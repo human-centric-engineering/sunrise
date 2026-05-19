@@ -158,6 +158,27 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
   }
 }
 
+/**
+ * Sync merge of externally-sourced models into the registry state.
+ *
+ * Used by server-only hydration coordinators (see
+ * `model-registry-db-hydrate.ts`) to pull operator-curated rows from
+ * `AiProviderModel` into the in-memory map without forcing this module
+ * — which is reachable from client components via the validations
+ * barrel — to depend on the Prisma client (and transitively on `pg`,
+ * `dns`, etc., which break the browser bundle).
+ *
+ * Last-write-wins on key conflict: passed-in entries override whatever
+ * the fallback map or OpenRouter feed produced. That matches the admin
+ * Model Matrix being the operator-authoritative source.
+ */
+export function registerModels(infos: ModelInfo[]): void {
+  if (infos.length === 0) return;
+  const merged = new Map(state.models);
+  for (const info of infos) merged.set(info.id, info);
+  state = { ...state, models: merged };
+}
+
 /** Return all models, optionally filtered to a single provider. */
 export function getAvailableModels(providerName?: string): ModelInfo[] {
   const all = dedupeModels(state.models);

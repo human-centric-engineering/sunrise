@@ -71,6 +71,46 @@ describe('ExecutionTraceEntryRow', () => {
     });
   });
 
+  // ── Description ─────────────────────────────────────────────────────────
+  // The description surfaces ONLY when the operator expands the row.
+  // It is not shown on the collapsed row, not in a `title` tooltip,
+  // and not next to a ⓘ icon — collapsing the row hides it again, by
+  // design. These tests pin both the present and absent cases.
+  describe('step description', () => {
+    const DESCRIPTION = 'Picks up the parsed model list and drafts the reply.';
+
+    it('does NOT render the description on the collapsed row (no inline text, no title, no icon)', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} description={DESCRIPTION} />);
+      // No description paragraph visible while collapsed.
+      expect(screen.queryByTestId('trace-entry-description-step-1')).not.toBeInTheDocument();
+      // No native browser tooltip on the step name either — the
+      // description is reveal-on-expand only.
+      expect(screen.getByText('Generate Summary')).not.toHaveAttribute('title');
+      // And no ⓘ icon — the test id from the prior icon-based design
+      // must stay absent so a future regression doesn't reintroduce it.
+      expect(screen.queryByTestId('trace-entry-description-icon-step-1')).not.toBeInTheDocument();
+    });
+
+    it('renders the description as a muted paragraph at the top of the expanded body when set', async () => {
+      const user = userEvent.setup();
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} description={DESCRIPTION} output="result" />);
+      // Expand the row first — the description paragraph lives inside the
+      // expanded region, above the input/output panes.
+      await user.click(screen.getByText('Generate Summary'));
+      const paragraph = screen.getByTestId('trace-entry-description-step-1');
+      expect(paragraph).toHaveTextContent(DESCRIPTION);
+    });
+
+    it('omits the expanded-body paragraph when no description is set', async () => {
+      const user = userEvent.setup();
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} output="result" />);
+      await user.click(screen.getByText('Generate Summary'));
+      // Absent description must not leave an empty muted paragraph at the
+      // top of the expanded body.
+      expect(screen.queryByTestId('trace-entry-description-step-1')).not.toBeInTheDocument();
+    });
+  });
+
   describe('expand/collapse toggle', () => {
     it('expands on click to show output', async () => {
       const user = userEvent.setup();
@@ -813,6 +853,42 @@ describe('ExecutionTraceEntryRow', () => {
       const chip = screen.getByTestId('trace-entry-step-type-step-1');
       expect(chip).not.toHaveAttribute('data-category');
       expect(chip.className).toContain('bg-muted');
+    });
+  });
+
+  // ── Agent chip ──────────────────────────────────────────────────────────
+  // For `agent_call` trace entries the API loader resolves the step's
+  // slug to `{ id, slug, name }` and the row renders a chip next to the
+  // step-type pill that links to the agent's edit page. These tests
+  // pin the chip-only-when-set behaviour and the link target.
+  describe('agent chip', () => {
+    const AGENT = { id: 'agent-cuid-1', slug: 'researcher', name: 'Researcher' };
+
+    it('renders the chip with the agent name when the `agent` prop is set', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} stepType="agent_call" agent={AGENT} />);
+      const chip = screen.getByTestId('trace-entry-agent-step-1');
+      expect(chip).toHaveTextContent(`Agent · ${AGENT.name}`);
+    });
+
+    it('links to the agent edit page in the same tab', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} stepType="agent_call" agent={AGENT} />);
+      const chip = screen.getByTestId('trace-entry-agent-step-1');
+      expect(chip.getAttribute('href')).toBe(`/admin/orchestration/agents/${AGENT.id}`);
+      // Plain in-tab navigation — no `target="_blank"`. Operators
+      // can use middle-click or cmd-click if they want a new tab.
+      expect(chip.getAttribute('target')).toBeNull();
+    });
+
+    it('omits the chip when `agent` is undefined (non-agent_call steps)', () => {
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} stepType="llm_call" />);
+      expect(screen.queryByTestId('trace-entry-agent-step-1')).not.toBeInTheDocument();
+    });
+
+    it('omits the chip on agent_call steps whose slug did not resolve to an active agent', () => {
+      // The API loader leaves `agent` absent when the slug isn't in the
+      // current registry — better than rendering a broken chip.
+      render(<ExecutionTraceEntryRow {...BASE_PROPS} stepType="agent_call" />);
+      expect(screen.queryByTestId('trace-entry-agent-step-1')).not.toBeInTheDocument();
     });
   });
 });

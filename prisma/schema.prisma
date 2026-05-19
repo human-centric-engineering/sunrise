@@ -457,17 +457,13 @@ model AiWorkflowExecution {
   status            String // "pending", "running", "paused_for_approval", "completed", "failed", "cancelled"
   inputData         Json
   outputData        Json?
+  // Resume cursor: the most-recently-entered step's id. Engine writes on
+  // every `markCurrentStep`; preserved across finalize for post-mortem
+  // diagnostics. The full set of in-flight steps lives on the side table
+  // `AiWorkflowRunningStep` (one row per running branch) so a `parallel`
+  // fan-out is fully observable; this scalar is just the cursor used by
+  // the resume path and as a short pointer for the in-flight banner.
   currentStep       String?
-  // Live-trace fields written alongside currentStep on every step_started
-  // transition and nulled on every step termination (completion / failure /
-  // pause / cancel). Powers the running-step indicator on the execution
-  // detail page so the UI can render the in-flight step's friendly label
-  // and ticking elapsed time without parsing the workflow version snapshot.
-  // Caveat: during a `parallel` fan-out, currentStep is a single column —
-  // these reflect whichever branch the engine most recently entered.
-  currentStepLabel     String?
-  currentStepType      String?
-  currentStepStartedAt DateTime?
   executionTrace    Json // array of step execution logs
   totalTokensUsed   Int       @default(0)
   totalCostUsd      Float     @default(0)
@@ -494,14 +490,6 @@ model AiWorkflowExecution {
   leaseExpiresAt    DateTime?
   lastHeartbeatAt   DateTime?
   recoveryAttempts  Int       @default(0)
-  // Mid-step checkpoint state for multi-turn step types (`agent_call`,
-  // `orchestrator`, `reflect`). The engine writes after each completed turn so
-  // a crashed run resumes at the next turn instead of restarting the whole
-  // step. Cleared on step transition (markCurrentStep) and workflow finalize.
-  // Single-shot step types ignore this column — their crash safety comes from
-  // the dispatch cache (`ai_workflow_step_dispatch`). See
-  // `lib/orchestration/engine/orchestration-engine.ts` (recordStepTurn).
-  currentStepTurns  Json?
   // Supervisor verdict columns. Populated by any executor that emits
   // `StepResult.contextPatch` — the supervisor step is the first user.
   // Persisted on the row for fast querying ("which runs failed the
@@ -512,6 +500,14 @@ model AiWorkflowExecution {
   supervisorScore      Float?
   supervisorReport     Json?
   supervisorReviewedAt DateTime?
+  // Lineage: when this execution was triggered via the rerun endpoint
+  // (`POST /executions/:id/rerun`) this points at the execution it was
+  // rerun from. The admin UI surfaces this as a "Re-run of execution X"
+  // breadcrumb. NULL for normal executions and for the parent of a
+  // rerun chain. `onDelete: SetNull` so deleting the parent doesn't
+  // cascade away children's history — the lineage link goes muted but
+  // the child stays.
+  parentExecutionId String?
   userId            String
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -520,8 +516,11 @@ model AiWorkflowExecution {
   workflow       AiWorkflow               @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   version        AiWorkflowVersion?       @relation(fields: [versionId], references: [id], onDelete: SetNull)
   user           User                     @relation("AiWorkflowExecutionUser", fields: [userId], references: [id])
+  parent         AiWorkflowExecution?     @relation("ExecutionLineage", fields: [parentExecutionId], references: [id], onDelete: SetNull)
+  reruns         AiWorkflowExecution[]    @relation("ExecutionLineage")
   costLogs       AiCostLog[]
   stepDispatches AiWorkflowStepDispatch[]
+  runningSteps   AiWorkflowRunningStep[]
 
   // Inbound-trigger dedup keyed on `dedupKey`. Route computes per-channel scope:
   //   - shared-secret channels (slack, postmark): `<channel>:<externalId>` — globally per channel
@@ -538,6 +537,7 @@ model AiWorkflowExecution {
   @@index([status, updatedAt]) // Abandoned-approval reaper
   @@index([status, leaseExpiresAt]) // Orphan sweep: RUNNING rows with expired lease
   @@index([userId, status, createdAt]) // Execution list with user + status + sort
+  @@index([parentExecutionId]) // "find all reruns of this execution" lookup
   @@map("ai_workflow_execution")
 }
 
@@ -570,6 +570,40 @@ model AiWorkflowStepDispatch {
   @@index([executionId, stepId]) // resume-time replay lookup per execution+step
   @@index([createdAt]) // future cleanup of stale cache rows
   @@map("ai_workflow_step_dispatch")
+}
+
+// In-flight step tracker. One row per step that's currently executing
+// (or paused awaiting approval) for an execution. The engine inserts a
+// row on every `markCurrentStep` and deletes on every step terminate
+// (success / failure / skip / reject / cancel). During a `parallel`
+// fan-out, each branch gets its own row — that's the whole reason this
+// is a side table and not scalar columns on `AiWorkflowExecution`,
+// which would last-writer-wins. The detail-page live poll reads this to
+// synthesise one "running" trace entry per branch.
+//
+// `turns` holds the multi-turn checkpoint state for `agent_call` /
+// `orchestrator` / `reflect` (the executors that record per-turn
+// state). It's per-step here, not per-execution — `markCurrentStep`'s
+// upsert deliberately doesn't touch this column on conflict, so the
+// resume path picks up the recorded turns when the engine re-enters
+// the same stepId after a crash, retry, or approval round-trip.
+//
+// See `lib/orchestration/engine/orchestration-engine.ts`
+// (markCurrentStep / recordStepTurn / clearRunningStep / startOrResume).
+model AiWorkflowRunningStep {
+  id          String   @id @default(cuid())
+  executionId String
+  stepId      String
+  label       String
+  stepType    String
+  startedAt   DateTime @default(now())
+  turns       Json?
+
+  execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, stepId])
+  @@index([executionId])
+  @@map("ai_workflow_running_step")
 }
 
 // Chat sessions

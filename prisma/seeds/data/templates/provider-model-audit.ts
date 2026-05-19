@@ -44,46 +44,18 @@
  * coordination).
  */
 
-import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
-import {
-  CAPABILITIES,
-  CONFIDENCE,
-  CONTEXT_LENGTH,
-  COST_EFFICIENCY,
-  DEPLOYMENT_PROFILES,
-  LATENCY,
-  QUALITY,
-  REASONING_DEPTH,
-  TIER_ROLES,
-  TOOL_USE,
-} from '@/lib/orchestration/model-audit/enums';
 import type { WorkflowTemplate } from '@/prisma/seeds/data/templates/types';
 
-// Enum specifications used by the validate_proposals guard. Embedded as a
-// JSON block in the prompt rather than comma-separated prose because LLMs
-// repeatedly mis-read prose lists in this guard — first dropping
-// `bestRole` from the accepted-field set (2026-05-15) and later dropping
-// `infrastructure` from `tierRole` (2026-05-16). JSON is harder to
-// silently misparse; the guard prompt explicitly tells the model to
-// re-read this block before judging each proposal.
-//
-// Sourced from `lib/orchestration/model-audit/enums.ts` so the guard,
-// the structured approval UI's Select widgets, and the server-side
-// per-field validation all stay in sync.
-const ENUM_SPEC = {
-  field: AUDITABLE_FIELDS,
-  tierRole: TIER_ROLES,
-  deploymentProfiles: DEPLOYMENT_PROFILES,
-  reasoningDepth: REASONING_DEPTH,
-  latency: LATENCY,
-  costEfficiency: COST_EFFICIENCY,
-  contextLength: CONTEXT_LENGTH,
-  toolUse: TOOL_USE,
-  quality: QUALITY,
-  confidence: CONFIDENCE,
-  capabilities: CAPABILITIES,
-} as const;
-const ENUM_SPEC_JSON = JSON.stringify(ENUM_SPEC, null, 2);
+// `validate_proposals` ran in LLM mode through 2026-05-19. It listed
+// every enum from `lib/orchestration/model-audit/enums.ts` as a JSON
+// block in its rules prompt, told the model to re-read the block
+// before judging each proposal, and STILL hallucinated three times
+// in five days (dropped `bestRole` from `field`, dropped
+// `infrastructure` from `tierRole`, and rejected `vision` from
+// `capabilities`). It now runs in schema mode against the
+// `audit-proposals` Zod schema registered in
+// `lib/orchestration/schemas/audit-proposals.ts`, which imports the
+// enum constants directly — no prompt-embedding step, no drift.
 
 // Provenance contract spelled out once and inlined into every producer
 // prompt. The audit workflow injects {{search_provider_info.output}} as
@@ -171,6 +143,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'load_models',
         name: 'Parse input and load model data',
+        description:
+          'Parses the audit-trigger input into a structured model list (IDs, names, providers, current field values) that downstream analysis steps and the report writer consume.',
         type: 'llm_call',
         config: {
           prompt:
@@ -196,6 +170,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'search_provider_info',
         name: 'Search web for current provider model info',
+        description:
+          'Single Brave Search call with a generic AI-news query. The five result URLs are injected into each analysis step as a numbered citation block so proposed changes can attribute to a URL rather than rely on training knowledge alone. Skipped silently when BRAVE_SEARCH_API_KEY is unset.',
         type: 'external_call',
         config: {
           // Static query — Brave caps the `q` param at 400 characters, and
@@ -237,6 +213,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'classify_models',
         name: 'Route by model capability type',
+        description:
+          'LLM-driven routing pass that labels the audit batch as chat-only, embedding-only, or mixed so the parallel analysis stage runs the right prompts.',
         type: 'route',
         config: {
           classificationPrompt:
@@ -263,6 +241,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'audit_models',
         name: 'Analyse models and discover new ones in parallel',
+        description:
+          'Parallel fan-out point — kicks off chat analysis, embedding analysis, and new-model discovery concurrently with a 120-second cap.',
         type: 'parallel',
         config: {
           branches: ['analyse_chat', 'analyse_embedding', 'discover_new_models'],
@@ -278,6 +258,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'analyse_chat',
         name: 'Analyse chat/completion models',
+        description:
+          'Evaluates every chat/completion model in scope and proposes field-level changes (tier role, latency, cost-efficiency, context length, tool use, deployment profiles) with per-claim source attribution.',
         type: 'llm_call',
         config: {
           prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
@@ -358,6 +340,8 @@ Respond with ONLY the JSON object, no markdown fencing.`,
       {
         id: 'analyse_embedding',
         name: 'Analyse embedding models',
+        description:
+          'Evaluates embedding models specifically — dimensions, quality tier, deployment profiles — and flags any that have been deprecated or superseded.',
         type: 'llm_call',
         config: {
           prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
@@ -437,141 +421,191 @@ Respond with ONLY the JSON object, no markdown fencing.`,
       {
         id: 'discover_new_models',
         name: 'Identify new models from providers (agent)',
+        description:
+          'Delegates to the provider-model-auditor agent to scan for recently released models that are missing from the registry, proposing full new-model entries with capability tags and source attribution.',
         type: 'agent_call',
         config: {
           agentSlug: 'provider-model-auditor',
           message: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate and produce a corrected new-model proposal set. Pay particular attention to enum values — they must match the allowed lists exactly, and every proposed model MUST carry a non-empty \`sources\` array.
 
-{{/if}}You are an AI model landscape expert. Given the list of providers and their currently registered models, identify any recently released models that are NOT in the registry.
+{{/if}}You are an AI model landscape expert. Your task is to identify models missing from the registry and propose complete entries for admin review.
 
-Current model registry:
-{{load_models.output}}
+## Output contract
 
-${SEARCH_RESULTS_BLOCK}
+Respond with ONLY this JSON object (no markdown fencing):
+
+\`\`\`json
+{
+  "newModels": [...],
+  "reasoning": "≤3 sentences summarising what was found and the strength of evidence."
+}
+\`\`\`
+
+If nothing is missing, respond with \`{ "newModels": [], "reasoning": "All known models are already registered" }\`.
+
+Each entry in \`newModels\`:
+- \`name\`: Human-readable name (e.g. "Claude Sonnet 4.5")
+- \`slug\`: Lowercase letters / digits / hyphens only, prefixed with the provider (e.g. "anthropic-claude-sonnet-4-5")
+- \`providerSlug\`: Must match an existing provider slug from the registry
+- \`modelId\`: API model identifier in **canonical short form** — the bare id the provider's API accepts, WITHOUT date suffixes. Match the format the registry already uses. Examples: \`claude-opus-4\` (NOT \`claude-opus-4-20250514\`), \`gpt-5\` (NOT \`gpt-5-2026-01-15\`), \`o3-mini\`.
+- \`description\`: Brief — purpose and strengths in one sentence.
+- \`capabilities\`: array of one or more of: \`chat\`, \`reasoning\`, \`embedding\`, \`audio\`, \`image\`, \`moderation\`, \`vision\`, \`documents\`. Use these exact tokens — do not invent values like \`multimodal\` or \`pdf\`. \`image\` = image generation; \`vision\` = image input to a chat model.
+- \`tierRole\`: one of \`thinking\` / \`worker\` / \`infrastructure\` / \`control_plane\` / \`embedding\` (the model's capability tier).
+- \`deploymentProfiles\`: array of one or more of \`hosted\` / \`sovereign\` (\`hosted\` for vendor API, \`sovereign\` for self-hosted like Ollama/vLLM; both if available either way). NEVER omit.
+- \`reasoningDepth\`: \`very_high\` / \`high\` / \`medium\` / \`none\`
+- \`latency\`: \`very_fast\` / \`fast\` / \`medium\`
+- \`costEfficiency\`: \`very_high\` / \`high\` / \`medium\` / \`none\`
+- \`contextLength\`: \`very_high\` / \`high\` / \`medium\` / \`n_a\`
+- \`toolUse\`: \`strong\` / \`moderate\` / \`none\`
+- \`bestRole\`: One-line summary of the optimal slot (≤8 words).
+- For embedding models also include: \`dimensions\` (int), \`quality\` (\`high\` / \`medium\` / \`budget\`), \`schemaCompatible\` (bool).
+- \`sources\`: non-empty array per the rules below.
 
 ${SOURCES_INSTRUCTIONS}
 
-For each provider represented in the data, check if they have released new models that are missing from the registry. For each new model found, propose a complete entry with:
-- "name": Human-readable name (e.g. "Claude Opus 4")
-- "slug": Lowercase with hyphens only (e.g. "anthropic-claude-opus-4")
-- "providerSlug": Must match an existing provider slug from the registry
-- "modelId": The API model identifier (e.g. "claude-opus-4-20250514")
-- "description": Brief description of the model's purpose and strengths
-- "capabilities": array of one or more of: chat, reasoning, embedding, audio, image, moderation, vision, documents. Use these exact tokens — do not substitute synonyms (e.g. use "image" for image generation, "vision" for image input to a chat model; do not invent values like "multimodal" or "pdf")
-- "tierRole": one of: thinking, worker, infrastructure, control_plane, embedding — what the model is FOR (capability tier)
-- "deploymentProfiles": array of one or more of: hosted, sovereign — where the model RUNS. \`hosted\` for vendor-managed API (default); \`sovereign\` for self-hosted (Ollama, vLLM); both if available either way. NEVER omit this field.
-- "reasoningDepth": one of: very_high, high, medium, none
-- "latency": one of: very_fast, fast, medium
-- "costEfficiency": one of: very_high, high, medium, none
-- "contextLength": one of: very_high, high, medium, n_a
-- "toolUse": one of: strong, moderate, none
-- "bestRole": One-line summary of optimal use case
-- For embedding models also include: "dimensions" (integer), "quality" (high | medium | budget), "schemaCompatible" (boolean)
-- "sources": non-empty array per the contract above — every new-model proposal MUST attribute the claim that the model exists and that its capabilities/tier are correct.
+## Worked example
 
-Respond with a JSON object:
+Suppose the registry contains only \`claude-sonnet-4\` (anthropic). Web search result [2] reads "Claude Sonnet 4.5 released October 2025" at https://anthropic.com/news/sonnet-4-5 with description "Anthropic announces Claude Sonnet 4.5, available via API from October 2025." A well-formed proposal looks like this:
+
+\`\`\`json
 {
-  "newModels": [...array of proposed models...],
-  "reasoning": "Summary of what was found and why these models should be added"
+  "name": "Claude Sonnet 4.5",
+  "slug": "anthropic-claude-sonnet-4-5",
+  "providerSlug": "anthropic",
+  "modelId": "claude-sonnet-4-5",
+  "description": "Anthropic's mid-tier 4.5-generation chat model, balancing reasoning quality and cost.",
+  "capabilities": ["chat", "vision", "documents"],
+  "tierRole": "infrastructure",
+  "deploymentProfiles": ["hosted"],
+  "reasoningDepth": "high",
+  "latency": "medium",
+  "costEfficiency": "high",
+  "contextLength": "very_high",
+  "toolUse": "strong",
+  "bestRole": "General chat workhorse",
+  "sources": [{
+    "source": "web_search",
+    "confidence": "high",
+    "reference": "https://anthropic.com/news/sonnet-4-5",
+    "snippet": "Anthropic announces Claude Sonnet 4.5, available via API from October 2025.",
+    "note": "Result [2] announces the model's release."
+  }]
 }
+\`\`\`
 
-If no new models are found, respond with { "newModels": [], "reasoning": "All known models are already registered" }.
+Note: \`modelId\` is the bare canonical form (\`claude-sonnet-4-5\`, not the dated release id); the source is \`web_search\` with a verifiable URL; confidence is \`high\` because it's a vendor announcement.
 
-IMPORTANT: Only propose models you are confident exist with attributable evidence. A model proposed solely from training knowledge with "low" confidence is acceptable to emit so the admin can verify; a model with NO source is not acceptable and will be rejected by the validator.
-Respond with ONLY the JSON object, no markdown fencing.`,
+## Data
+
+### Current model registry
+
+\`\`\`json
+{{load_models.output}}
+\`\`\`
+
+${SEARCH_RESULTS_BLOCK}
+
+## Instruction
+
+For each provider represented in the registry above, identify models that are **not present in the registry above** — "missing" is what matters, not "when released". Cross-reference web search results [N] when possible; a missing model with a \`web_search\` source is far stronger evidence than one with only \`training_knowledge\`.
+
+Only propose models you can attribute. A proposal with only \`training_knowledge: "low"\` is acceptable so the admin can verify; a proposal with NO source will be rejected by the validator.`,
           maxToolIterations: 5,
         },
         nextSteps: [{ targetStepId: 'validate_proposals' }],
       },
 
-      // ─── Step 6: guard (Pattern 18 — Guardrails) ──────────────────
-      // Tests: Safety/quality validation gate, LLM-mode rule checking,
-      // failAction configuration, bounded retry on failure.
+      // ─── Step 6a: guard (Pattern 18 — Guardrails, schema mode) ────
+      // Deterministic schema validation. Replaces the prior LLM-mode
+      // validator that hallucinated on enum membership three times
+      // in a week (rejected valid `capabilities: ["chat", "vision"]`
+      // even with the spec pasted into the prompt as JSON). Runs the
+      // `audit-proposals` Zod schema registered in
+      // `lib/orchestration/schemas/audit-proposals.ts` against the
+      // compound output of the three producer branches.
+      //
+      // Owns Rules 1–9 of the previous validator (field membership,
+      // enum membership, array-element checks, sources presence /
+      // shape / confidence caps, slug regex, required fields). Rule
+      // 10 — "rationale engages with currentValue" — is genuinely
+      // subjective and stays on the downstream `validate_rationale`
+      // LLM guard.
       {
         id: 'validate_proposals',
-        name: 'Validate proposed values against schemas',
+        name: 'Validate proposed shape (deterministic schema)',
+        description:
+          'Runs the `audit-proposals` Zod schema against the combined output of the three producer branches. Catches enum-membership / required-field / source-shape issues deterministically — no LLM call, no hallucination surface. The retry edge sends a precise Zod-issue path back to the producer (which step + which field) so the next attempt can fix the exact problem.',
         type: 'guard',
         config: {
-          rules: `You are a schema validator for AI-model-audit proposals. Validate every change, new-model entry, and deactivation proposal against the spec below.
+          mode: 'schema',
+          schemaName: 'audit-proposals',
+          inputStepIds: ['analyse_chat', 'analyse_embedding', 'discover_new_models'],
+          failAction: 'block',
+          maxRetries: 2,
+        },
+        nextSteps: [
+          { targetStepId: 'validate_rationale', condition: 'pass' },
+          { targetStepId: 'audit_models', condition: 'fail', maxRetries: 2 },
+          { targetStepId: 'report_validation_failure', condition: 'fail' },
+        ],
+      },
 
-## ENUM SPEC (authoritative list of valid values)
+      // ─── Step 6b: guard (Pattern 18 — Guardrails, LLM mode) ───────
+      // The narrow LLM-judgement check that remains after the schema
+      // gate ran above. By this point every proposal is structurally
+      // well-formed; the LLM's only job is verifying that the change
+      // `reason` text engages with the field's `currentValue` rather
+      // than arguing against something unrelated. Rule 10 of the
+      // previous monolithic validator, in isolation.
+      {
+        id: 'validate_rationale',
+        name: 'Validate change rationales engage with currentValue',
+        description:
+          "LLM-mode check that every proposed change's `reason` references the field's `currentValue` (or otherwise explains why the current value is wrong). Generic framings get caught here. Only runs after the deterministic schema gate above passes — by this point every proposal is structurally valid, so the LLM only judges the prose.",
+        type: 'guard',
+        config: {
+          rules: `You are a rationale checker for AI-model-audit proposals. The proposals below have already passed structural validation — every change has a valid field, valid enum values, and non-empty sources. Your job is narrow: verify that every \`change\` object's \`reason\` field engages with what is actually changing.
 
-The arrays below ARE the entire universe of valid values for each field. RE-READ THIS BLOCK BEFORE JUDGING EACH PROPOSAL. Do not abridge, paraphrase, or omit any array entry. If a proposed value appears character-for-character in the corresponding array, it is valid. If it does not, it is invalid. There are no implicit synonyms.
+Proposal streams to check:
 
 \`\`\`json
-${ENUM_SPEC_JSON}
+{{analyse_chat.output}}
 \`\`\`
 
-## VALIDATION RULES
+\`\`\`json
+{{analyse_embedding.output}}
+\`\`\`
 
-1. For every \`change\` object: its \`field\` value MUST be exactly one of the strings in \`field\` above. Treat these as literal identifiers, not natural-language phrases — \`bestRole\` is a recognised field (it is a free-text summary column on AiProviderModel, NOT an enum). Reject the change only if \`field\` is not present in the array.
+**Empty proposal set is a valid outcome.** If \`models\` is empty in both streams, OR every \`models[*].changes\` array is empty, reply PASS — the upstream analysers reviewed the registry and found nothing worth changing, and there are no rationales to judge. Do NOT fail just because there is nothing to check.
 
-2. For every change AND every new-model entry, when a value is provided for one of these enum fields, it MUST appear in the corresponding spec array: \`tierRole\`, \`reasoningDepth\`, \`latency\`, \`costEfficiency\`, \`contextLength\`, \`toolUse\`, \`quality\`, \`confidence\`. Before judging, COUNT THE ENTRIES in the spec array and confirm the proposed value matches one of them by exact string comparison.
+For every change in \`models[*].changes[*]\` across both streams:
 
-   **Specific values to NEVER let through.** \`tierRole\` is exactly the five values in the spec — \`thinking\`, \`worker\`, \`infrastructure\`, \`control_plane\`, \`embedding\`. Reject anything else, especially:
-   - \`chat\` — that's a capability, not a tier role
-   - \`local_sovereign\` — removed 2026-05-16; deployment locus lives in \`deploymentProfiles\` now
-   - \`reasoning\`, \`vision\`, \`multimodal\` — capabilities, not tiers
+  - PASS if \`reason\` literally contains the JSON-stringified \`currentValue\` (e.g. when \`currentValue\` is "worker", the reason mentions "worker"), OR
+  - PASS if \`reason\` explains why the field-at-its-current-value is wrong for this model.
+  - FAIL if \`reason\` is generic, references unrelated framings, or doesn't engage with what's actually changing.
 
-3. \`capabilities\` is an ARRAY field — apply per-element membership, NOT array-equality. The rule is: for every \`element\` in the proposal's \`capabilities\` array, check that \`element\` appears in the \`capabilities\` spec array above. Do NOT check whether the array as a whole appears in the spec — the spec lists individual capability tokens, not arrays. Concretely:
+Worked examples:
 
-   - \`capabilities: ["chat"]\` → PASS (the single element "chat" is in the spec).
-   - \`capabilities: ["chat", "vision"]\` → PASS (both elements are in the spec).
-   - \`capabilities: ["multimodal"]\` → FAIL (the element "multimodal" is not in the spec).
-   - \`capabilities: []\` → FAIL only if a separate field rule requires non-empty.
+- PASS: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "Worker tier is too low — this model's reasoning depth is very_high..." }\` (engages with "worker" by name)
+- FAIL: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "This is a chat model, not an embedding model." }\` (irrelevant — currentValue is "worker", not "embedding")
+- FAIL: \`{ "field": "deploymentProfiles", "currentValue": ["hosted"], "proposedValue": ["sovereign"], "reason": "This is an open-weight model." }\` (doesn't engage with why "hosted" is wrong)
 
-   A previous validator run rejected \`capabilities: ["chat"]\` with the reason ' \`capabilities: ["chat"]\` is not in [...]' — that is the wrong check. The element "chat" IS in the spec; that array is valid.
-
-4. \`deploymentProfiles\` (when present on a change or new-model entry) must be an array where every element appears in the \`deploymentProfiles\` spec array above (\`hosted\`, \`sovereign\`). Empty arrays are invalid — every model has at least one deployment locus.
-
-5. \`bestRole\` and \`description\` are free-text; validate only that they are present and non-empty.
-
-6. \`slug\` (on new model proposals) must match \`^[a-z0-9]+(-[a-z0-9]+)*$\`.
-
-7. New-model entries must include: \`name\`, \`slug\`, \`providerSlug\`, \`modelId\`, \`description\`, \`capabilities\`, \`tierRole\`, \`deploymentProfiles\`, \`bestRole\`. Reject entries missing any of these.
-
-8. Deactivation proposals must have a non-empty \`modelId\` and a non-empty \`reason\`. Reject otherwise.
-
-9. **Provenance.** Every \`change\` object MUST have a non-empty \`sources\` array. Every \`newModels\` entry MUST have a non-empty \`sources\` array. Every \`deactivateModels\` entry MUST have a non-empty \`sources\` array. Each \`sources[i]\` must:
-   - Have a \`source\` field equal to one of: \`training_knowledge\`, \`web_search\`, \`knowledge_base\`, \`prior_step\`, \`external_call\`, \`user_input\`.
-   - Have a \`confidence\` field equal to one of: \`high\`, \`medium\`, \`low\`.
-   - When \`source\` is \`web_search\`, \`knowledge_base\`, \`external_call\`, or \`prior_step\`: have a non-empty \`reference\` string (URL, chunk id, or step path).
-   - When \`source\` is \`training_knowledge\`: \`confidence\` MUST be \`medium\` or \`low\` (never \`high\`).
-   - \`snippet\` and \`note\` are optional but must be non-empty strings if present.
-
-   Reject the proposal if its sources array is missing, empty, or any entry fails the above. Quote the offending proposal so the producer can attribute on retry.
-
-10. **Rationale must engage with currentValue.** For every \`change\` object, the \`reason\` field MUST explicitly reference the \`currentValue\` (or the field whose value is changing). Generic framings that argue against an unrelated value are rejected. Concretely:
-    - PASS: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "Worker tier is too low — this model's reasoning depth is very_high and it's used as a planner, which is the thinking-tier definition." }\` (engages with \`worker\` by name)
-    - FAIL: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "This model is primarily a chat model, not an embedding model." }\` (irrelevant — current is \`worker\`, not embedding)
-    - FAIL: \`{ "field": "deploymentProfiles", "currentValue": ["hosted"], "proposedValue": ["sovereign"], "reason": "This is an open-weight model." }\` (doesn't engage with why \`hosted\` is wrong — the model may also be hosted via vendor API)
-
-    To pass, the reason string must either (a) literally contain the \`currentValue\` (as JSON-stringified text), or (b) explain why the field at its current value is incorrect for this model. Reject when the reason is generic, references unrelated framings, or fails to engage with the current value.
-
-## WORKED EXAMPLES
-
-- \`{ "field": "bestRole", "currentValue": "Lightweight worker", "proposedValue": "Planner / orchestrator", "reason": "Current 'Lightweight worker' undersells this model's reasoning capability...", "sources": [{ "source": "web_search", "confidence": "high", "reference": "https://example.com/", "note": "..." }] }\` → PASS.
-- \`{ "name": "Claude Sonnet 5", "capabilities": ["chat"], "tierRole": "worker", "deploymentProfiles": ["hosted"], "sources": [{ "source": "web_search", "confidence": "high", "reference": "https://anthropic.com/news", "note": "..." }] }\` → PASS (capabilities is checked per-element; "chat" is in the spec).
-- \`{ "name": "Multimodal Foo", "capabilities": ["chat", "multimodal"] }\` → FAIL (per-element check: "multimodal" is not in the capabilities spec).
-- \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "Worker tier mismatches the model's very_high reasoning depth...", "sources": [{ "source": "training_knowledge", "confidence": "medium", "note": "..." }] }\` → PASS.
-- \`{ "field": "tierRole", "proposedValue": "edge", "sources": [...] }\` → FAIL (not in tierRole array).
-- \`{ "field": "tierRole", "proposedValue": "chat", "sources": [...] }\` → FAIL (capability, not a tier role).
-- \`{ "field": "tierRole", "proposedValue": "local_sovereign", "sources": [...] }\` → FAIL (\`local_sovereign\` was removed; use \`deploymentProfiles: ["sovereign"]\` instead).
-- \`{ "field": "freshness", "proposedValue": "stale", "sources": [...] }\` → FAIL (\`freshness\` is not in the field array).
-- \`{ "field": "tierRole", "proposedValue": "embedding" }\` (no sources) → FAIL (Rule 9: missing sources).
-- \`{ "field": "tierRole", "proposedValue": "embedding", "sources": [{ "source": "training_knowledge", "confidence": "high" }] }\` → FAIL (Rule 9: training_knowledge cannot be \`high\` confidence).
-- \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "This is a chat model, not an embedding model.", "sources": [...] }\` → FAIL (Rule 10: reason references "embedding" but currentValue is "worker").
+Reply with exactly PASS or FAIL on the first line, then a brief reason on the second line. If FAIL, quote the offending change object so the producer can fix it on retry.
 
 {{#if vars.__retryContext}}
-## RETRY CONTEXT
-
-A previous attempt failed validation: {{vars.__retryContext.failureReason}}. The producer is re-running. Apply the same checks; quote the exact spec entry alongside any rejection so the producer can fix the next attempt.
-{{/if}}
-
-For each rejection in your verdict, quote the exact array entry the proposal failed to match (e.g. \`tierRole: "edge" is not in ["thinking","worker","infrastructure","control_plane","embedding"]\`). This anchoring prevents you from omitting valid values by mistake.`,
+RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}. Apply the same checks; quote the offending change for the next iteration.
+{{/if}}`,
           mode: 'llm',
           failAction: 'block',
           maxRetries: 2,
+          temperature: 0.1,
+          // Override the default chat model (gpt-4o-mini) with gpt-5. The
+          // smaller model confused the FAIL examples in the prompt with
+          // real producer output and reported example text back as the
+          // offending change — the retry context then asked the producer
+          // to fix a change that didn't exist. gpt-5 is reliable enough
+          // not to regurgitate few-shot example data as real input.
+          modelOverride: 'gpt-5',
         },
         nextSteps: [
           { targetStepId: 'refine_findings', condition: 'pass' },
@@ -586,6 +620,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'refine_findings',
         name: 'Refine audit findings',
+        description:
+          'Draft-critique-revise loop that re-reads the proposals and tightens confidence levels, rationales, and consistency before they hit the approval queue.',
         type: 'reflect',
         config: {
           critiquePrompt:
@@ -601,10 +637,12 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'score_audit',
         name: 'Score audit confidence and completeness',
+        description:
+          'Scores the refined proposal set against a 1–10 rubric covering accuracy, completeness, specificity, confidence calibration, and consistency.',
         type: 'evaluate',
         config: {
           rubric:
-            'Score the audit findings on a 1-10 scale:\n\n- **Accuracy** (1-10): Are the proposed changes factually correct based on current model capabilities?\n- **Completeness** (1-10): Were all relevant fields evaluated? Were any obvious issues missed? Were new models identified where appropriate?\n- **Specificity** (1-10): Are the reasons for changes specific and actionable, not vague?\n- **Confidence calibration** (1-10): Do the confidence levels match the strength of evidence?\n- **Consistency** (1-10): Are similar models treated consistently (e.g., same-family models should have consistent tier roles)?',
+            'Evaluate the AI-model audit results below against a 1-10 rubric. The engine-supplied `Input:` block above is the workflow trigger payload and is unrelated to scoring — score the proposal streams included in this rubric instead.\n\nChat/completion model proposals:\n\n```json\n{{analyse_chat.output}}\n```\n\nEmbedding model proposals:\n\n```json\n{{analyse_embedding.output}}\n```\n\nNew model discoveries:\n\n```json\n{{discover_new_models.output}}\n```\n\n**Empty proposal set.** If `analyse_chat.models`, `analyse_chat.deactivateModels`, `analyse_embedding.models`, `analyse_embedding.deactivateModels`, AND `discover_new_models.newModels` are all empty arrays — i.e. the audit ran cleanly and the registry was already accurate — reply with `10` on the first line and explain on subsequent lines that no changes were needed. Do not penalise an audit for finding nothing; that is a valid and useful outcome.\n\nOtherwise, score on the following dimensions, ignoring any that are not applicable to what the audit produced:\n\n- **Accuracy** (1-10): Are the proposed changes factually correct based on current model capabilities? Are the deactivation reasons grounded in real provider announcements? Are the new-model discoveries real (correct slugs, providerSlugs, modelIds)?\n- **Completeness** (1-10): Did the analysers cover every relevant field on each model in scope? Were obvious issues missed? Were new models identified where appropriate?\n- **Specificity** (1-10): Are the `reason` fields specific and actionable, citing the model and field by name, rather than generic framings?\n- **Confidence calibration** (1-10): Do the `confidence` / `overallConfidence` levels match the strength of the cited sources? High confidence should only appear with clear, verifiable evidence.\n- **Consistency** (1-10): Are similar models treated consistently — e.g. same-family models with consistent tier roles, comparable embedding models with consistent deployment-profile assignments?\n\nReturn the aggregate score (mean of the dimensions you actually scored) on the first line as a single number. On subsequent lines, briefly explain how each dimension scored and which proposals drove the lowest scores.',
           scaleMin: 1,
           scaleMax: 10,
           threshold: 6,
@@ -628,6 +666,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'review_changes',
         name: 'Admin reviews proposed changes and new models',
+        description:
+          'Pauses the workflow for admin review. Renders proposed field changes, new models, and deactivations as a per-row structured form with Accept / Reject / Modify and colour-coded source pills.',
         type: 'human_approval',
         config: {
           prompt:
@@ -779,6 +819,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'apply_changes',
         name: 'Apply accepted changes',
+        description:
+          'Writes accepted field changes back to the AiProviderModel rows via the apply_audit_changes capability.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'apply_audit_changes',
@@ -794,6 +836,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'add_new_models',
         name: 'Add approved new models',
+        description:
+          'Creates the approved new model entries via the add_provider_models capability.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'add_provider_models',
@@ -809,6 +853,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'deactivate_models',
         name: 'Deactivate deprecated models',
+        description:
+          'Soft-deletes deprecated models via the deactivate_provider_models capability. Reactivation is possible later.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'deactivate_provider_models',
@@ -825,6 +871,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'compile_report',
         name: 'Compile consolidated audit report',
+        description:
+          'Delegates to the audit-report-writer agent to synthesise an executive-summary narrative report from every preceding step output.',
         type: 'agent_call',
         config: {
           agentSlug: 'audit-report-writer',
@@ -856,6 +904,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'supervisor_review',
         name: 'Neutral supervisor review',
+        description:
+          'Independent judge model audits the full execution and produces a calibrated verdict (Pass / Concerns / Fail) plus a 0.00–1.00 score. Advisory only — does not gate the workflow. Can be turned off per-run from the trigger dialog.',
         type: 'supervisor',
         config: {
           assessmentCriteria:
@@ -908,6 +958,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'report_render',
         name: 'Prepare report for email',
+        description:
+          'Walks the trace and renders a deterministic Markdown report — step-by-step inputs, outputs, durations, costs — for embedding into the notification email. Can be turned off per-run.',
         type: 'report',
         config: {
           format: 'markdown',
@@ -939,6 +991,8 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'notify_complete',
         name: 'Notify audit completion',
+        description:
+          'Emails the configured recipient with the supervisor verdict, the agent-authored narrative, and the structured Markdown report.',
         type: 'send_notification',
         config: {
           channel: 'email',
@@ -952,13 +1006,14 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       },
 
       // ─── Exhaustion handler ───────────────────────────────────────
-      // Reached when the validate_proposals guard exhausts its retry
-      // budget. The engine looks for a sibling fail edge without
-      // maxRetries (this one) and routes here instead of silently
-      // halting. Terminal step — workflow ends with FAILED status after
-      // notification because `terminalStatus: 'failed'` tells the engine
-      // to set `errorMessage` from the interpolated body and emit
-      // workflow_failed instead of workflow_completed.
+      // Reached when either validation guard (`validate_proposals`
+      // schema-mode, `validate_rationale` LLM-mode) exhausts its
+      // retry budget. The engine looks for a sibling fail edge
+      // without maxRetries (this one) and routes here instead of
+      // silently halting. Terminal step — workflow ends with FAILED
+      // status after notification because `terminalStatus: 'failed'`
+      // tells the engine to set `errorMessage` from the interpolated
+      // body and emit workflow_failed instead of workflow_completed.
       //
       // `errorStrategy: 'skip'` is still set so a broken email channel
       // cannot mask the underlying validation-exhaustion signal:
@@ -967,13 +1022,15 @@ For each rejection in your verdict, quote the exact array entry the proposal fai
       {
         id: 'report_validation_failure',
         name: 'Notify admin: validation exhausted',
+        description:
+          'Terminal failure path. Reached when either the schema-mode `validate_proposals` guard or the LLM-mode `validate_rationale` guard exhausts its retry budget. Emails the admin with the last validator output and marks the execution FAILED.',
         type: 'send_notification',
         config: {
           channel: 'email',
           to: 'admin@example.com',
           subject: 'Provider Model Audit — validation failed after retries',
           bodyTemplate:
-            'The Provider Model Audit halted at the schema-validation gate after exhausting the retry budget.\n\nFinal validator output: {{validate_proposals.output}}\n\nNo changes were applied. Open the execution trace in the admin dashboard for the full proposal payload and retry timeline, then re-run the workflow after refining the analysis prompts or reviewing the offending proposals.',
+            'The Provider Model Audit halted at a validation gate after exhausting the retry budget.\n\nSchema validator output: {{validate_proposals.output}}\n\nRationale validator output: {{validate_rationale.output}}\n\nNo changes were applied. Open the execution trace in the admin dashboard for the full proposal payload and retry timeline, then re-run the workflow after refining the analysis prompts or reviewing the offending proposals.',
           errorStrategy: 'skip',
           terminalStatus: 'failed',
         },

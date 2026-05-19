@@ -31,6 +31,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { FieldHelp } from '@/components/ui/field-help';
 import {
   STEP_CATEGORY_COLOURS,
@@ -60,9 +61,15 @@ import {
   type CapabilityOption,
 } from '@/components/admin/orchestration/workflow-builder/block-editors';
 
+// Schema cap matches `workflowStepSchema.description.max(500)` in
+// `lib/validations/orchestration.ts`. Surfaced inline in the panel so
+// authors get a visible counter before persistence rejects the payload.
+const DESCRIPTION_MAX_CHARS = 500;
+
 export interface BlockConfigPanelProps {
   node: PatternNode;
   onLabelChange: (nodeId: string, label: string) => void;
+  onDescriptionChange: (nodeId: string, description: string) => void;
   onConfigChange: (nodeId: string, partial: Record<string, unknown>) => void;
   onDelete: (nodeId: string) => void;
   capabilities: readonly CapabilityOption[];
@@ -72,6 +79,7 @@ export interface BlockConfigPanelProps {
 export function BlockConfigPanel({
   node,
   onLabelChange,
+  onDescriptionChange,
   onConfigChange,
   onDelete,
   capabilities,
@@ -148,6 +156,31 @@ export function BlockConfigPanel({
           onChange={(e) => onLabelChange(node.id, e.target.value)}
           placeholder="e.g. Summarise transcript"
         />
+      </div>
+
+      {/* Editable description */}
+      <div className="mb-4 space-y-1.5">
+        <Label htmlFor="step-description" className="flex items-center">
+          Description (optional){' '}
+          <FieldHelp title="Step description">
+            One or two sentences explaining what this step is for. Shown on hover in the execution
+            trace viewer and in the expanded row when an operator clicks to inspect the step. Skip
+            it when the step name is already self-explanatory. Capped at {DESCRIPTION_MAX_CHARS}{' '}
+            characters.
+          </FieldHelp>
+        </Label>
+        <Textarea
+          id="step-description"
+          rows={3}
+          value={node.data.description ?? ''}
+          maxLength={DESCRIPTION_MAX_CHARS}
+          onChange={(e) => onDescriptionChange(node.id, e.target.value)}
+          placeholder="e.g. Picks up the parsed model list and queries Brave for recent provider news"
+          data-testid="step-description-textarea"
+        />
+        <p className="text-muted-foreground text-right text-[10px] tabular-nums">
+          {(node.data.description ?? '').length} / {DESCRIPTION_MAX_CHARS}
+        </p>
       </div>
 
       {/* Read-only step id */}

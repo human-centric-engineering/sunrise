@@ -143,6 +143,7 @@ export const API = {
         `/api/v1/admin/orchestration/executions/${id}/retry-step`,
       executionReview: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/review`,
+      executionRerun: (id: string): string => `/api/v1/admin/orchestration/executions/${id}/rerun`,
       executionReportMarkdown: (id: string): string =>
         `/api/v1/admin/orchestration/executions/${id}/report.md`,
       APPROVALS_HISTORY: '/api/v1/admin/orchestration/approvals/history',

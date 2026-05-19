@@ -834,3 +834,53 @@ describe('refreshFromOpenRouter — catch preserves previously-cached state', ()
     expect(registry.getModel('gpt-4o')).toBeDefined();
   });
 });
+
+describe('registerModels', () => {
+  it('merges externally-sourced models into the registry state', () => {
+    // Used by the server-only `model-registry-db-hydrate.ts` module to
+    // surface operator-curated rows (`AiProviderModel`) without
+    // requiring the registry itself to depend on Prisma.
+    expect(registry.getModel('gpt-5')).toBeUndefined();
+
+    registry.registerModels([
+      {
+        id: 'gpt-5',
+        name: 'GPT-5',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 1_000_000,
+        supportsTools: true,
+      },
+    ]);
+
+    expect(registry.getModel('gpt-5')?.provider).toBe('openai');
+  });
+
+  it('last-write-wins on key conflict — externally-sourced beats fallback', () => {
+    expect(registry.getModel('gpt-4o-mini')?.tier).toBe('budget');
+
+    registry.registerModels([
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o Mini (Operator-curated)',
+        provider: 'openai',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 128_000,
+        supportsTools: true,
+      },
+    ]);
+
+    expect(registry.getModel('gpt-4o-mini')?.tier).toBe('frontier');
+    expect(registry.getModel('gpt-4o-mini')?.name).toBe('GPT-4o Mini (Operator-curated)');
+  });
+
+  it('no-op when called with an empty array', () => {
+    const before = registry.getAvailableModels().length;
+    registry.registerModels([]);
+    expect(registry.getAvailableModels().length).toBe(before);
+  });
+});

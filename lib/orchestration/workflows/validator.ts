@@ -11,7 +11,8 @@
  *   - no cycles (DFS with gray/black colouring)
  *   - `human_approval` steps carry a `prompt` config
  *   - `tool_call` steps carry a `capabilitySlug` config
- *   - `guard` steps carry a `rules` config
+ *   - `guard` steps carry a `rules` config (llm/regex modes) or
+ *     `schemaName` config (schema mode) — mirrors the executor
  *   - `evaluate` steps carry a `rubric` config
  *   - `external_call` steps carry a `url` config
  *   - `agent_call` steps carry an `agentSlug` config
@@ -46,6 +47,7 @@ export interface WorkflowValidationError {
     | 'MISSING_APPROVAL_PROMPT'
     | 'MISSING_CAPABILITY_SLUG'
     | 'MISSING_GUARD_RULES'
+    | 'MISSING_GUARD_SCHEMA_NAME'
     | 'MISSING_EVALUATE_RUBRIC'
     | 'MISSING_EXTERNAL_URL'
     | 'MISSING_AGENT_SLUG'
@@ -133,13 +135,28 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidationRes
       }
     }
     if (step.type === 'guard') {
-      const rules = step.config?.rules;
-      if (typeof rules !== 'string' || rules.trim().length === 0) {
-        errors.push({
-          code: 'MISSING_GUARD_RULES',
-          message: `guard step "${step.id}" is missing a non-empty config.rules`,
-          stepId: step.id,
-        });
+      // Schema-mode guards key off `schemaName` instead of `rules` (see
+      // `executeGuard` in lib/orchestration/engine/executors/guard.ts).
+      // Default mode is `llm`, which — like `regex` — needs `rules`.
+      const mode = step.config?.mode;
+      if (mode === 'schema') {
+        const schemaName = step.config?.schemaName;
+        if (typeof schemaName !== 'string' || schemaName.trim().length === 0) {
+          errors.push({
+            code: 'MISSING_GUARD_SCHEMA_NAME',
+            message: `guard step "${step.id}" (mode: schema) is missing a non-empty config.schemaName`,
+            stepId: step.id,
+          });
+        }
+      } else {
+        const rules = step.config?.rules;
+        if (typeof rules !== 'string' || rules.trim().length === 0) {
+          errors.push({
+            code: 'MISSING_GUARD_RULES',
+            message: `guard step "${step.id}" is missing a non-empty config.rules`,
+            stepId: step.id,
+          });
+        }
       }
     }
     if (step.type === 'evaluate') {

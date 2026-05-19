@@ -23,6 +23,12 @@ import type {
 /** Data payload stored on each React Flow node used by the builder. */
 export interface PatternNodeData extends Record<string, unknown> {
   label: string;
+  /**
+   * Mirrors `WorkflowStep.description`. Round-trips through the builder
+   * so the textarea can read/write it without aliasing the config blob.
+   * Empty string and `undefined` both serialise as "no description".
+   */
+  description?: string;
   type: WorkflowStepType;
   config: Record<string, unknown>;
   /**
@@ -150,6 +156,7 @@ export function workflowDefinitionToFlow(definition: WorkflowDefinition): {
       position,
       data: {
         label: step.name,
+        ...(step.description ? { description: step.description } : {}),
         type: step.type,
         config: stripLayout(step.config),
         hasError: false,
@@ -272,9 +279,14 @@ export function flowToWorkflowDefinition(
       [LAYOUT_KEY]: { x: node.position.x, y: node.position.y },
     };
 
+    // `description` round-trip: only persist when there's actual text
+    // after trim, so re-saving a workflow that never had a description
+    // doesn't introduce empty-string churn in the JSON snapshot.
+    const trimmedDescription = node.data.description?.trim();
     return {
       id: node.id,
       name: node.data.label,
+      ...(trimmedDescription ? { description: trimmedDescription } : {}),
       type: node.data.type,
       config,
       nextSteps: outgoing,

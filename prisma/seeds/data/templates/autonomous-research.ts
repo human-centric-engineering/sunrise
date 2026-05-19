@@ -58,6 +58,8 @@ export const AUTONOMOUS_RESEARCH_TEMPLATE: WorkflowTemplate = {
       {
         id: 'retrieve_context',
         name: 'Retrieve prior knowledge',
+        description:
+          'Vector-searches the knowledge base for the top 10 chunks relevant to the research topic (similarity threshold 0.6). The retrieved context is injected into the orchestrator planner so it has a starting point rather than working from training knowledge alone.',
         type: 'rag_retrieve',
         config: {
           query: '{{input}}',
@@ -69,6 +71,8 @@ export const AUTONOMOUS_RESEARCH_TEMPLATE: WorkflowTemplate = {
       {
         id: 'orchestrate',
         name: 'Autonomous agent coordination',
+        description:
+          'AI planner decides which of the configured agents to delegate to each round, up to 4 rounds with 3 delegations each (180-second cap). Adapts strategy based on intermediate results — unlike fixed-DAG workflows. Replace the placeholder agent slugs in the config with your own.',
         type: 'orchestrator',
         config: {
           plannerPrompt:
@@ -85,6 +89,8 @@ export const AUTONOMOUS_RESEARCH_TEMPLATE: WorkflowTemplate = {
       {
         id: 'guard_output',
         name: 'Validate output quality',
+        description:
+          'LLM-mode guard that rejects reports with vague generalisations, missing source citations, fabricated statistics, or poor structure. On fail, retries the orchestrator step rather than blocking outright.',
         type: 'guard',
         config: {
           rules:
@@ -97,6 +103,8 @@ export const AUTONOMOUS_RESEARCH_TEMPLATE: WorkflowTemplate = {
       {
         id: 'evaluate_report',
         name: 'Score final report',
+        description:
+          'Scores the report on a 1–10 scale across completeness, accuracy, clarity, actionability, and depth so consumers see how strong the output is at a glance.',
         type: 'evaluate',
         config: {
           rubric:

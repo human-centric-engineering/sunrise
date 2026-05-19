@@ -27,14 +27,22 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // executeRejection wraps the status flip + running-step sweep in a
+  // callback transaction. Self-referential `prisma` const + a $transaction
+  // mock that passes `prisma` as the `tx` arg keeps assertions simple.
+  const prisma = {
     aiWorkflowExecution: {
       findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
-  },
-}));
+    aiWorkflowRunningStep: {
+      deleteMany: vi.fn(),
+    },
+    $transaction: vi.fn(async <T>(cb: (tx: unknown) => Promise<T>) => cb(prisma)),
+  };
+  return { prisma };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
@@ -358,5 +366,29 @@ describe('POST /api/v1/admin/orchestration/executions/:id/reject', () => {
 
     const response = await POST(makePostRequest({ reason: 'Rejected' }), makeParams(EXECUTION_ID));
     expect(response.status).toBe(404);
+  });
+
+  describe('Running-step cleanup', () => {
+    it('sweeps ai_workflow_running_step rows when the status flip succeeds', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      await POST(makePostRequest({ reason: 'Rejected' }), makeParams(EXECUTION_ID));
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({
+        where: { executionId: EXECUTION_ID },
+      });
+    });
+
+    it('does not sweep ai_workflow_running_step rows when the status guard fails', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 0 } as never);
+
+      await POST(makePostRequest({ reason: 'Rejected' }), makeParams(EXECUTION_ID));
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).not.toHaveBeenCalled();
+    });
   });
 });

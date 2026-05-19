@@ -54,12 +54,12 @@ interface ConditionalEdge {
 
 ### Decision Steps
 
-| Type             | Purpose                     | Key Config                                    |
-| ---------------- | --------------------------- | --------------------------------------------- |
-| `route`          | Classify input and branch   | `classificationPrompt`, `routes`              |
-| `human_approval` | Pause for human review      | `prompt` (required), `timeoutMinutes`         |
-| `guard`          | Safety gate (LLM or regex)  | `rules`, `mode` (`llm`/`regex`), `failAction` |
-| `evaluate`       | Score output against rubric | `rubric`, `scaleMin`, `scaleMax`, `threshold` |
+| Type             | Purpose                                | Key Config                                                                                                                    |
+| ---------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `route`          | Classify input and branch              | `classificationPrompt`, `routes`                                                                                              |
+| `human_approval` | Pause for human review                 | `prompt` (required), `timeoutMinutes`                                                                                         |
+| `guard`          | Safety gate (LLM / regex / **schema**) | `rules` (LLM/regex) **or** `schemaName` (schema), `mode` (`llm`/`regex`/`schema`), `failAction`, `inputStepId?` (schema only) |
+| `evaluate`       | Score output against rubric            | `rubric`, `scaleMin`, `scaleMax`, `threshold`                                                                                 |
 
 ### Input Steps
 
@@ -113,9 +113,19 @@ The four "evaluation-family" step types overlap; pick by **scope** and **lineage
 | ------------ | ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
 | `evaluate`   | One step's output      | Workflow's own model (or `modelOverride`)   | Gate a single step's output (e.g. "is this draft good enough to proceed") |
 | `reflect`    | One draft, in-step     | Workflow's own model                        | Same model self-critiques until convergence (no independent judgment)     |
-| `guard`      | One step's output      | LLM or regex                                | Binary pass/fail rule check before the next step                          |
+| `guard`      | One step's output      | LLM / regex / deterministic Zod schema      | Binary pass/fail rule check before the next step                          |
 | `supervisor` | Entire execution trace | Independent judge model (`JUDGE_MODEL` env) | Honest end-of-workflow audit with evidence-cited weaknesses               |
 | `report`     | Entire execution trace | None (deterministic — no LLM)               | Human-readable structured narration for email / download                  |
+
+### Pick the right `guard` mode
+
+| Mode     | When                                                                                      | Cost                     |
+| -------- | ----------------------------------------------------------------------------------------- | ------------------------ |
+| `llm`    | Fuzzy quality judgments — tone, on-topic, plausibility, "is this draft good"              | LLM call per evaluation  |
+| `regex`  | Simple pattern match against the workflow input (PII detection, banned-word lists)        | Zero cost, instantaneous |
+| `schema` | **Closed-set / shape checks** — enum membership, required fields, array-of-allowed-values | Zero cost, deterministic |
+
+**Reach for `schema` mode** whenever the rule is "must be one of these N values" or "must have these fields". LLM mode hallucinates on closed-set membership even with the spec pasted in (observed multiple times in the audit workflow's `validate_proposals` guard). Schema mode delegates the structural check to a Zod schema registered via `registerSchema(name, schema)` in `lib/orchestration/schemas/registry.ts`. The workflow step references the schema by `schemaName`. See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_ for the failure mode this fixes, and `references/step-config-schemas.md` → `guard` for the config shape.
 
 ## Template Interpolation
 

@@ -38,6 +38,13 @@ vi.mock('@/lib/db/client', () => ({
       updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    aiWorkflowRunningStep: {
+      upsert: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUnique: vi.fn(),
+      deleteMany: vi.fn(),
+    },
   },
 }));
 
@@ -88,7 +95,6 @@ import { prisma } from '@/lib/db/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import type { ExecutionEvent, TurnEntry, WorkflowDefinition } from '@/types/orchestration';
-import { Prisma } from '@prisma/client';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -4509,7 +4515,6 @@ describe('OrchestrationEngine', () => {
         totalCostUsd: 0,
         budgetLimitUsd: null,
         currentStep: 'a',
-        currentStepTurns: null,
         startedAt: new Date(),
         completedAt: null,
         outputData: null,
@@ -4518,6 +4523,16 @@ describe('OrchestrationEngine', () => {
         updatedAt: new Date(),
         ...overrides,
       };
+    }
+
+    /**
+     * Mock the side-table `findUnique` that the engine's resume path
+     * calls to read multi-turn state. Pass `null` to simulate "no row
+     * for this stepId" (e.g. crash happened before the running-step row
+     * was even written) or an object to simulate a persisted row.
+     */
+    function mockRunningStepFind(returns: { turns: unknown } | null) {
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce(returns as never);
     }
 
     // Nested beforeEach — resets only what this describe block uses, without
@@ -4549,9 +4564,10 @@ describe('OrchestrationEngine', () => {
 
     // ── recordStepTurn (3 tests) ────────────────────────────────────────────
 
-    it('recordStepTurn: writes the full turns array with lease guard and refreshed timestamps', async () => {
-      // Drive recordStepTurn via the executor's ctx.recordTurn closure.
-      // Arrange — a single-step workflow where the executor records one turn.
+    it('recordStepTurn: lease-refreshes the execution row AND writes turns to the running-step row', async () => {
+      // recordStepTurn is now a two-step write: lease refresh on
+      // aiWorkflowExecution (no `turns` here) and a `turns` updateMany on
+      // aiWorkflowRunningStep keyed by (executionId, stepId).
       const turn0 = makeTurn(0);
       let capturedRecordTurn: ((t: TurnEntry) => Promise<void>) | undefined;
 
@@ -4564,36 +4580,54 @@ describe('OrchestrationEngine', () => {
       // Act
       await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
 
-      // Assert — the recordStepTurn call writes the full turns array with the
-      // lease guard (where.leaseToken) and refreshed timestamps.
-      const recordTurnCallArgs = findUpdateMany(
-        (data) =>
-          'currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data),
-        'recordStepTurn write (currentStepTurns present, no executionTrace, no currentStep)'
-      )[0] as { where: Record<string, unknown>; data: Record<string, unknown> };
-      // Lease guard — stale host's write silently no-ops
-      expect(recordTurnCallArgs.where.id).toBe('exec_test');
-      expect(recordTurnCallArgs.where.leaseToken).toBe(LEASE_TOKEN);
-      // Turns array persisted (full overwrite, not append)
-      expect(recordTurnCallArgs.data.currentStepTurns).toEqual([turn0]);
-      // Lease refreshed in the same UPDATE
-      expect(recordTurnCallArgs.data.leaseExpiresAt).toBeInstanceOf(Date);
-      expect(recordTurnCallArgs.data.lastHeartbeatAt).toBeInstanceOf(Date);
+      // Assert — lease-refresh on the execution row: lease guard + new
+      // timestamps but NO `turns` in the data payload.
+      const leaseRefresh = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls.find((c) => {
+        const data = (c[0] as { data: Record<string, unknown> }).data;
+        return (
+          'leaseExpiresAt' in data &&
+          'lastHeartbeatAt' in data &&
+          !('currentStep' in data) &&
+          !('executionTrace' in data) &&
+          !('status' in data)
+        );
+      });
+      expect(leaseRefresh).toBeDefined();
+      const refreshArgs = leaseRefresh![0] as {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      };
+      expect(refreshArgs.where.id).toBe('exec_test');
+      expect(refreshArgs.where.leaseToken).toBe(LEASE_TOKEN);
+      expect(refreshArgs.data.leaseExpiresAt).toBeInstanceOf(Date);
+      expect(refreshArgs.data.lastHeartbeatAt).toBeInstanceOf(Date);
+
+      // Assert — running-step row carries the turns array, keyed by
+      // (executionId, stepId). Full overwrite, not append.
+      const turnsWrite = vi.mocked(prisma.aiWorkflowRunningStep.updateMany).mock.calls.find((c) => {
+        const data = (c[0] as { data: Record<string, unknown> }).data;
+        return 'turns' in data && Array.isArray(data.turns) && data.turns.length > 0;
+      });
+      expect(turnsWrite).toBeDefined();
+      const turnsArgs = turnsWrite![0] as {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      };
+      expect(turnsArgs.where.executionId).toBe('exec_test');
+      expect(turnsArgs.where.stepId).toBe('a');
+      expect(turnsArgs.data.turns).toEqual([turn0]);
+
       // confirm the closure was bound
       expect(capturedRecordTurn).toBeDefined();
     });
 
     it('recordStepTurn: DB throw is non-fatal — executor continues and workflow_completed is yielded', async () => {
-      // Arrange — updateMany rejects ONLY for currentStepTurns writes; other calls succeed.
-      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
-        args: unknown
-      ) => {
-        const data = (args as { data: Record<string, unknown> }).data;
-        if ('currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data)) {
-          throw new Error('connection lost');
-        }
-        return { count: 1 };
-      }) as never);
+      // Arrange — running-step `updateMany` rejects (this is the turns
+      // write in recordStepTurn's two-step sequence). The execution-row
+      // lease-refresh that precedes it succeeds.
+      vi.mocked(prisma.aiWorkflowRunningStep.updateMany).mockRejectedValue(
+        new Error('connection lost')
+      );
 
       registerStepType('llm_call', async (_step, ctx) => {
         if (ctx.recordTurn) await ctx.recordTurn(makeTurn(0));
@@ -4611,19 +4645,27 @@ describe('OrchestrationEngine', () => {
         'recordStepTurn: DB update failed (non-fatal — re-drive may restart at earlier turn)',
         expect.objectContaining({
           executionId: 'exec_test',
+          stepId: 'a',
           error: 'connection lost',
         })
       );
     });
 
-    it('recordStepTurn: count=0 (stale lease) — method resolves silently without logger.warn', async () => {
-      // Arrange — updateMany resolves count=0 only for currentStepTurns writes.
-      // This is the stale-lease case (another host claimed the row).
+    it('recordStepTurn: count=0 (stale lease) — turns write is skipped and no warn fires', async () => {
+      // Arrange — execution-row lease refresh returns count=0 ONLY for the
+      // recordStepTurn case (data has leaseExpiresAt + lastHeartbeatAt but
+      // no currentStep / executionTrace / status). Other paths see count=1.
       vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
         args: unknown
       ) => {
         const data = (args as { data: Record<string, unknown> }).data;
-        if ('currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data)) {
+        if (
+          'leaseExpiresAt' in data &&
+          'lastHeartbeatAt' in data &&
+          !('currentStep' in data) &&
+          !('executionTrace' in data) &&
+          !('status' in data)
+        ) {
           return { count: 0 };
         }
         return { count: 1 };
@@ -4637,10 +4679,10 @@ describe('OrchestrationEngine', () => {
       // Act
       const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()));
 
-      // Assert — workflow completes normally; no warn for count=0 (contrast with
-      // checkpoint which DOES warn on count=0 for a lease-loss situation)
+      // Assert — workflow completes; recordStepTurn detected stale lease and
+      // skipped the running-step write; no warn fires.
       expect(events.map((e) => e.type)).toContain('workflow_completed');
-      // No logger.warn call for the recordStepTurn count=0 path
+      expect(vi.mocked(prisma.aiWorkflowRunningStep.updateMany)).not.toHaveBeenCalled();
       const recordTurnWarnCalls = mockLogger.warn.mock.calls.filter(([msg]) =>
         String(msg).includes('recordStepTurn')
       );
@@ -4649,8 +4691,11 @@ describe('OrchestrationEngine', () => {
 
     // ── markCurrentStep (1 test) ────────────────────────────────────────────
 
-    it('markCurrentStep: data payload includes currentStepTurns: Prisma.DbNull (not null, not undefined)', async () => {
-      // Arrange — single-step workflow so markCurrentStep fires for step 'a'.
+    it('markCurrentStep: upserts the running-step row keyed by (executionId, stepId), preserving turns on conflict', async () => {
+      // markCurrentStep now writes only `currentStep` + lease-fields to
+      // aiWorkflowExecution and upserts the running-step row. The upsert's
+      // update clause touches only `startedAt`, so `turns` carried across
+      // retry / approval re-entry isn't clobbered.
       registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
 
       // Act
@@ -4663,29 +4708,50 @@ describe('OrchestrationEngine', () => {
         })
       );
 
-      // Assert — find the markCurrentStep call (data has currentStep, no executionTrace)
-      const markCall = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls.find(([arg]) => {
-        const data = (arg as { data: Record<string, unknown> }).data;
-        return 'currentStep' in data && !('executionTrace' in data) && !('status' in data);
-      });
+      // Assert — scalar refresh: currentStep set, no leftover currentStepTurns
+      const scalarCall = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(([arg]) => {
+          const data = (arg as { data: Record<string, unknown> }).data;
+          return 'currentStep' in data && !('executionTrace' in data) && !('status' in data);
+        });
+      expect(scalarCall).toBeDefined();
+      const scalarData = (scalarCall![0] as { data: Record<string, unknown> }).data;
+      expect(scalarData.currentStep).toBe('a');
+      // No more currentStepTurns / Label / Type / StartedAt on the execution row.
+      expect(scalarData).not.toHaveProperty('currentStepTurns');
+      expect(scalarData).not.toHaveProperty('currentStepLabel');
+      expect(scalarData).not.toHaveProperty('currentStepType');
+      expect(scalarData).not.toHaveProperty('currentStepStartedAt');
 
-      expect(markCall).toBeDefined();
-      const markData = (markCall![0] as { data: Record<string, unknown> }).data;
-      // Must be Prisma.DbNull — NOT JS null and NOT undefined
-      expect(markData.currentStepTurns).toBe(Prisma.DbNull);
-      expect(markData.currentStepTurns).not.toBeNull();
-      expect(markData.currentStepTurns).not.toBeUndefined();
+      // Assert — upsert on the side table: create carries the step
+      // metadata, update touches only startedAt (turns preserved).
+      const upsertArgs = vi.mocked(prisma.aiWorkflowRunningStep.upsert).mock.calls[0]?.[0] as {
+        where: { executionId_stepId: { executionId: string; stepId: string } };
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(upsertArgs).toBeDefined();
+      expect(upsertArgs.where.executionId_stepId.executionId).toBe('exec_test');
+      expect(upsertArgs.where.executionId_stepId.stepId).toBe('a');
+      expect(upsertArgs.create.stepId).toBe('a');
+      expect(upsertArgs.create.label).toBe('Step A');
+      expect(upsertArgs.create.stepType).toBe('llm_call');
+      // Update clause: ONLY startedAt. No `turns` so a retry re-entry
+      // preserves the running-step row's prior turns.
+      expect(Object.keys(upsertArgs.update)).toEqual(['startedAt']);
     });
 
     // ── initRun resume path (5 tests) ──────────────────────────────────────
 
-    it('initRun resume: currentStepTurns=null → ctx.resumeTurns stays undefined (logger.info NOT called)', async () => {
-      // Arrange — resume row with currentStepTurns=null (common case: step transition
-      // cleared the column and then we crashed before recording new turns).
-      // Step 'a' is in the trace as completed so step 'b' can run (isReady check passes).
+    it('initRun resume: running-step row has turns=null → ctx.resumeTurns stays undefined (logger.info NOT called)', async () => {
+      // Arrange — resume row + a running-step row with turns=null (common
+      // case: step transition just happened and we crashed before recording
+      // new turns). Step 'a' is in the trace as completed so step 'b' can run.
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow({ currentStepTurns: null }) as never
+        makeResumeRow() as never
       );
+      mockRunningStepFind({ turns: null });
 
       // Step 'b' is what actually runs on resume (queue = nextIdsAfter(byId, 'a') = ['b'])
       let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
@@ -4708,13 +4774,14 @@ describe('OrchestrationEngine', () => {
       expect(restoreInfoCalls).toHaveLength(0);
     });
 
-    it('initRun resume: valid non-empty currentStepTurns → ctx.resumeTurns populated + logger.info fired', async () => {
-      // Arrange — resume row with three valid reflect turns.
-      // Step 'a' is in the trace as completed so step 'b' runs (isReady passes).
+    it('initRun resume: valid non-empty running-step turns → ctx.resumeTurns populated + logger.info fired', async () => {
+      // Arrange — resume row + running-step row carrying three valid reflect
+      // turns. Step 'a' is in the trace as completed so step 'b' runs.
       const storedTurns = [makeTurn(0), makeTurn(1), makeTurn(2)];
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow({ currentStepTurns: storedTurns }) as never
+        makeResumeRow() as never
       );
+      mockRunningStepFind({ turns: storedTurns });
 
       // Step 'b' runs on resume; capture its ctx.resumeTurns at invocation time
       // (before executeSingleStep clears it on completion).
@@ -4740,13 +4807,14 @@ describe('OrchestrationEngine', () => {
       });
     });
 
-    it('initRun resume: currentStepTurns valid but empty [] → ctx.resumeTurns stays undefined', async () => {
-      // Arrange — row has currentStepTurns=[] (valid JSON, just empty).
+    it('initRun resume: running-step turns valid but empty [] → ctx.resumeTurns stays undefined', async () => {
+      // Arrange — running-step row has turns=[] (valid JSON, just empty).
       // The length>0 guard prevents populating resumeTurns for an empty array.
       // Step 'a' in trace so step 'b' is runnable on resume.
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow({ currentStepTurns: [] }) as never
+        makeResumeRow() as never
       );
+      mockRunningStepFind({ turns: [] });
 
       let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
       registerStepType('llm_call', async (_step, ctx) => {
@@ -4768,14 +4836,15 @@ describe('OrchestrationEngine', () => {
       expect(restoreInfoCalls).toHaveLength(0);
     });
 
-    it('initRun resume: malformed currentStepTurns → logger.warn with issue count, ctx.resumeTurns undefined', async () => {
-      // Arrange — row has currentStepTurns that fails the turnEntriesSchema parse.
-      // The kind='unknown' discriminant does not match any schema variant.
+    it('initRun resume: malformed running-step turns → logger.warn with issue count, ctx.resumeTurns undefined', async () => {
+      // Arrange — running-step row has turns that fails the turnEntriesSchema
+      // parse. The kind='unknown' discriminant doesn't match any schema variant.
       // Step 'a' in trace so step 'b' is runnable on resume (no deadlock).
       const malformed = [{ kind: 'unknown', iteration: 0 }];
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow({ currentStepTurns: malformed }) as never
+        makeResumeRow() as never
       );
+      mockRunningStepFind({ turns: malformed });
 
       let capturedResumeTurns: TurnEntry[] | undefined = 'sentinel' as never;
       registerStepType('llm_call', async (_step, ctx) => {
@@ -4796,7 +4865,7 @@ describe('OrchestrationEngine', () => {
       // Expected 'agent_call' | 'orchestrator' | 'reflect'") rather than per-arm issues
       // as a plain z.union would. If the schema ever changes to z.union, re-check the count.
       expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Resume: dropped malformed currentStepTurns',
+        'Resume: dropped malformed running-step turns',
         expect.objectContaining({
           executionId: EXEC_ID,
           issues: 1,
@@ -4804,16 +4873,14 @@ describe('OrchestrationEngine', () => {
       );
     });
 
-    it('initRun resume: currentStep=null with non-null currentStepTurns → guard blocks population, ctx.resumeTurns undefined', async () => {
-      // Arrange — edge case: column has stale data from a prior step transition that
-      // didn't clear properly, but currentStep is null.
-      // Guard: `row.currentStep && row.currentStepTurns !== null` → false when currentStep null.
-      // currentStep=null + no trace: resume starts from entryStepId ('a') via the fresh path.
-      const staleTurns = [makeTurn(0)];
+    it('initRun resume: currentStep=null → side-table lookup is skipped, ctx.resumeTurns undefined', async () => {
+      // Arrange — edge case: no resume cursor. The resume path's guard
+      // (`if (row.currentStep)`) short-circuits BEFORE the running-step
+      // findUnique fires, so stale turns (if any) can't be picked up.
+      // No trace: resume starts from entryStepId ('a') via the fresh path.
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
         makeResumeRow({
           currentStep: null,
-          currentStepTurns: staleTurns,
           executionTrace: [], // fresh start — visited seeding skipped when resumeAfterStepId=null
         }) as never
       );
@@ -4831,8 +4898,10 @@ describe('OrchestrationEngine', () => {
         resumeFromExecutionId: EXEC_ID,
       });
 
-      // Assert — guard prevents population when currentStep is null; step 'a' sees undefined
+      // Assert — guard short-circuited; running-step findUnique was never
+      // even consulted; step 'a' sees undefined resumeTurns.
       expect(capturedResumeTurns).toBeUndefined();
+      expect(vi.mocked(prisma.aiWorkflowRunningStep.findUnique)).not.toHaveBeenCalled();
       const restoreInfoCalls = mockLogger.info.mock.calls.filter(([msg]) =>
         String(msg).includes('restoring multi-turn step state')
       );
@@ -4842,12 +4911,14 @@ describe('OrchestrationEngine', () => {
     // ── executeSingleStep: stepTurns accumulator + ctx.recordTurn (5 tests) ─
 
     it('ctx.recordTurn: stepTurns seeds from ctx.resumeTurns and accumulates cumulatively', async () => {
-      // Arrange — populate resumeTurns on the row so initRun sets ctx.resumeTurns.
+      // Arrange — running-step row carries one prior turn so initRun sets
+      // ctx.resumeTurns. The executor then appends a second turn.
       const resumeTurn = makeTurn(0);
       const newTurn = makeTurn(1);
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
-        makeResumeRow({ currentStepTurns: [resumeTurn] }) as never
+        makeResumeRow() as never
       );
+      mockRunningStepFind({ turns: [resumeTurn] });
 
       registerStepType('llm_call', async (_step, ctx) => {
         // Executor records a new turn on top of the resumed turn
@@ -4861,21 +4932,16 @@ describe('OrchestrationEngine', () => {
         resumeFromExecutionId: EXEC_ID,
       });
 
-      // Assert — the recordStepTurn call writes the CUMULATIVE array [resumeTurn, newTurn]
-      // not just [newTurn]. If the source fails to seed from resumeTurns, the array would
-      // only contain [newTurn] and this assertion fails.
-      const recordTurnCallArgs = findUpdateMany(
-        (data) =>
-          'currentStepTurns' in data &&
-          Array.isArray(data.currentStepTurns) &&
-          (data.currentStepTurns as TurnEntry[]).length === 2 &&
-          !('executionTrace' in data) &&
-          !('currentStep' in data),
-        'recordTurn write with 2-element currentStepTurns (cumulative resume write)'
-      );
-      const turnsWritten = (
-        recordTurnCallArgs[0] as unknown as { data: { currentStepTurns: TurnEntry[] } }
-      ).data.currentStepTurns;
+      // Assert — the running-step updateMany writes the CUMULATIVE array
+      // [resumeTurn, newTurn]. If the source fails to seed from resumeTurns
+      // the write would only contain [newTurn] and this assertion fails.
+      const turnsWrite = vi.mocked(prisma.aiWorkflowRunningStep.updateMany).mock.calls.find((c) => {
+        const data = (c[0] as { data: Record<string, unknown> }).data;
+        return Array.isArray(data.turns) && (data.turns as TurnEntry[]).length === 2;
+      });
+      expect(turnsWrite).toBeDefined();
+      const turnsWritten = (turnsWrite![0] as unknown as { data: { turns: TurnEntry[] } }).data
+        .turns;
       expect(turnsWritten).toEqual([resumeTurn, newTurn]);
     });
 
@@ -4907,14 +4973,14 @@ describe('OrchestrationEngine', () => {
         })
       );
 
-      // Assert A — exactly 2 recordStepTurn writes fired (one per ctx.recordTurn call)
+      // Assert A — exactly 2 running-step turns writes fired (one per
+      // ctx.recordTurn call). The execution-row lease-refresh that pairs
+      // with each turns write also fires twice but is asserted elsewhere.
       const turnWrites = vi
-        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
         .mock.calls.filter(([arg]) => {
           const data = (arg as { data: Record<string, unknown> }).data;
-          return (
-            'currentStepTurns' in data && !('executionTrace' in data) && !('currentStep' in data)
-          );
+          return 'turns' in data;
         });
       expect(turnWrites).toHaveLength(2);
 
@@ -5058,11 +5124,11 @@ describe('OrchestrationEngine', () => {
       ];
       vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce(
         makeResumeRow({
-          currentStepTurns: [resumeTurn],
           executionTrace: threeStepTrace,
           currentStep: 'a',
         }) as never
       );
+      mockRunningStepFind({ turns: [resumeTurn] });
 
       const observedResumeTurns: Record<string, TurnEntry[] | undefined> = {};
 
@@ -5153,7 +5219,7 @@ describe('OrchestrationEngine', () => {
       expect(emptyTurnsWrite).toBeUndefined();
     });
 
-    it('onAttemptStart: called exactly once before attempt 1 on retry — two total currentStepTurns writes', async () => {
+    it('onAttemptStart: called exactly once before attempt 1 on retry — two total running-step turns writes', async () => {
       // Arrange — executor fails on attempt 0 (records turn0), succeeds on attempt 1.
       // retryCount=1: one retry fires.
       //
@@ -5199,20 +5265,15 @@ describe('OrchestrationEngine', () => {
       // Assert A — two executor invocations (attempt 0 + attempt 1)
       expect(attemptCount).toBe(2);
 
-      // Assert B — exactly 2 total currentStepTurns writes:
+      // Assert B — exactly 2 total running-step `turns` writes:
       //   1. attempt 0's ctx.recordTurn(turn0) → recordStepTurn write
       //   2. onAttemptStart's reset write (before attempt 1)
       // Any more would indicate extra retries; any fewer would mean no reset fired.
       const turnWrites = vi
-        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
         .mock.calls.filter(([arg]) => {
           const data = (arg as { data: Record<string, unknown> }).data;
-          return (
-            'currentStepTurns' in data &&
-            Array.isArray(data.currentStepTurns) &&
-            !('executionTrace' in data) &&
-            !('currentStep' in data)
-          );
+          return 'turns' in data && Array.isArray(data.turns);
         });
       expect(turnWrites).toHaveLength(2);
 
@@ -5280,19 +5341,14 @@ describe('OrchestrationEngine', () => {
       expect(observedResumeTurnsPerAttempt).toHaveLength(2);
       expect(observedResumeTurnsPerAttempt[1]).toBeUndefined();
 
-      // Assert 2 — the recordStepTurn call that follows attempt 1's ctx.recordTurn(turn1)
-      // writes [turn1] only — NOT [turn0, turn1]. This verifies the reset took effect.
+      // Assert 2 — the running-step turns write that follows attempt 1's
+      // ctx.recordTurn(turn1) writes [turn1] only — NOT [turn0, turn1].
+      // This verifies the reset took effect.
       const turnWritesAfterReset = vi
-        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mocked(prisma.aiWorkflowRunningStep.updateMany)
         .mock.calls.filter(([arg]) => {
           const data = (arg as { data: Record<string, unknown> }).data;
-          return (
-            'currentStepTurns' in data &&
-            Array.isArray(data.currentStepTurns) &&
-            (data.currentStepTurns as unknown[]).length > 0 &&
-            !('executionTrace' in data) &&
-            !('currentStep' in data)
-          );
+          return Array.isArray(data.turns) && (data.turns as unknown[]).length > 0;
         });
 
       // The only non-empty turns write after the reset should contain [turn1]
@@ -5300,15 +5356,258 @@ describe('OrchestrationEngine', () => {
       const lastNonEmptyWrite = turnWritesAfterReset.at(-1);
       if (!lastNonEmptyWrite) {
         throw new Error(
-          'No non-empty currentStepTurns write found after reset — ' +
+          'No non-empty running-step turns write found after reset — ' +
             'expected at least one write with turn1 after onAttemptStart cleared the accumulator'
         );
       }
-      const turnsWritten = (
-        lastNonEmptyWrite[0] as unknown as { data: { currentStepTurns: TurnEntry[] } }
-      ).data.currentStepTurns;
+      const turnsWritten = (lastNonEmptyWrite[0] as unknown as { data: { turns: TurnEntry[] } })
+        .data.turns;
       expect(turnsWritten).toEqual([turn1]);
       expect(turnsWritten).not.toContainEqual(turn0);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Running-step side table — behavioural coverage for the refactor that
+  // replaced the scalar currentStep*Label/Type/StartedAt/Turns columns
+  // with a normalised AiWorkflowRunningStep table. The headline reason
+  // for the change is parallel fan-out — that test is first.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('running-step side table', () => {
+    // Independent copies of the helpers used by `multi-turn checkpoint
+    // plumbing` — keeping them local so this describe block can run on
+    // its own and a future contributor doesn't accidentally entangle
+    // the two suites' state.
+    const EXEC_ID = 'exec_runningstep';
+    const makeTurn = (iteration: number): TurnEntry => ({
+      kind: 'reflect',
+      iteration,
+      draft: `draft-${iteration}`,
+      converged: false,
+      tokensUsed: 10 + iteration,
+      costUsd: 0.01 + iteration * 0.001,
+    });
+    const stepACompletedTrace = [
+      {
+        stepId: 'a',
+        stepType: 'llm_call',
+        label: 'Step A',
+        status: 'completed',
+        output: 'prior-out',
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 1,
+      },
+    ];
+
+    beforeEach(() => {
+      // Default the side-table writes so engine paths under test don't
+      // trip the non-fatal error logger and assertions stay focused on
+      // intent.
+      vi.mocked(prisma.aiWorkflowRunningStep.upsert).mockResolvedValue({} as never);
+      vi.mocked(prisma.aiWorkflowRunningStep.update).mockResolvedValue({} as never);
+      vi.mocked(prisma.aiWorkflowRunningStep.updateMany).mockResolvedValue({ count: 1 } as never);
+      vi.mocked(prisma.aiWorkflowRunningStep.deleteMany).mockResolvedValue({ count: 1 } as never);
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValue(null);
+    });
+
+    it('parallel fan-out: each branch produces its own upsert with a distinct stepId', async () => {
+      // The bug this refactor fixes: when a parallel step fans out to N
+      // branches, every branch's markCurrentStep used to overwrite the
+      // same scalar columns on ai_workflow_execution (last-writer-wins),
+      // so only one branch ever surfaced as "running" in the UI. Now each
+      // branch produces a distinct (executionId, stepId) row.
+      registerStepType('parallel', async (step) => ({
+        output: { parallel: true, branches: step.nextSteps.map((e) => e.targetStepId) },
+        tokensUsed: 0,
+        costUsd: 0,
+      }));
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'fork',
+            name: 'Fork',
+            type: 'parallel',
+            config: {},
+            nextSteps: [
+              { targetStepId: 'branch_a' },
+              { targetStepId: 'branch_b' },
+              { targetStepId: 'branch_c' },
+            ],
+          },
+          { id: 'branch_a', name: 'Branch A', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'branch_b', name: 'Branch B', type: 'llm_call', config: {}, nextSteps: [] },
+          { id: 'branch_c', name: 'Branch C', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+        entryStepId: 'fork',
+        errorStrategy: 'fail',
+      };
+
+      await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+      // Headline assertion: every branch produced an upsert with its own
+      // stepId. If the refactor regresses (last-writer-wins), the upserts
+      // would still fire but with overlapping stepIds — checking the set
+      // here makes that regression obvious.
+      const branchUpserts = vi
+        .mocked(prisma.aiWorkflowRunningStep.upsert)
+        .mock.calls.map((c) => {
+          const args = c[0] as { where: { executionId_stepId: { stepId: string } } };
+          return args.where.executionId_stepId.stepId;
+        })
+        .filter((stepId) => stepId.startsWith('branch_'));
+      expect(new Set(branchUpserts)).toEqual(new Set(['branch_a', 'branch_b', 'branch_c']));
+    });
+
+    it('successful step termination: clearRunningStep deletes the row', async () => {
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'a', name: 'A', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // The per-step delete fires with the stepId AND executionId so a
+      // concurrent re-drive of a different step doesn't collide.
+      expect(prisma.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({
+        where: { executionId: 'exec_test', stepId: 'a' },
+      });
+    });
+
+    it('failed step termination: clearRunningStep deletes the row', async () => {
+      registerStepType('llm_call', async (step) => {
+        throw new ExecutorError(step.id, 'executor_threw', 'boom');
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [{ id: 'a', name: 'A', type: 'llm_call', config: {}, nextSteps: [] }],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({
+        where: { executionId: 'exec_test', stepId: 'a' },
+      });
+    });
+
+    it('skipped step termination: clearRunningStep deletes the row', async () => {
+      registerStepType('llm_call', async (step) => {
+        throw new ExecutorError(step.id, 'executor_threw', 'boom');
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'a',
+              name: 'A',
+              type: 'llm_call',
+              config: { errorStrategy: 'skip' },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'a',
+          errorStrategy: 'fail',
+        })
+      );
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({
+        where: { executionId: 'exec_test', stepId: 'a' },
+      });
+    });
+
+    it('pauseForApproval: leaves the running-step row intact (no per-step delete fires)', async () => {
+      // Pause is "in flight, awaiting input". The row must survive so the
+      // detail view continues to render the step as awaiting_approval and
+      // the resume path can re-read its `turns`.
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, { prompt: 'Approve?' });
+      });
+
+      await collect(
+        new OrchestrationEngine(),
+        makeWorkflow({
+          steps: [
+            {
+              id: 'review',
+              name: 'Review',
+              type: 'human_approval',
+              config: { prompt: 'Approve?' },
+              nextSteps: [],
+            },
+          ],
+          entryStepId: 'review',
+          errorStrategy: 'fail',
+        })
+      );
+
+      // No per-step delete should fire for the paused step. (Other deletes
+      // for unrelated stepIds are still acceptable — we filter precisely.)
+      const reviewDeletes = vi
+        .mocked(prisma.aiWorkflowRunningStep.deleteMany)
+        .mock.calls.filter((c) => {
+          const args = c[0] as { where: { stepId?: string } };
+          return args.where.stepId === 'review';
+        });
+      expect(reviewDeletes).toHaveLength(0);
+    });
+
+    it('resume: clears every running-step row for the execution before re-entry', async () => {
+      // Sibling rows from a pre-crash parallel fan-out must be swept on
+      // resume — the engine re-walks the DAG single-cursor, so leaving
+      // stale siblings would surface ghost branches in the UI.
+      const resumeTurn = makeTurn(0);
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValueOnce({
+        id: EXEC_ID,
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'paused_for_approval',
+        inputData: {},
+        executionTrace: stepACompletedTrace,
+        totalTokensUsed: 0,
+        totalCostUsd: 0,
+        budgetLimitUsd: null,
+        currentStep: 'a',
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as never);
+      vi.mocked(prisma.aiWorkflowRunningStep.findUnique).mockResolvedValueOnce({
+        turns: [resumeTurn],
+      } as never);
+
+      registerStepType('llm_call', async () => ({ output: 'ok', tokensUsed: 0, costUsd: 0 }));
+
+      await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: EXEC_ID,
+      });
+
+      // The execution-wide deleteMany fires once during resume to wipe
+      // sibling/orphan rows. Per-step deletes for completed steps fire
+      // separately with a stepId in the where clause — those don't count.
+      const wholeExecDeletes = vi
+        .mocked(prisma.aiWorkflowRunningStep.deleteMany)
+        .mock.calls.filter((c) => {
+          const args = c[0] as { where: { executionId?: string; stepId?: string } };
+          return args.where.executionId === EXEC_ID && args.where.stepId === undefined;
+        });
+      expect(wholeExecDeletes.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

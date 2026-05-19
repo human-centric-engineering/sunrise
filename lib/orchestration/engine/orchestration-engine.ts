@@ -150,6 +150,16 @@ export interface ExecuteOptions {
    * `paused_for_approval` run.
    */
   resumeFromExecutionId?: string;
+  /**
+   * When set, the new `AiWorkflowExecution` row records this id as
+   * its `parentExecutionId` — the rerun-lineage link. Only meaningful
+   * on the fresh-run path; resumes don't create a new row so they
+   * ignore this field. Set by the rerun endpoint
+   * (`POST /executions/:id/rerun`) to point at the execution that
+   * was rerun from. Surfaces in the admin detail view as a "Re-run
+   * of execution X" breadcrumb.
+   */
+  parentExecutionId?: string;
 }
 
 export interface ExecuteWorkflowArg {
@@ -697,7 +707,7 @@ export class OrchestrationEngine {
     /**
      * Called BEFORE each retry attempt (i.e. after attempt 0 fails, before attempt 1 runs;
      * never before attempt 0). Lets callers reset per-attempt state — multi-turn checkpoint
-     * accumulators in `executeSingleStep` use this to clear `currentStepTurns` so failed
+     * accumulators in `executeSingleStep` use this to clear the running-step row's `turns` so failed
      * attempts' turns don't leak into the next attempt's history.
      */
     onAttemptStart?: (attempt: number) => Promise<void>
@@ -759,9 +769,10 @@ export class OrchestrationEngine {
       let accumulatedCost = 0;
       for (let attempt = 0; attempt <= retryCount; attempt++) {
         if (attempt > 0 && onAttemptStart) {
-          // Reset per-attempt accumulators (e.g. multi-turn `currentStepTurns`)
-          // so the next attempt starts fresh. Cost accumulators above persist
-          // across attempts intentionally — they reflect billing reality.
+          // Reset per-attempt accumulators (e.g. the running-step row's
+          // `turns` column) so the next attempt starts fresh. Cost accumulators
+          // above persist across attempts intentionally — they reflect billing
+          // reality.
           await onAttemptStart(attempt);
         }
         try {
@@ -1008,7 +1019,7 @@ export class OrchestrationEngine {
     unknown
   > {
     const { executionId } = lease;
-    yield stepStarted(step.id, step.type, step.name);
+    yield stepStarted(step.id, step.type, step.name, step.description);
     await this.markCurrentStep(lease, step, baseLogger);
 
     const started = Date.now();
@@ -1017,12 +1028,12 @@ export class OrchestrationEngine {
     let stepError: ExecutorError | null = null;
 
     // Multi-turn checkpoint plumbing. `stepTurns` is the in-memory accumulator
-    // for this step; it seeds from `ctx.resumeTurns` (set by initRun on the
-    // resume path) so a re-driven step picks up where it left off. The closure
-    // bound to `ctx.recordTurn` mirrors the array to the row's
-    // `currentStepTurns` column on each call. The accumulator is also captured
-    // by reference into the per-attempt reset callback below, so retry attempts
-    // start fresh — see `onAttemptStart`.
+    // for this step; it seeds from `ctx.resumeTurns` (set by `startOrResume`
+    // on the resume path) so a re-driven step picks up where it left off. The
+    // closure bound to `ctx.recordTurn` mirrors the array to this step's
+    // `AiWorkflowRunningStep.turns` column on each call. The accumulator is
+    // also captured by reference into the per-attempt reset callback below,
+    // so retry attempts start fresh — see `onAttemptStart`.
     //
     // `ctx.resumeTurns` STAYS on the live context across `runStepWithStrategy`
     // so attempt 0's snapshot (taken lazily inside `invokeExecutor`) carries
@@ -1033,7 +1044,7 @@ export class OrchestrationEngine {
     const stepTurns: TurnEntry[] = [...(ctx.resumeTurns ?? [])];
     ctx.recordTurn = async (turn: TurnEntry) => {
       stepTurns.push(turn);
-      await this.recordStepTurn(lease, stepTurns, baseLogger);
+      await this.recordStepTurn(lease, step.id, stepTurns, baseLogger);
     };
     // Reset between retry attempts: failed attempts shouldn't accumulate into
     // the next attempt's turns. The dispatch cache prevents side-effect
@@ -1043,7 +1054,7 @@ export class OrchestrationEngine {
     const onAttemptStart = async (): Promise<void> => {
       stepTurns.length = 0;
       ctx.resumeTurns = undefined; // resume replay is for attempt 0 only
-      await this.recordStepTurn(lease, [], baseLogger);
+      await this.recordStepTurn(lease, step.id, [], baseLogger);
     };
 
     try {
@@ -1061,6 +1072,7 @@ export class OrchestrationEngine {
           stepId: step.id,
           stepType: step.type,
           label: step.name,
+          ...(step.description ? { description: step.description } : {}),
           status: 'awaiting_approval',
           output: err.payload,
           tokensUsed: err.tokensUsed,
@@ -1072,10 +1084,11 @@ export class OrchestrationEngine {
           ...rollupTelemetry(telemetryOut),
           ...(stepTurns.length > 0 ? { turns: [...stepTurns] } : {}),
         });
-        // The pause path's column DOES retain currentStepTurns on purpose:
-        // pauseForApproval doesn't touch it, and the column is what
-        // approval-resume's initRun reads to repopulate ctx.resumeTurns. The
-        // trace entry's `turns` field is for observability; the column is for
+        // The pause path keeps the running-step row alive on purpose:
+        // `pauseForApproval` doesn't call `clearRunningStep`, so the row
+        // (with its `turns`) survives the pause and approval-resume's
+        // initRun reads it back into `ctx.resumeTurns`. The trace entry's
+        // `turns` field is for observability; the running-step row is for
         // resume.
         //
         // Clearing both context fields here prevents the next step's executor
@@ -1133,6 +1146,7 @@ export class OrchestrationEngine {
         stepId: step.id,
         stepType: step.type,
         label: step.name,
+        ...(step.description ? { description: step.description } : {}),
         status: 'failed',
         output: null,
         error: sanitizeError(stepError),
@@ -1148,6 +1162,7 @@ export class OrchestrationEngine {
       ctx.resumeTurns = undefined;
       ctx.recordTurn = undefined;
       await this.checkpoint(lease, ctx, trace);
+      await this.clearRunningStep(executionId, step.id, baseLogger);
       const reason = sanitizeError(stepError);
       yield workflowFailed(reason, step.id);
       return { failed: true, paused: false, terminal: true, failureReason: reason, nextIds: [] };
@@ -1164,6 +1179,7 @@ export class OrchestrationEngine {
       stepId: step.id,
       stepType: step.type,
       label: step.name,
+      ...(step.description ? { description: step.description } : {}),
       status: result.skipped ? 'skipped' : 'completed',
       output: result.output,
       // Skipped steps carry their sanitised failure reason so the trace
@@ -1186,6 +1202,7 @@ export class OrchestrationEngine {
     ctx.resumeTurns = undefined;
     ctx.recordTurn = undefined;
     await this.checkpoint(lease, ctx, trace);
+    await this.clearRunningStep(executionId, step.id, baseLogger);
 
     // Budget check — runs BEFORE step_completed so the event stream's
     // causality is honest. If this step's cost pushes the run over budget,
@@ -1324,7 +1341,7 @@ export class OrchestrationEngine {
           const started = Date.now();
           // Per-step telemetry buffer — isolated from sibling parallel branches.
           const telemetryOut: LlmTelemetryEntry[] = [];
-          allEvents.push(stepStarted(step.id, step.type, step.name));
+          allEvents.push(stepStarted(step.id, step.type, step.name, step.description));
 
           try {
             const result = await this.runStepToCompletion(step, ctx, telemetryOut);
@@ -1396,6 +1413,7 @@ export class OrchestrationEngine {
           stepId: step.id,
           stepType: step.type,
           label: step.name,
+          ...(step.description ? { description: step.description } : {}),
           status: 'awaiting_approval',
           output: outcome.value.payload,
           tokensUsed: pausedTokens,
@@ -1439,6 +1457,7 @@ export class OrchestrationEngine {
           stepId: step.id,
           stepType: step.type,
           label: step.name,
+          ...(step.description ? { description: step.description } : {}),
           status: 'failed',
           output: null,
           error: sanitizeError(error),
@@ -1451,6 +1470,7 @@ export class OrchestrationEngine {
           ...rollupTelemetry(telemetryOut),
         });
         await this.checkpoint(lease, ctx, trace);
+        await this.clearRunningStep(executionId, step.id, baseLogger);
         allEvents.push(workflowFailed(sanitizeError(error), step.id));
         batchFailed = true;
         batchFailureReason = sanitizeError(error);
@@ -1470,6 +1490,7 @@ export class OrchestrationEngine {
         stepId: step.id,
         stepType: step.type,
         label: step.name,
+        ...(step.description ? { description: step.description } : {}),
         status: stepResult.skipped ? 'skipped' : 'completed',
         output: stepResult.output,
         // Mirror the sequential path: persist the skip reason so the UI
@@ -1487,6 +1508,7 @@ export class OrchestrationEngine {
         ...(parallelProvenance ? { provenance: parallelProvenance } : {}),
       });
       await this.checkpoint(lease, ctx, trace);
+      await this.clearRunningStep(executionId, step.id, baseLogger);
 
       if (stepResult.skipped) {
         allEvents.push(stepFailed(step.id, stepResult.skipError ?? 'Step skipped', false));
@@ -1775,32 +1797,51 @@ export class OrchestrationEngine {
       // restart at turn 0. The dispatch cache (`ai_workflow_step_dispatch`)
       // makes the replay safe — already-completed tool calls return cached
       // results without re-firing.
-      if (row.currentStep && row.currentStepTurns !== null) {
-        const parsedTurns = turnEntriesSchema.safeParse(row.currentStepTurns);
-        if (parsedTurns.success && parsedTurns.data.length > 0) {
-          ctx.resumeTurns = parsedTurns.data;
-          baseLogger.info('Resume: restoring multi-turn step state', {
-            executionId: row.id,
-            currentStep: row.currentStep,
-            turns: parsedTurns.data.length,
-          });
-        } else if (!parsedTurns.success) {
-          // Operators need to identify which field/shape regressed without
-          // re-parsing the row by hand. Log the first three issue paths and
-          // messages alongside the count so a schema drift is visible from
-          // the log alone. Drops the malformed payload and falls through to
-          // a fresh-start resume — the dispatch cache prevents side-effect
-          // re-fire, but the executor's in-memory state restarts at turn 0.
-          baseLogger.warn('Resume: dropped malformed currentStepTurns', {
-            executionId: row.id,
-            issues: parsedTurns.error.issues.length,
-            sampleIssues: parsedTurns.error.issues.slice(0, 3).map((issue) => ({
-              path: issue.path.join('.'),
-              message: issue.message,
-            })),
-          });
+      //
+      // We look up turns on the running-step row keyed by `currentStep` (the
+      // resume cursor). Note: this is a single-cursor resume — a `parallel`
+      // step's siblings are intentionally discarded by the `deleteMany` below,
+      // and the engine re-walks the DAG. No seeded workflow today nests
+      // multi-turn executors (`agent_call`/`orchestrator`/`reflect`) inside a
+      // `parallel`, so the single-cursor strategy is sufficient. A future
+      // contributor combining the two would need a multi-cursor resume.
+      if (row.currentStep) {
+        const runningRow = await prisma.aiWorkflowRunningStep.findUnique({
+          where: { executionId_stepId: { executionId: row.id, stepId: row.currentStep } },
+          select: { turns: true },
+        });
+        if (runningRow && runningRow.turns !== null && runningRow.turns !== undefined) {
+          const parsedTurns = turnEntriesSchema.safeParse(runningRow.turns);
+          if (parsedTurns.success && parsedTurns.data.length > 0) {
+            ctx.resumeTurns = parsedTurns.data;
+            baseLogger.info('Resume: restoring multi-turn step state', {
+              executionId: row.id,
+              currentStep: row.currentStep,
+              turns: parsedTurns.data.length,
+            });
+          } else if (!parsedTurns.success) {
+            // Operators need to identify which field/shape regressed without
+            // re-parsing the row by hand. Log the first three issue paths and
+            // messages alongside the count so a schema drift is visible from
+            // the log alone. Drops the malformed payload and falls through to
+            // a fresh-start resume — the dispatch cache prevents side-effect
+            // re-fire, but the executor's in-memory state restarts at turn 0.
+            baseLogger.warn('Resume: dropped malformed running-step turns', {
+              executionId: row.id,
+              issues: parsedTurns.error.issues.length,
+              sampleIssues: parsedTurns.error.issues.slice(0, 3).map((issue) => ({
+                path: issue.path.join('.'),
+                message: issue.message,
+              })),
+            });
+          }
         }
       }
+      // Clear all running-step rows for this execution before re-entry. The
+      // engine is about to call `markCurrentStep` on the resume target, which
+      // will INSERT a fresh row; any stale siblings from a pre-crash parallel
+      // fan-out are intentionally discarded.
+      await prisma.aiWorkflowRunningStep.deleteMany({ where: { executionId: row.id } });
       await prisma.aiWorkflowExecution.updateMany({
         where: { id: row.id, leaseToken },
         data: { status: WorkflowStatus.RUNNING, startedAt: row.startedAt ?? new Date() },
@@ -1822,6 +1863,10 @@ export class OrchestrationEngine {
         workflowId: workflow.id,
         versionId: workflow.versionId ?? null,
         userId: options.userId,
+        // Conditional spread keeps the field absent on the row when
+        // not set, matching how `versionId: null` is treated for
+        // legacy executions. Only the rerun endpoint passes it today.
+        ...(options.parentExecutionId ? { parentExecutionId: options.parentExecutionId } : {}),
         status: WorkflowStatus.RUNNING,
         inputData: inputData as object,
         executionTrace: [],
@@ -1869,28 +1914,38 @@ export class OrchestrationEngine {
   ): Promise<void> {
     const { executionId, token } = lease;
     try {
-      // Lease-guarded: a stale-token holder's update silently no-ops via count=0.
-      // Refresh the lease in the same UPDATE so step transitions also extend ownership.
-      // currentStepTurns is reset to null because the column belongs to whichever step is
-      // named in currentStep — clearing it on transition keeps the invariant. Resume already
-      // copied the prior step's turns into `ctx.resumeTurns` before this UPDATE runs, so
-      // clearing here doesn't lose data.
-      //
-      // currentStepLabel / currentStepType / currentStepStartedAt power the live-running
-      // indicator on the execution detail page — the UI polls them so it can render the
-      // in-flight step's friendly label and ticking elapsed time without parsing the
-      // workflow version snapshot. They're cleared in `finalize`.
-      await prisma.aiWorkflowExecution.updateMany({
+      // Two-step write: lease-guarded scalar refresh on the execution
+      // row, then an upsert of the running-step row. The scalar refresh
+      // also serves as the lease check — count=0 means a stale token,
+      // and we skip the side-table write so we don't leak an orphaned
+      // row owned by no host.
+      const refreshed = await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken: token },
         data: {
           currentStep: step.id,
-          currentStepLabel: step.name,
-          currentStepType: step.type,
-          currentStepStartedAt: new Date(),
-          currentStepTurns: Prisma.DbNull,
           leaseExpiresAt: leaseExpiry(),
           lastHeartbeatAt: new Date(),
         },
+      });
+      if (refreshed.count === 0) return;
+
+      // Upsert keyed on (executionId, stepId). A retry or approval-resume
+      // re-enters the same stepId and trips the unique constraint; the
+      // `update` clause deliberately touches only `startedAt` —
+      // `turns` is preserved across re-entries so a multi-turn step
+      // resumes from its last recorded turn rather than restarting at
+      // turn 0. Parallel branches arrive with distinct stepIds so no
+      // collision: each branch lands its own row, which is the whole
+      // reason this is a side table.
+      await prisma.aiWorkflowRunningStep.upsert({
+        where: { executionId_stepId: { executionId, stepId: step.id } },
+        create: {
+          executionId,
+          stepId: step.id,
+          label: step.name,
+          stepType: step.type,
+        },
+        update: { startedAt: new Date() },
       });
     } catch (err) {
       // Non-fatal — but emit a warn so a connection-pool exhaustion or driver error doesn't
@@ -1904,59 +1959,92 @@ export class OrchestrationEngine {
   }
 
   /**
-   * Persist the latest turn snapshot for the current step. Lease-guarded — a stale-token
-   * holder's update silently no-ops via count=0. The lease is refreshed in the same UPDATE so
-   * a multi-turn LLM step that runs longer than `HEARTBEAT_INTERVAL_MS` keeps ownership
-   * without depending on the heartbeat timer.
+   * Delete a single step's running-step row when it terminates (success,
+   * failure, skip). Pause-for-approval keeps the row alive — the step
+   * is still in flight, just waiting on input — so this is NOT called
+   * from the pause paths. `finalize` does a sweep-delete for the whole
+   * execution to catch terminate paths that don't go through here
+   * (cancellation, fatal engine errors).
    *
-   * The full array is written each call (overwrite, not append). Postgres JSONB has no
-   * native append op, and a read-modify-write JSONB merge would race with concurrent writers
-   * — but at this scale there's only ever one host writing per execution (lease guarantees
-   * exclusivity), so the simpler overwrite is correct and avoids the round-trip a merge
-   * would require.
+   * Non-fatal: a missing row (e.g. a concurrent finalize cleared it
+   * first) is fine. `deleteMany` returns count=0 silently rather than
+   * throwing.
+   */
+  private async clearRunningStep(
+    executionId: string,
+    stepId: string,
+    logger: Logger
+  ): Promise<void> {
+    try {
+      await prisma.aiWorkflowRunningStep.deleteMany({
+        where: { executionId, stepId },
+      });
+    } catch (err) {
+      logger.warn('clearRunningStep: DB delete failed (non-fatal)', {
+        executionId,
+        stepId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Persist the latest turn snapshot for a specific step. Two-step write:
+   * lease refresh on the execution row (count=0 → stale token, skip the
+   * row update) then a `turns` update on the running-step row. The
+   * `updateMany` (not `update`) tolerates a missing row: a concurrent
+   * finalize that already swept the side table returns count=0 rather
+   * than throwing P2025 — non-fatal in the same way the prior
+   * column-write was.
    *
-   * Posture matches `markCurrentStep` and `checkpoint`: a DB hiccup mid-step is non-fatal —
-   * the in-memory turns array is the source of truth for THIS attempt; the worst case is a
-   * crashed re-drive starts from an earlier turn (and the dispatch cache prevents
-   * side-effect duplication on the replay).
+   * The full array is written each call (overwrite, not append).
+   * Read-modify-write JSONB would race with concurrent writers — but the
+   * lease guarantees only one host writes per execution, so overwrite is
+   * correct.
    *
-   * Log-level branch on the clear-write case (`turns.length === 0`): the empty-array write is
-   * fired by `executeSingleStep`'s `onAttemptStart` callback between retry attempts. If THAT
-   * write fails AND the host then crashes before attempt N+1's first successful turn record,
-   * a subsequent resume will replay attempt N's stale turns. The dispatch cache stops side-
-   * effect duplication, but the executor's reconstructed in-memory state (orchestrator round
-   * counter, agent_call message history, reflect draft) diverges from reality — token cost
-   * for the dropped attempt's partial work is lost. Surface this as `error` (not `warn`) so
-   * operators can monitor; behaviour is still non-fatal because a failed retry-clear is
-   * marginally better than a failed retry attempt itself.
+   * Log-level branch on the clear-write case (`turns.length === 0`): the
+   * empty-array write is fired by `executeSingleStep`'s `onAttemptStart`
+   * callback between retry attempts. If THAT write fails AND the host
+   * then crashes before attempt N+1's first successful turn record, a
+   * subsequent resume will replay attempt N's stale turns. The dispatch
+   * cache stops side-effect duplication, but the executor's reconstructed
+   * in-memory state (orchestrator round counter, agent_call message
+   * history, reflect draft) diverges from reality — token cost for the
+   * dropped attempt's partial work is lost. Surface this as `error` (not
+   * `warn`) so operators can monitor.
    */
   private async recordStepTurn(
     lease: LeaseHandle,
+    stepId: string,
     turns: TurnEntry[],
     logger: Logger
   ): Promise<void> {
     const { executionId, token } = lease;
     const isClearWrite = turns.length === 0;
     try {
-      await prisma.aiWorkflowExecution.updateMany({
+      const refreshed = await prisma.aiWorkflowExecution.updateMany({
         where: { id: executionId, leaseToken: token },
         data: {
-          currentStepTurns: turns as unknown as object,
           leaseExpiresAt: leaseExpiry(),
           lastHeartbeatAt: new Date(),
         },
+      });
+      if (refreshed.count === 0) return;
+      await prisma.aiWorkflowRunningStep.updateMany({
+        where: { executionId, stepId },
+        data: { turns: turns as unknown as object },
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (isClearWrite) {
         logger.error(
           'recordStepTurn: retry-clear write failed — next retry attempt may inherit stale turns on a subsequent crash; investigate DB connectivity',
-          { executionId, error: errorMessage }
+          { executionId, stepId, error: errorMessage }
         );
       } else {
         logger.warn(
           'recordStepTurn: DB update failed (non-fatal — re-drive may restart at earlier turn)',
-          { executionId, error: errorMessage }
+          { executionId, stepId, error: errorMessage }
         );
       }
     }
@@ -2116,13 +2204,6 @@ export class OrchestrationEngine {
           outputData:
             status === WorkflowStatus.COMPLETED ? (ctx.stepOutputs as object) : Prisma.DbNull,
           ...contextPatchData,
-          // Clear the live-running metadata so the detail page doesn't render
-          // a stale "Running" indicator for the last-entered step. `currentStep`
-          // itself is left alone — pre-existing engine behaviour preserves it
-          // for diagnostics on terminal rows.
-          currentStepLabel: null,
-          currentStepType: null,
-          currentStepStartedAt: null,
           leaseToken: null,
           leaseExpiresAt: null,
         },
@@ -2133,6 +2214,19 @@ export class OrchestrationEngine {
           status,
         });
         return false;
+      }
+      // Sweep any running-step rows for this execution. Covers terminate
+      // paths that didn't go through `clearRunningStep` per step
+      // (cancellation, fatal engine error, paused-then-failed). `currentStep`
+      // on the execution row is intentionally preserved for post-mortem
+      // diagnostics — only the in-flight live state needs clearing.
+      try {
+        await prisma.aiWorkflowRunningStep.deleteMany({ where: { executionId } });
+      } catch (err) {
+        ctx.logger.warn('finalize: running-step sweep failed (non-fatal)', {
+          executionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
       return true;
     } catch (err) {

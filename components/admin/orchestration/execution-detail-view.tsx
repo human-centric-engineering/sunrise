@@ -20,6 +20,7 @@ import {
   Download,
   Eye,
   Loader2,
+  Repeat,
   RotateCcw,
   StopCircle,
   ThumbsUp,
@@ -46,7 +47,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import {
   useExecutionLivePoll,
-  type CurrentStepDetails,
+  type RunningStep,
   type ExecutionLivePayload,
 } from '@/lib/hooks/use-execution-live-poll';
 import { cn } from '@/lib/utils';
@@ -73,6 +74,7 @@ import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
 import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
 import { buildInterpolationContextFromTrace } from '@/lib/orchestration/engine/interpolate-from-trace';
 import { ExecutionStatusSynopsis } from '@/components/admin/orchestration/execution-status-synopsis';
+import { RerunExecutionDialog } from '@/components/admin/orchestration/rerun-execution-dialog';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 import { supervisorReportSchema } from '@/lib/validations/orchestration';
 
@@ -81,6 +83,19 @@ import { supervisorReportSchema } from '@/lib/validations/orchestration';
 export interface ExecutionInfo {
   id: string;
   workflowId: string;
+  /**
+   * Pinned `AiWorkflowVersion.id`. Null on legacy executions from
+   * before the immutable-version model. The re-run dialog uses this
+   * as the anchor for "show versions added since the original run".
+   */
+  versionId?: string | null;
+  /**
+   * When set, this execution was created by the rerun endpoint and
+   * this points at the execution it was rerun from. The detail view
+   * surfaces it as a "Re-run of execution X" breadcrumb. Null for
+   * normal (non-rerun) executions.
+   */
+  parentExecutionId?: string | null;
   status: string;
   totalTokensUsed: number;
   totalCostUsd: number;
@@ -119,11 +134,13 @@ export interface ExecutionDetailViewProps {
    */
   costEntries?: TraceCostEntryRow[];
   /**
-   * Running-step metadata for the live indicator. Server-fetched from
-   * the same endpoint as `trace` so the initial paint already shows the
-   * in-flight step. The live-poll hook owns this state thereafter.
+   * In-flight step metadata for the live indicator. One entry per
+   * running step — during a `parallel` step's fan-out this carries one
+   * entry per branch. Server-fetched from the same endpoint as `trace`
+   * so the initial paint already shows the in-flight steps. The
+   * live-poll hook owns this state thereafter.
    */
-  currentStepDetails?: CurrentStepDetails | null;
+  initialRunningSteps?: RunningStep[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -514,12 +531,12 @@ export function ExecutionDetailView({
   execution,
   trace,
   costEntries,
-  currentStepDetails,
+  initialRunningSteps,
 }: ExecutionDetailViewProps) {
   const router = useRouter();
 
   // Live-poll seed. Once the hook has polled once it owns trace + cost +
-  // currentStepDetails; the initial values here just paint the first frame.
+  // currentRunningSteps; the initial values here just paint the first frame.
   const initialPayload: ExecutionLivePayload = useMemo(
     () => ({
       snapshot: {
@@ -535,7 +552,7 @@ export function ExecutionDetailView({
       },
       trace,
       costEntries: costEntries ?? [],
-      currentStepDetails: currentStepDetails ?? null,
+      currentRunningSteps: initialRunningSteps ?? [],
     }),
     // Seed only — never re-run mid-mount; the hook owns the state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -545,9 +562,9 @@ export function ExecutionDetailView({
   const liveSnap = live.snapshot;
   const liveTrace = live.trace;
   const liveCostEntries = live.costEntries;
-  const liveCurrentStep = live.currentStepDetails;
+  const liveRunningSteps = live.currentRunningSteps;
 
-  // Tick clock — advances every second while polling so the synthesised
+  // Tick clock — advances every second while polling so each synthesised
   // running entry's durationMs ticks up smoothly between server polls.
   const [tickClock, setTickClock] = useState(0);
   useEffect(() => {
@@ -556,32 +573,58 @@ export function ExecutionDetailView({
     return () => clearInterval(id);
   }, [live.isPolling]);
 
-  // Display trace = persisted entries + synthesised running entry (if any).
-  // The running entry is appended at the end so the timeline reads
-  // chronologically. Defensive filter drops any persisted entry with the
-  // same stepId in case a tick races the engine writing both at once.
-  // `tickClock` is included so durationMs recomputes every second between
-  // server polls.
+  // Display trace = persisted entries + one synthesised running entry per
+  // in-flight step. During a parallel fan-out this surfaces every branch
+  // simultaneously instead of just whichever started last. Defensive
+  // filter drops any persisted entry with a stepId we're about to render
+  // as running, in case a tick races the engine writing both. `tickClock`
+  // is included so durationMs recomputes every second between server polls.
   const displayTrace: ExecutionTraceEntry[] = useMemo(() => {
-    if (!liveCurrentStep) return liveTrace;
-    const synth = {
-      stepId: liveCurrentStep.stepId,
-      stepType: liveCurrentStep.stepType,
-      label: liveCurrentStep.label,
-      // The `status` union on persisted entries doesn't include 'running' —
-      // the trace-row component locally widens it. Cast here intentionally
-      // so the view-only display type stays narrow at the prop boundary.
-      status: 'running',
-      output: undefined,
-      tokensUsed: 0,
-      costUsd: 0,
-      startedAt: liveCurrentStep.startedAt,
-      durationMs: Math.max(0, Date.now() - new Date(liveCurrentStep.startedAt).getTime()),
-    } as unknown as ExecutionTraceEntry;
-    const persisted = liveTrace.filter((e) => e.stepId !== liveCurrentStep.stepId);
-    return [...persisted, synth];
+    if (liveRunningSteps.length === 0) return liveTrace;
+    const runningStepIds = new Set(liveRunningSteps.map((r) => r.stepId));
+    const persisted = liveTrace.filter((e) => !runningStepIds.has(e.stepId));
+    const synth = liveRunningSteps.map(
+      (r) =>
+        ({
+          stepId: r.stepId,
+          stepType: r.stepType,
+          label: r.label,
+          // The `status` union on persisted entries doesn't include 'running' —
+          // the trace-row component locally widens it. Cast here intentionally
+          // so the view-only display type stays narrow at the prop boundary.
+          status: 'running',
+          output: undefined,
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: r.startedAt,
+          durationMs: Math.max(0, Date.now() - new Date(r.startedAt).getTime()),
+        }) as unknown as ExecutionTraceEntry
+    );
+    return [...persisted, ...synth];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveTrace, liveCurrentStep, tickClock]);
+  }, [liveTrace, liveRunningSteps, tickClock]);
+
+  // Per-step turnCount lookup for the synthesized running rows. Lives
+  // outside the trace entry shape because ExecutionTraceEntry is also
+  // used for persisted entries (where turnCount has no meaning), so
+  // threading it as a side-channel keeps the trace type clean.
+  const turnCountByStepId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of liveRunningSteps) map.set(r.stepId, r.turnCount);
+    return map;
+  }, [liveRunningSteps]);
+
+  // 1-indexed step number per trace entry, computed off the full
+  // `displayTrace` (not `filteredTrace`) so the number reflects
+  // canonical execution position and stays stable when the user filters
+  // rows out. Keyed on entry-object identity rather than stepId so that
+  // retries — which produce multiple entries with the same stepId — each
+  // get their own number rather than colliding on a Map<stepId, number>.
+  const stepNumberByEntry = useMemo(() => {
+    const map = new Map<ExecutionTraceEntry, number>();
+    displayTrace.forEach((entry, idx) => map.set(entry, idx + 1));
+    return map;
+  }, [displayTrace]);
 
   // Interpolation context for the per-row "Show resolved" toggle.
   // Re-derives the LLM input client-side from the trace; vars set by the
@@ -747,6 +790,7 @@ export function ExecutionDetailView({
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectLoading, setRejectLoading] = useState(false);
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
 
   const handleReject = useCallback(async () => {
     setRejectLoading(true);
@@ -879,11 +923,37 @@ export function ExecutionDetailView({
     liveSnap.status === 'failed' ||
     liveSnap.status === 'cancelled';
 
+  // Re-run is available for any terminal execution. We disable it for
+  // in-flight runs (running / paused_for_approval) — those still have
+  // moves left, so "re-run now" is almost certainly the wrong action.
+  const canRerun =
+    liveSnap.status === 'completed' ||
+    liveSnap.status === 'failed' ||
+    liveSnap.status === 'cancelled' ||
+    liveSnap.status === 'rejected';
+
   // Extract approval prompt from awaiting trace entry
   const approvalPrompt = canApprove ? getApprovalPrompt(displayTrace) : null;
 
   return (
     <div className="space-y-6">
+      {/* Re-run lineage breadcrumb. Only renders when this execution
+          was created via the rerun endpoint. Plain anchor (not Next
+          Link) is fine because the target is admin-only and we want
+          a full reload to refresh the live-poll hook against the new
+          execution's status. */}
+      {execution.parentExecutionId && (
+        <p className="text-muted-foreground text-xs" data-testid="execution-parent-breadcrumb">
+          Re-run of execution{' '}
+          <a
+            href={`/admin/orchestration/executions/${execution.parentExecutionId}`}
+            className="hover:text-foreground underline underline-offset-2"
+          >
+            {execution.parentExecutionId.slice(0, 8)}…
+          </a>
+        </p>
+      )}
+
       {/* Action result banner */}
       {actionResult && (
         <div
@@ -905,7 +975,7 @@ export function ExecutionDetailView({
       )}
 
       {/* Action buttons */}
-      {(canCancel || canApprove || (canRetry && failedStepId) || canReview) && (
+      {(canCancel || canApprove || (canRetry && failedStepId) || canReview || canRerun) && (
         <div className="flex flex-wrap gap-2">
           {canApprove && (
             <Button size="sm" onClick={() => void handleApprove()} disabled={actionLoading}>
@@ -982,6 +1052,18 @@ export function ExecutionDetailView({
                 regardless of whether the workflow includes a <code>report</code> step.
               </FieldHelp>
             </div>
+          )}
+          {canRerun && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRerunDialogOpen(true)}
+              disabled={actionLoading}
+              data-testid="execution-rerun-button"
+            >
+              <Repeat className="mr-2 h-4 w-4" />
+              Re-run
+            </Button>
           )}
         </div>
       )}
@@ -1264,6 +1346,7 @@ export function ExecutionDetailView({
                   stepId={entry.stepId}
                   stepType={entry.stepType}
                   label={entry.label}
+                  description={entry.description}
                   status={entry.status}
                   output={entry.output}
                   error={entry.error}
@@ -1280,7 +1363,10 @@ export function ExecutionDetailView({
                   requestParams={entry.requestParams}
                   costEntries={costEntriesByStep.get(entry.stepId)}
                   provenance={entry.provenance}
+                  agent={entry.agent}
                   retries={entry.retries}
+                  turnCount={turnCountByStepId.get(entry.stepId)}
+                  stepNumber={stepNumberByEntry.get(entry)}
                   highlighted={highlightedStepId === entry.stepId}
                   forkNumber={parallelForkNumberByStepId.get(entry.stepId)}
                   parallelBranchOfNumber={parallelBranchOfByStepId.get(entry.stepId)}
@@ -1410,6 +1496,16 @@ export function ExecutionDetailView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <RerunExecutionDialog
+        open={rerunDialogOpen}
+        onOpenChange={setRerunDialogOpen}
+        execution={{
+          id: execution.id,
+          workflowId: execution.workflowId,
+          versionId: execution.versionId ?? null,
+        }}
+      />
     </div>
   );
 }

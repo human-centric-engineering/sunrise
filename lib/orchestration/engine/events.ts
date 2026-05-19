@@ -17,9 +17,16 @@ export function workflowStarted(executionId: string, workflowId: string): Execut
 export function stepStarted(
   stepId: string,
   stepType: WorkflowStepType,
-  label: string
+  label: string,
+  description?: string
 ): ExecutionEvent {
-  return { type: 'step_started', stepId, stepType, label };
+  return {
+    type: 'step_started',
+    stepId,
+    stepType,
+    label,
+    ...(description ? { description } : {}),
+  };
 }
 
 export function stepCompleted(

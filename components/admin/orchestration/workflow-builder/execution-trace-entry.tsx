@@ -60,6 +60,15 @@ export interface ExecutionTraceEntryRowProps {
   stepId: string;
   stepType: string;
   label: string;
+  /**
+   * Optional `WorkflowStep.description` snapshot. When set, renders as
+   * a muted paragraph at the top of the expanded accordion body
+   * (above the input / output panes). Absent for steps authored
+   * without a description. Not shown on the collapsed row at all —
+   * the row stays compact and the description is revealed by
+   * expanding the row.
+   */
+  description?: string;
   status: Status;
   output?: unknown;
   error?: string;
@@ -97,11 +106,37 @@ export interface ExecutionTraceEntryRowProps {
    */
   provenance?: ExecutionTraceEntry['provenance'];
   /**
+   * View-time enrichment for `agent_call` steps. The API loader resolves
+   * `config.agentSlug` against the AiAgent registry once per execution
+   * load and attaches the `{ id, slug, name }` here. Rendered as an
+   * "Agent · {name}" chip with a link to the agent's edit page on the
+   * collapsed row, next to the step-type pill. Absent for non-agent_call
+   * steps and for slugs that no longer resolve to an active agent.
+   */
+  agent?: ExecutionTraceEntry['agent'];
+  /**
    * Bounded-retry events emitted from this step. Rendered as amber
    * sub-rows so users can see at a glance which step looped, how many
    * attempts ran, and why each one failed.
    */
   retries?: ExecutionTraceEntry['retries'];
+  /**
+   * Live progress indicator for multi-turn steps. The detail view sets
+   * this on the synthesized "running" row from `currentRunningSteps[*].
+   * turnCount`. Renders as a small "N turns" pill next to the duration
+   * so long `agent_call` / `orchestrator` / `reflect` steps show
+   * forward progress instead of looking frozen. Only honored when
+   * `status === 'running'`; ignored on persisted/completed rows.
+   */
+  turnCount?: number;
+  /**
+   * 1-indexed position of this row in the trace as rendered. Shown as a
+   * small `#N` prefix on the label so the operator can reference a
+   * specific step by number ("scroll to step 7", "step 3 failed").
+   * Sequential in render order — during a `parallel` fan-out each
+   * branch gets its own number rather than sharing one.
+   */
+  stepNumber?: number;
   /** When true, render with a highlighted background (used by timeline-strip clicks). */
   highlighted?: boolean;
   /** Fires when the user clicks "Retry" on a failed step. */
@@ -155,6 +190,7 @@ export function ExecutionTraceEntryRow({
   stepId,
   stepType,
   label,
+  description,
   status,
   output,
   error,
@@ -171,7 +207,10 @@ export function ExecutionTraceEntryRow({
   requestParams,
   costEntries,
   provenance,
+  agent,
   retries,
+  turnCount,
+  stepNumber,
   highlighted,
   onRetry,
   forkNumber,
@@ -232,8 +271,34 @@ export function ExecutionTraceEntryRow({
         <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', style.colour, animate)} />
         <div className="flex-1">
           <div className="flex flex-wrap items-center gap-2">
+            {typeof stepNumber === 'number' && (
+              <span
+                data-testid={`trace-entry-step-number-${stepId}`}
+                className="text-muted-foreground font-mono text-xs tabular-nums"
+                title={`Step ${stepNumber} in execution order`}
+              >
+                #{stepNumber}
+              </span>
+            )}
             <span className="font-medium">{label}</span>
             <StepTypeChip stepId={stepId} stepType={stepType} />
+            {agent && (
+              // Agent chip — only renders for `agent_call` steps that
+              // resolved to a registered agent. Sits next to the step
+              // type pill so the operator sees which agent ran the
+              // step at a glance and can jump to its edit page.
+              // `e.stopPropagation()` keeps the click from also
+              // toggling the row's expand affordance.
+              <a
+                href={`/admin/orchestration/agents/${agent.id}`}
+                onClick={(e) => e.stopPropagation()}
+                data-testid={`trace-entry-agent-${stepId}`}
+                title={`Agent slug: ${agent.slug}`}
+                className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-800 hover:bg-blue-200 dark:bg-blue-950/60 dark:text-blue-200 dark:hover:bg-blue-900/60"
+              >
+                Agent · {agent.name}
+              </a>
+            )}
             {forkNumber !== undefined && (
               <span
                 data-testid={`trace-entry-fork-${stepId}`}
@@ -266,6 +331,11 @@ export function ExecutionTraceEntryRow({
           <div className="text-muted-foreground mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
             <span>{style.text}</span>
             {typeof durationMs === 'number' && <span>{durationMs.toLocaleString()} ms</span>}
+            {status === 'running' && typeof turnCount === 'number' && turnCount > 0 && (
+              <span data-testid={`trace-entry-turn-count-${stepId}`}>
+                {turnCount === 1 ? '1 turn' : `${turnCount.toLocaleString()} turns`}
+              </span>
+            )}
             {typeof llmDurationMs === 'number' && llmDurationMs > 0 && otherMs !== null && (
               <span data-testid={`trace-entry-latency-breakdown-${stepId}`}>
                 LLM {llmDurationMs.toLocaleString()} ms · other {otherMs.toLocaleString()} ms
@@ -359,6 +429,14 @@ export function ExecutionTraceEntryRow({
 
       {expanded && (
         <div className="mt-2 space-y-2 border-t pt-2">
+          {description && (
+            <p
+              data-testid={`trace-entry-description-${stepId}`}
+              className="text-muted-foreground text-xs leading-relaxed"
+            >
+              {description}
+            </p>
+          )}
           {error && <ErrorPane error={error} stepId={stepId} expected={expectedSkip} />}
           {(input !== undefined || output !== undefined) && (
             <div className="grid gap-2 lg:grid-cols-2">

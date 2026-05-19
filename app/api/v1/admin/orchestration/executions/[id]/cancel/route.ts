@@ -62,13 +62,24 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
   }
 
-  const result = await prisma.aiWorkflowExecution.updateMany({
-    where: { id, status: { in: [...CANCELLABLE_STATUSES] } },
-    data: {
-      status: WorkflowStatus.CANCELLED,
-      completedAt: new Date(),
-      errorMessage: 'Cancelled by user',
-    },
+  // Status flip and running-step sweep in one transaction. The engine's
+  // `finalize` may not run here (cancel races the lease) so the route
+  // takes responsibility for clearing the in-flight rows directly. The
+  // delete is conditional on the status guard matching so a no-op
+  // cancellation doesn't sweep rows still being driven by another path.
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.aiWorkflowExecution.updateMany({
+      where: { id, status: { in: [...CANCELLABLE_STATUSES] } },
+      data: {
+        status: WorkflowStatus.CANCELLED,
+        completedAt: new Date(),
+        errorMessage: 'Cancelled by user',
+      },
+    });
+    if (updated.count > 0) {
+      await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
+    }
+    return updated;
   });
 
   if (result.count === 0) {

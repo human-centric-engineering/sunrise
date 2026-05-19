@@ -37,6 +37,12 @@ vi.mock('@/lib/orchestration/workflows', () => ({
   semanticValidateWorkflow: vi.fn(() => Promise.resolve({ ok: true, errors: [] })),
 }));
 
+// Soft-stub the hydration coordinator so tests don't reach for prisma
+// (which would also drag `server-only` into the spec environment).
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
+  hydrateFromDb: vi.fn(() => Promise.resolve()),
+}));
+
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/db/client';

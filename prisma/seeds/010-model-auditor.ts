@@ -287,12 +287,15 @@ const DEACTIVATE_PROVIDER_MODELS_DEFINITION = {
 /**
  * Seed the "provider-model-auditor" agent with the apply_audit_changes,
  * add_provider_models, and deactivate_provider_models capabilities.
- * Also binds the existing search_knowledge_base and
- * estimate_workflow_cost capabilities.
+ * Also binds the existing estimate_workflow_cost capability.
  *
  * Idempotent — safe to run on every deploy. The audit template is in
  * `hashInputs` so any edit to the template file invalidates the unit's
- * content hash and forces a re-run.
+ * content hash and forces a re-run. The unit treats the set of declared
+ * built-in bindings as authoritative: any binding for this agent NOT in
+ * the expected set is unwound on re-seed (used to be, e.g., the
+ * `search_knowledge_base` binding — removed once the audit workflow no
+ * longer needed it, since the agent isn't grounded in any KB content).
  *
  * The `aiWorkflow.upsert` rewrites `workflowDefinition`, `metadata`,
  * `name`, `description`, and `patternsUsed` on every re-seed because
@@ -416,8 +419,12 @@ const unit: SeedUnit = {
       });
     }
 
-    // 6. Bind existing built-in capabilities (search_knowledge_base, estimate_workflow_cost)
-    const builtInSlugs = ['search_knowledge_base', 'estimate_workflow_cost'];
+    // 6. Bind existing built-in capabilities (estimate_workflow_cost).
+    // search_knowledge_base was previously bound but removed — the auditor
+    // has no KB content to ground in, and the unused tool was inflating
+    // agent-call wall-clock by giving gpt-5 a tool decision it shouldn't
+    // have been making in the first place.
+    const builtInSlugs = ['estimate_workflow_cost'];
     for (const slug of builtInSlugs) {
       const cap = await prisma.aiCapability.findUnique({ where: { slug } });
       if (!cap) {
@@ -438,6 +445,32 @@ const unit: SeedUnit = {
           isEnabled: true,
         },
       });
+    }
+
+    // 6b. Unbind any capability NOT in the expected set. Makes the seed
+    // authoritative for this agent's tool list — re-running the seed
+    // after removing a slug from `expectedSlugs` below also removes the
+    // binding row. Without this step the prior `search_knowledge_base`
+    // binding would persist on dev databases that pre-date this change.
+    const expectedSlugs = new Set<string>([
+      auditCap.slug,
+      addCap.slug,
+      deactCap.slug,
+      ...builtInSlugs,
+    ]);
+    const currentBindings = await prisma.aiAgentCapability.findMany({
+      where: { agentId: agent.id },
+      select: { id: true, capability: { select: { slug: true } } },
+    });
+    const stale = currentBindings.filter((b) => !expectedSlugs.has(b.capability.slug));
+    if (stale.length > 0) {
+      await prisma.aiAgentCapability.deleteMany({
+        where: { id: { in: stale.map((b) => b.id) } },
+      });
+      logger.info(
+        `Unbound ${stale.length} stale capability binding(s) from provider-model-auditor`,
+        { slugs: stale.map((b) => b.capability.slug) }
+      );
     }
 
     // 7. Create the audit-report-writer agent (no capabilities — pure synthesis)
@@ -535,7 +568,7 @@ const unit: SeedUnit = {
     });
 
     logger.info(
-      '✅ Seeded provider-model-auditor + audit-report-writer agents with 5 capabilities + system workflow'
+      '✅ Seeded provider-model-auditor + audit-report-writer agents with 4 capabilities + system workflow'
     );
   },
 };

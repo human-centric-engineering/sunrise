@@ -50,6 +50,8 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'classify',
         name: 'Classify intent',
+        description:
+          'Labels the inbound support request as billing, technical, account, or other so the triage step can pick the right path.',
         type: 'llm_call',
         config: {
           prompt:
@@ -62,6 +64,8 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'triage',
         name: 'Triage (self-serve vs human)',
+        description:
+          'Decides whether help-doc lookup can resolve the request (self-serve) or whether it goes straight to a human agent. Both paths converge at the approval step so every send has a reviewer in the loop.',
         type: 'route',
         config: {
           classificationPrompt:
@@ -76,6 +80,8 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'retrieve_docs',
         name: 'Retrieve help docs',
+        description:
+          'Vector-searches the knowledge base for the top 5 chunks relevant to the customer message (similarity threshold 0.7). Feeds the draft step so replies are grounded in real documentation.',
         type: 'rag_retrieve',
         config: {
           query: '{{input}}',
@@ -87,6 +93,8 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'search_kb',
         name: 'Search knowledge base',
+        description:
+          'Second knowledge-base lookup via the search_knowledge_base capability — supplements the RAG retrieve with citation-tagged chunks. Useful when the draft needs to attribute claims by [N] marker.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'search_knowledge_base',
@@ -96,6 +104,8 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'draft_reply',
         name: 'Draft reply',
+        description:
+          'Composes a concise, helpful customer reply using the retrieved docs. Acknowledges the issue and lays out clear next steps; final wording is reviewed by a human before send.',
         type: 'llm_call',
         config: {
           prompt:
@@ -108,6 +118,8 @@ export const CUSTOMER_SUPPORT_TEMPLATE: WorkflowTemplate = {
       {
         id: 'approve_send',
         name: 'Human approval before send',
+        description:
+          'Pauses the workflow for a support agent to review the drafted reply (or the escalated ticket) before anything reaches the customer. 60-minute timeout, in-app notification.',
         type: 'human_approval',
         config: {
           prompt:

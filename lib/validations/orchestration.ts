@@ -905,6 +905,12 @@ const conditionalEdgeSchema = z.object({
 const workflowStepSchema = z.object({
   id: z.string().min(1, 'Step ID is required'),
   name: z.string().min(1, 'Step name is required').max(100),
+  // Operator-facing context surfaced on hover and in the expanded trace
+  // row. Optional — short, self-explanatory steps don't need it. Capped at
+  // 500 chars so the tooltip body stays legible and authors don't paste
+  // essays here. `.trim()` discards leading/trailing whitespace so a
+  // blank-line paste doesn't persist.
+  description: z.string().trim().max(500).optional(),
   type: z.enum(KNOWN_STEP_TYPES, {
     message: `Step type must be one of: ${KNOWN_STEP_TYPES.join(', ')}`,
   }),
@@ -1676,6 +1682,23 @@ export const executeWorkflowBodySchema = z.object({
     .optional(),
 });
 
+/**
+ * Rerun-execution request body (POST /executions/:id/rerun).
+ *
+ * Both fields optional. When `versionId` is absent the server uses
+ * the workflow's current `publishedVersionId`. When `budgetLimitUsd`
+ * is absent the server reuses the original execution's value
+ * (preserving the "same input parameters" semantics of a rerun).
+ */
+export const rerunExecutionBodySchema = z.object({
+  versionId: cuidSchema.optional(),
+  budgetLimitUsd: z
+    .number()
+    .positive('Budget limit must be positive')
+    .max(1000, 'Budget limit must be at most $1,000')
+    .optional(),
+});
+
 /** Approve execution request body (POST /executions/[id]/approve). */
 export const approveExecutionBodySchema = z.object({
   approvalPayload: z.record(z.string(), z.unknown()).optional(),
@@ -2280,9 +2303,9 @@ export const updateOrchestrationSettingsSchema = z
 // ============================================================================
 // TurnEntry — multi-turn step checkpoint shapes
 // ============================================================================
-// Discriminated by `kind`. Used for the row-level `currentStepTurns` column
-// (mid-flight) and the trace entry's `turns` field (post-termination). The
-// shapes mirror the discriminated union in `types/orchestration.ts`.
+// Discriminated by `kind`. Used for the per-step `AiWorkflowRunningStep.turns`
+// column (mid-flight) and the trace entry's `turns` field (post-termination).
+// The shapes mirror the discriminated union in `types/orchestration.ts`.
 
 const agentCallTurnContinuingSchema = z.object({
   kind: z.literal('agent_call'),
@@ -2561,15 +2584,39 @@ export const ragRetrieveConfigSchema = stepErrorConfigSchema.extend({
   filters: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const guardConfigSchema = stepErrorConfigSchema.extend({
-  rules: z.string().optional(),
-  mode: z.enum(['llm', 'regex']).optional(),
-  failAction: z.enum(['block', 'flag']).optional(),
-  modelOverride: z.string().optional(),
-  temperature: z.number().optional(),
-  // Only meaningful in `mode: 'llm'`. Regex mode ignores it.
-  reasoningEffort: reasoningEffortConfigSchema,
-});
+export const guardConfigSchema = stepErrorConfigSchema
+  .extend({
+    rules: z.string().optional(),
+    mode: z.enum(['llm', 'regex', 'schema']).optional(),
+    failAction: z.enum(['block', 'flag']).optional(),
+    modelOverride: z.string().optional(),
+    temperature: z.number().optional(),
+    // Only meaningful in `mode: 'llm'`. Regex / schema modes ignore it.
+    reasoningEffort: reasoningEffortConfigSchema,
+    // Schema-mode fields. Both optional at the schema layer — the
+    // authoritative "schema mode requires schemaName" check lives in the
+    // executor so the operator sees a typed `missing_schema_name`
+    // ExecutorError in the trace rather than a generic ZodError. (A
+    // form-side check at save time is a separate improvement.)
+    schemaName: z.string().min(1).max(100).optional(),
+    // Single-input mode: when set, schema mode validates
+    // `ctx.stepOutputs[inputStepId]`. When both this and
+    // `inputStepIds` are absent, schema mode falls back to
+    // validating `ctx.inputData` (matches regex-mode default).
+    inputStepId: z.string().min(1).max(100).optional(),
+    // Compound-input mode: when set, schema mode validates a record
+    // `{ [stepId]: ctx.stepOutputs[stepId] }` against the named
+    // schema. Useful when one guard needs to validate the combined
+    // output of several upstream parallel branches (e.g. the audit
+    // workflow's three producer steps — `analyse_chat`,
+    // `analyse_embedding`, `discover_new_models`). Mutually
+    // exclusive with `inputStepId`.
+    inputStepIds: z.array(z.string().min(1).max(100)).max(20).optional(),
+  })
+  .refine((cfg) => !(cfg.inputStepId && cfg.inputStepIds), {
+    message: '`inputStepId` and `inputStepIds` are mutually exclusive — pick one.',
+    path: ['inputStepIds'],
+  });
 
 export const evaluateConfigSchema = stepErrorConfigSchema.extend({
   rubric: z.string().optional(),

@@ -55,6 +55,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'fetch_source',
         name: 'Fetch source data',
+        description:
+          'GETs raw records from the upstream source API with bearer auth and a 30-second timeout. Replace the placeholder URL and auth secret with your real source after cloning the template.',
         type: 'external_call',
         config: {
           url: 'https://api.example.com/data/export',
@@ -70,6 +72,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'validate_input',
         name: 'Validate input data',
+        description:
+          'Safety gate that rejects records containing PII (names, emails, phone numbers, national ID numbers), sanctioned-entity references, or missing required fields. Fail routes to the rejection-log path; pass goes to enrichment.',
         type: 'guard',
         config: {
           rules:
@@ -86,6 +90,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'rejection_log',
         name: 'Log rejection reason',
+        description:
+          'Reached when validate_input rejects a record. Writes a short log line summarising which fields were problematic and why — keeps the run history honest instead of silently dropping bad records.',
         type: 'llm_call',
         config: {
           prompt:
@@ -98,6 +104,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'fanout',
         name: 'Parallel enrichment',
+        description:
+          'Parallel fan-out point — runs the classify-and-tag and summarise branches concurrently with a 60-second cap.',
         type: 'parallel',
         config: {
           branches: ['enrich_classify', 'enrich_summarise'],
@@ -109,6 +117,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'enrich_classify',
         name: 'Classify and tag',
+        description:
+          'Adds a structured category and tag array to the record. One half of the parallel enrichment — paired with the summary branch and merged downstream.',
         type: 'llm_call',
         config: {
           prompt:
@@ -121,6 +131,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'enrich_summarise',
         name: 'Summarise content',
+        description:
+          'Writes a one-paragraph summary of the record highlighting key facts and anomalies. Other half of the parallel enrichment.',
         type: 'llm_call',
         config: {
           prompt:
@@ -133,6 +145,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'merge',
         name: 'Merge enrichments',
+        description:
+          'Merge point for the two parallel enrichment branches. Chain steps mark structural joins — they pass through unchanged and let downstream steps reference both branch outputs cleanly.',
         type: 'chain',
         config: {
           steps: [],
@@ -142,6 +156,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'score_quality',
         name: 'Score output quality',
+        description:
+          'Scores the enriched record on a 1–10 scale across completeness, accuracy, and summary quality. Threshold 7 — records below that are flagged for review rather than pushed downstream.',
         type: 'evaluate',
         config: {
           rubric:
@@ -156,6 +172,8 @@ export const DATA_PIPELINE_TEMPLATE: WorkflowTemplate = {
       {
         id: 'push_output',
         name: 'Push to destination',
+        description:
+          'POSTs the enriched, quality-checked record to the downstream destination API with API-key auth. Replace the placeholder URL and DEST_API_KEY secret with your real destination after cloning the template.',
         type: 'external_call',
         config: {
           url: 'https://api.example.com/data/import',

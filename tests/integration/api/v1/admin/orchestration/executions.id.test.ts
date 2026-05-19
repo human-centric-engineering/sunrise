@@ -33,6 +33,9 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       findUnique: vi.fn(),
     },
+    aiWorkflowRunningStep: {
+      findMany: vi.fn(),
+    },
     aiCostLog: {
       findMany: vi.fn(),
     },
@@ -75,9 +78,6 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
       },
     ],
     currentStep: 'step2',
-    currentStepLabel: 'Analyse',
-    currentStepType: 'llm_call',
-    currentStepStartedAt: new Date('2025-01-01T00:00:02Z'),
     errorMessage: null,
     totalTokensUsed: 10,
     totalCostUsd: 0.01,
@@ -114,7 +114,19 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     vi.clearAllMocks();
     // Default: no cost logs. Tests that need them override this.
     vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([] as never);
   });
+
+  function makeRunningStepRow(overrides: Record<string, unknown> = {}) {
+    return {
+      stepId: 'step2',
+      label: 'Analyse',
+      stepType: 'llm_call',
+      startedAt: new Date('2025-01-01T00:00:02Z'),
+      turns: null,
+      ...overrides,
+    };
+  }
 
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
@@ -241,51 +253,55 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.execution.supervisorReport).toBeNull();
   });
 
-  it('returns currentStepDetails for a running execution with live columns set', async () => {
+  it('returns currentRunningSteps for a running execution', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow(),
+    ] as never);
 
     const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
-    const data = await parseJson<{ data: { currentStepDetails: Record<string, unknown> | null } }>(
-      response
-    );
+    const data = await parseJson<{
+      data: { currentRunningSteps: Array<Record<string, unknown>> };
+    }>(response);
 
-    expect(data.data.currentStepDetails).toEqual({
-      stepId: 'step2',
-      label: 'Analyse',
-      stepType: 'llm_call',
-      startedAt: '2025-01-01T00:00:02.000Z',
-    });
+    expect(data.data.currentRunningSteps).toEqual([
+      {
+        stepId: 'step2',
+        label: 'Analyse',
+        stepType: 'llm_call',
+        startedAt: '2025-01-01T00:00:02.000Z',
+        turnCount: 0,
+      },
+    ]);
   });
 
-  it('returns null currentStepDetails when status is terminal', async () => {
+  it('returns empty currentRunningSteps when status is terminal', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
-      makeExecution({
-        status: 'completed',
-        currentStepLabel: null,
-        currentStepType: null,
-        currentStepStartedAt: null,
-      }) as never
+      makeExecution({ status: 'completed' }) as never
     );
 
     const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
-    const data = await parseJson<{ data: { currentStepDetails: unknown } }>(response);
-    expect(data.data.currentStepDetails).toBeNull();
+    const data = await parseJson<{ data: { currentRunningSteps: unknown[] } }>(response);
+    expect(data.data.currentRunningSteps).toEqual([]);
+    // Terminal status short-circuits — findMany should not even fire.
+    expect(vi.mocked(prisma.aiWorkflowRunningStep.findMany)).not.toHaveBeenCalled();
   });
 
-  it('returns null currentStepDetails when live columns are partially populated', async () => {
-    // Defensive: if the engine ever writes some columns but not others
-    // (e.g. crash mid-update), the route shouldn't render a half-broken
-    // running indicator — it must return null.
+  it('returns currentRunningSteps with multiple entries during a parallel fan-out', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
-      makeExecution({ currentStepType: null }) as never
-    );
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow({ stepId: 'branch_a', label: 'Branch A' }),
+      makeRunningStepRow({ stepId: 'branch_b', label: 'Branch B' }),
+    ] as never);
 
     const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
-    const data = await parseJson<{ data: { currentStepDetails: unknown } }>(response);
-    expect(data.data.currentStepDetails).toBeNull();
+    const data = await parseJson<{
+      data: { currentRunningSteps: Array<{ stepId: string }> };
+    }>(response);
+    expect(data.data.currentRunningSteps.map((r) => r.stepId)).toEqual(['branch_a', 'branch_b']);
   });
 
   it('returns costEntries from AiCostLog, keyed by metadata.stepId', async () => {

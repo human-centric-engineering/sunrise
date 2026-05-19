@@ -28,13 +28,14 @@ function makeNode(
   type: PatternNode['data']['type'],
   config: Record<string, unknown> = {},
   label = 'Test Step',
-  id = 'step-test-1'
+  id = 'step-test-1',
+  description?: string
 ): PatternNode {
   return {
     id,
     type: 'pattern',
     position: { x: 0, y: 0 },
-    data: { label, type, config },
+    data: { label, type, config, ...(description !== undefined ? { description } : {}) },
   };
 }
 
@@ -49,6 +50,7 @@ const CAPABILITIES: CapabilityOption[] = [
 
 const DEFAULT_PROPS = {
   onLabelChange: vi.fn(),
+  onDescriptionChange: vi.fn(),
   onConfigChange: vi.fn(),
   onDelete: vi.fn(),
   capabilities: CAPABILITIES,
@@ -189,6 +191,66 @@ describe('BlockConfigPanel', () => {
       const codeEls = Array.from(document.querySelectorAll('code'));
       const typeCodeEl = codeEls.find((el) => el.textContent === 'unknown_future_type');
       expect(typeCodeEl).toBeDefined();
+    });
+  });
+
+  // ── Description editing ────────────────────────────────────────────────
+  // The description textarea round-trips with the canvas node, fires the
+  // dedicated `onDescriptionChange` callback (not `onLabelChange`), and is
+  // capped at 500 characters to match `workflowStepSchema`. These tests
+  // pin those four behaviours so a regression that aliased description
+  // onto label, dropped the cap, or wired the wrong callback would surface.
+  describe('step description editing', () => {
+    it('renders the textarea with the node description when set', () => {
+      const node = makeNode(
+        'llm_call',
+        { prompt: '' },
+        'Pretty Name',
+        'step-1',
+        'Drafts the user-facing reply using retrieved docs.'
+      );
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+      const textarea = screen.getByTestId<HTMLTextAreaElement>('step-description-textarea');
+      expect(textarea.value).toBe('Drafts the user-facing reply using retrieved docs.');
+    });
+
+    it('renders the textarea empty when the node has no description', () => {
+      const node = makeNode('llm_call', { prompt: '' }, 'Pretty Name', 'step-1');
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+      const textarea = screen.getByTestId<HTMLTextAreaElement>('step-description-textarea');
+      expect(textarea.value).toBe('');
+    });
+
+    it('fires onDescriptionChange (not onLabelChange) with nodeId and new value when typing', async () => {
+      const user = userEvent.setup();
+      const onDescriptionChange = vi.fn();
+      const onLabelChange = vi.fn();
+      const node = makeNode('llm_call', { prompt: '' }, 'L', 'step-abc');
+      render(
+        <BlockConfigPanel
+          node={node}
+          {...DEFAULT_PROPS}
+          onDescriptionChange={onDescriptionChange}
+          onLabelChange={onLabelChange}
+        />
+      );
+      await user.type(screen.getByTestId('step-description-textarea'), 'A');
+      // The description callback fires; the label one stays untouched.
+      expect(onDescriptionChange).toHaveBeenCalled(); // test-review:accept no_arg_called — UI callback-fired guard
+      const lastCall = onDescriptionChange.mock.calls[onDescriptionChange.mock.calls.length - 1];
+      expect(lastCall[0]).toBe('step-abc');
+      expect(typeof lastCall[1]).toBe('string');
+      expect(lastCall[1]).toBe('A');
+      expect(onLabelChange).not.toHaveBeenCalled();
+    });
+
+    it('caps input at 500 chars via maxLength so authors hit the limit visibly', () => {
+      const node = makeNode('llm_call', { prompt: '' });
+      render(<BlockConfigPanel node={node} {...DEFAULT_PROPS} />);
+      const textarea = screen.getByTestId<HTMLTextAreaElement>('step-description-textarea');
+      // The Zod schema rejects > 500. The native `maxLength` here surfaces
+      // that limit at typing time rather than at save time.
+      expect(textarea.maxLength).toBe(500);
     });
   });
 

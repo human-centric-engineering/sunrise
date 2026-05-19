@@ -40,6 +40,7 @@ const CODE_LABELS: Record<string, string> = {
   MISSING_APPROVAL_PROMPT: 'Missing approval prompt',
   MISSING_CAPABILITY_SLUG: 'Missing capability',
   MISSING_GUARD_RULES: 'Missing guard rules',
+  MISSING_GUARD_SCHEMA_NAME: 'Missing guard schema',
   MISSING_EVALUATE_RUBRIC: 'Missing evaluation rubric',
   MISSING_EXTERNAL_URL: 'Missing external URL',
   MISSING_AGENT_SLUG: 'Missing agent',
@@ -70,6 +71,8 @@ const CODE_EXPLANATIONS: Record<string, string> = {
   MISSING_CAPABILITY_SLUG:
     'This tool call step needs a capability selected so the engine knows which tool to invoke.',
   MISSING_GUARD_RULES: 'This guard step needs validation rules so it knows what to check.',
+  MISSING_GUARD_SCHEMA_NAME:
+    'This guard step is set to schema mode but no schema is selected. Pick a registered schema name.',
   MISSING_EVALUATE_RUBRIC:
     'This evaluation step needs a scoring rubric so the AI knows how to rate quality.',
   MISSING_EXTERNAL_URL: 'This external call step needs a URL to know where to send the request.',

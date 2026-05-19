@@ -10,6 +10,9 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       updateMany: vi.fn(),
     },
+    aiWorkflowRunningStep: {
+      deleteMany: vi.fn(),
+    },
   },
 }));
 
@@ -18,8 +21,13 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 
 const mockUpdateMany = prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>;
+const mockRunningStepDeleteMany = prisma.aiWorkflowRunningStep.deleteMany as ReturnType<
+  typeof vi.fn
+>;
+const mockLoggerWarn = logger.warn as unknown as ReturnType<typeof vi.fn>;
 
 /** Helper: mock all three updateMany calls with given counts. */
 function mockCounts(running: number, pending: number, approvals: number) {
@@ -32,6 +40,9 @@ function mockCounts(running: number, pending: number, approvals: number) {
 describe('reapZombieExecutions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reaper always sweeps orphan running-step rows at the end of its tick.
+    // Default to count=0 so existing tests that don't care can ignore it.
+    mockRunningStepDeleteMany.mockResolvedValue({ count: 0 });
   });
 
   it('marks stale running executions as failed with errorMessage', async () => {
@@ -151,5 +162,50 @@ describe('reapZombieExecutions', () => {
     const approvalCutoff = approvalCall.where.updatedAt.lt as Date;
     expect(Date.now() - approvalCutoff.getTime()).toBeGreaterThan(oneDay - 2000);
     expect(Date.now() - approvalCutoff.getTime()).toBeLessThan(oneDay + 2000);
+  });
+
+  // ─── Running-step orphan sweep (one tick at the end of the reaper) ───────
+  // The reaper's normal job is to flip stale executions to FAILED. Once
+  // that's done, every running-step row whose parent execution is now in
+  // a terminal status (completed/failed/cancelled) is stale by
+  // definition — the engine's per-step delete and finalize sweep should
+  // have caught them, but this is the self-healing fallback.
+
+  it('always runs a single orphan-sweep deleteMany at the end of the tick', async () => {
+    mockCounts(0, 0, 0);
+
+    await reapZombieExecutions();
+
+    // Even when no executions were reaped this tick, the sweep still
+    // fires — orphans from prior incidents need cleaning up too.
+    expect(mockRunningStepDeleteMany).toHaveBeenCalledTimes(1);
+    const args = mockRunningStepDeleteMany.mock.calls[0][0];
+    expect(args).toEqual({
+      where: { execution: { status: { in: ['completed', 'failed', 'cancelled'] } } },
+    });
+  });
+
+  it('logs the orphan-sweep count when > 0', async () => {
+    mockCounts(0, 0, 0);
+    mockRunningStepDeleteMany.mockResolvedValueOnce({ count: 4 });
+
+    await reapZombieExecutions();
+
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      'Reaped orphan running-step rows',
+      expect.objectContaining({ count: 4 })
+    );
+  });
+
+  it('does not log the orphan-sweep when count = 0', async () => {
+    mockCounts(0, 0, 0);
+    mockRunningStepDeleteMany.mockResolvedValueOnce({ count: 0 });
+
+    await reapZombieExecutions();
+
+    const orphanWarns = mockLoggerWarn.mock.calls.filter(([msg]) =>
+      String(msg).includes('orphan running-step')
+    );
+    expect(orphanWarns).toHaveLength(0);
   });
 });

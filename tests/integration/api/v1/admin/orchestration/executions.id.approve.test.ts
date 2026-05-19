@@ -35,6 +35,12 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    // Approve doesn't sweep the running-step row — the same stepId is
+    // about to be re-entered on resume, so the row must survive. The
+    // mock exists so tests can assert deleteMany is NEVER called.
+    aiWorkflowRunningStep: {
+      deleteMany: vi.fn(),
+    },
   },
 }));
 
@@ -367,5 +373,21 @@ describe('POST /api/v1/admin/orchestration/executions/:id/approve', () => {
 
     const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
     expect(response.status).toBe(404);
+  });
+
+  describe('Running-step preservation', () => {
+    it('does NOT sweep ai_workflow_running_step rows — the row survives the PENDING transition', async () => {
+      // The approve path transitions paused_for_approval → pending so the
+      // engine can resume the same stepId. The running-step row must
+      // survive so the resume reads its `turns` and continues from the
+      // last recorded turn rather than restarting at turn 0.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      await POST(makePostRequest(), makeParams(EXECUTION_ID));
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).not.toHaveBeenCalled();
+    });
   });
 });

@@ -373,6 +373,15 @@ function WorkflowBuilderInner({
     [setNodes]
   );
 
+  const handleDescriptionChange = useCallback(
+    (nodeId: string, description: string) => {
+      setNodes((prev) =>
+        prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, description } } : n))
+      );
+    },
+    [setNodes]
+  );
+
   const handleConfigChange = useCallback(
     (nodeId: string, partial: Record<string, unknown>) => {
       setNodes((prev) =>
@@ -765,6 +774,7 @@ function WorkflowBuilderInner({
           <BlockConfigPanel
             node={selectedNode}
             onLabelChange={handleLabelChange}
+            onDescriptionChange={handleDescriptionChange}
             onConfigChange={handleConfigChange}
             onDelete={handleNodeDelete}
             capabilities={capabilities}

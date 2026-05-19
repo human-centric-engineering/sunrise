@@ -264,6 +264,23 @@ describe('ExecutionDetailView', () => {
       expect(screen.getByTestId('trace-entry-step-3')).toBeInTheDocument();
     });
 
+    it('numbers each row sequentially from 1 in execution order', () => {
+      // Lets the operator reference rows by number ("step 3 failed").
+      // 1-indexed off the full displayTrace so the number is canonical
+      // — stays the same regardless of any later filtering.
+      const entries: ExecutionTraceEntry[] = [
+        { ...TRACE_ENTRY, stepId: 'step-1', label: 'Step One' },
+        { ...TRACE_ENTRY, stepId: 'step-2', label: 'Step Two' },
+        { ...TRACE_ENTRY, stepId: 'step-3', label: 'Step Three' },
+      ];
+
+      render(<ExecutionDetailView execution={makeExecution()} trace={entries} />);
+
+      expect(screen.getByTestId('trace-entry-step-number-step-1')).toHaveTextContent('#1');
+      expect(screen.getByTestId('trace-entry-step-number-step-2')).toHaveTextContent('#2');
+      expect(screen.getByTestId('trace-entry-step-number-step-3')).toHaveTextContent('#3');
+    });
+
     it('renders the "Step Timeline" section heading', () => {
       render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
 
@@ -760,8 +777,8 @@ describe('ExecutionDetailView', () => {
   });
 
   // ─── Live execution paths ───────────────────────────────────────────────
-  // Exercise the synthesised "running" trace entry that the view appends
-  // when the live-poll hook returns currentStepDetails. The hook mock at
+  // Exercise the synthesised "running" trace rows that the view appends
+  // when the live-poll hook returns currentRunningSteps. The hook mock at
   // the top of this file passes the seed payload through unchanged, so we
   // shape the props to mirror what the page server-fetches.
 
@@ -775,12 +792,15 @@ describe('ExecutionDetailView', () => {
             currentStep: 'step-2',
           })}
           trace={[]}
-          currentStepDetails={{
-            stepId: 'step-2',
-            label: 'Analyse data',
-            stepType: 'llm_call',
-            startedAt: '2025-01-01T10:00:05.000Z',
-          }}
+          initialRunningSteps={[
+            {
+              stepId: 'step-2',
+              label: 'Analyse data',
+              stepType: 'llm_call',
+              startedAt: '2025-01-01T10:00:05.000Z',
+              turnCount: 0,
+            },
+          ]}
         />
       );
 
@@ -799,7 +819,7 @@ describe('ExecutionDetailView', () => {
       expect(screen.queryByTestId('execution-live-pill')).not.toBeInTheDocument();
     });
 
-    it('synthesises a running trace row from currentStepDetails', () => {
+    it('synthesises a running trace row from initialRunningSteps', () => {
       render(
         <ExecutionDetailView
           execution={makeExecution({
@@ -808,12 +828,15 @@ describe('ExecutionDetailView', () => {
             currentStep: 'step-2',
           })}
           trace={[TRACE_ENTRY]}
-          currentStepDetails={{
-            stepId: 'step-2',
-            label: 'Analyse data',
-            stepType: 'llm_call',
-            startedAt: '2025-01-01T10:00:05.000Z',
-          }}
+          initialRunningSteps={[
+            {
+              stepId: 'step-2',
+              label: 'Analyse data',
+              stepType: 'llm_call',
+              startedAt: '2025-01-01T10:00:05.000Z',
+              turnCount: 0,
+            },
+          ]}
         />
       );
 
@@ -828,8 +851,8 @@ describe('ExecutionDetailView', () => {
 
     it('drops a persisted entry that collides with the running stepId (race guard)', () => {
       // If a step transitions running → completed between server polls, the
-      // persisted entry could appear in `trace` at the same time as
-      // `currentStepDetails`. The view filters out the persisted dup so
+      // persisted entry could appear in `trace` at the same time as an entry
+      // in `initialRunningSteps`. The view filters out the persisted dup so
       // there's only ONE row for that stepId — the synthesised running one.
       const persisted = { ...TRACE_ENTRY, stepId: 'step-2', label: 'Persisted (stale)' };
       render(
@@ -840,12 +863,15 @@ describe('ExecutionDetailView', () => {
             currentStep: 'step-2',
           })}
           trace={[persisted]}
-          currentStepDetails={{
-            stepId: 'step-2',
-            label: 'Analyse data',
-            stepType: 'llm_call',
-            startedAt: '2025-01-01T10:00:05.000Z',
-          }}
+          initialRunningSteps={[
+            {
+              stepId: 'step-2',
+              label: 'Analyse data',
+              stepType: 'llm_call',
+              startedAt: '2025-01-01T10:00:05.000Z',
+              turnCount: 0,
+            },
+          ]}
         />
       );
 
@@ -856,12 +882,12 @@ describe('ExecutionDetailView', () => {
       expect(rows[0]).toHaveTextContent('Analyse data');
     });
 
-    it('does not synthesise a running row when currentStepDetails is null', () => {
+    it('does not synthesise a running row when initialRunningSteps is empty', () => {
       render(
         <ExecutionDetailView
           execution={makeExecution({ status: 'running', completedAt: null })}
           trace={[TRACE_ENTRY]}
-          currentStepDetails={null}
+          initialRunningSteps={[]}
         />
       );
 
@@ -871,6 +897,87 @@ describe('ExecutionDetailView', () => {
       // an extra segment like `trace-entry-step-type-…`). The "step-2"
       // running-row testid must not appear.
       expect(screen.queryByTestId('trace-entry-step-2')).not.toBeInTheDocument();
+    });
+
+    it('renders a turnCount indicator on running rows for multi-turn steps', () => {
+      // Long agent_call / orchestrator / reflect steps surface their
+      // in-flight progress via `turnCount`. Without this, a 4-minute
+      // agent_call shows as a frozen "Running" spinner with no signal
+      // that the model is making forward progress.
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'running',
+            completedAt: null,
+            currentStep: 'step-2',
+          })}
+          trace={[]}
+          initialRunningSteps={[
+            {
+              stepId: 'step-2',
+              label: 'Discover models',
+              stepType: 'agent_call',
+              startedAt: '2025-01-01T10:00:05.000Z',
+              turnCount: 7,
+            },
+          ]}
+        />
+      );
+
+      const indicator = screen.getByTestId('trace-entry-turn-count-step-2');
+      expect(indicator).toBeInTheDocument();
+      expect(indicator).toHaveTextContent('7 turns');
+    });
+
+    it('does not render the turnCount indicator when turnCount is 0', () => {
+      // Single-shot steps (`llm_call`) always report turnCount: 0 because
+      // they don't use ctx.recordTurn. The indicator should not appear
+      // for them — would just be noise.
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'running',
+            completedAt: null,
+            currentStep: 'step-2',
+          })}
+          trace={[]}
+          initialRunningSteps={[
+            {
+              stepId: 'step-2',
+              label: 'Analyse',
+              stepType: 'llm_call',
+              startedAt: '2025-01-01T10:00:05.000Z',
+              turnCount: 0,
+            },
+          ]}
+        />
+      );
+
+      expect(screen.queryByTestId('trace-entry-turn-count-step-2')).not.toBeInTheDocument();
+    });
+
+    it('renders the singular form when turnCount is 1', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({
+            status: 'running',
+            completedAt: null,
+            currentStep: 'step-2',
+          })}
+          trace={[]}
+          initialRunningSteps={[
+            {
+              stepId: 'step-2',
+              label: 'Discover',
+              stepType: 'agent_call',
+              startedAt: '2025-01-01T10:00:05.000Z',
+              turnCount: 1,
+            },
+          ]}
+        />
+      );
+
+      expect(screen.getByTestId('trace-entry-turn-count-step-2')).toHaveTextContent('1 turn');
     });
   });
 
@@ -1287,6 +1394,57 @@ describe('ExecutionDetailView', () => {
     it('does NOT render on a running execution (canReview is false)', () => {
       render(<ExecutionDetailView execution={makeExecution({ status: 'running' })} trace={[]} />);
       expect(screen.queryByTestId('execution-download-report-button')).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Re-run + lineage ─────────────────────────────────────────────────────
+  // Three things are wired by Phase 5: the Re-run button on terminal
+  // executions, the hidden state on in-flight runs, and the lineage
+  // breadcrumb on a re-run-derived execution. These tests pin the
+  // visibility rules — the dialog itself is exercised by its own
+  // test file + the rerun route tests.
+  describe('Re-run button and lineage breadcrumb', () => {
+    it('shows the Re-run button on a completed execution', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'completed' })} trace={[]} />);
+      expect(screen.getByTestId('execution-rerun-button')).toBeInTheDocument();
+    });
+
+    it('shows the Re-run button on a failed execution (operators commonly want to retry after a fix)', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'failed' })} trace={[]} />);
+      expect(screen.getByTestId('execution-rerun-button')).toBeInTheDocument();
+    });
+
+    it('hides the Re-run button on a running execution (the original still has moves left)', () => {
+      render(<ExecutionDetailView execution={makeExecution({ status: 'running' })} trace={[]} />);
+      expect(screen.queryByTestId('execution-rerun-button')).not.toBeInTheDocument();
+    });
+
+    it('hides the Re-run button on a paused-for-approval execution', () => {
+      render(
+        <ExecutionDetailView
+          execution={makeExecution({ status: 'paused_for_approval' })}
+          trace={[]}
+        />
+      );
+      expect(screen.queryByTestId('execution-rerun-button')).not.toBeInTheDocument();
+    });
+
+    it('renders the parent-execution breadcrumb when parentExecutionId is set', () => {
+      const PARENT = 'cmjbv4i3x00003wsloputgwu0';
+      render(
+        <ExecutionDetailView execution={makeExecution({ parentExecutionId: PARENT })} trace={[]} />
+      );
+      const crumb = screen.getByTestId('execution-parent-breadcrumb');
+      expect(crumb).toHaveTextContent('Re-run of execution');
+      // The link target is the parent execution's detail page — full
+      // navigation refreshes the live-poll hook against the new id.
+      const anchor = crumb.querySelector('a');
+      expect(anchor?.getAttribute('href')).toBe(`/admin/orchestration/executions/${PARENT}`);
+    });
+
+    it('omits the parent breadcrumb when parentExecutionId is absent', () => {
+      render(<ExecutionDetailView execution={makeExecution()} trace={[]} />);
+      expect(screen.queryByTestId('execution-parent-breadcrumb')).not.toBeInTheDocument();
     });
   });
 });

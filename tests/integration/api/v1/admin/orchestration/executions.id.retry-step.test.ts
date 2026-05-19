@@ -26,15 +26,24 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // The retry-step route wraps the status flip + defensive running-step
+  // sweep in a callback transaction. Pass `prisma` itself as the `tx` arg
+  // so the callback's `tx.aiWorkflowExecution.updateMany` etc. reach the
+  // same mocks asserted at the top level.
+  const prisma = {
     aiWorkflowExecution: {
       findUnique: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
     },
-  },
-}));
+    aiWorkflowRunningStep: {
+      deleteMany: vi.fn(),
+    },
+    $transaction: vi.fn(async <T>(cb: (tx: unknown) => Promise<T>) => cb(prisma)),
+  };
+  return { prisma };
+});
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
@@ -299,5 +308,45 @@ describe('POST /api/v1/admin/orchestration/executions/:id/retry-step', () => {
     expect(updateData.currentStep).toBeNull();
     expect(updateData.totalTokensUsed).toBe(0);
     expect(updateData.totalCostUsd).toBe(0);
+  });
+
+  describe('Running-step cleanup', () => {
+    it('defensively sweeps ai_workflow_running_step rows when the status flip succeeds', async () => {
+      // Finalize on the FAILED transition should have cleared running-step
+      // rows already, but a crashed-mid-finalize path could leave orphans.
+      // The retry-step route includes a defensive deleteMany to keep the
+      // FAILED → PENDING transition idempotent against those edge cases.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      (prisma.aiWorkflowExecution.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeFailedExecution()
+      );
+      (prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({
+        count: 1,
+      });
+
+      await POST(makeRequest({ stepId: 'step-3' }), {
+        params: Promise.resolve({ id: EXECUTION_ID }),
+      });
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({
+        where: { executionId: EXECUTION_ID },
+      });
+    });
+
+    it('does not sweep ai_workflow_running_step rows when the status guard fails', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      (prisma.aiWorkflowExecution.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeFailedExecution()
+      );
+      (prisma.aiWorkflowExecution.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({
+        count: 0,
+      });
+
+      await POST(makeRequest({ stepId: 'step-3' }), {
+        params: Promise.resolve({ id: EXECUTION_ID }),
+      });
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).not.toHaveBeenCalled();
+    });
   });
 });

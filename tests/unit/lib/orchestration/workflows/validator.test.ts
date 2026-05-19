@@ -284,6 +284,39 @@ describe('validateWorkflow', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts schema-mode guard with schemaName (no rules required)', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [
+          {
+            id: 'a',
+            name: 'A',
+            type: 'guard',
+            config: { mode: 'schema', schemaName: 'audit-proposals' },
+            nextSteps: [],
+          },
+        ],
+      })
+    );
+    // test-review:accept tobe_true — boolean field `ok` on WorkflowValidationResult; mirrors executor which keys off schemaName in schema mode
+    expect(result.ok).toBe(true);
+    expect(result.errors.find((e) => e.code === 'MISSING_GUARD_RULES')).toBeUndefined();
+  });
+
+  it('flags schema-mode guard missing schemaName', () => {
+    const result = validateWorkflow(
+      def({
+        entryStepId: 'a',
+        steps: [{ id: 'a', name: 'A', type: 'guard', config: { mode: 'schema' }, nextSteps: [] }],
+      })
+    );
+    const err = result.errors.find((e) => e.code === 'MISSING_GUARD_SCHEMA_NAME');
+    expect(err?.stepId).toBe('a');
+    // Should NOT also raise MISSING_GUARD_RULES — schema mode doesn't need rules.
+    expect(result.errors.find((e) => e.code === 'MISSING_GUARD_RULES')).toBeUndefined();
+  });
+
   it('flags evaluate step missing rubric', () => {
     const result = validateWorkflow(
       def({

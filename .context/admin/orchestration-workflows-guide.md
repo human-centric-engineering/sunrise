@@ -91,7 +91,8 @@ The backend validator (`validateWorkflow`) enforces required config for these st
 
 - `human_approval` must have `config.prompt` (error: `MISSING_APPROVAL_PROMPT`)
 - `tool_call` must have `config.capabilitySlug` (error: `MISSING_CAPABILITY_SLUG`)
-- `guard` must have `config.rules` (error: `MISSING_GUARD_RULES`)
+- `guard` in llm/regex mode must have `config.rules` (error: `MISSING_GUARD_RULES`)
+- `guard` in schema mode must have `config.schemaName` (error: `MISSING_GUARD_SCHEMA_NAME`)
 - `evaluate` must have `config.rubric` (error: `MISSING_EVALUATE_RUBRIC`)
 - `external_call` must have `config.url` (error: `MISSING_EXTERNAL_URL`)
 - `agent_call` must have `config.agentSlug` (error: `MISSING_AGENT_SLUG`)
@@ -248,20 +249,21 @@ if (!result.ok) {
 
 ### Error codes
 
-| Code                          | Has `stepId`? | Has `path`? | Meaning                                     |
-| ----------------------------- | ------------- | ----------- | ------------------------------------------- |
-| `MISSING_ENTRY`               | No            | No          | `entryStepId` doesn't resolve               |
-| `DUPLICATE_STEP_ID`           | Yes           | No          | Two steps share the same `id`               |
-| `UNKNOWN_TARGET`              | Yes           | No          | Edge points to non-existent step            |
-| `MISSING_APPROVAL_PROMPT`     | Yes           | No          | `human_approval` missing `config.prompt`    |
-| `MISSING_CAPABILITY_SLUG`     | Yes           | No          | `tool_call` missing `config.capabilitySlug` |
-| `MISSING_GUARD_RULES`         | Yes           | No          | `guard` missing `config.rules`              |
-| `MISSING_EVALUATE_RUBRIC`     | Yes           | No          | `evaluate` missing `config.rubric`          |
-| `MISSING_EXTERNAL_URL`        | Yes           | No          | `external_call` missing `config.url`        |
-| `MISSING_AGENT_SLUG`          | Yes           | No          | `agent_call` missing `config.agentSlug`     |
-| `INSUFFICIENT_ROUTE_BRANCHES` | Yes           | No          | `route` step needs at least two branches    |
-| `UNREACHABLE_STEP`            | Yes           | No          | Step not reachable from entry               |
-| `CYCLE_DETECTED`              | No            | Yes         | DAG contains a cycle                        |
+| Code                          | Has `stepId`? | Has `path`? | Meaning                                           |
+| ----------------------------- | ------------- | ----------- | ------------------------------------------------- |
+| `MISSING_ENTRY`               | No            | No          | `entryStepId` doesn't resolve                     |
+| `DUPLICATE_STEP_ID`           | Yes           | No          | Two steps share the same `id`                     |
+| `UNKNOWN_TARGET`              | Yes           | No          | Edge points to non-existent step                  |
+| `MISSING_APPROVAL_PROMPT`     | Yes           | No          | `human_approval` missing `config.prompt`          |
+| `MISSING_CAPABILITY_SLUG`     | Yes           | No          | `tool_call` missing `config.capabilitySlug`       |
+| `MISSING_GUARD_RULES`         | Yes           | No          | `guard` (llm/regex mode) missing `config.rules`   |
+| `MISSING_GUARD_SCHEMA_NAME`   | Yes           | No          | `guard` (schema mode) missing `config.schemaName` |
+| `MISSING_EVALUATE_RUBRIC`     | Yes           | No          | `evaluate` missing `config.rubric`                |
+| `MISSING_EXTERNAL_URL`        | Yes           | No          | `external_call` missing `config.url`              |
+| `MISSING_AGENT_SLUG`          | Yes           | No          | `agent_call` missing `config.agentSlug`           |
+| `INSUFFICIENT_ROUTE_BRANCHES` | Yes           | No          | `route` step needs at least two branches          |
+| `UNREACHABLE_STEP`            | Yes           | No          | Step not reachable from entry                     |
+| `CYCLE_DETECTED`              | No            | Yes         | DAG contains a cycle                              |
 
 The builder UI also runs `runExtraChecks()` which adds five FE-only codes for instant canvas feedback: `DISCONNECTED_NODE`, `PARALLEL_WITHOUT_MERGE`, `MISSING_REQUIRED_CONFIG`, `CYCLE_DETECTED` (lightweight DFS, distinct from the backend's structural check), and `DANGLING_EDGE` (edges referencing deleted nodes).
 

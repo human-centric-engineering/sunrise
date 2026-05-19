@@ -25,46 +25,71 @@ import type { EditorProps } from '@/components/admin/orchestration/workflow-buil
 
 export interface GuardConfig extends Record<string, unknown> {
   rules: string;
-  mode: 'llm' | 'regex';
+  mode: 'llm' | 'regex' | 'schema';
   failAction: 'block' | 'flag';
   modelOverride?: string;
   temperature?: number;
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | null;
+  /**
+   * Required when `mode === 'schema'`. Slug into the schema registry
+   * (`lib/orchestration/schemas/registry.ts`). The executor surfaces
+   * `schema_not_found` if the named schema isn't registered.
+   */
+  schemaName?: string;
+  /**
+   * Optional in schema mode. When set, the executor validates
+   * `ctx.stepOutputs[inputStepId]`. When absent, validates the
+   * workflow input (`ctx.inputData`).
+   */
+  inputStepId?: string;
   /** When > 0, the fail edge becomes a bounded retry back-edge. */
   maxRetries?: number;
 }
 
 export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
+  const mode = config.mode ?? 'llm';
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor="guard-rules" className="flex items-center text-xs">
-          Rules{' '}
-          <FieldHelp title="Guard rules">
-            In LLM mode: natural-language safety rules the model checks against. In regex mode: a
-            regular expression pattern to test against the input.
-          </FieldHelp>
-        </Label>
-        <Textarea
-          id="guard-rules"
-          value={config.rules ?? ''}
-          onChange={(e) => onChange({ rules: e.target.value })}
-          placeholder="e.g. Reject any input containing personal identifiable information…"
-          rows={5}
-        />
-      </div>
+      {/* `rules` is only meaningful in LLM and regex modes. Hiding it
+          in schema mode avoids the "why is there a Rules textbox if
+          I'm using a schema?" confusion and keeps the panel scannable. */}
+      {mode !== 'schema' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="guard-rules" className="flex items-center text-xs">
+            Rules{' '}
+            <FieldHelp title="Guard rules">
+              In LLM mode: natural-language safety rules the model checks against. In regex mode: a
+              regular expression pattern to test against the input.
+            </FieldHelp>
+          </Label>
+          <Textarea
+            id="guard-rules"
+            value={config.rules ?? ''}
+            onChange={(e) => onChange({ rules: e.target.value })}
+            placeholder="e.g. Reject any input containing personal identifiable information…"
+            rows={5}
+          />
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <Label htmlFor="guard-mode" className="flex items-center text-xs">
           Mode{' '}
           <FieldHelp title="Validation mode">
-            <strong>LLM</strong> — the model evaluates rules against input (flexible, costs tokens).
-            <strong>Regex</strong> — pattern match against input (fast, zero cost).
+            <strong>LLM</strong> — the model evaluates rules against input (flexible, costs tokens,
+            judgment-based; not reliable for closed-set / enum checks).
+            <br />
+            <strong>Regex</strong> — pattern match against input (fast, zero cost, structural).
+            <br />
+            <strong>Schema</strong> — validate an upstream step&rsquo;s output against a registered
+            Zod schema (deterministic, zero LLM cost). Use this for shape / enum / required-field
+            checks where LLM mode hallucinates. Authors register schemas in code via{' '}
+            <code>registerSchema</code>.
           </FieldHelp>
         </Label>
         <Select
-          value={config.mode ?? 'llm'}
-          onValueChange={(value) => onChange({ mode: value as 'llm' | 'regex' })}
+          value={mode}
+          onValueChange={(value) => onChange({ mode: value as 'llm' | 'regex' | 'schema' })}
         >
           <SelectTrigger id="guard-mode">
             <SelectValue />
@@ -72,9 +97,53 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
           <SelectContent>
             <SelectItem value="llm">LLM</SelectItem>
             <SelectItem value="regex">Regex</SelectItem>
+            <SelectItem value="schema">Schema</SelectItem>
           </SelectContent>
         </Select>
       </div>
+
+      {mode === 'schema' && (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="guard-schema-name" className="flex items-center text-xs">
+              Schema name{' '}
+              <FieldHelp title="Registered schema name">
+                The schema slug from <code>lib/orchestration/schemas/registry.ts</code>. The
+                executor looks the schema up at run time; if it&rsquo;s not registered the step
+                fails with <code>schema_not_found</code>. Authors register schemas in feature
+                modules (<code>lib/orchestration/&lt;feature&gt;/schemas.ts</code>) imported on app
+                start.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="guard-schema-name"
+              value={config.schemaName ?? ''}
+              onChange={(e) => onChange({ schemaName: e.target.value })}
+              placeholder="e.g. audit-proposals"
+              className="font-mono text-xs"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="guard-input-step-id" className="flex items-center text-xs">
+              Input step ID (optional){' '}
+              <FieldHelp title="Input step">
+                Step ID whose <code>output</code> is validated. Leave blank to validate the
+                workflow&rsquo;s input data instead. The validator surfaces{' '}
+                <code>input_step_not_found</code> if the named step has not completed before this
+                guard runs.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="guard-input-step-id"
+              value={config.inputStepId ?? ''}
+              onChange={(e) => onChange({ inputStepId: e.target.value })}
+              placeholder="e.g. analyse_chat"
+              className="font-mono text-xs"
+            />
+          </div>
+        </>
+      )}
 
       <div className="space-y-1.5">
         <Label htmlFor="guard-fail-action" className="flex items-center text-xs">
@@ -129,7 +198,7 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
         </div>
       )}
 
-      {(config.mode ?? 'llm') === 'llm' && (
+      {mode === 'llm' && (
         <>
           <div className="space-y-1.5">
             <Label htmlFor="guard-model-override" className="flex items-center text-xs">

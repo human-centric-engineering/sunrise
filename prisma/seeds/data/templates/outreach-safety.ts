@@ -55,6 +55,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'screen_request',
         name: 'Compliance screening',
+        description:
+          'Compliance gate. Blocks the outreach if the recipient is on the opt-out list, the message has misleading claims, the request violates GDPR / CAN-SPAM rules, or the recipient address is missing or malformed. Fail routes to the rejection-notice path; pass routes to channel selection.',
         type: 'guard',
         config: {
           rules:
@@ -71,6 +73,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'rejection_notice',
         name: 'Generate rejection notice',
+        description:
+          'Reached when compliance screening blocks the request. Writes a brief internal notice explaining which rule triggered the block — no message is sent to the recipient.',
         type: 'llm_call',
         config: {
           prompt:
@@ -83,6 +87,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'classify_channel',
         name: 'Route to channel',
+        description:
+          'Picks the delivery channel — email for standard communications, SMS for urgent or time-sensitive messages, webhook for system-to-system notifications. Email and SMS go through drafting + scoring + approval; webhook fires directly.',
         type: 'route',
         config: {
           classificationPrompt:
@@ -98,6 +104,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'draft_email',
         name: 'Draft email content',
+        description:
+          'Drafts a professional email — subject, greeting, body, and call to action — for the outreach request. Concise and on-brand; final wording is reviewed by a human before send.',
         type: 'llm_call',
         config: {
           prompt:
@@ -110,6 +118,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'draft_sms',
         name: 'Draft SMS content',
+        description:
+          'Drafts an SMS message capped at 160 characters with a direct call to action. Final wording is reviewed by a human before send.',
         type: 'llm_call',
         config: {
           prompt:
@@ -122,6 +132,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'send_webhook',
         name: 'Send webhook notification',
+        description:
+          'System-to-system path. POSTs the outreach payload to a configured webhook URL with bearer auth and a 10-second timeout. Skips the draft / score / approval flow.',
         type: 'external_call',
         config: {
           url: 'https://api.example.com/webhooks/notify',
@@ -137,6 +149,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'score_draft',
         name: 'Score draft quality',
+        description:
+          'Scores the email or SMS draft on a 1–10 scale across clarity, professionalism, and compliance. The score lands next to the message in the approval queue so reviewers can spot weak drafts at a glance.',
         type: 'evaluate',
         config: {
           rubric:
@@ -151,6 +165,8 @@ export const OUTREACH_SAFETY_TEMPLATE: WorkflowTemplate = {
       {
         id: 'approve_send',
         name: 'Approve before sending',
+        description:
+          'Pauses the workflow for a human to approve the drafted email or SMS before it reaches the recipient. 60-minute timeout, in-app notification.',
         type: 'human_approval',
         config: {
           prompt:

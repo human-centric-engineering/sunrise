@@ -205,6 +205,13 @@ export interface WorkflowStep {
   id: string;
   /** Human-readable step name */
   name: string;
+  /**
+   * Optional one-or-two sentence explanation of why this step exists and what
+   * it contributes. Surfaces on hover and in the expanded trace row in the
+   * execution viewer, and renders as a `<Textarea>` in the workflow builder's
+   * block-config panel. Capped at 500 chars by the Zod schema.
+   */
+  description?: string;
   /** Step type — see WorkflowStepType for known types */
   type: WorkflowStepType;
   /** Step-specific configuration */
@@ -245,7 +252,14 @@ export interface WorkflowDefinition {
  */
 export type ExecutionEvent =
   | { type: 'workflow_started'; executionId: string; workflowId: string }
-  | { type: 'step_started'; stepId: string; stepType: WorkflowStepType; label: string }
+  | {
+      type: 'step_started';
+      stepId: string;
+      stepType: WorkflowStepType;
+      label: string;
+      /** Optional `WorkflowStep.description` so the live execution panel can surface it without waiting for the persisted trace entry. Absent when the step has no description configured. */
+      description?: string;
+    }
   | {
       type: 'step_completed';
       stepId: string;
@@ -392,6 +406,13 @@ export interface ExecutionTraceEntry {
   stepId: string;
   stepType: WorkflowStepType;
   label: string;
+  /**
+   * Snapshot of `WorkflowStep.description` at execution time. Carried onto
+   * every trace entry by the engine so the viewer can show step context on
+   * hover and in the expanded row without rejoining to the workflow
+   * snapshot. Absent when the step had no description configured.
+   */
+  description?: string;
   status: 'completed' | 'failed' | 'skipped' | 'awaiting_approval' | 'rejected';
   output: unknown;
   error?: string;
@@ -469,6 +490,20 @@ export interface ExecutionTraceEntry {
    * detail; it is the workflow-step analogue of chat citations.
    */
   provenance?: ProvenanceItem[];
+  /**
+   * View-time enrichment for `agent_call` steps. The API loader resolves
+   * the step's `config.agentSlug` against the current AiAgent registry
+   * (one batched lookup per execution-detail load) and attaches the
+   * resolved id + display name so the trace viewer can render an
+   * "Agent · {name}" chip with a link to `/admin/orchestration/agents/{id}`.
+   * Absent for non-agent_call steps and for agent_call steps whose
+   * slug no longer matches an active agent (renamed / archived).
+   */
+  agent?: {
+    id: string;
+    slug: string;
+    name: string;
+  };
 }
 
 /**

@@ -23,6 +23,7 @@ import type {
   ReviewSchema,
   ReviewSection,
 } from '@/lib/orchestration/review-schema/types';
+import { maybeParseJson } from '@/lib/orchestration/engine/maybe-parse-json';
 
 export type ResolvedItem = Record<string, unknown> & {
   /** Stable key for React + selection state. Read from `itemKey`. */
@@ -74,17 +75,6 @@ function step(value: unknown, segment: string): unknown {
   const unwrapped = maybeParseJson(value);
   if (unwrapped === null || typeof unwrapped !== 'object') return undefined;
   return (unwrapped as Record<string, unknown>)[segment];
-}
-
-function maybeParseJson(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value;
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return value;
-  }
 }
 
 /**

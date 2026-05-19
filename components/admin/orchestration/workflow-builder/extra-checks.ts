@@ -226,7 +226,14 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
         break;
       }
       case 'guard': {
-        if (!isNonEmptyString(config.rules)) {
+        // Mirror the executor and `validateWorkflow`: schema-mode guards
+        // key off `schemaName` instead of `rules`. See
+        // lib/orchestration/engine/executors/guard.ts.
+        if (config.mode === 'schema') {
+          if (!isNonEmptyString(config.schemaName)) {
+            emit(`Guard "${label}" (schema mode) needs a schema name`);
+          }
+        } else if (!isNonEmptyString(config.rules)) {
           emit(`Guard "${label}" needs safety rules`);
         }
         break;

@@ -360,4 +360,100 @@ describe('GuardEditor', () => {
 
     expect(onChange).toHaveBeenCalledWith({ maxRetries: 0 });
   });
+
+  // ── Schema mode ─────────────────────────────────────────────────────────
+  // Selecting Schema mode swaps the panel into a different layout —
+  // no Rules textarea, no LLM-only fields, and two new inputs for the
+  // schema name and (optional) input step id. These tests pin both
+  // the visibility and the round-trip wiring.
+  describe('schema mode', () => {
+    it('renders the schema name and input step id inputs when mode is schema', () => {
+      const config: GuardConfig = {
+        rules: '',
+        mode: 'schema',
+        failAction: 'block',
+        schemaName: 'audit-proposals',
+      };
+      render(<GuardEditor config={config} onChange={vi.fn()} />);
+
+      const nameInput = document.getElementById('guard-schema-name') as HTMLInputElement;
+      const stepInput = document.getElementById('guard-input-step-id') as HTMLInputElement;
+      expect(nameInput).toBeInTheDocument();
+      expect(stepInput).toBeInTheDocument();
+      expect(nameInput.value).toBe('audit-proposals');
+    });
+
+    it('hides the Rules textarea in schema mode (schema mode keys off schemaName, not rules)', () => {
+      const config: GuardConfig = {
+        rules: 'leftover',
+        mode: 'schema',
+        failAction: 'block',
+        schemaName: 'demo',
+      };
+      render(<GuardEditor config={config} onChange={vi.fn()} />);
+
+      // The Rules textarea is hidden so an author isn't confused by
+      // a visible field that does nothing in this mode.
+      expect(document.getElementById('guard-rules')).not.toBeInTheDocument();
+    });
+
+    it('hides the LLM-only fields (model override, temperature) in schema mode', () => {
+      const config: GuardConfig = {
+        rules: '',
+        mode: 'schema',
+        failAction: 'block',
+        schemaName: 'demo',
+      };
+      render(<GuardEditor config={config} onChange={vi.fn()} />);
+
+      // Schema mode is deterministic — these only matter for LLM mode.
+      expect(document.getElementById('guard-model-override')).not.toBeInTheDocument();
+      expect(document.getElementById('guard-temperature')).not.toBeInTheDocument();
+    });
+
+    it('typing in the schema name input fires onChange({ schemaName })', () => {
+      const onChange = vi.fn();
+      const config: GuardConfig = {
+        rules: '',
+        mode: 'schema',
+        failAction: 'block',
+        schemaName: '',
+      };
+      render(<GuardEditor config={config} onChange={onChange} />);
+
+      const input = document.getElementById('guard-schema-name') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'audit-proposals' } });
+
+      expect(onChange).toHaveBeenCalledWith({ schemaName: 'audit-proposals' });
+    });
+
+    it('typing in the input step id input fires onChange({ inputStepId })', () => {
+      const onChange = vi.fn();
+      const config: GuardConfig = {
+        rules: '',
+        mode: 'schema',
+        failAction: 'block',
+        schemaName: 'demo',
+      };
+      render(<GuardEditor config={config} onChange={onChange} />);
+
+      const input = document.getElementById('guard-input-step-id') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: 'analyse_chat' } });
+
+      expect(onChange).toHaveBeenCalledWith({ inputStepId: 'analyse_chat' });
+    });
+
+    it('schema mode dropdown option is available and switching to it fires onChange({ mode: schema })', async () => {
+      const onChange = vi.fn();
+      const user = userEvent.setup();
+      const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'block' };
+      render(<GuardEditor config={config} onChange={onChange} />);
+
+      const trigger = document.getElementById('guard-mode')!;
+      await user.click(trigger);
+      await user.click(await screen.findByRole('option', { name: /^schema$/i }));
+
+      expect(onChange).toHaveBeenCalledWith({ mode: 'schema' });
+    });
+  });
 });

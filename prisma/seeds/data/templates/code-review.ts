@@ -59,6 +59,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'intake',
         name: 'Accept diff',
+        description:
+          'Entry point that accepts the code diff and any metadata from the trigger. Chain steps mark structural intake — they pass through unchanged and let the parallel fan-out reference {{input}} cleanly.',
         type: 'chain',
         config: {
           steps: [],
@@ -68,6 +70,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'fanout',
         name: 'Specialist analyses',
+        description:
+          'Parallel fan-out point — runs the security scan, style check, and logic review concurrently with a 90-second cap.',
         type: 'parallel',
         config: {
           branches: ['security_scan', 'style_check', 'logic_review'],
@@ -83,6 +87,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'security_scan',
         name: 'Security scan',
+        description:
+          'Scans the diff for injection flaws, hardcoded secrets, insecure dependencies, and OWASP Top 10 issues, tagging each finding with severity. Critical findings short-circuit the polishing loop later via the safety gate.',
         type: 'llm_call',
         config: {
           prompt:
@@ -95,6 +101,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'style_check',
         name: 'Style check',
+        description:
+          'Reviews naming conventions, formatting, documentation, and clean-code adherence. One of three parallel specialists; output feeds the synthesis step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -107,6 +115,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'logic_review',
         name: 'Logic review',
+        description:
+          'Reviews correctness, edge cases, performance, and regression risk. One of three parallel specialists; output feeds the synthesis step.',
         type: 'llm_call',
         config: {
           prompt:
@@ -119,6 +129,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'synthesise',
         name: 'Synthesise findings',
+        description:
+          'Merges security, style, and logic findings into a single structured review — grouped by severity, deduplicated, with a summary up top.',
         type: 'llm_call',
         config: {
           prompt:
@@ -131,6 +143,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'safety_gate',
         name: 'Critical vulnerability check',
+        description:
+          'Branches the review by severity. Critical findings skip the polishing loop and go straight to scoring so urgent issues surface fast; clean code passes through the reflect loop for a more polished write-up.',
         type: 'guard',
         config: {
           rules:
@@ -147,6 +161,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'refine_feedback',
         name: 'Refine review feedback',
+        description:
+          'Critique-revise loop that tightens the review prose — checks that suggestions are constructive, specific (with code examples), and professionally toned. Up to 2 iterations.',
         type: 'reflect',
         config: {
           critiquePrompt:
@@ -158,6 +174,8 @@ export const CODE_REVIEW_TEMPLATE: WorkflowTemplate = {
       {
         id: 'quality_score',
         name: 'Score code quality',
+        description:
+          'Scores overall code quality on a 1–10 scale across security, style, logic, and testability so reviewers can see at a glance whether the diff is ready or needs work.',
         type: 'evaluate',
         config: {
           rubric:

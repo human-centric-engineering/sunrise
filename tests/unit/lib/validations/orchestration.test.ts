@@ -492,6 +492,48 @@ describe('workflowDefinitionSchema', () => {
     const result = workflowDefinitionSchema.safeParse({ ...VALID_WORKFLOW_DEF, entryStepId: '' });
     expect(result.success).toBe(false);
   });
+
+  // ── Step.description — optional, capped at 500 chars, trim()-applied ─────
+  // The description field is opt-in: most steps in the wild won't carry one,
+  // and the schema must keep accepting them. When set, the cap protects the
+  // hover tooltip from becoming an essay, and `.trim()` discards an
+  // accidental blank-line paste before it persists.
+  it('accepts a workflow whose only step has no description (round-trip)', () => {
+    const result = workflowDefinitionSchema.safeParse(VALID_WORKFLOW_DEF);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.steps[0].description).toBeUndefined();
+    }
+  });
+
+  it('accepts a step with a description up to 500 chars', () => {
+    const result = workflowDefinitionSchema.safeParse({
+      ...VALID_WORKFLOW_DEF,
+      steps: [{ ...VALID_WORKFLOW_DEF.steps[0], description: 'x'.repeat(500) }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a step with a description longer than 500 chars', () => {
+    const result = workflowDefinitionSchema.safeParse({
+      ...VALID_WORKFLOW_DEF,
+      steps: [{ ...VALID_WORKFLOW_DEF.steps[0], description: 'x'.repeat(501) }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims surrounding whitespace from the description', () => {
+    const result = workflowDefinitionSchema.safeParse({
+      ...VALID_WORKFLOW_DEF,
+      steps: [{ ...VALID_WORKFLOW_DEF.steps[0], description: '   Picks up the parsed list.   ' }],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // The trim happens at parse time so persisted snapshots never carry
+      // leading or trailing whitespace, even when authors paste casually.
+      expect(result.data.steps[0].description).toBe('Picks up the parsed list.');
+    }
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

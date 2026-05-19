@@ -173,14 +173,25 @@ export async function executeRejection(
     completedAt: new Date().toISOString(),
   };
 
-  const result = await prisma.aiWorkflowExecution.updateMany({
-    where: { id: executionId, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
-    data: {
-      status: WorkflowStatus.CANCELLED,
-      completedAt: new Date(),
-      errorMessage: `Rejected: ${opts.reason}`,
-      executionTrace: trace as unknown as object,
-    },
+  // Reject transitions the execution to CANCELLED. The running-step row
+  // from the paused step (kept alive while awaiting approval) must be
+  // swept now — there's no engine path to clear it after rejection.
+  // Atomic with the status flip so a guard-failed reject doesn't sweep
+  // rows still being driven elsewhere.
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.aiWorkflowExecution.updateMany({
+      where: { id: executionId, status: WorkflowStatus.PAUSED_FOR_APPROVAL },
+      data: {
+        status: WorkflowStatus.CANCELLED,
+        completedAt: new Date(),
+        errorMessage: `Rejected: ${opts.reason}`,
+        executionTrace: trace as unknown as object,
+      },
+    });
+    if (updated.count > 0) {
+      await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId } });
+    }
+    return updated;
   });
 
   if (result.count === 0) {

@@ -13,14 +13,22 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // executeRejection wraps the status flip + running-step sweep in a
+  // callback transaction. Self-referential `prisma` const + a $transaction
+  // mock that passes `prisma` as the `tx` arg keeps assertions simple.
+  const prisma = {
     aiWorkflowExecution: {
       findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
-  },
-}));
+    aiWorkflowRunningStep: {
+      deleteMany: vi.fn(),
+    },
+    $transaction: vi.fn(async <T>(cb: (tx: unknown) => Promise<T>) => cb(prisma)),
+  };
+  return { prisma };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: {

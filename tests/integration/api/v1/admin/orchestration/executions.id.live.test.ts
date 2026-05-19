@@ -4,7 +4,7 @@
  * GET /api/v1/admin/orchestration/executions/:id/live
  *
  * Returns the same narrow status fields as `/status` plus the parsed trace,
- * cost-attribution rows, and `currentStepDetails` derived from the live
+ * cost-attribution rows, and `currentRunningSteps` derived from the live
  * `currentStep*` columns. Designed for ~1s polling from the detail page.
  */
 
@@ -28,6 +28,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflowExecution: { findUnique: vi.fn() },
+    aiWorkflowRunningStep: { findMany: vi.fn() },
     aiCostLog: { findMany: vi.fn() },
   },
 }));
@@ -58,9 +59,6 @@ function makeExecutionRow(overrides: Record<string, unknown> = {}) {
     userId: ADMIN_ID,
     status: 'running',
     currentStep: 'step-2',
-    currentStepLabel: 'Analyse models',
-    currentStepType: 'llm_call',
-    currentStepStartedAt: new Date('2026-05-01T12:00:05Z'),
     errorMessage: null,
     totalTokensUsed: 42,
     totalCostUsd: 0.123,
@@ -85,6 +83,19 @@ function makeExecutionRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeRunningStepRow(overrides: Record<string, unknown> = {}) {
+  return {
+    stepId: 'step-2',
+    label: 'Analyse models',
+    stepType: 'llm_call',
+    startedAt: new Date('2026-05-01T12:00:05Z'),
+    // Default `turns: null` — single-shot steps and freshly-started
+    // multi-turn steps both surface as turnCount: 0 in the response.
+    turns: null,
+    ...overrides,
+  };
+}
+
 function makeRequest(): NextRequest {
   return new NextRequest(
     `http://localhost:3000/api/v1/admin/orchestration/executions/${EXECUTION_ID}/live`
@@ -104,6 +115,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id/live', () => {
     vi.clearAllMocks();
     vi.mocked(adminLimiter.check).mockReturnValue({ success: true } as never);
     vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([] as never);
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -152,9 +164,12 @@ describe('GET /api/v1/admin/orchestration/executions/:id/live', () => {
     expect(response.status).toBe(404);
   });
 
-  it('returns snapshot + trace + currentStepDetails for a running execution', async () => {
+  it('returns snapshot + trace + currentRunningSteps for a running execution', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecutionRow() as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow(),
+    ] as never);
 
     const response = await GET(makeRequest(), makeParams(EXECUTION_ID));
     expect(response.status).toBe(200);
@@ -165,7 +180,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id/live', () => {
         snapshot: Record<string, unknown>;
         trace: unknown[];
         costEntries: unknown[];
-        currentStepDetails: Record<string, unknown> | null;
+        currentRunningSteps: Array<Record<string, unknown>>;
       };
     }>(response);
 
@@ -182,41 +197,111 @@ describe('GET /api/v1/admin/orchestration/executions/:id/live', () => {
       createdAt: '2026-05-01T11:59:55.000Z',
     });
     expect(body.data.trace).toHaveLength(1);
-    expect(body.data.currentStepDetails).toEqual({
-      stepId: 'step-2',
-      label: 'Analyse models',
-      stepType: 'llm_call',
-      startedAt: '2026-05-01T12:00:05.000Z',
-    });
+    expect(body.data.currentRunningSteps).toEqual([
+      {
+        stepId: 'step-2',
+        label: 'Analyse models',
+        stepType: 'llm_call',
+        startedAt: '2026-05-01T12:00:05.000Z',
+        turnCount: 0,
+      },
+    ]);
   });
 
-  it('returns null currentStepDetails when status is terminal', async () => {
+  it('exposes turnCount from running-step `turns` length so long agent_calls show forward progress', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
-      makeExecutionRow({
-        status: 'completed',
-        currentStepLabel: null,
-        currentStepType: null,
-        currentStepStartedAt: null,
-      }) as never
-    );
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecutionRow() as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow({
+        stepId: 'discover_new_models',
+        label: 'Discover new models',
+        stepType: 'agent_call',
+        turns: Array.from({ length: 7 }, (_, i) => ({
+          kind: 'agent_call',
+          phase: 'continuing',
+          index: i,
+        })),
+      }),
+    ] as never);
 
     const response = await GET(makeRequest(), makeParams(EXECUTION_ID));
-    const body = await parseJson<{ data: { currentStepDetails: unknown } }>(response);
+    const body = await parseJson<{ data: { currentRunningSteps: Array<{ turnCount: number }> } }>(
+      response
+    );
 
-    expect(body.data.currentStepDetails).toBeNull();
+    expect(body.data.currentRunningSteps[0]?.turnCount).toBe(7);
   });
 
-  it('returns null currentStepDetails when live columns are partially populated', async () => {
-    // Defends against rendering a half-broken running indicator if the engine
-    // ever writes some columns but not others (e.g. crash mid-update).
+  it('returns turnCount=0 when running-step has no turns persisted yet', async () => {
+    // Either the executor doesn't use `recordTurn` (single-shot) or the
+    // step just started and hasn't fired its first turn yet. Either way
+    // the UI should treat it as "no progress signal" and hide the chip.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecutionRow() as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow({ turns: null }),
+    ] as never);
+
+    const response = await GET(makeRequest(), makeParams(EXECUTION_ID));
+    const body = await parseJson<{ data: { currentRunningSteps: Array<{ turnCount: number }> } }>(
+      response
+    );
+
+    expect(body.data.currentRunningSteps[0]?.turnCount).toBe(0);
+  });
+
+  it('returns empty currentRunningSteps when status is terminal', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
-      makeExecutionRow({ currentStepLabel: null }) as never
+      makeExecutionRow({ status: 'completed' }) as never
     );
+    // Even if rows happen to linger (engine sweep race), terminal status
+    // short-circuits the findMany and returns an empty array.
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow(),
+    ] as never);
+
     const response = await GET(makeRequest(), makeParams(EXECUTION_ID));
-    const body = await parseJson<{ data: { currentStepDetails: unknown } }>(response);
-    expect(body.data.currentStepDetails).toBeNull();
+    const body = await parseJson<{ data: { currentRunningSteps: unknown[] } }>(response);
+
+    expect(body.data.currentRunningSteps).toEqual([]);
+    expect(vi.mocked(prisma.aiWorkflowRunningStep.findMany)).not.toHaveBeenCalled();
+  });
+
+  it('returns currentRunningSteps with one entry per branch during a parallel fan-out', async () => {
+    // The headline behaviour: every in-flight branch surfaces as its own
+    // running-step row instead of last-writer-wins on scalar columns.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecutionRow() as never);
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([
+      makeRunningStepRow({
+        stepId: 'analyse_chat',
+        label: 'Analyse chat',
+        startedAt: new Date('2026-05-01T12:00:05Z'),
+      }),
+      makeRunningStepRow({
+        stepId: 'analyse_embedding',
+        label: 'Analyse embedding',
+        startedAt: new Date('2026-05-01T12:00:05Z'),
+      }),
+      makeRunningStepRow({
+        stepId: 'discover_new_models',
+        label: 'Discover new models',
+        startedAt: new Date('2026-05-01T12:00:05Z'),
+      }),
+    ] as never);
+
+    const response = await GET(makeRequest(), makeParams(EXECUTION_ID));
+    const body = await parseJson<{
+      data: { currentRunningSteps: Array<{ stepId: string }> };
+    }>(response);
+
+    expect(body.data.currentRunningSteps).toHaveLength(3);
+    expect(body.data.currentRunningSteps.map((r) => r.stepId)).toEqual([
+      'analyse_chat',
+      'analyse_embedding',
+      'discover_new_models',
+    ]);
   });
 
   it('attributes cost-log rows by stepId; drops rows without a stepId', async () => {

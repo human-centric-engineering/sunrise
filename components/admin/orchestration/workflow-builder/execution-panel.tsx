@@ -43,6 +43,8 @@ interface LiveTraceEntry {
   stepId: string;
   stepType: string;
   label: string;
+  /** Mirrors `WorkflowStep.description` when the engine attaches it to `step_started`. */
+  description?: string;
   status: ExecutionTraceEntry['status'] | 'running';
   output?: unknown;
   error?: string;
@@ -170,6 +172,7 @@ export function ExecutionPanel({
               stepId: d.stepId as string,
               stepType: typeof d.stepType === 'string' ? d.stepType : 'unknown',
               label: d.label as string,
+              ...(typeof d.description === 'string' ? { description: d.description } : {}),
               status: 'running',
               tokensUsed: 0,
               costUsd: 0,
@@ -483,6 +486,7 @@ export function ExecutionPanel({
               stepId={entry.stepId}
               stepType={String(entry.stepType)}
               label={entry.label}
+              description={entry.description}
               status={entry.status}
               output={entry.output}
               error={entry.error}

@@ -33,14 +33,23 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  // The route wraps the status flip + running-step sweep in a callback
+  // transaction. Build `prisma` as a self-referential const so the
+  // `$transaction` callback can pass `prisma` itself as the `tx` arg —
+  // assertions at the top level then see the mock calls made via `tx`.
+  const prisma = {
     aiWorkflowExecution: {
       findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
-  },
-}));
+    aiWorkflowRunningStep: {
+      deleteMany: vi.fn(),
+    },
+    $transaction: vi.fn(async <T>(cb: (tx: unknown) => Promise<T>) => cb(prisma)),
+  };
+  return { prisma };
+});
 
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },
@@ -340,6 +349,37 @@ describe('POST /api/v1/admin/orchestration/executions/:id/cancel', () => {
 
       const response = await POST(makePostRequest(), makeParams(EXECUTION_ID));
       expect(response.status).toBe(404);
+    });
+  });
+
+  describe('Running-step cleanup', () => {
+    it('sweeps ai_workflow_running_step rows when the status flip succeeds', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        makeExecution({ status: 'running' }) as never
+      );
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 1 } as never);
+
+      await POST(makePostRequest(), makeParams(EXECUTION_ID));
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({
+        where: { executionId: EXECUTION_ID },
+      });
+    });
+
+    it('does not sweep ai_workflow_running_step rows when the status guard fails (race)', async () => {
+      // count=0 means another path already moved the row out of a
+      // cancellable status. Sweeping running-step rows in that case would
+      // strip live state from whatever path now owns it.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        makeExecution({ status: 'running' }) as never
+      );
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockResolvedValue({ count: 0 } as never);
+
+      await POST(makePostRequest(), makeParams(EXECUTION_ID));
+
+      expect(prisma.aiWorkflowRunningStep.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

@@ -70,6 +70,33 @@ describe('Event factory helpers', () => {
         label: 'Generate text',
       });
     });
+
+    // The description argument is optional. When omitted the event payload
+    // must stay byte-identical to the pre-description shape so historical
+    // SSE consumers and event-stream snapshots aren't disrupted.
+    it('omits `description` from the event payload when not passed', () => {
+      const event = stepStarted('step-1', 'llm_call', 'Generate text');
+      expect(event).not.toHaveProperty('description');
+    });
+
+    // When the workflow step carries a description, the engine forwards it
+    // so the live execution panel can render hover context as soon as the
+    // step starts, without waiting for the persisted trace entry to land.
+    it('forwards `description` onto the event payload when passed', () => {
+      const event = stepStarted(
+        'step-1',
+        'llm_call',
+        'Generate text',
+        'Drafts the user-facing reply using the retrieved docs.'
+      );
+      expect(event).toEqual({
+        type: 'step_started',
+        stepId: 'step-1',
+        stepType: 'llm_call',
+        label: 'Generate text',
+        description: 'Drafts the user-facing reply using the retrieved docs.',
+      });
+    });
   });
 
   describe('stepCompleted', () => {

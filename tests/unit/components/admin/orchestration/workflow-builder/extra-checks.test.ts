@@ -225,6 +225,23 @@ describe('runExtraChecks', () => {
       expect(missing[0].stepId).toBe('n1');
     });
 
+    it('accepts schema-mode guard with schemaName (no rules required)', () => {
+      const nodes = [
+        makeNode('n1', 'guard', { mode: 'schema', schemaName: 'audit-proposals' }, 'Guard'),
+      ];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(0);
+    });
+
+    it('flags schema-mode guard missing schemaName', () => {
+      const nodes = [makeNode('n1', 'guard', { mode: 'schema' }, 'Guard')];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(1);
+      expect(missing[0].stepId).toBe('n1');
+    });
+
     it('flags evaluate with empty rubric', () => {
       const nodes = [makeNode('n1', 'evaluate', { rubric: '' }, 'Evaluate')];
       const errors = runExtraChecks(nodes, []);

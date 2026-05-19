@@ -67,7 +67,7 @@ function payload(over: Partial<ExecutionLivePayload> = {}): ExecutionLivePayload
     snapshot: snapshot(),
     trace: [],
     costEntries: [],
-    currentStepDetails: null,
+    currentRunningSteps: [],
     ...over,
   };
 }
@@ -121,12 +121,15 @@ describe('ExecutionProgressInline', () => {
         <ExecutionProgressInline
           executionId={EXEC_ID}
           initialPayload={payload({
-            currentStepDetails: {
-              stepId: 'step-1',
-              label: 'Searching the web',
-              stepType: 'external_call',
-              startedAt: '2026-05-15T10:00:00.000Z',
-            },
+            currentRunningSteps: [
+              {
+                stepId: 'step-1',
+                label: 'Searching the web',
+                stepType: 'external_call',
+                startedAt: '2026-05-15T10:00:00.000Z',
+                turnCount: 0,
+              },
+            ],
           })}
         />
       );

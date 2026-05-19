@@ -62,13 +62,14 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/publish`                  | POST               | Promote `draftDefinition` to a new published version                                                       | 5.1     |
 | `/workflows/:id/discard-draft`            | POST               | Clear `draftDefinition`; published version unchanged                                                       | 5.1     |
 | `/workflows/:id/rollback`                 | POST               | Create a NEW version copied from a target version                                                          | 5.1     |
-| `/executions/:id`                         | GET                | Read execution + parsed trace + `currentStepDetails` for live indicator                                    | 3.2     |
+| `/executions/:id`                         | GET                | Read execution + parsed trace + `currentRunningSteps[]` for live indicator                                 | 3.2     |
 | `/executions/:id/status`                  | GET                | Lightweight status read (no trace, polling-friendly)                                                       | —       |
-| `/executions/:id/live`                    | GET                | Snapshot + trace + cost entries + `currentStepDetails` (1 s-poll friendly)                                 | —       |
+| `/executions/:id/live`                    | GET                | Snapshot + trace + cost entries + `currentRunningSteps[]` (1 s-poll friendly)                              | —       |
 | `/executions/:id/approve`                 | POST               | Approve paused execution                                                                                   | 3.2     |
 | `/executions/:id/reject`                  | POST               | Reject paused execution with reason                                                                        | —       |
 | `/executions/:id/cancel`                  | POST               | Cancel a running/paused execution                                                                          | 5.1     |
 | `/executions/:id/retry-step`              | POST               | Retry from a failed step                                                                                   | 7.0     |
+| `/executions/:id/rerun`                   | POST               | Re-run the execution against a chosen workflow version (SSE)                                               | 8.0     |
 | `/approvals/history`                      | GET                | Past approval decisions (filters, paging, CSV export)                                                      | —       |
 | `/chat/stream`                            | POST               | Streaming chat turn (SSE)                                                                                  | 3.3     |
 | `/chat/transcribe`                        | POST               | Speech-to-text — multipart audio in, transcript out                                                        | —       |
@@ -413,9 +414,9 @@ Body: `{ versionIndex: number }`. Returns the updated workflow.
 
 ### `GET /executions/:id`
 
-Returns the execution row with a parsed `ExecutionTraceEntry[]`, step-attributed `costEntries`, and `currentStepDetails`. Scoped to `session.user.id` — cross-user returns 404.
+Returns the execution row with a parsed `ExecutionTraceEntry[]`, step-attributed `costEntries`, and `currentRunningSteps[]`. Scoped to `session.user.id` — cross-user returns 404.
 
-`currentStepDetails: { stepId, label, stepType, startedAt } | null` — populated from the live `currentStep*` columns on `AiWorkflowExecution` when the execution is in a non-terminal status AND the engine has written all three. `null` otherwise (terminal status, partially-populated columns, or a step that hasn't started). Lets the page render the in-flight step's friendly label and elapsed time without parsing the workflow version snapshot.
+`currentRunningSteps: Array<{ stepId, label, stepType, startedAt, turnCount }>` — one entry per step that's currently in flight, ordered by `startedAt` ascending. Sourced from the `AiWorkflowRunningStep` side table rather than scalar columns on `AiWorkflowExecution`, so a `parallel` step's fan-out surfaces every branch concurrently instead of last-writer-wins. Empty array on terminal status; otherwise zero or more entries (zero before the engine enters its first step, N during a parallel fan-out). `turnCount` is the number of multi-turn checkpoint writes recorded for that step — always 0 for single-shot step types, grows for `agent_call` / `orchestrator` / `reflect` as the model fires more iterations. The detail view renders it as a "N turns" indicator so long agent calls show forward progress rather than looking frozen.
 
 ### `GET /executions/:id/live`
 
@@ -432,11 +433,20 @@ Same auth/ownership/rate-limit posture as `/status`, but returns everything the 
   "costEntries": [
     /* per-LLM-call cost rows keyed by stepId */
   ],
-  "currentStepDetails": { "stepId": "...", "label": "...", "stepType": "...", "startedAt": "..." } | null
+  "currentRunningSteps": [
+    {
+      "stepId": "analyse_chat",
+      "label": "Analyse chat models",
+      "stepType": "llm_call",
+      "startedAt": "2026-05-19T15:11:40.573Z",
+      "turnCount": 0,
+    },
+    // During a `parallel` step's fan-out, one entry per branch.
+  ],
 }
 ```
 
-`currentStepDetails` follows the same null-when-incomplete rule as `/executions/:id`.
+`currentRunningSteps` follows the same shape rule as `/executions/:id`. Empty array on terminal status.
 
 ### `POST /executions/:id/approve`
 
@@ -491,6 +501,27 @@ Prepares a failed execution for retry from a specific step. Truncates the trace 
 After this call, the client reconnects via `POST /workflows/:workflowId/execute?resumeFromExecutionId=<executionId>` to resume streaming from the failed step.
 
 Guards: execution must be `failed`, `stepId` must reference a failed step in the trace, ownership is scoped to `session.user.id`.
+
+### `POST /executions/:id/rerun`
+
+Re-run a previously-executed workflow against either its current published version or a caller-specified version, carrying the original execution's `inputData` and `budgetLimitUsd` forward. The new execution row carries `parentExecutionId` pointing at the original, which the admin detail view renders as a "Re-run of execution X" breadcrumb.
+
+```jsonc
+// Request — both fields optional
+{
+  "versionId": "<workflow-version-cuid>", // defaults to publishedVersionId
+  "budgetLimitUsd": 5.0, // defaults to original's budget
+}
+
+// Response: SSE stream of ExecutionEvent
+// (first event: workflow_started with the new executionId)
+```
+
+The response is an SSE stream — clients capture the new `executionId` from the first `workflow_started` event and navigate to `/admin/orchestration/executions/<newId>` to follow the run via the standard live-poll path. See `audit-models-dialog.tsx` for the detached-drain pattern (don't abort the fetch on close, or the engine aborts mid-run).
+
+Guards: execution must belong to `session.user.id` (cross-user returns 404 to avoid existence leaks). `versionId`, when provided, must belong to the original workflow — cross-workflow pins return 400 with a typed `ValidationError`. `prepareWorkflowExecution` then runs structural + semantic validation on the chosen version's snapshot before the engine starts.
+
+Side effects: every capability dispatch, notification, and external call in the workflow re-fires. The admin UI dialog (`<RerunExecutionDialog>`) surfaces this explicitly in the confirmation body.
 
 ### `GET /approvals/history`
 

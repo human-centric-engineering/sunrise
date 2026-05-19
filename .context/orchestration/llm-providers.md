@@ -208,11 +208,12 @@ For tests or scripts that bypass the database, use `providerManager.registerProv
 
 ## Model Registry
 
-Dynamic catalogue of models with pricing, context windows, and capabilities. Three layers:
+Dynamic catalogue of models with pricing, context windows, and capabilities. Four layers:
 
 1. **Static fallback map** — always available. Covers Claude Opus/Sonnet/Haiku 4.x, GPT-4o family, Llama 3.3 70B on Together/Fireworks/Groq, and a `local:generic` placeholder.
 2. **OpenRouter refresh** — `modelRegistry.refreshFromOpenRouter()` pulls 300+ live entries from `https://openrouter.ai/api/v1/models`, cached 24h. No API key required. Concurrent callers share one in-flight fetch.
 3. **Per-provider discovery** — `modelRegistry.refreshFromProvider(provider)` marks entries as `available: true` when a configured provider lists them (e.g. Ollama returns only locally-pulled models).
+4. **DB hydration from `AiProviderModel`** — operator-curated rows added via the admin Model Matrix. Lives in a separate server-only module at `lib/orchestration/llm/model-registry-db-hydrate.ts` to keep the registry itself platform-agnostic (the registry is reachable from client components via `lib/validations/orchestration.ts`; pulling Prisma into it broke the browser bundle with "Module not found: Can't resolve 'dns'"). The hydration runs at the start of every `prepareWorkflowExecution`, throttled to one SELECT per 60 s per process, with concurrent-call dedup so a parallel-execution burst doesn't fan out N queries. DB rows beat fallback/OpenRouter on key conflict — the matrix is the operator-authoritative source for "is this model usable right now". Without this layer, a workflow step that sets `modelOverride: 'gpt-5'` semantic-validates to `UNKNOWN_MODEL_OVERRIDE` even though the operator added gpt-5 in the UI, because the registry's hardcoded fallback doesn't know about it.
 
 ```typescript
 await modelRegistry.refreshFromOpenRouter();

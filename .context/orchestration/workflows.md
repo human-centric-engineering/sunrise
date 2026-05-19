@@ -30,11 +30,14 @@ interface WorkflowDefinition {
 interface WorkflowStep {
   id: string;
   name: string;
+  description?: string; // optional 1–2 sentence operator-facing context; capped at 500 chars
   type: 'llm_call' | 'tool_call' | 'human_approval' | 'chain' | /* ... */;
   config: Record<string, unknown>;
   nextSteps: ConditionalEdge[]; // { targetStepId: string; condition?: string; maxRetries?: number }
 }
 ```
+
+The optional `description` is the "why this step exists and what it contributes" copy shown inside the expanded accordion body of the execution trace viewer (the collapsed row stays compact; it's a reveal-on-expand field). Authoring guidance lives in [`workflow-builder.md` § Step description](../admin/workflow-builder.md#step-description). Capped at 500 chars by the Zod schema; `.trim()` is applied so a paste-with-blank-lines doesn't persist.
 
 Zod validates the **shape** (in `createWorkflowSchema` / `updateWorkflowSchema`). `validateWorkflow` validates the **structure**: reachability, cycles, per-type config requirements.
 
@@ -279,7 +282,7 @@ Every step config that already exposes `temperature` / `maxTokens` also accepts 
 | `route_llm`    | The classification LLM call                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `reflect`      | All critique / revision LLM calls in the loop                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `plan`         | The planning LLM call                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `guard`        | Only when `mode: 'llm'` — the rule-check LLM call. `mode: 'regex'` ignores the field.                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `guard`        | Only when `mode: 'llm'` — the rule-check LLM call. `mode: 'regex'` and `mode: 'schema'` ignore the field (no LLM call).                                                                                                                                                                                                                                                                                                                                                                                      |
 | `evaluate`     | The scoring LLM call                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `supervisor`   | Every LLM call the supervisor makes (judge, citation validator, rescoring). No per-call carve-out.                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `agent_call`   | **Overrides the called agent's own `reasoningEffort`** for THIS step only. Falls back to the agent column if unset.                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -288,6 +291,29 @@ Every step config that already exposes `temperature` / `maxTokens` also accepts 
 Honoured only by reasoning-capable models (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking models). Dropped silently on others. Caller intent is recorded on the trace's `LlmRequestParamsSnapshot.reasoningEffort` either way, so a misconfigured step shows up in the execution detail view's request-envelope line.
 
 The admin UI surfaces this via `<ReasoningEffortSelect />` (one shared component at `components/admin/orchestration/reasoning-effort-select.tsx`) so the Select copy and help text stay aligned across the eight step-config panels plus the agent form.
+
+## `guard` modes
+
+The `guard` step supports three validation modes; `config.mode` picks between them.
+
+| Mode     | What runs                                                                                                                                     | Cost                   | Use for                                                                                |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| `llm`    | An LLM judges `config.rules` against `ctx.inputData` and returns `PASS` / `FAIL`.                                                             | One LLM call per check | Fuzzy quality judgments — tone, on-topic, plausibility.                                |
+| `regex`  | `new RegExp(config.rules, 'i').test(JSON.stringify(ctx.inputData))`.                                                                          | Zero                   | Simple substring / pattern matches against the workflow input.                         |
+| `schema` | Looks up `config.schemaName` in the schema registry and runs `.safeParse(...)` on `ctx.stepOutputs[config.inputStepId]` (or `ctx.inputData`). | Zero, deterministic    | Closed-set / shape checks — enum membership, required fields, array-of-allowed-values. |
+
+Schema mode is the deterministic alternative to LLM-mode for structural checks where LLM mode hallucinates (the provider-model-audit `validate_proposals` guard logged three such hallucinations on enum membership before this mode existed). The schema registry (`lib/orchestration/schemas/registry.ts`) maps stable string slugs to Zod schemas; feature modules register their schemas at module load via `registerSchema(name, schema)`. The audit workflow ships one such module at `lib/orchestration/schemas/audit-proposals.ts` that registers `audit-proposals` for its compound `validate_proposals` guard; downstream forks add their own feature-scoped modules and import them on app start (the schemas barrel at `lib/orchestration/schemas/index.ts` is the canonical place to wire new ones in).
+
+On schema parse failure the guard's output carries:
+
+- `passed: false`, `verdict: 'fail'`, `reason: 'Schema validation failed at <path>: <message>'`
+- `issues`: the full Zod `ZodIssue[]` array — interpolate `{{guard.output.issues}}` into a downstream retry's prompt for precise field-level feedback
+
+Typed `ExecutorError` codes:
+
+- `missing_schema_name` — `mode: 'schema'` with no `schemaName` set
+- `schema_not_found` — `schemaName` references an unregistered slug
+- `input_step_not_found` — `inputStepId` references a step that has not completed before this guard runs
 
 ## Step output conventions
 

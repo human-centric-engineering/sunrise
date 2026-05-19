@@ -18,6 +18,15 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { WorkflowStatus } from '@/types/orchestration';
 
+// Mirrors the closed set used by the live route. Defined locally
+// rather than imported because there's no shared module for it yet
+// and the alternative (a one-line constants file) would be premature.
+const TERMINAL_STATUSES = [
+  WorkflowStatus.COMPLETED,
+  WorkflowStatus.FAILED,
+  WorkflowStatus.CANCELLED,
+];
+
 /** Executions running longer than this are considered zombies. */
 const ZOMBIE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -115,6 +124,19 @@ export async function reapZombieExecutions(
       count: approvalResult.count,
       approvalThresholdMs,
     });
+  }
+
+  // Self-healing sweep: any running-step rows belonging to terminal
+  // executions are stale by definition. The engine clears its own rows
+  // on per-step terminate and `finalize` does a sweep, so this only
+  // fires when a row leaked past those paths (crash mid-finalize, manual
+  // status flip, etc). Idempotent — finds zero matches when everything
+  // is healthy.
+  const orphanCleanup = await prisma.aiWorkflowRunningStep.deleteMany({
+    where: { execution: { status: { in: TERMINAL_STATUSES } } },
+  });
+  if (orphanCleanup.count > 0) {
+    logger.warn('Reaped orphan running-step rows', { count: orphanCleanup.count });
   }
 
   return {

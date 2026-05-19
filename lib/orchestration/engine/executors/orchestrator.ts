@@ -148,14 +148,15 @@ async function runDelegation(
   //    resumeTurns to the delegation, the child's filter (`kind === 'agent_call'
   //    && outerTurn === undefined` in agent-call.ts) would pick up nothing today
   //    — but a bug in the kind-tagging contract or a future extension that
-  //    writes mixed-kind entries to the orchestrator's `currentStepTurns` would
-  //    silently leak into the delegation's resume state. Clear it explicitly.
+  //    writes mixed-kind entries to the orchestrator's running-step row
+  //    `turns` column would silently leak into the delegation's resume state.
+  //    Clear it explicitly.
   //
   //  - `recordTurn` — the orchestrator's per-round checkpoint closure captures
   //    `stepTurns` keyed to the orchestrator's lease. Forwarding it to the
   //    delegation would cause every inner agent_call iteration to push
   //    `kind: 'agent_call'` entries into the orchestrator's accumulator AND
-  //    write them to the orchestrator's `currentStepTurns` column. Cross-step
+  //    write them to the orchestrator's running-step `turns` column. Cross-step
   //    pollution; quadratic JSON growth across rounds × delegations × tool
   //    iterations. The delegation is its own step boundary — checkpointing the
   //    inner agent_call's per-iteration state at the orchestrator level isn't

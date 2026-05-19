@@ -6,7 +6,7 @@ import {
   ExecutionDetailView,
   type TraceCostEntryRow,
 } from '@/components/admin/orchestration/execution-detail-view';
-import type { CurrentStepDetails } from '@/lib/hooks/use-execution-live-poll';
+import type { RunningStep } from '@/lib/hooks/use-execution-live-poll';
 
 // Force a fresh server fetch on every navigation so router.refresh() from the
 // live-poll hook reliably re-paints with the final terminal state.
@@ -25,6 +25,8 @@ export const metadata: Metadata = {
 interface ExecutionDetail {
   id: string;
   workflowId: string;
+  versionId: string | null;
+  parentExecutionId: string | null;
   status: string;
   totalTokensUsed: number;
   totalCostUsd: number;
@@ -47,7 +49,7 @@ interface ExecutionResponse {
   execution: ExecutionDetail;
   trace: ExecutionTraceEntry[];
   costEntries?: TraceCostEntryRow[];
-  currentStepDetails?: CurrentStepDetails | null;
+  currentRunningSteps?: RunningStep[];
 }
 
 async function getExecution(id: string): Promise<ExecutionResponse | null> {
@@ -118,7 +120,7 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
         execution={data.execution}
         trace={data.trace}
         costEntries={data.costEntries}
-        currentStepDetails={data.currentStepDetails ?? null}
+        initialRunningSteps={data.currentRunningSteps ?? []}
       />
     </div>
   );

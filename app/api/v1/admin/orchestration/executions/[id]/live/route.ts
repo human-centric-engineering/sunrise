@@ -6,18 +6,18 @@
  * Designed for high-frequency (~1s) polling from the execution detail page.
  * Returns everything the live view needs in one round-trip:
  *
- *   - `snapshot`           — the same narrow fields as `/status` (status,
- *                            currentStep, errorMessage, tokens, cost, dates).
- *   - `trace`              — persisted step trace (steps that have terminated).
- *   - `costEntries`        — per-LLM-call cost rows attributed to this run.
- *   - `currentStepDetails` — { stepId, label, type, startedAt } when the
- *                            execution is in a running/paused status AND the
- *                            engine has written the live-running columns.
- *                            Null otherwise.
+ *   - `snapshot`             — the same narrow fields as `/status` (status,
+ *                              currentStep, errorMessage, tokens, cost, dates).
+ *   - `trace`                — persisted step trace (steps that have terminated).
+ *   - `costEntries`          — per-LLM-call cost rows attributed to this run.
+ *   - `currentRunningSteps`  — array of `{ stepId, label, stepType, startedAt }`
+ *                              for every step currently in flight. During a
+ *                              `parallel` step's fan-out this carries one
+ *                              entry per branch; empty array on terminal rows.
  *
- * `currentStepDetails` is sourced from the `currentStep*` columns on
- * `AiWorkflowExecution` (populated by `markCurrentStep` in the engine) so
- * we don't have to parse the workflow version snapshot per poll.
+ * `currentRunningSteps` is read from `AiWorkflowRunningStep` (side table; one
+ * row per in-flight step) so the detail view can render every branch
+ * simultaneously instead of just the most-recently-entered one.
  *
  * Ownership: rows are scoped to `session.user.id`. Cross-user access
  * returns 404 (not 403) — we never confirm existence of another user's row.
@@ -66,9 +66,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
       userId: true,
       status: true,
       currentStep: true,
-      currentStepLabel: true,
-      currentStepType: true,
-      currentStepStartedAt: true,
       errorMessage: true,
       totalTokensUsed: true,
       totalCostUsd: true,
@@ -115,24 +112,32 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     });
   }
 
-  // Only surface running-step details for non-terminal executions whose
-  // live columns are all populated. Terminal rows (and rows whose engine
-  // hasn't yet entered a step) get null so the UI can drop the running
-  // indicator cleanly.
+  // Surface every in-flight step on terminal-status-aware reads. During
+  // a `parallel` fan-out each branch lands as its own row, so the array
+  // can carry N entries — the detail view synthesises one "running"
+  // trace row per entry. Empty array on terminal rows.
   const isTerminal = TERMINAL_STATUSES.has(execution.status);
-  const currentStepDetails =
-    !isTerminal &&
-    execution.currentStep &&
-    execution.currentStepLabel &&
-    execution.currentStepType &&
-    execution.currentStepStartedAt
-      ? {
-          stepId: execution.currentStep,
-          label: execution.currentStepLabel,
-          stepType: execution.currentStepType,
-          startedAt: execution.currentStepStartedAt.toISOString(),
-        }
-      : null;
+  const currentRunningSteps = isTerminal
+    ? []
+    : (
+        await prisma.aiWorkflowRunningStep.findMany({
+          where: { executionId: id },
+          orderBy: { startedAt: 'asc' },
+          select: { stepId: true, label: true, stepType: true, startedAt: true, turns: true },
+        })
+      ).map((row) => ({
+        stepId: row.stepId,
+        label: row.label,
+        stepType: row.stepType,
+        startedAt: row.startedAt.toISOString(),
+        // Progress indicator for multi-turn steps (`agent_call`,
+        // `orchestrator`, `reflect`). Each `recordTurn` call adds an
+        // entry, so on a long-running agent_call this ticks up as the
+        // model fires more tool iterations — lets the operator see
+        // forward progress instead of staring at a frozen "Running"
+        // badge. Always 0 for single-shot step types.
+        turnCount: Array.isArray(row.turns) ? row.turns.length : 0,
+      }));
 
   return successResponse({
     snapshot: {
@@ -148,7 +153,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     },
     trace,
     costEntries,
-    currentStepDetails,
+    currentRunningSteps,
   });
 });
 

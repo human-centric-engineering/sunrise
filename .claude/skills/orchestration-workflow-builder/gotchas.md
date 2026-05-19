@@ -159,35 +159,63 @@ Multi-turn checkpointing covers `reflect` and `orchestrator` cleanly. `agent_cal
 
 ## `guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set
 
-An LLM-mode guard can only check what is **explicitly in its prompt**. A rule like _"reject changes where `field` is not a recognised X field"_ fails open or fails closed unpredictably — the model has no access to the real list, so it guesses. Observed failure: the `validate_proposals` guard in `tpl-provider-model-audit` rejected the legitimate field `bestRole` (a real free-text column on `AiProviderModel`) as "not a recognised field", because the rules described the constraint without enumerating which names counted as recognised. Subtler effect: enum-heavy lists bias the model — a lone free-text member like `bestRole` reads as anomalous and gets flagged.
+An LLM-mode guard can only check what is **explicitly in its prompt**. A rule like _"reject changes where `field` is not a recognised X field"_ fails open or fails closed unpredictably — the model has no access to the real list, so it guesses.
 
-**Fix shape:** When a closed set defines validity, paste the set into the prompt and source it from the same constant the apply step uses, so it cannot drift:
+**Worse: even with the spec pasted into the prompt, the LLM still hallucinates.** Three observed failures on the same `validate_proposals` guard in `tpl-provider-model-audit`:
 
-```ts
-import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+1. The guard rejected the legitimate field `bestRole` (a free-text column on `AiProviderModel`) as "not a recognised field" because the rules described the constraint without enumerating which names counted (2026-05-15).
+2. With all six valid `tierRole` values enumerated as comma-separated prose, the model still rejected `infrastructure` and listed only the other five values in its rejection text (2026-05-16).
+3. With the six-element `capabilities` array enumerated AS A JSON BLOCK with explicit anti-omission instructions AND a worked example for `["chat", "vision"]`, the model rejected `["chat","vision","documents"]` claiming `"vision"` was not in the array (2026-05-19). The retry budget caught it but the full audit fan-out re-ran.
 
-const LIST = AUDITABLE_FIELDS.map((f) => `\`${f}\``).join(', ');
+This is not a prompt-engineering problem. It is the limit of LLM-mode guards on closed-set checks.
 
-// In the guard rules:
-`The \`field\` value MUST be one of: ${LIST}. Treat these as literal strings.`;
+**Fix: use `mode: 'schema'`.** Schema-mode guards run a registered Zod schema via `safeParse` on the named step's output. Zero LLM cost, deterministic, no hallucination surface. See `references/step-config-schemas.md` → `guard` for the config shape and a worked registration example.
+
+```jsonc
+// instead of LLM mode enumerating the spec in prose:
+{
+  "mode": "schema",
+  "schemaName": "audit-proposals",
+  "inputStepId": "analyse_chat",
+  "failAction": "block",
+}
 ```
 
-**Stronger fix:** Use `mode: 'regex'` or a deterministic check for structural rules (field-name-in-set, enum-value-in-set, shape patterns). Reserve `mode: 'llm'` for fuzzy quality judgments (on-topic, appropriate tone, plausible content) where the LLM is actually doing the work that no regex could do.
+The schema is authored in TypeScript next to the apply-side Zod schemas it mirrors, so the validator and the apply layer cannot drift:
 
-**Drift signal to watch for:** if a guard's prompt enumerates allowed values **and** the apply-side capability also enumerates them in its Zod schema, those two lists must come from one source. Two hand-maintained lists become inconsistent in two commits.
+```ts
+// lib/orchestration/audit/schemas.ts
+import { z } from 'zod';
+import { registerSchema } from '@/lib/orchestration/schemas/registry';
+import { CAPABILITIES, TIER_ROLES } from '@/lib/orchestration/model-audit/enums';
 
-Also: backtick-wrap literal field names inside guard prompts. Without quoting, `bestRole` reads as the noun phrase "best role" and the model evaluates the _concept_, not the _identifier_.
+registerSchema(
+  'audit-proposals',
+  z.object({
+    models: z.array(
+      z.object({
+        changes: z.array(
+          z.object({
+            field: z.string(),
+            // The single source of truth — same constant the apply
+            // capability validates against. No prompt drift possible.
+            proposedValue: z.union([z.string(), z.array(z.enum(CAPABILITIES))]),
+            sources: z.array(z.unknown()).min(1),
+          })
+        ),
+      })
+    ),
+  })
+);
+```
 
-**Even with the list pasted in, the LLM still mis-reads it.** Observed second failure on the same guard: with all six valid `tierRole` values enumerated as comma-separated prose in the rules, the model still rejected `infrastructure` and listed only the other five values in its rejection text (2026-05-16). The LLM is dropping items from a list it can see. This is not a prompt-engineering problem any more — it is the limit of LLM-mode guards on closed-set checks.
+**When to keep LLM mode:** genuinely fuzzy quality judgments — tone, on-topic, plausibility, "is this draft good enough". Anything where there is no enum to check against and an LLM is actually doing work a regex couldn't.
 
-If you can't yet move to a deterministic capability, mitigate with:
+**When to use regex mode:** simple substring / pattern matches against the workflow input (PII detection, banned-word lists). Faster than LLM, no schema authoring required.
 
-1. **JSON spec block, not comma prose.** Embed a `{"tierRole": ["a", "b", ...]}` JSON object in the prompt. LLMs parse JSON arrays more reliably than they re-read prose. Source the arrays from a typed constant so they cannot drift.
-2. **Explicit anti-omission instruction.** Add "RE-READ THIS BLOCK BEFORE JUDGING EACH PROPOSAL. Do not abridge, paraphrase, or omit any array entry." right above the spec.
-3. **Require the model to quote back the array entry it failed to match.** _"For each rejection, quote the exact array entry the proposal failed to match"_ forces the model to do another lookup pass, catching omissions before they go out.
-4. **Add a worked example that calls out the most-recent failure case.** E.g. _"`tierRole`: `infrastructure` → PASS (it is at index 2 of the array)"_. Repeating the actually-dropped value in an example block lowers the recurrence rate, though it doesn't eliminate it.
+**Drift signal to watch for:** if a guard's prompt enumerates allowed values **and** the apply-side capability also enumerates them, those two lists must come from one source. Schema mode forces this discipline — the schema's enum imports from the constant. Two hand-maintained lists in prose become inconsistent in two commits.
 
-But the real fix is still option above: deterministic validation. After two hallucinations on the same guard, retire the LLM-mode validation and replace it with a `tool_call` to a structural-validation capability that runs the payload through the same Zod schemas the apply step uses.
+**Historical mitigations (kept here only because old workflows still use them):** Backtick-wrap literal field names. Embed JSON spec blocks rather than prose. Require the model to quote back the array entry it failed to match. Add worked examples for the most-recent failure case. Each lowers the recurrence rate but does not eliminate it. After the third failure on the same guard, retire LLM mode and adopt schema mode.
 
 ## Capability `isIdempotent` Default Is `false`
 

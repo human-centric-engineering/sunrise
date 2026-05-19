@@ -48,6 +48,8 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
       {
         id: 'complexity_triage',
         name: 'Classify complexity',
+        description:
+          'Classifies the inbound request as simple, standard, or complex so the next step can dispatch to a cost-appropriate model.',
         type: 'route',
         config: {
           classificationPrompt:
@@ -63,6 +65,8 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
       {
         id: 'simple_reply',
         name: 'Cheap-tier response',
+        description:
+          'Cheap-tier path. Dispatches the simple request to Claude Haiku — fast and inexpensive, used for FAQ-style lookups.',
         type: 'llm_call',
         config: {
           prompt: 'Answer the simple user request directly and concisely.\n\n{{input}}',
@@ -74,6 +78,8 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
       {
         id: 'standard_reply',
         name: 'Standard-tier response',
+        description:
+          'Standard-tier path. Dispatches short generative tasks to Claude Sonnet — the workhorse model for most user-facing replies.',
         type: 'llm_call',
         config: {
           prompt:
@@ -86,6 +92,8 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
       {
         id: 'complex_reply',
         name: 'Frontier-tier response',
+        description:
+          'Frontier-tier path. Routes multi-step reasoning to Claude Opus — slower and pricier but used only when the request actually needs it.',
         type: 'llm_call',
         config: {
           prompt:
@@ -98,6 +106,8 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
       {
         id: 'estimate_cost',
         name: 'Estimate workflow cost',
+        description:
+          'Calls the estimate_workflow_cost capability so the per-request USD figure can flow into billing, budget tracking, or per-tenant cost dashboards.',
         type: 'tool_call',
         config: {
           capabilitySlug: 'estimate_workflow_cost',
@@ -107,6 +117,8 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
       {
         id: 'safety_check',
         name: 'Safety and format pass',
+        description:
+          'Final pass before the reply leaves the workflow — checks tone, strips anything that looks like leaked secrets or PII, and normalises formatting.',
         type: 'llm_call',
         config: {
           prompt:

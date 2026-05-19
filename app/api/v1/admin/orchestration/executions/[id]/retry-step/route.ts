@@ -91,17 +91,28 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   //
   // Optimistic lock: include status in WHERE so concurrent retry requests
   // don't both truncate the trace (second one sees count === 0).
-  const result = await prisma.aiWorkflowExecution.updateMany({
-    where: { id, status: WorkflowStatus.FAILED },
-    data: {
-      status: WorkflowStatus.PENDING,
-      executionTrace: keptTrace as unknown as object,
-      totalTokensUsed,
-      totalCostUsd,
-      currentStep,
-      errorMessage: null,
-      completedAt: null,
-    },
+  //
+  // Defensive deleteMany of running-step rows: there should be none at
+  // this point (finalize cleared on FAILED), but a crashed-mid-finalize
+  // path could leave orphans. Atomic with the status flip so a
+  // guard-failed retry doesn't sweep rows belonging to another path.
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.aiWorkflowExecution.updateMany({
+      where: { id, status: WorkflowStatus.FAILED },
+      data: {
+        status: WorkflowStatus.PENDING,
+        executionTrace: keptTrace as unknown as object,
+        totalTokensUsed,
+        totalCostUsd,
+        currentStep,
+        errorMessage: null,
+        completedAt: null,
+      },
+    });
+    if (updated.count > 0) {
+      await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
+    }
+    return updated;
   });
   if (result.count === 0) {
     throw new ValidationError('Execution was already retried by another request', {
