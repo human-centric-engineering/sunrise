@@ -97,10 +97,24 @@ export function ExecutionProgressInline({
       {/* Status row */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <Badge variant={STATUS_BADGE_VARIANT[status] ?? 'outline'}>{formatStatus(status)}</Badge>
-        {live.currentStepDetails && !terminal && (
+        {live.currentRunningSteps.length > 0 && !terminal && (
           <span className="text-muted-foreground inline-flex items-center gap-1">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span className="font-mono text-xs">{live.currentStepDetails.label}</span>
+            <span className="font-mono text-xs">
+              {/*
+                During a `parallel` step's fan-out this is N labels — render
+                up to three, and append a "+M more" suffix if there are more.
+                Keeps the inline strip compact while still giving a hint at
+                concurrency.
+              */}
+              {live.currentRunningSteps
+                .slice(0, 3)
+                .map((r) => r.label)
+                .join(', ')}
+              {live.currentRunningSteps.length > 3
+                ? ` +${live.currentRunningSteps.length - 3} more`
+                : ''}
+            </span>
           </span>
         )}
         <span className="text-muted-foreground ml-auto inline-flex items-center gap-3 text-xs">

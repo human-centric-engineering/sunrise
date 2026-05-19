@@ -448,7 +448,7 @@ export function AuditModelsDialog({
         },
         trace: [],
         costEntries: [],
-        currentStepDetails: null,
+        currentRunningSteps: [],
       }
     : null;
 

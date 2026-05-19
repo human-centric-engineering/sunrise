@@ -51,7 +51,12 @@ export interface ExecutionLiveSnapshot {
   createdAt: string;
 }
 
-export interface CurrentStepDetails {
+/**
+ * One in-flight step. During a `parallel` step's fan-out, the live
+ * endpoint returns one entry per branch. Otherwise the array carries
+ * zero or one entries.
+ */
+export interface RunningStep {
   stepId: string;
   label: string;
   stepType: string;
@@ -73,7 +78,7 @@ export interface ExecutionLivePayload {
   snapshot: ExecutionLiveSnapshot;
   trace: ExecutionTraceEntry[];
   costEntries: ExecutionLiveCostEntry[];
-  currentStepDetails: CurrentStepDetails | null;
+  currentRunningSteps: RunningStep[];
 }
 
 export interface UseExecutionLivePollResult extends ExecutionLivePayload {
