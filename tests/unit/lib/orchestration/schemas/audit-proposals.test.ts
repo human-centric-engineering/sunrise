@@ -327,6 +327,335 @@ describe('audit-proposals schema', () => {
     expect(result.success).toBe(false);
   });
 
+  // ── changeSchema per-field enum (proposedValue not a string) ────────
+  // Hits the `typeof change.proposedValue !== 'string'` branch in the
+  // per-field enum check — proposedValue must be a string when the
+  // field is one of the enum-typed fields. The existing tests already
+  // exercise the wrong-value path; this is the wrong-shape path.
+  it('rejects a change whose enum field receives a non-string proposedValue', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'tierRole',
+                  currentValue: 'worker',
+                  proposedValue: 42, // not a string
+                  reason: 'whatever',
+                  confidence: 'low',
+                  sources: [SOURCE],
+                },
+              ],
+              overallConfidence: 'low',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a change whose enum field receives a string outside the allowed set', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'tierRole',
+                  currentValue: 'worker',
+                  proposedValue: 'super-thinker', // string, but not in TIER_ROLES
+                  reason: 'whatever',
+                  confidence: 'low',
+                  sources: [SOURCE],
+                },
+              ],
+              overallConfidence: 'low',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(false);
+  });
+
+  // ── changeSchema array-field path (capabilities / deploymentProfiles) ──
+  it('rejects a change whose array field receives a non-array proposedValue', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'capabilities',
+                  currentValue: ['chat'],
+                  proposedValue: 'chat', // should be an array
+                  reason: 'narrow down',
+                  confidence: 'low',
+                  sources: [SOURCE],
+                },
+              ],
+              overallConfidence: 'low',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a change whose array field contains a non-string element', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'capabilities',
+                  currentValue: ['chat'],
+                  proposedValue: ['chat', 42], // non-string element
+                  reason: 'add reasoning',
+                  confidence: 'low',
+                  sources: [SOURCE],
+                },
+              ],
+              overallConfidence: 'low',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a deploymentProfiles change with an empty array', () => {
+    // Mirrors the newModel-side rule: every model has at least one
+    // deployment locus, so an empty proposedValue would strand the row.
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'deploymentProfiles',
+                  currentValue: ['hosted'],
+                  proposedValue: [], // empty
+                  reason: 'remove all deployment options',
+                  confidence: 'low',
+                  sources: [SOURCE],
+                },
+              ],
+              overallConfidence: 'low',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(false);
+  });
+
+  // ── sourceAttributionSchema — non-web_search reference-required kinds ──
+  it.each(['knowledge_base', 'external_call', 'prior_step'])(
+    'rejects a %s source with no reference',
+    (kind) => {
+      const result = auditProposalsSchema.safeParse(
+        makeInput({
+          analyse_chat: {
+            models: [
+              {
+                model_id: 'm1',
+                modelName: 'Model 1',
+                providerSlug: 'provider',
+                changes: [
+                  {
+                    field: 'bestRole',
+                    currentValue: 'worker',
+                    proposedValue: 'planner',
+                    reason: 'whatever',
+                    confidence: 'low',
+                    sources: [{ source: kind, confidence: 'medium' }],
+                  },
+                ],
+                overallConfidence: 'low',
+                reasoning: '',
+              },
+            ],
+            deactivateModels: [],
+          },
+        })
+      );
+      expect(result.success).toBe(false);
+    }
+  );
+
+  // ── deactivationSchema — exercises the previously-unhit branch ───────
+  it('accepts a valid deactivation row', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [],
+          deactivateModels: [
+            {
+              modelId: 'legacy-model-1',
+              reason: 'Provider sunset; replaced by v2',
+              sources: [SOURCE],
+            },
+          ],
+        },
+      })
+    );
+    expect(result.success).toBe(true);
+  });
+
+  // ── Positive path: valid array-field change (deploymentProfiles non-empty) ──
+  // The empty-array case is tested above; the validator's main array-
+  // field block runs for every array-field change regardless of value,
+  // and exercising the non-empty path closes a small remaining gap.
+  it('accepts a deploymentProfiles change with a non-empty array of valid profiles', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'deploymentProfiles',
+                  currentValue: ['hosted'],
+                  proposedValue: ['hosted', 'sovereign'],
+                  reason: 'model is also self-hostable',
+                  confidence: 'medium',
+                  sources: [SOURCE],
+                },
+              ],
+              overallConfidence: 'medium',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(true);
+  });
+
+  // ── user_input source kind (no reference required) ──
+  // Exercises the `KINDS_REQUIRING_REFERENCE.has(s.source) === false`
+  // branch for a kind other than training_knowledge.
+  it('accepts a user_input source with no reference', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Model 1',
+              providerSlug: 'provider',
+              changes: [
+                {
+                  field: 'bestRole',
+                  currentValue: 'worker',
+                  proposedValue: 'planner',
+                  reason: 'operator override',
+                  confidence: 'low',
+                  sources: [{ source: 'user_input', confidence: 'low', note: 'operator override' }],
+                },
+              ],
+              overallConfidence: 'low',
+              reasoning: '',
+            },
+          ],
+          deactivateModels: [],
+        },
+      })
+    );
+    expect(result.success).toBe(true);
+  });
+
+  // ── Embedding-model new-model proposal (exercises optional fields) ──
+  // The optional `dimensions` / `quality` / `schemaCompatible` triplet
+  // on newModelSchema is only meaningful for embedding-tier rows. The
+  // existing tests all proposed chat models, so the embedding-shape
+  // branch was unreached.
+  it('accepts a new embedding model with dimensions / quality / schemaCompatible set', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        discover_new_models: {
+          newModels: [
+            {
+              name: 'Demo Embedding',
+              slug: 'provider-demo-embed',
+              providerSlug: 'provider',
+              modelId: 'demo-embed-1',
+              description: 'A demo embedding model',
+              capabilities: ['embedding'],
+              tierRole: 'embedding',
+              deploymentProfiles: ['hosted'],
+              bestRole: 'Vector retrieval',
+              sources: [SOURCE],
+              dimensions: 1536,
+              quality: 'high',
+              schemaCompatible: true,
+            },
+          ],
+          reasoning: 'one new embedding model',
+        },
+      })
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a deactivation row with an empty sources array', () => {
+    const result = auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [],
+          deactivateModels: [
+            {
+              modelId: 'legacy-model-1',
+              reason: 'Provider sunset',
+              sources: [], // empty
+            },
+          ],
+        },
+      })
+    );
+    expect(result.success).toBe(false);
+  });
+
   // ── modelId canonical-form regex (Issue 5 — registry uses bare ids) ──
   // The schema enforces structural shape; the "no date suffix" rule is
   // a semantic constraint that lives in the prompt. The regex still
