@@ -591,12 +591,20 @@ model AiWorkflowStepDispatch {
 // See `lib/orchestration/engine/orchestration-engine.ts`
 // (markCurrentStep / recordStepTurn / clearRunningStep / startOrResume).
 model AiWorkflowRunningStep {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   executionId String
   stepId      String
   label       String
   stepType    String
-  startedAt   DateTime @default(now())
+  startedAt   DateTime  @default(now())
+  // Set when this step finishes but the surrounding batch (e.g. a
+  // parallel fan-out) is still in flight. Lets the live poll surface
+  // "done but waiting for siblings" so the timeline can render a
+  // greyed wait segment after the coloured processing portion. Null
+  // for sequential steps and for parallel branches that are still
+  // running. Rows are deleted (not just nulled) once the whole batch
+  // settles in the post-`Promise.allSettled` loop.
+  completedAt DateTime?
   turns       Json?
 
   execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
