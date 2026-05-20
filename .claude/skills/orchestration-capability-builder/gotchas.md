@@ -68,6 +68,14 @@ Stringy `customConfig` fields (`forcedUrl`, `forcedHeaders` on `call_external_ap
 
 For vendors that need `multipart/form-data` (Gotenberg HTML→PDF, file-upload APIs), pass `multipart: { files: [...], fields: {...} }` instead of `body`. The two are **mutually exclusive** (Zod refine). HMAC auth + multipart is rejected as `multipart_hmac_unsupported` — the boundary varies so signatures aren't deterministic.
 
+## `processesPii = true` Requires `redactProvenance` — Enforced at Registration
+
+Capabilities that handle customer PII (emails, phones, free-text memory values, transcripts, addresses, bearer tokens, secrets) MUST set `processesPii = true` AND override `redactProvenance()`. The dispatcher's registry runs `Object.prototype.hasOwnProperty.call(proto, 'redactProvenance')` at registration time — a capability that declares `processesPii = true` but inherits the default redactor throws on `registerBuiltInCapabilities()` (the error names the capability and the missing override). This is a one-way ratchet: opting in costs nothing if your data turns out to be safe, but inheriting the default redactor when you process PII leaks customer data into every conversation audit row (`AiMessage.provenance.capabilityCalls[]`). Use the helpers in `lib/security/redact.ts` (`maskEmail`, `maskPhone`, `maskBearerToken`, `redactedString`, `maskKeysInObject`) — see the SKILL.md "Provenance & PII" section for the `read_user_memory` worked example.
+
+## Provenance redaction is for the audit row, not the LLM
+
+`redactProvenance()` only shapes what gets persisted onto `AiMessage.provenance.capabilityCalls[]` for the durable audit bundle. The LLM still sees the un-redacted `CapabilityResult` envelope the dispatcher returns to it — that's the source of truth for the model's reasoning loop. A common mistake is to over-redact and break the LLM's ability to use the result; the redactor is only invoked on the audit-write path, not on the dispatcher's return.
+
 ## In-Chat Approvals Route Through `run_workflow`
 
 The dispatcher's `requires_approval` failure code stays admin-only — chat clients render Approve / Reject cards by routing through workflow `human_approval` pauses via the `run_workflow` capability, not by extending the capability dispatcher. Capability-level (non-workflow) in-chat approvals are explicitly out of scope; if a partner needs one, author a one-step workflow with `human_approval` and bind `run_workflow` to the agent.

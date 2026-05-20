@@ -126,6 +126,10 @@ POST /api/v1/admin/orchestration/agents
 
 Agent updates are **versioned** — `PATCH /agents/:id` creates an `AiAgentVersion` row capturing the field changes. A tab-prefixed change summary appears in the version history panel; rollback works like workflow rollback (append-only forward step).
 
+**If the solution needs more than one agent that should sound the same**, hoist the shared persona / voice / guardrails into an `AiAgentProfile` row and link each agent via `profileId`. Per-field `personaMode` / `voiceMode` / `guardrailsMode` (`inherit` / `override` / `append`) controls how each agent combines the profile fragments with its own. The runtime resolves the composed system prompt for both chat and workflow `agent_call` — one source of truth for brand voice. Profiles have a dedicated admin section (`/admin/orchestration/agent-profiles`); create the profile first, then point the agents at it.
+
+**Reasoning effort** is set via the `reasoningEffort` field (`minimal` / `low` / `medium` / `high` / null). Only honoured on reasoning-capable models (o-series / gpt-5 / Claude 4 thinking) — silently dropped elsewhere. Leave null unless the role genuinely benefits from deeper reasoning (typically planners, supervisors, complex evaluators).
+
 ### Step 3: Create custom capabilities
 
 For each external action, API call, or data lookup, create one capability. The 4-step pipeline:
@@ -138,6 +142,8 @@ For each external action, API call, or data lookup, create one capability. The 4
 For `api`/`webhook` execution types, skip steps 1-2 — no TypeScript class needed, the dispatcher makes HTTP calls directly. Set `executionHandler` to the target URL.
 
 Use `/orchestration-capability-builder` for detailed templates and gotchas when building complex capabilities.
+
+**If the capability handles customer PII** (emails, phones, free-text user input, secret tokens, transcripts), set `processesPii = true` on the class and override `redactProvenance()`. The dispatcher's registry refuses to load a PII-handling capability without an explicit redactor — this prevents customer data from leaking into the `AiMessage.provenance.capabilityCalls[]` audit rows that the conversation provenance bundle exports. Use the helpers in `lib/security/redact.ts` (`maskEmail`, `maskPhone`, `maskBearerToken`, `redactedString`).
 
 ### Step 4: Bind built-in capabilities
 

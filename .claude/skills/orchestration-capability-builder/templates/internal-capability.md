@@ -31,6 +31,18 @@ interface Data {
 export class ExampleCapability extends BaseCapability<Args, Data> {
   readonly slug = 'example_slug';
 
+  // Declare PII handling explicitly. Default is `false`.
+  // If you set `true`, you MUST override `redactProvenance()` below —
+  // the registry refuses to register a PII-handling capability without
+  // an explicit redactor. See SKILL.md "Provenance & PII" for the
+  // `read_user_memory` worked example using `lib/security/redact.ts`.
+  // readonly processesPii = true;
+  //
+  // redactProvenance(args: Args, result: CapabilityResult<Data>): ProvenanceRedaction {
+  //   // Mask the sensitive fields before they reach the audit row
+  //   return { args: { ...args, email: maskEmail(args.email) }, resultPreview: '<redacted>' };
+  // }
+
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'example_slug', // MUST match slug
     description: 'One-sentence description of what this tool does.',

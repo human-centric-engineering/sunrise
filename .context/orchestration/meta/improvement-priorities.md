@@ -2,7 +2,7 @@
 
 Prioritised improvements to the orchestration layer, scoped to the deployment profile Sunrise actually targets: **single-tenant, one instance per project, small engineering teams, small projects.**
 
-**Last updated:** 2026-05-16 (consistency pass — every pending item across Tiers 5–8 now carries an explicit `**Priority justification.**` paragraph alongside `**Difficulty.**` so cherry-picking sessions can target the best effort/reward ratio; Tier 8 added — proposed pre-launch foundation: reliability, operational trust, and partner-readiness; Tier 7 added earlier today — proposed lifecycle, integration, and operational-symmetry features; Tier 5 gained item 23a — production-conversation replay as the empirical complement to item 20)
+**Last updated:** 2026-05-20 (recent-PR sweep — item 47 (Conversation provenance bundle) marked ✅ Done after PR #196 shipped per-message version pinning, citation-hash snapshots, JSON + deterministic Markdown provenance routes, PII redaction architecture, and consent-gated cross-user access; item 40 (Stuck-execution / live-engine admin surface) re-graded Low–Moderate after PR #202's running-step side table covered most of its data substrate; item 35 (Shadow / canary version routing) re-graded down to Moderate after PR #197's trace-captured `requestParams` and PR #198's `parentExecutionId` rerun lineage closed half its prerequisite chain; item 23a (Production-conversation replay) re-anchored on item 47's now-shipped provenance scalars; item 49 (data portability) prerequisite chain shortened to just #46; Tier 8 sequence updated to drop #47. — 2026-05-16 (consistency pass — every pending item across Tiers 5–8 now carries an explicit `**Priority justification.**` paragraph alongside `**Difficulty.**` so cherry-picking sessions can target the best effort/reward ratio; Tier 8 added — proposed pre-launch foundation: reliability, operational trust, and partner-readiness; Tier 7 added earlier today — proposed lifecycle, integration, and operational-symmetry features; Tier 5 gained item 23a — production-conversation replay as the empirical complement to item 20))
 
 ---
 
@@ -576,9 +576,9 @@ Replay closes this. Given a window of historical `AiConversation` rows and a tar
 - **Source-of-truth dilemma.** When the replayed answer is "different but arguably better," what does the admin do? Mitigation: divergence is reported, not gated — the report shows the new answer alongside the original with metric deltas; the human reads the trade.
 - **Context drift.** If the source conversation depended on capabilities or KB chunks since deleted, replay either fails or runs against a different reality. Mitigation: replay validates that all source-referenced capabilities and KB chunks still exist before running; skipped conversations are reported with reasons.
 
-**Priority justification.** Top-3 Tier 5 priority. Ships independently — no dependency on items 20–23. The signal to build it: the first time a partner has to migrate to a new model version. Pairs with item 35 (canary routing) for the full "offline + live" divergence story; build 23a first so the canary scoring machinery is well-shaped. Defer if no model migrations are imminent.
+**Priority justification.** Top-3 Tier 5 priority — **strengthened after PR #196 (item 47).** Conversation provenance shipped per-message agent/workflow/model/citation pinning, which means replay can now anchor each historical turn to the _exact_ model, version, and citation set that produced it. Pre-PR-#196, replay would have had to infer that state from execution traces, with a documented lossiness for any conversation that crossed an agent edit. Post-PR-#196, replay's "what was the source reality?" question has a precise answer, which makes the divergence report meaningfully more defensible. Ships independently — no dependency on items 20–23. The signal to build it: the first time a partner has to migrate to a new model version. Pairs with item 35 (canary routing) for the full "offline + live" divergence story; build 23a first so the canary scoring machinery is well-shaped. Defer if no model migrations are imminent.
 
-**Difficulty: Moderate.** New table + new admin route + new engine module + new admin page + trace-viewer side-by-side mode. Reuses chat handler, evaluation pipeline, agent versioning. One sprint.
+**Difficulty: Moderate.** New table + new admin route + new engine module + new admin page + trace-viewer side-by-side mode. Reuses chat handler, evaluation pipeline, agent versioning, and item 47's provenance scalars. One sprint.
 
 ### Tier summary
 
@@ -909,9 +909,9 @@ This is the most architecturally-dependent item in Tier 7. It is _not_ a standal
 - **Diverging-result anxiety.** A canary that produces "different but arguably better" answers is the same dilemma as item 23a — the operator has to read the trade. Mitigation: the report is the same shape as item 23a's divergence report; same reading skill applies.
 - **Engine-dispatcher complexity.** Version resolution now consults a canary table on every execution. Mitigation: the canary lookup is a single indexed row read; cache the active-canary set in-process with invalidation on the canary admin routes.
 
-**Priority justification.** Lowest-priority Tier 7 item taken standalone — depends on item 23a (replay) shipping first to share scoring infrastructure. Sequence: ship 23a, run a model-upgrade replay against historical traffic, then build 35 when a partner asks for the live-traffic complement. One-to-two sprints; do not build speculatively.
+**Priority justification.** Originally framed as lowest-priority Tier 7 because the architectural prerequisites were not in place — **re-grade upward after PRs #197 and #198.** PR #197 (LLM param profile) captures `requestParams` on every trace entry, which is the substrate any version-divergence scoring needs. PR #198 (execution rerun) shipped `AiWorkflowExecution.parentExecutionId` and a `POST /executions/:id/rerun` route that already knows how to fork an execution against a chosen version — most of the dispatcher mechanics canary needs are now in place. Still depends on item 23a (replay) for the divergence-scoring metric set, but the gap is meaningfully narrower than the original framing implied. Sequence: ship 23a (whose scoring metrics double as canary's metrics), then ship 35 incrementally on top of the existing rerun + provenance plumbing.
 
-**Difficulty: Moderate–High.** Two new tables + dispatcher integration + canary admin page + trace-viewer divergence panel + promotion atomic operation. One-to-two sprints. Defer until item 23a has shipped and a partner has explicitly asked for the live-traffic complement.
+**Difficulty: Moderate (re-graded down from Moderate–High after PRs #197 + #198).** One canary table + dispatcher branch + canary admin page + trace-viewer divergence panel + promotion atomic operation. The rerun route's version-forking semantics cover the original "two new tables" estimate's bulk. One sprint once item 23a has landed.
 
 ### 36. OpenAPI-driven capability generator — ⚪ Not started
 
@@ -967,21 +967,21 @@ A fourth category of proposed work focused on **hardening what's already built**
 
 Items 37–39 are correctness — they prevent silent damage. Items 40–43 are observability and operational control — they make the running system inspectable and tunable. Items 44–45 are developer experience — they multiply partner integration velocity. Items 46–47 are audit defensibility — they answer compliance questions. Items 48–49 are partner trust — they unblock public-sector pilots and remove vendor-lock-in concerns.
 
-| #   | Improvement                                                    | Value         | Effort       | Status         |
-| --- | -------------------------------------------------------------- | ------------- | ------------ | -------------- |
-| 37  | End-to-end idempotency model                                   | Very high     | Moderate     | ⚪ Not started |
-| 38  | Outbound webhook retry policy + dead-letter queue              | High          | Low–Moderate | ⚪ Not started |
-| 39  | Per-execution hard cost cap (runaway-loop guard)               | High          | Low–Moderate | ⚪ Not started |
-| 40  | Stuck-execution / live-engine admin surface                    | Very high     | Moderate     | ⚪ Not started |
-| 41  | Workflow-execution health dashboard (operational, not quality) | Moderate      | Moderate     | ⚪ Not started |
-| 42  | Capability emergency-disable / quarantine                      | Moderate      | Low–Moderate | ⚪ Not started |
-| 43  | Orchestration-specific load + chaos test harness               | Moderate–High | Moderate     | ⚪ Not started |
-| 44  | Orchestration admin API OpenAPI + generated SDK                | High          | Moderate     | ⚪ Not started |
-| 45  | Embed widget as installable npm package                        | Moderate–High | Low–Moderate | ⚪ Not started |
-| 46  | Audit-log tamper-evidence (hash chain)                         | High          | Low–Moderate | ⚪ Not started |
-| 47  | Conversation provenance bundle                                 | High          | Moderate     | ⚪ Not started |
-| 48  | WCAG 2.1 AA conformance — orchestration surfaces only          | Very high     | Moderate     | ⚪ Not started |
-| 49  | Orchestration data portability — transactional-data extension  | Moderate      | Moderate     | ⚪ Not started |
+| #   | Improvement                                                    | Value         | Effort       | Status            |
+| --- | -------------------------------------------------------------- | ------------- | ------------ | ----------------- |
+| 37  | End-to-end idempotency model                                   | Very high     | Moderate     | ⚪ Not started    |
+| 38  | Outbound webhook retry policy + dead-letter queue              | High          | Low–Moderate | ⚪ Not started    |
+| 39  | Per-execution hard cost cap (runaway-loop guard)               | High          | Low–Moderate | ⚪ Not started    |
+| 40  | Stuck-execution / live-engine admin surface                    | Very high     | Moderate     | ⚪ Not started    |
+| 41  | Workflow-execution health dashboard (operational, not quality) | Moderate      | Moderate     | ⚪ Not started    |
+| 42  | Capability emergency-disable / quarantine                      | Moderate      | Low–Moderate | ⚪ Not started    |
+| 43  | Orchestration-specific load + chaos test harness               | Moderate–High | Moderate     | ⚪ Not started    |
+| 44  | Orchestration admin API OpenAPI + generated SDK                | High          | Moderate     | ⚪ Not started    |
+| 45  | Embed widget as installable npm package                        | Moderate–High | Low–Moderate | ⚪ Not started    |
+| 46  | Audit-log tamper-evidence (hash chain)                         | High          | Low–Moderate | ⚪ Not started    |
+| 47  | Conversation provenance bundle                                 | High          | Moderate     | ✅ Done (PR #196) |
+| 48  | WCAG 2.1 AA conformance — orchestration surfaces only          | Very high     | Moderate     | ⚪ Not started    |
+| 49  | Orchestration data portability — transactional-data extension  | Moderate      | Moderate     | ⚪ Not started    |
 
 ### 37. End-to-end idempotency model — ⚪ Not started
 
@@ -1098,9 +1098,9 @@ Items 37–39 are correctness — they prevent silent damage. Items 40–43 are 
 - **Auto-refresh load.** A live page polling every 5 seconds across multiple admins could pressure Postgres. Mitigation: SSE push from a singleton in-process aggregator that materialises the snapshot once per tick; clients subscribe.
 - **Force-fail misuse.** An impatient admin force-fails a slow-but-legitimate execution. Mitigation: confirmation dialog warns about side-effects partially completed; audit-log captures actor and (optional) reason.
 
-**Priority justification.** Top-3 Tier 8 priority. The cheapest operational visibility win — every primitive needed is already in the codebase, the missing piece is the UI. Partner pilots will hit "the workflow is stuck" within the first week of running anything non-trivial.
+**Priority justification.** Top-3 Tier 8 priority — **re-graded upward after PR #202.** The running-step side table that PR #202 introduced (per-step rows with stamped lifecycle timestamps, including per-branch `completedAt` for parallel branches) is exactly the data shape this page needs. `timeInCurrentStepMs` is now an indexed side-table read rather than a cost-log scan, and orphan detection is already wired through the reaper. The remaining work has shrunk to mostly UI + force-fail route. Partner pilots will hit "the workflow is stuck" within the first week of running anything non-trivial; this is the cheapest operational visibility win in Tier 8.
 
-**Difficulty: Moderate.** New admin page + four cards + computed field + force-fail route + lease drill-in. One sprint.
+**Difficulty: Low–Moderate (re-graded down from Moderate after PR #202).** New admin page + four cards + force-fail route + lease drill-in. The running-step side table eliminates the computed-field work the original framing implied. Roughly half a sprint.
 
 ### 41. Workflow-execution health dashboard (operational, not quality) — ⚪ Not started
 
@@ -1279,34 +1279,31 @@ Items 37–39 are correctness — they prevent silent damage. Items 40–43 are 
 
 **Difficulty: Low–Moderate.** Three Prisma fields + one new table + insert-time hashing + signing tick + verification route + admin button + back-fill migration. Half-to-one sprint.
 
-### 47. Conversation provenance bundle — ⚪ Not started
+### 47. Conversation provenance bundle — ✅ Done (PR #196)
 
-**Why it matters.** For legal-advice, mortgage-broking, tenant-rights, council-planning, health-protocol, financial-planning pilots, the conversation itself is the audit artefact partners hand to their reviewers. The question "show me how the agent arrived at this answer on this date" needs a defensible answer, not a SQL join across half a dozen tables. Today `AiMessage` does not record the agent version, workflow version, model ID, or KB chunks cited at message time — reconstructing this requires inferring from execution traces and citation envelopes, and the inference is lossy if the agent was edited or knowledge re-ingested between the message and the audit. Pre-launch is the cheap moment to add the pinning; post-launch retrofitting it means every legacy message carries a "pre-vN" asterisk.
+**Why it mattered.** For legal-advice, mortgage-broking, tenant-rights, council-planning, health-protocol, financial-planning pilots, the conversation itself is the audit artefact partners hand to their reviewers. The question "show me how the agent arrived at this answer on this date" needed a defensible answer, not a SQL join across half a dozen tables. Pre-PR, `AiMessage` did not record the agent version, workflow version, model ID, or KB chunks cited at message time — reconstructing this required inferring from execution traces and citation envelopes, and the inference was lossy if the agent was edited or knowledge re-ingested between the message and the audit. Pre-launch was the cheap moment to add the pinning; post-launch retrofitting would mean every legacy message carries a "pre-vN" asterisk.
 
-**What exists today.** Conversation export route at `app/api/v1/admin/orchestration/conversations/export/route.ts` returns JSON/CSV with `conversationId`, `agentId`, `agentSlug`, `agentName`, messages, timestamps — but no per-message agent version / workflow version / model ID, no KB chunks cited, no capability calls made. `AiMessage` has no `agentVersionId` / `workflowVersionId` / `modelId` fields. Item 2 (citations) captures KB chunks in the citation envelope (in-band on the rendered message) but not in the export. Item 12 (workflow versioning) pins `AiWorkflowExecution.versionId` but not per-message. Reconstructing "what was running when this message was sent" requires manual joins across `AiConversation → AiWorkflowExecution → AiWorkflowVersion`.
+**What shipped (PR #196).**
 
-**What we'd ship.**
+- **Per-message version pinning.** New columns on `AiMessage`: `agentVersionId`, `workflowVersionId` (nullable; populated for `run_workflow`-fired messages), `modelId`, `providerSlug`. Streaming chat writes the scalars at message-creation time; workflow `agent_call` and `run_workflow` snapshot them too. `MessageMetadata` was split into a `diagnostic` half (telemetry) and a `provenance` half (audit pinning) so the two grow independently.
+- **Per-message citation pinning.** Citations are snapshotted onto the message at write time as content-addressable refs (`chunkId`, `documentId`, `contentHash`) — not just the inline `[N]` markers from item 2. Trace viewer + export were refactored to read citations from the provenance bundle so there is one source of truth.
+- **Per-message workflow provenance.** `run_workflow` capability dispatches now snapshot the workflow's provenance onto the resulting assistant message so a chat turn that delegated to a workflow carries the workflow's version + step trail forward.
+- **Provenance routes.** `GET /api/v1/admin/orchestration/conversations/:id/provenance` returns the full bundle in two formats — JSON for machine audit and a deterministic Markdown rendering (`renderConversationMarkdown`) for human reviewers handing artefacts to auditors. No PDF / Gotenberg dependency — the deterministic Markdown turned out to satisfy the audit-artefact need without the external service.
+- **Admin UI.** Version pills + download buttons on the conversation detail page; trace viewer + export panel read citations from the provenance bundle.
+- **PII redaction architecture (beyond the original spec).** `BaseCapability` gained a `processesPii` boolean + `redactProvenance` hook; non-PII built-ins declare `processesPii=false` and the registry refuses to register a capability that handles PII but provides no redactor. `call_external_api` redacts request args and response bodies; four other HIGH-PII built-ins ship redactors. `buildToolCallTrace` routes through the capability redactor so the provenance bundle never carries un-redacted PII.
+- **Consent-gated cross-user access (beyond the original spec).** New `AiConversationShare` consent record; consumer share + revoke routes; list/search include shared conversations; `adminCanViewConversation` gates every per-id admin route; `logConversationAccess` writes an `AiAdminAuditLog` row on every cross-user read so the audit trail is itself auditable. Every provenance download is logged to `AiAdminAuditLog`.
+- **Audit-of-audits.** Cross-user search matches are themselves audited (an admin scanning the corpus is a privacy-sensitive action, not just a read).
 
-1. **Per-message version pinning.** Add `AiMessage.agentVersionId String?`, `AiMessage.workflowVersionId String?` (nullable; populated for workflow-fired messages), `AiMessage.modelId String?`, `AiMessage.providerSlug String?`. The chat handler writes these at message-creation time.
-2. **Per-message citation pinning.** Add `AiMessage.citations Json?` carrying the resolved chunk refs at message time: `[{ chunkId, documentId, documentVersion, contentHash }]`. Item 31 (KB freshness scanner) makes `documentVersion` meaningful.
-3. **Per-message capability pinning.** Add `AiMessage.capabilityCalls Json?` carrying `[{ capabilityId, capabilitySlug, capabilityVersion, args, result, costUsd, latencyMs }]` for the tool calls that produced the message.
-4. **Provenance endpoint.** `GET /api/v1/admin/orchestration/conversations/{id}/provenance` returns the full bundle: every message with its pinned versions + citations + capability calls, plus conversation-level metadata (start time, end time, total cost, agent-version transitions during the conversation, model-routing decisions). Output format: JSON, plus a PDF rendering via the Gotenberg recipe (chains item 17). Composes with item 27 (conversation export) — the export is the _conversation_; provenance is the _audit trail_.
+**Beyond the original spec.** The original framing called for a JSON + PDF bundle. The PR replaced PDF with deterministic Markdown (simpler, no service dep), and expanded scope to include PII redaction infrastructure and consent-gated cross-user access — both of which are prerequisites for handing the bundle to a partner under any realistic data-handling policy. Capability-call pinning lives in the trace, not on `AiMessage` directly — same retrieval contract via the provenance route, simpler row growth.
 
-**Benefits.**
+**Critical files (for reference):** `prisma/schema.prisma` (`AiMessage` provenance columns, `AiConversationShare`), `lib/orchestration/trace/render-conversation-markdown.ts` (`renderConversationMarkdown`), `app/api/v1/admin/orchestration/conversations/[id]/provenance/route.ts` + `.../provenance.md/route.ts`, `lib/orchestration/capabilities/base-capability.ts` (`processesPii`, `redactProvenance` hook), `lib/orchestration/capabilities/dispatcher.ts` (registry-time enforcement of the `processesPii` pairing), `lib/security/redact.ts`, `lib/orchestration/access/conversation-access.ts` (`adminCanViewConversation`, `logConversationAccess`), `components/admin/orchestration/conversation-trace-viewer.tsx` (version pills + provenance download), `.context/security/conversation-access.md`, `.context/security/pii-redaction.md`.
 
-- **Audit defensibility.** Partners hand auditors a versioned provenance bundle, not "trust us, we logged it."
-- **Composes with item 12 (versioning), item 2 (citations), item 31 (freshness).** Every existing primitive that pins state at one level becomes per-message-pinned.
-- **Pre-launch timing matters.** Retrofitting version pinning to existing messages means accepting a "pre-vN messages don't have provenance" carve-out.
+**Tradeoffs surfaced in the work.**
 
-**Risks.**
-
-- **Row growth.** Four new columns × millions of messages × JSON for citations and capability-calls. Mitigation: citations and capability-calls are JSONB; pruning policy via the existing retention plumbing.
-- **Provenance-export cost.** A long conversation with deep citations produces a large bundle. Mitigation: page the provenance endpoint by message ranges; PDF rendering is opt-in.
-- **Schema migration on existing messages.** Existing messages lack version pins. Mitigation: a best-effort back-fill migration joins against `AiWorkflowExecution.versionId` and the conversation's then-current agent version; rows that can't be back-filled get a `provenance: 'partial'` marker.
-
-**Priority justification.** Top-7 Tier 8 priority. The kind of feature whose absence is invisible until a compliance audit asks for it; cheap to add pre-launch; expensive to retrofit post-launch. Composes with multiple existing items, so the marginal cost of building it is lower than implied by the row counts.
-
-**Difficulty: Moderate.** Four Prisma fields + chat-handler write integration + provenance route + PDF rendering recipe + back-fill migration. One sprint.
+- **Markdown over PDF.** Gotenberg / Chromium-render would have produced a glossier artefact but added a service dependency. Deterministic Markdown bytes are content-addressable, diff-friendly, and auditor-acceptable. Reconsider if a partner formally requires PDF as a delivery format.
+- **No best-effort back-fill on existing messages.** The migration is additive; pre-PR-196 rows carry `null` provenance scalars. Documented at the route boundary; admins see "pre-provenance" in the rendered Markdown for those messages. Acceptable because the deployment profile is early-stage pilots where the provenance gap is narrow.
+- **Capability redactor opt-in is enforced at registration, not runtime.** A capability author who forgets to set `processesPii` correctly gets a registration-time error rather than a runtime audit miss. Stronger guarantee than the original spec implied.
+- **Sharing model is opt-in per conversation, not org-wide.** A consumer who wants to forward a conversation to a partner creates a share record explicitly. The alternative (admin-can-see-all by default) was rejected because the threat model includes the admin themselves as a privacy-sensitive actor.
 
 ### 48. WCAG 2.1 AA conformance — orchestration surfaces only — ⚪ Not started
 
@@ -1366,17 +1363,17 @@ Items 37–39 are correctness — they prevent silent damage. Items 40–43 are 
 - **Embedding compatibility.** Vector embeddings from one model don't transfer to a deployment using a different embedding model. Mitigation: export records the embedding model + dimension; import warns if the target deployment's model differs; documented re-embedding path on the import side.
 - **PII surfaces.** Full export includes conversations, which contain PII. Mitigation: export is admin-only with an explicit "this contains user data" confirmation; signed URLs have short TTLs; access is audit-logged.
 
-**Priority justification.** Lower-tier Tier 8 priority. Less acute than #37–#40 because the current config-only export covers the most common operational need (clone-and-redeploy). But high-leverage for commercial conversations — "we have full data portability" closes a known procurement concern. Build after #46 (audit chain) and #47 (provenance) so the exported data is itself trustworthy.
+**Priority justification.** Lower-tier Tier 8 priority. Less acute than #37–#40 because the current config-only export covers the most common operational need (clone-and-redeploy). But high-leverage for commercial conversations — "we have full data portability" closes a known procurement concern. **With #47 (provenance) shipped in PR #196, only #46 (audit chain) remains as a prerequisite** for the exported data to be itself trustworthy.
 
 **Difficulty: Moderate.** Exporter extension + streaming response + admin UI + roundtrip smoke test + documentation. One sprint.
 
 ### Tier summary
 
-The thirteen items split into five sub-groups that share an order-of-completion: **correctness → operational visibility → DX → compliance → partner trust**. Each group provides cheap leverage for the next: correctness (#37–#39) makes the dashboards (#40–#41) meaningful; the dashboards make the load tests (#43) interpretable; the load tests give the SDK (#44) defensible baselines; the SDK gives partners the contract; the audit chain (#46) and provenance (#47) give partners the audit trail; WCAG (#48) and portability (#49) close the procurement objections.
+The thirteen items split into five sub-groups that share an order-of-completion: **correctness → operational visibility → DX → compliance → partner trust**. Each group provides cheap leverage for the next: correctness (#37–#39) makes the dashboards (#40–#41) meaningful; the dashboards make the load tests (#43) interpretable; the load tests give the SDK (#44) defensible baselines; the SDK gives partners the contract; the audit chain (#46) and provenance (#47, ✅ shipped in PR #196) give partners the audit trail; WCAG (#48) and portability (#49) close the procurement objections.
 
-Sequenced for shortest path to a partner-defensible foundation: **37 → 40 → 38 → 39 → 48 → 44 → 46 → 47 → 42 → 41 → 43 → 45 → 49**, with #37 (idempotency) first because correctness gaps compound silently, #40 (live engine) second because operational visibility is the first thing partners ask for, #48 (WCAG) early because public-sector procurement is binary, and #44 (OpenAPI/SDK) middle because it multiplies every subsequent iteration. Items #41–#43 and #45–#49 are reorderable based on partner pull.
+Sequenced for shortest path to a partner-defensible foundation, with #47 now removed because it shipped: **37 → 40 → 38 → 39 → 48 → 44 → 46 → 42 → 41 → 43 → 45 → 49**. #37 (idempotency) first because correctness gaps compound silently, #40 (live engine) second because operational visibility is the first thing partners ask for _and_ PR #202's running-step side table makes it materially cheaper to build than the original framing implied, #48 (WCAG) early because public-sector procurement is binary, and #44 (OpenAPI/SDK) middle because it multiplies every subsequent iteration. Items #41–#43 and #45–#49 are reorderable based on partner pull.
 
-The unifying property: every Tier 8 item answers "what makes the platform solid enough to build on?" rather than "what new thing does the platform do?" Pre-launch is the moment to spend on these. Retrofitting any of them after partner code is in production is strictly more expensive — and several (per-message version pinning in #47, audit-chain back-fill in #46, idempotency shape in #37) carry a permanent "before vN / after vN" asterisk if deferred.
+The unifying property: every Tier 8 item answers "what makes the platform solid enough to build on?" rather than "what new thing does the platform do?" Pre-launch is the moment to spend on these. Retrofitting any of them after partner code is in production is strictly more expensive — and several (audit-chain back-fill in #46, idempotency shape in #37) carry a permanent "before vN / after vN" asterisk if deferred. Item #47 (per-message version pinning) was the canonical example of the retrofit-asterisk class — it was shipped pre-launch in PR #196 for exactly this reason.
 
 If the team has 1 sprint: **#37**. If 2–3 sprints: **#37 → #40 → #48**. If 4–6 sprints: **#37 → #40 → #38 → #39 → #48 → #44**. Beyond that, partner-pull and operational pressure dictate the order — the items are independent enough that any individual sprint pays off on its own.
 

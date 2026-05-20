@@ -149,6 +149,19 @@ If a step-timeline error message ends in that suffix, the diagnostic was cut and
 
 History: the cap was 256 characters before 2026-05-16. Anyone reading older trace entries should know that pre-fix errors were silently truncated with no marker at all.
 
+## `agent_call` Resolves Agent-Profile Inheritance
+
+When `agent_call` invokes an agent, the executor loads the agent **with its optional `profile`** and runs `resolveEffectivePrompt(agent, profile)` before sending. That means the agent's persona / voice / guardrails picked up from a shared profile are honoured inside the workflow execution exactly the way they are in chat. Two implications:
+
+- Editing a shared profile (`AiAgentProfile`) silently changes the behaviour of every agent — and therefore every `agent_call` step — that points at it. Treat profile edits with the same care as agent-systemInstructions edits; both feed into the same resolved prompt.
+- A workflow that hard-codes an `agent_call.message` assuming a specific persona will break if the agent later inherits a profile that contradicts the hard-coded framing. Prefer letting the profile carry the persona, and use `message` for the actual task input.
+
+## `reasoningEffort` Precedence on `agent_call`
+
+The step's `config.reasoningEffort` **overrides** the agent's own `AiAgent.reasoningEffort`, not adds to it. Resolution: step config (if set) → agent's own value (if set) → no `reasoning_effort` parameter sent. If you copy-paste a step from a workflow that targeted a non-reasoning model and later swap in a reasoning-capable agent, you may suddenly start paying for reasoning tokens without seeing the per-step setting; check the trace's captured `requestParams` to confirm what actually went over the wire.
+
+On `orchestrator`, the planner uses the step's `reasoningEffort` but delegated agent calls keep using each delegated agent's own value — the planner-vs-delegate split is by design.
+
 ## `agent_call` Multi-Turn Mode Falls Back On Re-Drive
 
 Multi-turn checkpointing covers `reflect` and `orchestrator` cleanly. `agent_call` in multi-turn mode is **explicitly not supported** for full resume — it falls back to a fresh start on re-drive. The dispatch cache prevents inner-side-effect duplication (capabilities the agent called won't fire twice), so the cost of re-drive is LLM tokens only, not the side effect itself. Document the limitation if a long agent_call session is load-bearing.

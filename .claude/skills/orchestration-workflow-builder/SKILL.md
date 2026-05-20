@@ -29,6 +29,7 @@ interface WorkflowDefinition {
 interface WorkflowStep {
   id: string; // Unique within the workflow
   name: string; // Human-readable label
+  description?: string; // Optional ≤500-char operator-facing note
   type: WorkflowStepType; // One of 17 step types
   config: Record<string, unknown>; // Type-specific configuration
   nextSteps: ConditionalEdge[]; // Outgoing edges
@@ -126,6 +127,27 @@ The four "evaluation-family" step types overlap; pick by **scope** and **lineage
 | `schema` | **Closed-set / shape checks** — enum membership, required fields, array-of-allowed-values | Zero cost, deterministic |
 
 **Reach for `schema` mode** whenever the rule is "must be one of these N values" or "must have these fields". LLM mode hallucinates on closed-set membership even with the spec pasted in (observed multiple times in the audit workflow's `validate_proposals` guard). Schema mode delegates the structural check to a Zod schema registered via `registerSchema(name, schema)` in `lib/orchestration/schemas/registry.ts`. The workflow step references the schema by `schemaName`. See `gotchas.md` → _"`guard` Steps in `mode: 'llm'` Cannot Validate Against An Implicit Closed Set"_ for the failure mode this fixes, and `references/step-config-schemas.md` → `guard` for the config shape.
+
+## Step `description` (operator-facing)
+
+Every step takes an optional `description` (≤500 chars, `.trim()`-ed). Authors paste it once; the engine carries it onto every trace entry and the workflow-builder canvas + execution detail view show it on hover / expand. Use it to explain non-obvious intent ("Re-runs only when `validate_proposals` returns CONCERNS — keeps the cheap path live and short-circuits on PASS"). Templates can backfill descriptions onto existing steps via the seed-unit pattern (see `prisma/seeds/data/templates/*.ts` for examples).
+
+Leave `description` off for short, self-explanatory steps — empty hover tooltips read as bugs.
+
+## Reasoning-effort knob (`reasoningEffort`)
+
+Every LLM-bearing step type accepts an optional `reasoningEffort: 'minimal' | 'low' | 'medium' | 'high' | null`. Honoured only by reasoning-capable models (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking) — silently dropped by other models. Resolution order:
+
+| Step                                                                                 | Resolution                                                                                                    |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `llm_call`, `plan`, `route`, `evaluate`, `reflect`, `guard` (llm mode), `supervisor` | Step config wins; null/undefined → no `reasoning_effort` sent                                                 |
+| `agent_call`                                                                         | Step config beats `AiAgent.reasoningEffort`; null on both → no `reasoning_effort` sent                        |
+| `orchestrator`                                                                       | Step config applies to the **planner only**; delegated agent calls keep using each delegated agent's own knob |
+| `guard` mode `schema`                                                                | Ignored (no LLM call)                                                                                         |
+
+Use `reasoningEffort: 'high'` sparingly — it adds non-trivial token cost and latency on reasoning models, and is a no-op on every other model. Default to leaving it null and bumping only the steps that actually need extra reasoning depth (typically `plan`, `orchestrator` planner, or a final `supervisor`).
+
+`requestParams` (the resolved `temperature` / `maxTokens` / `reasoningEffort` / provider-specific knobs that actually went into the LLM call) is captured on every trace entry — useful when debugging "did the executor honour my override?" The trace viewer surfaces it in the per-step expansion panel.
 
 ## Template Interpolation
 
@@ -294,6 +316,14 @@ A workflow can fire from five distinct entry points. Each pins `versionId` from 
 
 **`run_workflow` capability** is the bridge from chat agents into workflows. Per-agent `customConfig.allowedWorkflowSlugs` whitelist (fail-closed). The capability returns `{ status: 'pending_approval' | 'completed', ... }` and integrates with the in-chat approval card surface.
 
+## Re-running an execution
+
+Any terminal execution can be re-run via `POST /api/v1/admin/orchestration/executions/:id/rerun` (the execution detail page renders a Re-run dialog with a version chooser). The new execution row is created against the chosen workflow version with `parentExecutionId` pointing at the source — the engine threads the lineage so the trace viewer shows a breadcrumb back to the original. `inputData` is Zod-parsed from the source row (not as-cast — a corrupted source row produces a clean validation error instead of a runtime crash).
+
+This is most useful when an audit / supervisor run flagged a problem and you want to retry against a **newer published version** of the same workflow without losing the audit trail of the failed run. Operators choosing "current published" against the same version-id is allowed but discouraged unless an environmental factor (rate limit, transient external-API failure) changed.
+
+There is **no per-step rerun** today — the granule is the whole execution. If you find yourself wanting to retry from step N with prior outputs preserved, file it as a follow-up; the engine doesn't support partial reruns yet.
+
 ## Crash Recovery and Idempotency
 
 Workflows survive process crashes. The skill author rarely configures this directly but should know it exists when designing long-running pipelines.
@@ -371,6 +401,8 @@ npm run test -- tests/unit/lib/orchestration/engine/executors/
 - [ ] No orphan steps (all reachable from entry)
 - [ ] No cycles in the DAG
 - [ ] Required config fields populated for all step types
+- [ ] Step `description` populated for any non-obvious step (operator hover tooltip)
+- [ ] `reasoningEffort` set only where it earns its keep (left null elsewhere)
 - [ ] Template variables reference only upstream steps
 - [ ] `route` steps have at least 2 branches with matching conditions
 - [ ] `parallel` branches are arrays of step IDs

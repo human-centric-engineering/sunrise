@@ -2,7 +2,7 @@
 
 A plain-language record of the major technical and architectural choices behind Sunrise's agent orchestration layer. Each decision first explains the concept in everyday terms, then states what was chosen, lists the alternatives that were rejected, gives the rationale, and points to where the decision lives in the codebase.
 
-**Last updated:** 2026-05-05
+**Last updated:** 2026-05-20 (PRs #196–#204 sweep — added §3.12 Conversation provenance + PII redaction (PR #196), §3.13 Agent profile inheritance (PR #204), §3.14 LLM parameter profile + reasoningEffort (PR #197), §3.15 Step description on every trace entry (PR #198), §3.16 Guard schema mode (PR #198), §3.17 Execution rerun with lineage (PR #198); reframed §10.3 around lease + dispatch cache + running-step side table after PR #202 closed the broader checkpoint gap)
 
 ---
 
@@ -616,7 +616,7 @@ This section covers how an agent actually executes — the structure of a workfl
 - **Opt-in everywhere it matters.** Workflows that don't emit `sources` get `provenance: undefined`; nothing changes. The audit workflow opts in via prompts + guard; future workflows opt in the same way.
 - **One rendering for two surfaces.** The same `SourcesField` pill component renders inside the structured approval form and the post-execution trace viewer. Admins learn one inspection pattern.
 - **Composes with chat citations (5.6), not duplicates them.** A deployment using both chat and workflows gets per-message citations on chat turns AND per-claim provenance on workflow step outputs. Neither replaces the other.
-- **Distinct from per-message conversation provenance (improvement-priorities item 47).** That item pins agent/workflow versions + chunk refs onto `AiMessage` rows for audit defensibility of conversations. This is per-claim attribution inside a workflow step's structured output. They share vocabulary; they target different surfaces.
+- **Distinct from per-message conversation provenance (§3.12 below, shipped in PR #196).** That decision pins agent/workflow versions + chunk refs onto `AiMessage` rows for audit defensibility of conversations. This is per-claim attribution inside a workflow step's structured output. They share vocabulary; they target different surfaces.
 
 **Where it lives:** `lib/orchestration/provenance/types.ts` (contract + `extractProvenance` helper), `lib/orchestration/provenance/guard-rules.ts` (opt-in rule fragment), `lib/orchestration/engine/orchestration-engine.ts` (sequential + parallel trace push lift), `prisma/seeds/data/templates/provider-model-audit.ts` (first adopter), `lib/orchestration/review-schema/types.ts` (`display: 'sources'`), `components/admin/orchestration/approvals/sources-field.tsx` (pill renderer), `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx` (trace viewer panel), `.context/orchestration/provenance.md` (canonical doc).
 
@@ -643,6 +643,153 @@ This section covers how an agent actually executes — the structure of a workfl
 - **Future expansion is structurally cheap.** Adding `edge` or `air_gapped` to `DEPLOYMENT_PROFILES` is an array-value addition, not an enum split.
 
 **Where it lives:** `prisma/schema.prisma` (`deploymentProfiles String[] @default(["hosted"])`), `prisma/migrations/20260516120000_add_deployment_profiles/`, `types/orchestration.ts` (`TIER_ROLES`, `DEPLOYMENT_PROFILES`, `TIER_ROLE_META`, `DEPLOYMENT_PROFILE_META`), `lib/orchestration/model-audit/enums.ts`, `lib/validations/orchestration.ts` (`tierRoleSchema`, `deploymentProfilesSchema`), `lib/orchestration/llm/model-heuristics.ts` (`deriveTierRole` + new `deriveDeploymentProfiles`), `lib/orchestration/llm/provider-selector.ts` (sovereign-aware `private` scoring branch), `lib/orchestration/llm/db-model-adapter.ts` (`mapTierRoleToTier` honours the override), `prisma/seeds/009-provider-models.ts` (three rows reclassified), `prisma/seeds/data/templates/provider-model-audit.ts` (two-axis producer prompts + Rule 10), `components/admin/orchestration/provider-model-form.tsx` (new deployment-profile control). The canonical doc is the matrix reference at `.context/orchestration/provider-selection-matrix.md` plus the audit guide at `.context/admin/orchestration-provider-audit-guide.md`.
+
+### 3.12 Conversation provenance — per-message version pinning + PII redaction
+
+**What is it?** Per-conversation audit defensibility for regulated-domain pilots (legal advice, mortgage broking, tenant rights, council planning, NHS guidance). The question "show me how the agent arrived at this answer on this date" needed a defensible answer rather than a SQL join across half a dozen tables. Pre-PR-#196, `AiMessage` did not record the agent version, workflow version, model ID, or KB chunks cited at message time — reconstructing required inference from execution traces and citation envelopes, lossy whenever the agent was edited or knowledge re-ingested between the message and the audit. Pre-launch was the cheap moment to add the pinning; post-launch retrofitting would leave every legacy message carrying a "pre-vN" asterisk.
+
+**What we chose:** New columns on `AiMessage` (`agentVersionId`, `workflowVersionId`, `modelId`, `providerSlug`) plus citation hash snapshots; `MessageMetadata` split into a `diagnostic` half (telemetry) and a `provenance` half (audit pinning) so the two grow independently. Trace viewer + export refactored to read citations from the provenance bundle so there is one source of truth. Routes: `GET /admin/orchestration/conversations/:id/provenance` (JSON) and `.../provenance.md` (deterministic Markdown via `renderConversationMarkdown`). Capability-call pinning lives on the trace, not on `AiMessage` — the same retrieval contract via the provenance route, with smaller row growth. **PII redaction is paired primitives:** `BaseCapability.processesPii: boolean` + `redactProvenance()` hook, with **registry-time enforcement** that refuses to register a `processesPii = true` capability without an explicit redactor override. `lib/security/redact.ts` ships `maskEmail`, `maskPhone`, `maskBearerToken`, `redactedString`, and `maskKeysInObject`. **Consent-gated cross-user access** ships as `AiConversationShare` consent records + `adminCanViewConversation()` gate on every per-id admin route + `logConversationAccess()` audit-of-audits (an admin scanning the corpus is itself a privacy-sensitive action).
+
+**Alternatives**
+
+| Option                                                                                           | Why not                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stick with the JSON-only export route + inferred provenance from `AiWorkflowExecution.versionId` | Lossy whenever an agent was edited between the message and the audit; auditors want pinned state, not "we infer it was probably this version"                                                                                                                    |
+| PDF rendering via a Gotenberg / Chromium service                                                 | Adds a service dependency; Markdown bytes are content-addressable, diff-friendly, and auditor-acceptable. Reconsider if a partner formally requires PDF as a delivery format                                                                                     |
+| Best-effort back-fill migration on existing messages                                             | Existing rows can be back-filled with the conversation's then-current agent version but the inference is precisely the lossiness the feature exists to eliminate — keep them null and label them "pre-provenance"                                                |
+| Runtime PII detection inside the dispatcher (no per-capability flag)                             | Pattern-matching PII reliably is a hard problem; the registry-time enforcement is a one-way ratchet — opting in costs nothing if your data turns out to be safe, but inheriting the default redactor when you process PII leaks customer data to every audit row |
+| Auto-share-with-org admin model                                                                  | The threat model includes admins themselves as privacy-sensitive actors. Opt-in consent per conversation is the correct default                                                                                                                                  |
+
+**Why this approach**
+
+- **Audit defensibility without back-fill anxiety.** Pre-PR rows are explicitly labelled "pre-provenance"; post-PR rows carry pinned scalars; the cut-over is honest. Auditors get the bundle they need on the rows the partner cares about.
+- **Markdown beats PDF on substrate.** Deterministic Markdown bytes hash-equally across deployments; PDF rendering is sensitive to font / kerning / OS differences in ways that make audit comparison harder, not easier. The audit-artefact need is satisfied.
+- **Registry-time PII enforcement is structurally honest.** A capability author who forgets to set `processesPii` correctly gets a registration-time error rather than a runtime audit miss. Stronger guarantee than the original spec implied.
+- **Composes with §3.10 (workflow-step provenance), not duplicates it.** Two surfaces, one vocabulary — chat turns get per-message version + citation pinning; workflow step outputs get per-claim attribution. A deployment that uses both gets both.
+
+**Where it lives:** `prisma/schema.prisma` (`AiMessage` provenance columns, `AiConversationShare`), `lib/orchestration/trace/render-conversation-markdown.ts` (`renderConversationMarkdown`), `app/api/v1/admin/orchestration/conversations/[id]/provenance/route.ts` + `.../provenance.md/route.ts`, `lib/orchestration/capabilities/base-capability.ts` (`processesPii` + `redactProvenance` hook), `lib/orchestration/capabilities/dispatcher.ts` (registry-time enforcement of the pairing), `lib/security/redact.ts`, `lib/orchestration/access/conversation-access.ts` (`adminCanViewConversation`, `logConversationAccess`), `components/admin/orchestration/conversation-trace-viewer.tsx` (version pills + provenance download), `.context/security/conversation-access.md`, `.context/security/pii-redaction.md`.
+
+### 3.13 Agent profile inheritance — shared persona / voice / guardrails
+
+**What is it?** A fleet of agents sharing a brand voice ("warm, plain-English, no jargon"), persona, or guardrail set ("never quote prices; defer pricing to sales") was duplicating those fragments verbatim across every agent's `systemInstructions`. Editing the shared fragment meant editing every agent. The agent-version model treated each agent as an independent unit; there was no first-class way to express "these ten agents inherit this one persona."
+
+**What we chose:** A new `AiAgentProfile` table for inheritable fragments. Each agent links to at most one profile via `profileId`. Per-field mode columns (`personaMode`, `voiceMode`, `guardrailsMode`) decide how the agent combines profile fragments with its own: `inherit` (use the profile verbatim), `override` (replace with the agent's own value), or `append` (concatenate, profile first). The runtime resolver `resolveEffectivePrompt(agent, profile)` + `composeSystemPromptString()` compose the final system prompt — and **the same resolver runs in both surfaces**, the streaming chat handler and the workflow `agent_call` executor. A profile edit changes both behaviours atomically.
+
+**Alternatives**
+
+| Option                                                                       | Why not                                                                                                                         |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Keep duplicating fragments in each agent's `systemInstructions`              | The fleet-wide brand-voice edit case is the explicit driver; the existing model fails it                                        |
+| One big "templates" table — every agent is an instance of a template         | Loses the "this agent overrides one field" expressiveness; templates would have to fork to vary by field                        |
+| Single-mode inheritance (always-inherit; agent-fields are ignored if linked) | Too rigid — a specialised agent in a 10-agent fleet often needs to diverge from one shared fragment while inheriting the others |
+| Resolve at agent-write time instead of dispatch time                         | Means a profile edit doesn't reach already-saved agents until each is touched; defeats the "edit once, change all" purpose      |
+| Different resolvers for chat and workflow                                    | Two surfaces diverge silently. Same resolver in both is the only way "profile change applies to chat AND workflow" stays true   |
+
+**Why this approach**
+
+- **One source of truth for shared fragments.** A brand-voice profile edit takes effect on every linked agent's next call, in both chat and workflow contexts. No agent-by-agent migration.
+- **Per-field modes preserve granular control.** An agent that wants the shared persona but a different brand voice can `inherit` on `personaMode` and `override` on `voiceMode`. The expressiveness covers the realistic combinations.
+- **Resolved at dispatch, not at save.** Profile changes propagate without rewriting agent rows. The agent versioning surface stays focused on agent-level changes; profile changes are versioned on the profile.
+- **Audit and version coverage match the agent model.** Profiles ship with the same `isSystem` protection, audit-log coverage, and admin CRUD surface as agents.
+
+**Where it lives:** `prisma/schema.prisma` (`AiAgentProfile` + `AiAgent.profileId` / `*Mode` columns), `lib/orchestration/agents/resolve-effective-prompt.ts` (`resolveEffectivePrompt` + `composeSystemPromptString`), `lib/orchestration/chat/message-builder.ts` (chat surface integration), `lib/orchestration/engine/executors/agent-call.ts` (workflow surface integration), `app/api/v1/admin/orchestration/agent-profiles/` (CRUD), `app/admin/orchestration/agent-profiles/` (admin pages + sidebar), `.context/admin/orchestration-agent-profiles.md`, `.context/orchestration/agent-profiles.md`.
+
+### 3.14 LLM parameter profile + per-agent / per-step `reasoningEffort`
+
+**What is it?** Reasoning-capable models (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking) accept a `reasoning_effort` parameter that other models silently ignore. Pre-PR-#197, the platform had no way to set this per-agent or per-step — every call to a reasoning model used provider defaults. The audit workflow's planner step in particular benefited from `high` reasoning depth, but there was no knob to express that. Worse, the request parameters that actually went over the wire were not captured anywhere, so debugging "did the executor honour my override?" required reading provider logs.
+
+**What we chose:** Add `reasoningEffort: 'minimal' | 'low' | 'medium' | 'high' | null` to `AiAgent` and to every LLM-bearing workflow step config (`llm_call`, `plan`, `route`, `evaluate`, `reflect`, `guard.llm`, `agent_call`, `orchestrator`, `supervisor`). Resolution precedence is consistent: step config (if set) → agent value (if set) → no `reasoning_effort` parameter sent. `agent_call` step config beats the called agent's own knob; `orchestrator` step config applies to the **planner only** (delegated agent calls keep each delegated agent's own value). Anthropic thinking-budget is guarded — a budget < 1024 is rejected at the provider boundary because Anthropic ignores it silently otherwise. A `paramProfile` enum on `AiProviderModel` (`openai-legacy` / `openai-reasoning` / `anthropic` / `gemini`) drives which `requestParams` shape is built per call. **Every trace entry captures the resolved `requestParams`** so the trace viewer can answer "what actually went over the wire" without provider-log spelunking.
+
+**Alternatives**
+
+| Option                                                                          | Why not                                                                                                                                                                           |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hard-code a `reasoning_effort` value per model family                           | Loses the per-workflow knob — the supervisor's `high` and the planner's `medium` are legitimately different settings on the same model                                            |
+| Pass `reasoningEffort` only via step config, not on the agent                   | The "this agent runs deep" case (a supervisor agent, a planner agent) is real; forcing every workflow to set it duplicates the intent                                             |
+| Don't capture `requestParams` on the trace                                      | Then "did the override land?" is unanswerable without provider logs. Capturing it is a fixed-size addition per entry                                                              |
+| Send `reasoning_effort` to every model and let the provider ignore it           | Some providers reject unknown parameters; silent drop is provider-specific; the paramProfile gives us a structural answer                                                         |
+| Stop at a single `reasoningEffort` and skip the broader `paramProfile` registry | Future provider-specific knobs (Anthropic thinking budget, Gemini safety mode) would need the same registry-driven shape — building it once now is cheaper than refactoring later |
+
+**Why this approach**
+
+- **Honours the precedence model authors expect.** Step config wins (workflow author's local intent), then agent value (broad agent posture), then no parameter (provider default). Surprising-free.
+- **`agent_call` precedence captures the right intent.** A workflow author who sets `reasoningEffort: 'high'` on an `agent_call` step is saying "for this turn, push the model harder than the agent normally does." That intent should beat the called agent's own knob, and it does.
+- **`requestParams` capture closes the debug loop.** The trace viewer surfaces what went over the wire; admins don't need provider-log access to verify their override.
+- **`paramProfile` as a registry value, not a code branch.** Provider-specific request-shape construction lives on the model row, not in branchy executor code. New profile = new enum value + new request builder; existing executors untouched.
+
+**Where it lives:** `prisma/schema.prisma` (`AiAgent.reasoningEffort`, `AiProviderModel.paramProfile`), `lib/orchestration/llm/types.ts` (`ParamProfile` discriminator + per-profile request shapes), `lib/orchestration/llm/anthropic.ts` / `openai-compatible.ts` (per-profile request builders), `lib/orchestration/llm/model-heuristics.ts` (`paramProfile` resolution), `lib/orchestration/llm/db-model-adapter.ts` (paramProfile honoured on the resolved model), `lib/orchestration/engine/executors/*.ts` (every LLM-bearing executor threads `reasoningEffort` + records `requestParams`), `lib/orchestration/engine/llm-runner.ts` (shared call site that captures `requestParams` onto the telemetry buffer), `lib/validations/orchestration.ts` (`paramProfileSchema`, `reasoningEffort` on agent + step schemas), `.context/orchestration/llm-providers.md`.
+
+### 3.15 Optional step `description` carried onto every trace entry
+
+**What is it?** Operators reviewing a paused execution or a completed run kept asking "what is this step for?" — the step ID and the per-type rendered config are not always self-explanatory. Pre-PR-#198, there was no place for a one-line operator-facing note explaining intent. Authors had been smuggling explanations into `name` (truncated by the UI) or into the prompt itself (hidden from the trace view).
+
+**What we chose:** Optional `description?: string` on every `WorkflowStep` in the validation schema (≤500 chars, `.trim()`-ed). The engine carries it onto every `ExecutionTraceEntry` at execution time (via a view-time overlay for old executions so historical traces show the description on expand even though the original trace JSON predates the field). The workflow-builder canvas shows a hover tooltip; the execution detail view shows it on expand. A seed unit backfills descriptions onto every step in all 12 built-in templates so the surface is meaningful from day one.
+
+**Alternatives**
+
+| Option                                                                  | Why not                                                                                                                                          |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Re-use the existing `name` field                                        | The UI truncates `name`; the field is for identification, not narration. Conflating the two breaks both readings.                                |
+| Carry only at builder time; don't lift to trace                         | Then re-reviewing a completed execution loses the context. The expensive part — the read — is the part that benefits most.                       |
+| Make `description` required for new steps                               | Punishes simple workflows where the step IDs are already self-explanatory. Optional is correct; ≤500 chars caps the worst-case bloat.            |
+| Skip the trace lift and read the description from the workflow snapshot | An execution can outlive its source workflow version. Materialising onto the trace at execution time means the description survives schema drift |
+
+**Why this approach**
+
+- **One paste, two surfaces.** The description shows in the builder and the trace; authors don't paste twice or rebuild navigation between them.
+- **View-time overlay preserves the surface for historical executions.** Old traces lacking the field on disk still render the description when the user expands a row — the workflow snapshot is the fallback. Forward-compatible without a back-fill migration.
+- **≤500-char cap is the legibility budget.** Operators read hover tooltips quickly; longer notes belong in the workflow doc.
+
+**Where it lives:** `lib/validations/orchestration.ts` (`workflowStepSchema.description`), `lib/orchestration/engine/orchestration-engine.ts` (lifts description onto every `ExecutionTraceEntry`), `components/admin/orchestration/workflow-builder/step-editor.tsx` (description textarea), `components/admin/orchestration/workflow-builder/execution-trace-entry.tsx` (view-time overlay for historical traces), `prisma/seeds/data/templates/*.ts` (backfilled descriptions on all built-in templates).
+
+### 3.16 `guard` step gains a deterministic `schema` mode
+
+**What is it?** The audit workflow's `validate_proposals` guard, in `mode: 'llm'`, kept hallucinating on closed-set membership ("must be one of these N tierRoles") even with the spec inlined in the prompt. The LLM would mark a known-invalid `tierRole` as PASS, the proposal would flow through, the downstream apply step would fail, and the workflow would burn its retry budget. Closed-set checks are precisely what Zod is for — but the `guard` executor had no path that didn't call an LLM.
+
+**What we chose:** A `mode: 'schema'` variant on the existing `guard` step. The config carries `schemaName` (a slug into a process-wide registry at `lib/orchestration/schemas/registry.ts`) and an optional `inputStepId` (the step whose output gets validated; defaults to `ctx.inputData`). The executor runs `getSchema(name).safeParse(...)`. Failure returns `{ passed: false, reason: 'Schema validation failed at <path>: <message>', issues: [...] }` so a downstream retry can interpolate precise failure paths into its prompt. Schema mode never calls an LLM; `modelOverride` / `temperature` / `reasoningEffort` are ignored when set. The provider-model-audit workflow is the first adopter — its `validate_proposals` step swaps from `llm` to `schema` against a registered `audit-proposals` schema. The structural validator at workflow-validation time was taught to accept schema-mode without requiring `rules`.
+
+**Alternatives**
+
+| Option                                       | Why not                                                                                                                                                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep `mode: 'llm'` and write tighter prompts | We tried. Closed-set hallucination is the failure mode the LLM cannot prompt its way out of                                                                           |
+| Add a separate `validate` step type          | More schema surface, more docs, more admin UI. Reusing `guard`'s existing UX is cheaper and the mental model ("validate before continuing") is identical              |
+| Inline Zod schemas in the step config        | Stringified Zod can't be edited safely in JSON; the registry indirection lets schemas be feature-scoped TypeScript modules (`lib/orchestration/<feature>/schemas.ts`) |
+| Ship a built-in schema catalogue             | Couples Sunrise to specific domain shapes; the registry starts empty so forks add only the schemas they need                                                          |
+
+**Why this approach**
+
+- **Eliminates the hallucination class entirely.** Schema validation is deterministic; closed-set membership is now a structural check, not a prompted one.
+- **Zero LLM cost on the validation path.** Each schema-mode guard runs in microseconds and never bills tokens.
+- **Issue paths empower retry loops.** A downstream `llm_call` can interpolate `{{guard_step.output.issues}}` so the retry sees "field `tierRole` must be one of [thinking, worker, …]" rather than "validation failed."
+- **Feature-scoped schemas keep coupling local.** A workflow that needs a domain schema registers it in its own module; the registry ships empty so unrelated features stay decoupled.
+
+**Where it lives:** `lib/orchestration/schemas/registry.ts` (`registerSchema` / `getSchema`), `lib/orchestration/schemas/audit-proposals.ts` (the first registered schema), `lib/orchestration/schemas/index.ts` (registration barrel), `lib/orchestration/engine/executors/guard.ts` (schema-mode branch), `lib/validations/orchestration.ts` (`guardStepConfigSchema` schema-mode shape), `lib/orchestration/workflows/validator.ts` (schema-mode allowed without `rules`), `prisma/seeds/data/templates/provider-model-audit.ts` (first adopter).
+
+### 3.17 Execution rerun with lineage tracking
+
+**What is it?** When a supervisor verdict flagged a failed or "concerns" execution, operators wanted to retry against a **newer** workflow version without losing the audit trail of the original run. There was no first-class rerun primitive; the closest tool was triggering a fresh execution by hand and manually linking the two in a spreadsheet.
+
+**What we chose:** `POST /admin/orchestration/executions/:id/rerun` accepts an optional `versionId` (defaults to the workflow's current published version) and creates a new `AiWorkflowExecution` row with `parentExecutionId` pointing at the source. The source row's `inputData` is **Zod-parsed**, not as-cast, so a corrupted source row produces a clean validation error instead of a runtime crash mid-rerun. The engine threads `parentExecutionId` through the trace so the execution detail page renders a breadcrumb back to the original. The `RerunExecutionDialog` on the detail page exposes a version chooser + SSE handoff so the operator watches the rerun live.
+
+**Alternatives**
+
+| Option                                                       | Why not                                                                                                                                                                 |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mutate the original execution row's status back to `running` | Destroys the audit trail of the failed run. The supervisor's verdict against the original is part of the record                                                         |
+| Spawn the rerun without `parentExecutionId`                  | Then linking the two is a manual exercise. The pair is a natural lineage; encoding it on the row is free                                                                |
+| As-cast `inputData` on the rerun route                       | A bad cast on a corrupt source row produces a runtime crash mid-rerun instead of a clean 400 — directly contradicts the "validate at boundaries" CLAUDE.md rule         |
+| Build per-step rerun (start from step N)                     | Genuinely useful but materially harder — requires preserving prior step outputs and re-keying the dispatch cache. Deferred; full-execution rerun is the cheap win first |
+| Re-use the manual-execute route with an extra flag           | Conflates two intents. Manual execute is for fresh runs; rerun carries lineage. Different concerns, separate routes                                                     |
+
+**Why this approach**
+
+- **Preserves the audit trail.** The original execution + its supervisor verdict stay intact; the rerun is a sibling row, not an overwrite.
+- **Zod-parsed inputs catch corruption at the boundary.** Mid-rerun crashes were a latent risk; the Zod gate eliminates them.
+- **Lineage is a first-class column.** A future "history of reruns" view is a single FK traversal, not a stitching job.
+- **Per-step rerun stays open as a forward path.** The current granule is the whole execution; the more expensive per-step case is documented as a follow-up.
+
+**Where it lives:** `prisma/schema.prisma` (`AiWorkflowExecution.parentExecutionId`), `app/api/v1/admin/orchestration/executions/[id]/rerun/route.ts`, `lib/orchestration/engine/orchestration-engine.ts` (threads `parentExecutionId` through the engine), `components/admin/orchestration/rerun-execution-dialog.tsx` (version chooser + SSE handoff), `.context/api/orchestration-endpoints.md` (POST /executions/:id/rerun reference).
 
 ---
 
@@ -1754,27 +1901,33 @@ These three entries describe places where the current implementation deliberatel
 
 **Where it lives:** `lib/orchestration/llm/circuit-breaker.ts`, `lib/orchestration/llm/` (budget mutex), `.context/orchestration/resilience.md`. The migration target is documented in `improvement-priorities.md`.
 
-### 10.3 Checkpoint recovery limited to `human_approval` pauses
+### 10.3 Crash recovery: lease + dispatch cache + running-step side table
 
-**What is it?** "Checkpoint recovery" means the orchestration engine can resume a workflow after a crash by replaying from a saved snapshot. LangGraph's gold-standard approach checkpoints state at every super-step. Sunrise currently only persists a recoverable state at one specific kind of pause — the `human_approval` step.
+**What is it?** "Checkpoint recovery" means the orchestration engine can resume a workflow after a crash by replaying from a saved snapshot. The original ship targeted only `human_approval` pauses (humans take days; a workflow had to survive a deploy in the interim). Improvement-priorities item 15 closed the broader gap; PR #202 then refactored the in-flight state into a dedicated side table to make per-step visibility cheap and the orphan sweep robust.
 
-**What we chose:** Persist execution state when a workflow pauses for human approval; do not persist intermediate state across other steps. A crash mid-workflow loses in-flight state for that run; the run is marked failed and can be re-run.
+**What we chose (three layers).**
+
+1. **Lease + heartbeat (item 15, earlier PR).** Each running execution owns a `leaseToken` + `leaseExpiresAt` + `lastHeartbeatAt`. A 60-s heartbeat refreshes the lease across long single steps; lease expiry plus an orphan-sweep pass in the maintenance tick re-drives the row from the last checkpoint. Capped at 3 recovery attempts via `recoveryAttempts`; beyond that the row is marked `failed` with `error.code = 'recovery_exhausted'`.
+2. **Dispatch cache (item 15, earlier PR).** `AiWorkflowStepDispatch` keyed on `(executionId, stepId)` deduplicates side effects on re-drive. `external_call` derives an `Idempotency-Key` HTTP header from the cache key; `send_notification` and `tool_call` consult the capability's `isIdempotent` flag.
+3. **Per-step running-state side table (PR #202).** In-flight state lives in a dedicated `AiWorkflowRunningStep`-shaped table rather than columns on `AiWorkflowExecution`. The engine writes a row when a step starts and clears it when the step finishes; the reaper sweeps orphan rows from crashed hosts; parallel branches each stamp their own `completedAt` so the execution timeline can render per-branch wait segments. API routes return live in-flight rows so the client renders every running branch concurrently.
 
 **Alternatives**
 
-| Option                                              | Why not                                                                    |
-| --------------------------------------------------- | -------------------------------------------------------------------------- |
-| Full checkpoint at every step                       | DB write per step; slows the engine; complicates parallel branch semantics |
-| No checkpoint at all                                | Approval flow could not resume across deploy or crash                      |
-| Use an external checkpointer (LangGraph or similar) | Reintroduces the external-framework problem (Section 1.1)                  |
+| Option                                                      | Why not                                                                                                                                                                                         |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep recovery limited to `human_approval` pauses            | Item 8 (background / async execution) made long-running profiles first-class — scheduled cron, webhook-triggered, multi-minute orchestrator + agent_call chains. The recovery gap became acute. |
+| Persist in-flight state as columns on `AiWorkflowExecution` | Each parallel branch's per-step state contends on the same row; concurrent stamps fight for updates. A side table gives each step its own row.                                                  |
+| Use an external checkpointer (LangGraph or similar)         | Reintroduces the external-framework problem (Section 1.1)                                                                                                                                       |
+| Sweep orphans only on the next maintenance tick             | Crash-recovery latency would equal the tick interval; the side table lets the reaper sweep precisely the rows in flight at crash time                                                           |
 
 **Why this approach**
 
-- Approval is the case where checkpointing is required — humans take days to respond, and the workflow must survive a deploy in the interim.
-- For other steps, the engine prioritises throughput; a crash during a 30-second workflow is rare and the rerun is cheap.
-- The `improvement-priorities.md` document tracks broader checkpointing as a future enhancement when use cases demand it.
+- **Side-table shape is the right data model.** Parallel branches need per-branch lifecycle timestamps; one row per running step delivers that without contention. The trace timeline strip shows per-branch wait segments instead of guessing from aggregate timestamps.
+- **Live observability falls out for free.** The "Stuck-execution / live-engine admin surface" (improvement-priorities item 40) now reads from the side table — `timeInCurrentStepMs` is an indexed query, not a cost-log scan. Building the operational view became materially cheaper.
+- **Approval pause + crash recovery share the same primitives.** The lease, dispatch cache, and side table all participate; no separate plumbing for "approval pause" vs "crash recovery."
+- **Single-instance deployment profile stays intact.** No distributed lease coordination; the lease + heartbeat is in-process and good enough for the single-host target.
 
-**Where it lives:** `lib/orchestration/engine/`, `.context/orchestration/engine.md`, `improvement-priorities.md`.
+**Where it lives:** `prisma/schema.prisma` (`AiWorkflowExecution.leaseToken` / `leaseExpiresAt` / `lastHeartbeatAt` / `recoveryAttempts`, `AiWorkflowStepDispatch`, the running-step side table), `lib/orchestration/engine/lease.ts`, `lib/orchestration/engine/dispatch-cache.ts`, `lib/orchestration/engine/execution-reaper.ts` (`sweepOrphans`), `lib/orchestration/engine/orchestration-engine.ts` (claim, heartbeat, side-table write/clear), `.context/orchestration/engine.md` (Recovery model section).
 
 ### 10.4 Maintenance tick: 202 + background-chain with watchdog
 
@@ -1836,77 +1989,83 @@ These three entries describe places where the current implementation deliberatel
 
 Alphabetical index of every decision in this document, with section reference. Use this to jump straight to a concept (e.g. "What is SSE?") without scrolling.
 
-| Decision                                                       | Section |
-| -------------------------------------------------------------- | ------- |
-| Tag-based knowledge access control                             | 5.7     |
-| API-first design                                               | 1.3     |
-| Backup schema versioning + structured `ImportResult`           | 7.6     |
-| `better-auth` as the authentication substrate                  | 6.10    |
-| Budget enforcement inside the execution loop                   | 4.3     |
-| Checkpoint recovery limited to `human_approval` pauses         | 10.3    |
-| Circuit breaker for LLM providers                              | 4.1     |
-| Citation envelope, `[N]` markers, and citation guard           | 5.6     |
-| Conversation similarity via message embeddings                 | 5.8     |
-| Credentials only via environment variables                     | 6.4     |
-| Cron scheduling architecture                                   | 10.5    |
-| CSV row-level chunking                                         | 5.4     |
-| Custom orchestration engine vs an external framework           | 1.1     |
-| DAG workflows + the autonomous orchestrator step               | 3.1     |
-| DB-backed experiments with traffic splitting                   | 9.3     |
-| Default-allow dispatch + default-deny LLM visibility           | 3.3     |
-| Dependency minimalism — open to future architectural decisions | 1.6     |
-| Embed token + CORS origin allowlist                            | 8.2     |
-| Embedding provider choice and the 1536-dimension ceiling       | 5.10    |
-| `ExecutorError.retriable` classification                       | 4.6     |
-| Fire-and-forget for cost logging and hook dispatch             | 2.6     |
-| Frozen context snapshots for executors                         | 3.4     |
-| HMAC-SHA256 signed tokens for stateless external approvals     | 2.5     |
-| HTTP idempotency-key support on external calls                 | 6.9     |
-| Hybrid BM25 + vector search                                    | 5.2     |
-| Immutable audit log                                            | 7.2     |
-| In-memory hook registry cache (60s TTL)                        | 7.5     |
-| In-memory state for circuit breaker and budget mutex           | 10.2    |
-| In-product trace viewer over external observability backends   | 9.5     |
-| In-process event hooks alongside outbound webhooks             | 2.4     |
-| JSON-RPC 2.0 over Streamable HTTP for the MCP server           | 2.2     |
-| Knowledge namespace scope: agent, not team                     | 5.9     |
-| LLM-driven evaluation completion                               | 9.4     |
-| Maintenance tick: 202 + background-chain with watchdog         | 10.4    |
-| MCP session lifecycle and eviction                             | 2.7     |
-| Mid-stream provider failover                                   | 3.6     |
-| Multi-format ingestion via parser-per-format                   | 5.3     |
-| Multi-tier rate-limit topology                                 | 6.7     |
-| Next.js 16 + App Router + React Server Components              | 1.4     |
-| Optimistic locking + ticket-based overlap guard                | 10.1    |
-| Outbound webhooks with retry                                   | 2.3     |
-| Ownership scoping returns 404 not 403                          | 6.3     |
-| Parallel branch aggregation: wait-all only                     | 4.7     |
-| Path alias `@/` enforced via ESLint                            | 8.3     |
-| PDF preview/confirm flow                                       | 5.5     |
-| Per-agent ordered fallback chains                              | 4.2     |
-| Per-agent widget customisation: scope and locale strategy      | 8.6     |
-| Per-host outbound rate limiter with `Retry-After` respect      | 6.8     |
-| Per-operation cost log                                         | 9.2     |
-| Per-step timeout wrapper                                       | 4.5     |
-| pgvector vs a dedicated vector database                        | 5.1     |
-| Platform-agnostic core                                         | 1.2     |
-| PostgreSQL + Prisma 7                                          | 7.1     |
-| Provider selector task-intent heuristic                        | 3.7     |
-| React Flow for the workflow visual builder                     | 8.5     |
-| React Server Components, Suspense, and streaming SSR           | 1.7     |
-| Rolling summary for long conversations                         | 7.4     |
-| Server-Sent Events (SSE) for streaming                         | 2.1     |
-| Seven-stage capability dispatch pipeline                       | 3.2     |
-| `shadcn/ui` + Tailwind 4 as the component model                | 8.4     |
-| Shadow DOM for the embed widget                                | 8.1     |
-| Single-artifact Docker deployment                              | 1.5     |
-| SSRF protection via host allowlist for `external_call`         | 6.5     |
-| Structured logger with request context                         | 9.1     |
-| Three-guard pipeline: input, output, citation                  | 6.6     |
-| Three-mode safety guards                                       | 4.4     |
-| Token vs session authentication                                | 6.2     |
-| Tool loop with budget check before every LLM call              | 3.5     |
-| User memory: per-user-per-agent persistent facts               | 3.8     |
-| Versioning for agent configuration (two layers)                | 7.3     |
-| Workflow templates and dry-run mode                            | 3.9     |
-| Zod validation at every boundary                               | 6.1     |
+| Decision                                                              | Section |
+| --------------------------------------------------------------------- | ------- |
+| Tag-based knowledge access control                                    | 5.7     |
+| API-first design                                                      | 1.3     |
+| Backup schema versioning + structured `ImportResult`                  | 7.6     |
+| `better-auth` as the authentication substrate                         | 6.10    |
+| Budget enforcement inside the execution loop                          | 4.3     |
+| Crash recovery: lease + dispatch cache + running-step side table      | 10.3    |
+| Agent profile inheritance — shared persona / voice / guardrails       | 3.13    |
+| Conversation provenance — per-message version pinning + PII redaction | 3.12    |
+| Execution rerun with lineage tracking                                 | 3.17    |
+| `guard` step gains a deterministic `schema` mode                      | 3.16    |
+| LLM parameter profile + per-agent / per-step `reasoningEffort`        | 3.14    |
+| Optional step `description` carried onto every trace entry            | 3.15    |
+| Circuit breaker for LLM providers                                     | 4.1     |
+| Citation envelope, `[N]` markers, and citation guard                  | 5.6     |
+| Conversation similarity via message embeddings                        | 5.8     |
+| Credentials only via environment variables                            | 6.4     |
+| Cron scheduling architecture                                          | 10.5    |
+| CSV row-level chunking                                                | 5.4     |
+| Custom orchestration engine vs an external framework                  | 1.1     |
+| DAG workflows + the autonomous orchestrator step                      | 3.1     |
+| DB-backed experiments with traffic splitting                          | 9.3     |
+| Default-allow dispatch + default-deny LLM visibility                  | 3.3     |
+| Dependency minimalism — open to future architectural decisions        | 1.6     |
+| Embed token + CORS origin allowlist                                   | 8.2     |
+| Embedding provider choice and the 1536-dimension ceiling              | 5.10    |
+| `ExecutorError.retriable` classification                              | 4.6     |
+| Fire-and-forget for cost logging and hook dispatch                    | 2.6     |
+| Frozen context snapshots for executors                                | 3.4     |
+| HMAC-SHA256 signed tokens for stateless external approvals            | 2.5     |
+| HTTP idempotency-key support on external calls                        | 6.9     |
+| Hybrid BM25 + vector search                                           | 5.2     |
+| Immutable audit log                                                   | 7.2     |
+| In-memory hook registry cache (60s TTL)                               | 7.5     |
+| In-memory state for circuit breaker and budget mutex                  | 10.2    |
+| In-product trace viewer over external observability backends          | 9.5     |
+| In-process event hooks alongside outbound webhooks                    | 2.4     |
+| JSON-RPC 2.0 over Streamable HTTP for the MCP server                  | 2.2     |
+| Knowledge namespace scope: agent, not team                            | 5.9     |
+| LLM-driven evaluation completion                                      | 9.4     |
+| Maintenance tick: 202 + background-chain with watchdog                | 10.4    |
+| MCP session lifecycle and eviction                                    | 2.7     |
+| Mid-stream provider failover                                          | 3.6     |
+| Multi-format ingestion via parser-per-format                          | 5.3     |
+| Multi-tier rate-limit topology                                        | 6.7     |
+| Next.js 16 + App Router + React Server Components                     | 1.4     |
+| Optimistic locking + ticket-based overlap guard                       | 10.1    |
+| Outbound webhooks with retry                                          | 2.3     |
+| Ownership scoping returns 404 not 403                                 | 6.3     |
+| Parallel branch aggregation: wait-all only                            | 4.7     |
+| Path alias `@/` enforced via ESLint                                   | 8.3     |
+| PDF preview/confirm flow                                              | 5.5     |
+| Per-agent ordered fallback chains                                     | 4.2     |
+| Per-agent widget customisation: scope and locale strategy             | 8.6     |
+| Per-host outbound rate limiter with `Retry-After` respect             | 6.8     |
+| Per-operation cost log                                                | 9.2     |
+| Per-step timeout wrapper                                              | 4.5     |
+| pgvector vs a dedicated vector database                               | 5.1     |
+| Platform-agnostic core                                                | 1.2     |
+| PostgreSQL + Prisma 7                                                 | 7.1     |
+| Provider selector task-intent heuristic                               | 3.7     |
+| React Flow for the workflow visual builder                            | 8.5     |
+| React Server Components, Suspense, and streaming SSR                  | 1.7     |
+| Rolling summary for long conversations                                | 7.4     |
+| Server-Sent Events (SSE) for streaming                                | 2.1     |
+| Seven-stage capability dispatch pipeline                              | 3.2     |
+| `shadcn/ui` + Tailwind 4 as the component model                       | 8.4     |
+| Shadow DOM for the embed widget                                       | 8.1     |
+| Single-artifact Docker deployment                                     | 1.5     |
+| SSRF protection via host allowlist for `external_call`                | 6.5     |
+| Structured logger with request context                                | 9.1     |
+| Three-guard pipeline: input, output, citation                         | 6.6     |
+| Three-mode safety guards                                              | 4.4     |
+| Token vs session authentication                                       | 6.2     |
+| Tool loop with budget check before every LLM call                     | 3.5     |
+| User memory: per-user-per-agent persistent facts                      | 3.8     |
+| Versioning for agent configuration (two layers)                       | 7.3     |
+| Workflow templates and dry-run mode                                   | 3.9     |
+| Zod validation at every boundary                                      | 6.1     |
