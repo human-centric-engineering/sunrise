@@ -416,7 +416,7 @@ Body: `{ versionIndex: number }`. Returns the updated workflow.
 
 Returns the execution row with a parsed `ExecutionTraceEntry[]`, step-attributed `costEntries`, and `currentRunningSteps[]`. Scoped to `session.user.id` — cross-user returns 404.
 
-`currentRunningSteps: Array<{ stepId, label, stepType, startedAt, turnCount }>` — one entry per step that's currently in flight, ordered by `startedAt` ascending. Sourced from the `AiWorkflowRunningStep` side table rather than scalar columns on `AiWorkflowExecution`, so a `parallel` step's fan-out surfaces every branch concurrently instead of last-writer-wins. Empty array on terminal status; otherwise zero or more entries (zero before the engine enters its first step, N during a parallel fan-out). `turnCount` is the number of multi-turn checkpoint writes recorded for that step — always 0 for single-shot step types, grows for `agent_call` / `orchestrator` / `reflect` as the model fires more iterations. The detail view renders it as a "N turns" indicator so long agent calls show forward progress rather than looking frozen.
+`currentRunningSteps: Array<{ stepId, label, stepType, startedAt, completedAt: string | null, turnCount }>` — one entry per step that's currently in flight, ordered by `startedAt` ascending. Sourced from the `AiWorkflowRunningStep` side table rather than scalar columns on `AiWorkflowExecution`, so a `parallel` step's fan-out surfaces every branch concurrently instead of last-writer-wins. Empty array on terminal status; otherwise zero or more entries (zero before the engine enters its first step, N during a parallel fan-out). `completedAt` is set on a parallel branch that finished before its siblings — the row stays alive (carrying the timestamp) until the whole batch settles, so the detail view can render the branch as completed with a greyed "waiting for siblings" segment on its timeline bar; null on still-running branches and on sequential rows. `turnCount` is the number of multi-turn checkpoint writes recorded for that step — always 0 for single-shot step types, grows for `agent_call` / `orchestrator` / `reflect` as the model fires more iterations. The detail view renders it as a "N turns" indicator so long agent calls show forward progress rather than looking frozen.
 
 ### `GET /executions/:id/live`
 
@@ -439,9 +439,12 @@ Same auth/ownership/rate-limit posture as `/status`, but returns everything the 
       "label": "Analyse chat models",
       "stepType": "llm_call",
       "startedAt": "2026-05-19T15:11:40.573Z",
+      "completedAt": null, // set when a parallel branch finishes before its siblings
       "turnCount": 0,
     },
-    // During a `parallel` step's fan-out, one entry per branch.
+    // During a `parallel` step's fan-out, one entry per branch — branches
+    // that finished early carry a non-null `completedAt` until the batch
+    // settles, so the timeline can render their wait segment.
   ],
 }
 ```
