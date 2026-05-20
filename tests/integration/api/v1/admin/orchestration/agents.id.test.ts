@@ -1019,6 +1019,102 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(snapshot).toHaveProperty('providerConfig', { t: 1 });
     });
   });
+
+  // ── Agent profile inheritance fields ──────────────────────────────────────
+  // Added with the AiAgentProfile feature: profileId (relation), persona,
+  // guardrails, personaMode/voiceMode/guardrailsMode.
+
+  describe('agent profile inheritance fields', () => {
+    it('attaches a profile via Prisma relation connect when profileId is set', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(
+        makeRequest('PATCH', { profileId: 'cmjbv4i3x00003wsloputgwu2' }),
+        makeParams(AGENT_ID)
+      );
+
+      // Should use the relation form { profile: { connect: { id } } }, not a
+      // scalar profileId set — the latter would break Prisma type inference.
+      expect(vi.mocked(prisma.aiAgent.update)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            profile: { connect: { id: 'cmjbv4i3x00003wsloputgwu2' } },
+          }),
+        })
+      );
+    });
+
+    it('detaches a profile via { disconnect: true } when profileId is null', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(makeRequest('PATCH', { profileId: null }), makeParams(AGENT_ID));
+
+      expect(vi.mocked(prisma.aiAgent.update)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ profile: { disconnect: true } }),
+        })
+      );
+    });
+
+    it('round-trips persona, guardrails, and the three mode columns', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent() as never);
+
+      await PATCH(
+        makeRequest('PATCH', {
+          persona: 'You are Sky.',
+          guardrails: 'Never quote pricing.',
+          personaMode: 'append',
+          voiceMode: 'override',
+          guardrailsMode: 'append',
+        }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(vi.mocked(prisma.aiAgent.update)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            persona: 'You are Sky.',
+            guardrails: 'Never quote pricing.',
+            personaMode: 'append',
+            voiceMode: 'override',
+            guardrailsMode: 'append',
+          }),
+        })
+      );
+    });
+
+    it('rejects an unknown mode value with a 400', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { personaMode: 'splice' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(vi.mocked(prisma.aiAgent.update)).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid profileId (not a CUID) with a 400', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { profileId: 'not-a-cuid' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(vi.mocked(prisma.aiAgent.update)).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('PATCH /api/v1/admin/orchestration/agents/:id — system agent protections', () => {

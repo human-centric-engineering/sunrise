@@ -33,6 +33,8 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/agents/compare`                         | GET                | Compare two agents side-by-side                                                                            | 5.1     |
 | `/agents/export`                          | POST               | Export selected agents as a bundle                                                                         | 3.1     |
 | `/agents/import`                          | POST               | Import an agent bundle                                                                                     | 3.1     |
+| `/agent-profiles`                         | GET, POST          | List / create reusable persona / brand voice / guardrails profiles                                         | —       |
+| `/agent-profiles/:id`                     | GET, PATCH, DELETE | Read / update / hard-delete (FK SET NULL detaches agents)                                                  | —       |
 | `/capabilities`                           | GET, POST          | List / create capabilities                                                                                 | 3.1     |
 | `/capabilities/:id`                       | GET, PATCH, DELETE | Read / update / soft-delete                                                                                | 3.1     |
 | `/capabilities/:id/stats`                 | GET                | Capability execution metrics + daily breakdown                                                             | 5.1     |
@@ -241,6 +243,32 @@ Response: `{ usage: { "search_knowledge_base": 12, "get_pattern_detail": 3 } }`
 ### `POST /agents/export` / `POST /agents/import`
 
 Versioned bundle format. Import runs in a single transaction with `conflictMode: 'skip' | 'overwrite'`. Capabilities are embedded by slug for cross-environment portability.
+
+---
+
+## Agent Profiles
+
+Reusable library of `persona`, `brandVoiceInstructions`, and `guardrails` text that agents can inherit from. Agents pick at most one profile via `AiAgent.profileId`; per-field mode columns (`personaMode`, `voiceMode`, `guardrailsMode` — values `override` | `append`) decide whether the agent's own text replaces or extends the profile value. See [`.context/orchestration/agent-profiles.md`](../orchestration/agent-profiles.md) for the resolver and composition rules.
+
+### `GET /agent-profiles`
+
+Paginated list. Query: `page`, `limit`, `q` (matches name + slug). Each row carries `agentCount` derived from `_count.agents` so the list view can show how many agents inherit from each profile before an operator edits it. Ordered by `updatedAt desc`.
+
+### `POST /agent-profiles`
+
+Create. Body validated by `agentProfileFormSchema` — `name` and `slug` required; `description`, `persona`, `brandVoiceInstructions`, `guardrails` optional (max 10 000 chars each, except for the textual fields where the schema caps apply per field). Returns `201` with `agentCount: 0`. Duplicate slug → `409`. Writes a `logAdminAction` entry with `action: 'agent_profile.create'`.
+
+### `GET /agent-profiles/:id`
+
+Detail. Response includes `agents: [{ id, slug, name, isActive }]` so the edit page can show every agent currently inheriting from this profile.
+
+### `PATCH /agent-profiles/:id`
+
+Partial update via `updateAgentProfileSchema`. **Slug is intentionally not in the update schema** — extra keys (including `slug`) are silently dropped by Zod. Rename = create a new profile and re-point agents. Writes `agent_profile.update` audit log with computed field diff.
+
+### `DELETE /agent-profiles/:id`
+
+Hard delete. The FK on `ai_agent.profileId` is `ON DELETE SET NULL`, so attached agents are detached cleanly — their own override texts remain unchanged; they just stop inheriting. Response: `{ id, deleted: true, detachedAgentCount }`. Same number is recorded in the `agent_profile.delete` audit log entry's `metadata`.
 
 ---
 

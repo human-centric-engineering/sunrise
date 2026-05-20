@@ -332,4 +332,238 @@ describe('AgentForm — Instructions tab', () => {
       });
     });
   });
+
+  // ── Profile inheritance UI ────────────────────────────────────────────────
+  // Covers the Persona / Guardrails fields, the "Append to profile"
+  // checkbox per inheritable field, and the EffectivePromptPreview
+  // subcomponent — all added with the agent-profile feature.
+
+  const MOCK_PROFILE = {
+    id: 'prof-support',
+    name: 'Support Family',
+    slug: 'support-family',
+    persona: 'You are a calm senior support specialist.',
+    brandVoiceInstructions: 'Friendly and concise.',
+    guardrails: 'Never give medical advice.',
+  };
+
+  describe('profile inheritance', () => {
+    it('renders Persona and Guardrails textareas on the Instructions tab', async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent()}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[MOCK_PROFILE]}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      expect(screen.getByRole('textbox', { name: /^persona/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /^guardrails/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /^brand voice/i })).toBeInTheDocument();
+    });
+
+    it('shows an "Inheriting from profile X" hint when a profile is attached and the agent field is blank', async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({ profileId: 'prof-support' } as Partial<AiAgent>)}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[MOCK_PROFILE]}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      // The hint uses smart quotes (&ldquo;…&rdquo;), so match by substring
+      // around the profile name instead.
+      const hints = screen.getAllByText((_, el) =>
+        Boolean(
+          el?.textContent?.includes('Inheriting from profile') &&
+          el.textContent.includes('Support Family')
+        )
+      );
+      // Three inheritable fields → three hints when all are blank.
+      expect(hints.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('omits the "Append to profile" checkbox when no profile is attached', async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({ persona: 'Agent persona.' } as Partial<AiAgent>)}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      expect(
+        screen.queryByRole('checkbox', { name: /append persona to profile/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it('shows the Append checkbox when both a profile and agent text are present', async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({
+            profileId: 'prof-support',
+            persona: 'Also: based in London.',
+            guardrails: 'Also: never quote internal pricing.',
+            brandVoiceInstructions: 'Greet returning users by name.',
+          } as Partial<AiAgent>)}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[MOCK_PROFILE]}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      // All three append toggles render — one per inheritable field.
+      expect(document.getElementById('personaAppend')).toBeInTheDocument();
+      expect(document.getElementById('guardrailsAppend')).toBeInTheDocument();
+      expect(document.getElementById('voiceAppend')).toBeInTheDocument();
+    });
+
+    it('toggling the persona Append checkbox flips personaMode to "append" and submits it', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+      const agent = makeAgent({
+        profileId: 'prof-support',
+        persona: 'Also based in London.',
+        personaMode: 'override',
+      } as Partial<AiAgent>);
+      vi.mocked(apiClient.patch).mockResolvedValue({ ...agent });
+
+      render(
+        <AgentForm
+          mode="edit"
+          agent={agent}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[MOCK_PROFILE]}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      const checkbox = document.getElementById('personaAppend') as HTMLInputElement;
+      expect(checkbox).toBeInTheDocument();
+      await user.click(checkbox);
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/agents/agent-edit-id'),
+          expect.objectContaining({
+            body: expect.objectContaining({ personaMode: 'append' }),
+          })
+        );
+      });
+    });
+
+    it('Effective prompt preview renders the merged system message with per-section source badges', async () => {
+      const user = userEvent.setup();
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({
+            profileId: 'prof-support',
+            systemInstructions: 'Help with billing.',
+            persona: null,
+            guardrails: 'Also never quote internal pricing.',
+            guardrailsMode: 'append',
+            brandVoiceInstructions: null,
+          } as Partial<AiAgent>)}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[MOCK_PROFILE]}
+        />
+      );
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+
+      // Expand the <details> preview.
+      const summary = screen.getByText(/effective prompt preview/i);
+      await user.click(summary);
+
+      // Persona inherited → "from profile" badge for that section
+      // (smart-quote-safe substring match).
+      expect(
+        screen.getAllByText((_, el) =>
+          Boolean(
+            el?.textContent?.includes('from profile') && el.textContent.includes('Support Family')
+          )
+        ).length
+      ).toBeGreaterThan(0);
+      // Guardrails appended → "profile + agent additions" badge.
+      expect(screen.getByText(/profile \+ agent additions/i)).toBeInTheDocument();
+      // Composed output contains both the profile persona and the appended
+      // guardrails. The persona substring also appears in the textarea
+      // placeholder ("Profile says: …"), so accept any number of matches.
+      expect(
+        screen.getAllByText((_, el) =>
+          (el?.textContent ?? '').includes('You are a calm senior support specialist.')
+        ).length
+      ).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText((_, el) =>
+          (el?.textContent ?? '').includes('Also never quote internal pricing.')
+        ).length
+      ).toBeGreaterThan(0);
+    });
+  });
+
+  // ── Profile selector (General tab) ────────────────────────────────────────
+
+  describe('profile selector on General tab', () => {
+    it('renders the profile dropdown trigger when profiles are provided', () => {
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent()}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[MOCK_PROFILE]}
+        />
+      );
+
+      // Radix Select renders a <button id="profileId"> trigger — the label
+      // is associated via htmlFor. Query by the trigger id directly.
+      expect(document.getElementById('profileId')).toBeInTheDocument();
+      // The label text is rendered above the trigger.
+      expect(screen.getByText(/inherit from profile/i)).toBeInTheDocument();
+    });
+
+    it('omits the profile dropdown when no profiles are provided', () => {
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent()}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+        />
+      );
+      expect(document.getElementById('profileId')).not.toBeInTheDocument();
+    });
+
+    it('omits the profile dropdown when an empty profile list is provided', () => {
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent()}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          profiles={[]}
+        />
+      );
+      expect(document.getElementById('profileId')).not.toBeInTheDocument();
+    });
+  });
 });

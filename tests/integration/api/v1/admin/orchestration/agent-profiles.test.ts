@@ -274,4 +274,51 @@ describe('POST /api/v1/admin/orchestration/agent-profiles', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('persists null for optional fields when they are omitted from the payload', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.create).mockResolvedValue(makeProfile() as never);
+
+    await POST(makePostRequest({ name: 'Minimal', slug: 'minimal' }));
+
+    expect(vi.mocked(prisma.aiAgentProfile.create)).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        name: 'Minimal',
+        slug: 'minimal',
+        description: null,
+        persona: null,
+        brandVoiceInstructions: null,
+        guardrails: null,
+        createdBy: expect.any(String),
+      }),
+    });
+  });
+
+  it('does NOT translate non-P2002 Prisma errors to 409 (only slug conflicts are mapped)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.create).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Foreign key violation', {
+        code: 'P2003',
+        clientVersion: 'x',
+      })
+    );
+
+    const response = await POST(makePostRequest(VALID_PAYLOAD));
+
+    // The withAdminAuth error handler translates Prisma known-request errors
+    // to a structured 4xx envelope; the route's bespoke P2002 → ConflictError
+    // branch must NOT swallow other codes. Either way the response is not a
+    // 201 success.
+    expect(response.status).not.toBe(201);
+    expect(response.status).not.toBe(409);
+  });
+
+  it('rethrows unexpected runtime errors as a 500', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.create).mockRejectedValue(new Error('boom'));
+
+    const response = await POST(makePostRequest(VALID_PAYLOAD));
+
+    expect(response.status).toBe(500);
+  });
 });
