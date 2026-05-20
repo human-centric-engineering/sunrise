@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import {
@@ -164,12 +164,11 @@ describe('AgentProfileForm — create mode', () => {
 
     const oversize = 'a'.repeat(10_001);
     await user.type(screen.getByRole('textbox', { name: /^name/i }), 'X');
-    // Use fireEvent for the long string — userEvent.type would be O(n) slow.
+    // fireEvent bypasses the O(n) cost of userEvent.type for the long string
+    // and stays HTMLElement-typed (no cast needed for type-check).
     const persona = screen.getByRole('textbox', { name: /^persona/i });
-    persona.focus();
-    persona.value = oversize;
-    persona.dispatchEvent(new Event('input', { bubbles: true }));
-    persona.dispatchEvent(new Event('blur', { bubbles: true }));
+    fireEvent.input(persona, { target: { value: oversize } });
+    fireEvent.blur(persona);
 
     await user.click(screen.getByRole('button', { name: /create profile/i }));
 
