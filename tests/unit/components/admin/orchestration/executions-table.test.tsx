@@ -33,6 +33,7 @@ function makeExecution(overrides: Partial<ExecutionListItem> = {}): ExecutionLis
     createdAt: '2026-04-18T10:00:00Z',
     completedAt: '2026-04-18T10:00:03Z',
     workflow: { id: 'wf-1', name: 'Test Workflow' },
+    timeInCurrentStepMs: null,
     ...overrides,
   };
 }

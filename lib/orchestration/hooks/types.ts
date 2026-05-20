@@ -35,6 +35,13 @@ export const HOOK_EVENT_TYPES = [
   'workflow.execution.failed',
   'workflow.paused_for_approval',
   'agent.updated',
+  // Admin force-fail. Fired in addition to (not in place of)
+  // `workflow.failed` so existing Slack / PagerDuty integrations keep
+  // working unchanged, and consumers that want to distinguish admin
+  // termination from a natural engine failure can subscribe to this
+  // event specifically. Payload carries `{ executionId, workflowId,
+  // actorUserId, reason }`.
+  'execution.force_failed',
 ] as const;
 
 export type HookEventType = (typeof HOOK_EVENT_TYPES)[number];

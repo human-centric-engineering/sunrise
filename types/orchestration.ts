@@ -715,6 +715,16 @@ export interface ExecutionListItem {
   createdAt: string;
   completedAt: string | null;
   workflow: { id: string; name: string };
+  /**
+   * Milliseconds the execution has spent in its current step (oldest
+   * branch wins for parallel fan-out). Computed server-side from the
+   * `AiWorkflowRunningStep` side table at list time. `null` for any
+   * execution that is not currently running, has no recorded running
+   * step row, or has reached a terminal state. The admin executions
+   * list highlights the row when this exceeds the configured stuck
+   * threshold in minutes.
+   */
+  timeInCurrentStepMs: number | null;
 }
 
 // ============================================================================

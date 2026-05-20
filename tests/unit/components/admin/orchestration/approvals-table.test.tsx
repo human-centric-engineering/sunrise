@@ -34,6 +34,7 @@ function makeApproval(overrides: Partial<ExecutionListItem> = {}): ExecutionList
     createdAt: '2026-04-28T10:00:00Z',
     completedAt: null,
     workflow: { id: 'wf-1', name: 'Compliance Review' },
+    timeInCurrentStepMs: null,
     ...overrides,
   };
 }
