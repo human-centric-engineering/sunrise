@@ -2,7 +2,7 @@
  * LiveEngineDashboard Component Tests
  *
  * Test Coverage:
- * - Renders four cards (Running, Queued, Orphaned, Provider in-flight) with initial data
+ * - Renders four cards (Running, Pending, Orphaned, Provider in-flight) with initial data
  * - Empty state copy when all counts are zero
  * - Card links point to the filtered executions list
  * - Auto-refresh polls the live snapshot endpoint and updates the UI
@@ -96,7 +96,7 @@ describe('LiveEngineDashboard', () => {
 
       // Assert — card titles are present from the initial render (synchronous)
       expect(screen.getByText('Running')).toBeInTheDocument();
-      expect(screen.getByText('Queued')).toBeInTheDocument();
+      expect(screen.getByText('Pending')).toBeInTheDocument();
       expect(screen.getByText('Orphaned')).toBeInTheDocument();
       expect(screen.getByText('Provider in-flight')).toBeInTheDocument();
     });
@@ -117,14 +117,14 @@ describe('LiveEngineDashboard', () => {
       expect(screen.getByText(/p95 step age/i)).toBeInTheDocument();
     });
 
-    it('renders the queued count', () => {
+    it('renders the pending count', () => {
       const initial = makeSnapshot();
       global.fetch = vi
         .fn()
         .mockResolvedValue(createMockFetchResponse({ success: true, data: initial }));
       render(<LiveEngineDashboard initial={initial} pollIntervalMs={60_000} />);
 
-      // count=2 appears in the Queued card's primary value
+      // count=2 appears in the Pending card's primary value
       expect(screen.getByText('2')).toBeInTheDocument();
     });
 
@@ -219,7 +219,7 @@ describe('LiveEngineDashboard', () => {
       expect(runningLink?.getAttribute('href')).toContain('?status=running');
     });
 
-    it('Queued card links to ?status=pending', () => {
+    it('Pending card links to ?status=pending', () => {
       const initial = makeSnapshot();
       global.fetch = vi
         .fn()
@@ -227,10 +227,10 @@ describe('LiveEngineDashboard', () => {
       render(<LiveEngineDashboard initial={initial} pollIntervalMs={60_000} />);
 
       const links = screen.getAllByRole('link');
-      const queuedLink = links.find((l) => l.textContent?.includes('Queued'));
+      const pendingLink = links.find((l) => l.textContent?.includes('Pending'));
 
-      expect(queuedLink).toBeDefined();
-      expect(queuedLink?.getAttribute('href')).toContain('?status=pending');
+      expect(pendingLink).toBeDefined();
+      expect(pendingLink?.getAttribute('href')).toContain('?status=pending');
     });
 
     it('Orphaned card links to ?status=running', () => {
@@ -486,7 +486,7 @@ describe('LiveEngineDashboard', () => {
       expect(screen.getByText(/p95 step age 1\.5h · max 2\.0h/i)).toBeInTheDocument();
     });
 
-    it('renders the Queued card "Oldest wait" in milliseconds when sub-second', () => {
+    it('renders the Pending card "Oldest wait" in milliseconds when sub-second', () => {
       const snapshot: LiveEngineSnapshotView = {
         running: { count: 0, p95AgeMs: null, maxAgeMs: null },
         queued: { count: 1, maxWaitMs: 250 },
@@ -519,10 +519,10 @@ describe('LiveEngineDashboard', () => {
       );
 
       const runningButton = screen.getByRole('button', { name: /running/i });
-      const queuedButton = screen.getByRole('button', { name: /queued/i });
+      const pendingButton = screen.getByRole('button', { name: /pending/i });
       const orphanedButton = screen.getByRole('button', { name: /orphaned/i });
       expect(runningButton.tagName).toBe('BUTTON');
-      expect(queuedButton.tagName).toBe('BUTTON');
+      expect(pendingButton.tagName).toBe('BUTTON');
       expect(orphanedButton.tagName).toBe('BUTTON');
 
       // fireEvent.click goes straight through React's onClick.
@@ -535,7 +535,7 @@ describe('LiveEngineDashboard', () => {
       fireEvent.click(runningButton);
       expect(onCardClick).toHaveBeenCalledWith('running');
 
-      fireEvent.click(queuedButton);
+      fireEvent.click(pendingButton);
       expect(onCardClick).toHaveBeenCalledWith('pending');
 
       fireEvent.click(orphanedButton);

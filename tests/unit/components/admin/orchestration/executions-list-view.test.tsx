@@ -84,7 +84,7 @@ describe('ExecutionsListView', () => {
 
     // The dashboard's four card titles are visible.
     expect(screen.getByText(/^Running$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^Queued$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Pending$/i)).toBeInTheDocument();
     expect(screen.getByText(/^Orphaned$/i)).toBeInTheDocument();
     expect(screen.getByText(/Provider in-flight/i)).toBeInTheDocument();
     // The table renders its column headers.
@@ -108,7 +108,7 @@ describe('ExecutionsListView', () => {
     expect(mockReplace).toHaveBeenCalledWith('?status=running', { scroll: false });
   });
 
-  it('clicking the Queued card pushes ?status=pending', async () => {
+  it('clicking the Pending card pushes ?status=pending', async () => {
     render(
       <ExecutionsListView
         initialSnapshot={SNAPSHOT}
@@ -118,7 +118,7 @@ describe('ExecutionsListView', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /queued/i }));
+    fireEvent.click(screen.getByRole('button', { name: /pending/i }));
 
     expect(mockReplace).toHaveBeenCalledWith('?status=pending', { scroll: false });
   });

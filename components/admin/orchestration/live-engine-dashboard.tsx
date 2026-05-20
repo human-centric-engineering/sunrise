@@ -18,10 +18,11 @@
 
 import Link from 'next/link';
 import { useCallback, useState, type ReactElement, type ReactNode } from 'react';
-import { AlertTriangle, ArrowUpRight, Clock, Gauge, ServerCog } from 'lucide-react';
+import { AlertTriangle, Clock, Gauge, ServerCog } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { FieldHelp } from '@/components/ui/field-help';
 import { useAutoRefresh } from '@/lib/hooks/use-auto-refresh';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
@@ -126,17 +127,33 @@ export function LiveEngineDashboard({
               : `p95 step age ${formatMs(snapshot.running.p95AgeMs)} · max ${formatMs(snapshot.running.maxAgeMs)}`
           }
           hint={`Stuck threshold: ${stuckThresholdMins}m`}
+          info={
+            <p>
+              Executions actively being driven by the engine right now. The age numbers (p95 / max)
+              are time spent in the current step — for a parallel fan-out, the oldest in-flight
+              branch wins. Rows past the configured stuck threshold are highlighted amber in the
+              list below.
+            </p>
+          }
         />
         <DrillInCard
           href={`/admin/orchestration/executions?status=pending`}
           onClick={onCardClick ? () => onCardClick('pending') : undefined}
           icon={<Clock className="h-5 w-5" aria-hidden />}
-          title="Queued"
+          title="Pending"
           primary={snapshot.queued.count.toLocaleString()}
           secondary={
             snapshot.queued.count === 0
               ? 'Nothing waiting to start'
               : `Oldest wait: ${formatMs(snapshot.queued.maxWaitMs)}`
+          }
+          info={
+            <p>
+              Executions waiting for the engine to pick them up. Steady-state should be 0 — a
+              sustained non-zero count means the engine isn&apos;t keeping up with the trigger rate.{' '}
+              <em>Oldest wait</em> shows how long the longest-waiting row has been sitting in the
+              queue.
+            </p>
           }
         />
         <DrillInCard
@@ -151,6 +168,14 @@ export function LiveEngineDashboard({
               : 'Running rows whose lease has expired'
           }
           variant={snapshot.orphaned.count > 0 ? 'warning' : 'default'}
+          info={
+            <p>
+              Running rows whose lease has expired — the host that was driving them has died or
+              stopped responding. The orphan sweep re-claims them on the next maintenance tick (~60
+              s). A persistent non-zero count here means the sweep isn&apos;t running or runs are
+              crashing faster than recovery can keep up.
+            </p>
+          }
         />
         <ProviderCard providers={snapshot.providers} />
       </div>
@@ -179,6 +204,15 @@ interface DrillInCardProps {
   secondary: string;
   hint?: string;
   variant?: 'default' | 'warning';
+  /**
+   * Body of the (i) popover — explains what the card's count means
+   * and when an operator should worry. Rendered as a sibling of the
+   * card's clickable wrapper (not a child) because FieldHelp's
+   * trigger is itself a `<button>` and nested buttons are invalid
+   * HTML. Absolute positioning + a `relative` grid cell wrapper
+   * floats the trigger over the top-right corner of the card.
+   */
+  info: ReactNode;
 }
 
 function DrillInCard({
@@ -190,29 +224,27 @@ function DrillInCard({
   secondary,
   hint,
   variant = 'default',
+  info,
 }: DrillInCardProps): ReactElement {
-  // `h-full` on every layer keeps all four grid cells the same
-  // height regardless of content. Without it the Provider in-flight
-  // card grows with its list and the other three sit at their
-  // shorter natural height, leaving uneven whitespace below them.
-  // The grid stretches the cell; the wrapper, Card, and CardContent
-  // must each take that full height for it to propagate down.
+  // `h-full` on every layer keeps all four grid cells the same height
+  // regardless of content (see the ProviderCard which grows with its
+  // list — without h-full propagation the other three cards shrink
+  // to their natural height and leave whitespace below).
   const wrapperClassName =
-    'group focus-visible:ring-ring h-full rounded-lg focus-visible:ring-2 focus-visible:outline-none';
+    'focus-visible:ring-ring h-full rounded-lg focus-visible:ring-2 focus-visible:outline-none';
   const cardBody = (
     <Card
       className={
         variant === 'warning'
-          ? 'h-full border-amber-300 transition-shadow hover:shadow-md dark:border-amber-700'
-          : 'h-full transition-shadow hover:shadow-md'
+          ? 'h-full cursor-pointer border-amber-300 transition-shadow hover:shadow-md dark:border-amber-700'
+          : 'h-full cursor-pointer transition-shadow hover:shadow-md'
       }
     >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+      <CardHeader className="pb-2">
         <CardTitle className="text-muted-foreground flex items-center gap-2 text-sm font-medium">
           {icon}
           {title}
         </CardTitle>
-        <ArrowUpRight className="text-muted-foreground h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
       </CardHeader>
       <CardContent>
         <div className="text-3xl font-semibold tabular-nums">{primary}</div>
@@ -222,28 +254,44 @@ function DrillInCard({
     </Card>
   );
 
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        // Stable accessible name = card title only. Without it the
-        // computed name pulls in the secondary copy too — and
-        // "Orphaned" cards say "Running rows whose lease has expired"
-        // in that copy, which would make `getByRole('button', { name:
-        // /running/i })` ambiguous in tests and confusing for screen
-        // readers.
-        aria-label={title}
-        className={`${wrapperClassName} block w-full text-left`}
-      >
-        {cardBody}
-      </button>
-    );
-  }
-  return (
-    <Link href={href} aria-label={title} className={wrapperClassName}>
+  const clickable = onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      // Stable accessible name = card title only. Without it the
+      // computed name pulls in the secondary copy too — and
+      // "Orphaned" cards say "Running rows whose lease has expired"
+      // in that copy, which would make `getByRole('button', { name:
+      // /running/i })` ambiguous in tests and confusing for screen
+      // readers.
+      aria-label={title}
+      className={`${wrapperClassName} block w-full text-left`}
+    >
+      {cardBody}
+    </button>
+  ) : (
+    <Link href={href} aria-label={title} className={`${wrapperClassName} block`}>
       {cardBody}
     </Link>
+  );
+
+  return (
+    <div className="relative h-full">
+      {clickable}
+      {/*
+       * FieldHelp floats over the card top-right corner. It's a
+       * sibling of the clickable wrapper (NOT a child) because the
+       * trigger is itself a button — nesting it would emit invalid
+       * HTML and confuse assistive tech. Click events on the (i) do
+       * not bubble through the card's button because they originate
+       * outside it.
+       */}
+      <div className="absolute top-2 right-2 z-10">
+        <FieldHelp title={title} contentClassName="w-80">
+          {info}
+        </FieldHelp>
+      </div>
+    </div>
   );
 }
 
@@ -253,33 +301,48 @@ function ProviderCard({
   providers: { provider: string; inFlight: number }[];
 }): ReactElement {
   return (
-    <Card className="h-full">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-muted-foreground flex items-center gap-2 text-sm font-medium">
-          <ServerCog className="h-5 w-5" aria-hidden />
-          Provider in-flight
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {providers.length === 0 ? (
-          <>
-            <div className="text-3xl font-semibold tabular-nums">0</div>
-            <p className="text-muted-foreground mt-1 text-xs">No active provider calls.</p>
-          </>
-        ) : (
-          <ul className="space-y-1.5 text-sm">
-            {providers.map((p) => (
-              <li key={p.provider} className="flex items-center justify-between gap-2">
-                <span className="truncate font-mono text-xs">{p.provider}</span>
-                <Badge variant={p.inFlight > 10 ? 'destructive' : 'secondary'} className="text-xs">
-                  {p.inFlight}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+    <div className="relative h-full">
+      <Card className="h-full">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-muted-foreground flex items-center gap-2 text-sm font-medium">
+            <ServerCog className="h-5 w-5" aria-hidden />
+            Provider in-flight
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {providers.length === 0 ? (
+            <>
+              <div className="text-3xl font-semibold tabular-nums">0</div>
+              <p className="text-muted-foreground mt-1 text-xs">No active provider calls.</p>
+            </>
+          ) : (
+            <ul className="space-y-1.5 text-sm">
+              {providers.map((p) => (
+                <li key={p.provider} className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-xs">{p.provider}</span>
+                  <Badge
+                    variant={p.inFlight > 10 ? 'destructive' : 'secondary'}
+                    className="text-xs"
+                  >
+                    {p.inFlight}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+      <div className="absolute top-2 right-2 z-10">
+        <FieldHelp title="Provider in-flight" contentClassName="w-80">
+          <p>
+            Live LLM / embedding / transcription calls per provider, counted in process memory.
+            Multi-process deployments show only the worker your admin tab hit — there is no per-user
+            attribution at the proxy boundary. Sustained counts past ~10 per provider warn of
+            saturation that may trip the circuit breaker.
+          </p>
+        </FieldHelp>
+      </div>
+    </div>
   );
 }
 
