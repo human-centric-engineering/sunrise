@@ -25,6 +25,7 @@ import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
+import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
 import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
 import {
   ProviderError,
@@ -106,12 +107,43 @@ export async function getProvider(slugOrName: string): Promise<LlmProvider> {
     });
   }
 
-  const instance = buildProviderFromConfig(config);
+  const instance = withInFlightTracking(buildProviderFromConfig(config), config.slug);
   const entry: CachedProvider = { provider: instance, cachedAt: Date.now() };
   instanceCache.set(config.slug, entry);
   // Also key by name so callers that already looked up via name are consistent.
   if (slugOrName !== config.slug) instanceCache.set(slugOrName, entry);
   return instance;
+}
+
+/**
+ * Wrap a freshly-built provider so its long-running calls (chat,
+ * chatStream, embed, transcribe) are accounted in the in-flight
+ * counter under `slug`. Short admin-metadata methods (`listModels`,
+ * `testConnection`) are NOT tracked — they're not part of the runtime
+ * workload the dashboard is measuring.
+ *
+ * Wrapping happens once per cache miss, not per call, so the proxy
+ * cost is negligible. Returns the original instance unchanged when
+ * `slug` is empty (defensive — should not happen with current
+ * call sites).
+ */
+function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider {
+  if (!slug) return provider;
+  return {
+    name: provider.name,
+    isLocal: provider.isLocal,
+    chat: (messages, options) => track(slug, () => provider.chat(messages, options)),
+    chatStream: (messages, options) =>
+      trackStream(slug, () => provider.chatStream(messages, options)),
+    embed: (text, options) => track(slug, () => provider.embed(text, options)),
+    listModels: () => provider.listModels(),
+    testConnection: () => provider.testConnection(),
+    ...(provider.transcribe
+      ? {
+          transcribe: (audio, options) => track(slug, () => provider.transcribe!(audio, options)),
+        }
+      : {}),
+  };
 }
 
 /**

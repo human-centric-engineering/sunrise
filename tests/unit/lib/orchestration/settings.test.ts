@@ -52,6 +52,8 @@ import {
   parseEscalationConfig,
   hydrateSettings,
   getOrchestrationSettings,
+  clampStuckThreshold,
+  STUCK_THRESHOLD_BOUNDS,
 } from '@/lib/orchestration/settings';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -75,6 +77,7 @@ function makeRow(
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
     embedAllowedOrigins: Prisma.JsonValue;
+    stuckExecutionThresholdMins: number | null;
   }> = {}
 ) {
   return {
@@ -99,6 +102,7 @@ function makeRow(
     auditLogRetentionDays: null as number | null,
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
+    stuckExecutionThresholdMins: null as number | null,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -684,5 +688,166 @@ describe('getOrchestrationSettings', () => {
     );
 
     await expect(getOrchestrationSettings()).rejects.toThrow('DB connection failed');
+  });
+});
+
+// ─── A. clampStuckThreshold ───────────────────────────────────────────────────
+
+describe('clampStuckThreshold', () => {
+  describe('non-finite / non-number inputs return the default (5)', () => {
+    it('returns 5 for null', () => {
+      expect(clampStuckThreshold(null)).toBe(5);
+    });
+
+    it('returns 5 for undefined', () => {
+      expect(clampStuckThreshold(undefined)).toBe(5);
+    });
+
+    it('returns 5 for NaN', () => {
+      expect(clampStuckThreshold(NaN)).toBe(5);
+    });
+
+    it('returns 5 for Infinity', () => {
+      expect(clampStuckThreshold(Infinity)).toBe(5);
+    });
+
+    it('returns 5 for a numeric string ("5")', () => {
+      // clampStuckThreshold accepts number | null | undefined; a string is not a number
+      expect(clampStuckThreshold('5' as unknown as number)).toBe(5);
+    });
+
+    it('returns 5 for a plain object ({})', () => {
+      expect(clampStuckThreshold({} as unknown as number)).toBe(5);
+    });
+  });
+
+  describe('below-minimum inputs clamp to 1', () => {
+    it('returns 1 for 0', () => {
+      expect(clampStuckThreshold(0)).toBe(1);
+    });
+
+    it('returns 1 for -5', () => {
+      expect(clampStuckThreshold(-5)).toBe(1);
+    });
+
+    it('returns 1 for -1000', () => {
+      expect(clampStuckThreshold(-1000)).toBe(1);
+    });
+
+    it('returns 1 for 0.4 (rounds to 0, then clamps to 1)', () => {
+      // Math.round(0.4) === 0 which is below the minimum of 1
+      expect(clampStuckThreshold(0.4)).toBe(1);
+    });
+  });
+
+  describe('above-maximum inputs clamp to 1440', () => {
+    it('returns 1440 for 1441', () => {
+      expect(clampStuckThreshold(1441)).toBe(1440);
+    });
+
+    it('returns 1440 for 9999', () => {
+      expect(clampStuckThreshold(9999)).toBe(1440);
+    });
+
+    it('returns 1440 for Number.MAX_SAFE_INTEGER', () => {
+      expect(clampStuckThreshold(Number.MAX_SAFE_INTEGER)).toBe(1440);
+    });
+  });
+
+  describe('in-range inputs pass through rounded', () => {
+    it('returns 5 for 5', () => {
+      expect(clampStuckThreshold(5)).toBe(5);
+    });
+
+    it('returns 10 for 10', () => {
+      expect(clampStuckThreshold(10)).toBe(10);
+    });
+
+    it('returns 3 for 3.4 (rounds down)', () => {
+      // Math.round(3.4) === 3
+      expect(clampStuckThreshold(3.4)).toBe(3);
+    });
+  });
+});
+
+// ─── B. hydrateSettings — stuckExecutionThresholdMins integration ─────────────
+
+describe('hydrateSettings — stuckExecutionThresholdMins', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(computeDefaultModelMap).mockReturnValue({
+      routing: 'claude-haiku-4-5',
+      chat: 'claude-haiku-4-5',
+      reasoning: 'claude-opus-4-6',
+      embeddings: 'claude-haiku-4-5',
+      audio: '',
+    });
+  });
+
+  it('passes through an in-range value unchanged (7 → 7)', () => {
+    // Arrange: row stores 7 minutes
+    const row = makeRow({ stuckExecutionThresholdMins: 7 });
+
+    // Act
+    const result = hydrateSettings(row);
+
+    // Assert: hydrateSettings called clampStuckThreshold(7) which returns 7
+    expect(result.stuckExecutionThresholdMins).toBe(7);
+  });
+
+  it('returns the default (5) when the row stores null', () => {
+    // Arrange: null is the DB default for new rows
+    const row = makeRow({ stuckExecutionThresholdMins: null });
+
+    // Act
+    const result = hydrateSettings(row);
+
+    // Assert: clampStuckThreshold(null) returns 5
+    expect(result.stuckExecutionThresholdMins).toBe(5);
+  });
+
+  it('returns the default (5) when the field is absent from the row entirely', () => {
+    // Arrange: makeRow does not include stuckExecutionThresholdMins in this call
+    // The row type marks it optional (?), so omitting it mirrors an older fixture.
+    const row = (() => {
+      const { stuckExecutionThresholdMins: _omitted, ...rest } = makeRow();
+      return rest;
+    })();
+
+    // Act
+    const result = hydrateSettings(row);
+
+    // Assert: clampStuckThreshold(undefined) returns 5
+    expect(result.stuckExecutionThresholdMins).toBe(5);
+  });
+
+  it('clamps an out-of-range low value (0 → 1)', () => {
+    const row = makeRow({ stuckExecutionThresholdMins: 0 });
+    expect(hydrateSettings(row).stuckExecutionThresholdMins).toBe(1);
+  });
+
+  it('clamps an out-of-range high value (9999 → 1440)', () => {
+    const row = makeRow({ stuckExecutionThresholdMins: 9999 });
+    expect(hydrateSettings(row).stuckExecutionThresholdMins).toBe(1440);
+  });
+});
+
+// ─── C. STUCK_THRESHOLD_BOUNDS constant shape ────────────────────────────────
+
+describe('STUCK_THRESHOLD_BOUNDS', () => {
+  it('exports the correct min, max, and default values', () => {
+    expect(STUCK_THRESHOLD_BOUNDS).toEqual({ min: 1, max: 1440, default: 5 });
+  });
+
+  it('min is 1', () => {
+    expect(STUCK_THRESHOLD_BOUNDS.min).toBe(1);
+  });
+
+  it('max is 1440 (24 hours in minutes)', () => {
+    expect(STUCK_THRESHOLD_BOUNDS.max).toBe(1440);
+  });
+
+  it('default is 5', () => {
+    expect(STUCK_THRESHOLD_BOUNDS.default).toBe(5);
   });
 });

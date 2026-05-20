@@ -1442,6 +1442,13 @@ export interface OrchestrationSettings {
    * column level. See `lib/orchestration/knowledge/embedder.ts`.
    */
   activeEmbeddingModelId: string | null;
+  /**
+   * Minutes a running execution may spend in its current step before
+   * the executions list flags the row as "stuck-looking" and the
+   * live-engine dashboard counts it in the stuck-age band. Clamped to
+   * [1, 1440] on read and write; default 5.
+   */
+  stuckExecutionThresholdMins: number;
   createdAt: Date;
   updatedAt: Date;
 }

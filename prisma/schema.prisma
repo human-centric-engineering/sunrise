@@ -563,6 +563,7 @@ model AiWorkflowExecution {
   costLogs       AiCostLog[]
   stepDispatches AiWorkflowStepDispatch[]
   runningSteps   AiWorkflowRunningStep[]
+  leaseEvents    AiWorkflowExecutionLeaseEvent[]
 
   // Inbound-trigger dedup keyed on `dedupKey`. Route computes per-channel scope:
   //   - shared-secret channels (slack, postmark): `<channel>:<externalId>` — globally per channel
@@ -654,6 +655,36 @@ model AiWorkflowRunningStep {
   @@unique([executionId, stepId])
   @@index([executionId])
   @@map("ai_workflow_running_step")
+}
+
+// Append-only history of lease transitions for an execution. The lease
+// inspector (admin live-engine surface) reads this to answer "is the
+// engine restarting? has this execution been claimed by multiple hosts?"
+// The execution row itself only holds the *current* lease state, so
+// without this table there is no way to see prior claim/recover events.
+//
+// Written from `lib/orchestration/engine/lease.ts` on every successful
+// claim, heartbeat-loss bail-out, release, and orphan-resume; and from
+// the admin force-fail route when an admin terminates a run early.
+// Pruned by the maintenance tick after the configured retention window.
+//
+// `leaseToken` stores ONLY the last 5 chars of the token (prefixed `…`)
+// — the full token is a write-capability secret and must never appear
+// in audit data. Operators correlate by the tail; that's enough.
+model AiWorkflowExecutionLeaseEvent {
+  id          String   @id @default(cuid())
+  executionId String
+  event       String // "claimed" | "refresh-failed" | "released" | "orphan-resume" | "force-failed"
+  leaseToken  String? // redacted tail (e.g. "…ab12c"); nullable for events with no token in play
+  reason      String? // e.g. "fresh-resume", "admin-force-fail", "engine-terminal"
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@index([executionId, createdAt])
+  @@index([createdAt]) // retention prune
+  @@map("ai_workflow_execution_lease_event")
 }
 
 // Chat sessions
@@ -1286,6 +1317,12 @@ model AiOrchestrationSettings {
   voiceInputGloballyEnabled    Boolean   @default(true) // org-wide kill switch for the voice-input feature; when false, every agent's enableVoiceInput flag is treated as off regardless of its own value.
   imageInputGloballyEnabled    Boolean   @default(true) // org-wide kill switch for image attachments on chat; when false, every agent's enableImageInput flag is treated as off regardless of its own value.
   documentInputGloballyEnabled Boolean   @default(true) // org-wide kill switch for PDF / document attachments on chat; when false, every agent's enableDocumentInput flag is treated as off regardless of its own value.
+  // Minutes a running execution may spend in its current step before the
+  // executions list highlights the row as "stuck-looking" and the live-
+  // engine dashboard counts it in the stuck-age band. Read by the live
+  // page + the executions list. Clamped to [1, 1440] on PATCH; the read
+  // path defends with the same clamp so a bad DB value never breaks the UI.
+  stuckExecutionThresholdMins  Int       @default(5)
   createdAt                    DateTime  @default(now())
   updatedAt                    DateTime  @updatedAt
 

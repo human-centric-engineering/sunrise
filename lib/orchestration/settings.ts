@@ -94,6 +94,7 @@ export function hydrateSettings(row: {
   imageInputGloballyEnabled?: boolean | null;
   documentInputGloballyEnabled?: boolean | null;
   activeEmbeddingModelId?: string | null;
+  stuckExecutionThresholdMins?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -166,10 +167,43 @@ export function hydrateSettings(row: {
     imageInputGloballyEnabled: row.imageInputGloballyEnabled ?? true,
     documentInputGloballyEnabled: row.documentInputGloballyEnabled ?? true,
     activeEmbeddingModelId: row.activeEmbeddingModelId ?? null,
+    stuckExecutionThresholdMins: clampStuckThreshold(row.stuckExecutionThresholdMins),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
+
+/**
+ * Min/max bounds for the "stuck step" threshold on the executions list
+ * and live-engine dashboard. Floor of 1 minute stops a misconfigured
+ * `0` from highlighting every row (which would make the signal
+ * useless); ceiling of 1440 (24h) covers genuinely long-running batch
+ * workflows while preventing a typo of e.g. `9999999` from disabling
+ * the highlight entirely.
+ */
+const STUCK_THRESHOLD_MIN_MINS = 1;
+const STUCK_THRESHOLD_MAX_MINS = 1440;
+const STUCK_THRESHOLD_DEFAULT_MINS = 5;
+
+/**
+ * Defence-in-depth clamp on read. The PATCH validator clamps on write,
+ * but a row written via seed / migration / direct SQL could land
+ * outside the bounds. A bad value here would silently break the
+ * executions-list "stuck" highlight, so we coerce rather than throw.
+ */
+export function clampStuckThreshold(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return STUCK_THRESHOLD_DEFAULT_MINS;
+  const rounded = Math.round(value);
+  if (rounded < STUCK_THRESHOLD_MIN_MINS) return STUCK_THRESHOLD_MIN_MINS;
+  if (rounded > STUCK_THRESHOLD_MAX_MINS) return STUCK_THRESHOLD_MAX_MINS;
+  return rounded;
+}
+
+export const STUCK_THRESHOLD_BOUNDS = {
+  min: STUCK_THRESHOLD_MIN_MINS,
+  max: STUCK_THRESHOLD_MAX_MINS,
+  default: STUCK_THRESHOLD_DEFAULT_MINS,
+} as const;
 
 /**
  * Narrow the `embedAllowedOrigins` JSON column into a normalised

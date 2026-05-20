@@ -86,6 +86,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   imageInputGloballyEnabled: true,
   documentInputGloballyEnabled: true,
   activeEmbeddingModelId: null,
+  stuckExecutionThresholdMins: 5,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

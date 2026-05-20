@@ -20,6 +20,9 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       updateMany: vi.fn(),
     },
+    aiWorkflowExecutionLeaseEvent: {
+      create: vi.fn(),
+    },
   },
 }));
 
@@ -43,12 +46,16 @@ import {
   claimLease,
   generateLeaseToken,
   leaseExpiry,
+  recordForceFailEvent,
+  redactLeaseToken,
   refreshLease,
+  releaseLease,
   startHeartbeat,
 } from '@/lib/orchestration/engine/lease';
 
 // ─── typed mock references ───────────────────────────────────────────────────
 const mockUpdateMany = vi.mocked(prisma.aiWorkflowExecution.updateMany);
+const mockLeaseEventCreate = vi.mocked(prisma.aiWorkflowExecutionLeaseEvent.create);
 const mockLoggerWarn = vi.mocked(logger.warn);
 const mockLoggerError = vi.mocked(logger.error);
 
@@ -623,5 +630,299 @@ describe('startHeartbeat', () => {
 
     await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 3);
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── redactLeaseToken ────────────────────────────────────────────────────────
+describe('redactLeaseToken', () => {
+  it('returns null for null input', () => {
+    expect(redactLeaseToken(null)).toBeNull();
+  });
+
+  it('returns null for undefined input', () => {
+    expect(redactLeaseToken(undefined)).toBeNull();
+  });
+
+  it('returns null for empty string input', () => {
+    expect(redactLeaseToken('')).toBeNull();
+  });
+
+  it('returns the full token prefixed with ellipsis when length is exactly 5', () => {
+    // The code returns `…${token}` when length <= 5 — assert the prefix was added, not
+    // that the input was echoed. A trivial pass-through would fail the prefix check.
+    const token = 'abcde';
+    const result = redactLeaseToken(token);
+    expect(result).toBe('…abcde');
+  });
+
+  it('returns the full token prefixed with ellipsis when length is less than 5', () => {
+    const token = 'abc';
+    const result = redactLeaseToken(token);
+    expect(result).toBe('…abc');
+  });
+
+  it('returns only the last 5 chars prefixed with ellipsis when token is longer than 5 chars', () => {
+    // For a long token (UUID-shaped), only the tail should appear — the leading
+    // chars are stripped so the inspector never exposes the full write-capability secret.
+    const token = '550e8400-e29b-41d4-a716-446655440000';
+    const result = redactLeaseToken(token);
+    // Last 5 chars of token are '40000'
+    expect(result).toBe('…40000');
+    // The full token must NOT be present
+    expect(result).not.toContain('550e8400');
+  });
+
+  it('produces a different redaction for two tokens that share the same tail — demonstrates tail isolation', () => {
+    // Confirm the function extracts the tail, not some other slice
+    const tokenA = 'aaaaaXXXXX';
+    const tokenB = 'bbbbbXXXXX';
+    // Both tokens share the same last-5 tail — both should redact identically
+    expect(redactLeaseToken(tokenA)).toBe(redactLeaseToken(tokenB));
+    expect(redactLeaseToken(tokenA)).toBe('…XXXXX');
+  });
+});
+
+// ─── claimLease — lease event writes ────────────────────────────────────────
+// These tests extend the existing claimLease suite to cover the new event
+// recording behaviour added in the lease module. The updateMany mock is already
+// configured in the outer beforeEach; we additionally assert on the leaseEvent
+// create call that records the claim.
+describe('claimLease — lease event recording', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockLeaseEventCreate.mockResolvedValue({} as never);
+  });
+
+  it('on success with reason=fresh-resume, records a "claimed" event with redacted token tail', async () => {
+    const token = await claimLease('exec-event-fresh', 'fresh-resume');
+    expect(token).not.toBeNull();
+
+    // Allow the fire-and-forget microtask to settle
+    await Promise.resolve();
+
+    expect(mockLeaseEventCreate).toHaveBeenCalledTimes(1);
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    expect(createArg).toBeDefined();
+
+    const data = (createArg as { data: Record<string, unknown> }).data;
+    // The code applies redactLeaseToken — the stored token must be the tail, not the full UUID
+    expect(data['event']).toBe('claimed');
+    expect(data['executionId']).toBe('exec-event-fresh');
+    // redactLeaseToken on a UUID (length > 5) produces '…<last5>' — the full token must not appear
+    expect(typeof data['leaseToken']).toBe('string');
+    expect((data['leaseToken'] as string).startsWith('…')).toBe(true);
+    expect((data['leaseToken'] as string).length).toBe(6); // '…' + 5 chars
+    // reason must be passed through so the inspector can label the event
+    expect(data['reason']).toBe('fresh-resume');
+  });
+
+  it('on success with reason=orphan-resume, records an "orphan-resume" event, not "claimed"', async () => {
+    const token = await claimLease('exec-event-orphan', 'orphan-resume');
+    expect(token).not.toBeNull();
+
+    await Promise.resolve();
+
+    expect(mockLeaseEventCreate).toHaveBeenCalledTimes(1);
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    // Distinct event name distinguishes recovery cycles from clean approval resumes
+    expect(data['event']).toBe('orphan-resume');
+    expect(data['reason']).toBe('orphan-resume');
+  });
+
+  it('when count=0 (no lease won), does NOT write any lease event', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    const token = await claimLease('exec-no-claim', 'fresh-resume');
+    expect(token).toBeNull();
+
+    await Promise.resolve();
+
+    // No event should be recorded — a failed claim is not a lifecycle transition worth logging
+    expect(mockLeaseEventCreate).not.toHaveBeenCalled();
+  });
+
+  it('lease event write errors are swallowed — claimLease still returns the token', async () => {
+    mockLeaseEventCreate.mockRejectedValueOnce(new Error('DB write failed'));
+
+    // claimLease must not throw even if the fire-and-forget event write rejects
+    const token = await claimLease('exec-event-error', 'fresh-resume');
+
+    // Allow the rejected promise microtask to settle (triggers the catch inside recordLeaseEvent)
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(token).not.toBeNull();
+    expect(token).toMatch(UUID_PATTERN);
+  });
+});
+
+// ─── refreshLease — lease event writes ──────────────────────────────────────
+describe('refreshLease — lease event recording', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLeaseEventCreate.mockResolvedValue({} as never);
+  });
+
+  it('on count=0 (token mismatch), records a "refresh-failed" event with reason="token-mismatch"', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await refreshLease('exec-refresh-fail', 'stale-token-12345');
+    expect(result).toBe(false);
+
+    await Promise.resolve();
+
+    expect(mockLeaseEventCreate).toHaveBeenCalledTimes(1);
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    expect(data['event']).toBe('refresh-failed');
+    expect(data['executionId']).toBe('exec-refresh-fail');
+    expect(data['reason']).toBe('token-mismatch');
+    // Token stored in the event must be the redacted tail, not the full token
+    expect(data['leaseToken']).toBe('…12345');
+  });
+
+  it('on count=1 (successful refresh), does NOT write any lease event', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await refreshLease('exec-refresh-ok', 'live-token-abc');
+    expect(result).toBe(true);
+
+    await Promise.resolve();
+
+    // Successful refreshes are intentionally not recorded to avoid table domination
+    expect(mockLeaseEventCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ─── releaseLease ─────────────────────────────────────────────────────────────
+describe('releaseLease', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLeaseEventCreate.mockResolvedValue({} as never);
+  });
+
+  it('when count=1, clears lease columns and returns true', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    const result = await releaseLease('exec-release-ok', 'admin-terminated');
+    expect(result).toBe(true);
+
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    const call = mockUpdateMany.mock.calls[0]?.[0];
+    const data = (call as { data: Record<string, unknown> }).data;
+
+    // The code must null out both lease columns — not just one
+    expect(data['leaseToken']).toBeNull();
+    expect(data['leaseExpiresAt']).toBeNull();
+  });
+
+  it('when count=1, WHERE clause requires leaseToken IS NOT NULL to prevent double-release', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    await releaseLease('exec-release-where', 'reason');
+
+    const call = mockUpdateMany.mock.calls[0]?.[0];
+    const where = (call as { where: Record<string, unknown> }).where;
+    expect(where['id']).toBe('exec-release-where');
+    // Conditional on leaseToken not being null — calling on an already-released row is a no-op
+    expect(where['leaseToken']).toEqual({ not: null });
+  });
+
+  it('when count=1, records a "released" event with the passed reason and null token', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+
+    await releaseLease('exec-release-event', 'workflow-completed');
+
+    await Promise.resolve();
+
+    expect(mockLeaseEventCreate).toHaveBeenCalledTimes(1);
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    expect(data['event']).toBe('released');
+    expect(data['executionId']).toBe('exec-release-event');
+    expect(data['reason']).toBe('workflow-completed');
+    // releaseLease passes null as the token — redactLeaseToken(null) returns null
+    expect(data['leaseToken']).toBeNull();
+  });
+
+  it('when count=0 (row already released or never claimed), returns false', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await releaseLease('exec-already-released', 'reason');
+    expect(result).toBe(false);
+  });
+
+  it('when count=0, does NOT write any lease event — keeps the event log honest', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    await releaseLease('exec-no-event', 'reason');
+
+    await Promise.resolve();
+
+    expect(mockLeaseEventCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ─── recordForceFailEvent ─────────────────────────────────────────────────────
+describe('recordForceFailEvent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLeaseEventCreate.mockResolvedValue({} as never);
+  });
+
+  it('writes a "force-failed" event with the redacted token tail', async () => {
+    await recordForceFailEvent('exec-force-fail', 'prior-token-12345', 'admin-request');
+
+    expect(mockLeaseEventCreate).toHaveBeenCalledTimes(1);
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    expect(data['event']).toBe('force-failed');
+    expect(data['executionId']).toBe('exec-force-fail');
+    // priorToken is longer than 5 chars — only the last 5 should appear
+    expect(data['leaseToken']).toBe('…12345');
+    expect(data['reason']).toBe('admin-request');
+  });
+
+  it('passes metadata through to the event row when provided', async () => {
+    const metadata = { triggeredBy: 'user-99', reason: 'runaway-cost' };
+    await recordForceFailEvent('exec-force-meta', 'prior-token-abcde', 'budget-exceeded', metadata);
+
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    expect(data['metadata']).toEqual(metadata);
+  });
+
+  it('does NOT call updateMany — no lease mutation, only the event row', async () => {
+    await recordForceFailEvent('exec-force-no-update', 'prior-token-xyz99', 'force-fail');
+
+    // The function exists specifically to write only the event; the caller's conditional
+    // UPDATE already cleared the lease columns atomically
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('works with a null priorToken — redactLeaseToken(null) stores null in the event row', async () => {
+    await recordForceFailEvent('exec-force-null-token', null, 'admin-request');
+
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    expect(data['leaseToken']).toBeNull();
+  });
+
+  it('omits metadata key from event row when not provided', async () => {
+    await recordForceFailEvent('exec-force-no-meta', 'prior-token-xyz99', 'reason');
+
+    const createArg = mockLeaseEventCreate.mock.calls[0]?.[0];
+    const data = (createArg as { data: Record<string, unknown> }).data;
+
+    // metadata: undefined means Prisma omits the column — no stray {} stored
+    expect(data['metadata']).toBeUndefined();
   });
 });

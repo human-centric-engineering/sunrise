@@ -29,6 +29,70 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { WorkflowStatus } from '@/types/orchestration';
 
+/**
+ * Names of the lease lifecycle events recorded in
+ * `AiWorkflowExecutionLeaseEvent`. The set is intentionally small —
+ * each name maps to a distinct operator question:
+ *
+ *  - `claimed`        — a host successfully took the row
+ *  - `refresh-failed` — a heartbeat tick couldn't extend the lease
+ *  - `released`       — the engine cleanly handed the row back on terminal
+ *  - `orphan-resume`  — the sweep re-claimed a row whose previous host
+ *                       went silent (incl. recovery-attempts increment)
+ *  - `force-failed`   — an admin terminated the run via the live-engine
+ *                       force-fail action
+ */
+export type LeaseEventName =
+  | 'claimed'
+  | 'refresh-failed'
+  | 'released'
+  | 'orphan-resume'
+  | 'force-failed';
+
+/**
+ * Reduce a full lease token to a short tail suitable for audit/inspector
+ * display. The full token is a write-capability secret — anyone holding
+ * it can write to the row via the engine's `where: { id, leaseToken }`
+ * paths — so the inspector only ever shows the last 5 chars. Operators
+ * correlate by tail; that's enough to answer "is this still the same
+ * host?" without ever shipping the secret to the browser.
+ */
+export function redactLeaseToken(token: string | null | undefined): string | null {
+  if (!token) return null;
+  return token.length <= 5 ? `…${token}` : `…${token.slice(-5)}`;
+}
+
+/**
+ * Append a row to `AiWorkflowExecutionLeaseEvent`. Fire-and-forget —
+ * lease-event writes must never block the engine's critical path. A
+ * dropped event is a missed inspector entry, not a correctness issue.
+ */
+async function recordLeaseEvent(
+  executionId: string,
+  event: LeaseEventName,
+  token: string | null,
+  reason?: string,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    await prisma.aiWorkflowExecutionLeaseEvent.create({
+      data: {
+        executionId,
+        event,
+        leaseToken: redactLeaseToken(token),
+        reason: reason ?? null,
+        metadata: metadata ? (metadata as object) : undefined,
+      },
+    });
+  } catch (err) {
+    logger.warn('Lease event write failed (non-fatal)', {
+      executionId,
+      event,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 export const LEASE_DURATION_MS = 3 * 60 * 1000;
 export const HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
@@ -133,7 +197,18 @@ export async function claimLease(executionId: string, reason: ClaimReason): Prom
       ...(reason === 'orphan-resume' ? { recoveryAttempts: { increment: 1 } } : {}),
     },
   });
-  return result.count === 1 ? token : null;
+  if (result.count === 1) {
+    // Distinct event names per reason so the inspector can show
+    // recovery cycles distinctly from clean approval resumes.
+    void recordLeaseEvent(
+      executionId,
+      reason === 'orphan-resume' ? 'orphan-resume' : 'claimed',
+      token,
+      reason
+    );
+    return token;
+  }
+  return null;
 }
 
 /**
@@ -154,7 +229,56 @@ export async function refreshLease(executionId: string, leaseToken: string): Pro
       lastHeartbeatAt: now,
     },
   });
-  return result.count === 1;
+  if (result.count === 0) {
+    // Token mismatch — the previous host is no longer the owner. Record
+    // so the inspector can show "lease lost at <time>" instead of a
+    // silent gap. Successful refreshes are NOT recorded (they would
+    // dominate the table by orders of magnitude vs. transitions).
+    void recordLeaseEvent(executionId, 'refresh-failed', leaseToken, 'token-mismatch');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Release the lease on a terminal write. Today the engine's `finalize`
+ * path nulls `leaseToken`/`leaseExpiresAt` itself; this helper exists
+ * for non-engine terminations (admin force-fail, future bulk-abort) to
+ * (a) clear the lease columns atomically with a single conditional
+ * update and (b) record a `released` event so the inspector reflects
+ * the transition.
+ *
+ * Conditional on `leaseToken IS NOT NULL` so calling on an already-
+ * released row is a no-op (returns false) — keeps the event log honest.
+ */
+export async function releaseLease(executionId: string, reason: string): Promise<boolean> {
+  const result = await prisma.aiWorkflowExecution.updateMany({
+    where: { id: executionId, leaseToken: { not: null } },
+    data: { leaseToken: null, leaseExpiresAt: null },
+  });
+  if (result.count === 1) {
+    void recordLeaseEvent(executionId, 'released', null, reason);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Record an externally-driven force-fail in the lease history.
+ *
+ * The admin force-fail route nulls the lease columns itself as part of
+ * its single conditional UPDATE (so it can't race with the engine), so
+ * this helper only writes the event — no lease mutation. Kept separate
+ * from `releaseLease` so the inspector can distinguish "clean release"
+ * from "admin terminated".
+ */
+export async function recordForceFailEvent(
+  executionId: string,
+  priorToken: string | null,
+  reason: string,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  await recordLeaseEvent(executionId, 'force-failed', priorToken, reason, metadata);
 }
 
 /**
