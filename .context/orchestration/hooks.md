@@ -44,16 +44,19 @@ lib/orchestration/hooks/
 
 Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
-| Event Type                     | Currently Emitted By                                  |
-| ------------------------------ | ----------------------------------------------------- |
-| `workflow.started`             | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `workflow.completed`           | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `workflow.failed`              | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `workflow.execution.failed`    | `lib/orchestration/scheduling/scheduler.ts`           |
-| `workflow.paused_for_approval` | `lib/orchestration/engine/orchestration-engine.ts`    |
-| `message.created`              | `lib/orchestration/chat/streaming-handler.ts`         |
-| `conversation.started`         | `lib/orchestration/chat/streaming-handler.ts`         |
-| `agent.updated`                | `app/api/v1/admin/orchestration/agents/[id]/route.ts` |
+| Event Type                     | Currently Emitted By                                                 |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `workflow.started`             | `lib/orchestration/engine/orchestration-engine.ts`                   |
+| `workflow.completed`           | `lib/orchestration/engine/orchestration-engine.ts`                   |
+| `workflow.failed`              | `lib/orchestration/engine/orchestration-engine.ts`                   |
+| `workflow.execution.failed`    | `lib/orchestration/scheduling/scheduler.ts`                          |
+| `workflow.paused_for_approval` | `lib/orchestration/engine/orchestration-engine.ts`                   |
+| `message.created`              | `lib/orchestration/chat/streaming-handler.ts`                        |
+| `conversation.started`         | `lib/orchestration/chat/streaming-handler.ts`                        |
+| `agent.updated`                | `app/api/v1/admin/orchestration/agents/[id]/route.ts`                |
+| `execution.force_failed`       | `app/api/v1/admin/orchestration/executions/[id]/force-fail/route.ts` |
+
+`execution.force_failed` fires from the admin force-fail route (live-engine surface) **in addition to** `workflow.failed`, not in place of it. Existing Slack / PagerDuty integrations subscribed to `workflow.failed` keep firing unchanged; subscribers that want to distinguish admin-driven termination from a natural engine failure should also subscribe to `execution.force_failed`. The dual emit is intentional — see `.context/admin/orchestration-executions-live-engine.md`. Payload: `{ executionId, workflowId, actorUserId, reason, previousStatus }`. The `workflow.failed` payload emitted alongside includes `source: 'admin-force-fail'` so a single subscriber can detect the case from either event.
 
 `workflow.failed` and `workflow.execution.failed` are not the same event:
 

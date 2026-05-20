@@ -122,28 +122,42 @@ export async function getProvider(slugOrName: string): Promise<LlmProvider> {
  * `testConnection`) are NOT tracked — they're not part of the runtime
  * workload the dashboard is measuring.
  *
+ * Uses a `Proxy` so the returned value preserves the original
+ * prototype — existing call sites (and tests) doing
+ * `instanceof AnthropicProvider` keep working. The handler intercepts
+ * the four tracked methods and rebinds them to the original target so
+ * `this` inside the SDK call is the real provider instance.
+ *
  * Wrapping happens once per cache miss, not per call, so the proxy
  * cost is negligible. Returns the original instance unchanged when
  * `slug` is empty (defensive — should not happen with current
  * call sites).
  */
+const TRACKED_METHODS = new Set(['chat', 'embed', 'transcribe']);
+const STREAM_METHODS = new Set(['chatStream']);
+
 function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider {
   if (!slug) return provider;
-  return {
-    name: provider.name,
-    isLocal: provider.isLocal,
-    chat: (messages, options) => track(slug, () => provider.chat(messages, options)),
-    chatStream: (messages, options) =>
-      trackStream(slug, () => provider.chatStream(messages, options)),
-    embed: (text, options) => track(slug, () => provider.embed(text, options)),
-    listModels: () => provider.listModels(),
-    testConnection: () => provider.testConnection(),
-    ...(provider.transcribe
-      ? {
-          transcribe: (audio, options) => track(slug, () => provider.transcribe!(audio, options)),
-        }
-      : {}),
-  };
+  return new Proxy(provider, {
+    get(target, prop, receiver): unknown {
+      const value: unknown = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      const name = typeof prop === 'string' ? prop : '';
+      const fn = value as (this: LlmProvider, ...args: unknown[]) => unknown;
+      if (TRACKED_METHODS.has(name)) {
+        return (...args: unknown[]): Promise<unknown> =>
+          track(slug, () => fn.apply(target, args) as Promise<unknown>);
+      }
+      if (STREAM_METHODS.has(name)) {
+        return (...args: unknown[]): AsyncIterable<unknown> =>
+          trackStream(slug, () => fn.apply(target, args) as AsyncIterable<unknown>);
+      }
+      // Everything else (listModels, testConnection, accessors, etc.)
+      // is forwarded bound to the original instance so `this`
+      // resolution inside the SDK call stays intact.
+      return fn.bind(target);
+    },
+  });
 }
 
 /**

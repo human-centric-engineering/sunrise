@@ -57,6 +57,7 @@ export interface OrchestrationSettings {
   auditLogRetentionDays: number | null;
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
+  stuckExecutionThresholdMins?: number;
   escalationConfig?: EscalationConfig | null;
   voiceInputGloballyEnabled?: boolean;
   imageInputGloballyEnabled?: boolean;
@@ -88,6 +89,7 @@ const settingsFormSchema = z.object({
   maxMessagesPerConversation: nullableNumber.pipe(
     z.number().int().positive().max(10_000).nullable()
   ),
+  stuckExecutionThresholdMins: nullableNumber.pipe(z.number().int().min(1).max(1440).nullable()),
   // Retention
   webhookRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
   costLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
@@ -173,6 +175,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       maxConversationsPerUser: toStr(initialSettings.maxConversationsPerUser),
       maxMessagesPerConversation: toStr(initialSettings.maxMessagesPerConversation),
+      stuckExecutionThresholdMins: toStr(initialSettings.stuckExecutionThresholdMins ?? null),
       webhookRetentionDays: toStr(initialSettings.webhookRetentionDays),
       costLogRetentionDays: toStr(initialSettings.costLogRetentionDays),
       auditLogRetentionDays: toStr(initialSettings.auditLogRetentionDays),
@@ -261,6 +264,12 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
           maxConversationsPerUser: values.maxConversationsPerUser,
           maxMessagesPerConversation: values.maxMessagesPerConversation,
+          // PATCH route only honours defined values. Sending null would
+          // be a no-op (Zod schema rejects it); omit when the field is
+          // null so an empty input doesn't clobber the existing value.
+          ...(values.stuckExecutionThresholdMins !== null
+            ? { stuckExecutionThresholdMins: values.stuckExecutionThresholdMins }
+            : {}),
           webhookRetentionDays: values.webhookRetentionDays,
           costLogRetentionDays: values.costLogRetentionDays,
           auditLogRetentionDays: values.auditLogRetentionDays,
@@ -558,6 +567,28 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
             />
             {errors.maxMessagesPerConversation && (
               <p className="text-xs text-red-600">{errors.maxMessagesPerConversation.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="stuckExecutionThresholdMins" className="flex items-center gap-1">
+              Stuck execution threshold (minutes)
+              <FieldHelp title="Stuck execution threshold">
+                Rows on the executions list are flagged when the current step has been running
+                longer than this many minutes. The live engine dashboard uses the same number.
+                Default 5. Minimum 1, maximum 1440.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="stuckExecutionThresholdMins"
+              type="number"
+              min={1}
+              max={1440}
+              placeholder="5"
+              {...register('stuckExecutionThresholdMins')}
+            />
+            {errors.stuckExecutionThresholdMins && (
+              <p className="text-xs text-red-600">{errors.stuckExecutionThresholdMins.message}</p>
             )}
           </div>
         </CardContent>

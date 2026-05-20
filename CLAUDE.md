@@ -331,6 +331,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Evaluations UI           | `.context/admin/orchestration-evaluations.md`             | Evaluation runner, annotations, completion flow                                         |
 | Evaluation Metrics       | `.context/orchestration/evaluation-metrics.md`            | Named-metric scoring (faithfulness, groundedness, relevance), rescore                   |
 | Observability Dashboard  | `.context/admin/orchestration-observability.md`           | Dashboard metrics, trace viewers, logging audit                                         |
+| Live Engine (admin)      | `.context/admin/orchestration-executions-live-engine.md`  | Stuck-execution dashboard, force-fail action, lease inspector, stuck-threshold setting  |
 | Analytics (admin)        | `.context/admin/orchestration-analytics.md`               | Usage, popular topics, unanswered, feedback, gaps                                       |
 | Audit Log (admin)        | `.context/admin/orchestration-audit-log.md`               | Immutable config change log, entity filters                                             |
 | Approval Queue (admin)   | `.context/admin/orchestration-approvals.md`               | Pending approvals list, approve/reject, sidebar badge                                   |

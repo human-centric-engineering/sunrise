@@ -2330,6 +2330,16 @@ export const updateOrchestrationSettingsSchema = z
       .max(10_000, 'Max messages must be at most 10,000')
       .nullable()
       .optional(),
+    // Minutes a running step may run before the executions list flags
+    // it as stuck. Hard floor of 1 stops a misconfigured 0 from
+    // highlighting every row; ceiling of 1440 (24h) covers long batch
+    // workflows without disabling the highlight outright.
+    stuckExecutionThresholdMins: z
+      .number()
+      .int()
+      .min(1, 'Stuck threshold must be at least 1 minute')
+      .max(1440, 'Stuck threshold must be at most 1440 minutes (24h)')
+      .optional(),
     escalationConfig: escalationConfigSchema.nullable().optional(),
     /**
      * Allowlist of origins permitted to call the embed-channel approval
@@ -2385,6 +2395,7 @@ export const updateOrchestrationSettingsSchema = z
       v.auditLogRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
+      v.stuckExecutionThresholdMins !== undefined ||
       v.escalationConfig !== undefined ||
       v.embedAllowedOrigins !== undefined ||
       v.voiceInputGloballyEnabled !== undefined ||

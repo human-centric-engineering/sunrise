@@ -76,6 +76,14 @@ Emitted by `lib/orchestration/workflows/version-service.ts`:
 The legacy `workflow.definition_revert` action was removed alongside the
 `/definition-revert` route. See [`workflow-versioning.md`](../orchestration/workflow-versioning.md).
 
+### Execution lifecycle actions
+
+Emitted from the admin executions API:
+
+| Action                   | Changes | Metadata                                            | Notes                                                                                                                                                                                           |
+| ------------------------ | ------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `execution.force_failed` | none    | `{ previousStatus, reason }` (reason may be `null`) | Admin terminated a stuck/in-flight execution via the live-engine surface. Badge variant: `outline`. See [`orchestration-executions-live-engine.md`](./orchestration-executions-live-engine.md). |
+
 ## Data source
 
 ### `GET /api/v1/admin/orchestration/audit-log`

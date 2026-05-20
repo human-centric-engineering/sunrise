@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: OrchestrationSettings = {
   auditLogRetentionDays: null,
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
+  stuckExecutionThresholdMins: 5,
   escalationConfig: null,
 };
 

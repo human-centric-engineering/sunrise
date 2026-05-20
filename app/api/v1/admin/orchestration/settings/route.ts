@@ -230,6 +230,9 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.maxMessagesPerConversation !== undefined) {
     updateData.maxMessagesPerConversation = body.maxMessagesPerConversation;
   }
+  if (body.stuckExecutionThresholdMins !== undefined) {
+    updateData.stuckExecutionThresholdMins = body.stuckExecutionThresholdMins;
+  }
   if (body.escalationConfig !== undefined) {
     updateData.escalationConfig =
       body.escalationConfig === null
