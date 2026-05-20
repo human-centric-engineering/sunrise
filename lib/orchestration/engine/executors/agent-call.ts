@@ -44,6 +44,10 @@ import { agentCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
+import {
+  composeSystemPromptString,
+  resolveEffectivePrompt,
+} from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import {
@@ -359,9 +363,11 @@ export async function executeAgentCall(
     );
   }
 
-  // Load the target agent
+  // Load the target agent with its (optional) inheritance profile so the
+  // system prompt resolves the same way as the chat handler.
   const agent = await prisma.aiAgent.findFirst({
     where: { slug: agentSlug, isActive: true },
+    include: { profile: true },
   });
   if (!agent) {
     throw new ExecutorError(
@@ -391,10 +397,27 @@ export async function executeAgentCall(
   // Interpolate the message template
   const interpolatedMessage = interpolatePrompt(message, ctx);
 
-  // Build the initial message array with agent's system instructions
+  // Build the initial message array using the same persona/voice/guardrails
+  // composition the chat streaming handler performs. Profile inheritance is
+  // resolved here so a single agent produces byte-identical system prompts
+  // whether invoked via chat or via a workflow agent_call step.
+  const resolvedPrompt = resolveEffectivePrompt(
+    {
+      systemInstructions: agent.systemInstructions,
+      persona: agent.persona,
+      brandVoiceInstructions: agent.brandVoiceInstructions,
+      guardrails: agent.guardrails,
+      personaMode: agent.personaMode as 'override' | 'append',
+      voiceMode: agent.voiceMode as 'override' | 'append',
+      guardrailsMode: agent.guardrailsMode as 'override' | 'append',
+    },
+    agent.profile
+  );
+  const systemPrompt = composeSystemPromptString(resolvedPrompt);
+
   const initialMessages: LlmMessage[] = [];
-  if (agent.systemInstructions) {
-    initialMessages.push({ role: 'system', content: agent.systemInstructions });
+  if (systemPrompt) {
+    initialMessages.push({ role: 'system', content: systemPrompt });
   }
   initialMessages.push({ role: 'user', content: interpolatedMessage });
 

@@ -197,6 +197,7 @@ describe('executeAgentCall', () => {
 
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith({
       where: { slug: 'summarizer', isActive: true },
+      include: { profile: true },
     });
   });
 
