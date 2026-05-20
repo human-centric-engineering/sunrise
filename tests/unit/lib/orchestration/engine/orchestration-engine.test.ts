@@ -1306,6 +1306,69 @@ describe('OrchestrationEngine', () => {
     }
   });
 
+  it('records each parallel branch completedAt at its actual finish, not batch settle', async () => {
+    // Regression for "all parallel bars equal width": before the fix, each
+    // branch's completedAt was stamped in the post-`Promise.allSettled` loop
+    // (long after the slowest branch ended), so every branch's
+    // (completedAt − startedAt) collapsed to ~the slowest branch's duration
+    // and the Gantt timeline rendered every bar the same width.
+    registerStepType('parallel', async (step) => ({
+      output: { parallel: true, branches: step.nextSteps.map((e) => e.targetStepId) },
+      tokensUsed: 0,
+      costUsd: 0,
+    }));
+    registerStepType('llm_call', async (step) => {
+      // Two very different branch durations — fast vs slow.
+      await new Promise((r) => setTimeout(r, step.id === 'a' ? 30 : 200));
+      return { output: `out:${step.id}`, tokensUsed: 1, costUsd: 0.001 };
+    });
+
+    const def: WorkflowDefinition = {
+      steps: [
+        {
+          id: 'p',
+          name: 'Parallel',
+          type: 'parallel',
+          config: {},
+          nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+        },
+        { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'A' }, nextSteps: [] },
+        { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'B' }, nextSteps: [] },
+      ],
+      entryStepId: 'p',
+      errorStrategy: 'fail',
+    };
+
+    await collect(new OrchestrationEngine(), makeWorkflow(def));
+
+    const calls = vi.mocked(prisma.aiWorkflowExecution.updateMany).mock.calls;
+    const lastTrace = calls
+      .map((c) => (c[0] as { data?: { executionTrace?: unknown } }).data?.executionTrace)
+      .filter(Array.isArray)
+      .pop() as Array<{
+      stepId: string;
+      startedAt: string;
+      completedAt: string;
+      durationMs: number;
+    }>;
+    const a = lastTrace.find((e) => e.stepId === 'a');
+    const b = lastTrace.find((e) => e.stepId === 'b');
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+
+    const wallA = new Date(a!.completedAt).getTime() - new Date(a!.startedAt).getTime();
+    const wallB = new Date(b!.completedAt).getTime() - new Date(b!.startedAt).getTime();
+
+    // Each branch's wall-clock end−start should track its own durationMs
+    // within a small skew, NOT the slowest branch's duration.
+    expect(Math.abs(wallA - a!.durationMs)).toBeLessThan(10);
+    expect(Math.abs(wallB - b!.durationMs)).toBeLessThan(10);
+
+    // And the fast branch's wall-clock must be clearly shorter than the slow
+    // one — the bug would have made them equal.
+    expect(wallA).toBeLessThan(wallB - 100);
+  });
+
   it('parallel branch failure with skip strategy continues other branches', async () => {
     registerStepType('parallel', async () => ({
       output: { parallel: true },

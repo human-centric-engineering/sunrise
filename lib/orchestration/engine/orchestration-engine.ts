@@ -1345,18 +1345,26 @@ export class OrchestrationEngine {
 
           try {
             const result = await this.runStepToCompletion(step, ctx, telemetryOut);
-            const durationMs = Date.now() - started;
+            // Capture endedAt *inside* the callback — once per branch, at the
+            // real finish moment. The post-`Promise.allSettled` loop runs
+            // sequentially long after the slowest branch ends, so writing
+            // completedAt there would collapse every branch's end timestamp
+            // to ~the slowest branch's finish (all bars equal width).
+            const endedAt = Date.now();
+            const durationMs = endedAt - started;
             setSpanStatus(span, { code: 'ok' });
             return {
               step,
               result,
               durationMs,
               started,
+              endedAt,
               telemetryOut,
               error: null as ExecutorError | null,
             };
           } catch (err) {
-            const durationMs = Date.now() - started;
+            const endedAt = Date.now();
+            const durationMs = endedAt - started;
             if (err instanceof PausedForApproval) {
               // Pause is not a tracer-level error — workflow continues from the
               // pause point after admin approval.
@@ -1366,6 +1374,7 @@ export class OrchestrationEngine {
                 result: null,
                 durationMs,
                 started,
+                endedAt,
                 telemetryOut,
                 paused: true,
                 payload: err.payload,
@@ -1386,7 +1395,15 @@ export class OrchestrationEngine {
                     err
                   );
             setSpanStatus(span, { code: 'error', message: execErr.message });
-            return { step, result: null, durationMs, started, telemetryOut, error: execErr };
+            return {
+              step,
+              result: null,
+              durationMs,
+              started,
+              endedAt,
+              telemetryOut,
+              error: execErr,
+            };
           }
         },
         { manualStatus: true }
@@ -1401,7 +1418,7 @@ export class OrchestrationEngine {
         // Should not happen — inner function catches all errors.
         continue;
       }
-      const { step, result, durationMs, started, telemetryOut, error } = outcome.value;
+      const { step, result, durationMs, started, endedAt, telemetryOut, error } = outcome.value;
 
       // Handle pause (rare in parallel — only if human_approval is in a branch)
       if ('paused' in outcome.value && outcome.value.paused) {
@@ -1419,7 +1436,7 @@ export class OrchestrationEngine {
           tokensUsed: pausedTokens,
           costUsd: pausedCost,
           startedAt: new Date(started).toISOString(),
-          completedAt: new Date().toISOString(),
+          completedAt: new Date(endedAt).toISOString(),
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
@@ -1464,7 +1481,7 @@ export class OrchestrationEngine {
           tokensUsed: failedTokens,
           costUsd: failedCost,
           startedAt: new Date(started).toISOString(),
-          completedAt: new Date().toISOString(),
+          completedAt: new Date(endedAt).toISOString(),
           durationMs,
           input: step.config,
           ...rollupTelemetry(telemetryOut),
@@ -1501,7 +1518,7 @@ export class OrchestrationEngine {
         tokensUsed: stepResult.tokensUsed,
         costUsd: stepResult.costUsd,
         startedAt: new Date(started).toISOString(),
-        completedAt: new Date().toISOString(),
+        completedAt: new Date(endedAt).toISOString(),
         durationMs,
         input: step.config,
         ...rollupTelemetry(telemetryOut),
