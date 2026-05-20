@@ -191,14 +191,20 @@ function DrillInCard({
   hint,
   variant = 'default',
 }: DrillInCardProps): ReactElement {
+  // `h-full` on every layer keeps all four grid cells the same
+  // height regardless of content. Without it the Provider in-flight
+  // card grows with its list and the other three sit at their
+  // shorter natural height, leaving uneven whitespace below them.
+  // The grid stretches the cell; the wrapper, Card, and CardContent
+  // must each take that full height for it to propagate down.
   const wrapperClassName =
-    'group focus-visible:ring-ring rounded-lg focus-visible:ring-2 focus-visible:outline-none';
+    'group focus-visible:ring-ring h-full rounded-lg focus-visible:ring-2 focus-visible:outline-none';
   const cardBody = (
     <Card
       className={
         variant === 'warning'
-          ? 'border-amber-300 transition-shadow hover:shadow-md dark:border-amber-700'
-          : 'transition-shadow hover:shadow-md'
+          ? 'h-full border-amber-300 transition-shadow hover:shadow-md dark:border-amber-700'
+          : 'h-full transition-shadow hover:shadow-md'
       }
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -247,7 +253,7 @@ function ProviderCard({
   providers: { provider: string; inFlight: number }[];
 }): ReactElement {
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader className="pb-2">
         <CardTitle className="text-muted-foreground flex items-center gap-2 text-sm font-medium">
           <ServerCog className="h-5 w-5" aria-hidden />
