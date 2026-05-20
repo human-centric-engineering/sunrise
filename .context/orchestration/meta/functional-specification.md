@@ -2,7 +2,7 @@
 
 A comprehensive specification of the AI agent orchestration system built into the Sunrise platform.
 
-**Last updated:** 2026-05-03
+**Last updated:** 2026-05-20 (PRs #196–#204 sweep — conversation provenance, agent profile inheritance, LLM param profile + per-agent / per-step `reasoningEffort`, step descriptions, guard schema mode, execution rerun, running-step side table)
 
 ---
 
@@ -69,17 +69,19 @@ lib/orchestration/           ← Platform-agnostic core (NO Next.js imports)
 
 An agent is the primary deployment unit: a configured AI persona with model selection, behaviour parameters, attached capabilities, knowledge scope, and budget constraints.
 
-| Property                       | Purpose                                                                        |
-| ------------------------------ | ------------------------------------------------------------------------------ |
-| `name` / `slug`                | Human and machine identifiers                                                  |
-| `systemInstructions`           | Persona, behaviour rules, domain context                                       |
-| `model` / `provider`           | LLM model and provider selection                                               |
-| `temperature` / `maxTokens`    | Generation parameters                                                          |
-| `monthlyBudgetUsd`             | Per-agent spend cap with 80% warning threshold                                 |
-| `fallbackProviders`            | Ordered failover chain (up to 5 providers)                                     |
-| `knowledgeAccessMode` + grants | Scoped knowledge base access (`full` / `restricted` × tag and document grants) |
-| `capabilities`                 | Attached tools the agent can invoke                                            |
-| `visibility`                   | Access control: `internal`, `public`, `invite_only`                            |
+| Property                       | Purpose                                                                                                                                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name` / `slug`                | Human and machine identifiers                                                                                                                                                       |
+| `systemInstructions`           | Persona, behaviour rules, domain context                                                                                                                                            |
+| `model` / `provider`           | LLM model and provider selection                                                                                                                                                    |
+| `temperature` / `maxTokens`    | Generation parameters                                                                                                                                                               |
+| `reasoningEffort`              | Optional `minimal` / `low` / `medium` / `high` knob; honoured by reasoning-capable models (o-series, gpt-5, Claude 4 thinking) and silently dropped elsewhere                       |
+| `profileId` + `*Mode` fields   | Optional FK to `AiAgentProfile` (inheritable persona / brand voice / guardrails); per-field `personaMode` / `voiceMode` / `guardrailsMode` choose `inherit` / `override` / `append` |
+| `monthlyBudgetUsd`             | Per-agent spend cap with 80% warning threshold                                                                                                                                      |
+| `fallbackProviders`            | Ordered failover chain (up to 5 providers)                                                                                                                                          |
+| `knowledgeAccessMode` + grants | Scoped knowledge base access (`full` / `restricted` × tag and document grants)                                                                                                      |
+| `capabilities`                 | Attached tools the agent can invoke                                                                                                                                                 |
+| `visibility`                   | Access control: `internal`, `public`, `invite_only`                                                                                                                                 |
 
 ### 1.2 Agent Lifecycle
 
@@ -100,6 +102,20 @@ Three visibility modes control who can interact with an agent:
 | `invite_only` | Token holders only — `AiAgentInviteToken` with expiry and usage limits |
 
 Embed tokens (`AiAgentEmbedToken`) provide separate auth for widget deployments with CORS origin restrictions.
+
+### 1.4 Agent Profiles (inheritable persona / voice / guardrails)
+
+`AiAgentProfile` records are reusable persona, brand-voice, and guardrails fragments shared across multiple agents. Each agent links to at most one profile via `profileId`; per-field mode fields (`personaMode`, `voiceMode`, `guardrailsMode`) decide how the agent combines the profile's fragments with its own:
+
+| Mode       | Effect                                                        |
+| ---------- | ------------------------------------------------------------- |
+| `inherit`  | Use the profile's value verbatim (agent field can stay blank) |
+| `override` | Replace the profile's value with the agent's own              |
+| `append`   | Concatenate (profile fragment first, then agent fragment)     |
+
+At dispatch time, `resolveEffectivePrompt(agent, profile)` + `composeSystemPromptString()` merge the resolved fragments into the system prompt that goes over the wire. The same resolver runs in both surfaces — the streaming chat handler and the workflow `agent_call` executor — so a profile edit changes both behaviours atomically.
+
+Profiles have a dedicated admin section (sidebar entry, CRUD pages at `/admin/orchestration/agent-profiles`); the agents-using count for each profile is surfaced on the list. Versioning, system-protection (`isSystem`), and audit-log coverage match the agent model.
 
 ---
 
@@ -232,7 +248,11 @@ Workflows are directed acyclic graphs of steps, validated at save time and execu
 - **Event streaming**: Real-time execution events for UI feedback
 - **Template interpolation**: Dynamic prompts with variable substitution
 
-### 5.2 Step Types (15)
+### 5.2 Step Types
+
+Every step carries an optional `description` (≤500 chars, trimmed) that is captured onto the trace entry at execution time and surfaced as a hover tooltip in the builder canvas and the execution detail view. Every LLM-bearing step type (`llm_call`, `plan`, `route`, `evaluate`, `reflect`, `guard.llm`, `agent_call`, `orchestrator`, `supervisor`) accepts an optional `reasoningEffort` (`minimal` / `low` / `medium` / `high`) override that honours the same precedence rules as the agent-level knob.
+
+`guard` runs in three modes: `llm` (model evaluates rules), `regex` (pattern match against `JSON.stringify(ctx.inputData)`), and **`schema`** — Zod-schema validation via `schemaName` looked up in `lib/orchestration/schemas/registry.ts`, with an optional `inputStepId` to validate the named step's output instead of the workflow input. Schema mode is deterministic, zero-LLM-cost, and surfaces full Zod `issues` arrays so a downstream retry can interpolate precise failure paths into the next prompt. The provider-model-audit workflow's `validate_proposals` step is the first adopter.
 
 | Step Type          | Purpose                                    |
 | ------------------ | ------------------------------------------ |
@@ -282,6 +302,8 @@ Each step can define its own error handling:
 - **Notification dispatcher**: When an execution pauses, a `workflow.paused_for_approval` hook event and `approval_required` webhook event are emitted with pre-signed approve/reject URLs and channel metadata. External consumers (Slack bots, email services) build approval UIs from these payloads.
 - **Approver scoping**: Optional `approverUserIds` in `humanApprovalConfigSchema` enables delegation to specific admins beyond the execution owner.
 - **Step retry**: Individual failed steps can be retried without re-running the workflow
+- **Execution rerun**: Any terminal execution can be re-run via `POST /admin/orchestration/executions/:id/rerun`. The new row is created against a chosen workflow version with `AiWorkflowExecution.parentExecutionId` pointing at the source; `inputData` is Zod-parsed from the source row (clean validation error on corruption rather than runtime crash). The execution detail page renders a Re-run dialog with version chooser and SSE handoff. There is no per-step rerun — the granule is the whole execution.
+- **Running-step side table**: Per-step in-flight state lives in a dedicated side table rather than columns on `AiWorkflowExecution`. The engine writes a row when a step starts and clears it when the step finishes; the reaper sweeps orphan rows from crashed hosts; parallel branches each stamp their own `completedAt` so the execution timeline can render per-branch wait segments instead of guessing from aggregate timestamps. API routes return live in-flight rows so the client renders every running branch concurrently.
 - **Cancellation**: In-flight executions can be cancelled
 
 ### 5.5a Provider model classification — capability tier vs deployment profile
@@ -303,7 +325,7 @@ Optional, opt-in source-attribution contract for LLM and agent steps. When a ste
 - **First adopter**: the provider-model-audit workflow. The three producer steps (`analyse_chat`, `analyse_embedding`, `discover_new_models`) render Brave search results as a numbered block and require sources per change, new-model, and deactivation proposal; the `validate_proposals` guard enforces it via Rule 8.
 - **Surfaces**: the structured approval form (`display: 'sources'` on a `reviewSchema` field) and the trace viewer's expanded entry panel. Same pill component on both — one inspection pattern.
 
-Workflow-engine analogue of §6.4.1 (chat citation guard). Distinct from per-message conversation provenance (item 47 in `improvement-priorities.md`, not started) — that pins versions/citations/capability calls onto `AiMessage` rows; this pins source attribution per claim inside structured step output.
+Workflow-engine analogue of §6.4.1 (chat citation guard). Distinct from per-message conversation provenance (§6.8 below — shipped in PR #196) — that pins versions/citations/capability calls onto `AiMessage` rows; this pins source attribution per claim inside structured step output.
 
 Reference: `.context/orchestration/provenance.md`.
 
@@ -419,6 +441,20 @@ The effective state for image input is `agent.enableImageInput && settings.image
 **Versioning.** `enableImageInput` and `enableDocumentInput` are tracked in `VERSIONED_FIELDS` on the agent PATCH route alongside `enableVoiceInput`, so flipping either toggle is captured in the agent version snapshot/restore audit.
 
 **Storage policy.** Pass-through only — image and PDF bytes never persist beyond the in-memory request body. `AiMessage` rows store the user's text alongside `[image]` / `[pdf]` placeholders; cost rows store counts in metadata, never bytes. Mirrors the voice-input precedent.
+
+### 6.8 Conversation Provenance Bundle
+
+Every chat message persists the resolved state of the agent at write time so a later audit can reconstruct "what was running when this message was sent" without inferring from execution traces.
+
+- **Per-message version pinning.** `AiMessage` carries `agentVersionId`, `workflowVersionId` (nullable; populated when a `run_workflow` capability dispatched the turn), `modelId`, and `providerSlug`. Streaming chat writes the scalars at message-creation time; workflow `agent_call` and `run_workflow` snapshot them too. `MessageMetadata` is split into a `diagnostic` half (telemetry) and a `provenance` half (audit pinning).
+- **Citation hash snapshots.** The chunk refs supplied to the LLM at turn time are content-addressed (`chunkId`, `documentId`, `contentHash`) and persisted on the message rather than only living in-band on the rendered `[N]` markers. Trace viewer + export both read citations from the provenance bundle so there is one source of truth.
+- **Routes.** `GET /api/v1/admin/orchestration/conversations/:id/provenance` returns the full bundle as JSON for machine audit; `GET .../provenance.md` returns a deterministic Markdown rendering (`renderConversationMarkdown`) for human reviewers handing artefacts to auditors. Every download is logged to `AiAdminAuditLog`.
+- **PII redaction architecture.** `BaseCapability` gains a `processesPii: boolean` flag and a `redactProvenance(args, result)` hook. The dispatcher's registry refuses to register a capability that declares `processesPii = true` without overriding the redactor (enforced via `Object.prototype.hasOwnProperty('redactProvenance')`). Built-in `call_external_api`, `read_user_memory`, `write_user_memory`, and three other HIGH-PII capabilities ship redactors using helpers in `lib/security/redact.ts` (`maskEmail`, `maskPhone`, `maskBearerToken`, `redactedString`). The LLM still sees the un-redacted live result; only the durable audit row uses the redactor's output.
+- **Consent-gated cross-user access.** New `AiConversationShare` records carry consumer-issued consent for cross-user reads. List and search routes include shared conversations. `adminCanViewConversation()` gates every per-id admin route; `logConversationAccess()` writes an `AiAdminAuditLog` row on every cross-user read so the audit trail is itself auditable (audit-of-audits). Consumer share + revoke routes are public-facing.
+
+Composes with §5.6 (workflow-step provenance) — that pins per-claim attribution inside a workflow execution's step output; this pins per-message version + citations on the conversation. Two surfaces, one vocabulary.
+
+Reference: `.context/orchestration/provenance.md` (Conversation provenance section), `.context/admin/orchestration-conversations.md`, `.context/security/pii-redaction.md`, `.context/security/conversation-access.md`.
 
 ---
 
