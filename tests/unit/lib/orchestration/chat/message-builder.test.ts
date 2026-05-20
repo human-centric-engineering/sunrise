@@ -411,6 +411,89 @@ describe('buildMessages', () => {
     expect(messages[0].content).not.toContain('[Brand Voice]');
   });
 
+  // ── persona + guardrails injection (profile inheritance surface) ────────
+
+  it('prepends persona under a [Persona] header when set', () => {
+    const messages = buildMessages({
+      systemInstructions: 'Help with billing.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      persona: 'You are Sky, a calm senior support specialist.',
+    });
+
+    const content = messages[0].content as string;
+    expect(content).toContain('[Persona]\nYou are Sky');
+    expect(content.indexOf('[Persona]')).toBeLessThan(content.indexOf('Help with billing.'));
+  });
+
+  it('appends guardrails under a [Guardrails] header after instructions', () => {
+    const messages = buildMessages({
+      systemInstructions: 'Help with billing.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      guardrails: 'Never quote unreleased pricing.',
+    });
+
+    const content = messages[0].content as string;
+    expect(content).toContain('[Guardrails]\nNever quote unreleased pricing.');
+    expect(content.indexOf('Help with billing.')).toBeLessThan(content.indexOf('[Guardrails]'));
+  });
+
+  it('composes all four sections in canonical order: persona, instructions, guardrails, voice', () => {
+    const messages = buildMessages({
+      systemInstructions: 'Help with billing.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      persona: 'You are Sky.',
+      guardrails: 'Never quote unreleased pricing.',
+      brandVoiceInstructions: 'Friendly and concise.',
+    });
+
+    const content = messages[0].content as string;
+    expect(content).toBe(
+      '[Persona]\nYou are Sky.\n\n' +
+        'Help with billing.\n\n' +
+        '[Guardrails]\nNever quote unreleased pricing.\n\n' +
+        '[Brand Voice]\nFriendly and concise.'
+    );
+  });
+
+  it('omits absent sections cleanly when only some are provided', () => {
+    const messages = buildMessages({
+      systemInstructions: 'Just do the task.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      persona: null,
+      guardrails: undefined,
+      brandVoiceInstructions: null,
+    });
+
+    expect(messages[0].content).toBe('Just do the task.');
+    expect(messages[0].content).not.toContain('[Persona]');
+    expect(messages[0].content).not.toContain('[Guardrails]');
+    expect(messages[0].content).not.toContain('[Brand Voice]');
+  });
+
+  it('honours pre-resolved append text (joined `${profile}\\n\\n${agent}`) verbatim', () => {
+    // Caller is expected to pre-resolve via resolveEffectivePrompt — the
+    // message builder simply embeds whatever string is passed under the
+    // section header. This guards against accidental re-composition.
+    const joinedGuardrails = 'Never give medical advice.\n\nAlso never quote internal pricing.';
+    const messages = buildMessages({
+      systemInstructions: 'Help with billing.',
+      contextBlock: null,
+      history: [],
+      newUserMessage: 'Hi',
+      guardrails: joinedGuardrails,
+    });
+
+    expect(messages[0].content).toContain(`[Guardrails]\n${joinedGuardrails}`);
+  });
+
   // ── token-aware truncation ─────────────────────────────────────────────────
 
   it('applies token-aware truncation when contextWindowTokens is set', () => {

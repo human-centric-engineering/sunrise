@@ -22,6 +22,7 @@ import {
   estimateTokens,
   truncateToTokenBudget,
 } from '@/lib/orchestration/chat/token-estimator';
+import { composeSections } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import type { InputBreakdown, InputBreakdownPart } from '@/types/orchestration';
 
 /**
@@ -54,7 +55,24 @@ export interface BuildMessagesArgs {
   conversationSummary?: string;
   /** Per-user-per-agent memories to inject into context. */
   userMemories?: UserMemoryEntry[];
-  /** Brand voice instructions appended to the system prompt. */
+  /**
+   * Persona text — identity / role / perspective. Composed into the system
+   * prompt under a `[Persona]` header before `systemInstructions`. Pass
+   * the *resolved* value (after profile inheritance has been applied via
+   * `lib/orchestration/agents/resolve-effective-prompt.ts`).
+   */
+  persona?: string | null;
+  /**
+   * Guardrails text — refusals, escalation rules, things-not-to-do.
+   * Composed under a `[Guardrails]` header after `systemInstructions`.
+   * Pass the resolved value (post-inheritance).
+   */
+  guardrails?: string | null;
+  /**
+   * Brand voice instructions — tone, register, style. Composed under a
+   * `[Brand Voice]` header as the final section. Pass the resolved value
+   * (post-inheritance).
+   */
   brandVoiceInstructions?: string | null;
   /**
    * Model's context window size in tokens. When set, token-aware
@@ -110,9 +128,16 @@ export interface BuildMessagesResult {
 export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessagesResult {
   const modelId = args.modelId;
 
-  const systemPrompt = args.brandVoiceInstructions
-    ? `${args.systemInstructions}\n\n[Brand Voice]\n${args.brandVoiceInstructions}`
-    : args.systemInstructions;
+  // Compose persona / instructions / guardrails / brand voice into the
+  // single system message. Order and section headers are owned by
+  // `composeSections` in resolve-effective-prompt.ts so the workflow
+  // `agent_call` path produces an identical system prompt.
+  const systemPrompt = composeSections({
+    persona: args.persona,
+    systemInstructions: args.systemInstructions,
+    guardrails: args.guardrails,
+    brandVoiceInstructions: args.brandVoiceInstructions,
+  });
   const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }];
 
   const breakdown: InputBreakdown = {

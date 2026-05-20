@@ -133,7 +133,7 @@ export function resolveEffectivePrompt(
 }
 
 /**
- * Join the resolved sections into the single string that becomes the
+ * Join the four sections into the single string that becomes the
  * `system` message content for the LLM call. Order:
  *
  *   [Persona] -> systemInstructions -> [Guardrails] -> [Brand Voice]
@@ -141,14 +141,32 @@ export function resolveEffectivePrompt(
  * Persona first establishes identity before the task. Brand voice last
  * leans on recency bias to anchor tone in the model's working window.
  * Sections with null text are simply omitted (no empty headers).
+ *
+ * Shared by `composeSystemPromptString` (operating on a resolved prompt)
+ * and `message-builder.ts` (which already receives the resolved values
+ * from the caller and composes the chat system message in-place).
  */
-export function composeSystemPromptString(resolved: ResolvedAgentPrompt): string {
+export function composeSections(opts: {
+  persona?: string | null;
+  systemInstructions: string;
+  guardrails?: string | null;
+  brandVoiceInstructions?: string | null;
+}): string {
   const parts: string[] = [];
-  if (resolved.persona) parts.push(`[Persona]\n${resolved.persona}`);
-  parts.push(resolved.systemInstructions);
-  if (resolved.guardrails) parts.push(`[Guardrails]\n${resolved.guardrails}`);
-  if (resolved.brandVoiceInstructions) {
-    parts.push(`[Brand Voice]\n${resolved.brandVoiceInstructions}`);
+  if (opts.persona) parts.push(`[Persona]\n${opts.persona}`);
+  parts.push(opts.systemInstructions);
+  if (opts.guardrails) parts.push(`[Guardrails]\n${opts.guardrails}`);
+  if (opts.brandVoiceInstructions) {
+    parts.push(`[Brand Voice]\n${opts.brandVoiceInstructions}`);
   }
   return parts.join('\n\n');
+}
+
+export function composeSystemPromptString(resolved: ResolvedAgentPrompt): string {
+  return composeSections({
+    persona: resolved.persona,
+    systemInstructions: resolved.systemInstructions,
+    guardrails: resolved.guardrails,
+    brandVoiceInstructions: resolved.brandVoiceInstructions,
+  });
 }
