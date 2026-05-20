@@ -164,6 +164,10 @@ abstract class BaseCapability<TArgs = unknown, TData = unknown> {
   protected abstract readonly schema: CapabilitySchema<TArgs>;
   abstract execute(args: TArgs, ctx: CapabilityContext): Promise<CapabilityResult<TData>>;
 
+  // Declarative PII flag — paired with redactProvenance (see Provenance & PII below)
+  readonly processesPii: boolean = false;
+  redactProvenance(args: TArgs, result: CapabilityResult<TData>): ProvenanceRedaction;
+
   validate(rawArgs: unknown): TArgs; // throws CapabilityValidationError
   protected success<T>(data: T, opts?): CapabilityResult<T>;
   protected error(message: string, code?: string): CapabilityResult<never>;
@@ -176,6 +180,48 @@ abstract class BaseCapability<TArgs = unknown, TData = unknown> {
 - `execute(args, ctx)` — business logic; args are pre-validated and typed
 - `success(data, opts?)` — build success result; set `{ skipFollowup: true }` if the result IS the final answer
 - `error(message, code?)` — build error result; default code is `'capability_error'`
+- `processesPii` / `redactProvenance` — controls what the conversation-provenance bundle persists for this capability's calls (see next section)
+
+## Provenance & PII (conversation provenance bundle)
+
+Every capability call made during a chat turn is snapshotted onto the assistant message's `provenance.capabilityCalls[]` for the audit bundle (`GET /admin/orchestration/conversations/:id/provenance`). The LLM still sees the un-redacted live result — only the durable audit row uses the redacted form. The contract:
+
+- `processesPii = false` (default) — args persisted verbatim, result JSON-stringified and truncated to 480 chars. Correct for capabilities whose inputs and outputs are not customer PII: `get_pattern_detail`, `estimate_workflow_cost`, `search_knowledge_base`, `add_provider_models`, etc.
+- `processesPii = true` — **must override `redactProvenance`**. The registry refuses to register a PII-handling capability without an explicit redactor (enforced via `Object.prototype.hasOwnProperty('redactProvenance')` at registration time). Forces every capability author to make an explicit decision rather than leaking customer PII into durable rows by default.
+
+Use the helpers in `lib/security/redact.ts` for the masking:
+
+| Helper                              | Use for                                             |
+| ----------------------------------- | --------------------------------------------------- |
+| `maskEmail(s)`                      | Email-shaped fields — preserves first char + TLD    |
+| `maskPhone(s)`                      | Phone-shaped fields — preserves last 4 digits       |
+| `maskBearerToken(s)`                | `Authorization` headers, JWTs, API keys             |
+| `redactedString('label')`           | Free-text user input where even shape leaks signal  |
+| `maskKeysInObject(obj, keys, mask)` | Walk a nested object and mask a known set of fields |
+
+Example (the `read_user_memory` shape — keeps the `key` so the auditor can verify "memory for `preferred_language` was read" but redacts each free-text `value`):
+
+```typescript
+readonly processesPii = true;
+
+redactProvenance(args: ReadArgs, result: CapabilityResult<ReadData>): ProvenanceRedaction {
+  if (result.success && result.data) {
+    const safeData = {
+      memories: result.data.memories.map((m) => ({
+        key: m.key,
+        value: redactedString('memory-value'),
+        updatedAt: m.updatedAt,
+      })),
+    };
+    return { args, resultPreview: JSON.stringify({ success: true, data: safeData }) };
+  }
+  return { args, resultPreview: JSON.stringify(result) };
+}
+```
+
+The "nuclear" option for capabilities whose args AND results are both irredeemably sensitive (`call_external_api` for some bindings, `escalate_to_human` payloads) is `{ args: redactedString('args'), resultPreview: redactedString('result') }`.
+
+If you're unsure whether your capability handles PII: set `processesPii = true` and write a redactor. The registry-time enforcement is a one-way ratchet — opting in costs nothing if your data turns out to be safe, but opting out and being wrong leaks PII to every conversation audit row.
 
 ## CapabilityContext
 
@@ -312,6 +358,7 @@ npm run test -- tests/unit/lib/orchestration/capabilities/my-capability.test.ts
 - [ ] Agent binding created with `isEnabled: true`
 - [ ] No `next/*` imports in the capability file
 - [ ] `this.success()` / `this.error()` used (never hand-built result objects)
+- [ ] `processesPii` declared explicitly (`true` requires a `redactProvenance` override; the registry will refuse to load otherwise)
 - [ ] Tests written and passing under `tests/unit/lib/orchestration/capabilities/`
 - [ ] `npm run validate` passes (type-check + lint + format)
 - [ ] Run `/pre-pr` before merging the feature branch

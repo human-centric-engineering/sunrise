@@ -56,6 +56,39 @@ Key decisions per agent:
   0.8+ for creative
 - **System instructions:** Be specific about role, boundaries, escalation
   rules, and output format
+- **Reasoning effort:** Set `reasoningEffort` (`minimal` / `low` / `medium` / `high`)
+  only on reasoning-capable models (o-series / gpt-5 / Claude 4 thinking).
+  Silently dropped elsewhere. Default null = no `reasoning_effort` sent.
+- **Profile inheritance:** Set `profileId` to an `AiAgentProfile` row when
+  multiple agents share a persona, brand voice, or guardrail set. Per-field
+  modes (`personaMode` / `voiceMode` / `guardrailsMode` = `inherit` / `override` / `append`)
+  let one agent diverge from the profile without breaking the link. Edit the
+  profile once → every inheriting agent picks up the change on its next call.
+
+---
+
+## Reusable persona / voice / guardrails: `AiAgentProfile`
+
+When a fleet of agents shares persona ("warm, plain-English, no jargon"),
+voice ("active voice, second person, ≤2 sentences per paragraph"), or
+guardrails ("never quote prices; defer pricing questions to sales"),
+hoist the shared fragments into an `AiAgentProfile` row instead of pasting
+them into each agent's `systemInstructions`. Each agent points at a
+profile via `profileId` and chooses a mode per field:
+
+- `inherit` — use the profile's value verbatim
+- `override` — replace the profile's value with the agent's own
+- `append` — concatenate (profile fragment + agent fragment)
+
+The runtime `resolveEffectivePrompt(agent, profile)` composes the final
+system prompt from the resolved fragments before either chat or workflow
+`agent_call` sends. Both surfaces share the same composition order, so a
+profile edit changes both chat and workflow behaviour atomically.
+
+Profiles are first-class admin entities (sidebar entry, list page, CRUD
+API at `/api/v1/admin/orchestration/agent-profiles/...`). Treat editing
+a profile with the same care as editing an agent's systemInstructions —
+the blast radius is every agent that inherits from it.
 
 ---
 

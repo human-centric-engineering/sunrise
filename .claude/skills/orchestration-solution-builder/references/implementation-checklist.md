@@ -18,10 +18,12 @@ Sequenced checklists for each complexity tier. Follow top-to-bottom — order ma
 
 - [ ] **Provider** — verify exists
 - [ ] **Embedding provider** — if using RAG
-- [ ] **Agents** — create each with appropriate model/temperature
+- [ ] **Agent profile (if multiple agents share persona/voice/guardrails)** — create one `AiAgentProfile` row, link agents via `profileId`, choose per-field modes
+- [ ] **Agents** — create each with appropriate model/temperature; set `reasoningEffort` only on reasoning-capable models when the role benefits
 - [ ] **Custom capabilities — code**
   - [ ] TypeScript class in `lib/orchestration/capabilities/built-in/`
   - [ ] Zod schema + OpenAI function definition (semantically equivalent)
+  - [ ] `processesPii` declared explicitly (PII handlers MUST override `redactProvenance`)
   - [ ] Register in `registry.ts`
 - [ ] **Custom capabilities — DB**
   - [ ] Create `AiCapability` rows via API
@@ -42,14 +44,17 @@ Sequenced checklists for each complexity tier. Follow top-to-bottom — order ma
 - [ ] **Provider** — verify primary exists
 - [ ] **Fallback provider** — create secondary for resilience
 - [ ] **Embedding provider** — create for RAG
+- [ ] **Agent profile (if applicable)** — shared persona / voice / guardrails hoisted into `AiAgentProfile`; agents link via `profileId` with per-field inherit/override/append modes
 - [ ] **Agents** — create all (router, specialists, reviewer)
   - [ ] Model selection by role (Haiku for routing, Sonnet for work)
   - [ ] Temperature by task type
+  - [ ] `reasoningEffort` set only where a reasoning-capable model is pinned and the role benefits
   - [ ] `monthlyBudgetUsd` per agent
   - [ ] `knowledgeCategories` scoping
 - [ ] **Custom capabilities — code**
   - [ ] TypeScript classes (one per tool)
   - [ ] Zod schemas + function definitions
+  - [ ] `processesPii` declared explicitly; PII handlers override `redactProvenance` (registry-enforced)
   - [ ] Registry entries
 - [ ] **Custom capabilities — DB + bindings**
   - [ ] `AiCapability` rows
