@@ -1133,13 +1133,20 @@ describe('StreamingChatHandler', () => {
   });
 
   // 16 ----------------------------------------------------------------------
-  it('no assistant row persisted for turn 1 when tool_call arrives before any text', async () => {
+  it('persists the tool-call envelope for turn 1 when only tool_calls arrive (no assistant text)', async () => {
+    // Regression guard for the reasoning-model + tool-call bug: when an
+    // assistant turn emits only `tool_calls` with empty text, we MUST
+    // still persist a row carrying `metadata.toolCalls` so the next
+    // turn's history rebuild has the preceding tool_calls block. Without
+    // it, OpenAI rejects the follow-up with HTTP 400 ("messages with
+    // role 'tool' must be a response to a preceeding message with
+    // 'tool_calls'").
     const provider = mockProvider([
       // Turn 1: no text, just tool_call then done
       [
         {
           type: 'tool_call',
-          toolCall: { id: 'tc6', name: 'silent_tool', arguments: {} },
+          toolCall: { id: 'tc6', name: 'silent_tool', arguments: { q: 'x' } },
         },
         { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
       ],
@@ -1162,8 +1169,19 @@ describe('StreamingChatHandler', () => {
 
     const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
     const assistantMsgs = createCalls.filter((c: any) => c[0].data.role === 'assistant');
-    // Turn-2 produces an assistant row, turn-1 should NOT (empty text)
-    expect(assistantMsgs).toHaveLength(1);
+    // Turn-1 persists a tool-call-only assistant row; turn-2 persists
+    // the final text row. Both rows are required for replay validity.
+    expect(assistantMsgs).toHaveLength(2);
+
+    const toolCallTurn = assistantMsgs[0][0].data;
+    expect(toolCallTurn.content).toBe('');
+    expect(toolCallTurn.metadata.toolCalls).toEqual([
+      { id: 'tc6', name: 'silent_tool', arguments: { q: 'x' } },
+    ]);
+
+    const textTurn = assistantMsgs[1][0].data;
+    expect(textTurn.content).toBe('Result processed.');
+    expect(textTurn.metadata.toolCalls).toBeUndefined();
   });
 
   // 16b — tool call with no done chunk (usage=null): logCost skipped, tool dispatch proceeds --
@@ -2199,10 +2217,21 @@ describe('mid-loop budget re-check', () => {
     );
 
     // Persists a partial assistant message with the cap-breach marker
-    // so a reload renders the "stopped early" state correctly.
-    const persistedAssistant = vi
+    // so a reload renders the "stopped early" state correctly. Note
+    // there are now TWO assistant rows on a tool-call breach: the
+    // first row records the tool_calls envelope (so any later turn
+    // sees a valid `tool_calls` block if the user re-engages), and
+    // the second is the cap-breach marker that this test looks at.
+    const assistantPersists = vi
       .mocked(prisma.aiMessage.create)
-      .mock.calls.find((call) => (call[0] as { data: { role: string } }).data.role === 'assistant');
+      .mock.calls.filter(
+        (call) => (call[0] as { data: { role: string } }).data.role === 'assistant'
+      );
+    expect(assistantPersists.length).toBeGreaterThanOrEqual(1);
+    const persistedAssistant = assistantPersists.find((call) => {
+      const meta = (call[0] as { data: { metadata?: { endedReason?: string } } }).data.metadata;
+      return meta?.endedReason === 'budget_exceeded';
+    });
     expect(persistedAssistant).toBeDefined();
     const persistedMeta = (persistedAssistant?.[0] as { data: { metadata: unknown } }).data
       .metadata as {

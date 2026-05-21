@@ -670,11 +670,25 @@ export class StreamingChatHandler {
       // so the summary covers exactly the dropped messages).
       let conversationSummary: string | undefined;
       let summarizerSideEffect: SideEffectModelUsage | undefined;
-      const historyRows = history.map((m) => ({
-        role: m.role,
-        content: m.content,
-        toolCallId: m.toolCallId,
-      }));
+      const historyRows = history.map((m) => {
+        // Rehydrate tool_calls the assistant requested on this turn so
+        // the next LLM call's history has them. Persisted in metadata
+        // because `AiMessage` has no scalar column for them; without
+        // this rehydration, tool-call-only assistant turns (common for
+        // reasoning models) leave the following `tool` rows orphaned
+        // and OpenAI returns HTTP 400.
+        const metadata = (m.metadata ?? null) as MessageMetadata | null;
+        const toolCalls =
+          m.role === 'assistant' && metadata?.toolCalls && metadata.toolCalls.length > 0
+            ? metadata.toolCalls
+            : null;
+        return {
+          role: m.role,
+          content: m.content,
+          toolCallId: m.toolCallId,
+          ...(toolCalls ? { toolCalls } : {}),
+        };
+      });
       const effectiveMessageCap =
         typeof agent.maxHistoryMessages === 'number' && agent.maxHistoryMessages >= 0
           ? agent.maxHistoryMessages
@@ -1172,14 +1186,28 @@ export class StreamingChatHandler {
 
         // Persist assistant message AFTER output guard (blocked responses
         // are never saved). Tool-call turns also persist here so the
-        // conversation history is complete for the next LLM iteration.
+        // conversation history is complete for the next LLM iteration —
+        // including reasoning-model turns that emit only `tool_calls`
+        // with no text. Without persisting the tool_calls envelope on
+        // those turns, the following `tool` rows are orphaned and
+        // OpenAI rejects the next history rebuild with HTTP 400.
         // Citations are only attached to the terminal turn (no tool calls
         // pending) — they describe the sources the LLM cited in its final
         // text, so interim tool-call turns don't carry them.
-        if (assistantText.length > 0) {
+        if (assistantText.length > 0 || toolCalls.size > 0) {
           const isTerminalTurn = toolCalls.size === 0;
           const assistantMetadata: MessageMetadata = {};
           const assistantProvenance: MessageProvenance = {};
+          // Persist the tool_calls envelope so the next turn's history
+          // rebuild can hand them back to the LLM. Required for OpenAI's
+          // tool-message ordering invariant; harmless for Anthropic.
+          if (toolCalls.size > 0) {
+            assistantMetadata.toolCalls = [...toolCalls.values()].map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: tc.arguments,
+            }));
+          }
           // TS narrows `usage` (a closure-captured `let`) to its initial
           // `null` value at this point because the closure mutation inside
           // `withSpanGenerator` isn't visible to flow analysis. The cast

@@ -192,19 +192,109 @@ describe('buildMessages', () => {
     });
   });
 
-  it('maps rows with toolCallId to tool-role messages', () => {
+  it('maps rows with toolCallId to tool-role messages when paired with an assistant tool_calls row', () => {
     const messages = buildMessages({
       systemInstructions: 'sys',
       contextBlock: null,
-      history: [{ role: 'tool', content: '{"ok":true}', toolCallId: 'tc_1' }],
+      history: [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'tc_1', name: 'search', arguments: { q: 'x' } }],
+        },
+        { role: 'tool', content: '{"ok":true}', toolCallId: 'tc_1' },
+      ],
       newUserMessage: 'next',
     });
 
+    // Index 0 is the system prompt; the assistant tool_calls row keeps
+    // its tool_calls block; the tool row follows.
     expect(messages[1]).toEqual({
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 'tc_1', name: 'search', arguments: { q: 'x' } }],
+    });
+    expect(messages[2]).toEqual({
       role: 'tool',
       content: '{"ok":true}',
       toolCallId: 'tc_1',
     });
+  });
+
+  it('drops a leading orphaned tool row whose assistant tool_calls are missing', () => {
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [{ role: 'tool', content: '{"ok":true}', toolCallId: 'tc_orphan' }],
+      newUserMessage: 'next',
+    });
+
+    // The orphaned tool row gets silently stripped — sending it would
+    // trigger OpenAI's "messages with role 'tool' must be a response
+    // to a preceeding message with 'tool_calls'" 400. No summary
+    // marker: the user does not need to know we hid bad state.
+    expect(messages.find((m) => m.role === 'tool')).toBeUndefined();
+  });
+
+  it('drops a mid-history orphaned tool row (no preceding assistant tool_calls)', () => {
+    // Regression for the historic pre-fix bug: assistant turns that
+    // emitted only tool_calls (empty text) were never persisted, but
+    // their tool result rows were. The forward pass must drop those
+    // mid-history orphans the same way it drops leading orphans —
+    // otherwise OpenAI rejects the conversation rebuild.
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [
+        { role: 'user', content: 'first turn' },
+        // No assistant tool_calls row here — the historic bug stripped it.
+        { role: 'tool', content: '{"ok":true}', toolCallId: 'tc_orphan' },
+        { role: 'user', content: 'second turn' },
+      ],
+      newUserMessage: 'third turn',
+    });
+
+    expect(messages.find((m) => m.role === 'tool')).toBeUndefined();
+    // The user turns survive.
+    expect(messages.filter((m) => m.role === 'user').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('strips assistant tool_calls whose response messages are missing from history', () => {
+    // Per-turn cap aborts can leave an assistant tool_calls row in the
+    // DB with no corresponding tool response rows. The builder must
+    // strip those orphaned tool_calls so the LLM request stays valid.
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [
+        {
+          role: 'assistant',
+          content: 'partial answer',
+          toolCalls: [{ id: 'tc_unresponded', name: 'search', arguments: {} }],
+        },
+      ],
+      newUserMessage: 'next',
+    });
+
+    const assistant = messages.find((m) => m.role === 'assistant');
+    expect(assistant).toEqual({ role: 'assistant', content: 'partial answer' });
+  });
+
+  it('drops a tool-call-only assistant row entirely when its responses are missing', () => {
+    const messages = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history: [
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'tc_unresponded', name: 'search', arguments: {} }],
+        },
+      ],
+      newUserMessage: 'next',
+    });
+
+    expect(messages.find((m) => m.role === 'assistant')).toBeUndefined();
   });
 
   // ── conversationSummary integration ──────────────────────────────────────

@@ -1095,6 +1095,16 @@ export interface MessageMetadata {
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;
+  /**
+   * Tool calls the assistant requested on this turn. Persisted on every
+   * assistant message that emitted any `tool_calls`, including turns
+   * where the assistant returned no text (common for reasoning models).
+   * The next turn's message-builder rehydrates this onto the `LlmMessage`
+   * `toolCalls` field so the subsequent `tool` role rows have the
+   * required preceding `tool_calls` reference — OpenAI rejects orphaned
+   * tool messages with a 400.
+   */
+  toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   // Present on error-marker messages (persisted when streaming fails completely)
   error?: boolean;
   errorCode?: string;

@@ -14,7 +14,7 @@
  */
 
 import { logger } from '@/lib/logging';
-import type { ContentPart, LlmMessage, LlmRole } from '@/lib/orchestration/llm/types';
+import type { ContentPart, LlmMessage, LlmRole, LlmToolCall } from '@/lib/orchestration/llm/types';
 import type { ChatAttachment } from '@/lib/orchestration/chat/types';
 import { MAX_HISTORY_MESSAGES } from '@/lib/orchestration/chat/types';
 import {
@@ -37,6 +37,15 @@ export interface HistoryRow {
   role: string;
   content: string;
   toolCallId?: string | null;
+  /**
+   * Tool calls the assistant requested on this turn (rehydrated from
+   * `AiMessage.metadata.toolCalls`). When present, the message-builder
+   * emits the assistant message with `toolCalls` set even if `content`
+   * is empty — required so the following `tool` role rows have a valid
+   * preceding `tool_calls` block. Without this, OpenAI rejects the
+   * conversation with HTTP 400.
+   */
+  toolCalls?: LlmToolCall[] | null;
 }
 
 export interface UserMemoryEntry {
@@ -228,22 +237,82 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     }
   }
 
+  // Pre-scan: which `tool_call` ids actually have a tool-result row in
+  // the kept history? Drives the per-assistant tool_calls filter so we
+  // never advertise a call we can't answer.
+  const respondedToolCallIds = new Set<string>();
+  for (const row of truncated) {
+    if (normaliseRole(row.role) === 'tool' && row.toolCallId) {
+      respondedToolCallIds.add(row.toolCallId);
+    }
+  }
+
+  // Forward emit pass.
+  //
+  // OpenAI's invariant: every `tool` message must be preceded — with no
+  // intervening user/assistant turn — by an assistant message whose
+  // `tool_calls` includes its `tool_call_id`. Violations produce HTTP
+  // 400 ("messages with role 'tool' must be a response to a preceeding
+  // message with 'tool_calls'"). Anthropic is similarly strict.
+  //
+  // Historic conversations can hold orphaned tool rows from two
+  // sources: (a) the pre-fix `assistantText.length > 0` skip that
+  // never persisted tool-call-only assistant turns, leaving downstream
+  // tool rows with no preceding `tool_calls`; (b) per-turn cap aborts
+  // that persisted an assistant tool_calls row but skipped tool
+  // dispatch. The forward pass below repairs both by tracking the
+  // rolling set of unanswered tool_call ids the most recent assistant
+  // tool_calls promised; a tool row is only emitted if its id is in
+  // that pending set.
+  const pendingToolCallIds = new Set<string>();
   let historyChars = 0;
   let historyTokens = 0;
   let historyMessageCount = 0;
   for (const row of truncated) {
     const role = normaliseRole(row.role);
-    // Skip empty-content assistant messages — these are persisted as
-    // markers for UI state (e.g. the synthetic message that carries
-    // `metadata.pendingApproval` when a workflow paused for approval).
-    // Anthropic's Messages API rejects content blocks with empty
-    // strings, so leaving them in the LLM history breaks the next
-    // turn after the user submits a follow-up.
-    if (role === 'assistant' && (!row.content || row.content.length === 0)) {
+
+    if (role === 'tool') {
+      if (!row.toolCallId || !pendingToolCallIds.has(row.toolCallId)) {
+        // Orphaned tool row — drop it.
+        continue;
+      }
+      pendingToolCallIds.delete(row.toolCallId);
+      messages.push({ role: 'tool', content: row.content, toolCallId: row.toolCallId });
+      historyChars += row.content.length;
+      historyTokens += estimateTokens(row.content, modelId);
+      historyMessageCount += 1;
       continue;
     }
-    if (role === 'tool' && row.toolCallId) {
-      messages.push({ role: 'tool', content: row.content, toolCallId: row.toolCallId });
+
+    // Any non-tool message ends the current tool-loop window. Anything
+    // left in `pendingToolCallIds` was an unfulfilled call from the
+    // previous assistant turn — the assistant message was kept (it had
+    // text content) but the responses never landed. Clear so a stale
+    // id doesn't accidentally match a much-later tool row.
+    pendingToolCallIds.clear();
+
+    const rawToolCalls =
+      role === 'assistant' && row.toolCalls && row.toolCalls.length > 0 ? row.toolCalls : null;
+    const rowToolCalls = rawToolCalls
+      ? rawToolCalls.filter((tc) => respondedToolCallIds.has(tc.id))
+      : null;
+    const hasToolCalls = rowToolCalls !== null && rowToolCalls.length > 0;
+
+    // Skip empty-content assistant messages that have nothing to say —
+    // persisted UI markers (e.g. `metadata.pendingApproval` carriers).
+    // Anthropic's Messages API rejects content blocks with empty
+    // strings, so leaving them in the LLM history breaks the next turn.
+    //
+    // Tool-call-only assistant turns (common for reasoning models) MUST
+    // be retained even when `content` is empty: the following `tool`
+    // role rows need their preceding `tool_calls` block.
+    if (role === 'assistant' && (!row.content || row.content.length === 0) && !hasToolCalls) {
+      continue;
+    }
+
+    if (role === 'assistant' && rowToolCalls && rowToolCalls.length > 0) {
+      for (const tc of rowToolCalls) pendingToolCallIds.add(tc.id);
+      messages.push({ role: 'assistant', content: row.content, toolCalls: rowToolCalls });
     } else {
       messages.push({ role, content: row.content });
     }
