@@ -132,24 +132,26 @@ export function WorkflowDefinitionHistoryPanel({
 
   return (
     <div className="border-border rounded-md border">
-      <button
-        type="button"
-        onClick={handleToggle}
-        className="hover:bg-muted/40 flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium"
-        aria-expanded={expanded}
-      >
-        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        Definition history
+      <div className="hover:bg-muted/40 flex w-full items-center gap-2 px-3 py-2 text-sm font-medium">
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="flex flex-1 items-center gap-2 text-left"
+          aria-expanded={expanded}
+        >
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          Definition history
+        </button>
         <FieldHelp title="Definition history">
           Every save creates a versioned snapshot. You can compare any two versions with the Diff
           button, or revert to a previous version — reverts are also tracked, so nothing is lost.
         </FieldHelp>
         {data && (
-          <span className="text-muted-foreground ml-1 text-xs">
+          <span className="text-muted-foreground text-xs">
             ({data.entries.length} {data.entries.length === 1 ? 'version' : 'versions'})
           </span>
         )}
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t px-3 py-3">
