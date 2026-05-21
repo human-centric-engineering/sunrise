@@ -168,15 +168,26 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
  * barrel — to depend on the Prisma client (and transitively on `pg`,
  * `dns`, etc., which break the browser bundle).
  *
- * Last-write-wins on key conflict — EXCEPT pricing + context length,
- * which fall back to the existing entry when the incoming row carries
- * zero. The matrix is authoritative for capabilities / tier /
- * availability, but `AiProviderModel.costPerMillionTokens` is nullable
- * (and unfilled rows coerce to 0 via `dbModelToModelInfo`); clobbering
- * a known OpenRouter price with 0 would silently zero out every
- * downstream cost estimate. Operators who genuinely want to override
- * pricing for a local / custom model can still do so by setting a
- * non-zero value in the matrix.
+ * Last-write-wins on key conflict — EXCEPT:
+ *
+ *   - **Pricing + context length** fall back to the existing entry when
+ *     the incoming row carries zero. `AiProviderModel.costPerMillionTokens`
+ *     is nullable (and unfilled rows coerce to 0 via `dbModelToModelInfo`);
+ *     clobbering a known OpenRouter price with 0 would silently zero
+ *     out every downstream cost estimate. Operators who genuinely want
+ *     to override pricing for a local / custom model can still do so by
+ *     setting a non-zero value in the matrix.
+ *
+ *   - **Cross-provider id collisions are dropped.** The bare-id key
+ *     drives runtime provider resolution (`getModel(id).provider →
+ *     getProvider(provider)`). If a matrix row for an unconfigured
+ *     provider — e.g. `microsoft-azure-gpt-4o` (providerSlug `microsoft`,
+ *     modelId `gpt-4o`) — overwrote OpenAI's `gpt-4o` entry, every
+ *     subsequent runtime call would route to `microsoft` and fail with
+ *     `Provider "microsoft" unavailable`. We preserve the existing
+ *     entry's provider on cross-provider collisions; if both providers
+ *     are properly configured the upstream caller already disambiguates
+ *     via an explicit `provider/model` selection rather than bare id.
  */
 export function registerModels(infos: ModelInfo[]): void {
   if (infos.length === 0) return;
@@ -185,6 +196,27 @@ export function registerModels(infos: ModelInfo[]): void {
     const existing = merged.get(info.id);
     if (!existing) {
       merged.set(info.id, info);
+      continue;
+    }
+    if (existing.provider !== info.provider) {
+      // Different-provider id collision — keep the existing entry's
+      // provider as the bare-id canonical so runtime resolution stays
+      // stable. Still let pricing / context fall through when the
+      // existing entry was missing those signals and the incoming row
+      // has them, since that's a useful enrichment regardless of which
+      // provider's id we picked.
+      merged.set(info.id, {
+        ...existing,
+        inputCostPerMillion:
+          existing.inputCostPerMillion > 0
+            ? existing.inputCostPerMillion
+            : info.inputCostPerMillion,
+        outputCostPerMillion:
+          existing.outputCostPerMillion > 0
+            ? existing.outputCostPerMillion
+            : info.outputCostPerMillion,
+        maxContext: existing.maxContext > 0 ? existing.maxContext : info.maxContext,
+      });
       continue;
     }
     merged.set(info.id, {

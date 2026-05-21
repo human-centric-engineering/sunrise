@@ -935,4 +935,69 @@ describe('registerModels', () => {
     registry.registerModels([]);
     expect(registry.getAvailableModels().length).toBe(before);
   });
+
+  it('does NOT overwrite the bare-id provider on a cross-provider collision', () => {
+    // `prisma/seeds/009-provider-models.ts` ships a `microsoft-azure-gpt-4o`
+    // matrix row (providerSlug='microsoft', modelId='gpt-4o') alongside
+    // OpenAI's `gpt-4o`. Before this guard, DB hydration's last-write-wins
+    // could flip `getModel('gpt-4o').provider` to `microsoft`, and the LLM
+    // runner would then try `getProvider('microsoft')` → ProviderError →
+    // "Provider \"microsoft\" unavailable" on every chat default call.
+    expect(registry.getModel('gpt-4o')?.provider).toBe('openai');
+
+    registry.registerModels([
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o (Azure)',
+        provider: 'microsoft',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 128_000,
+        supportsTools: true,
+      },
+    ]);
+
+    expect(registry.getModel('gpt-4o')?.provider).toBe('openai');
+  });
+
+  it('still enriches missing pricing on a cross-provider collision when existing entry has zero', () => {
+    // The previous test guarantees provider stability. This one covers
+    // the secondary path: when the existing bare-id entry is missing
+    // pricing (e.g. a stub fallback) but the cross-provider row carries
+    // a real number, fall the price through so cost estimates stay
+    // honest. Provider still does not flip.
+    registry.registerModels([
+      {
+        id: 'custom-stub',
+        name: 'Stub',
+        provider: 'providerA',
+        tier: 'mid',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 0,
+        supportsTools: true,
+      },
+    ]);
+    expect(registry.getModel('custom-stub')?.provider).toBe('providerA');
+
+    registry.registerModels([
+      {
+        id: 'custom-stub',
+        name: 'Stub (B)',
+        provider: 'providerB',
+        tier: 'mid',
+        inputCostPerMillion: 2.5,
+        outputCostPerMillion: 7.5,
+        maxContext: 32_000,
+        supportsTools: true,
+      },
+    ]);
+
+    const after = registry.getModel('custom-stub');
+    expect(after?.provider).toBe('providerA');
+    expect(after?.inputCostPerMillion).toBe(2.5);
+    expect(after?.outputCostPerMillion).toBe(7.5);
+    expect(after?.maxContext).toBe(32_000);
+  });
 });
