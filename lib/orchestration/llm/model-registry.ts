@@ -507,6 +507,71 @@ function buildFallbackMap(): Map<string, ModelInfo> {
       maxContext: 128_000,
       supportsTools: true,
     },
+    // OpenAI reasoning / GPT-5 family. AiProviderModel rows for these
+    // ship without `costPerMillionTokens` populated (see 009-provider-models
+    // seed), so without these fallback entries `calculateCost` returns
+    // zero and the session cost strip sums to $0.00. Rates are
+    // OpenAI's published pricing per 1M tokens.
+    {
+      id: 'gpt-5',
+      name: 'GPT-5',
+      provider: 'openai',
+      tier: 'frontier',
+      inputCostPerMillion: 1.25,
+      outputCostPerMillion: 10,
+      maxContext: 400_000,
+      supportsTools: true,
+    },
+    {
+      id: 'gpt-5-mini',
+      name: 'GPT-5 Mini',
+      provider: 'openai',
+      tier: 'mid',
+      inputCostPerMillion: 0.25,
+      outputCostPerMillion: 2,
+      maxContext: 400_000,
+      supportsTools: true,
+    },
+    {
+      id: 'gpt-5-nano',
+      name: 'GPT-5 Nano',
+      provider: 'openai',
+      tier: 'budget',
+      inputCostPerMillion: 0.05,
+      outputCostPerMillion: 0.4,
+      maxContext: 400_000,
+      supportsTools: true,
+    },
+    {
+      id: 'o3',
+      name: 'o3',
+      provider: 'openai',
+      tier: 'frontier',
+      inputCostPerMillion: 2,
+      outputCostPerMillion: 8,
+      maxContext: 200_000,
+      supportsTools: true,
+    },
+    {
+      id: 'o3-mini',
+      name: 'o3-mini',
+      provider: 'openai',
+      tier: 'mid',
+      inputCostPerMillion: 1.1,
+      outputCostPerMillion: 4.4,
+      maxContext: 200_000,
+      supportsTools: true,
+    },
+    {
+      id: 'o4-mini',
+      name: 'o4-mini',
+      provider: 'openai',
+      tier: 'mid',
+      inputCostPerMillion: 1.1,
+      outputCostPerMillion: 4.4,
+      maxContext: 200_000,
+      supportsTools: true,
+    },
     // Together
     {
       id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',

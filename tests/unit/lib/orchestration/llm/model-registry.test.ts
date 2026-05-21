@@ -839,14 +839,16 @@ describe('registerModels', () => {
   it('merges externally-sourced models into the registry state', () => {
     // Used by the server-only `model-registry-db-hydrate.ts` module to
     // surface operator-curated rows (`AiProviderModel`) without
-    // requiring the registry itself to depend on Prisma.
-    expect(registry.getModel('gpt-5')).toBeUndefined();
+    // requiring the registry itself to depend on Prisma. Use a
+    // fictitious id so the test isn't coupled to whatever the fallback
+    // happens to ship.
+    expect(registry.getModel('acme-custom-thinker')).toBeUndefined();
 
     registry.registerModels([
       {
-        id: 'gpt-5',
-        name: 'GPT-5',
-        provider: 'openai',
+        id: 'acme-custom-thinker',
+        name: 'Acme Custom Thinker',
+        provider: 'acme',
         tier: 'frontier',
         inputCostPerMillion: 0,
         outputCostPerMillion: 0,
@@ -855,7 +857,7 @@ describe('registerModels', () => {
       },
     ]);
 
-    expect(registry.getModel('gpt-5')?.provider).toBe('openai');
+    expect(registry.getModel('acme-custom-thinker')?.provider).toBe('acme');
   });
 
   it('last-write-wins on key conflict — externally-sourced beats fallback', () => {
