@@ -131,6 +131,10 @@ export const API = {
       workflowSaveAsTemplate: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/save-as-template`,
       EXECUTIONS: '/api/v1/admin/orchestration/executions',
+      // Status-count aggregate (groupBy). Used by the admin sidebar to
+      // drive approval / in-progress badges with a single request instead
+      // of N list queries.
+      EXECUTION_COUNTS: '/api/v1/admin/orchestration/executions/counts',
       // Live-engine dashboard snapshot (collection-scoped — running /
       // queued / orphaned counts + per-provider in-flight). NOT the
       // per-execution SSE stream below (`executionLive(id)`).

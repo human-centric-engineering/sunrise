@@ -18,6 +18,19 @@ vi.mock('next/navigation', () => ({
   usePathname: () => pathnameMock(),
 }));
 
+function countsResponse(counts: Record<string, number>) {
+  return new Response(JSON.stringify({ success: true, data: { counts } }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const ZERO_COUNTS = {
+  paused_for_approval: 0,
+  pending: 0,
+  running: 0,
+};
+
 describe('AdminSidebar', () => {
   let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
 
@@ -26,13 +39,8 @@ describe('AdminSidebar', () => {
     pathnameMock.mockReturnValue('/admin/overview');
     mockFetch = vi.fn<typeof fetch>();
     global.fetch = mockFetch as typeof fetch;
-    // Default: approval count fetch returns 0
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ success: true, data: [], meta: { total: 0 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
+    // Default: counts endpoint returns zeros for every requested status.
+    mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
   });
 
   afterEach(() => {
@@ -118,12 +126,7 @@ describe('AdminSidebar', () => {
   });
 
   it('shows approval badge when pending approvals exist', async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ success: true, data: [], meta: { total: 3 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
+    mockFetch.mockResolvedValue(countsResponse({ paused_for_approval: 3, pending: 0, running: 0 }));
 
     render(<AdminSidebar />);
 
@@ -132,32 +135,105 @@ describe('AdminSidebar', () => {
     });
   });
 
-  it('does not show approval badge when count is zero', async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ success: true, data: [], meta: { total: 0 } }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
+  it('sums pending + running for the executions badge', async () => {
+    mockFetch.mockResolvedValue(countsResponse({ paused_for_approval: 0, pending: 2, running: 4 }));
 
     render(<AdminSidebar />);
 
-    // Wait for fetch to complete, then check no badge number rendered
+    // 2 + 4 = 6 — proves the call site sums the two statuses rather than
+    // displaying either alone.
+    await waitFor(() => {
+      expect(screen.getByText('6')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show approval badge when count is zero', async () => {
+    mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
+
+    render(<AdminSidebar />);
+
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled();
     });
     expect(screen.queryByText('0')).not.toBeInTheDocument();
   });
 
-  it('handles approval count fetch failure gracefully', async () => {
-    mockFetch.mockRejectedValue(new Error('Network error'));
+  it('issues a single counts request per poll (not one per status)', async () => {
+    mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
 
     render(<AdminSidebar />);
 
-    // Should render without crashing
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled();
     });
+
+    // The previous implementation fanned out 3 list-endpoint calls per tick
+    // (one per status). The new endpoint collapses them — anything > 1 call
+    // on initial mount means the regression is back.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit?];
+    expect(url).toContain('/api/v1/admin/orchestration/executions/counts');
+    // Comma is an RFC 3986 sub-delim and is not percent-encoded by template
+    // literals — the server splits on raw `,` anyway. Assert the statuses
+    // travel together in a single query param rather than as N requests.
+    const parsed = new URL(url, 'http://localhost');
+    expect(parsed.searchParams.get('statuses')?.split(',').sort()).toEqual([
+      'paused_for_approval',
+      'pending',
+      'running',
+    ]);
+  });
+
+  it('handles network errors gracefully', async () => {
+    // Arrange: simulate a rejected promise (network / CORS / abort)
+    mockFetch.mockRejectedValue(new Error('Network error'));
+
+    // Act
+    render(<AdminSidebar />);
+
+    // Assert: fetch was attempted, sidebar still renders, no badge appears
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+    expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
+  });
+
+  it('does not update badges when server returns a non-2xx response', async () => {
+    // Arrange: simulate a 429 Too Many Requests — the !res.ok guard should
+    // short-circuit before any JSON parsing, so badges must stay hidden.
+    mockFetch.mockResolvedValue(new Response(null, { status: 429 }));
+
+    // Act
+    render(<AdminSidebar />);
+
+    // Assert: fetch was called, but no numeric badge is rendered
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+    expect(screen.queryByText(/^\d+$/)).toBeNull();
+    expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
+  });
+
+  it('does not update badges when the response body fails schema validation', async () => {
+    // Arrange: a 200 OK response whose `data.counts` contains an unknown status
+    // key — the superRefine in executionCountsResponseSchema.safeParse rejects
+    // it, so the badge must not render "99" or any garbage value.
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { counts: { not_a_real_status: 99 } } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    // Act
+    render(<AdminSidebar />);
+
+    // Assert: fetch was called, the garbage value must never appear, sidebar
+    // keeps rendering normally.
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('99')).toBeNull();
     expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
   });
 });

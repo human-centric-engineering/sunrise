@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { API } from '@/lib/api/endpoints';
+import { executionCountsResponseSchema } from '@/lib/validations/orchestration';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface NavItem {
@@ -392,44 +393,50 @@ interface AdminSidebarProps {
 
 const EXECUTION_BADGE_POLL_MS = 15_000;
 
-function useExecutionStatusCount(statuses: string[], pathname: string): number | undefined {
-  const [count, setCount] = useState<number | undefined>();
+/**
+ * Polls the counts aggregate endpoint once per tick and returns the raw
+ * per-status map. Callers sum the keys they care about — keeps the hook
+ * generic and lets the badge mapping live at the call site.
+ *
+ * Note: `pathname` is intentionally NOT a dep. The interval and the
+ * visibilitychange listener already cover refresh; refetching on every
+ * admin nav click amplified the request burst that motivated this hook.
+ */
+function useExecutionCounts(statuses: readonly string[]): Record<string, number> | undefined {
+  const [counts, setCounts] = useState<Record<string, number> | undefined>();
   const key = statuses.join(',');
 
   useEffect(() => {
     let cancelled = false;
     let controller: AbortController | null = null;
 
-    const fetchCount = async () => {
+    const fetchCounts = async () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       controller?.abort();
       controller = new AbortController();
       const signal = controller.signal;
       try {
-        const totals = await Promise.all(
-          statuses.map((status) =>
-            fetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?status=${status}&limit=1`, {
-              credentials: 'same-origin',
-              signal,
-            })
-              .then((res) => (res.ok ? res.json() : null))
-              .then((body: { meta?: { total?: number } } | null) => body?.meta?.total ?? 0)
-              .catch(() => 0)
-          )
-        );
-        if (!cancelled && !signal.aborted) {
-          setCount(totals.reduce((sum, n) => sum + n, 0));
-        }
+        const res = await fetch(`${API.ADMIN.ORCHESTRATION.EXECUTION_COUNTS}?statuses=${key}`, {
+          credentials: 'same-origin',
+          signal,
+        });
+        if (!res.ok) return;
+        const envelope: unknown = await res.json();
+        const data =
+          envelope && typeof envelope === 'object' ? (envelope as { data?: unknown }).data : null;
+        const parsed = executionCountsResponseSchema.safeParse(data);
+        if (!parsed.success) return;
+        if (!cancelled && !signal.aborted) setCounts(parsed.data.counts);
       } catch {
-        // ignored
+        // ignored — aborts and transient failures should not blank the badge
       }
     };
 
-    void fetchCount();
-    const intervalId = setInterval(() => void fetchCount(), EXECUTION_BADGE_POLL_MS);
+    void fetchCounts();
+    const intervalId = setInterval(() => void fetchCounts(), EXECUTION_BADGE_POLL_MS);
 
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') void fetchCount();
+      if (document.visibilityState === 'visible') void fetchCounts();
     };
     document.addEventListener('visibilitychange', onVisibility);
 
@@ -439,11 +446,22 @@ function useExecutionStatusCount(statuses: string[], pathname: string): number |
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, pathname]);
+  }, [key]);
 
-  return count;
+  return counts;
 }
+
+function sumCounts(
+  counts: Record<string, number> | undefined,
+  statuses: readonly string[]
+): number | undefined {
+  if (!counts) return undefined;
+  return statuses.reduce((acc, status) => acc + (counts[status] ?? 0), 0);
+}
+
+const APPROVAL_STATUSES = ['paused_for_approval'] as const;
+const IN_PROGRESS_STATUSES = ['pending', 'running'] as const;
+const BADGE_STATUSES = [...APPROVAL_STATUSES, ...IN_PROGRESS_STATUSES] as const;
 
 function injectBadges(
   sections: NavSection[],
@@ -467,8 +485,9 @@ function injectBadges(
 export function AdminSidebar({ className }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const approvalCount = useExecutionStatusCount(['paused_for_approval'], pathname);
-  const inProgressCount = useExecutionStatusCount(['pending', 'running'], pathname);
+  const counts = useExecutionCounts(BADGE_STATUSES);
+  const approvalCount = sumCounts(counts, APPROVAL_STATUSES);
+  const inProgressCount = sumCounts(counts, IN_PROGRESS_STATUSES);
   const sections = useMemo(
     () =>
       injectBadges(navSections, {

@@ -801,6 +801,37 @@ await act(async () => {
 
 ---
 
+### 25. Zod `superRefine` Issue Paths Are Prefixed by Parent Object Keys
+
+**Problem**: When `superRefine` lives on a nested schema and calls `ctx.addIssue({ path: [innerKey], ... })`, the parent `z.object(...)` prepends its own field name to the path. The natural-looking assertion `expect(result.error.issues[0].path[0]).toBe('innerKey')` then fails — `path[0]` is the parent field, not the inner key — but the failure message reads as if the refinement didn't run at all.
+
+Concrete case: `z.object({ counts: z.record(z.string(), z.number()).superRefine((counts, ctx) => { for (const key of Object.keys(counts)) { ctx.addIssue({ path: [key], ... }); } }) })`. Feeding `{ counts: { not_a_real_status: 1 } }` produces an issue with `path === ['counts', 'not_a_real_status']`, not `['not_a_real_status']`.
+
+**Solution**: assert against the joined or flattened path, not `path[0]`:
+
+```typescript
+// ❌ Fails — `path[0]` is the parent field, not the inner key
+const offendingKey = result.error.issues.map((i) => i.path[0]);
+expect(offendingKey).toContain('not_a_real_status');
+
+// ✅ Works — flatten across the whole path so the key is found wherever it sits
+const allPathSegments = result.error.issues.flatMap((i) => i.path.map(String));
+expect(allPathSegments).toContain('not_a_real_status');
+
+// Alternative when you know the parent depth, equally fine
+expect(result.error.issues[0].path).toEqual(['counts', 'not_a_real_status']);
+```
+
+The `flatMap` form survives refactors that move the schema deeper (e.g. wrap it in another object) — the parent prefix grows, but the inner key is still in the array. Asserting on the literal path `['counts', 'not_a_real_status']` is tighter but brittle to such refactors; pick based on whether you want the depth to be part of the contract.
+
+**Symptom decoder**: a schema test fails with `expected [ 'counts' ] to contain 'not_a_real_status'` (or similar wrong-segment message) even though the schema is rejecting the input correctly. The refinement IS running; the assertion is reading the wrong path index.
+
+**Signal for `/test-write`**: when planning tests for `z.object({ X: schemaWithSuperRefine })`, note in the plan that issue paths begin with `X`. Default to `flatMap(i => i.path.map(String))` over the issues so the test survives later wrapping.
+
+**Status**: ✅ DOCUMENTED — Surfaced by the `test-engineer` agent on the `/test-fix` pass that added `describe('executionCountsResponseSchema')` to `tests/unit/lib/validations/orchestration.test.ts` (branch `fix/admin-sidebar-execution-counts`). First-attempt assertion read `path[0]` and failed; agent traced through `superRefine` semantics, corrected to `flatMap`, and flagged the gotcha in its deviation report.
+
+---
+
 ## Best Practices Summary
 
 **Before Writing Tests**:

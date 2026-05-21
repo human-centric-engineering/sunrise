@@ -84,6 +84,7 @@ import {
   bulkCreateProviderModelsSchema,
   listProviderModelsQuerySchema,
   updateOrchestrationSettingsSchema,
+  executionCountsResponseSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1451,6 +1452,72 @@ describe('listExecutionsQuerySchema', () => {
 
   it('rejects an unknown status', () => {
     const result = listExecutionsQuerySchema.safeParse({ status: 'exploded' });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// executionCountsResponseSchema
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('executionCountsResponseSchema', () => {
+  it('parses valid counts for known status keys', () => {
+    // Arrange: well-formed response body with known statuses
+    const input = { counts: { pending: 5, running: 2 } };
+
+    // Act
+    const result = executionCountsResponseSchema.safeParse(input);
+
+    // Assert: parse succeeds and values are preserved
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.counts.pending).toBe(5);
+    }
+  });
+
+  it('accepts an empty counts object (no statuses requested)', () => {
+    // Arrange: empty record — superRefine has nothing to iterate, so it passes
+    const result = executionCountsResponseSchema.safeParse({ counts: {} });
+
+    // Assert: valid — server may return no statuses if none were requested
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown status key (superRefine enforcement)', () => {
+    // Arrange: counts contains a key that is not a valid WorkflowStatus
+    const result = executionCountsResponseSchema.safeParse({
+      counts: { not_a_real_status: 1 },
+    });
+
+    // Assert: parse fails; the issue path proves superRefine ran, not another
+    // validator. The superRefine uses `path: [key]` inside the counts record,
+    // so the full issue path is ['counts', 'not_a_real_status'].
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const flatPaths = result.error.issues.flatMap((i) => i.path.map(String));
+      expect(flatPaths).toContain('not_a_real_status');
+    }
+  });
+
+  it('rejects a negative count value (.nonnegative() constraint)', () => {
+    // Arrange: count value is negative
+    const result = executionCountsResponseSchema.safeParse({
+      counts: { pending: -1 },
+    });
+
+    // Assert: parse fails
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-integer count value (.int() constraint)', () => {
+    // Arrange: count value is a float
+    const result = executionCountsResponseSchema.safeParse({
+      counts: { pending: 1.5 },
+    });
+
+    // Assert: parse fails
     expect(result.success).toBe(false);
   });
 });

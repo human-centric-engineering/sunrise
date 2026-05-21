@@ -1746,6 +1746,63 @@ export const listExecutionsQuerySchema = paginationQuerySchema.extend({
 });
 
 /**
+ * Query schema for GET /api/v1/admin/orchestration/executions/counts.
+ *
+ * `statuses` is a comma-separated list of `executionStatusSchema` values.
+ * The CSV is split, trimmed, de-duplicated, and validated as a strict
+ * `WorkflowStatus[]`. Capped at 10 entries to keep the `IN (...)` clause
+ * bounded — there are only 6 statuses today, the cap is forward-defensive.
+ */
+export const executionCountsQuerySchema = z.object({
+  statuses: z
+    .string()
+    .min(1, 'statuses is required')
+    .transform((csv) =>
+      Array.from(
+        new Set(
+          csv
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        )
+      )
+    )
+    .pipe(
+      z
+        .array(executionStatusSchema)
+        .min(1, 'statuses must contain at least one value')
+        .max(10, 'At most 10 statuses')
+    ),
+});
+
+/**
+ * Response body shape (the `data` field inside the standard envelope) for
+ * `GET /executions/counts`. Used client-side to validate the fetch body
+ * before reading `counts` — a malformed payload should keep the last-known
+ * badge value rather than silently rendering garbage.
+ *
+ * The response only contains the statuses requested in the query string
+ * (not all six), so keys are validated as a *subset* of the enum via
+ * `superRefine` rather than a fully-keyed `z.record(enum, …)` — the latter
+ * would require every enum value to be present.
+ */
+export const executionCountsResponseSchema = z.object({
+  counts: z.record(z.string(), z.number().int().nonnegative()).superRefine((counts, ctx) => {
+    for (const key of Object.keys(counts)) {
+      if (!executionStatusSchema.safeParse(key).success) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `Unknown status key: ${key}`,
+        });
+      }
+    }
+  }),
+});
+
+export type ExecutionCountsResponse = z.infer<typeof executionCountsResponseSchema>;
+
+/**
  * Query schema for the admin approval-history endpoint.
  *
  * `format=csv` switches the response to a CSV attachment and bypasses
