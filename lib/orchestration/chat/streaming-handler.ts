@@ -1366,6 +1366,50 @@ export class StreamingChatHandler {
               summarizerSideEffect
             )
           );
+
+          // Per-turn cap — terminal-turn surface.
+          //
+          // The mid-loop cap (further down) hard-stops the tool loop
+          // before another iteration costs more. On terminal turns the
+          // LLM stream has already completed; we know the cost only
+          // after `usage` arrives, so there is nothing left to abort.
+          // We still emit `budget_exceeded_per_turn` AFTER `done` so the
+          // user sees the cap was breached and can raise it (or pick a
+          // cheaper model) — without that signal the cap silently does
+          // nothing on chats that resolve in a single iteration, which
+          // is the common case for Q&A-shaped advisor agents.
+          //
+          // Order matters: `done` updates the assistant message's
+          // costUsd / tokenUsage in the UI; `budget_exceeded_per_turn`
+          // then renders the cap panel. The UI's cap branch short-
+          // circuits the SSE read loop, so anything after this would
+          // be dropped client-side.
+          const terminalCap = await resolvePerTurnCap();
+          if (terminalCap !== undefined && turnCostUsd > terminalCap) {
+            log.warn('Chat per-turn cap exceeded on terminal turn', {
+              agentId: agent.id,
+              agentSlug: agent.slug,
+              conversationId: conversation.id,
+              iteration,
+              turnCostUsd,
+              maxCostPerTurnUsd: terminalCap,
+            });
+            void dispatchWebhookEvent('chat_budget_exceeded_per_turn', {
+              agentId: agent.id,
+              agentSlug: agent.slug,
+              conversationId: conversation.id,
+              usedUsd: turnCostUsd,
+              limitUsd: terminalCap,
+              iteration,
+            });
+            yield {
+              type: 'budget_exceeded_per_turn',
+              code: 'budget_exceeded_per_turn',
+              message: `This response cost $${turnCostUsd.toFixed(4)}, which exceeded the agent's per-turn cost limit of $${terminalCap.toFixed(4)}. The answer was delivered because the LLM stream completed in a single iteration; ask an admin to raise the cap or pick a cheaper model.`,
+              usedUsd: turnCostUsd,
+              limitUsd: terminalCap,
+            };
+          }
           return;
         }
 

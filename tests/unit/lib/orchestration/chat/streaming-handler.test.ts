@@ -2242,6 +2242,103 @@ describe('mid-loop budget re-check', () => {
     expect(persistedMeta.budgetExceededDetail).toEqual({ usedUsd: 0.03, limitUsd: 0.02 });
   });
 
+  it('yields budget_exceeded_per_turn AFTER done when a text-only terminal turn breaches the cap', async () => {
+    // Regression guard: the mid-loop cap check only fires after a
+    // tool-call iteration, so text-only Q&A turns (the common shape
+    // for advisor agents) could silently exceed the cap. The terminal
+    // path now emits the breach event *after* `done` so the user gets
+    // the answer they paid for plus a visible cap warning. Order
+    // matters — the UI's cap branch short-circuits the SSE read loop,
+    // so events emitted after the cap event are dropped client-side.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxCostPerTurnUsd: 0.02 })
+    );
+
+    const provider = mockProvider([
+      // Single iteration, text-only — no tool_calls, terminal turn.
+      // Default mock fixture's calculateCost returns 0.03 for this
+      // usage; cap is 0.02 → terminal cap path must fire.
+      [
+        { type: 'text', content: 'Pattern 3 is the supervisor pattern...' },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const doneIdx = events.findIndex(
+      (e: unknown) => (e as Record<string, unknown>).type === 'done'
+    );
+    const breachIdx = events.findIndex(
+      (e: unknown) => (e as Record<string, unknown>).type === 'budget_exceeded_per_turn'
+    );
+
+    expect(doneIdx).toBeGreaterThanOrEqual(0);
+    expect(breachIdx).toBeGreaterThanOrEqual(0);
+    // Order: done before breach. The UI relies on this so the message's
+    // cost/usage strip is populated before the cap panel renders.
+    expect(breachIdx).toBeGreaterThan(doneIdx);
+
+    const breach = events[breachIdx] as Record<string, unknown>;
+    expect(breach).toMatchObject({
+      type: 'budget_exceeded_per_turn',
+      code: 'budget_exceeded_per_turn',
+      usedUsd: 0.03,
+      limitUsd: 0.02,
+    });
+
+    // Webhook still fires on terminal-turn breach.
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'chat_budget_exceeded_per_turn',
+      expect.objectContaining({
+        agentId: 'agent-1',
+        agentSlug: 'helper',
+        usedUsd: 0.03,
+        limitUsd: 0.02,
+      })
+    );
+  });
+
+  it('does NOT yield budget_exceeded_per_turn on a terminal turn that stays under the cap', async () => {
+    // Counter-test for the new terminal cap check: when the turn's
+    // cost lands under the cap, no breach event fires.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxCostPerTurnUsd: 10 }) // generous cap
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Cheap answer.' },
+        { type: 'done', usage: { inputTokens: 100, outputTokens: 50 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const breach = events.find(
+      (e: unknown) => (e as Record<string, unknown>).type === 'budget_exceeded_per_turn'
+    );
+    expect(breach).toBeUndefined();
+  });
+
   it('does NOT enforce a per-turn cap when both agent + settings have no value set', async () => {
     // Default makeAgent leaves `maxCostPerTurnUsd` unset; the global
     // settings mock returns no `defaultMaxCostPerTurnUsd`. The cap
