@@ -321,6 +321,8 @@ Hitting the cap emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn
 
 **Scope limitation (v1).** Only the chat LLM's cost is summed against the per-turn cap. Tool capabilities that invoke their own LLMs (`search_knowledge_base` embeddings, the rolling summariser, `run_workflow`'s child execution) log their own `AiCostLog` rows but do not return `costUsd` from `CapabilityResult`, so they are not counted against the per-turn cap. The runaway cases this guard targets (loops that keep round-tripping the chat LLM) are fully covered.
 
+**Workflow `agent_call` parity.** The same per-turn cap (`agent.maxCostPerTurnUsd` → org `defaultMaxCostPerTurnUsd` → uncapped) is enforced inside `lib/orchestration/engine/executors/agent-call.ts`'s inner tool-iteration loop. So an agent with a per-turn cap is protected regardless of whether it's invoked through this streaming chat path or through a workflow `agent_call` step. The workflow variant aborts with `ExecutorError code: 'agent_call_budget_exceeded_per_turn'` (non-retriable) instead of emitting an SSE event — the step fails, carries its partial `tokensUsed`/`costUsd` onto the trace entry, and the workflow's error strategy (skip / continue / failure-branch) decides what happens next. See `.context/orchestration/engine.md` for the error-code table.
+
 ### Tool dispatch timeout
 
 Every `capabilityDispatcher.dispatch()` call is wrapped in `withToolTimeout()` (default `TOOL_DISPATCH_TIMEOUT_MS = 30_000`). If a tool hangs beyond 30 seconds, the promise rejects with a timeout error, and the LLM receives a `{ success: false, error: 'Tool execution timed out' }` result.

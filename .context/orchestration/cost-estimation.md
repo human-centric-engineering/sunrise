@@ -79,19 +79,32 @@ Past `AiCostLog` rows carry the originating `stepId` in `metadata.stepId`. The e
 
 ## API
 
-### Endpoint
+### Endpoints
+
+Two variants of the same estimator, differing only in which workflow definition they price:
 
 ```
 GET /api/v1/admin/orchestration/workflows/:id/cost-estimate
   ?itemCount=N&supervisor=true|false
 ```
 
-**Query params (both optional):**
+Estimates against the workflow's **published** version. Trigger UIs (audit-models dialog, rerun-execution dialog, any future "Run" button) call this — the published snapshot is what would actually run.
+
+```
+POST /api/v1/admin/orchestration/workflows/:id/cost-estimate
+  Body: { definition, itemCount?, supervisor? }
+```
+
+Estimates against an **in-memory** `WorkflowDefinition` supplied in the body. The workflow builder calls this with the draft on the canvas so the cost banner and per-node tinting reflect unsaved edits, not the last-published snapshot. Past-run calibration still keys by `workflowId`, so empirical mode reuses the workflow's historical token shapes — the draft just changes the shape that gets priced, not the calibration sample.
+
+Use the GET endpoint when you want "what would this cost if the operator clicked Run right now." Use the POST endpoint when you want "what would this cost if the operator saved this draft and ran it."
+
+**Query params / body fields (both optional):**
 
 - `itemCount` — integer 0–10,000. Caller-supplied multiplier for workflows whose cost scales with an input dimension (e.g. number of models being audited, number of documents being processed). Omit (or pass 0) for workflows without a scaling input.
 - `supervisor` — `true` | `false`. Whether the supervisor will run for this estimate. Ignored when the workflow has no supervisor step. Only controls whether the supervisor add-on is included; the work calibration set is the same either way.
 
-**Response:**
+**Response (both endpoints):**
 
 ```ts
 interface WorkflowCostEstimateModel {
@@ -115,10 +128,14 @@ interface WorkflowCostEstimate {
   workflowHasSupervisor: boolean;
   llmStepCount: number;
   notes: string;
+  // Returned by both GET and POST; not part of the core estimator type.
+  effectiveCapUsd: number | null;
 }
 ```
 
-**Authentication:** Admin role required. Rate-limited via `adminLimiter`.
+**`effectiveCapUsd`** is the per-execution cap that would apply to a run started **without** an explicit caller override. Resolution order is `workflow.maxCostPerExecutionUsd` → org default (`AiOrchestrationSettings.defaultMaxCostPerExecutionUsd`) → `null` (no cap configured at either layer; only the monthly budget applies). The workflow builder uses this to colour its banner (`ok` / `warn` at ≥50% of cap / `over` at ≥100%) and to tint individual nodes when their projected step cost crosses 25% / 100% of the cap.
+
+**Authentication:** Admin role required. Rate-limited via `adminLimiter` on both verbs.
 
 ### Programmatic use (server-side)
 
@@ -173,9 +190,10 @@ To add a cost estimate to a workflow trigger dialog:
 4. **Show the model mix** in the FieldHelp popover — iterate `estimate.modelMix` and render one row per entry (`<code>{m.modelId}</code> — {formatUsd(m.costUsd)}`, suffix with `(supervisor)` when `m.role === 'supervisor'`). When `m.pricingKnown === false`, render "pricing unknown" (in an amber/warning colour) instead of `$0.00` and add a footnote pointing at the matrix row that needs `costPerMillionTokens` filled in — silent $0 reads as "free" to operators. For workflows that pin one step to an expensive model (or use agent_call into a frontier agent), the breakdown is the only way the operator sees that contribution. The legacy `estimate.modelUsed` field still resolves to the chat default and is fine to mention as a sentence under the list ("Other steps fall back to the chat default `<modelUsed>`.").
 5. **Treat the number as planning-grade.** Don't gate the action button on it. The estimator returns silently if the past-runs query fails — the dialog should still let the operator proceed.
 
-## Reference implementation
+## Reference implementations
 
-[`components/admin/orchestration/audit-models-dialog.tsx`](../../components/admin/orchestration/audit-models-dialog.tsx) is the canonical consumer. It passes `itemCount = selected.size` (the number of models being audited) and toggles `supervisor` based on the dialog's neutral-review checkbox.
+- **Trigger dialog (GET)** — [`components/admin/orchestration/audit-models-dialog.tsx`](../../components/admin/orchestration/audit-models-dialog.tsx) is the canonical GET consumer. It passes `itemCount = selected.size` (the number of models being audited) and toggles `supervisor` based on the dialog's neutral-review checkbox.
+- **Builder draft (POST)** — [`components/admin/orchestration/workflow-builder/use-workflow-cost-estimate.ts`](../../components/admin/orchestration/workflow-builder/use-workflow-cost-estimate.ts) is the canonical POST consumer. It debounces 800 ms, keys on a `JSON.stringify(definition)` content hash (not object identity — React Flow churns the array refs), and feeds the result to `<WorkflowResourceSummary>`'s cost banner and to a `costBand` field that `PatternNode` reads as an amber/red ring.
 
 ## Files
 
