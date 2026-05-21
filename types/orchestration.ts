@@ -1202,11 +1202,12 @@ export interface Citation {
   documentName: string | null;
   /**
    * Hash of the document's content at the moment this citation was
-   * produced. Snapshotted from `AiKnowledgeDocument.contentHash`. Lets
-   * an auditor detect a silent re-ingestion of the same `documentId`:
-   * if today's hash differs from this one, the chunk the LLM saw is no
-   * longer available verbatim. Null on legacy citations created before
-   * the snapshot landed.
+   * produced. Snapshotted from `AiKnowledgeDocument.fileHash` (the
+   * SHA-256 the ingestion pipeline stores for dedup). Lets an auditor
+   * detect a silent re-ingestion of the same `documentId`: if today's
+   * hash differs from this one, the chunk the LLM saw is no longer
+   * available verbatim. Null on legacy citations created before the
+   * snapshot landed.
    */
   contentHash: string | null;
   /**
