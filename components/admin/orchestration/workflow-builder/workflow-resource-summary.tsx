@@ -102,8 +102,16 @@ function collectResources(
     }
   }
 
-  const capLookup = new Map(capabilities.map((c) => [c.slug, c]));
-  const agentLookup = new Map(agents.map((a) => [a.slug, a]));
+  // Defensive: the prop types promise arrays, but if upstream hands us a
+  // malformed shape (e.g. a swallowed API error that returned an object
+  // instead of a list) the panel must not crash the whole builder. Fall
+  // back to empty — labels just won't resolve to friendly names.
+  const safeCapabilities: readonly CapabilityOption[] = Array.isArray(capabilities)
+    ? capabilities
+    : [];
+  const safeAgents: readonly AgentOption[] = Array.isArray(agents) ? agents : [];
+  const capLookup = new Map(safeCapabilities.map((c) => [c.slug, c]));
+  const agentLookup = new Map(safeAgents.map((a) => [a.slug, a]));
 
   const capEntries: ResourceEntry[] = [...capMap.entries()].map(([slug, stepIds]) => {
     const cap = capLookup.get(slug);
