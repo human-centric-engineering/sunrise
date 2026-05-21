@@ -10,6 +10,8 @@ Predicts the USD cost of running a workflow **before** it's triggered, so trigge
 
 Don't use it for billing, quotes, or hard caps — the estimator is **planning-grade**. Real cost varies with prompt evolution, retry behaviour on validation guards, agent tool-use iterations, and supervisor-judge response length. Use `AiCostLog` aggregates for actuals.
 
+**Related to but distinct from the per-execution cap (`AiWorkflow.maxCostPerExecutionUsd`).** That cap is the enforced runtime ceiling (improvement #39 — see `.context/orchestration/engine.md`); the estimator is the pre-flight prediction. A trigger UI can compare the estimate against the resolved cap and warn before submission ("Estimated $5.20 — exceeds the workflow's $2.00 cap; the run will likely fail mid-way"). Not yet wired into the admin estimator endpoint; consumers that want this can read `AiWorkflow.maxCostPerExecutionUsd` themselves and compare.
+
 ## How it works
 
 The estimator picks one of two modes based on data availability for the specific workflow:

@@ -127,17 +127,18 @@ Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enfor
 
 Defined in `types/orchestration.ts`. Discriminated union — every client switches on `event.type`:
 
-| `type`               | Key fields                                                                                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workflow_started`   | `executionId`, `workflowId`                                                                                                                         |
-| `step_started`       | `stepId`, `stepType`, `label`                                                                                                                       |
-| `step_completed`     | `stepId`, `output`, `tokensUsed`, `costUsd`, `durationMs`                                                                                           |
-| `step_retry`         | `fromStepId`, `targetStepId`, `attempt`, `maxRetries`, `reason`, optional `exhausted: true` when routed to a fallback edge after retries were spent |
-| `step_failed`        | `stepId`, `error`, `willRetry`                                                                                                                      |
-| `approval_required`  | `stepId`, `payload` (shape: `{ prompt, previous, ... }`)                                                                                            |
-| `budget_warning`     | `usedUsd`, `limitUsd`                                                                                                                               |
-| `workflow_completed` | `output`, `totalTokensUsed`, `totalCostUsd`                                                                                                         |
-| `workflow_failed`    | `error`, `failedStepId?`                                                                                                                            |
+| `type`                     | Key fields                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workflow_started`         | `executionId`, `workflowId`                                                                                                                                                                                                                                                                                                                                              |
+| `step_started`             | `stepId`, `stepType`, `label`                                                                                                                                                                                                                                                                                                                                            |
+| `step_completed`           | `stepId`, `output`, `tokensUsed`, `costUsd`, `durationMs`                                                                                                                                                                                                                                                                                                                |
+| `step_retry`               | `fromStepId`, `targetStepId`, `attempt`, `maxRetries`, `reason`, optional `exhausted: true` when routed to a fallback edge after retries were spent                                                                                                                                                                                                                      |
+| `step_failed`              | `stepId`, `error`, `willRetry`                                                                                                                                                                                                                                                                                                                                           |
+| `approval_required`        | `stepId`, `payload` (shape: `{ prompt, previous, ... }`)                                                                                                                                                                                                                                                                                                                 |
+| `budget_warning`           | `usedUsd`, `limitUsd`                                                                                                                                                                                                                                                                                                                                                    |
+| `workflow_budget_exceeded` | `usedUsd`, `limitUsd`, `failedStepId` — fires immediately BEFORE `workflow_failed` on per-execution cap breach (improvement #39). Dispatches the `workflow_budget_exceeded` webhook fire-and-forget so subscribers can branch on the cap-breach case without string-matching `workflow_failed.error`. The generic `workflow_failed` still follows as the terminal event. |
+| `workflow_completed`       | `output`, `totalTokensUsed`, `totalCostUsd`                                                                                                                                                                                                                                                                                                                              |
+| `workflow_failed`          | `error`, `failedStepId?` — error string is `"Budget exceeded ($X.XXXX / $Y.YYYY cap)"` on a cap breach (stable prefix for executions-list / live-engine styling)                                                                                                                                                                                                         |
 
 The parallel `ExecutionTraceEntry` (also in `types/orchestration.ts`) is what the engine persists to `AiWorkflowExecution.executionTrace` — one per completed step, with `stepId`, `stepType`, `label`, `status`, `output`, `tokensUsed`, `costUsd`, `startedAt`, `completedAt`, and `durationMs`. **Per-branch `completedAt` capture (parallel batch).** Inside `executeParallelBatch`, each branch's `endedAt` is recorded inside its own `Promise.allSettled` callback the instant the branch finishes — not in the post-settle sequential merge loop. The post-settle loop runs long after the slowest branch ends, so stamping `completedAt = new Date()` there would collapse every branch's end timestamp to ~the slowest branch's finish and the execution timeline strip would draw every parallel bar at the same width. The engine also writes six **optional** fields populated from the per-step telemetry channel (see "LLM telemetry capture" below):
 
@@ -312,11 +313,28 @@ Both paths are checked before each step, not mid-step — a long-running LLM cal
 After every step the engine checks `ctx.totalCostUsd > budgetLimitUsd` and emits:
 
 - `budget_warning` once the cumulative cost crosses 80% of the limit.
-- `workflow_failed { error: 'Budget exceeded' }` if the limit is overrun; the generator then returns.
+- `workflow_budget_exceeded { usedUsd, limitUsd, failedStepId }` immediately followed by `workflow_failed { error: 'Budget exceeded ($X.XXXX / $Y.YYYY cap)' }` if the limit is overrun; the generator then returns. The discrete `workflow_budget_exceeded` event also dispatches the same-named webhook fire-and-forget so partners can wire the cap-breach case to Slack / PagerDuty separately from the generic terminal event.
 
 If the caller does not supply `budgetLimitUsd` the check is skipped entirely.
 
 **Parallel batch note:** budget is checked after the entire parallel batch completes, not between branches. All branches run to completion (or failure) before the budget guard fires. Use per-step `timeoutMs` to bound individual branch cost.
+
+### Per-execution cap resolution (improvement #39 — runaway-loop guard)
+
+`budgetLimitUsd` is no longer a "caller-must-pass-it" parameter. Every execution-creation site (admin execute / execute-stream, the `run_workflow` capability, cron scheduler, inbound triggers, webhook triggers, rerun) resolves the effective cap via `resolveEffectiveExecutionCap()` (`app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers.ts`) — which wraps the pure helper `resolveMaxCostPerExecution()` (`lib/orchestration/llm/cost-caps.ts`):
+
+```
+explicit caller override
+  > AiWorkflow.maxCostPerExecutionUsd
+  > AiOrchestrationSettings.defaultMaxCostPerExecutionUsd
+  > undefined (no cap; only the agent's monthly budget applies)
+```
+
+The resolved value is **persisted onto `AiWorkflowExecution.budgetLimitUsd`** at creation time. Resume paths and the lease-reaper read it from the row, so the cap is frozen at run-start — lowering a workflow / settings default mid-run does NOT retroactively cap an in-flight execution.
+
+The check itself uses the **in-process running total** (`ctx.totalCostUsd`), never re-reads from `AiCostLog`. A failed cost-log write therefore does not weaken enforcement.
+
+`BudgetExceeded`-thrown-by-executor (used by `reflect` to project the next iteration's cost before committing) takes the same code path: yields `workflow_budget_exceeded` then `workflow_failed`, with the executor's `usedUsd` / `limitUsd` carried into both events.
 
 ## Execution statuses
 

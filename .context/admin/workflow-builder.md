@@ -298,6 +298,7 @@ Request body shape for both create and edit:
   description: string;
   workflowDefinition: WorkflowDefinition; // { steps, entryStepId, errorStrategy }
   isTemplate: boolean;
+  maxCostPerExecutionUsd: number | null; // runaway-loop guard, improvement #39
 }
 ```
 
@@ -308,6 +309,7 @@ The POST schema requires `slug` and `description`, which the canvas does not cap
 - **Slug** — auto-derived from the workflow name via a local `slugify()` helper, but the dialog stops auto-deriving once the user types in the slug field (`slugTouched` state). Validated against `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` before the Confirm button enables.
 - **Description** — free-text, required non-empty.
 - **Error strategy** — Select over `fail` / `retry` / `skip` / `fallback`, defaults to `fail`. Threaded through `flowToWorkflowDefinition` opts. Individual steps can override this via the block config panel's error handling section.
+- **Per-execution cost cap (USD)** — Optional number input bound to `AiWorkflow.maxCostPerExecutionUsd`. Min 0.01, max 10,000. Leave blank to inherit the org-wide default (Settings → Orchestration). When set, every execution of this workflow inherits the cap unless the caller passes an explicit `budgetLimitUsd` override. The runaway-loop guard from improvement #39 — see `.context/orchestration/engine.md` for the resolution chain and breach semantics.
 - **Is template** — Checkbox, default false.
 
 Confirming calls `performSave(resolved)` → `saveWorkflow()` → on success `router.push('/admin/orchestration/workflows/:id')`. On subsequent saves the shell holds the resolved `details` in state and skips the dialog.

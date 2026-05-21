@@ -44,17 +44,19 @@ lib/orchestration/hooks/
 
 Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
-| Event Type                     | Currently Emitted By                                                 |
-| ------------------------------ | -------------------------------------------------------------------- |
-| `workflow.started`             | `lib/orchestration/engine/orchestration-engine.ts`                   |
-| `workflow.completed`           | `lib/orchestration/engine/orchestration-engine.ts`                   |
-| `workflow.failed`              | `lib/orchestration/engine/orchestration-engine.ts`                   |
-| `workflow.execution.failed`    | `lib/orchestration/scheduling/scheduler.ts`                          |
-| `workflow.paused_for_approval` | `lib/orchestration/engine/orchestration-engine.ts`                   |
-| `message.created`              | `lib/orchestration/chat/streaming-handler.ts`                        |
-| `conversation.started`         | `lib/orchestration/chat/streaming-handler.ts`                        |
-| `agent.updated`                | `app/api/v1/admin/orchestration/agents/[id]/route.ts`                |
-| `execution.force_failed`       | `app/api/v1/admin/orchestration/executions/[id]/force-fail/route.ts` |
+| Event Type                      | Currently Emitted By                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------- |
+| `workflow.started`              | `lib/orchestration/engine/orchestration-engine.ts`                                    |
+| `workflow.completed`            | `lib/orchestration/engine/orchestration-engine.ts`                                    |
+| `workflow.failed`               | `lib/orchestration/engine/orchestration-engine.ts`                                    |
+| `workflow.execution.failed`     | `lib/orchestration/scheduling/scheduler.ts`                                           |
+| `workflow.paused_for_approval`  | `lib/orchestration/engine/orchestration-engine.ts`                                    |
+| `message.created`               | `lib/orchestration/chat/streaming-handler.ts`                                         |
+| `conversation.started`          | `lib/orchestration/chat/streaming-handler.ts`                                         |
+| `agent.updated`                 | `app/api/v1/admin/orchestration/agents/[id]/route.ts`                                 |
+| `execution.force_failed`        | `app/api/v1/admin/orchestration/executions/[id]/force-fail/route.ts`                  |
+| `workflow_budget_exceeded`      | `lib/orchestration/engine/events.ts` (improvement #39 — webhook system only)          |
+| `chat_budget_exceeded_per_turn` | `lib/orchestration/chat/streaming-handler.ts` (improvement #39 — webhook system only) |
 
 `execution.force_failed` fires from the admin force-fail route (live-engine surface) **in addition to** `workflow.failed`, not in place of it. Existing Slack / PagerDuty integrations subscribed to `workflow.failed` keep firing unchanged; subscribers that want to distinguish admin-driven termination from a natural engine failure should also subscribe to `execution.force_failed`. The dual emit is intentional — see `.context/admin/orchestration-executions-live-engine.md`. Payload: `{ executionId, workflowId, actorUserId, reason, previousStatus }`. The `workflow.failed` payload emitted alongside includes `source: 'admin-force-fail'` so a single subscriber can detect the case from either event.
 
@@ -64,6 +66,8 @@ Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 - `workflow.execution.failed` fires from `drainEngine` when the engine itself throws an uncaught error, so `finalize()` never ran. The execution row would otherwise zombify until the reaper picks it up — `drainEngine` updates the row to `failed` in the same catch block before emitting, so subscribers and `/executions/:id/status` see consistent state immediately.
 
 Use `workflow.execution.failed` for "background workflow crashed entirely" alerts; use `workflow.failed` for normal step-level failure handling.
+
+**Cost-cap events (improvement #39 runaway-loop guard).** `workflow_budget_exceeded` and `chat_budget_exceeded_per_turn` are dispatched through the [Webhook Subscriptions](../admin/orchestration-webhooks.md) subsystem only — they do NOT appear in the in-process `HookEventType` union. Ordering for the per-execution case: `workflow_budget_exceeded` fires BEFORE the engine's terminal `workflow.failed` so subscribers wanting only one notification can listen to the specific event and ignore the generic one (the generic still fires for trace-consumer compatibility). The per-turn variant fires from the chat handler alongside the SSE `budget_exceeded_per_turn` event, with no companion terminal event since chat turns don't have a workflow-level lifecycle. Payloads include `usedUsd`, `limitUsd`, and (for the per-execution case) `failedStepId` + `executionId`.
 
 The `error` field in the `workflow.execution.failed` payload is sanitised before dispatch — absolute filesystem paths (POSIX and Windows) are replaced with `<path>` and the message is truncated to 200 characters. Webhook receivers are admin-trusted but may forward to broader-audience destinations; the unsanitised message is still persisted to `AiWorkflowExecution.errorMessage` and visible to admins via `/executions/:id` and `/executions/:id/status`. See `sanitiseHookErrorMessage` in `lib/orchestration/scheduling/scheduler.ts`.
 

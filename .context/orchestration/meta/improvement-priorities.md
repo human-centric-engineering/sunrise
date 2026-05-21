@@ -1043,35 +1043,38 @@ Items 37–39 are correctness — they prevent silent damage. Items 40–43 are 
 
 **Difficulty: Low–Moderate.** Two additive Prisma columns + dispatcher policy lookup + new admin page + retry-policy form panel. Half-to-one sprint.
 
-### 39. Per-execution hard cost cap (runaway-loop guard) — ⚪ Not started
+### 39. Per-execution hard cost cap (runaway-loop guard) — ✅ Done
 
-**Why it matters.** `AiAgent.monthlyBudgetUsd` caps spend over a month, enforced by `checkBudget()` at `lib/orchestration/llm/cost-tracker.ts` lines 417–476. What it does not cap is a single misbehaving execution. A `reflect` loop that doesn't converge, an `orchestrator` re-planning 50 times, a tool-call loop with a misbehaving capability — any of these can spend a hundred dollars within a single execution before any quality signal fires. The platform tracks a `budgetLimitUsd` parameter at execution-creation time on `AiWorkflowExecution`, but this is a per-execution _record_, not enforced incrementally as the execution runs.
+**Why it matters.** `AiAgent.monthlyBudgetUsd` caps spend over a month, enforced by `checkBudget()` at `lib/orchestration/llm/cost-tracker.ts` lines 417–476. What it does not cap is a single misbehaving execution. A `reflect` loop that doesn't converge, an `orchestrator` re-planning 50 times, a tool-call loop with a misbehaving capability — any of these can spend a hundred dollars within a single execution before any quality signal fires.
 
-**What exists today.** Monthly budget enforcement only. `budgetLimitUsd` is stored on `AiWorkflowExecution` rows but the engine does not consult it inside the run. No `maxCostPerExecutionUsd` or `maxCostPerTurnUsd` fields on `AiAgent` or `AiWorkflow`. No inline check inside `reflect`, `orchestrator`, or `tool-call` executors.
+**Correction to the pre-PR framing.** This entry previously claimed "the engine does not consult `budgetLimitUsd` inside the run." That was wrong — the engine has enforced `budgetLimitUsd` after every step since the cost-tracking work landed (see `lib/orchestration/engine/orchestration-engine.ts` cap-check sites). The actual gaps closed by this PR were narrower:
 
-**What we'd ship.**
+1. **No defaulting mechanism.** `budgetLimitUsd` had to be supplied per-execution by the caller; cron-triggered, inbound-triggered, and webhook-triggered runs left it null and so ran uncapped.
+2. **No persisted default on `AiWorkflow` itself.**
+3. **No org-wide default.**
+4. **No per-turn cap on chat.** Chat re-checked the monthly budget mid-loop but had no cap on a single turn's spend.
+5. **Hook subscribers couldn't distinguish cap-breach from generic step failure** — both surfaced as `workflow_failed`.
 
-1. **Schema additions.** `AiAgent.maxCostPerTurnUsd Float?`, `AiWorkflow.maxCostPerExecutionUsd Float?`, plus org-wide defaults on `AiOrchestrationSettings.defaultMaxCostPerExecutionUsd` and `defaultMaxCostPerTurnUsd`.
-2. **Inline enforcement.** Inside the engine's per-step cost roll-up (`lib/orchestration/engine/`), after every cost-emitting step (`llm-call`, `tool-call`, `external-call`, `rag-retrieve`, evaluations), compare the running execution total against the configured cap. On breach: terminate the execution with a `BUDGET_EXCEEDED_PER_EXECUTION` error, write a clear trace entry, fire a new `workflow.budget_exceeded` hook event.
-3. **Per-turn enforcement on chat.** The streaming chat handler (`lib/orchestration/chat/`) rolls up cost per assistant turn (LLM + tool calls + RAG). When the running turn cost crosses `maxCostPerTurnUsd`, the tool loop stops (no more iterations) and the partial answer is returned with a `budget_exceeded_per_turn` metadata flag.
-4. **Admin form integration.** Agent form's "Routing" tab gains `maxCostPerTurnUsd` with FieldHelp explaining the runaway-loop framing. Workflow form's "Budget" section gains `maxCostPerExecutionUsd`. Both nullable; null means "no per-call cap, monthly budget applies."
+**What shipped.**
 
-**Benefits.**
+1. **Schema additions.** `AiAgent.maxCostPerTurnUsd Float?`, `AiWorkflow.maxCostPerExecutionUsd Float?`, plus org-wide defaults on `AiOrchestrationSettings.defaultMaxCostPerExecutionUsd` and `defaultMaxCostPerTurnUsd`. All nullable; null preserves prior behaviour.
+2. **Cap resolver helpers** in `lib/orchestration/llm/cost-caps.ts` — pure functions that pick the first non-null value across the caller / entity / settings chain (with a defensive `> 0 && finite` filter so a stale 0 or NaN can't silently block everything).
+3. **Threaded through every execution-creation path** — admin execute / execute-stream, the `run_workflow` capability (child executions from chat), the cron scheduler, inbound triggers, webhook triggers, and rerun. The resolved value is persisted onto `AiWorkflowExecution.budgetLimitUsd` so resume / lease-reaper paths inherit it without re-resolving.
+4. **Engine emits `workflow_budget_exceeded` before `workflow_failed`** at all four cap-check sites (sequential main loop, single-step path, parallel batch, executor-thrown `BudgetExceeded`). Carries `usedUsd` / `limitUsd` / `failedStepId`. Dispatches the same-named webhook fire-and-forget. `workflow_failed.error` is now formatted as `"Budget exceeded ($X.XXXX / $Y.YYYY cap)"` — stable prefix for the executions-list / live-engine UI to style cap-breach rows.
+5. **Per-turn cap in chat** — `lib/orchestration/chat/streaming-handler.ts` tracks an in-process per-turn LLM cost accumulator (via `calculateCost`, computed BEFORE the fire-and-forget `logCost` write), checks after every LLM iteration BEFORE dispatching that iteration's tools. On breach: emits `budget_exceeded_per_turn` SSE event, persists the partial assistant message with `metadata.endedReason = 'budget_exceeded'` + `budgetExceededDetail`, dispatches the `chat_budget_exceeded_per_turn` webhook, returns. Tool capabilities that invoke their own LLMs are NOT counted (v1 scope) — the targeted runaway cases (loops round-tripping the chat LLM) are still fully covered.
+6. **Admin form integration.** Agent form's "Model" tab carries `maxCostPerTurnUsd` with FieldHelp explaining the runaway-loop framing. The workflow-details dialog carries `maxCostPerExecutionUsd`. The orchestration settings form's "Limits" card carries both org-wide defaults. Backup export/import round-trip the new agent field.
+7. **Two new webhook events** registered in `event-labels.ts` so the admin webhook UI shows human-readable labels in the picker and delivery list.
 
-- **Stops runaway spend before it happens.** A bad deployment becomes a $5 mistake instead of a $500 one.
-- **Pairs with item 22 (feedback-loop health).** Item 22 catches systemic loop divergence over time; #39 catches the single bad execution before it accumulates.
-- **Pairs with item 33 (per-end-user cost).** Defends the per-user cap from a single rogue turn blowing through it.
-- **Reuses the existing cost-tracking pipeline.** No architectural change; the in-process running total is already maintained.
+**Risks (and how the implementation mitigated them).**
 
-**Risks.**
+- **False-positive terminations on legitimate long workflows.** Per-workflow override on the cap; default null = unlimited. Org-wide default also null on a fresh install, so no install is uncapped by surprise.
+- **Mid-turn cutoff UX.** Partial answer returned with a clear `budget_exceeded_per_turn` marker; configurable copy at the agent level (`agent.metadata.copy?.budgetExceededPerTurn` — not yet wired but the SSE event already carries a default message that admin chat surfaces render).
+- **Cost-tracking lag.** Enforcement uses the in-process running total (`ctx.totalCostUsd` / `turnCostUsd`), never re-reads from `AiCostLog`. A `logCost` failure does not weaken enforcement.
+- **Foot-gun cap of 0.** Zod validators reject `< 0.01` at every entry point; the resolver also defensively skips non-positive / non-finite values so a stale DB row can't silently block every execution.
 
-- **False-positive terminations on legitimate long workflows.** A multi-hour batch-style workflow might legitimately spend a lot. Mitigation: per-workflow override on the cap; default is null (= unlimited).
-- **Mid-turn cutoff UX.** A chat user sees the answer cut off. Mitigation: the partial answer is returned with a clear `budget_exceeded` marker and a user-facing fallback message configurable per agent.
-- **Cost-tracking lag.** If cost-log writes are fire-and-forget, the running total may be stale. Mitigation: enforcement uses the in-process running total maintained inside the engine, not a re-read from `AiCostLog`.
+**Priority justification.** Top-5 Tier 8 priority. Small implementation, prevents the single class of "this deployment cost us $500 overnight" incidents that erode platform trust faster than any quality gap. Schema-additive; shipped without breaking any existing agents or workflows.
 
-**Priority justification.** Top-5 Tier 8 priority. Small implementation, prevents the single class of "this deployment cost us $500 overnight" incidents that erode platform trust faster than any quality gap. Schema-additive; ships without breaking any existing agents.
-
-**Difficulty: Low–Moderate.** Three Prisma fields + engine-internal check + chat-handler check + two admin form panels + one new hook event. Half-to-one sprint.
+**Difficulty: Low–Moderate.** Three Prisma fields + cap-resolver module + engine event + chat per-turn check + 7 execution-creation paths + three admin form panels + two new webhook event labels. Single PR; tests + docs included.
 
 ### 40. Stuck-execution / live-engine admin surface — ⚪ Not started
 
