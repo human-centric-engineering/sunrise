@@ -10,10 +10,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildDisplayTrace,
   buildParallelBranchMap,
   computeTraceAggregates,
   rollupTelemetry,
   slowOutlierThresholdMs,
+  type RunningStepRef,
 } from '@/lib/orchestration/trace/aggregate';
 import type { ExecutionTraceEntry, LlmTelemetryEntry } from '@/types/orchestration';
 
@@ -335,5 +337,74 @@ describe('buildParallelBranchMap', () => {
       }),
     ];
     expect(buildParallelBranchMap(trace).size).toBe(0);
+  });
+});
+
+describe('buildDisplayTrace', () => {
+  function running(overrides: Partial<RunningStepRef> = {}): RunningStepRef {
+    return {
+      stepId: 'r1',
+      stepType: 'llm_call',
+      label: 'Running step',
+      startedAt: '2026-05-05T00:00:00.000Z',
+      completedAt: null,
+      ...overrides,
+    };
+  }
+
+  it('returns the persisted trace unchanged when nothing is running', () => {
+    const trace = [entry({ stepId: 'a' })];
+    expect(buildDisplayTrace(trace, [], 0)).toBe(trace);
+  });
+
+  it('appends one synthesised running row per in-flight step', () => {
+    const trace = [entry({ stepId: 'a' })];
+    const nowMs = new Date('2026-05-05T00:00:03.000Z').getTime();
+    const result = buildDisplayTrace(
+      trace,
+      [running({ stepId: 'branch-1' }), running({ stepId: 'branch-2' })],
+      nowMs
+    );
+    expect(result).toHaveLength(3);
+    expect(result.slice(1).map((e) => e.stepId)).toEqual(['branch-1', 'branch-2']);
+    expect(result.slice(1).every((e) => (e.status as string) === 'running')).toBe(true);
+    // durationMs ticks against nowMs so the bar grows between polls.
+    expect(result[1].durationMs).toBe(3_000);
+  });
+
+  it('drops persisted entries whose stepId is also reported as running', () => {
+    // Defence against the rare race where the engine has just written the
+    // persisted entry but the live-poll snapshot still reports it running.
+    const trace = [entry({ stepId: 'racey', durationMs: 999 })];
+    const result = buildDisplayTrace(
+      trace,
+      [running({ stepId: 'racey' })],
+      new Date('2026-05-05T00:00:01.000Z').getTime()
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].stepId).toBe('racey');
+    expect(result[0].status as string).toBe('running');
+    // Synthesised, not the persisted 999ms entry.
+    expect(result[0].durationMs).toBe(1_000);
+  });
+
+  it('synthesises a finished-but-waiting branch as completed with real completedAt', () => {
+    // A parallel branch that finished early — `completedAt` is set on the
+    // running-step row so the strip can render the "waited for siblings"
+    // hashed tail.
+    const result = buildDisplayTrace(
+      [],
+      [
+        running({
+          stepId: 'fast-branch',
+          startedAt: '2026-05-05T00:00:00.000Z',
+          completedAt: '2026-05-05T00:00:02.000Z',
+        }),
+      ],
+      new Date('2026-05-05T00:00:10.000Z').getTime() // "now" — way past completedAt
+    );
+    expect(result[0].status as string).toBe('completed');
+    expect(result[0].completedAt).toBe('2026-05-05T00:00:02.000Z');
+    expect(result[0].durationMs).toBe(2_000);
   });
 });

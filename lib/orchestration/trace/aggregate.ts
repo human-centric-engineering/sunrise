@@ -214,3 +214,66 @@ export function buildParallelBranchMap(trace: ExecutionTraceEntry[]): Map<string
   }
   return map;
 }
+
+/**
+ * Minimal shape required to synthesise a running trace row. The
+ * `useExecutionLivePoll` hook's `RunningStep` is structurally compatible,
+ * but defining it locally keeps `aggregate.ts` free of any
+ * client-only hook imports.
+ */
+export interface RunningStepRef {
+  stepId: string;
+  label: string;
+  stepType: string;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+/**
+ * Merge persisted trace rows with synthesised "running" rows derived from
+ * the live-poll endpoint's in-flight step list. Used by both the full
+ * execution detail view and the compact inline progress panel (audit
+ * dialog) so a `parallel` fan-out surfaces every branch simultaneously
+ * instead of silently waiting for each one to persist.
+ *
+ * Behaviour:
+ *   - Drops any persisted entry whose stepId is also reported as running.
+ *     Defends against the rare tick that races the engine writing both.
+ *   - When a running step's `completedAt` is set, the branch finished but
+ *     the sibling batch hasn't settled yet — synth as `completed` with
+ *     the real completedAt so the timeline strip can render the trailing
+ *     "waited for slower siblings" segment.
+ *   - When `completedAt` is null, synth as `running` with `durationMs`
+ *     computed against `nowMs` (caller controls the clock so a 1Hz tick
+ *     ref keeps the bar growing smoothly between server polls).
+ */
+export function buildDisplayTrace(
+  liveTrace: ExecutionTraceEntry[],
+  liveRunningSteps: readonly RunningStepRef[],
+  nowMs: number
+): ExecutionTraceEntry[] {
+  if (liveRunningSteps.length === 0) return liveTrace;
+  const runningStepIds = new Set(liveRunningSteps.map((r) => r.stepId));
+  const persisted = liveTrace.filter((e) => !runningStepIds.has(e.stepId));
+  const synth = liveRunningSteps.map((r) => {
+    const startMs = new Date(r.startedAt).getTime();
+    const completed = r.completedAt !== null;
+    const endMs = completed ? new Date(r.completedAt as string).getTime() : nowMs;
+    return {
+      stepId: r.stepId,
+      stepType: r.stepType,
+      label: r.label,
+      // The `status` union on persisted entries doesn't include 'running' —
+      // the trace-row component locally widens it. Cast here intentionally
+      // so the view-only display type stays narrow at the prop boundary.
+      status: completed ? 'completed' : 'running',
+      output: undefined,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: r.startedAt,
+      ...(completed ? { completedAt: r.completedAt as string } : {}),
+      durationMs: Math.max(0, endMs - startMs),
+    } as unknown as ExecutionTraceEntry;
+  });
+  return [...persisted, ...synth];
+}

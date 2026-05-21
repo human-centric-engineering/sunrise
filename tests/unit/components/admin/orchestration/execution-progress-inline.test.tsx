@@ -295,6 +295,62 @@ describe('ExecutionProgressInline', () => {
     });
   });
 
+  describe('parallel branch surfacing', () => {
+    it('renders a timeline bar for each in-flight running step alongside the persisted parent fork', () => {
+      // Reproduces the audit-modal scenario: a `parallel` fork has
+      // persisted (with output.branches) but its branches are still
+      // running. The inline strip must surface those branches as their
+      // own bars via the synthesised displayTrace.
+      const trace: ExecutionTraceEntry[] = [
+        {
+          stepId: 'fork',
+          stepType: 'parallel',
+          label: 'Fan out per model',
+          status: 'completed',
+          output: { branches: ['branch-a', 'branch-b'] },
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: '2026-05-15T10:00:00.000Z',
+          completedAt: '2026-05-15T10:00:01.000Z',
+          durationMs: 1_000,
+        },
+      ];
+      render(
+        <ExecutionProgressInline
+          executionId={EXEC_ID}
+          initialPayload={payload({
+            trace,
+            currentRunningSteps: [
+              {
+                stepId: 'branch-a',
+                label: 'Audit gpt-4o-mini',
+                stepType: 'agent_call',
+                startedAt: '2026-05-15T10:00:01.100Z',
+                completedAt: null,
+                turnCount: 0,
+              },
+              {
+                stepId: 'branch-b',
+                label: 'Audit claude-haiku',
+                stepType: 'agent_call',
+                startedAt: '2026-05-15T10:00:01.100Z',
+                completedAt: null,
+                turnCount: 0,
+              },
+            ],
+          })}
+        />
+      );
+      // Branch rows appear in the strip with their parent fork tag (∥1).
+      expect(screen.getByTestId('timeline-bar-branch-a')).toBeInTheDocument();
+      expect(screen.getByTestId('timeline-bar-branch-b')).toBeInTheDocument();
+      expect(screen.getByTestId('timeline-bar-branch-a')).toHaveAttribute(
+        'data-parallel-parent',
+        'fork'
+      );
+    });
+  });
+
   describe('detail-page escape hatch', () => {
     it('renders a "View full details" link pointing at the execution detail page', () => {
       render(<ExecutionProgressInline executionId={EXEC_ID} initialPayload={payload()} />);
