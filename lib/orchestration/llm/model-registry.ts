@@ -168,14 +168,66 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
  * barrel — to depend on the Prisma client (and transitively on `pg`,
  * `dns`, etc., which break the browser bundle).
  *
- * Last-write-wins on key conflict: passed-in entries override whatever
- * the fallback map or OpenRouter feed produced. That matches the admin
- * Model Matrix being the operator-authoritative source.
+ * Last-write-wins on key conflict — EXCEPT:
+ *
+ *   - **Pricing + context length** fall back to the existing entry when
+ *     the incoming row carries zero. `AiProviderModel.costPerMillionTokens`
+ *     is nullable (and unfilled rows coerce to 0 via `dbModelToModelInfo`);
+ *     clobbering a known OpenRouter price with 0 would silently zero
+ *     out every downstream cost estimate. Operators who genuinely want
+ *     to override pricing for a local / custom model can still do so by
+ *     setting a non-zero value in the matrix.
+ *
+ *   - **Cross-provider id collisions are dropped.** The bare-id key
+ *     drives runtime provider resolution (`getModel(id).provider →
+ *     getProvider(provider)`). If a matrix row for an unconfigured
+ *     provider — e.g. `microsoft-azure-gpt-4o` (providerSlug `microsoft`,
+ *     modelId `gpt-4o`) — overwrote OpenAI's `gpt-4o` entry, every
+ *     subsequent runtime call would route to `microsoft` and fail with
+ *     `Provider "microsoft" unavailable`. We preserve the existing
+ *     entry's provider on cross-provider collisions; if both providers
+ *     are properly configured the upstream caller already disambiguates
+ *     via an explicit `provider/model` selection rather than bare id.
  */
 export function registerModels(infos: ModelInfo[]): void {
   if (infos.length === 0) return;
   const merged = new Map(state.models);
-  for (const info of infos) merged.set(info.id, info);
+  for (const info of infos) {
+    const existing = merged.get(info.id);
+    if (!existing) {
+      merged.set(info.id, info);
+      continue;
+    }
+    if (existing.provider !== info.provider) {
+      // Different-provider id collision — keep the existing entry's
+      // provider as the bare-id canonical so runtime resolution stays
+      // stable. Still let pricing / context fall through when the
+      // existing entry was missing those signals and the incoming row
+      // has them, since that's a useful enrichment regardless of which
+      // provider's id we picked.
+      merged.set(info.id, {
+        ...existing,
+        inputCostPerMillion:
+          existing.inputCostPerMillion > 0
+            ? existing.inputCostPerMillion
+            : info.inputCostPerMillion,
+        outputCostPerMillion:
+          existing.outputCostPerMillion > 0
+            ? existing.outputCostPerMillion
+            : info.outputCostPerMillion,
+        maxContext: existing.maxContext > 0 ? existing.maxContext : info.maxContext,
+      });
+      continue;
+    }
+    merged.set(info.id, {
+      ...info,
+      inputCostPerMillion:
+        info.inputCostPerMillion > 0 ? info.inputCostPerMillion : existing.inputCostPerMillion,
+      outputCostPerMillion:
+        info.outputCostPerMillion > 0 ? info.outputCostPerMillion : existing.outputCostPerMillion,
+      maxContext: info.maxContext > 0 ? info.maxContext : existing.maxContext,
+    });
+  }
   state = { ...state, models: merged };
 }
 
@@ -364,7 +416,15 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
 }
 
 function classifyTier(inputCostPerMillion: number): ModelTier {
-  if (inputCostPerMillion <= 0) return 'local';
+  // Price-only classification. The `'local'` tier is intentionally NOT
+  // returned from this function — locality is a deployment property, not
+  // a price property. OpenRouter is the sole caller and it never serves
+  // genuinely local models; some catalog entries are however $0-priced
+  // (e.g. `:free` variants) and previously collapsed into `'local'`,
+  // which then poisoned the Local vs. cloud savings panel. Free-tier
+  // hosted models now land in `'budget'` like any other cheap model.
+  // The fallback map's local placeholder sets `tier: 'local'` directly
+  // and the DB-curated path uses `mapTierRoleToTier` instead.
   if (inputCostPerMillion <= 0.5) return 'budget';
   if (inputCostPerMillion <= 5) return 'mid';
   return 'frontier';
@@ -453,6 +513,71 @@ function buildFallbackMap(): Map<string, ModelInfo> {
       inputCostPerMillion: 0.15,
       outputCostPerMillion: 0.6,
       maxContext: 128_000,
+      supportsTools: true,
+    },
+    // OpenAI reasoning / GPT-5 family. AiProviderModel rows for these
+    // ship without `costPerMillionTokens` populated (see 009-provider-models
+    // seed), so without these fallback entries `calculateCost` returns
+    // zero and the session cost strip sums to $0.00. Rates are
+    // OpenAI's published pricing per 1M tokens.
+    {
+      id: 'gpt-5',
+      name: 'GPT-5',
+      provider: 'openai',
+      tier: 'frontier',
+      inputCostPerMillion: 1.25,
+      outputCostPerMillion: 10,
+      maxContext: 400_000,
+      supportsTools: true,
+    },
+    {
+      id: 'gpt-5-mini',
+      name: 'GPT-5 Mini',
+      provider: 'openai',
+      tier: 'mid',
+      inputCostPerMillion: 0.25,
+      outputCostPerMillion: 2,
+      maxContext: 400_000,
+      supportsTools: true,
+    },
+    {
+      id: 'gpt-5-nano',
+      name: 'GPT-5 Nano',
+      provider: 'openai',
+      tier: 'budget',
+      inputCostPerMillion: 0.05,
+      outputCostPerMillion: 0.4,
+      maxContext: 400_000,
+      supportsTools: true,
+    },
+    {
+      id: 'o3',
+      name: 'o3',
+      provider: 'openai',
+      tier: 'frontier',
+      inputCostPerMillion: 2,
+      outputCostPerMillion: 8,
+      maxContext: 200_000,
+      supportsTools: true,
+    },
+    {
+      id: 'o3-mini',
+      name: 'o3-mini',
+      provider: 'openai',
+      tier: 'mid',
+      inputCostPerMillion: 1.1,
+      outputCostPerMillion: 4.4,
+      maxContext: 200_000,
+      supportsTools: true,
+    },
+    {
+      id: 'o4-mini',
+      name: 'o4-mini',
+      provider: 'openai',
+      tier: 'mid',
+      inputCostPerMillion: 1.1,
+      outputCostPerMillion: 4.4,
+      maxContext: 200_000,
       supportsTools: true,
     },
     // Together

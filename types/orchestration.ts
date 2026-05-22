@@ -283,6 +283,17 @@ export type ExecutionEvent =
   | { type: 'approval_required'; stepId: string; payload: unknown }
   | { type: 'budget_warning'; usedUsd: number; limitUsd: number }
   | {
+      // Fires before `workflow_failed` when the cause is the
+      // per-execution cap, so webhook subscribers can branch on the
+      // more-specific event (runaway-loop guard from improvement #39)
+      // without writing a string-match on `workflow_failed.error`.
+      // The terminal `workflow_failed` still follows.
+      type: 'workflow_budget_exceeded';
+      usedUsd: number;
+      limitUsd: number;
+      failedStepId: string;
+    }
+  | {
       type: 'workflow_completed';
       output: unknown;
       totalTokensUsed: number;
@@ -863,7 +874,25 @@ export type ChatEvent =
        */
       sideEffectModels?: SideEffectModelUsage[];
     }
-  | { type: 'error'; code: string; message: string };
+  | { type: 'error'; code: string; message: string }
+  | {
+      // Fires when the per-turn cost cap is breached mid-loop. The
+      // streaming handler aborts the in-flight LLM stream, skips any
+      // pending tool dispatches, persists the partial assistant
+      // message with `metadata.endedReason = 'budget_exceeded'`, and
+      // dispatches the `chat.budget_exceeded_per_turn` webhook before
+      // emitting this terminal event.
+      //
+      // `usedUsd` is the running per-turn cost AT THE MOMENT the cap
+      // was first observed crossed (≥ `limitUsd`). Discrete event so
+      // consumer UIs can render a specific "your request was capped"
+      // affordance instead of guessing from a generic `error` code.
+      type: 'budget_exceeded_per_turn';
+      code: 'budget_exceeded_per_turn';
+      message: string;
+      usedUsd: number;
+      limitUsd: number;
+    };
 
 /**
  * A model invocation that happened during a chat turn but isn't the
@@ -1066,9 +1095,36 @@ export interface MessageMetadata {
   // Present on tool messages
   toolCall?: { id: string; name: string; arguments: unknown };
   result?: unknown;
+  /**
+   * Tool calls the assistant requested on this turn. Persisted on every
+   * assistant message that emitted any `tool_calls`, including turns
+   * where the assistant returned no text (common for reasoning models).
+   * The next turn's message-builder rehydrates this onto the `LlmMessage`
+   * `toolCalls` field so the subsequent `tool` role rows have the
+   * required preceding `tool_calls` reference — OpenAI rejects orphaned
+   * tool messages with a 400.
+   */
+  toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   // Present on error-marker messages (persisted when streaming fails completely)
   error?: boolean;
   errorCode?: string;
+  /**
+   * Set on the assistant message persisted when the streaming chat
+   * handler aborts a turn before the LLM signalled completion. The
+   * conversation row still reflects what was streamed; this marker
+   * lets a reload distinguish "model finished" from "we cut it off."
+   *
+   *   `'budget_exceeded'` — per-turn cost cap breached (improvement #39)
+   *   `'tool_loop_cap'`   — `MAX_TOOL_ITERATIONS` reached without convergence
+   */
+  endedReason?: 'budget_exceeded' | 'tool_loop_cap';
+  /**
+   * Companion to `endedReason: 'budget_exceeded'` — the running per-turn
+   * total at the moment the cap was observed crossed, and the cap that
+   * was breached. Surfaced in the admin trace viewer; consumer surfaces
+   * may show only the configurable user-facing copy.
+   */
+  budgetExceededDetail?: { usedUsd: number; limitUsd: number };
 }
 
 // ============================================================================
@@ -1146,11 +1202,12 @@ export interface Citation {
   documentName: string | null;
   /**
    * Hash of the document's content at the moment this citation was
-   * produced. Snapshotted from `AiKnowledgeDocument.contentHash`. Lets
-   * an auditor detect a silent re-ingestion of the same `documentId`:
-   * if today's hash differs from this one, the chunk the LLM saw is no
-   * longer available verbatim. Null on legacy citations created before
-   * the snapshot landed.
+   * produced. Snapshotted from `AiKnowledgeDocument.fileHash` (the
+   * SHA-256 the ingestion pipeline stores for dedup). Lets an auditor
+   * detect a silent re-ingestion of the same `documentId`: if today's
+   * hash differs from this one, the chunk the LLM saw is no longer
+   * available verbatim. Null on legacy citations created before the
+   * snapshot landed.
    */
   contentHash: string | null;
   /**
@@ -1459,6 +1516,22 @@ export interface OrchestrationSettings {
    * [1, 1440] on read and write; default 5.
    */
   stuckExecutionThresholdMins: number;
+  /**
+   * Org-wide default for per-execution cost cap (USD). Falls back to
+   * this when a workflow has no `maxCostPerExecutionUsd` AND the
+   * execute call passes no explicit `budgetLimitUsd`. Null = no org
+   * default (executions stay uncapped unless caller / workflow sets a
+   * value). See `lib/orchestration/llm/cost-caps.ts`.
+   */
+  defaultMaxCostPerExecutionUsd: number | null;
+  /**
+   * Org-wide default for per-turn cost cap (USD) on chat. Falls back
+   * to this when an agent has no `maxCostPerTurnUsd`. Null = no org
+   * default (chat turns stay uncapped at the per-turn layer; the
+   * agent's monthly budget still applies). See
+   * `lib/orchestration/llm/cost-caps.ts`.
+   */
+  defaultMaxCostPerTurnUsd: number | null;
   createdAt: Date;
   updatedAt: Date;
 }

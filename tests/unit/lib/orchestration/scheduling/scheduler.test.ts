@@ -35,6 +35,12 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecutionLeaseEvent: {
       create: vi.fn().mockResolvedValue({ id: 'evt-test' }),
     },
+    // Settings singleton — scheduler reads this to resolve the
+    // per-execution cap (defaults to "no org cap" so existing
+    // execution-create assertions on these tests still hold).
+    aiOrchestrationSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -117,6 +123,7 @@ function makeSchedule(overrides: Record<string, unknown> = {}) {
       id: 'wf_1',
       slug: 'test-workflow',
       isActive: true,
+      maxCostPerExecutionUsd: null,
       publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     },
     ...overrides,
@@ -137,6 +144,7 @@ function makeExecution(overrides: Record<string, unknown> = {}) {
       id: 'wf_1',
       slug: 'test-workflow',
       isActive: true,
+      maxCostPerExecutionUsd: null,
       publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
     },
     version: { id: 'wfv_1', snapshot: VALID_DEFINITION },
@@ -299,6 +307,7 @@ describe('processDueSchedules', () => {
         id: 'wf_1',
         slug: 'inactive-wf',
         isActive: false,
+        maxCostPerExecutionUsd: null,
         publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
       },
     });
@@ -363,6 +372,7 @@ describe('processDueSchedules', () => {
         id: 'wf_2',
         slug: 'wf-two',
         isActive: true,
+        maxCostPerExecutionUsd: null,
         publishedVersion: { id: 'wfv_2', snapshot: VALID_DEFINITION },
       },
     });
@@ -1189,6 +1199,7 @@ describe('processOrphanedExecutions', () => {
         id: 'wf_2',
         slug: 'wf-two',
         isActive: true,
+        maxCostPerExecutionUsd: null,
         publishedVersion: { id: 'wfv_2', snapshot: VALID_DEFINITION },
       },
       version: { id: 'wfv_2', snapshot: VALID_DEFINITION },
@@ -1391,6 +1402,7 @@ describe('processOrphanedExecutions', () => {
         id: 'wf_1',
         slug: 'inactive-wf',
         isActive: false,
+        maxCostPerExecutionUsd: null,
         publishedVersion: { id: 'wfv_1', snapshot: VALID_DEFINITION },
       },
     });

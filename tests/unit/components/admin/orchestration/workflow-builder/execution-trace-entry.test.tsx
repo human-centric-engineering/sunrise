@@ -17,7 +17,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { ExecutionTraceEntryRow } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
+import {
+  ExecutionTraceEntryRow,
+  summariseRetryReason,
+} from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import type { ExecutionTraceEntryRowProps } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -575,9 +578,165 @@ describe('ExecutionTraceEntryRow', () => {
       ).toBeInTheDocument();
     });
 
+    it('summarises a retry reason that quotes a field-change object', () => {
+      const reason =
+        'The tierRole change reason doesn\'t mention the current value "worker" or explain why it\'s wrong; it only argues for the proposed "thinking" tier. Offending change: { "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "...", "confidence": "medium", "sources": [{ "source": "training_knowledge" }] }';
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          retries={[{ attempt: 1, maxRetries: 2, reason, targetStepId: 'audit_models' }]}
+        />
+      );
+
+      // Salient summary appears: prose + field transition, no `confidence`,
+      // `sources`, or the verbatim long `reason` text.
+      const pill = screen.getByText(/argues for the proposed "thinking" tier/);
+      expect(pill.textContent).toContain('tierRole: "worker" → "thinking"');
+      expect(pill.textContent).not.toContain('confidence');
+      expect(pill.textContent).not.toContain('sources');
+      expect(pill.textContent).not.toContain('training_knowledge');
+
+      // Full original reason is preserved on hover via `title`.
+      expect(pill).toHaveAttribute('title', reason);
+    });
+
     it('does not render a retries list when no retries are provided', () => {
       render(<ExecutionTraceEntryRow {...BASE_PROPS} />);
       expect(screen.queryByTestId('trace-entry-retries-step-1')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('summariseRetryReason', () => {
+    it('returns the reason unchanged when no JSON object is present', () => {
+      expect(summariseRetryReason('tierRole "supercomputer" is not valid')).toBe(
+        'tierRole "supercomputer" is not valid'
+      );
+    });
+
+    it('keeps the prose and appends a field/current/proposed summary', () => {
+      const result = summariseRetryReason(
+        'Reason is generic. Offending change: { "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "confidence": "medium" }'
+      );
+      expect(result).toBe('Reason is generic — tierRole: "worker" → "thinking"');
+    });
+
+    it('summarises a model-shape offending object', () => {
+      const result = summariseRetryReason(
+        'Duplicate model proposed: { "modelName": "Claude Sonnet 4.5", "providerSlug": "anthropic", "modelId": "claude-sonnet-4-5" }'
+      );
+      expect(result).toBe('Duplicate model proposed — Claude Sonnet 4.5 (anthropic)');
+    });
+
+    it('handles array-valued currentValue / proposedValue', () => {
+      const result = summariseRetryReason(
+        'Bad deployment shift: { "field": "deploymentProfiles", "currentValue": ["hosted"], "proposedValue": ["sovereign"] }'
+      );
+      expect(result).toBe('Bad deployment shift — deploymentProfiles: ["hosted"] → ["sovereign"]');
+    });
+
+    it('falls back to prefix-only when the embedded JSON cannot be parsed', () => {
+      const result = summariseRetryReason('See offending change: { not valid json ');
+      expect(result).toBe('See offending change.');
+    });
+
+    it('strips fenced-code markers from the prefix', () => {
+      const result = summariseRetryReason(
+        'Failed. ```json\n{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking" }\n```'
+      );
+      expect(result).toBe('Failed — tierRole: "worker" → "thinking"');
+    });
+
+    it('returns the raw reason trimmed when both prefix and tail are empty', () => {
+      // Reason starts with `{` (prefix=''), and the JSON is unparseable
+      // (tail=null) — `!prefix && !tail` falls through to `reason.trim()`.
+      expect(summariseRetryReason('  { not valid json  ')).toBe('{ not valid json');
+    });
+
+    it('falls back to the bare prefix when no tail can be produced (no marker)', () => {
+      // The unparseable-JSON path with a prefix that doesn't contain the
+      // canonical "Offending change:" lead-in — the prefix is preserved
+      // exactly and gets a period suffix.
+      expect(summariseRetryReason('Validator complained. { broken')).toBe('Validator complained.');
+    });
+
+    it('handles escaped quotes inside the embedded JSON string', () => {
+      // sliceBalancedBraces walks the JSON character-by-character; the
+      // `\"` escape inside the string must NOT toggle the `inStr` flag,
+      // otherwise the closing `}` is missed and the helper returns null.
+      const result = summariseRetryReason(
+        'Reason. Offending change: { "field": "a\\"b", "currentValue": 1, "proposedValue": 2 }'
+      );
+      // The escape gets resolved by JSON.parse; what matters for coverage
+      // is that sliceBalancedBraces tracked the escape and found the
+      // closing brace, so the tail summary was produced at all.
+      expect(result).toBe('Reason — a"b: 1 → 2');
+    });
+
+    it('falls back to obj.slug when no field/model shape matches', () => {
+      const result = summariseRetryReason('Bad pick: { "slug": "my-capability", "extra": 1 }');
+      expect(result).toBe('Bad pick — my-capability');
+    });
+
+    it('falls back to obj.modelId when no field/model/slug shape matches', () => {
+      const result = summariseRetryReason(
+        'Bad model: { "modelId": "claude-sonnet-4-5", "extra": 1 }'
+      );
+      expect(result).toBe('Bad model — claude-sonnet-4-5');
+    });
+
+    it('falls back to the first two scalar key=value pairs when no specific shape matches', () => {
+      const result = summariseRetryReason(
+        'Generic offending: { "foo": "bar", "count": 3, "deep": { "nested": true } }'
+      );
+      // Only the two scalar keys (foo, count) appear; the nested object is
+      // skipped. The standalone "offending" word in the prefix is stripped
+      // by the Offending-marker regex, leaving the leading "Generic".
+      expect(result).toBe('Generic — foo="bar", count=3');
+    });
+
+    it('returns null tail (and uses prefix-only) when the object has only nested-only keys', () => {
+      const result = summariseRetryReason(
+        'No scalars: { "nested": { "inner": 1 }, "arr": [1, 2] }'
+      );
+      // scalars.length === 0 → summariseOffendingObject returns null →
+      // falls back to the prefix with a trailing period.
+      expect(result).toBe('No scalars.');
+    });
+
+    it('formats null and undefined-shaped values via formatValue', () => {
+      // currentValue: null exercises the `v === null` arm.
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": null, "proposedValue": "next" }'
+      );
+      expect(result).toBe('Reason — x: null → "next"');
+    });
+
+    it('formats empty arrays as []', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": [], "proposedValue": ["a"] }'
+      );
+      expect(result).toBe('Reason — x: [] → ["a"]');
+    });
+
+    it('formats non-string arrays as [...length] summary', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": [1, 2, 3], "proposedValue": [4, 5] }'
+      );
+      expect(result).toBe('Reason — x: […3] → […2]');
+    });
+
+    it('formats object-valued current/proposed values as {…}', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": { "a": 1 }, "proposedValue": { "b": 2 } }'
+      );
+      expect(result).toBe('Reason — x: {…} → {…}');
+    });
+
+    it('formats number and boolean current/proposed values', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "enabled", "currentValue": false, "proposedValue": 42 }'
+      );
+      expect(result).toBe('Reason — enabled: false → 42');
     });
   });
 

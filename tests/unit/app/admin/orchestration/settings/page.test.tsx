@@ -57,6 +57,8 @@ const defaults = {
   outputGuardMode: null,
   citationGuardMode: null,
   globalMonthlyBudgetUsd: null,
+  defaultMaxCostPerExecutionUsd: null,
+  defaultMaxCostPerTurnUsd: null,
   defaultApprovalTimeoutMs: null,
   approvalDefaultAction: null,
   searchConfig: null,

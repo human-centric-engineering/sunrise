@@ -84,6 +84,10 @@ Optional number input (`AiAgent.maxHistoryMessages`). Per-agent override for the
 
 Optional number input. When set, the chat handler rejects new turns once MTD spend exceeds the cap. Leave blank to disable.
 
+### Per-turn cost cap (USD)
+
+Optional number input (`AiAgent.maxCostPerTurnUsd`). Caps the total LLM cost of a single chat turn — the runaway-loop guard from improvement #39. A reflect / orchestrator / tool loop that doesn't converge is the case this protects against: a single bad question becomes a few cents instead of a few dollars. Min 0.01, max 10,000. Leave blank to inherit the org-wide default (Settings → Orchestration → "Per-turn cap default"). When that is also blank, no per-turn cap applies — only the monthly budget above. On breach, the chat surface renders a friendly "stopped early" message and the requested tools for that iteration are NOT dispatched. The conversation row keeps the partial assistant message with an `endedReason: 'budget_exceeded'` marker so reloads render the cap-breach state correctly. See `.context/orchestration/chat.md` for the loop semantics.
+
 ### Fallback providers
 
 Multi-checkbox list populated from the provider list. When the primary provider's circuit breaker is open, the chat handler falls back through these in order. Maximum 5 entries.
@@ -160,6 +164,7 @@ Implementation: `getAgentModels()` in `lib/orchestration/prefetch-helpers.ts` fi
 - **Temperature** — "How much the model varies its wording. 0 = always picks the most likely next word (good for deterministic tasks). 1 = balanced. 2 = very creative, sometimes incoherent. Default: `0.7`."
 - **Max output tokens** — "Upper bound on how long one reply can be. Defaults to `4096`. Only raise this if replies are getting cut off — higher values cost more on every turn."
 - **Monthly budget (USD)** — "Hard spend cap for this agent, in USD. When month-to-date spend exceeds the cap, new chats are rejected until the calendar month rolls over or you raise the limit. Leave blank to disable the cap."
+- **Per-turn cost cap (USD)** — "Caps the total LLM cost of a single chat turn (the messages exchanged before the model returns a final answer). Protects against a tool loop that keeps round-tripping without converging — a single bad question becomes a few cents instead of a few dollars. When the cap is hit mid-turn, the loop stops and the chat shows a friendly 'response stopped early' message. Leave blank to inherit the org-wide default (Settings → Orchestration). When that is also blank, no per-turn cap applies — only the monthly budget above."
 - **Enable voice input** — "When enabled, users can record audio messages that are automatically transcribed before sending to the agent. Audio is forwarded to the configured speech-to-text provider (e.g. OpenAI Whisper) and discarded after transcription — only the transcript is stored as a normal user message. Voice input also requires the platform-wide switch in Settings → Orchestration to be on. Default: off."
 
 ## Tab 3 — Instructions

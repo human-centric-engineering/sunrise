@@ -72,6 +72,42 @@ export function budgetWarning(usedUsd: number, limitUsd: number): ExecutionEvent
   return { type: 'budget_warning', usedUsd, limitUsd };
 }
 
+/**
+ * Fires when the per-execution cost cap is breached. Emitted by the
+ * engine immediately before `workflow_failed` at all four cap-check
+ * sites — sequential main loop, single-step path, parallel batch, and
+ * executor-thrown `BudgetExceeded` — so subscribers can branch on the
+ * more-specific event (runaway-loop guard from improvement #39) without
+ * string-matching on `workflow_failed.error`. The standard
+ * `workflow_failed` event still follows and remains the terminal-event
+ * contract for trace consumers.
+ *
+ * Also dispatches the `workflow_budget_exceeded` webhook (fire-and-forget;
+ * a webhook failure must never block the terminal event sequence). The
+ * generic `workflow_failed` webhook still fires from `workflowFailed()`
+ * below — subscribers wanting only one notification should listen to the
+ * specific event and ignore the generic one.
+ */
+export function workflowBudgetExceeded(
+  usedUsd: number,
+  limitUsd: number,
+  failedStepId: string,
+  executionId?: string
+): ExecutionEvent {
+  dispatchWebhookEvent('workflow_budget_exceeded', {
+    usedUsd,
+    limitUsd,
+    failedStepId,
+    ...(executionId ? { executionId } : {}),
+  }).catch((err) => {
+    logger.warn('Webhook dispatch failed for workflow_budget_exceeded', {
+      failedStepId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  return { type: 'workflow_budget_exceeded', usedUsd, limitUsd, failedStepId };
+}
+
 export function workflowCompleted(
   output: unknown,
   totalTokensUsed: number,

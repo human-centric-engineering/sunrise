@@ -39,6 +39,14 @@ export const GET = withAdminAuth(async (request, _session) => {
     if (!rateLimit.success) return createRateLimitResponse(rateLimit);
     await refreshFromOpenRouter({ force: true });
     log.info('Model registry refresh forced');
+  } else {
+    // Warm this handler's own registry instance. In Next.js's per-route
+    // bundling, `model-registry.ts` can be duplicated between the page's
+    // module graph and this route handler's, so a `refreshFromOpenRouter()`
+    // call upstream on the server-component side may not populate the
+    // instance read here. The TTL/backoff inside the helper makes this a
+    // no-op on warm hits (24h success TTL, 5-min failure backoff).
+    await refreshFromOpenRouter();
   }
 
   // Merge operator-curated `AiProviderModel` rows on top of the

@@ -40,7 +40,10 @@ import { sseResponse } from '@/lib/api/sse';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { rerunExecutionBodySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
+import {
+  prepareWorkflowExecution,
+  resolveEffectiveExecutionCap,
+} from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -107,10 +110,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // error instead of an unexpected shape downstream.
   const inputData = z.record(z.string(), z.unknown()).parse(original.inputData ?? {});
 
-  // Budget: caller override wins; else preserve the original's value.
-  // null on the original means "no limit" which the engine treats by
-  // skipping the budget check entirely.
-  const budgetLimitUsd = body.budgetLimitUsd ?? original.budgetLimitUsd ?? undefined;
+  // Budget resolution: caller override > original's stamped cap > workflow
+  // default > settings default. Treating the original's cap as a "caller
+  // override" in the resolver chain preserves the historic semantics —
+  // a rerun without arguments reuses the original's ceiling — while
+  // still falling through to the new workflow / settings defaults when
+  // the original ran uncapped.
+  const effectiveBudgetLimitUsd = await resolveEffectiveExecutionCap({
+    callerOverride: body.budgetLimitUsd ?? original.budgetLimitUsd,
+    workflowDefault: workflow.maxCostPerExecutionUsd,
+  });
 
   log.info('execution rerun started', {
     workflowId: workflow.id,
@@ -118,14 +127,17 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     versionId: version.id,
     versionNumber: version.version,
     userId: session.user.id,
-    budgetLimitUsd,
+    callerBudgetLimitUsd: body.budgetLimitUsd ?? null,
+    originalBudgetLimitUsd: original.budgetLimitUsd,
+    workflowMaxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd ?? null,
+    effectiveBudgetLimitUsd: effectiveBudgetLimitUsd ?? null,
     customVersionPin: body.versionId !== undefined,
   });
 
   const engine = new OrchestrationEngine();
   const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
     userId: session.user.id,
-    budgetLimitUsd,
+    ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
     signal: request.signal,
     parentExecutionId: original.id,
   });

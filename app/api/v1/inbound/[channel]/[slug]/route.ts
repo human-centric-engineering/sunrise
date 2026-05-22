@@ -36,6 +36,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { drainEngine } from '@/lib/orchestration/scheduling/scheduler';
+import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
 
@@ -135,6 +136,7 @@ export async function POST(
         select: {
           id: true,
           slug: true,
+          maxCostPerExecutionUsd: true,
           publishedVersion: { select: { id: true, snapshot: true } },
         },
       },
@@ -249,6 +251,22 @@ export async function POST(
     },
   };
 
+  // Cap resolution for the inbound-triggered run: no caller override,
+  // fall through to workflow default then org-wide default. Inbound
+  // channels (Slack / Postmark / generic HMAC) are the canonical case
+  // for needing a cap — without one, a hostile or buggy upstream that
+  // floods the endpoint can rack up cost before the rate limiter or
+  // dedup window catches it.
+  const orgSettings = await prisma.aiOrchestrationSettings.findUnique({
+    where: { slug: 'global' },
+    select: { defaultMaxCostPerExecutionUsd: true },
+  });
+  const effectiveBudgetLimitUsd = resolveMaxCostPerExecution({
+    callerOverride: null,
+    workflowDefault: trigger.workflow.maxCostPerExecutionUsd,
+    settingsDefault: orgSettings?.defaultMaxCostPerExecutionUsd ?? null,
+  });
+
   let executionId: string;
   try {
     const execution = await prisma.aiWorkflowExecution.create({
@@ -262,6 +280,9 @@ export async function POST(
         triggerSource,
         triggerExternalId: externalId,
         dedupKey,
+        ...(effectiveBudgetLimitUsd !== undefined
+          ? { budgetLimitUsd: effectiveBudgetLimitUsd }
+          : {}),
       },
     });
     executionId = execution.id;

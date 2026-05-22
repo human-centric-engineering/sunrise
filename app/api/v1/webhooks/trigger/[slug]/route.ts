@@ -24,6 +24,7 @@ import { apiLimiter, apiKeyChatLimiter, createRateLimitResponse } from '@/lib/se
 import { getClientIP } from '@/lib/security/ip';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
 import { slugSchema } from '@/lib/validations/common';
+import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 
 const triggerSlugSchema = slugSchema.pipe(z.string().max(100));
 const webhookInputSchema = z.record(z.string(), z.unknown());
@@ -69,7 +70,7 @@ export async function POST(
 
   const workflow = await prisma.aiWorkflow.findFirst({
     where: { slug, isActive: true },
-    select: { id: true, publishedVersionId: true },
+    select: { id: true, publishedVersionId: true, maxCostPerExecutionUsd: true },
   });
 
   if (!workflow) {
@@ -93,6 +94,21 @@ export async function POST(
     // Empty body or non-JSON — proceed with empty input
   }
 
+  // Cap resolution for the webhook-triggered run: no caller override,
+  // fall through to workflow default then org-wide default. Webhook
+  // triggers run as the API key's user but the caller has no path to
+  // pass a per-call cap, so the workflow / settings defaults are the
+  // only defence against a runaway loop in a webhook-driven workflow.
+  const orgSettings = await prisma.aiOrchestrationSettings.findUnique({
+    where: { slug: 'global' },
+    select: { defaultMaxCostPerExecutionUsd: true },
+  });
+  const effectiveBudgetLimitUsd = resolveMaxCostPerExecution({
+    callerOverride: null,
+    workflowDefault: workflow.maxCostPerExecutionUsd,
+    settingsDefault: orgSettings?.defaultMaxCostPerExecutionUsd ?? null,
+  });
+
   try {
     const execution = await prisma.aiWorkflowExecution.create({
       data: {
@@ -102,6 +118,9 @@ export async function POST(
         inputData,
         executionTrace: [],
         userId: resolved.session.user.id,
+        ...(effectiveBudgetLimitUsd !== undefined
+          ? { budgetLimitUsd: effectiveBudgetLimitUsd }
+          : {}),
       },
     });
 

@@ -15,6 +15,8 @@ export const EVENT_LABELS: Record<string, string> = {
   execution_completed: 'Execution Completed',
   execution_failed: 'Execution Failed',
   execution_crashed: 'Execution Crashed (engine error)',
+  workflow_budget_exceeded: 'Workflow Budget Exceeded (per-execution cap)',
+  chat_budget_exceeded_per_turn: 'Chat Budget Exceeded (per-turn cap)',
 };
 
 /** Returns the human-readable label or formats the raw value as title case. */

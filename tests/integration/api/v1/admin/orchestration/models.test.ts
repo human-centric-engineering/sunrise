@@ -5,7 +5,9 @@
  * GET /api/v1/admin/orchestration/models?refresh=true
  *
  * Key behaviours:
- *   - Default path returns models without calling refreshFromOpenRouter
+ *   - Default path calls refreshFromOpenRouter() to warm this handler's
+ *     own registry instance (per-route bundling means the page-side
+ *     warm call may not reach the same module instance)
  *   - ?refresh=true calls refreshFromOpenRouter({ force: true })
  *   - ?refresh=true response includes refreshed: true
  *   - ?refresh=true is rate-limited (adminLimiter.check)
@@ -118,13 +120,19 @@ describe('GET /api/v1/admin/orchestration/models', () => {
       expect(data.data.models).toHaveLength(1);
     });
 
-    it('does NOT call refreshFromOpenRouter on the default path', async () => {
+    it("calls refreshFromOpenRouter (no force) on the default path to warm this handler's registry instance", async () => {
+      // In Next.js per-route bundling, `model-registry.ts` can be
+      // duplicated between the costs page's module graph and this
+      // route handler's. The page-side warm call therefore doesn't
+      // populate the instance read here. We rely on this handler's
+      // own (cached) refresh to keep the response in sync. The TTL /
+      // failure-backoff inside `refreshFromOpenRouter` makes it cheap.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(getAvailableModels).mockReturnValue([]);
 
       await GET(makeGetRequest());
 
-      expect(vi.mocked(refreshFromOpenRouter)).not.toHaveBeenCalled();
+      expect(vi.mocked(refreshFromOpenRouter)).toHaveBeenCalledWith();
     });
 
     it('does NOT call adminLimiter.check on the default path', async () => {

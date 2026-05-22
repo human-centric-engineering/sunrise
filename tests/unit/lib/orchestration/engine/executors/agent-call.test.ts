@@ -52,6 +52,10 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/capabilities/registry', () => ({
   registerBuiltInCapabilities: vi.fn(),
   getCapabilityDefinitions: vi.fn(),
@@ -75,6 +79,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getCapabilityDefinitions } from '@/lib/orchestration/capabilities/registry';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import type { TurnEntry, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { MockTracer } from '@/tests/helpers/mock-tracer';
@@ -152,6 +157,9 @@ function setupDefaultMocks(): void {
     outputCostUsd: 0.006,
   });
   vi.mocked(logCost).mockResolvedValue(undefined as never);
+  vi.mocked(getOrchestrationSettings).mockResolvedValue({
+    defaultMaxCostPerTurnUsd: null,
+  } as never);
   mockChat.mockResolvedValue({
     content: 'Summary result',
     usage: { inputTokens: 100, outputTokens: 50 },
@@ -507,6 +515,135 @@ describe('executeAgentCall', () => {
     // Should have called chat exactly 2 times (the loop cap)
     expect(mockChat).toHaveBeenCalledTimes(2);
     expect(result.output).toBe('looping...');
+  });
+
+  // ── per-turn cost cap (agent.maxCostPerTurnUsd / settings) ───────────────
+  // The agent_call executor mirrors the chat streaming handler's per-turn
+  // guard: once accumulated step cost crosses the cap, the tool loop
+  // aborts with `agent_call_budget_exceeded_per_turn`. Resolution
+  // precedence is agent column → org settings → uncapped.
+
+  describe('per-turn cost cap enforcement', () => {
+    function loopingChatResponse(): void {
+      mockChat.mockResolvedValue({
+        content: 'still looping...',
+        toolCalls: [{ id: 'tc_x', name: 'search', arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+        finishReason: 'tool_use',
+        model: 'claude-sonnet-4-20250514',
+      });
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+        success: true,
+        data: {},
+      });
+    }
+
+    it('aborts with budget_exceeded_per_turn when the agent cap is breached', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        maxCostPerTurnUsd: 0.015,
+      } as never);
+      // Each turn billed at $0.01 → cap (0.015) crosses on iteration 1
+      // (totalCostUsd 0.02 > 0.015). Configure maxToolIterations high
+      // enough that only the cap can stop the loop.
+      loopingChatResponse();
+
+      await expect(
+        executeAgentCall(makeStep({ maxToolIterations: 5 }), makeCtx())
+      ).rejects.toMatchObject({
+        name: 'ExecutorError',
+        code: 'agent_call_budget_exceeded_per_turn',
+        retriable: false,
+      });
+
+      // Two iterations ran before the cap caught it (totalCostUsd
+      // crossed 0.015 after the second turn's $0.01 was added).
+      expect(mockChat).toHaveBeenCalledTimes(2);
+    });
+
+    it('carries partial tokens and cost on the cap-exceeded ExecutorError', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        maxCostPerTurnUsd: 0.015,
+      } as never);
+      loopingChatResponse();
+
+      try {
+        await executeAgentCall(makeStep({ maxToolIterations: 5 }), makeCtx());
+        // unreachable
+        expect.fail('expected ExecutorError');
+      } catch (err) {
+        const error = err as Error & {
+          code: string;
+          tokensUsed: number;
+          costUsd: number;
+        };
+        expect(error.code).toBe('agent_call_budget_exceeded_per_turn');
+        // Two turns × 15 tokens = 30; two turns × $0.01 = $0.02
+        expect(error.tokensUsed).toBe(30);
+        expect(error.costUsd).toBeCloseTo(0.02, 5);
+      }
+    });
+
+    it('falls back to org settings.defaultMaxCostPerTurnUsd when the agent has no cap', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        maxCostPerTurnUsd: null,
+      } as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultMaxCostPerTurnUsd: 0.015,
+      } as never);
+      loopingChatResponse();
+
+      await expect(
+        executeAgentCall(makeStep({ maxToolIterations: 5 }), makeCtx())
+      ).rejects.toMatchObject({
+        code: 'agent_call_budget_exceeded_per_turn',
+      });
+      expect(getOrchestrationSettings).toHaveBeenCalled();
+    });
+
+    it('skips the settings lookup when the agent sets its own cap', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        maxCostPerTurnUsd: 0.015,
+      } as never);
+      loopingChatResponse();
+
+      await expect(
+        executeAgentCall(makeStep({ maxToolIterations: 5 }), makeCtx())
+      ).rejects.toMatchObject({
+        code: 'agent_call_budget_exceeded_per_turn',
+      });
+      // Agent cap short-circuits — no settings I/O.
+      expect(getOrchestrationSettings).not.toHaveBeenCalled();
+    });
+
+    it('proceeds uncapped when settings lookup fails', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        maxCostPerTurnUsd: null,
+      } as never);
+      vi.mocked(getOrchestrationSettings).mockRejectedValueOnce(new Error('db hiccup'));
+      // Loop terminates by hitting maxToolIterations, not by cap.
+      loopingChatResponse();
+
+      const result = await executeAgentCall(makeStep({ maxToolIterations: 2 }), makeCtx());
+
+      expect(mockChat).toHaveBeenCalledTimes(2);
+      expect(result.output).toBe('still looping...');
+    });
+
+    it('does not abort when accumulated cost stays under the cap', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        ...MOCK_AGENT,
+        maxCostPerTurnUsd: 1.0, // generous cap, well above the test's $0.01/turn cost
+      } as never);
+      // Normal happy-path response (no tool call → terminal turn).
+      const result = await executeAgentCall(makeStep(), makeCtx());
+      expect(result.output).toBe('Summary result');
+      expect(result.costUsd).toBe(0.01);
+    });
   });
 
   it('includes tool definitions when agent has capabilities', async () => {

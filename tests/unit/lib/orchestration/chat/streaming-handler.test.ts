@@ -156,6 +156,7 @@ const { scanOutput, scanCitations } = await import('@/lib/orchestration/chat/out
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
 const { withAgentBudgetLock } = await import('@/lib/orchestration/llm/budget-mutex');
+const { dispatchWebhookEvent } = await import('@/lib/orchestration/webhooks/dispatcher');
 // Ensure the model-registry mock is loaded (module itself is used by source via vi.mock above)
 await import('@/lib/orchestration/llm/model-registry');
 
@@ -1132,13 +1133,20 @@ describe('StreamingChatHandler', () => {
   });
 
   // 16 ----------------------------------------------------------------------
-  it('no assistant row persisted for turn 1 when tool_call arrives before any text', async () => {
+  it('persists the tool-call envelope for turn 1 when only tool_calls arrive (no assistant text)', async () => {
+    // Regression guard for the reasoning-model + tool-call bug: when an
+    // assistant turn emits only `tool_calls` with empty text, we MUST
+    // still persist a row carrying `metadata.toolCalls` so the next
+    // turn's history rebuild has the preceding tool_calls block. Without
+    // it, OpenAI rejects the follow-up with HTTP 400 ("messages with
+    // role 'tool' must be a response to a preceeding message with
+    // 'tool_calls'").
     const provider = mockProvider([
       // Turn 1: no text, just tool_call then done
       [
         {
           type: 'tool_call',
-          toolCall: { id: 'tc6', name: 'silent_tool', arguments: {} },
+          toolCall: { id: 'tc6', name: 'silent_tool', arguments: { q: 'x' } },
         },
         { type: 'done', usage: { inputTokens: 5, outputTokens: 0 }, finishReason: 'tool_use' },
       ],
@@ -1161,8 +1169,19 @@ describe('StreamingChatHandler', () => {
 
     const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
     const assistantMsgs = createCalls.filter((c: any) => c[0].data.role === 'assistant');
-    // Turn-2 produces an assistant row, turn-1 should NOT (empty text)
-    expect(assistantMsgs).toHaveLength(1);
+    // Turn-1 persists a tool-call-only assistant row; turn-2 persists
+    // the final text row. Both rows are required for replay validity.
+    expect(assistantMsgs).toHaveLength(2);
+
+    const toolCallTurn = assistantMsgs[0][0].data;
+    expect(toolCallTurn.content).toBe('');
+    expect(toolCallTurn.metadata.toolCalls).toEqual([
+      { id: 'tc6', name: 'silent_tool', arguments: { q: 'x' } },
+    ]);
+
+    const textTurn = assistantMsgs[1][0].data;
+    expect(textTurn.content).toBe('Result processed.');
+    expect(textTurn.metadata.toolCalls).toBeUndefined();
   });
 
   // 16b — tool call with no done chunk (usage=null): logCost skipped, tool dispatch proceeds --
@@ -2132,6 +2151,235 @@ describe('mid-loop budget re-check', () => {
       code: 'budget_exceeded',
     });
     expect(budgetCallCount).toBe(2);
+  });
+
+  it('yields budget_exceeded_per_turn when agent.maxCostPerTurnUsd is breached mid-loop', async () => {
+    // Improvement #39 runaway-loop guard. After each LLM iteration the
+    // handler increments a per-turn cost accumulator (via
+    // `calculateCost`) and checks against the agent's
+    // `maxCostPerTurnUsd`. On breach: emit the discrete event, persist a
+    // partial assistant message, fire the chat webhook, and return —
+    // without dispatching the requested tool.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+    // Default mock fixture returns `totalCostUsd: 0.03`. Set the cap to
+    // 0.02 so the first iteration's cost ($0.03) immediately crosses.
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxCostPerTurnUsd: 0.02 })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'tool_call', toolCall: { id: 'tc1', name: 'search', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: 'result',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const breach = events.find(
+      (e: unknown) => (e as Record<string, unknown>).type === 'budget_exceeded_per_turn'
+    );
+
+    expect(breach).toMatchObject({
+      type: 'budget_exceeded_per_turn',
+      code: 'budget_exceeded_per_turn',
+      usedUsd: 0.03,
+      limitUsd: 0.02,
+    });
+    expect((breach as { message: string }).message).toMatch(/per-turn cost limit/);
+
+    // Tool MUST NOT be dispatched — the cap fires AFTER the LLM cost
+    // is recorded but BEFORE the iteration's tools are dispatched.
+    expect(capabilityDispatcher.dispatch).not.toHaveBeenCalled();
+
+    // Fires the chat-specific webhook so partners can wire Slack /
+    // PagerDuty separately from the generic `budget_exceeded` event.
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'chat_budget_exceeded_per_turn',
+      expect.objectContaining({
+        agentId: 'agent-1',
+        agentSlug: 'helper',
+        usedUsd: 0.03,
+        limitUsd: 0.02,
+      })
+    );
+
+    // Persists a partial assistant message with the cap-breach marker
+    // so a reload renders the "stopped early" state correctly. Note
+    // there are now TWO assistant rows on a tool-call breach: the
+    // first row records the tool_calls envelope (so any later turn
+    // sees a valid `tool_calls` block if the user re-engages), and
+    // the second is the cap-breach marker that this test looks at.
+    const assistantPersists = vi
+      .mocked(prisma.aiMessage.create)
+      .mock.calls.filter(
+        (call) => (call[0] as { data: { role: string } }).data.role === 'assistant'
+      );
+    expect(assistantPersists.length).toBeGreaterThanOrEqual(1);
+    const persistedAssistant = assistantPersists.find((call) => {
+      const meta = (call[0] as { data: { metadata?: { endedReason?: string } } }).data.metadata;
+      return meta?.endedReason === 'budget_exceeded';
+    });
+    expect(persistedAssistant).toBeDefined();
+    const persistedMeta = (persistedAssistant?.[0] as { data: { metadata: unknown } }).data
+      .metadata as {
+      endedReason?: string;
+      budgetExceededDetail?: { usedUsd: number; limitUsd: number };
+    };
+    expect(persistedMeta.endedReason).toBe('budget_exceeded');
+    expect(persistedMeta.budgetExceededDetail).toEqual({ usedUsd: 0.03, limitUsd: 0.02 });
+  });
+
+  it('yields budget_exceeded_per_turn BEFORE done when a text-only terminal turn breaches the cap', async () => {
+    // Regression guard: the mid-loop cap check only fires after a
+    // tool-call iteration, so text-only Q&A turns (the common shape
+    // for advisor agents) could silently exceed the cap. The terminal
+    // path now emits the breach event *before* `done` so the UI's cap
+    // handler sets the error panel and `done` then updates the
+    // message's cost / tokenUsage strip. Order matters: the UI's
+    // `done` handler `return`s from the SSE read loop, so anything
+    // after `done` is dropped client-side; cap-before-done lets both
+    // events land.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxCostPerTurnUsd: 0.02 })
+    );
+
+    const provider = mockProvider([
+      // Single iteration, text-only — no tool_calls, terminal turn.
+      // Default mock fixture's calculateCost returns 0.03 for this
+      // usage; cap is 0.02 → terminal cap path must fire.
+      [
+        { type: 'text', content: 'Pattern 3 is the supervisor pattern...' },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const doneIdx = events.findIndex(
+      (e: unknown) => (e as Record<string, unknown>).type === 'done'
+    );
+    const breachIdx = events.findIndex(
+      (e: unknown) => (e as Record<string, unknown>).type === 'budget_exceeded_per_turn'
+    );
+
+    expect(doneIdx).toBeGreaterThanOrEqual(0);
+    expect(breachIdx).toBeGreaterThanOrEqual(0);
+    // Order: breach before done. The UI's `done` branch returns from
+    // the SSE read loop, so anything after `done` is dropped; placing
+    // the cap event first lets the UI set the error panel and then
+    // process `done` to update the message's cost/usage strip.
+    expect(breachIdx).toBeLessThan(doneIdx);
+
+    const breach = events[breachIdx] as Record<string, unknown>;
+    expect(breach).toMatchObject({
+      type: 'budget_exceeded_per_turn',
+      code: 'budget_exceeded_per_turn',
+      usedUsd: 0.03,
+      limitUsd: 0.02,
+    });
+
+    // Webhook still fires on terminal-turn breach.
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'chat_budget_exceeded_per_turn',
+      expect.objectContaining({
+        agentId: 'agent-1',
+        agentSlug: 'helper',
+        usedUsd: 0.03,
+        limitUsd: 0.02,
+      })
+    );
+  });
+
+  it('does NOT yield budget_exceeded_per_turn on a terminal turn that stays under the cap', async () => {
+    // Counter-test for the new terminal cap check: when the turn's
+    // cost lands under the cap, no breach event fires.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxCostPerTurnUsd: 10 }) // generous cap
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Cheap answer.' },
+        { type: 'done', usage: { inputTokens: 100, outputTokens: 50 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const breach = events.find(
+      (e: unknown) => (e as Record<string, unknown>).type === 'budget_exceeded_per_turn'
+    );
+    expect(breach).toBeUndefined();
+  });
+
+  it('does NOT enforce a per-turn cap when both agent + settings have no value set', async () => {
+    // Default makeAgent leaves `maxCostPerTurnUsd` unset; the global
+    // settings mock returns no `defaultMaxCostPerTurnUsd`. The cap
+    // resolver returns undefined, so the breach event must never
+    // fire and the tool loop proceeds as normal.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+
+    const provider = mockProvider([
+      [
+        { type: 'tool_call', toolCall: { id: 'tc1', name: 'search', arguments: {} } },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 } },
+      ],
+      [
+        { type: 'text', content: 'Done.' },
+        { type: 'done', usage: { inputTokens: 50, outputTokens: 20 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: 'result',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+    const breach = events.find(
+      (e: unknown) => (e as Record<string, unknown>).type === 'budget_exceeded_per_turn'
+    );
+    expect(breach).toBeUndefined();
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('acquires budget lock for mid-loop re-check (not just initial check)', async () => {

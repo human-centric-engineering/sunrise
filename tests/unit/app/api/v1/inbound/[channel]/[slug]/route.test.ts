@@ -79,6 +79,13 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflowExecution: {
       create: mockExecutionCreate,
     },
+    // The inbound route resolves the effective per-execution cap on
+    // every trigger fire (cron / inbound / webhook are the canonical
+    // "no caller override" cases). Default to null so existing
+    // assertions about uncapped executions still hold.
+    aiOrchestrationSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -168,6 +175,10 @@ function makeTrigger(overrides: Record<string, unknown> = {}) {
     workflow: {
       id: 'workflow-id-1',
       slug: 'my-workflow',
+      // No per-workflow cap by default — keeps existing assertions
+      // (execution created without budgetLimitUsd) valid. Tests that
+      // exercise the workflow-default path override with a number.
+      maxCostPerExecutionUsd: null,
       publishedVersion: {
         id: 'version-id-1',
         snapshot: VALID_SNAPSHOT,
@@ -506,6 +517,7 @@ describe('trigger lookup', () => {
         workflow: {
           id: 'workflow-id-1',
           slug: 'my-workflow',
+          maxCostPerExecutionUsd: null,
           publishedVersion: null,
         },
       })
@@ -536,6 +548,7 @@ describe('workflow definition snapshot validation', () => {
         workflow: {
           id: 'workflow-id-1',
           slug: 'my-workflow',
+          maxCostPerExecutionUsd: null,
           publishedVersion: {
             id: 'version-id-1',
             snapshot: INVALID_SNAPSHOT,

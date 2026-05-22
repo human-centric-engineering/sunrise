@@ -111,6 +111,10 @@ export async function importOrchestrationConfig(
             maxTokens: agent.maxTokens,
             reasoningEffort: agent.reasoningEffort ?? null,
             monthlyBudgetUsd: agent.monthlyBudgetUsd,
+            // Older backup bundles omit this field — treat absent as
+            // null (no per-turn cap). The schema validator allows the
+            // omission via `optional()`.
+            maxCostPerTurnUsd: agent.maxCostPerTurnUsd ?? null,
             visibility: agent.visibility,
             isActive: agent.isActive,
             metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,

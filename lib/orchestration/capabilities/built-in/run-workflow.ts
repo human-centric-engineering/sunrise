@@ -40,6 +40,7 @@ import type {
 } from '@/lib/orchestration/capabilities/types';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
+import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { redactedString } from '@/lib/security/redact';
 import type { WorkflowDefinition } from '@/types/orchestration';
@@ -213,6 +214,7 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
       select: {
         id: true,
         slug: true,
+        maxCostPerExecutionUsd: true,
         publishedVersion: { select: { id: true, snapshot: true } },
       },
     });
@@ -246,6 +248,25 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
     const definition = definitionParsed.data as WorkflowDefinition;
     const pinnedVersionId = workflowRow.publishedVersion.id;
 
+    // Cap resolution for the spawned child execution:
+    //   binding.customConfig.defaultBudgetUsd (caller override)
+    //   > workflowRow.maxCostPerExecutionUsd (workflow default)
+    //   > settings.defaultMaxCostPerExecutionUsd (org default)
+    //   > undefined (engine treats as no per-execution cap).
+    // The chat per-turn cap is NOT propagated into the child execution —
+    // it's a different scope. The child's cost still rolls into the
+    // parent turn's running total via the parent's `logCost` writes, so
+    // a per-turn cap can still trip mid-child.
+    const settings = await prisma.aiOrchestrationSettings.findUnique({
+      where: { slug: 'global' },
+      select: { defaultMaxCostPerExecutionUsd: true },
+    });
+    const effectiveBudgetLimitUsd = resolveMaxCostPerExecution({
+      callerOverride: customConfig.defaultBudgetUsd,
+      workflowDefault: workflowRow.maxCostPerExecutionUsd,
+      settingsDefault: settings?.defaultMaxCostPerExecutionUsd ?? null,
+    });
+
     const engine = new OrchestrationEngine();
 
     let executionId: string | undefined;
@@ -258,8 +279,8 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
         args.input ?? {},
         {
           userId: context.userId,
-          ...(customConfig.defaultBudgetUsd !== undefined
-            ? { budgetLimitUsd: customConfig.defaultBudgetUsd }
+          ...(effectiveBudgetLimitUsd !== undefined
+            ? { budgetLimitUsd: effectiveBudgetLimitUsd }
             : {}),
         }
       )) {

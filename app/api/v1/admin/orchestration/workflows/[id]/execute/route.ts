@@ -30,7 +30,10 @@ import {
   resumeExecutionQuerySchema,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
+import {
+  prepareWorkflowExecution,
+  resolveEffectiveExecutionCap,
+} from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -89,10 +92,22 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     pinnedVersionId,
   });
 
+  // Cap resolution: caller override > AiWorkflow.maxCostPerExecutionUsd >
+  // AiOrchestrationSettings.defaultMaxCostPerExecutionUsd > undefined.
+  // The resolved value is what the engine actually enforces and what
+  // gets persisted onto AiWorkflowExecution.budgetLimitUsd for resume
+  // / reaper continuity.
+  const effectiveBudgetLimitUsd = await resolveEffectiveExecutionCap({
+    callerOverride: body.budgetLimitUsd,
+    workflowDefault: workflow.maxCostPerExecutionUsd,
+  });
+
   log.info('workflow execute started', {
     workflowId: workflow.id,
     userId: session.user.id,
-    budgetLimitUsd: body.budgetLimitUsd,
+    callerBudgetLimitUsd: body.budgetLimitUsd ?? null,
+    workflowMaxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd ?? null,
+    effectiveBudgetLimitUsd: effectiveBudgetLimitUsd ?? null,
     resumeFromExecutionId,
   });
 
@@ -102,7 +117,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     body.inputData,
     {
       userId: session.user.id,
-      budgetLimitUsd: body.budgetLimitUsd,
+      ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
       signal: request.signal,
       resumeFromExecutionId,
     }

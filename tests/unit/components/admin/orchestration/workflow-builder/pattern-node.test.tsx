@@ -50,10 +50,15 @@ import { PatternNode } from '@/components/admin/orchestration/workflow-builder/n
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function renderNode(
-  data: { label: string; type: string; config: Record<string, unknown> },
-  selected = false
-) {
+interface RenderNodeData {
+  label: string;
+  type: string;
+  config: Record<string, unknown>;
+  hasError?: boolean;
+  costBand?: 'warn' | 'over';
+}
+
+function renderNode(data: RenderNodeData, selected = false) {
   // NodeProps shape expected by PatternNode
   const props = {
     id: 'node-1',
@@ -165,6 +170,86 @@ describe('PatternNode', () => {
     it('shows the type string on the node', () => {
       renderNode({ label: 'My LLM Step', type: 'llm_call', config: {} });
       expect(screen.getByText('llm_call')).toBeInTheDocument();
+    });
+  });
+
+  describe('costBand ring behaviour', () => {
+    it('renders no cost-band ring when costBand is undefined', () => {
+      // Arrange: no costBand field — baseline node
+      renderNode({ label: 'Summarise', type: 'llm_call', config: {} });
+      const node = screen.getByTestId('pattern-node-llm_call');
+
+      // Assert: the data attribute is absent and neither cost ring colour is applied
+      expect(node).not.toHaveAttribute('data-cost-band');
+      expect(node).not.toHaveClass('ring-amber-500');
+      expect(node).not.toHaveClass('ring-red-500');
+    });
+
+    it('renders amber ring + sr-only label when costBand="warn"', () => {
+      // Arrange: cost band flagged as warn
+      renderNode({ label: 'Summarise', type: 'llm_call', config: {}, costBand: 'warn' });
+      const node = screen.getByTestId('pattern-node-llm_call');
+
+      // Assert: the component applies the warn band attribute and amber ring classes
+      expect(node).toHaveAttribute('data-cost-band', 'warn');
+      expect(node).toHaveClass('ring-amber-500');
+      // The accessible sr-only label must convey the warn message
+      expect(
+        screen.getByText('Step projected to consume a large share of the cost cap')
+      ).toBeInTheDocument();
+    });
+
+    it('renders red ring + sr-only label when costBand="over"', () => {
+      // Arrange: cost band flagged as over
+      renderNode({ label: 'Summarise', type: 'llm_call', config: {}, costBand: 'over' });
+      const node = screen.getByTestId('pattern-node-llm_call');
+
+      // Assert: the component applies the over band attribute and red ring classes
+      expect(node).toHaveAttribute('data-cost-band', 'over');
+      expect(node).toHaveClass('ring-red-500');
+      // The accessible sr-only label must convey the over-cap message
+      expect(
+        screen.getByText('Step alone projected to exceed the per-execution cost cap')
+      ).toBeInTheDocument();
+    });
+
+    it('hasError overrides costBand: validation ring wins, no cost sr-only label rendered', () => {
+      // Arrange: both hasError and costBand="warn" are set simultaneously.
+      // The component contract: hasError always wins — costBand is nulled out.
+      renderNode({
+        label: 'Summarise',
+        type: 'llm_call',
+        config: {},
+        hasError: true,
+        costBand: 'warn',
+      });
+      const node = screen.getByTestId('pattern-node-llm_call');
+
+      // Assert: data-cost-band is absent (costBand was suppressed)
+      expect(node).not.toHaveAttribute('data-cost-band');
+      // Assert: no amber ring — the validation (red) ring wins
+      expect(node).not.toHaveClass('ring-amber-500');
+      // Assert: the error sr-only label is present
+      expect(screen.getByText('Step has validation errors')).toBeInTheDocument();
+      // Assert: neither cost-band sr-only label was rendered
+      expect(
+        screen.queryByText('Step projected to consume a large share of the cost cap')
+      ).toBeNull();
+      expect(
+        screen.queryByText('Step alone projected to exceed the per-execution cost cap')
+      ).toBeNull();
+    });
+
+    it('costBand suppresses the selected ring when costBand="warn"', () => {
+      // Arrange: node is selected AND has a warn cost band.
+      // The ring-primary selection ring must be suppressed in favour of the amber band ring.
+      renderNode({ label: 'Summarise', type: 'llm_call', config: {}, costBand: 'warn' }, true);
+      const node = screen.getByTestId('pattern-node-llm_call');
+
+      // Assert: amber ring is applied (the cost band wins)
+      expect(node).toHaveClass('ring-amber-500');
+      // Assert: the selection ring-primary class is NOT present
+      expect(node).not.toHaveClass('ring-primary');
     });
   });
 

@@ -52,6 +52,10 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    // Scheduler resolves the per-execution cap on every tick.
+    aiOrchestrationSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -192,6 +196,7 @@ describe('background workflow crash flow (e2e)', () => {
           id: WORKFLOW_ID,
           slug: WORKFLOW_SLUG,
           isActive: true,
+          maxCostPerExecutionUsd: null,
           publishedVersion: { id: 'wfv-1', snapshot: VALID_DEFINITION },
         },
       },

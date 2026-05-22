@@ -63,6 +63,12 @@ vi.mock('@/lib/db/client', () => ({
     aiAdminAuditLog: {
       create: vi.fn(),
     },
+    // The route resolves the per-execution cap on every trigger fire.
+    // Default null = no org cap so existing assertions about uncapped
+    // executions still hold.
+    aiOrchestrationSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -134,6 +140,11 @@ function makeTriggerRow(overrides: Record<string, unknown> = {}) {
     workflow: {
       id: WORKFLOW_ID,
       slug: WORKFLOW_SLUG,
+      // No per-workflow cap by default — keeps the existing
+      // execution-create assertions valid (no budgetLimitUsd on the
+      // row). Tests that exercise the workflow-default cap path can
+      // override this with a numeric value.
+      maxCostPerExecutionUsd: null,
       publishedVersion: {
         id: VERSION_ID,
         snapshot: VALID_SNAPSHOT,

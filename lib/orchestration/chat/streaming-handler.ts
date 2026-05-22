@@ -48,6 +48,7 @@ import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-reso
 import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -405,6 +406,51 @@ export class StreamingChatHandler {
         return;
       }
 
+      // Resolve the effective per-turn cost cap lazily.
+      //
+      // Improvement #39 — runaway-loop guard for chat. The check itself
+      // runs inside the tool loop after every LLM cost. `undefined`
+      // means "no per-turn cap" — the monthly budget above still
+      // applies.
+      //
+      // Lazy resolution: most turns have no cap to enforce, and the
+      // resolution requires reading the settings singleton. We defer
+      // that I/O until the first LLM cost is recorded, then cache
+      // the result for the rest of the loop. Agents that explicitly
+      // set their own cap skip the settings lookup entirely.
+      let maxCostPerTurnUsd: number | undefined | null = null; // null = "not yet resolved"
+      const resolvePerTurnCap = async (): Promise<number | undefined> => {
+        if (maxCostPerTurnUsd !== null) return maxCostPerTurnUsd;
+        if (agent.maxCostPerTurnUsd !== null && agent.maxCostPerTurnUsd !== undefined) {
+          maxCostPerTurnUsd = resolveMaxCostPerTurn({
+            agentDefault: agent.maxCostPerTurnUsd,
+            settingsDefault: null,
+          });
+          return maxCostPerTurnUsd;
+        }
+        // Settings lookup is best-effort. If it fails (DB hiccup,
+        // partial migration), treat as "no org cap" rather than
+        // killing the chat — the user's request shouldn't fail
+        // because the OPS table is briefly unavailable.
+        try {
+          const turnCapSettings = await getOrchestrationSettings();
+          maxCostPerTurnUsd = resolveMaxCostPerTurn({
+            agentDefault: null,
+            settingsDefault: turnCapSettings.defaultMaxCostPerTurnUsd,
+          });
+        } catch (err) {
+          log.warn(
+            'Failed to load orchestration settings for per-turn cost cap; proceeding uncapped',
+            {
+              agentId: agent.id,
+              error: err instanceof Error ? err.message : String(err),
+            }
+          );
+          maxCostPerTurnUsd = undefined;
+        }
+        return maxCostPerTurnUsd;
+      };
+
       // Attachment gate — fail fast before persisting a user message or
       // creating a conversation if the request carries attachments that
       // the agent or platform cannot serve. Three orthogonal checks
@@ -624,11 +670,25 @@ export class StreamingChatHandler {
       // so the summary covers exactly the dropped messages).
       let conversationSummary: string | undefined;
       let summarizerSideEffect: SideEffectModelUsage | undefined;
-      const historyRows = history.map((m) => ({
-        role: m.role,
-        content: m.content,
-        toolCallId: m.toolCallId,
-      }));
+      const historyRows = history.map((m) => {
+        // Rehydrate tool_calls the assistant requested on this turn so
+        // the next LLM call's history has them. Persisted in metadata
+        // because `AiMessage` has no scalar column for them; without
+        // this rehydration, tool-call-only assistant turns (common for
+        // reasoning models) leave the following `tool` rows orphaned
+        // and OpenAI returns HTTP 400.
+        const metadata = (m.metadata ?? null) as MessageMetadata | null;
+        const toolCalls =
+          m.role === 'assistant' && metadata?.toolCalls && metadata.toolCalls.length > 0
+            ? metadata.toolCalls
+            : null;
+        return {
+          role: m.role,
+          content: m.content,
+          toolCallId: m.toolCallId,
+          ...(toolCalls ? { toolCalls } : {}),
+        };
+      });
       const effectiveMessageCap =
         typeof agent.maxHistoryMessages === 'number' && agent.maxHistoryMessages >= 0
           ? agent.maxHistoryMessages
@@ -826,6 +886,25 @@ export class StreamingChatHandler {
        * exotic; the single-workflow case is overwhelmingly common.
        */
       const turnWorkflowExecutionIds: string[] = [];
+
+      /**
+       * In-process running total of THIS user turn's LLM cost — the
+       * value the per-turn cap is checked against. Scoped to this
+       * generator invocation (one user message turn). Updated after
+       * every LLM iteration via `calculateCost` BEFORE the
+       * fire-and-forget `logCost` write so the check never depends on
+       * the DB write completing.
+       *
+       * Limitation: only LLM cost is summed here. Tool capabilities
+       * that invoke their own LLMs (`search_knowledge_base` embedding,
+       * the rolling summariser) log their own cost rows but do not
+       * return `costUsd` from `CapabilityResult`, so they are not
+       * counted toward the per-turn cap in this version. The runaway
+       * cases this guard targets (reflect/orchestrator/tool loops that
+       * keep round-tripping the chat LLM) are still fully covered. See
+       * `.context/orchestration/chat.md`.
+       */
+      let turnCostUsd = 0;
 
       let iteration = 0;
       while (iteration < MAX_TOOL_ITERATIONS) {
@@ -1107,14 +1186,28 @@ export class StreamingChatHandler {
 
         // Persist assistant message AFTER output guard (blocked responses
         // are never saved). Tool-call turns also persist here so the
-        // conversation history is complete for the next LLM iteration.
+        // conversation history is complete for the next LLM iteration —
+        // including reasoning-model turns that emit only `tool_calls`
+        // with no text. Without persisting the tool_calls envelope on
+        // those turns, the following `tool` rows are orphaned and
+        // OpenAI rejects the next history rebuild with HTTP 400.
         // Citations are only attached to the terminal turn (no tool calls
         // pending) — they describe the sources the LLM cited in its final
         // text, so interim tool-call turns don't carry them.
-        if (assistantText.length > 0) {
+        if (assistantText.length > 0 || toolCalls.size > 0) {
           const isTerminalTurn = toolCalls.size === 0;
           const assistantMetadata: MessageMetadata = {};
           const assistantProvenance: MessageProvenance = {};
+          // Persist the tool_calls envelope so the next turn's history
+          // rebuild can hand them back to the LLM. Required for OpenAI's
+          // tool-message ordering invariant; harmless for Anthropic.
+          if (toolCalls.size > 0) {
+            assistantMetadata.toolCalls = [...toolCalls.values()].map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: tc.arguments,
+            }));
+          }
           // TS narrows `usage` (a closure-captured `let`) to its initial
           // `null` value at this point because the closure mutation inside
           // `withSpanGenerator` isn't visible to flow analysis. The cast
@@ -1239,6 +1332,13 @@ export class StreamingChatHandler {
           // Cast re-bind: see comment above the assistantMetadata block.
           const u = usage as { inputTokens: number; outputTokens: number } | null;
           if (u) {
+            // Update the per-turn running total BEFORE the
+            // fire-and-forget DB write so the check below never depends
+            // on a successful logCost. Terminal turn: no further
+            // iteration, so even a breach here is informational — we're
+            // already returning. We still increment so trace + emitted
+            // metadata reflect the true turn cost.
+            turnCostUsd += calculateCost(resolvedModel, u.inputTokens, u.outputTokens).totalCostUsd;
             void logCost({
               agentId: agent.id,
               conversationId: conversation.id,
@@ -1256,6 +1356,53 @@ export class StreamingChatHandler {
           if (citations.length > 0) {
             yield { type: 'citations', citations };
           }
+
+          // Per-turn cap — terminal-turn surface.
+          //
+          // The mid-loop cap (further down) hard-stops the tool loop
+          // before another iteration costs more. On terminal turns the
+          // LLM stream has already completed; we know the cost only
+          // after `usage` arrives, so there is nothing left to abort.
+          // We still emit `budget_exceeded_per_turn` so the user sees
+          // the cap was breached and can raise it (or pick a cheaper
+          // model) — without that signal the cap silently does nothing
+          // on chats that resolve in a single iteration, which is the
+          // common case for Q&A-shaped advisor agents.
+          //
+          // Order matters: cap must be emitted BEFORE `done`. The UI's
+          // `done` handler `return`s from the SSE read loop (anything
+          // after it is dropped client-side); the cap handler is
+          // designed to set the error panel and fall through, letting
+          // `done` follow to update the message's cost / tokenUsage
+          // strip. Both events land; the assistant message shows the
+          // answer + cost, and the cap panel surfaces underneath.
+          const terminalCap = await resolvePerTurnCap();
+          if (terminalCap !== undefined && turnCostUsd > terminalCap) {
+            log.warn('Chat per-turn cap exceeded on terminal turn', {
+              agentId: agent.id,
+              agentSlug: agent.slug,
+              conversationId: conversation.id,
+              iteration,
+              turnCostUsd,
+              maxCostPerTurnUsd: terminalCap,
+            });
+            void dispatchWebhookEvent('chat_budget_exceeded_per_turn', {
+              agentId: agent.id,
+              agentSlug: agent.slug,
+              conversationId: conversation.id,
+              usedUsd: turnCostUsd,
+              limitUsd: terminalCap,
+              iteration,
+            });
+            yield {
+              type: 'budget_exceeded_per_turn',
+              code: 'budget_exceeded_per_turn',
+              message: `This response cost $${turnCostUsd.toFixed(4)}, which exceeded the agent's per-turn cost limit of $${terminalCap.toFixed(4)}. The answer was delivered because the LLM stream completed in a single iteration; ask an admin to raise the cap or pick a cheaper model.`,
+              usedUsd: turnCostUsd,
+              limitUsd: terminalCap,
+            };
+          }
+
           yield buildDoneEvent(
             resolvedModel,
             u,
@@ -1269,11 +1416,20 @@ export class StreamingChatHandler {
           return;
         }
 
-        // Tool call path — log cost for this LLM turn, then re-check
-        // budget before dispatching tools (which will trigger another
-        // LLM turn that costs more).
+        // Tool call path — log cost for this LLM turn, update the
+        // per-turn running total, then re-check both the per-turn cap
+        // and the monthly budget before dispatching tools (which will
+        // trigger another LLM turn that costs more).
         const turnUsage = usage as { inputTokens: number; outputTokens: number } | null;
         if (turnUsage) {
+          // Increment the in-process running total BEFORE the
+          // fire-and-forget logCost — the per-turn check below must
+          // never depend on a successful DB write.
+          turnCostUsd += calculateCost(
+            resolvedModel,
+            turnUsage.inputTokens,
+            turnUsage.outputTokens
+          ).totalCostUsd;
           void logCost({
             agentId: agent.id,
             conversationId: conversation.id,
@@ -1285,6 +1441,80 @@ export class StreamingChatHandler {
             traceId: llmTraceId,
             spanId: llmSpanId,
           });
+        }
+
+        // Per-turn cap — improvement #39 runaway-loop guard.
+        //
+        // Fires when the running per-turn LLM cost crosses the agent's
+        // (or settings-default) cap. Hard-stop: emit the discrete
+        // `budget_exceeded_per_turn` SSE event, persist whatever the
+        // LLM streamed so far as a partial assistant message with
+        // `endedReason: 'budget_exceeded'`, fire the
+        // `chat.budget_exceeded_per_turn` webhook, and return without
+        // dispatching the requested tools.
+        //
+        // The in-flight LLM stream is already complete here (we only
+        // know cost AFTER the stream returns token usage), so "hard
+        // stop" practically means "no more iterations" — the next
+        // tool dispatch + LLM round-trip is skipped. Tools that were
+        // already requested in this iteration are NOT dispatched.
+        const turnCap = await resolvePerTurnCap();
+        if (turnCap !== undefined && turnCostUsd > turnCap) {
+          const userMessage = `This response stopped early to stay within the agent's per-turn cost limit ($${turnCap.toFixed(4)}). Try a more specific question or break the request into smaller steps.`;
+          log.warn('Chat per-turn cap exceeded — aborting tool loop', {
+            agentId: agent.id,
+            agentSlug: agent.slug,
+            conversationId: conversation.id,
+            iteration,
+            turnCostUsd,
+            maxCostPerTurnUsd: turnCap,
+          });
+          // Persist the partial assistant message so a reload renders
+          // what was streamed plus the cap-breach marker. assistantText
+          // is whatever the LLM emitted before this iteration's tool
+          // call request; it may be empty for tool-first responses,
+          // which is fine — the metadata marker is the load-bearing
+          // bit for replay.
+          await this.persistMessage({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: assistantText,
+            modelId: resolvedModel,
+            providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+            metadata: {
+              endedReason: 'budget_exceeded',
+              budgetExceededDetail: {
+                usedUsd: turnCostUsd,
+                limitUsd: turnCap,
+              },
+              ...(turnUsage
+                ? {
+                    tokenUsage: {
+                      inputTokens: turnUsage.inputTokens,
+                      outputTokens: turnUsage.outputTokens,
+                      totalTokens: turnUsage.inputTokens + turnUsage.outputTokens,
+                    },
+                  }
+                : {}),
+              costUsd: turnCostUsd,
+            },
+          });
+          void dispatchWebhookEvent('chat_budget_exceeded_per_turn', {
+            agentId: agent.id,
+            agentSlug: agent.slug,
+            conversationId: conversation.id,
+            usedUsd: turnCostUsd,
+            limitUsd: turnCap,
+            iteration,
+          });
+          yield {
+            type: 'budget_exceeded_per_turn',
+            code: 'budget_exceeded_per_turn',
+            message: userMessage,
+            usedUsd: turnCostUsd,
+            limitUsd: turnCap,
+          };
+          return;
         }
 
         // Re-check budget before the next tool-loop iteration (locked to

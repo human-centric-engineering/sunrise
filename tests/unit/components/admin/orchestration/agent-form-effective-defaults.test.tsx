@@ -113,6 +113,7 @@ function makeSystemSeededAgent(): AiAgent {
     maxTokens: 4096,
     reasoningEffort: null,
     monthlyBudgetUsd: null,
+    maxCostPerTurnUsd: null,
     isActive: true,
     isSystem: true,
     createdBy: 'system',

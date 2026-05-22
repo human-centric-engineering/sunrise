@@ -36,6 +36,7 @@ import {
   stepFailed,
   approvalRequired,
   budgetWarning,
+  workflowBudgetExceeded,
   workflowCompleted,
   workflowFailed,
 } from '@/lib/orchestration/engine/events';
@@ -219,6 +220,54 @@ describe('Event factory helpers', () => {
           expect.objectContaining({
             failedStepId: 'step-6',
             error: 'raw string error',
+          })
+        );
+      });
+    });
+  });
+
+  describe('workflowBudgetExceeded', () => {
+    it('returns an event carrying usedUsd, limitUsd, and the failed step id', () => {
+      const event = workflowBudgetExceeded(1.5, 1.0, 'step-llm');
+      expect(event).toEqual({
+        type: 'workflow_budget_exceeded',
+        usedUsd: 1.5,
+        limitUsd: 1.0,
+        failedStepId: 'step-llm',
+      });
+    });
+
+    it('dispatches the `workflow_budget_exceeded` webhook with the supplied context', () => {
+      workflowBudgetExceeded(1.5, 1.0, 'step-llm', 'exec-123');
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('workflow_budget_exceeded', {
+        usedUsd: 1.5,
+        limitUsd: 1.0,
+        failedStepId: 'step-llm',
+        executionId: 'exec-123',
+      });
+    });
+
+    it('omits executionId from the webhook payload when not supplied', () => {
+      workflowBudgetExceeded(1.5, 1.0, 'step-llm');
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('workflow_budget_exceeded', {
+        usedUsd: 1.5,
+        limitUsd: 1.0,
+        failedStepId: 'step-llm',
+      });
+    });
+
+    it('does not throw when the webhook dispatch rejects — logs a warning instead', async () => {
+      vi.mocked(dispatchWebhookEvent).mockRejectedValueOnce(new Error('Webhook offline'));
+
+      // Synchronous call must not throw — return the event for the caller to yield.
+      expect(() => workflowBudgetExceeded(1.5, 1.0, 'step-llm', 'exec-456')).not.toThrow();
+
+      await vi.waitFor(() => {
+        expect(logger.warn).toHaveBeenCalledWith(
+          'Webhook dispatch failed for workflow_budget_exceeded',
+          expect.objectContaining({
+            failedStepId: 'step-llm',
+            error: 'Webhook offline',
           })
         );
       });

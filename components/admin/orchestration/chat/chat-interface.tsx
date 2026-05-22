@@ -699,32 +699,25 @@ export function ChatInterface({
     ...typingAnimationOptions,
   });
 
-  // Update last assistant message when displayText changes (typing animation).
-  //
-  // Bail when the buffer is empty AND we're not actively streaming or
-  // animating: that combination is the post-mount initial state, and
-  // running setMessages there would race the hydration effect's restore
-  // and silently wipe a rehydrated assistant turn (the callback always
-  // sees the latest committed state, so it observes the restored
-  // content as "different from the empty buffer" and overwrites it).
-  // Once a turn is in flight the buffer is the source of truth again.
-  useEffect(() => {
-    if (!enableTypingAnimation) return;
-    if (!streaming && !typing.isAnimating && !typing.displayText) return;
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (!last || last.role !== 'assistant') return prev;
-      if (last.content === typing.displayText) return prev;
-      const updated = [...prev];
-      updated[updated.length - 1] = { ...last, content: typing.displayText };
-      return updated;
-    });
-  }, [typing.displayText, typing.isAnimating, streaming, enableTypingAnimation]);
+  // Note: we deliberately do NOT mirror `typing.displayText` into
+  // `messages[last].content` on every rAF tick. Doing so created a
+  // setState-per-frame cascade (rAF → setDisplayText → effect →
+  // setMessages → render → next rAF) that tripped React 19's update-
+  // depth detector under bursty SSE — even though each link in the
+  // chain is individually bounded, the cumulative state shuffle
+  // through a long response was enough to trigger "Maximum update
+  // depth exceeded" at the rAF setDisplayText site. Instead, the
+  // renderer reads `typing.displayText` directly for the streaming-
+  // tail assistant message; `messages[last].content` only gets
+  // updated when the turn settles (`done` / `content_reset`).
 
-  // Scroll to bottom when messages change
+  // Scroll to bottom when messages change OR when the typing buffer
+  // grows. Tracking `typing.displayText` keeps the auto-scroll in
+  // sync during animated streaming without forcing a setMessages on
+  // every frame.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, typing.displayText]);
 
   // Restore focus to the input when a turn completes so the user can
   // type the next message without clicking back in. The `disabled`
@@ -947,51 +940,76 @@ export function ChatInterface({
                 await ensureMinThinking();
                 setError(getUserFacingError(code));
                 return;
+              } else if (parsed.type === 'budget_exceeded_per_turn') {
+                // Discrete cap event — render the friendly cap message.
+                //
+                // The streaming handler emits this BEFORE `done` on the
+                // terminal-turn surface (so cost/usage from `done` still
+                // updates the message strip) and AS the final event on
+                // the mid-loop hard-stop surface (no `done` follows).
+                // In both cases we want to set the error panel and
+                // keep reading — anything after this either updates
+                // the message (terminal) or never arrives (mid-loop,
+                // where the SSE stream closes naturally on the next
+                // reader.read() returning done=true).
+                await ensureMinThinking();
+                setError(getUserFacingError('budget_exceeded_per_turn'));
               } else if (parsed.type === 'done') {
                 setWarning(null);
                 typing.flush();
-                if (showInlineTrace) {
-                  const typed = parseChatStreamEvent(block);
-                  if (typed?.type === 'done') {
-                    const costUsd = typed.costUsd;
-                    const tokenUsage = typed.tokenUsage;
-                    const modelUsed = typed.model;
-                    const inputBreakdown = typed.inputBreakdown;
-                    const sideEffectModels = typed.sideEffectModels;
-                    if (
-                      typeof costUsd === 'number' ||
-                      tokenUsage !== undefined ||
-                      typeof modelUsed === 'string' ||
-                      inputBreakdown !== undefined ||
-                      (sideEffectModels && sideEffectModels.length > 0)
-                    ) {
-                      setMessages((prev) => {
-                        const updated = [...prev];
-                        const last = updated[updated.length - 1];
-                        if (!last || last.role !== 'assistant') return prev;
-                        updated[updated.length - 1] = {
-                          ...last,
-                          ...(typeof costUsd === 'number' ? { costUsd } : {}),
-                          ...(tokenUsage ? { tokenUsage } : {}),
-                          ...(typeof modelUsed === 'string' ? { modelUsed } : {}),
-                          ...(inputBreakdown ? { inputBreakdown } : {}),
-                          ...(sideEffectModels && sideEffectModels.length > 0
-                            ? { sideEffectModels }
-                            : {}),
-                        };
-                        return updated;
-                      });
-                    }
-                  }
-                }
+                // Settle the final content into messages state. During
+                // animated streaming the renderer reads typing.displayText
+                // directly so msg.content stays empty until now — the
+                // single commit here is what gets persisted to
+                // localStorage and shown after `streaming` flips false.
+                const typedDone = showInlineTrace ? parseChatStreamEvent(block) : null;
+                const doneCostUsd = typedDone?.type === 'done' ? typedDone.costUsd : undefined;
+                const doneTokenUsage =
+                  typedDone?.type === 'done' ? typedDone.tokenUsage : undefined;
+                const doneModelUsed = typedDone?.type === 'done' ? typedDone.model : undefined;
+                const doneInputBreakdown =
+                  typedDone?.type === 'done' ? typedDone.inputBreakdown : undefined;
+                const doneSideEffectModels =
+                  typedDone?.type === 'done' ? typedDone.sideEffectModels : undefined;
+                setMessages((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (!last || last.role !== 'assistant') return prev;
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: fullText,
+                    ...(typeof doneCostUsd === 'number' ? { costUsd: doneCostUsd } : {}),
+                    ...(doneTokenUsage ? { tokenUsage: doneTokenUsage } : {}),
+                    ...(typeof doneModelUsed === 'string' ? { modelUsed: doneModelUsed } : {}),
+                    ...(doneInputBreakdown ? { inputBreakdown: doneInputBreakdown } : {}),
+                    ...(doneSideEffectModels && doneSideEffectModels.length > 0
+                      ? { sideEffectModels: doneSideEffectModels }
+                      : {}),
+                  };
+                  return updated;
+                });
                 onStreamComplete?.(fullText);
                 return;
               }
             }
           }
 
-          // Stream ended without a done/error event — treat as complete
+          // Stream ended without a done/error event — treat as complete.
+          // Settle the typing buffer into the message so partial content
+          // survives the streaming→idle transition (otherwise the
+          // renderer falls back to the empty msg.content once
+          // `streaming` flips false).
           typing.flush();
+          if (fullText.length > 0) {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (!last || last.role !== 'assistant') return prev;
+              if (last.content === fullText) return prev;
+              const updated = [...prev];
+              updated[updated.length - 1] = { ...last, content: fullText };
+              return updated;
+            });
+          }
           return;
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') return;
@@ -1277,8 +1295,17 @@ export function ChatInterface({
         )}
 
         {messages.map((msg, i) => {
-          const isStreamingTail =
-            streaming && msg.role === 'assistant' && i === messages.length - 1 && !!msg.content;
+          const isLastAssistant = msg.role === 'assistant' && i === messages.length - 1;
+          // During animated streaming the buffer lives in the typing
+          // hook's `displayText` state; `msg.content` is empty until
+          // `done` settles. Read directly from the hook here so the
+          // last assistant turn renders progressively without
+          // mirroring every rAF tick through setMessages.
+          const liveContent =
+            isLastAssistant && enableTypingAnimation && (typing.isAnimating || streaming)
+              ? typing.displayText
+              : msg.content;
+          const isStreamingTail = streaming && isLastAssistant && !!liveContent;
           return (
             <div key={i} className="flex font-mono text-sm leading-relaxed">
               <span
@@ -1291,13 +1318,13 @@ export function ChatInterface({
                 {msg.role === 'user' ? '❯' : ' '}
               </span>
               <div className="min-w-0 flex-1">
-                {isLastAssistantEmpty(i, msg) && !msg.pendingApproval ? (
+                {isLastAssistantEmpty(i, msg) && !liveContent && !msg.pendingApproval ? (
                   <ThinkingIndicator message={status} />
                 ) : msg.role === 'assistant' ? (
                   <>
-                    {msg.content && (
+                    {liveContent && (
                       <MessageWithCitations
-                        content={msg.content}
+                        content={liveContent}
                         citations={msg.citations}
                         panelMode="external"
                         onCitationClick={() =>
@@ -1330,7 +1357,7 @@ export function ChatInterface({
                       showInlineTrace={showInlineTrace}
                     />
                     {/* Inline status during streaming — shown below content */}
-                    {streaming && msg.content && i === messages.length - 1 && status && (
+                    {streaming && liveContent && i === messages.length - 1 && status && (
                       <div className="text-muted-foreground mt-1 text-xs italic">{status}</div>
                     )}
                   </>

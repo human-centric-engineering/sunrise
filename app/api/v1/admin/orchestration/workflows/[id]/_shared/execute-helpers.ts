@@ -15,10 +15,11 @@ import { validateWorkflow, semanticValidateWorkflow } from '@/lib/orchestration/
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
+import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 interface PrepareResult {
-  workflow: { id: string };
+  workflow: { id: string; maxCostPerExecutionUsd: number | null };
   version: { id: string; version: number };
   definition: WorkflowDefinition;
 }
@@ -140,8 +141,39 @@ export async function prepareWorkflowExecution(
   }
 
   return {
-    workflow: { id: workflow.id },
+    workflow: {
+      id: workflow.id,
+      maxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd,
+    },
     version: { id: resolvedVersion.id, version: resolvedVersion.version },
     definition,
   };
+}
+
+/**
+ * Resolve the effective per-execution cost cap for a workflow run.
+ *
+ * Loads the `AiOrchestrationSettings` singleton once and combines with
+ * the caller's explicit override (if any) and the workflow's own
+ * default via the resolver in `lib/orchestration/llm/cost-caps.ts`.
+ *
+ * Returns `undefined` when no layer sets a value; the engine treats
+ * that as "no per-execution cap" (only the agent's monthly budget
+ * still applies). The resolved value is persisted onto
+ * `AiWorkflowExecution.budgetLimitUsd` by the engine so resumes and
+ * the lease-reaper path inherit it without re-resolving.
+ */
+export async function resolveEffectiveExecutionCap(args: {
+  callerOverride: number | null | undefined;
+  workflowDefault: number | null | undefined;
+}): Promise<number | undefined> {
+  const settings = await prisma.aiOrchestrationSettings.findUnique({
+    where: { slug: 'global' },
+    select: { defaultMaxCostPerExecutionUsd: true },
+  });
+  return resolveMaxCostPerExecution({
+    callerOverride: args.callerOverride,
+    workflowDefault: args.workflowDefault,
+    settingsDefault: settings?.defaultMaxCostPerExecutionUsd ?? null,
+  });
 }

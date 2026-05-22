@@ -22,6 +22,13 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflow: {
       findUnique: vi.fn(),
     },
+    // Required by resolveEffectiveExecutionCap — the route loads the
+    // settings singleton on every execute call to read the org-wide
+    // per-execution default. Default mock resolves to null so the
+    // existing "no cap" expectations on these tests still hold.
+    aiOrchestrationSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -110,6 +117,11 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
+    // Default to no per-workflow cap — the existing assertions on these
+    // tests check that the engine sees the caller-supplied budget (or
+    // undefined). Tests that want to exercise the workflow-default
+    // resolution path override with `maxCostPerExecutionUsd: 1.5`.
+    maxCostPerExecutionUsd: null,
     draftDefinition: null,
     publishedVersionId: 'wfv-1',
     publishedVersion: { id: 'wfv-1', version: 1, snapshot },

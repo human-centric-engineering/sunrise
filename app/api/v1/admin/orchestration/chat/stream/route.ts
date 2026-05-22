@@ -20,8 +20,10 @@ import { sseResponse } from '@/lib/api/sse';
 import { errorResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
+import { prisma } from '@/lib/db/client';
 import {
   adminLimiter,
+  agentChatLimiter,
   chatLimiter,
   createRateLimitResponse,
   imageLimiter,
@@ -43,6 +45,26 @@ export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, chatStreamRequestSchema);
   const requestId = await getRequestId();
+
+  // Per-agent rate limit (honours `agent.rateLimitRpm`). Mirrors the
+  // consumer route so the field works the same way regardless of which
+  // surface initiates the turn — the bucket key is `${agentId}:${userId}`
+  // and is shared with the consumer limiter, so a user can't bypass
+  // their per-agent throttle by switching surfaces. The lookup is a
+  // single indexed find and is intentionally separate from the heavier
+  // agent resolution inside `streamChat`.
+  const agent = await prisma.aiAgent.findUnique({
+    where: { slug: body.agentSlug },
+    select: { id: true, rateLimitRpm: true },
+  });
+  if (!agent) {
+    return errorResponse(`Agent "${body.agentSlug}" not found`, {
+      code: 'NOT_FOUND',
+      status: 404,
+    });
+  }
+  const agentLimit = agentChatLimiter.check(`${agent.id}:${session.user.id}`, agent.rateLimitRpm);
+  if (!agentLimit.success) return createRateLimitResponse(agentLimit);
 
   // Attachment-bearing turns get an extra rate-limit bucket + magic-
   // byte validation before reaching the orchestration handler. Per-

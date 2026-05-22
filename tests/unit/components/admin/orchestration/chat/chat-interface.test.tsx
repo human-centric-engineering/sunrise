@@ -159,6 +159,35 @@ describe('ChatInterface', () => {
     expect(body.agentSlug).toBe('test-agent');
   });
 
+  it('renders streamed content from typing.displayText without mirroring per-tick to messages', async () => {
+    // Regression: a prior implementation mirrored typing.displayText
+    // into messages[last].content on every rAF tick via a useEffect
+    // dependency. Under bursty SSE that triggered React 19's
+    // "Maximum update depth exceeded" at the rAF setDisplayText
+    // site. The renderer now reads the typing buffer directly and
+    // only commits to messages on `done` / `content_reset` / stream
+    // end. The visible content still appears progressively.
+    const user = userEvent.setup();
+    // Many content frames in close succession — the SSE shape that
+    // tripped the old loop. We do not assert on intermediate state;
+    // arriving at the final text without an unbounded render loop
+    // is the contract.
+    const deltas = Array.from({ length: 40 }, (_, i) => contentFrame(`chunk${i} `));
+    const stream = makeSseStream([startFrame('conv-1', 'msg-1'), ...deltas, doneFrame()]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => {
+      // After done settles, the message text contains the full payload.
+      expect(screen.getByText(/chunk39/)).toBeInTheDocument();
+    });
+  });
+
   it('renders user and assistant messages during streaming', async () => {
     const user = userEvent.setup();
     const stream = makeSseStream([
@@ -205,6 +234,87 @@ describe('ChatInterface', () => {
     );
 
     expect(document.body.textContent ?? '').not.toContain(SECRET);
+  });
+
+  it('renders the cap message when a budget_exceeded_per_turn frame arrives', async () => {
+    // The streaming handler emits a discrete `budget_exceeded_per_turn`
+    // event (not the generic `error` event) when the per-turn cost cap
+    // is breached. The UI must convert it into the friendly cap copy —
+    // otherwise the stream ends silently or, worse, the user sees the
+    // scary "Something Went Wrong" default.
+    const user = userEvent.setup();
+    const capFrame =
+      `event: budget_exceeded_per_turn\n` +
+      `data: ${JSON.stringify({
+        code: 'budget_exceeded_per_turn',
+        message:
+          "This response stopped early to stay within the agent's per-turn cost limit ($0.0200).",
+        usedUsd: 0.03,
+        limitUsd: 0.02,
+      })}\n\n`;
+    const stream = makeSseStream([startFrame('conv-1', 'msg-1'), capFrame]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'Hi');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(
+      () => {
+        // getUserFacingError('budget_exceeded_per_turn') → title is
+        // exactly "Response Cost Limit Reached".
+        expect(screen.queryAllByText(/Response Cost Limit Reached/i).length).toBeGreaterThan(0);
+      },
+      { timeout: 3000 }
+    );
+
+    // Should NOT fall back to internal_error.
+    expect(screen.queryByText(/something went wrong/i)).not.toBeInTheDocument();
+  });
+
+  it('processes done AFTER budget_exceeded_per_turn on terminal-turn breaches', async () => {
+    // The terminal-turn cap surface yields cap BEFORE done so both
+    // frames land in the UI: the cap branch sets the error panel
+    // without returning, then `done` follows and updates the
+    // message's content via the SSE read loop. Regression for the
+    // bug where the UI's done handler returned from the read loop
+    // before the cap event arrived, eating the cap signal entirely.
+    const user = userEvent.setup();
+    const capFrame =
+      `event: budget_exceeded_per_turn\n` +
+      `data: ${JSON.stringify({
+        code: 'budget_exceeded_per_turn',
+        message: 'Capped',
+        usedUsd: 0.014,
+        limitUsd: 0.01,
+      })}\n\n`;
+    const stream = makeSseStream([
+      startFrame('conv-1', 'msg-1'),
+      contentFrame('Pattern 3 is the supervisor pattern.'),
+      capFrame,
+      doneFrame(),
+    ]);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: stream }));
+
+    render(<ChatInterface agentSlug="test-agent" />);
+
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'what is pattern 3');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    // Both the answer AND the cap panel render — proving the cap
+    // event did NOT short-circuit the read loop before done.
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Pattern 3 is the supervisor pattern/)).toBeInTheDocument();
+        expect(screen.queryAllByText(/Response Cost Limit Reached/i).length).toBeGreaterThan(0);
+      },
+      { timeout: 3000 }
+    );
   });
 
   it('calls onCapabilityResult when capability_result event arrives', async () => {

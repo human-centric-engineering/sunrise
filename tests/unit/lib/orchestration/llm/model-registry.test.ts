@@ -617,8 +617,11 @@ describe('parseOpenRouterEntry — entry.id has no provider prefix (no slash)', 
 });
 
 describe('parseOpenRouterEntry — missing optional pricing and metadata fields', () => {
-  it('defaults inputCostPerMillion and outputCostPerMillion to 0 when pricing is absent', async () => {
-    // Arrange: no pricing object at all → costs default to 0, tier classifies as 'local'
+  it('defaults pricing to 0 and classifies $0-priced cloud models as budget, NOT local', async () => {
+    // Locality is a deployment property, not a price property. A free /
+    // unpriced OpenRouter model is still cloud-hosted; previously
+    // classifyTier collapsed it into `'local'` which poisoned the
+    // Local vs. cloud savings panel with phantom savings.
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -639,7 +642,7 @@ describe('parseOpenRouterEntry — missing optional pricing and metadata fields'
     expect(model).toBeDefined();
     expect(model?.inputCostPerMillion).toBe(0);
     expect(model?.outputCostPerMillion).toBe(0);
-    expect(model?.tier).toBe('local');
+    expect(model?.tier).toBe('budget');
   });
 
   it('falls back to canonicalId as name when the name field is absent', async () => {
@@ -839,14 +842,16 @@ describe('registerModels', () => {
   it('merges externally-sourced models into the registry state', () => {
     // Used by the server-only `model-registry-db-hydrate.ts` module to
     // surface operator-curated rows (`AiProviderModel`) without
-    // requiring the registry itself to depend on Prisma.
-    expect(registry.getModel('gpt-5')).toBeUndefined();
+    // requiring the registry itself to depend on Prisma. Use a
+    // fictitious id so the test isn't coupled to whatever the fallback
+    // happens to ship.
+    expect(registry.getModel('acme-custom-thinker')).toBeUndefined();
 
     registry.registerModels([
       {
-        id: 'gpt-5',
-        name: 'GPT-5',
-        provider: 'openai',
+        id: 'acme-custom-thinker',
+        name: 'Acme Custom Thinker',
+        provider: 'acme',
         tier: 'frontier',
         inputCostPerMillion: 0,
         outputCostPerMillion: 0,
@@ -855,7 +860,7 @@ describe('registerModels', () => {
       },
     ]);
 
-    expect(registry.getModel('gpt-5')?.provider).toBe('openai');
+    expect(registry.getModel('acme-custom-thinker')?.provider).toBe('acme');
   });
 
   it('last-write-wins on key conflict — externally-sourced beats fallback', () => {
@@ -878,9 +883,126 @@ describe('registerModels', () => {
     expect(registry.getModel('gpt-4o-mini')?.name).toBe('GPT-4o Mini (Operator-curated)');
   });
 
+  it('preserves existing pricing when the incoming entry has zero cost', () => {
+    // AiProviderModel.costPerMillionTokens is nullable and many matrix
+    // rows leave it empty; dbModelToModelInfo coerces null → 0. If
+    // registerModels naively overrode the registry, that would clobber
+    // the OpenRouter / fallback pricing and zero out every cost
+    // estimate downstream (audit dialog showed $0.00 in dev because
+    // of this).
+    const before = registry.getModel('gpt-4o-mini');
+    expect(before?.inputCostPerMillion).toBeGreaterThan(0);
+    expect(before?.outputCostPerMillion).toBeGreaterThan(0);
+
+    registry.registerModels([
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o Mini',
+        provider: 'openai',
+        tier: 'budget',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 0,
+        supportsTools: true,
+      },
+    ]);
+
+    const after = registry.getModel('gpt-4o-mini');
+    expect(after?.inputCostPerMillion).toBe(before?.inputCostPerMillion);
+    expect(after?.outputCostPerMillion).toBe(before?.outputCostPerMillion);
+    expect(after?.maxContext).toBe(before?.maxContext);
+  });
+
+  it('does override pricing when the incoming entry has a non-zero cost', () => {
+    // Operators who genuinely want to override pricing for a local /
+    // custom model can still do so — only zero is treated as "unfilled".
+    registry.registerModels([
+      {
+        id: 'gpt-4o-mini',
+        name: 'GPT-4o Mini',
+        provider: 'openai',
+        tier: 'budget',
+        inputCostPerMillion: 1.23,
+        outputCostPerMillion: 4.56,
+        maxContext: 64_000,
+        supportsTools: true,
+      },
+    ]);
+
+    const after = registry.getModel('gpt-4o-mini');
+    expect(after?.inputCostPerMillion).toBe(1.23);
+    expect(after?.outputCostPerMillion).toBe(4.56);
+    expect(after?.maxContext).toBe(64_000);
+  });
+
   it('no-op when called with an empty array', () => {
     const before = registry.getAvailableModels().length;
     registry.registerModels([]);
     expect(registry.getAvailableModels().length).toBe(before);
+  });
+
+  it('does NOT overwrite the bare-id provider on a cross-provider collision', () => {
+    // `prisma/seeds/009-provider-models.ts` ships a `microsoft-azure-gpt-4o`
+    // matrix row (providerSlug='microsoft', modelId='gpt-4o') alongside
+    // OpenAI's `gpt-4o`. Before this guard, DB hydration's last-write-wins
+    // could flip `getModel('gpt-4o').provider` to `microsoft`, and the LLM
+    // runner would then try `getProvider('microsoft')` → ProviderError →
+    // "Provider \"microsoft\" unavailable" on every chat default call.
+    expect(registry.getModel('gpt-4o')?.provider).toBe('openai');
+
+    registry.registerModels([
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o (Azure)',
+        provider: 'microsoft',
+        tier: 'frontier',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 128_000,
+        supportsTools: true,
+      },
+    ]);
+
+    expect(registry.getModel('gpt-4o')?.provider).toBe('openai');
+  });
+
+  it('still enriches missing pricing on a cross-provider collision when existing entry has zero', () => {
+    // The previous test guarantees provider stability. This one covers
+    // the secondary path: when the existing bare-id entry is missing
+    // pricing (e.g. a stub fallback) but the cross-provider row carries
+    // a real number, fall the price through so cost estimates stay
+    // honest. Provider still does not flip.
+    registry.registerModels([
+      {
+        id: 'custom-stub',
+        name: 'Stub',
+        provider: 'providerA',
+        tier: 'mid',
+        inputCostPerMillion: 0,
+        outputCostPerMillion: 0,
+        maxContext: 0,
+        supportsTools: true,
+      },
+    ]);
+    expect(registry.getModel('custom-stub')?.provider).toBe('providerA');
+
+    registry.registerModels([
+      {
+        id: 'custom-stub',
+        name: 'Stub (B)',
+        provider: 'providerB',
+        tier: 'mid',
+        inputCostPerMillion: 2.5,
+        outputCostPerMillion: 7.5,
+        maxContext: 32_000,
+        supportsTools: true,
+      },
+    ]);
+
+    const after = registry.getModel('custom-stub');
+    expect(after?.provider).toBe('providerA');
+    expect(after?.inputCostPerMillion).toBe(2.5);
+    expect(after?.outputCostPerMillion).toBe(7.5);
+    expect(after?.maxContext).toBe(32_000);
   });
 });

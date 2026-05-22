@@ -35,6 +35,10 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflow: { findUnique: vi.fn() },
     aiWorkflowExecution: { findUnique: vi.fn() },
     aiWorkflowVersion: { findUnique: vi.fn() },
+    // resolveEffectiveExecutionCap loads the settings singleton — null
+    // (no row) = "no org default", which keeps the existing assertions
+    // (caller-supplied budget passes through unchanged) valid.
+    aiOrchestrationSettings: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -133,6 +137,9 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     description: 'A test workflow',
     isActive: true,
     isTemplate: false,
+    // No per-workflow cap by default — tests that exercise the
+    // workflow-default resolution path override with a numeric value.
+    maxCostPerExecutionUsd: null,
     draftDefinition: null,
     publishedVersionId: snapshot === null ? null : 'wfv-1',
     publishedVersion: snapshot === null ? null : { id: 'wfv-1', version: 1, snapshot },

@@ -93,6 +93,7 @@ export const POST = withAdminAuth(async (request, session) => {
         maxTokens: agent.maxTokens,
         reasoningEffort: reasoningEffortSchema.parse(agent.reasoningEffort),
         monthlyBudgetUsd: agent.monthlyBudgetUsd,
+        maxCostPerTurnUsd: agent.maxCostPerTurnUsd,
         metadata: jsonRecord.parse(agent.metadata),
         isActive: agent.isActive,
         fallbackProviders: agent.fallbackProviders,

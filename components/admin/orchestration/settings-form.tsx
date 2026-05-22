@@ -44,6 +44,16 @@ export interface OrchestrationSettings {
   outputGuardMode: string | null;
   citationGuardMode: string | null;
   globalMonthlyBudgetUsd: number | null;
+  /**
+   * Org-wide default for per-execution cost cap. Runaway-loop guard
+   * (improvement #39); null disables the default.
+   */
+  defaultMaxCostPerExecutionUsd: number | null;
+  /**
+   * Org-wide default for per-turn cost cap on chat. Runaway-loop
+   * guard (improvement #39); null disables the default.
+   */
+  defaultMaxCostPerTurnUsd: number | null;
   defaultApprovalTimeoutMs: number | null;
   approvalDefaultAction: string | null;
   searchConfig: {
@@ -85,6 +95,11 @@ const settingsFormSchema = z.object({
   citationGuardMode: z.enum(GUARD_MODES),
   // Limits
   globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
+  // Per-execution / per-turn defaults (improvement #39 runaway-loop
+  // guard). Min 0.01 matches the API-side validator; an empty field
+  // becomes null, which means "no org default."
+  defaultMaxCostPerExecutionUsd: nullableNumber.pipe(z.number().min(0.01).max(10_000).nullable()),
+  defaultMaxCostPerTurnUsd: nullableNumber.pipe(z.number().min(0.01).max(10_000).nullable()),
   maxConversationsPerUser: nullableNumber.pipe(z.number().int().positive().max(10_000).nullable()),
   maxMessagesPerConversation: nullableNumber.pipe(
     z.number().int().positive().max(10_000).nullable()
@@ -173,6 +188,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       outputGuardMode: guardModeToForm(initialSettings.outputGuardMode),
       citationGuardMode: guardModeToForm(initialSettings.citationGuardMode),
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
+      defaultMaxCostPerExecutionUsd: toStr(initialSettings.defaultMaxCostPerExecutionUsd),
+      defaultMaxCostPerTurnUsd: toStr(initialSettings.defaultMaxCostPerTurnUsd),
       maxConversationsPerUser: toStr(initialSettings.maxConversationsPerUser),
       maxMessagesPerConversation: toStr(initialSettings.maxMessagesPerConversation),
       stuckExecutionThresholdMins: toStr(initialSettings.stuckExecutionThresholdMins ?? null),
@@ -262,6 +279,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           outputGuardMode: guardModeToApi(values.outputGuardMode),
           citationGuardMode: guardModeToApi(values.citationGuardMode),
           globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
+          defaultMaxCostPerExecutionUsd: values.defaultMaxCostPerExecutionUsd,
+          defaultMaxCostPerTurnUsd: values.defaultMaxCostPerTurnUsd,
           maxConversationsPerUser: values.maxConversationsPerUser,
           maxMessagesPerConversation: values.maxMessagesPerConversation,
           // PATCH route only honours defined values. Sending null would
@@ -527,6 +546,55 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
             />
             {errors.globalMonthlyBudgetUsd && (
               <p className="text-xs text-red-600">{errors.globalMonthlyBudgetUsd.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="defaultMaxCostPerExecutionUsd" className="flex items-center gap-1">
+              Per-execution cap default (USD)
+              <FieldHelp title="Workflow runaway-loop guard">
+                Default cap on the total LLM + tool spend of a single workflow run. Workflows
+                without their own cap inherit this value. Each cron / inbound / webhook trigger also
+                inherits unless the caller passes an explicit override. Leave blank to apply no
+                default — workflows then run uncapped until you set a workflow-level value or the
+                caller supplies one. Independent of the monthly cap above.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="defaultMaxCostPerExecutionUsd"
+              type="number"
+              step="0.01"
+              min={0.01}
+              max={10_000}
+              placeholder="No default"
+              {...register('defaultMaxCostPerExecutionUsd')}
+            />
+            {errors.defaultMaxCostPerExecutionUsd && (
+              <p className="text-xs text-red-600">{errors.defaultMaxCostPerExecutionUsd.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="defaultMaxCostPerTurnUsd" className="flex items-center gap-1">
+              Per-turn cap default (USD)
+              <FieldHelp title="Chat runaway-loop guard">
+                Default cap on a single chat turn&apos;s LLM cost. Agents without their own per-turn
+                cap inherit this value. Protects against a tool loop that keeps round-tripping the
+                chat model. Leave blank to apply no default — chat turns then only respect the agent
+                monthly budget and this org-wide monthly budget.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="defaultMaxCostPerTurnUsd"
+              type="number"
+              step="0.01"
+              min={0.01}
+              max={10_000}
+              placeholder="No default"
+              {...register('defaultMaxCostPerTurnUsd')}
+            />
+            {errors.defaultMaxCostPerTurnUsd && (
+              <p className="text-xs text-red-600">{errors.defaultMaxCostPerTurnUsd.message}</p>
             )}
           </div>
 
@@ -940,6 +1008,11 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
                   />
                   Enable hybrid search (BM25 + vector)
                   <FieldHelp title="Enable hybrid search (BM25 + vector)">
+                    <strong>BM25</strong> stands for &ldquo;Best Match 25&rdquo; — a classic
+                    keyword-ranking algorithm (the &ldquo;BM&rdquo; is short for <em>Best Match</em>
+                    ).
+                    <br />
+                    <br />
                     When on, results are ranked by{' '}
                     <code>vectorWeight × vector_score + bm25Weight × keyword_score</code>, where{' '}
                     <code>keyword_score</code> is PostgreSQL&apos;s <code>ts_rank_cd</code> (a

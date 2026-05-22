@@ -458,7 +458,7 @@ describe('OrchestrationEngine', () => {
     });
   });
 
-  it('budget exceeded emits workflow_failed with "Budget exceeded"', async () => {
+  it('budget exceeded emits workflow_failed with a formatted "Budget exceeded" reason', async () => {
     registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 1 }));
 
     const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
@@ -470,7 +470,40 @@ describe('OrchestrationEngine', () => {
       { type: 'workflow_failed' }
     >;
     expect(failed).toBeDefined();
-    expect(failed.error).toBe('Budget exceeded');
+    // Stable "Budget exceeded" prefix so the executions list / live-engine
+    // page can style cap-breach rows (and integration tests can match).
+    expect(failed.error).toMatch(/^Budget exceeded\b/);
+    // Both running cost and cap are now embedded so the operator can
+    // see why the run failed without opening the trace viewer.
+    expect(failed.error).toContain('$1.0000');
+    expect(failed.error).toContain('$0.5000');
+  });
+
+  it('emits `workflow_budget_exceeded` immediately before `workflow_failed` on cap breach', async () => {
+    // Discrete event for webhook subscribers that want to wire the
+    // runaway-loop case to Slack / PagerDuty separately from generic
+    // step failures. Must precede `workflow_failed` so the more
+    // specific notification fires first.
+    registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 1 }));
+
+    const events = await collect(new OrchestrationEngine(), makeWorkflow(linearDefinition()), {
+      userId: USER_ID,
+      budgetLimitUsd: 0.5,
+    });
+    const types = events.map((e) => e.type);
+    const budgetIdx = types.indexOf('workflow_budget_exceeded');
+    const failedIdx = types.indexOf('workflow_failed');
+    expect(budgetIdx).toBeGreaterThan(-1);
+    expect(failedIdx).toBeGreaterThan(-1);
+    expect(budgetIdx).toBeLessThan(failedIdx);
+
+    const breach = events[budgetIdx] as Extract<
+      ExecutionEvent,
+      { type: 'workflow_budget_exceeded' }
+    >;
+    expect(breach.usedUsd).toBeCloseTo(1, 6);
+    expect(breach.limitUsd).toBe(0.5);
+    expect(breach.failedStepId).toBe('a');
   });
 
   it('budget overrun yields workflow_failed without step_completed for the over-budget step', async () => {
@@ -1976,7 +2009,12 @@ describe('OrchestrationEngine', () => {
       ExecutionEvent,
       { type: 'workflow_failed' }
     >;
-    expect(failed.error).toBe('Budget exceeded during parallel batch');
+    // Reason now embeds the running cost and the cap so the executions
+    // list / live-engine page can show the breach without opening the
+    // trace viewer. The "during parallel batch" qualifier is preserved
+    // so an operator can tell parallel-branch overruns apart from
+    // sequential ones.
+    expect(failed.error).toMatch(/^Budget exceeded during parallel batch\b/);
   });
 
   // ─── Parallel batch: budget warning after batch ───────────────────
@@ -2568,7 +2606,7 @@ describe('OrchestrationEngine', () => {
       { type: 'workflow_failed' }
     >;
     expect(failed).toBeDefined();
-    expect(failed.error).toBe('Budget exceeded');
+    expect(failed.error).toMatch(/^Budget exceeded\b/);
   });
 
   // ─── resume with non-completed trace entries ─────────────────────
@@ -2803,7 +2841,7 @@ describe('OrchestrationEngine', () => {
       ExecutionEvent,
       { type: 'workflow_failed' }
     >;
-    expect(failed.error).toBe('Budget exceeded');
+    expect(failed.error).toMatch(/^Budget exceeded\b/);
     expect(failed.failedStepId).toBe('a');
   });
 

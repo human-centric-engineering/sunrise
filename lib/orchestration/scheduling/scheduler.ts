@@ -19,6 +19,7 @@ import { logger } from '@/lib/logging';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { recordReleaseEvent } from '@/lib/orchestration/engine/lease';
+import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
@@ -201,6 +202,7 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           id: true,
           slug: true,
           isActive: true,
+          maxCostPerExecutionUsd: true,
           publishedVersion: { select: { id: true, snapshot: true } },
         },
       },
@@ -260,6 +262,23 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
         continue;
       }
 
+      // Cap resolution for the scheduled run: no caller override, so we
+      // fall through to the workflow default then the org-wide default.
+      // Cron-driven workflows are the canonical case for needing a hard
+      // cap — without one, a misbehaving reflect/orchestrator loop runs
+      // every cron tick and silently burns budget. The resolved value
+      // is persisted on the execution row so the resume / lease-reaper
+      // path inherits it without re-resolving.
+      const orgSettings = await prisma.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: { defaultMaxCostPerExecutionUsd: true },
+      });
+      const effectiveBudgetLimitUsd = resolveMaxCostPerExecution({
+        callerOverride: null,
+        workflowDefault: schedule.workflow.maxCostPerExecutionUsd,
+        settingsDefault: orgSettings?.defaultMaxCostPerExecutionUsd ?? null,
+      });
+
       // Create execution row, pinned to the resolved version
       const execution = await prisma.aiWorkflowExecution.create({
         data: {
@@ -269,6 +288,9 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           inputData: schedule.inputTemplate ?? {},
           executionTrace: [],
           userId: schedule.createdBy,
+          ...(effectiveBudgetLimitUsd !== undefined
+            ? { budgetLimitUsd: effectiveBudgetLimitUsd }
+            : {}),
         },
       });
 

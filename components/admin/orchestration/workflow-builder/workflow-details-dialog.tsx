@@ -80,16 +80,38 @@ export function WorkflowDetailsDialog({
     initial?.errorStrategy ?? 'fail'
   );
   const [isTemplate, setIsTemplate] = useState<boolean>(initial?.isTemplate ?? false);
+  // Empty string = "blank → inherit org default"; we only persist when
+  // the operator types something parseable. The server validator
+  // rejects values below $0.01 so a typo of `0` surfaces inline.
+  const [maxCostPerExecutionUsdInput, setMaxCostPerExecutionUsdInput] = useState<string>(
+    initial?.maxCostPerExecutionUsd != null ? String(initial.maxCostPerExecutionUsd) : ''
+  );
 
   const slug = slugOverride ?? slugify(workflowName);
 
   const slugValid = SLUG_REGEX.test(slug);
   const descriptionValid = description.trim().length > 0;
-  const canConfirm = slugValid && descriptionValid;
+  // Cap is optional. When provided, the value must parse to a finite
+  // positive number ≥ 0.01 — matches the API-side Zod constraint.
+  const trimmedCap = maxCostPerExecutionUsdInput.trim();
+  const parsedCap = trimmedCap === '' ? null : Number(trimmedCap);
+  const capValid =
+    parsedCap === null ||
+    (typeof parsedCap === 'number' &&
+      Number.isFinite(parsedCap) &&
+      parsedCap >= 0.01 &&
+      parsedCap <= 10_000);
+  const canConfirm = slugValid && descriptionValid && capValid;
 
   const handleConfirm = (): void => {
     if (!canConfirm) return;
-    onConfirm({ slug, description: description.trim(), errorStrategy, isTemplate });
+    onConfirm({
+      slug,
+      description: description.trim(),
+      errorStrategy,
+      isTemplate,
+      maxCostPerExecutionUsd: parsedCap,
+    });
   };
 
   return (
@@ -190,6 +212,38 @@ export function WorkflowDetailsDialog({
                 <SelectItem value="fallback">Fallback branch</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="details-max-cost-per-execution" className="flex items-center">
+              Per-execution cost cap (USD){' '}
+              <FieldHelp title="Runaway-loop guard">
+                Caps the total LLM + tool spend for a single run of this workflow. A reflect /
+                orchestrator loop that doesn&apos;t converge is the runaway case this protects
+                against — a single bad input becomes a few cents instead of a few dollars. When the
+                cap is hit, the execution stops with status &ldquo;failed&rdquo; and a clear
+                &ldquo;Budget exceeded&rdquo; reason. Leave blank to inherit the org-wide default
+                (Settings → Orchestration). When that is also blank, no per-execution cap applies.
+                Callers can still pass an explicit <code>budgetLimitUsd</code> per-execution to
+                override.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="details-max-cost-per-execution"
+              type="number"
+              step="0.01"
+              min="0.01"
+              max="10000"
+              value={maxCostPerExecutionUsdInput}
+              onChange={(e) => setMaxCostPerExecutionUsdInput(e.target.value)}
+              placeholder="Leave blank to inherit org default"
+              aria-invalid={!capValid}
+            />
+            {!capValid && (
+              <p className="text-xs text-red-600">
+                Must be a positive number between $0.01 and $10,000, or blank.
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

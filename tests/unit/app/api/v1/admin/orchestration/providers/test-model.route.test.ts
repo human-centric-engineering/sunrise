@@ -264,6 +264,52 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
         expect.objectContaining({ model: 'gpt-4o' })
       );
     });
+
+    it('gives reasoning models enough maxTokens to clear reasoning + visible output', async () => {
+      // Regression: the connectivity test used to send maxTokens: 10
+      // for every chat model. gpt-5 / o-series bill that against
+      // reasoning tokens AND visible output combined, so the request
+      // burnt the entire cap on reasoning and the openai-compatible
+      // provider threw `truncated_no_output` — surfacing as "Model
+      // did not respond" in the agent test card even though the call
+      // reached the model. Reasoning profiles now get 256.
+      const mockChat = vi.fn().mockResolvedValue({ content: 'Hello!' });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProvider({ slug: 'openai' }) as never
+      );
+      vi.mocked(getProvider).mockResolvedValue({ chat: mockChat } as never);
+
+      await POST(makePostRequest({ model: 'gpt-5' }), makeParams(PROVIDER_ID));
+
+      const callOpts = mockChat.mock.calls[0]?.[1] as
+        | { maxTokens?: number; temperature?: number }
+        | undefined;
+      expect(callOpts?.maxTokens).toBe(256);
+      // temperature is omitted for reasoning models (gpt-5 rejects
+      // non-default temperature).
+      expect(callOpts?.temperature).toBeUndefined();
+    });
+
+    it('keeps the small maxTokens budget for legacy chat models', async () => {
+      // Counter-test: non-reasoning models should still get the cheap
+      // 10-token cap. Bumping every test to 256 would needlessly
+      // raise per-test cost across the matrix.
+      const mockChat = vi.fn().mockResolvedValue({ content: 'Hello!' });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProvider({ slug: 'openai' }) as never
+      );
+      vi.mocked(getProvider).mockResolvedValue({ chat: mockChat } as never);
+
+      await POST(makePostRequest({ model: 'gpt-4o' }), makeParams(PROVIDER_ID));
+
+      const callOpts = mockChat.mock.calls[0]?.[1] as
+        | { maxTokens?: number; temperature?: number }
+        | undefined;
+      expect(callOpts?.maxTokens).toBe(10);
+      expect(callOpts?.temperature).toBe(0);
+    });
   });
 
   // ── Provider chat failure ──────────────────────────────────────────────────

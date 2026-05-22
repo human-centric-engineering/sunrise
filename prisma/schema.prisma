@@ -182,6 +182,16 @@ model AiAgent {
   // model-heuristics.ts → supportsReasoningEffort().
   reasoningEffort           String?
   monthlyBudgetUsd          Float?
+  // Per-turn hard cost cap (USD) for chat. Caps total LLM + tool spend for a
+  // single assistant turn — defends against a reflect/orchestrator/tool loop
+  // that doesn't converge. Null = inherit AiOrchestrationSettings
+  // .defaultMaxCostPerTurnUsd; null there = no per-turn cap (monthly budget
+  // still applies). Enforcement is in-process inside the streaming chat
+  // handler; on breach the in-flight LLM stream is aborted and any pending
+  // tool dispatches in the same batch are cancelled. See
+  // lib/orchestration/chat/streaming-handler.ts and lib/orchestration/llm/
+  // cost-caps.ts.
+  maxCostPerTurnUsd         Float?
   metadata                  Json?
   knowledgeAccessMode       String   @default("full") // "full" = unrestricted KB access (default — preserves prior behaviour). "restricted" = effective doc set is (granted docs) ∪ (docs in any granted tag) ∪ (docs with scope = 'system').
   topicBoundaries           String[] @default([]) // forbidden topic keywords/phrases for output guard
@@ -388,6 +398,15 @@ model AiWorkflow {
   description        String   @db.Text
   draftDefinition    Json? // in-progress edit; null when there is no draft
   publishedVersionId String? // FK to the version executions pin to
+  // Per-execution hard cost cap (USD). Default for executions of this
+  // workflow when the caller does not pass an explicit budgetLimitUsd.
+  // Resolution order at execution-creation time: caller override >
+  // AiWorkflow.maxCostPerExecutionUsd > AiOrchestrationSettings
+  // .defaultMaxCostPerExecutionUsd > unlimited. The resolved value is
+  // persisted onto AiWorkflowExecution.budgetLimitUsd so resumes and
+  // lease-reaper paths inherit it without re-resolving. See
+  // lib/orchestration/llm/cost-caps.ts.
+  maxCostPerExecutionUsd Float?
   patternsUsed       Int[] // pattern numbers used in this workflow
   isActive           Boolean  @default(true)
   isTemplate         Boolean  @default(false)
@@ -569,7 +588,7 @@ model AiWorkflowExecution {
   //   - shared-secret channels (slack, postmark): `<channel>:<externalId>` — globally per channel
   //   - per-trigger HMAC: `hmac:<workflowId>:<externalId>` — scoped per trigger
   // Postgres treats NULLs as distinct, so non-inbound rows (NULL dedupKey) never collide.
-  @@unique([dedupKey], name: "ai_workflow_execution_dedup_key")
+  @@unique([dedupKey], map: "ai_workflow_execution_dedup_key")
   @@index([workflowId])
   @@index([versionId])
   @@index([userId])
@@ -1300,6 +1319,16 @@ model AiOrchestrationSettings {
   defaultModels                Json // { routing: string, chat: string, reasoning: string, embeddings: string }
   activeEmbeddingModelId       String? // FK → AiProviderModel; the model whose dimension the vector columns are currently sized for. Null = use resolver default.
   globalMonthlyBudgetUsd       Float?
+  // Org-wide default for AiWorkflow.maxCostPerExecutionUsd. Applies when a
+  // workflow has no per-workflow value AND the caller passes no explicit
+  // budgetLimitUsd. Null = no default (unlimited unless caller/workflow
+  // sets one). See lib/orchestration/llm/cost-caps.ts.
+  defaultMaxCostPerExecutionUsd Float?
+  // Org-wide default for AiAgent.maxCostPerTurnUsd. Applies when an agent
+  // has no per-agent value. Null = no default (no per-turn cap; monthly
+  // budget still applies). See lib/orchestration/llm/cost-caps.ts and
+  // lib/orchestration/chat/streaming-handler.ts.
+  defaultMaxCostPerTurnUsd     Float?
   searchConfig                 Json? // { keywordBoostWeight: number, vectorWeight: number }
   lastSeededAt                 DateTime?
   defaultApprovalTimeoutMs     Int? // ms before auto-action on approval gates; null = no timeout

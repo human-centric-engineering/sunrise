@@ -113,6 +113,18 @@ export const createAgentSchema = z.object({
     .max(10000, 'Monthly budget must be at most $10,000')
     .optional(),
 
+  // Per-turn cost cap (USD) for chat — runaway-loop guard from
+  // improvement #39. Null inherits from
+  // AiOrchestrationSettings.defaultMaxCostPerTurnUsd; null there
+  // means no per-turn cap (monthly budget still applies). Min 0.01
+  // rejects an accidental 0 which would silently block every turn.
+  maxCostPerTurnUsd: z
+    .number()
+    .min(0.01, 'Per-turn cap must be at least $0.01')
+    .max(10000, 'Per-turn cap must be at most $10,000')
+    .nullable()
+    .optional(),
+
   metadata: metadataSchema,
 
   rateLimitRpm: z
@@ -231,6 +243,16 @@ export const updateAgentSchema = z.object({
     .number()
     .positive('Monthly budget must be positive')
     .max(10000, 'Monthly budget must be at most $10,000')
+    .nullable()
+    .optional(),
+
+  // See createAgentSchema for the per-turn cap framing — runaway-loop
+  // guard from improvement #39. Nullable on update so admins can clear
+  // the override and fall back to the org default.
+  maxCostPerTurnUsd: z
+    .number()
+    .min(0.01, 'Per-turn cap must be at least $0.01')
+    .max(10000, 'Per-turn cap must be at most $10,000')
     .nullable()
     .optional(),
 
@@ -845,6 +867,9 @@ const bundledAgentSchema = z.object({
   // reasoning_effort.
   reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
   monthlyBudgetUsd: z.number().positive().max(10000).nullable().optional(),
+  // Per-turn cost cap (USD) — runaway-loop guard from improvement #39.
+  // Optional so older backup bundles round-trip; null preserves "no cap".
+  maxCostPerTurnUsd: z.number().min(0.01).max(10000).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   isActive: z.boolean(),
   fallbackProviders: z.array(z.string().max(50)).max(5).default([]),
@@ -1029,6 +1054,18 @@ export const createWorkflowSchema = z.object({
 
   isTemplate: z.boolean().default(false),
 
+  // Per-execution cost cap (USD) — runaway-loop guard from improvement
+  // #39. When set, every execution of this workflow inherits this cap
+  // (unless the caller passes an explicit `budgetLimitUsd` override).
+  // Null on create falls back to
+  // AiOrchestrationSettings.defaultMaxCostPerExecutionUsd.
+  maxCostPerExecutionUsd: z
+    .number()
+    .min(0.01, 'Per-execution cap must be at least $0.01')
+    .max(10000, 'Per-execution cap must be at most $10,000')
+    .nullable()
+    .optional(),
+
   metadata: metadataSchema,
 });
 
@@ -1062,6 +1099,16 @@ export const updateWorkflowSchema = z.object({
   isActive: z.boolean().optional(),
 
   isTemplate: z.boolean().optional(),
+
+  // Per-execution cost cap (USD) — see createWorkflowSchema for the
+  // framing. Nullable on update so admins can clear the override and
+  // fall back to the org default.
+  maxCostPerExecutionUsd: z
+    .number()
+    .min(0.01, 'Per-execution cap must be at least $0.01')
+    .max(10000, 'Per-execution cap must be at most $10,000')
+    .nullable()
+    .optional(),
 
   metadata: metadataSchema,
 });
@@ -2436,6 +2483,23 @@ export const updateOrchestrationSettingsSchema = z
       )
       .max(100, 'At most 100 allowed origins')
       .optional(),
+    // Org-wide defaults for the per-execution / per-turn cost caps —
+    // runaway-loop guards from improvement #39. See
+    // `lib/orchestration/llm/cost-caps.ts` for the resolution chain.
+    // Min 0.01 rejects an accidental 0 (which would silently block
+    // every execution / turn).
+    defaultMaxCostPerExecutionUsd: z
+      .number()
+      .min(0.01, 'Default per-execution cap must be at least $0.01')
+      .max(10_000, 'Default per-execution cap must be at most $10,000')
+      .nullable()
+      .optional(),
+    defaultMaxCostPerTurnUsd: z
+      .number()
+      .min(0.01, 'Default per-turn cap must be at least $0.01')
+      .max(10_000, 'Default per-turn cap must be at most $10,000')
+      .nullable()
+      .optional(),
   })
   .refine(
     (v) =>
@@ -2458,7 +2522,9 @@ export const updateOrchestrationSettingsSchema = z
       v.voiceInputGloballyEnabled !== undefined ||
       v.imageInputGloballyEnabled !== undefined ||
       v.documentInputGloballyEnabled !== undefined ||
-      v.activeEmbeddingModelId !== undefined,
+      v.activeEmbeddingModelId !== undefined ||
+      v.defaultMaxCostPerExecutionUsd !== undefined ||
+      v.defaultMaxCostPerTurnUsd !== undefined,
     {
       message: 'At least one field must be provided',
     }

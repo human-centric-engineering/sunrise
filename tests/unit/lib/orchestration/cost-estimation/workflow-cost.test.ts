@@ -24,6 +24,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflow: { findUnique: vi.fn() },
     aiWorkflowExecution: { findMany: vi.fn() },
     aiCostLog: { findMany: vi.fn() },
+    aiAgent: { findMany: vi.fn() },
   },
 }));
 
@@ -33,6 +34,11 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: vi.fn(),
+  refreshFromOpenRouter: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
+  hydrateFromDb: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
@@ -44,7 +50,8 @@ vi.mock('@/lib/orchestration/evaluations/judge-model', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
-import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { getModel, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import {
   estimateWorkflowCost,
@@ -138,6 +145,7 @@ beforeEach(() => {
   vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(null);
   vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([]);
   vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([]);
+  vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
   mockChatDefault(CHAT_MODEL.id);
   mockModelLookup({ [CHAT_MODEL.id]: CHAT_MODEL, [HAIKU.id]: HAIKU });
 });
@@ -234,6 +242,14 @@ interface PastRun {
   workStepId?: string;
   /** Step id to attribute supervisor tokens to. Must match a step id with type 'supervisor'. */
   supStepId?: string;
+  /**
+   * Model recorded on the work cost-log row. Defaults to the chat-default
+   * (CHAT_MODEL.id) so existing tests stay representative of an unchanged
+   * model setup. Override to simulate a model swap.
+   */
+  workModel?: string;
+  /** Same, but for the supervisor cost-log row. */
+  supModel?: string;
 }
 
 function seedPastRuns(runs: PastRun[]): void {
@@ -254,6 +270,7 @@ function seedPastRuns(runs: PastRun[]): void {
           inputTokens: r.workInput,
           outputTokens: r.workOutput,
           metadata: { stepId: r.workStepId ?? 's0' },
+          model: r.workModel ?? CHAT_MODEL.id,
         },
       ];
       if (r.supervisor && r.supInput && r.supOutput && r.supStepId) {
@@ -262,6 +279,7 @@ function seedPastRuns(runs: PastRun[]): void {
           inputTokens: r.supInput,
           outputTokens: r.supOutput,
           metadata: { stepId: r.supStepId },
+          model: r.supModel ?? CHAT_MODEL.id,
         });
       }
       return rows;
@@ -288,7 +306,11 @@ describe('estimateWorkflowCost — empirical mode', () => {
     expect(estimate.midUsd).toBeCloseTo(0.048, 3);
   });
 
-  it('reprices using the current chat default, not the historical model', async () => {
+  it('reprices empirical tokens at the current registry rate when the model is unchanged', async () => {
+    // Same modelId in past runs and current shape — fingerprint matches.
+    // The registry's per-token rate is the *current* rate, so a price
+    // shift on Sonnet propagates immediately. (Realistic scenario:
+    // OpenRouter refresh picks up an updated cost from the matrix.)
     mockWorkflow(makeDefinition(['llm_call', 'evaluate']));
     seedPastRuns([
       { executionId: 'e1', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
@@ -296,19 +318,100 @@ describe('estimateWorkflowCost — empirical mode', () => {
       { executionId: 'e3', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
     ]);
 
-    // Switch the chat default to Haiku.
-    mockChatDefault(HAIKU.id);
+    // Halve Sonnet's rates in the registry — modelId unchanged.
+    mockModelLookup({
+      [CHAT_MODEL.id]: { ...CHAT_MODEL, inputCostPerMillion: 1.5, outputCostPerMillion: 7.5 },
+      [HAIKU.id]: HAIKU,
+    });
 
     const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
     expect(estimate.basedOn).toBe('empirical');
-    expect(estimate.modelUsed).toBe(HAIKU.id);
-    // Haiku rates: 6_000/1M*1 + 2_000/1M*5 = $0.006 + $0.010 = $0.016
-    expect(estimate.midUsd).toBeCloseTo(0.016, 3);
+    expect(estimate.modelUsed).toBe(CHAT_MODEL.id);
+    // Halved rates: 6_000/1M*1.5 + 2_000/1M*7.5 = $0.009 + $0.015 = $0.024
+    expect(estimate.midUsd).toBeCloseTo(0.024, 3);
   });
 
-  it('filters past runs by supervisor toggle when the workflow has a supervisor', async () => {
+  it('falls back to heuristic when the chat default has changed since the past runs', async () => {
+    // Past runs all logged Sonnet. We then switch the chat default to
+    // Haiku. The current shape resolves each step to Haiku, so the
+    // per-step model fingerprint diverges from every past run — there
+    // is no way to honestly recycle a Sonnet-run token shape under the
+    // new Haiku-or-equivalent assumption, so empirical must stand down.
+    mockWorkflow(makeDefinition(['llm_call', 'evaluate']));
+    seedPastRuns([
+      { executionId: 'e1', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
+      { executionId: 'e2', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
+      { executionId: 'e3', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
+    ]);
+    mockChatDefault(HAIKU.id);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+    expect(estimate.basedOn).toBe('heuristic');
+    expect(estimate.modelUsed).toBe(HAIKU.id);
+    // 3 of 3 past runs excluded — note must point at the model change,
+    // not at sparse history.
+    expect(estimate.notes).toMatch(/different models/i);
+  });
+
+  it('falls back to heuristic when a step has been pinned to a different model via modelOverride', async () => {
+    // Past runs logged Sonnet on s0. We pin s0 to Haiku — same effect
+    // as switching an agent's bound model to a more expensive one.
+    // Empirical should stand down even though the *chat default*
+    // hasn't moved.
+    const def = makeDefinition(['llm_call']);
+    def.steps[0].config = { ...def.steps[0].config, modelOverride: HAIKU.id };
+    mockWorkflow(def);
+    seedPastRuns([
+      { executionId: 'e1', itemCount: 0, supervisor: false, workInput: 3_000, workOutput: 1_000 },
+      { executionId: 'e2', itemCount: 0, supervisor: false, workInput: 3_000, workOutput: 1_000 },
+      { executionId: 'e3', itemCount: 0, supervisor: false, workInput: 3_000, workOutput: 1_000 },
+    ]);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+    expect(estimate.basedOn).toBe('heuristic');
+    expect(estimate.notes).toMatch(/different models/i);
+  });
+
+  it('keeps empirical when only the *removed* steps had a different model', async () => {
+    // Past runs include cost-log rows for a step id that no longer
+    // exists in the current shape (e.g. step was deleted). The current
+    // fingerprint asks about s0 only — and that matches.
+    mockWorkflow(makeDefinition(['llm_call']));
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([
+      { id: 'e1', inputData: { modelIds: [] } },
+      { id: 'e2', inputData: { modelIds: [] } },
+      { id: 'e3', inputData: { modelIds: [] } },
+    ] as never);
+    vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([
+      // s0 on Sonnet (matches current shape).
+      ...['e1', 'e2', 'e3'].map((id) => ({
+        workflowExecutionId: id,
+        inputTokens: 3_000,
+        outputTokens: 1_000,
+        metadata: { stepId: 's0' },
+        model: CHAT_MODEL.id,
+      })),
+      // A retired step that used to exist, logged on a different model.
+      ...['e1', 'e2', 'e3'].map((id) => ({
+        workflowExecutionId: id,
+        inputTokens: 100,
+        outputTokens: 50,
+        metadata: { stepId: 's_retired' },
+        model: HAIKU.id,
+      })),
+    ] as never);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+    expect(estimate.basedOn).toBe('empirical');
+    expect(estimate.sampleSize).toBe(3);
+  });
+
+  it('calibrates work tokens from all past runs regardless of supervisor toggle', async () => {
+    // Past runs all had the supervisor on — but the work-token bucket
+    // is isolated from supervisor tokens by stepId, so it's valid
+    // calibration data for a supervisor=false request too. The toggle
+    // should change the supervisor add-on, not which methodology runs.
     mockWorkflow(makeDefinition(['llm_call', 'supervisor']));
-    // Three past runs ALL with supervisor=true — should not match a supervisor=false request.
     seedPastRuns([
       {
         executionId: 'e1',
@@ -342,9 +445,20 @@ describe('estimateWorkflowCost — empirical mode', () => {
       },
     ]);
 
-    const noSupRequest = await estimateWorkflowCost({ workflowId: 'wf-1', supervisor: false });
-    expect(noSupRequest.basedOn).toBe('heuristic'); // no matching runs
-    expect(noSupRequest.sampleSize).toBe(0);
+    const withSup = await estimateWorkflowCost({ workflowId: 'wf-1', supervisor: true });
+    const withoutSup = await estimateWorkflowCost({ workflowId: 'wf-1', supervisor: false });
+
+    // Both should pick empirical — work calibration carries across the toggle.
+    expect(withSup.basedOn).toBe('empirical');
+    expect(withoutSup.basedOn).toBe('empirical');
+    expect(withSup.sampleSize).toBe(3);
+    expect(withoutSup.sampleSize).toBe(3);
+
+    // The supervisor add-on must move the cost in the right direction
+    // (adds the judge-model bill) and must not flip the methodology.
+    expect(withSup.midUsd).toBeGreaterThan(withoutSup.midUsd);
+    expect(withoutSup.judgeModelUsed).toBeNull();
+    expect(withSup.judgeModelUsed).toBe(CHAT_MODEL.id);
   });
 
   it('skips supervisor filter when the workflow has no supervisor step', async () => {
@@ -375,30 +489,201 @@ describe('estimateWorkflowCost — empirical mode', () => {
 // ─── summariseShape ───────────────────────────────────────────────────────
 
 describe('summariseShape', () => {
-  it('counts agent_call as 3 LLM steps (tool-iteration multiplier)', () => {
+  it('counts agent_call as 3 LLM steps (tool-iteration multiplier)', async () => {
     const def = makeDefinition(['agent_call']);
-    const shape = summariseShape(def);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
     expect(shape.llmStepCount).toBe(3);
   });
 
-  it('counts reflect as 2 LLM steps (draft + critique)', () => {
+  it('counts reflect as 2 LLM steps (draft + critique)', async () => {
     const def = makeDefinition(['reflect']);
-    const shape = summariseShape(def);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
     expect(shape.llmStepCount).toBe(2);
   });
 
-  it('excludes non-LLM step types from the count', () => {
+  it('excludes non-LLM step types from the count', async () => {
     const def = makeDefinition(['tool_call', 'external_call', 'send_notification', 'parallel']);
-    const shape = summariseShape(def);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
     expect(shape.llmStepCount).toBe(0);
   });
 
-  it('collects supervisor step ids separately', () => {
+  it('collects supervisor step ids separately', async () => {
     const def = makeDefinition(['llm_call', 'supervisor', 'supervisor']);
-    const shape = summariseShape(def);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
     expect(shape.llmStepCount).toBe(1); // supervisors don't count toward LLM step count
     expect(shape.hasSupervisor).toBe(true);
     expect(shape.supervisorStepIds.size).toBe(2);
+  });
+
+  it('resolves each LLM step to its modelOverride when present', async () => {
+    const def = makeDefinition(['llm_call', 'llm_call']);
+    def.steps[1].config = { ...def.steps[1].config, modelOverride: 'gpt-5' };
+    const shape = await summariseShape(def, CHAT_MODEL.id);
+    expect(shape.workSteps).toHaveLength(2);
+    expect(shape.workSteps[0].modelId).toBe(CHAT_MODEL.id);
+    expect(shape.workSteps[1].modelId).toBe('gpt-5');
+  });
+
+  it('resolves agent_call steps to the agent bound model', async () => {
+    const def = makeDefinition(['agent_call']);
+    def.steps[0].config = { agentSlug: 'auditor' };
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+      { slug: 'auditor', model: 'gpt-5' },
+    ] as never);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
+    expect(shape.workSteps).toHaveLength(1);
+    expect(shape.workSteps[0].modelId).toBe('gpt-5');
+  });
+
+  it('falls back to chat default for agent_call when the agent has no bound model', async () => {
+    const def = makeDefinition(['agent_call']);
+    def.steps[0].config = { agentSlug: 'auditor' };
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+      { slug: 'auditor', model: null },
+    ] as never);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
+    expect(shape.workSteps[0].modelId).toBe(CHAT_MODEL.id);
+  });
+
+  it('modelOverride on an agent_call beats the agent bound model', async () => {
+    const def = makeDefinition(['agent_call']);
+    def.steps[0].config = { agentSlug: 'auditor', modelOverride: 'gpt-5' };
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
+      { slug: 'auditor', model: 'claude-haiku-4-5' },
+    ] as never);
+    const shape = await summariseShape(def, CHAT_MODEL.id);
+    expect(shape.workSteps[0].modelId).toBe('gpt-5');
+  });
+
+  it('captures supervisor modelOverride when present', async () => {
+    const def = makeDefinition(['llm_call', 'supervisor']);
+    def.steps[1].config = { ...def.steps[1].config, modelOverride: 'gpt-5' };
+    const shape = await summariseShape(def, CHAT_MODEL.id);
+    expect(shape.supervisorModelId).toBe('gpt-5');
+  });
+});
+
+// ─── Per-model pricing ────────────────────────────────────────────────────
+
+describe('estimateWorkflowCost — per-model pricing', () => {
+  it('prices the modelOverride step at the override rate, not the chat default', async () => {
+    // Two LLM steps: first runs on the chat default (Sonnet), second
+    // overrides to Haiku. Per-step token allocation: 3_000 input +
+    // 1_000 output each. Per-model cost:
+    //   Sonnet: 3_000/1M × 3 + 1_000/1M × 15 = $0.009 + $0.015 = $0.024
+    //   Haiku:  3_000/1M × 1 + 1_000/1M × 5  = $0.003 + $0.005 = $0.008
+    //   Total ≈ $0.032
+    const def = makeDefinition(['llm_call', 'llm_call']);
+    def.steps[1].config = { ...def.steps[1].config, modelOverride: HAIKU.id };
+    mockWorkflow(def);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    expect(estimate.modelMix).toHaveLength(2);
+    const sonnetEntry = estimate.modelMix.find((m) => m.modelId === CHAT_MODEL.id);
+    const haikuEntry = estimate.modelMix.find((m) => m.modelId === HAIKU.id);
+    expect(sonnetEntry?.costUsd).toBeCloseTo(0.024, 4);
+    expect(haikuEntry?.costUsd).toBeCloseTo(0.008, 4);
+    expect(estimate.midUsd).toBeCloseTo(0.032, 4);
+  });
+
+  it('groups steps using the same model into a single modelMix entry', async () => {
+    // Three steps, all running on Sonnet — one combined modelMix entry.
+    const def = makeDefinition(['llm_call', 'llm_call', 'evaluate']);
+    mockWorkflow(def);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    expect(estimate.modelMix).toHaveLength(1);
+    expect(estimate.modelMix[0].modelId).toBe(CHAT_MODEL.id);
+    expect(estimate.modelMix[0].role).toBe('work');
+  });
+
+  it('lists supervisor as a separate modelMix entry under its judge model', async () => {
+    const def = makeDefinition(['llm_call', 'supervisor']);
+    mockWorkflow(def);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1', supervisor: true });
+
+    const supervisorEntry = estimate.modelMix.find((m) => m.role === 'supervisor');
+    expect(supervisorEntry).toBeDefined();
+    expect(supervisorEntry?.modelId).toBe(CHAT_MODEL.id); // JUDGE_MODEL null → chat default
+  });
+
+  it('marks pricingKnown=true for models the registry has, false for unknowns', async () => {
+    const def = makeDefinition(['llm_call', 'llm_call']);
+    def.steps[1].config = { ...def.steps[1].config, modelOverride: 'gpt-5' };
+    mockWorkflow(def);
+    // Only CHAT_MODEL is in the registry; gpt-5 returns undefined.
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    const sonnetEntry = estimate.modelMix.find((m) => m.modelId === CHAT_MODEL.id);
+    const gpt5Entry = estimate.modelMix.find((m) => m.modelId === 'gpt-5');
+    expect(sonnetEntry?.pricingKnown).toBe(true);
+    expect(gpt5Entry?.pricingKnown).toBe(false);
+    expect(gpt5Entry?.costUsd).toBe(0);
+  });
+
+  it('treats a registry entry with zero pricing as unpriced (matrix row with no cost)', async () => {
+    // Operator added 'gpt-5' to the matrix but left costPerMillionTokens
+    // NULL. After hydration the registry has a gpt-5 entry with $0 cost —
+    // the conservative `registerModels` merge from earlier in this branch
+    // keeps OR pricing on known models, but a model that's *only* in the
+    // matrix (no OR / fallback entry) still surfaces with both costs at
+    // zero. UI must call this out instead of reading $0 as "free".
+    const ZERO_MODEL = {
+      id: 'gpt-5',
+      name: 'gpt-5',
+      provider: 'openai',
+      tier: 'mid' as const,
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0,
+      maxContext: 0,
+      supportsTools: true,
+    };
+    mockModelLookup({ [CHAT_MODEL.id]: CHAT_MODEL, [ZERO_MODEL.id]: ZERO_MODEL });
+
+    const def = makeDefinition(['llm_call']);
+    def.steps[0].config = { ...def.steps[0].config, modelOverride: 'gpt-5' };
+    mockWorkflow(def);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    const gpt5Entry = estimate.modelMix.find((m) => m.modelId === 'gpt-5');
+    expect(gpt5Entry?.pricingKnown).toBe(false);
+  });
+});
+
+// ─── Registry warmup ──────────────────────────────────────────────────────
+
+describe('estimateWorkflowCost — registry warmup', () => {
+  it('triggers refreshFromOpenRouter + hydrateFromDb before pricing', async () => {
+    // Cold path: an operator hits the cost-estimate endpoint before any
+    // other route warms the registry. Without the warmup, the in-memory
+    // registry only has the static fallback and any operator-curated id
+    // prices to $0. The warmup is heavily cached so the cost is paid
+    // once per process.
+    mockWorkflow(makeDefinition(['llm_call']));
+
+    await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    expect(vi.mocked(refreshFromOpenRouter)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(hydrateModelRegistryFromDb)).toHaveBeenCalledTimes(1);
+  });
+
+  it('still produces an estimate when both warmup calls fail', async () => {
+    // `allSettled` lets a transient OR outage or a DB hiccup happen
+    // without breaking the dialog. The estimate falls back to whatever
+    // the registry already had.
+    vi.mocked(refreshFromOpenRouter).mockRejectedValueOnce(new Error('OR down'));
+    vi.mocked(hydrateModelRegistryFromDb).mockRejectedValueOnce(new Error('DB blip'));
+    mockWorkflow(makeDefinition(['llm_call']));
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    expect(estimate.midUsd).toBeGreaterThanOrEqual(0);
+    expect(estimate.modelMix.length).toBeGreaterThan(0);
   });
 });
 

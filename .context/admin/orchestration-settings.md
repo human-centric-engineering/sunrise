@@ -29,11 +29,15 @@ Agents can override both guard modes in their own configuration. "None" maps to 
 
 #### Limits
 
-| Field                       | Type   | Description                                               |
-| --------------------------- | ------ | --------------------------------------------------------- |
-| Monthly budget (USD)        | Number | Platform-wide spend cap. Blank = no cap                   |
-| Max conversations / user    | Number | Active conversations per user per agent. Blank = no limit |
-| Max messages / conversation | Number | Messages per conversation. Blank = no limit               |
+| Field                           | Type   | Description                                                                                                                                                                                                               |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monthly budget (USD)            | Number | Platform-wide spend cap. Blank = no cap                                                                                                                                                                                   |
+| Per-execution cap default (USD) | Number | Org-wide default cap on a single workflow run. Workflows without their own `maxCostPerExecutionUsd` inherit this. Caller override (`budgetLimitUsd`) wins when supplied. Range 0.01–10,000. Blank = no default (uncapped) |
+| Per-turn cap default (USD)      | Number | Org-wide default cap on a single chat turn's LLM cost. Agents without their own `maxCostPerTurnUsd` inherit this. Range 0.01–10,000. Blank = no default (uncapped per-turn; only the monthly budget applies)              |
+| Max conversations / user        | Number | Active conversations per user per agent. Blank = no limit                                                                                                                                                                 |
+| Max messages / conversation     | Number | Messages per conversation. Blank = no limit                                                                                                                                                                               |
+
+**Cost-cap resolution order** — caller-supplied override → workflow / agent value → org-wide default here → no cap. Implemented by `resolveMaxCostPerExecution` and `resolveMaxCostPerTurn` in `lib/orchestration/llm/cost-caps.ts`; see [Cost Estimation](../orchestration/cost-estimation.md) and [Resilience & Error Handling](../orchestration/resilience.md#per-execution-budget) for runtime behaviour.
 
 #### Retention
 

@@ -428,6 +428,16 @@ export function AuditModelsDialog({
       } else if (!isRunning && submittedExecution === null) {
         // Idle form dismissal — no-op on localStorage.
       }
+      // Reset the post-submit view state so the next open lands on the
+      // fresh model-picker form. Without this, a terminal-status run
+      // (especially a failed one) lingers as the dialog body the next
+      // time the operator clicks "Audit Models", looking like the new
+      // audit they expected to initiate has already finished/failed.
+      // The peek-banner / executions page remain the canonical place to
+      // watch a backgrounded run; the dialog's job is to start one.
+      setSubmittedExecution(null);
+      setTerminalStatus(null);
+      setError(null);
       onOpenChange(false);
     },
     [submittedExecution, terminalStatus, clearInFlight, onOpenChange]
@@ -688,35 +698,49 @@ export function AuditModelsDialog({
                     (range {formatUsd(estimate.lowUsd)}–{formatUsd(estimate.highUsd)})
                   </span>
                 </span>
-                <FieldHelp title="How the cost is estimated" contentClassName="w-80">
+                <FieldHelp title="How the cost is estimated" contentClassName="w-96">
                   <p>{estimate.notes}</p>
-                  <p className="mt-2">
-                    <strong>Model{estimate.judgeModelUsed ? 's' : ''}:</strong> non-supervisor steps
-                    priced against <code>{estimate.modelUsed}</code> (the configured chat default).
-                    {estimate.judgeModelUsed ? (
-                      <>
-                        {' '}
-                        Supervisor step priced against <code>{estimate.judgeModelUsed}</code>
-                        {estimate.judgeModelUsed === estimate.modelUsed ? (
-                          <>
-                            {' '}
-                            (same as the chat default — set <code>EVALUATION_JUDGE_MODEL</code> to
-                            give the supervisor an independent judge)
-                          </>
-                        ) : null}
-                        .
-                      </>
-                    ) : (
-                      '.'
-                    )}
-                  </p>
+                  {estimate.modelMix.length > 0 ? (
+                    <div className="mt-2">
+                      <strong>Per-model breakdown:</strong>
+                      <ul className="mt-1 list-disc pl-4">
+                        {estimate.modelMix.map((m, idx) => (
+                          <li key={`${m.modelId}:${m.role}:${idx}`}>
+                            <code>{m.modelId}</code>
+                            {m.role === 'supervisor' ? ' (supervisor)' : ''} —{' '}
+                            {m.pricingKnown ? (
+                              formatUsd(m.costUsd)
+                            ) : (
+                              <span className="text-amber-700 dark:text-amber-400">
+                                pricing unknown
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-muted-foreground mt-1 text-[11px]">
+                        Steps with a <code>modelOverride</code> or an <code>agent_call</code> into
+                        an agent bound to a specific model are priced against that model. Other
+                        steps fall back to the chat default (<code>{estimate.modelUsed}</code>).
+                      </p>
+                      {estimate.modelMix.some((m) => !m.pricingKnown) ? (
+                        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                          One or more models referenced by this workflow have no pricing in the
+                          registry — likely a matrix row with an empty{' '}
+                          <code>costPerMillionTokens</code> for a custom/local id. Set a non-zero
+                          value, or use a model that OpenRouter / the static fallback catalogue
+                          knows. The estimate above excludes their contribution.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <p className="mt-2">
                     <strong>Source:</strong>{' '}
                     {estimate.basedOn === 'empirical'
                       ? `past run history (${estimate.sampleSize} match${
                           estimate.sampleSize === 1 ? '' : 'es'
                         })`
-                      : 'heuristic — fixed token assumptions repriced at the current model rates'}
+                      : 'heuristic — fixed token assumptions repriced at the current per-model rates'}
                     .
                   </p>
                   <p className="mt-2">

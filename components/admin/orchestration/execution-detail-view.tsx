@@ -70,7 +70,7 @@ import {
   applyTraceFilter,
   type TraceFilter,
 } from '@/components/admin/orchestration/execution-trace-filters';
-import { buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
+import { buildDisplayTrace, buildParallelBranchMap } from '@/lib/orchestration/trace/aggregate';
 import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
 import { buildInterpolationContextFromTrace } from '@/lib/orchestration/engine/interpolate-from-trace';
 import { ExecutionStatusSynopsis } from '@/components/admin/orchestration/execution-status-synopsis';
@@ -586,30 +586,7 @@ export function ExecutionDetailView({
   // strip uses it to render the coloured processing portion plus a
   // greyed wait portion that grows until the slowest sibling ends.
   const displayTrace: ExecutionTraceEntry[] = useMemo(() => {
-    if (liveRunningSteps.length === 0) return liveTrace;
-    const runningStepIds = new Set(liveRunningSteps.map((r) => r.stepId));
-    const persisted = liveTrace.filter((e) => !runningStepIds.has(e.stepId));
-    const synth = liveRunningSteps.map((r) => {
-      const startMs = new Date(r.startedAt).getTime();
-      const completed = r.completedAt !== null;
-      const endMs = completed ? new Date(r.completedAt!).getTime() : Date.now();
-      return {
-        stepId: r.stepId,
-        stepType: r.stepType,
-        label: r.label,
-        // The `status` union on persisted entries doesn't include 'running' —
-        // the trace-row component locally widens it. Cast here intentionally
-        // so the view-only display type stays narrow at the prop boundary.
-        status: completed ? 'completed' : 'running',
-        output: undefined,
-        tokensUsed: 0,
-        costUsd: 0,
-        startedAt: r.startedAt,
-        ...(completed ? { completedAt: r.completedAt! } : {}),
-        durationMs: Math.max(0, endMs - startMs),
-      } as unknown as ExecutionTraceEntry;
-    });
-    return [...persisted, ...synth];
+    return buildDisplayTrace(liveTrace, liveRunningSteps, Date.now());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveTrace, liveRunningSteps, tickClock]);
 

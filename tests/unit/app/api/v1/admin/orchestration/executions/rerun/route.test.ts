@@ -45,6 +45,14 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 // test here; the helper has its own coverage.
 vi.mock('@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers', () => ({
   prepareWorkflowExecution: vi.fn(),
+  // The route now resolves the effective cap via this helper (caller >
+  // workflow > settings). Default to a pass-through that returns the
+  // caller override unchanged — preserves the existing assertions on
+  // what `budgetLimitUsd` the engine sees, while still exercising the
+  // call site.
+  resolveEffectiveExecutionCap: vi.fn(
+    async (args: { callerOverride: number | null }) => args.callerOverride ?? undefined
+  ),
 }));
 // `sseResponse` returns a Response; the route's return value is shoved
 // straight through. A stub keeps the assertions in this file deterministic.
@@ -123,12 +131,15 @@ function makeOriginal(overrides: Partial<Record<string, unknown>> = {}): Record<
 }
 
 function happyPrepare(versionId: string = ORIGINAL_VERSION_ID): {
-  workflow: { id: string };
+  workflow: { id: string; maxCostPerExecutionUsd: number | null };
   version: { id: string; version: number };
   definition: { steps: never[]; entryStepId: string; errorStrategy: 'fail' };
 } {
   return {
-    workflow: { id: WORKFLOW_ID },
+    // `prepareWorkflowExecution` exposes `maxCostPerExecutionUsd` so
+    // the route can pass it into `resolveEffectiveExecutionCap`. Null
+    // here keeps the existing assertions (no workflow-level cap) valid.
+    workflow: { id: WORKFLOW_ID, maxCostPerExecutionUsd: null },
     version: { id: versionId, version: 1 },
     definition: { steps: [], entryStepId: 'x', errorStrategy: 'fail' },
   };

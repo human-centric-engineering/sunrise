@@ -87,6 +87,8 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   documentInputGloballyEnabled: true,
   activeEmbeddingModelId: null,
   stuckExecutionThresholdMins: 5,
+  defaultMaxCostPerExecutionUsd: null,
+  defaultMaxCostPerTurnUsd: null,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

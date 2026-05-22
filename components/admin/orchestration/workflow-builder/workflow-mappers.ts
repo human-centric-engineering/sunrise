@@ -36,6 +36,14 @@ export interface PatternNodeData extends Record<string, unknown> {
    * `flowToWorkflowDefinition` strips it before serialising.
    */
   hasError?: boolean;
+  /**
+   * Transient cost-cap band. 'warn' = step's own estimate exceeds a
+   * meaningful share of the effective per-execution cap; 'over' = step
+   * alone exceeds the whole cap. Painted by `PatternNode` as an amber
+   * or red ring. Never persisted — set by the live cost-estimate hook
+   * and dropped on serialise just like `hasError`.
+   */
+  costBand?: 'warn' | 'over';
 }
 
 export type PatternNode = Node<PatternNodeData, 'pattern'>;

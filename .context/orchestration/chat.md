@@ -302,9 +302,26 @@ The tool loop is a bounded while-loop (`MAX_TOOL_ITERATIONS = 5`). Each iteratio
 4. **Output guard** — if no tool calls, scans the assistant text via `scanOutput()` before logging cost. If the guard blocks (mode = `block`), the cost is never logged and the stream terminates. See [Output Guard](./output-guard.md).
 5. Fires `logCost` once per turn with `operation: CostOperation.CHAT`. Capability costs are logged separately by the dispatcher — there is no double counting.
 6. If no tool call: yields `done` and returns.
-7. If tool calls: **re-checks budget** via `checkBudget(agentId)` before dispatching — prevents multi-tool conversations from exceeding budget mid-stream. Then dispatches via `capabilityDispatcher.dispatch` (wrapped in a 30-second timeout — see below), yields `capability_result`, persists `role: 'tool'` rows, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
+7. If tool calls: increments the per-turn cost accumulator via `calculateCost(model, inputTokens, outputTokens)` BEFORE the fire-and-forget `logCost` write (so enforcement never depends on the DB write completing), then **per-turn cap check** (see below), then **re-checks monthly budget** via `checkBudget(agentId)` — prevents multi-tool conversations from exceeding budget mid-stream. Then dispatches via `capabilityDispatcher.dispatch` (wrapped in a 30-second timeout — see below), yields `capability_result`, persists `role: 'tool'` rows, invalidates the locked context if one is bound, and either returns (on `skipFollowup`) or loops.
 
 Hitting the cap emits `{ type: 'error', code: 'tool_loop_cap' }` and logs a warn.
+
+### Per-turn cost cap (improvement #39 — runaway-loop guard)
+
+`agent.maxCostPerTurnUsd` (or, as fallback, `AiOrchestrationSettings.defaultMaxCostPerTurnUsd`) caps the total LLM cost of a single chat turn. Protects against a reflect / orchestrator / tool loop that keeps round-tripping the chat LLM — a single bad question becomes a few cents instead of a few dollars.
+
+**Hard-stop semantics.** The check fires after every LLM iteration, AFTER the iteration's cost has been added to the per-turn running total, BEFORE the requested tools are dispatched. On breach:
+
+1. Emit the dedicated `{ type: 'budget_exceeded_per_turn', code: 'budget_exceeded_per_turn', usedUsd, limitUsd, message }` SSE event. Discrete type so consumer UIs can render a specific "stopped early" affordance instead of guessing from a generic `error`.
+2. Persist a partial assistant message with `metadata.endedReason = 'budget_exceeded'` + `metadata.budgetExceededDetail = { usedUsd, limitUsd }`. A reload thus renders the "stopped early" state correctly even after the SSE stream is gone.
+3. Dispatch the `chat_budget_exceeded_per_turn` webhook fire-and-forget so partners can wire Slack / PagerDuty.
+4. `return` from the generator. The requested tools for the cap-breaching iteration are **NOT** dispatched. Tools that completed before the cap was observed (e.g. in an earlier iteration) are preserved.
+
+**Lazy resolution.** Settings is loaded only when the agent has no `maxCostPerTurnUsd` of its own; agents that opted in skip the settings lookup entirely. Failure to load settings (DB hiccup, partial migration) is treated as "no cap" with a warning log — chat doesn't fail because the OPS table is briefly unavailable.
+
+**Scope limitation (v1).** Only the chat LLM's cost is summed against the per-turn cap. Tool capabilities that invoke their own LLMs (`search_knowledge_base` embeddings, the rolling summariser, `run_workflow`'s child execution) log their own `AiCostLog` rows but do not return `costUsd` from `CapabilityResult`, so they are not counted against the per-turn cap. The runaway cases this guard targets (loops that keep round-tripping the chat LLM) are fully covered.
+
+**Workflow `agent_call` parity.** The same per-turn cap (`agent.maxCostPerTurnUsd` → org `defaultMaxCostPerTurnUsd` → uncapped) is enforced inside `lib/orchestration/engine/executors/agent-call.ts`'s inner tool-iteration loop. So an agent with a per-turn cap is protected regardless of whether it's invoked through this streaming chat path or through a workflow `agent_call` step. The workflow variant aborts with `ExecutorError code: 'agent_call_budget_exceeded_per_turn'` (non-retriable) instead of emitting an SSE event — the step fails, carries its partial `tokensUsed`/`costUsd` onto the trace entry, and the workflow's error strategy (skip / continue / failure-branch) decides what happens next. See `.context/orchestration/engine.md` for the error-code table.
 
 ### Tool dispatch timeout
 

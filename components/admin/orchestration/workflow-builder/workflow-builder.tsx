@@ -56,7 +56,9 @@ import {
 } from '@/components/admin/orchestration/workflow-builder/validation-summary-panel';
 import { WorkflowCanvas } from '@/components/admin/orchestration/workflow-builder/workflow-canvas';
 import { WorkflowDetailsDialog } from '@/components/admin/orchestration/workflow-builder/workflow-details-dialog';
+import { WorkflowResourceSummary } from '@/components/admin/orchestration/workflow-builder/workflow-resource-summary';
 import { runExtraChecks } from '@/components/admin/orchestration/workflow-builder/extra-checks';
+import { useWorkflowCostEstimate } from '@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate';
 import {
   saveWorkflow,
   type WorkflowDetails,
@@ -140,6 +142,7 @@ function initialState(
     description: workflow.description,
     errorStrategy: def?.errorStrategy ?? 'fail',
     isTemplate: workflow.isTemplate,
+    maxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd ?? null,
   };
 
   if (!def || !Array.isArray(def.steps)) {
@@ -338,6 +341,56 @@ function WorkflowBuilderInner({
     // change reschedules the debounce.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges]);
+
+  // Live cost estimate against the draft definition. Hook is internally
+  // debounced + keyed on a JSON snapshot so it survives the validator
+  // re-rendering hasError back into node data without re-firing.
+  const draftDefinitionForCost = useMemo<WorkflowDefinition | null>(() => {
+    if (nodes.length === 0) return null;
+    try {
+      const raw = flowToWorkflowDefinition(nodes, edges, {
+        errorStrategy: details?.errorStrategy,
+      });
+      // Only ask the estimator about *valid* drafts — a half-wired
+      // canvas would just generate noise. Zod parse is cheap.
+      const parsed = workflowDefinitionSchema.safeParse(raw);
+      return parsed.success ? (parsed.data as WorkflowDefinition) : null;
+    } catch {
+      return null;
+    }
+  }, [nodes, edges, details?.errorStrategy]);
+
+  const { estimate: costEstimate, loading: costLoading } = useWorkflowCostEstimate(
+    workflow?.id ?? null,
+    draftDefinitionForCost
+  );
+
+  // Propagate per-node `costBand` from the estimate. Mirrors the
+  // hasError pattern above: only writes when the band actually changes
+  // so React Flow doesn't churn on every estimate refresh.
+  useEffect(() => {
+    const cap = costEstimate?.effectiveCapUsd ?? null;
+    const bandByStepId = new Map<string, 'warn' | 'over'>();
+    if (cap !== null && cap > 0 && costEstimate?.perStep) {
+      // Per-step tinting tunables — slightly more sensitive than the
+      // banner thresholds so individual steps light up before the whole
+      // workflow does.
+      const PER_STEP_WARN = 0.25;
+      const PER_STEP_OVER = 1.0;
+      for (const step of costEstimate.perStep) {
+        const share = step.costUsd / cap;
+        if (share >= PER_STEP_OVER) bandByStepId.set(step.stepId, 'over');
+        else if (share >= PER_STEP_WARN) bandByStepId.set(step.stepId, 'warn');
+      }
+    }
+    setNodes((prev) =>
+      prev.map((node) => {
+        const next = bandByStepId.get(node.id) ?? undefined;
+        if (node.data.costBand === next) return node;
+        return { ...node, data: { ...node.data, costBand: next } };
+      })
+    );
+  }, [costEstimate, setNodes]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -735,6 +788,15 @@ function WorkflowBuilderInner({
           {workflow.description}
         </div>
       ) : null}
+
+      <WorkflowResourceSummary
+        nodes={nodes}
+        capabilities={capabilities}
+        agents={agents}
+        onFocusNode={handleFocusNode}
+        costEstimate={costEstimate}
+        costLoading={costLoading}
+      />
 
       <div ref={summaryPanelRef}>
         <ValidationSummaryPanel errors={validationErrors} onFocusNode={handleFocusNode} />

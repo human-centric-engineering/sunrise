@@ -34,13 +34,19 @@ beforeEach(() => {
 // Minimum field set the adapter needs to produce a ModelInfo. Mirrors
 // an active AiProviderModel row without dragging in the whole Prisma
 // type — the test only cares about the bridge behaviour.
+// A fictitious operator-added model id (NOT present in the registry's
+// hardcoded fallback) — proves DB hydration is the path that surfaces it.
+// Using a real id like 'gpt-5' couples the test to whatever the fallback
+// happens to ship at any given time.
+const CUSTOM_MODEL_ID = 'acme-custom-thinker';
+
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'cuid_test',
-    slug: 'openai-gpt-5',
-    providerSlug: 'openai',
-    modelId: 'gpt-5',
-    name: 'GPT-5',
+    slug: 'acme-acme-custom-thinker',
+    providerSlug: 'acme',
+    modelId: CUSTOM_MODEL_ID,
+    name: 'Acme Custom Thinker',
     description: '',
     capabilities: ['chat'],
     tierRole: 'thinking',
@@ -71,18 +77,18 @@ function makeRow(overrides: Record<string, unknown> = {}) {
 
 describe('hydrateFromDb', () => {
   it('merges active DB rows into the in-memory registry so getModel resolves them', async () => {
-    // The motivating case: gpt-5 is in the operator's Model Matrix but
-    // not in the registry's hardcoded fallback. Without hydration, a
-    // step's `modelOverride: 'gpt-5'` semantic-validates to
-    // UNKNOWN_MODEL_OVERRIDE.
-    expect(registry.getModel('gpt-5')).toBeUndefined();
+    // The motivating case: an operator-added model is in the Model
+    // Matrix but not in the registry's hardcoded fallback. Without
+    // hydration, a step's `modelOverride: '<custom>'` semantic-validates
+    // to UNKNOWN_MODEL_OVERRIDE.
+    expect(registry.getModel(CUSTOM_MODEL_ID)).toBeUndefined();
 
     mockFindMany.mockResolvedValue([makeRow()]);
     await hydrate.hydrateFromDb();
 
-    const model = registry.getModel('gpt-5');
+    const model = registry.getModel(CUSTOM_MODEL_ID);
     expect(model).toBeDefined();
-    expect(model?.provider).toBe('openai');
+    expect(model?.provider).toBe('acme');
     expect(model?.supportsTools).toBe(true); // toolUse: 'strong' → true
   });
 
@@ -105,7 +111,7 @@ describe('hydrateFromDb', () => {
 
     // Fallback models still resolvable after the failed hydration.
     expect(registry.getModel('gpt-4o-mini')).toBeDefined();
-    expect(registry.getModel('gpt-5')).toBeUndefined();
+    expect(registry.getModel(CUSTOM_MODEL_ID)).toBeUndefined();
 
     expect(vi.mocked(logging.logger.warn)).toHaveBeenCalledWith(
       'Model registry: hydrateFromDb failed',
@@ -116,6 +122,7 @@ describe('hydrateFromDb', () => {
   it('DB row overrides a same-id fallback entry — admin matrix beats hardcoded list', async () => {
     mockFindMany.mockResolvedValue([
       makeRow({
+        providerSlug: 'openai',
         modelId: 'gpt-4o-mini',
         slug: 'openai-gpt-4o-mini',
         name: 'GPT-4o Mini (Operator-curated)',

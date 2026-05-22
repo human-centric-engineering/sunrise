@@ -4,7 +4,6 @@ Admin page at `/admin/orchestration/costs`. Surfaces every spend / budget signal
 
 **Page shell:** `app/admin/orchestration/costs/page.tsx` — async server component.
 **Client island:** `components/admin/orchestration/costs/costs-view.tsx`.
-**Landed:** Phase 4 Session 4.4.
 
 ## Layout
 
@@ -24,13 +23,15 @@ Admin page at `/admin/orchestration/costs`. Surfaces every spend / budget signal
 ├─────────────────────────────────────────────────────────────────┤
 │ How costs are calculated  (measured vs est, tokenomics, guides) │
 ├─────────────────────────────────────────────────────────────────┤
-│ Configuration form  (task defaults + global monthly cap)        │
+│ Footer link → Settings  (default models + global monthly cap)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+The default-models form and global monthly cap used to live on this page; they were moved to the dedicated Settings page (`/admin/orchestration/settings`) so the Costs page stays focused on reporting. The footer card on this page is a small pointer with a button-link to Settings — it does not fetch or edit configuration.
+
 ## Data sources
 
-The server shell fires six parallel null-safe fetches via `serverFetch()`. Any upstream failure renders an empty state in its section — the page never throws.
+The server shell fires four parallel null-safe fetches via `serverFetch()`. Any upstream failure renders an empty state in its section — the page never throws.
 
 | Section                | Endpoint                                                    | Notes                                                  |
 | ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
@@ -41,7 +42,8 @@ The server shell fires six parallel null-safe fetches via `serverFetch()`. Any u
 | Per-model table        | `GET /costs/summary` (`byModel[]`) + `GET /models`          | Joined to annotate provider / tier / local badge       |
 | Local vs cloud panel   | `GET /costs/summary.localSavings` + `byModel[]` + `/models` | `localSavings: null` → muted placeholder, never throws |
 | Budget alerts list     | `GET /costs/alerts`                                         | Returns `{ alerts, globalCap }` — sorted by severity   |
-| Configuration form     | `GET /settings` + `GET /models`                             | Singleton upsert-on-read                               |
+
+Before fetching, the page also calls `refreshFromOpenRouter()` once so the model registry's per-token rates are at most 24 h stale. The call is heavily cached and a no-op on warm pages.
 
 ## Trend chart — tier synthesis
 
@@ -65,34 +67,40 @@ The `methodology` field is retained as a single-value union on `LocalSavingsResu
 
 On any error — registry lookup blew up, Prisma threw, anything — the helper returns `null` and the rest of `getCostSummary()` still renders. The UI shows "—" in the savings callout in that case.
 
-## Settings form semantics
+## Defaults & global cap (managed on the Settings page)
 
-The form edits a single `AiOrchestrationSettings` row (`slug: 'global'`, lazily upserted by `GET /settings`). Two sections:
+The default-model assignments and the global monthly budget cap are edited on `/admin/orchestration/settings` — see [`orchestration-settings.md`](./orchestration-settings.md) for the form itself. This section documents how those values are consumed by the cost/budget runtime, which is the part a Costs reader usually cares about.
 
 ### Default model assignments
 
-A select for each `TaskType`: `routing` / `chat` / `reasoning` / `embeddings`. Saved via `PATCH /settings { defaultModels }`. The route validates ids via `validateTaskDefaults()` in `model-registry.ts`: chat/routing/reasoning ids must resolve through `getModel()` in the chat-model registry, but the embeddings slot is checked only as a non-empty string in that pass. Embedding ids (`text-embedding-3-small`, `voyage-3`, `nomic-embed-text`, …) live in the DB-backed embedding-model registry (`embedding-models.ts`) and can't be looked up synchronously from a Zod refinement, so the route handler does an explicit `getEmbeddingModels()` check after Zod parse and rejects unknown ids with a 400. Defence-in-depth: bogus ids never reach the DB, even if a non-form caller PATCHes the endpoint directly.
+The Settings form writes per-task defaults to the single `AiOrchestrationSettings` row (`slug: 'global'`, lazily upserted by `GET /settings`). Task slots: `routing` / `chat` / `reasoning` / `embeddings` / `audio`. Saved via `PATCH /settings { defaultModels }`.
 
-The values resolve at runtime via `getDefaultModelForTask(task)` in `lib/orchestration/llm/settings-resolver.ts`, which is called whenever the chat handler needs a model for a task that the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
+Validation lives in `app/api/v1/admin/orchestration/settings/route.ts`:
 
-### Global monthly budget cap (read-only reference)
+- chat/routing/reasoning ids are checked via `validateTaskDefaults()` in `model-registry.ts` — each id must resolve through `getModel()` in the chat-model registry.
+- the `embeddings` slot is validated separately against the DB-backed embedding-model registry (`getEmbeddingModels()`) because those ids aren't in the synchronous chat registry.
+- the `audio` slot is parsed by `parseAudioDefault()` and matched against the available audio models.
 
-This section displays the current global cap value (or "No global cap set") as read-only text with a link to `/admin/orchestration/settings` where the cap is managed. The cap is NOT editable on the costs page — it lives on the dedicated Settings page to keep the costs page focused on reporting and the settings page focused on configuration.
+Defence-in-depth: bogus ids never reach the DB, even if a non-form caller PATCHes the endpoint directly.
 
-**Enforcement:** When set, `cost-tracker.ts#checkBudget()` additionally computes the month-to-date spend _across all agents_ (`getMonthToDateGlobalSpend()`) and flips `globalCapExceeded: true` when the cumulative total is at or above the cap. The streaming chat handler short-circuits on that flag with the `BUDGET_EXCEEDED_GLOBAL` error code so the SSE `error` frame sanitises distinctly from per-agent overruns.
+At runtime, values resolve via `getDefaultModelForTask(task)` in `lib/orchestration/llm/settings-resolver.ts`, called whenever the chat handler needs a model for a task the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
+
+### Global monthly budget cap — enforcement
+
+When the cap is set on the Settings page, `cost-tracker.ts#checkBudget()` additionally computes the month-to-date spend _across all agents_ via `getMonthToDateGlobalSpend()` and flips `globalCapExceeded: true` when the cumulative total is at or above the cap.
+
+The streaming chat handler treats this the same as a per-agent budget breach: it emits the shared `budget_exceeded` SSE error code (`lib/orchestration/chat/streaming-handler.ts:396-399`) with a generic "monthly budget reached" message, and dispatches the `budget_exceeded` webhook. There is **no distinct error code for the global cap** — the UI's red "Global monthly budget exceeded" banner is driven by `GET /costs/alerts → globalCap.exceeded`, not by SSE frame discrimination.
 
 The global cap enforcement is wrapped in try/catch so a transient settings fetch failure degrades gracefully to the per-agent path — it never blocks chat globally because Prisma hiccuped.
 
-## Field help voice
+### Per-turn cost cap
 
-Every non-trivial field is wrapped in `<FieldHelp>`. Reference copy (mirror the voice in later sessions):
+A separate mechanism caps the cost of a single chat turn (defense against a tool loop that fails to converge). Two layers:
 
-- **Routing model** — "Used for fast classification decisions (e.g. 'which specialist agent should handle this question?'). A cheap, fast model is usually the right choice."
-- **Default chat model** — "Fallback model for agents that have not explicitly set their own model. Changing this immediately affects every agent using the 'use default' option."
-- **Reasoning model** — "Used for multi-step reasoning tasks (tool loops, complex planning, capability orchestration). Favour a frontier model for reliability."
-- **Embeddings model** — "Used by the knowledge-base retrieval pipeline to embed both documents at ingest time and queries at search time. Changing this invalidates existing embeddings — re-index before you expect retrieval to work correctly."
-- **Global cap** — "When set, the streaming chat handler refuses any new turn whose cumulative month-to-date spend across all agents would meet or exceed this value."
-- **Projected month card** — "Extrapolates the current month-to-date spend to the end of the month using a simple per-day run rate."
+- **Per-agent override** — `AiAgent.maxCostPerTurnUsd`, edited on the agent form. See [`agent-form.md`](./agent-form.md#per-turn-cost-cap-usd).
+- **Org default** — `AiOrchestrationSettings.defaultMaxCostPerTurnUsd`, edited on the Settings page. Applies when an agent leaves its own cap blank.
+
+When the accumulating turn cost crosses the resolved cap mid-loop, the streaming handler emits a distinct `budget_exceeded_per_turn` SSE event (separate from the monthly `budget_exceeded` code), persists the partial assistant message with `endedReason: 'budget_exceeded'`, and dispatches the `chat_budget_exceeded_per_turn` webhook so PagerDuty/alerting can fire independently of the monthly-overrun signal. See [`.context/orchestration/chat.md`](../orchestration/chat.md) for the loop semantics; the `agent_call` workflow step type mirrors the same guard with the `agent_call_budget_exceeded_per_turn` error.
 
 ## Global cap exceeded banner
 
@@ -150,9 +158,12 @@ The badge format is `$low–$high/run` and includes a tooltip explaining the met
 
 ## Cross-references
 
-- [`.context/admin/agent-form.md`](./agent-form.md) — per-agent budget field
+- [`.context/admin/orchestration-settings.md`](./orchestration-settings.md) — where default models and the global monthly cap are edited
+- [`.context/admin/agent-form.md`](./agent-form.md) — per-agent monthly budget and per-turn cost cap fields
 - [`.context/admin/provider-form.md`](./provider-form.md) — where API keys live
 - [`.context/admin/workflow-builder.md`](./workflow-builder.md) — template banner, cost indicator
+- [`.context/orchestration/chat.md`](../orchestration/chat.md) — streaming handler loop, budget enforcement semantics
+- [`.context/orchestration/cost-estimation.md`](../orchestration/cost-estimation.md) — pre-run USD estimate service (empirical + heuristic)
 - [`.context/orchestration/admin-api.md`](../orchestration/admin-api.md) — `/settings`, `/costs`, `/costs/summary`, `/costs/alerts`
 - [`.context/orchestration/llm-providers.md`](../orchestration/llm-providers.md) — `getDefaultModelForTask` in `settings-resolver.ts`
 - [`.context/api/orchestration-endpoints.md`](../api/orchestration-endpoints.md) — consumer HTTP reference

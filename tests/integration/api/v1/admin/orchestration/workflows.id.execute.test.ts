@@ -32,6 +32,12 @@ vi.mock('@/lib/db/client', () => ({
     aiWorkflow: {
       findUnique: vi.fn(),
     },
+    // The route resolves the effective per-execution cap via
+    // resolveEffectiveExecutionCap, which loads the settings singleton
+    // (null here = "no org cap" so existing assertions still hold).
+    aiOrchestrationSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -117,6 +123,9 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
     patternsUsed: [],
     isActive: true,
     isTemplate: false,
+    // No per-workflow cap by default — keeps existing assertions
+    // (engine sees the caller-supplied budgetLimitUsd) valid.
+    maxCostPerExecutionUsd: null,
     metadata: null,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),

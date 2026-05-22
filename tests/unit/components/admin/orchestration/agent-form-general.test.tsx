@@ -159,6 +159,7 @@ describe('AgentForm — General tab', () => {
         maxTokens: 4096,
         reasoningEffort: null,
         monthlyBudgetUsd: null,
+        maxCostPerTurnUsd: null,
         isActive: true,
         isSystem: false,
         createdBy: 'system',

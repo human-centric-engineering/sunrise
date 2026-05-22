@@ -23,7 +23,7 @@
  * fetch) so the first paint isn't blank.
  */
 
-import { useCallback, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import Link from 'next/link';
 import { CheckCircle2, ChevronRight, Clock, ExternalLink, Loader2, XCircle } from 'lucide-react';
 
@@ -41,6 +41,7 @@ import {
 } from '@/lib/hooks/use-execution-live-poll';
 import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
 import { MarkdownContent } from '@/components/admin/orchestration/markdown-or-raw-view';
+import { buildDisplayTrace } from '@/lib/orchestration/trace/aggregate';
 import { getApprovalPrompt } from '@/lib/orchestration/trace/approval-prompt';
 import { formatStatus } from '@/lib/utils/format-status';
 import { cn } from '@/lib/utils';
@@ -78,6 +79,27 @@ export function ExecutionProgressInline({
   const live = useExecutionLivePoll(executionId, initialPayload);
   const status = live.snapshot.status;
   const terminal = isTerminalStatus(status);
+
+  // Tick clock — advances every second while polling so each synthesised
+  // running entry's durationMs ticks up smoothly between server polls.
+  // Mirrors the full execution detail view; without it parallel branches
+  // would freeze at their last server-reported width between 1s polls.
+  const [tickClock, setTickClock] = useState(0);
+  useEffect(() => {
+    if (terminal) return;
+    const id = setInterval(() => setTickClock((t) => t + 1), 1_000);
+    return () => clearInterval(id);
+  }, [terminal]);
+
+  // Persisted trace + synthesised running rows. During a `parallel`
+  // fan-out this is what makes every branch show up as its own bar in
+  // the timeline strip while the batch is still in flight, instead of
+  // appearing only after each branch persists.
+  const displayTrace = useMemo(
+    () => buildDisplayTrace(live.trace, live.currentRunningSteps, Date.now()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [live.trace, live.currentRunningSteps, tickClock]
+  );
 
   // Wall-clock format: fast, lossy, and always rendered (running runs
   // have no completedAt — `formatWallClock` substitutes "now").
@@ -141,7 +163,7 @@ export function ExecutionProgressInline({
       )}
 
       {/* Timeline strip (hides itself when trace.length < 2) */}
-      <ExecutionTimelineStrip trace={live.trace} />
+      <ExecutionTimelineStrip trace={displayTrace} />
 
       {/* Inline approval card */}
       {status === 'paused_for_approval' && (

@@ -285,6 +285,47 @@ nodes/edges change ─┐
 
 The **Validate** toolbar button does not fire any network request — validation is cheap and local. It simply calls `summaryPanelRef.current?.scrollIntoView({ behavior: 'smooth' })` so the panel pops into view and the aria-live update re-announces.
 
+## Cost banner and per-node cost tinting
+
+`workflow-resource-summary.tsx` renders a band above the canvas that combines the existing capabilities / agents resource list with a **live cost-vs-cap banner**. The banner shows the projected mid estimate against the workflow's effective per-execution cap (workflow override → org default → no cap configured), colour-banded so an operator sees runaway draft cost before they publish.
+
+Driven by `use-workflow-cost-estimate.ts`, which:
+
+- Posts the in-memory `WorkflowDefinition` to `POST /api/v1/admin/orchestration/workflows/:id/cost-estimate` on every (debounced 800 ms) canvas edit. See `.context/orchestration/cost-estimation.md` for the endpoint contract.
+- Skips entirely in create mode (no workflowId yet) and on empty drafts.
+- Keys the debounce on a `JSON.stringify(definition)` content hash rather than object identity — React Flow churns the array refs on every interaction (selection, hover, drag), and identity-based gating would clear-then-reschedule the timer on every micro-update, leaving the banner stuck on "Estimating cost…" forever.
+- Returns `effectiveCapUsd` from the backend (resolution: `workflow.maxCostPerExecutionUsd` → `defaultMaxCostPerExecutionUsd` → null) so the UI doesn't repeat the lookup chain.
+
+### Banner colour bands
+
+| Band   | Condition                              | Style                      | Headline                                                 |
+| ------ | -------------------------------------- | -------------------------- | -------------------------------------------------------- |
+| `ok`   | Cap null/0, or projected < 50% of cap  | Neutral (muted-foreground) | `Projected $X per run · cap $Y` (or "no cap configured") |
+| `warn` | Projected ≥ 50% and < 100% of cap      | Amber (`bg-amber-50` etc.) | `Projected $X — N% of the $Y cap`                        |
+| `over` | Projected ≥ 100% of cap (cap non-null) | Red (`bg-red-50` etc.)     | `Projected $X — exceeds the $Y per-execution cap`        |
+
+The right-hand cluster always shows the `basedOn` badge (`empirical` / `heuristic`) and the `$low–$high` range. USD formatting: `$0.00` for zero, `<$0.01` for sub-cent values, otherwise two-decimal dollars. Banner is best-effort guidance; the runtime cost-cap layer (`.context/orchestration/engine.md`) is what actually aborts a run.
+
+### Per-node tinting (`costBand`)
+
+The builder's draft-cost effect propagates a transient `costBand` field onto each `PatternNode` based on the same estimate's `perStep` breakdown:
+
+- `share = step.costUsd / effectiveCapUsd`
+- `share ≥ 1.0` → `costBand: 'over'` → red ring
+- `share ≥ 0.25` → `costBand: 'warn'` → amber ring
+- Otherwise the band is cleared
+
+Thresholds are slightly more sensitive than the banner's (0.25 vs 0.5 for warn) so individual problem steps light up before the whole workflow does, giving the operator a fix target.
+
+`PatternNode` paints the ring **subject to two precedence rules**:
+
+1. **Validation errors override cost.** A step that's both invalid (red `ring-red-500`) AND expensive shows only the validation ring — the validation fix needs to happen before the cost conversation makes sense.
+2. **Cost band suppresses the "selected" ring.** When a node is selected AND has a cost band, the amber/red ring wins over `ring-primary`.
+
+Each band also renders an `sr-only` label ("Step projected to consume a large share of the cost cap" / "Step alone projected to exceed the per-execution cost cap") for screen-reader users.
+
+The `costBand` field is never persisted — `flowToWorkflowDefinition` strips it on serialise the same way it strips `hasError`. The full lifecycle (estimate fetch → effect → node data → ring) is recomputed on every debounced edit, and the effect's "only write when changed" guard avoids React Flow churn.
+
 ## Saving
 
 `components/admin/orchestration/workflow-builder/workflow-save.ts` is a pure helper that serialises React Flow state via `flowToWorkflowDefinition(nodes, edges, { errorStrategy })` and POSTs or PATCHes via `apiClient`. Keeping it outside the React component makes it trivial to unit-test.
@@ -298,6 +339,7 @@ Request body shape for both create and edit:
   description: string;
   workflowDefinition: WorkflowDefinition; // { steps, entryStepId, errorStrategy }
   isTemplate: boolean;
+  maxCostPerExecutionUsd: number | null; // runaway-loop guard, improvement #39
 }
 ```
 
@@ -308,6 +350,7 @@ The POST schema requires `slug` and `description`, which the canvas does not cap
 - **Slug** — auto-derived from the workflow name via a local `slugify()` helper, but the dialog stops auto-deriving once the user types in the slug field (`slugTouched` state). Validated against `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` before the Confirm button enables.
 - **Description** — free-text, required non-empty.
 - **Error strategy** — Select over `fail` / `retry` / `skip` / `fallback`, defaults to `fail`. Threaded through `flowToWorkflowDefinition` opts. Individual steps can override this via the block config panel's error handling section.
+- **Per-execution cost cap (USD)** — Optional number input bound to `AiWorkflow.maxCostPerExecutionUsd`. Min 0.01, max 10,000. Leave blank to inherit the org-wide default (Settings → Orchestration). When set, every execution of this workflow inherits the cap unless the caller passes an explicit `budgetLimitUsd` override. The runaway-loop guard from improvement #39 — see `.context/orchestration/engine.md` for the resolution chain and breach semantics.
 - **Is template** — Checkbox, default false.
 
 Confirming calls `performSave(resolved)` → `saveWorkflow()` → on success `router.push('/admin/orchestration/workflows/:id')`. On subsequent saves the shell holds the resolved `details` in state and skips the dialog.

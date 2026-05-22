@@ -41,6 +41,123 @@ import type { ExecutionTraceEntry } from '@/types/orchestration';
 const RETRY_PILL_CLASS =
   'rounded-md border border-dashed border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200';
 
+/**
+ * Trim a retry reason for inline display in the amber pill.
+ *
+ * The `validate_rationale` LLM guard's prompt asks the judge to quote
+ * the offending change object after the prose, so producers get a
+ * precise retry signal. That JSON is noise in the row-level summary —
+ * the full output (including the verbatim reason) is one accordion
+ * expand away in the step's output pane. We keep the prose, attach a
+ * one-line summary of the offending object's salient keys (e.g.
+ * `tierRole: "worker" → "thinking"`), and drop everything else.
+ *
+ * The full untrimmed reason is preserved in the row's `title` so it
+ * still surfaces on hover without forcing an expansion.
+ */
+export function summariseRetryReason(reason: string): string {
+  const braceAt = reason.indexOf('{');
+  if (braceAt === -1) return reason.trim();
+
+  const jsonText = sliceBalancedBraces(reason, braceAt);
+  const tail = jsonText ? summariseOffendingObject(jsonText) : null;
+
+  // When we can produce a tail summary, strip the redundant
+  // "Offending change:" lead-in from the prefix — the tail conveys
+  // the same signal more concisely. When we can't, keep the marker
+  // so the operator still knows something was attached.
+  const rawPrefix = reason.slice(0, braceAt).replace(/```(?:json)?\s*$/i, '');
+  const prefix = (
+    tail
+      ? rawPrefix.replace(/\b(Offending(?:\s+(?:change|object|item))?)\s*:?\s*$/i, '')
+      : rawPrefix
+  )
+    .trim()
+    .replace(/[\s.,;:—-]+$/, '');
+
+  if (!prefix && !tail) return reason.trim();
+  if (!tail) return `${prefix}.`;
+  return prefix ? `${prefix} — ${tail}` : tail;
+}
+
+function sliceBalancedBraces(s: string, start: number): string | null {
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') inStr = !inStr;
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function summariseOffendingObject(jsonText: string): string | null {
+  let obj: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(jsonText);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    obj = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  // Field-change shape: `{ field, currentValue, proposedValue, ... }`.
+  // This is the dominant offending-object shape across the audit
+  // template's guards, so name the field and show the transition.
+  if (typeof obj.field === 'string' && 'currentValue' in obj && 'proposedValue' in obj) {
+    return `${obj.field}: ${formatValue(obj.currentValue)} → ${formatValue(obj.proposedValue)}`;
+  }
+
+  // Model-shape: `{ modelName, providerSlug, ... }`. Used when the
+  // judge quotes the whole proposal rather than a single change.
+  if (typeof obj.modelName === 'string' && typeof obj.providerSlug === 'string') {
+    return `${obj.modelName} (${obj.providerSlug})`;
+  }
+  if (typeof obj.slug === 'string') return obj.slug;
+  if (typeof obj.modelId === 'string') return String(obj.modelId);
+
+  // Generic fallback: first couple of scalar keys, comma-joined.
+  const scalars: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      scalars.push(`${k}=${formatValue(v)}`);
+      if (scalars.length === 2) break;
+    }
+  }
+  return scalars.length > 0 ? scalars.join(', ') : null;
+}
+
+function formatValue(v: unknown): string {
+  if (typeof v === 'string') return `"${v}"`;
+  if (v === null || v === undefined) return String(v);
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '[]';
+    if (v.every((x) => typeof x === 'string')) {
+      return `[${v.map((x) => `"${x}"`).join(', ')}]`;
+    }
+    return `[…${v.length}]`;
+  }
+  if (typeof v === 'object') return '{…}';
+  if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'bigint') {
+    return String(v);
+  }
+  return '…';
+}
+
 type Status = ExecutionTraceEntry['status'] | 'running';
 
 /**
@@ -444,7 +561,11 @@ export function ExecutionTraceEntryRow({
                     ? `Retry budget exhausted — routed to ${r.targetStepId}`
                     : `Attempt ${r.attempt} of ${r.maxRetries} failed — re-running ${r.targetStepId}`}
                 </p>
-                {r.reason && <p className="mt-0.5 break-words opacity-80">Reason: {r.reason}</p>}
+                {r.reason && (
+                  <p className="mt-0.5 break-words opacity-80" title={r.reason}>
+                    Reason: {summariseRetryReason(r.reason)}
+                  </p>
+                )}
               </div>
             </li>
           ))}

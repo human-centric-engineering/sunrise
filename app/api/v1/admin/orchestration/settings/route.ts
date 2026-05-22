@@ -233,6 +233,12 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.stuckExecutionThresholdMins !== undefined) {
     updateData.stuckExecutionThresholdMins = body.stuckExecutionThresholdMins;
   }
+  if (body.defaultMaxCostPerExecutionUsd !== undefined) {
+    updateData.defaultMaxCostPerExecutionUsd = body.defaultMaxCostPerExecutionUsd;
+  }
+  if (body.defaultMaxCostPerTurnUsd !== undefined) {
+    updateData.defaultMaxCostPerTurnUsd = body.defaultMaxCostPerTurnUsd;
+  }
   if (body.escalationConfig !== undefined) {
     updateData.escalationConfig =
       body.escalationConfig === null

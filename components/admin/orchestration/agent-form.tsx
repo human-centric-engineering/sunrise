@@ -92,6 +92,10 @@ const agentFormSchema = z.object({
   // null. The submit handler translates `'auto'` → null.
   reasoningEffort: z.enum(['auto', 'minimal', 'low', 'medium', 'high']),
   monthlyBudgetUsd: z.number().positive().max(10000).optional(),
+  // Per-turn cap (improvement #39 runaway-loop guard). Optional /
+  // nullable; null means "use the org default" or "no cap" if that
+  // is also null. min(0.01) matches the API-side validator.
+  maxCostPerTurnUsd: z.number().min(0.01).max(10000).nullable().optional(),
   isActive: z.boolean(),
   inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
   outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
@@ -213,6 +217,7 @@ export function AgentForm({
       maxTokens: agent?.maxTokens ?? 4096,
       reasoningEffort: toReasoningEffortFormValue(agent?.reasoningEffort),
       monthlyBudgetUsd: agent?.monthlyBudgetUsd ?? undefined,
+      maxCostPerTurnUsd: agent?.maxCostPerTurnUsd ?? null,
       isActive: agent?.isActive ?? true,
       inputGuardMode: (agent?.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
@@ -989,6 +994,35 @@ export function AgentForm({
           </div>
 
           <div className="grid gap-2">
+            <Label htmlFor="maxCostPerTurnUsd">
+              Per-turn cost cap (USD){' '}
+              <FieldHelp title="Runaway-loop guard">
+                Caps the total LLM cost of a single chat turn or workflow agent_call step (the
+                messages exchanged before the model returns a final answer). Protects against a tool
+                loop that keeps round-tripping without converging — a single bad question becomes a
+                few cents instead of a few dollars. When the cap is hit, the loop stops: in chat the
+                user sees a friendly &ldquo;response stopped early&rdquo; message; in a workflow the
+                step fails with budget_exceeded_per_turn and the workflow&apos;s error strategy
+                decides what happens next. Leave blank to inherit the org-wide default (Settings →
+                Orchestration). When that is also blank, no per-turn cap applies — only the monthly
+                budget above.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="maxCostPerTurnUsd"
+              type="number"
+              step="0.01"
+              {...register('maxCostPerTurnUsd', {
+                setValueAs: (v: string | number) =>
+                  v === '' || v === null || v === undefined ? null : Number(v),
+              })}
+            />
+            {errors.maxCostPerTurnUsd && (
+              <p className="text-destructive text-xs">{errors.maxCostPerTurnUsd.message}</p>
+            )}
+          </div>
+
+          <div className="grid gap-2">
             <Label htmlFor="rateLimitRpm">
               Rate limit (RPM){' '}
               <FieldHelp title="Per-user request throttle">
@@ -1616,6 +1650,7 @@ export function AgentForm({
                       maxTokens: fresh.maxTokens,
                       reasoningEffort: toReasoningEffortFormValue(fresh.reasoningEffort),
                       monthlyBudgetUsd: fresh.monthlyBudgetUsd ?? undefined,
+                      maxCostPerTurnUsd: fresh.maxCostPerTurnUsd ?? null,
                       isActive: fresh.isActive,
                       inputGuardMode:
                         (fresh.inputGuardMode as AgentFormData['inputGuardMode']) ?? null,

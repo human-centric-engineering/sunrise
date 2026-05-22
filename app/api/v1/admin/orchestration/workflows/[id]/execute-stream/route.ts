@@ -19,7 +19,10 @@ import { sseResponse } from '@/lib/api/sse';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { prepareWorkflowExecution } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
+import {
+  prepareWorkflowExecution,
+  resolveEffectiveExecutionCap,
+} from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 import { z } from 'zod';
 
 const MAX_INPUT_SIZE = 256 * 1024; // 256 KB
@@ -74,16 +77,25 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
   const { workflow, definition, version } = await prepareWorkflowExecution(rawId);
 
+  // Cap resolution: caller query-string > workflow default > settings default.
+  const effectiveBudgetLimitUsd = await resolveEffectiveExecutionCap({
+    callerOverride: budgetLimitUsd,
+    workflowDefault: workflow.maxCostPerExecutionUsd,
+  });
+
   log.info('workflow execute-stream started', {
     workflowId: workflow.id,
     versionId: version.id,
     userId: session.user.id,
+    callerBudgetLimitUsd: budgetLimitUsd ?? null,
+    workflowMaxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd ?? null,
+    effectiveBudgetLimitUsd: effectiveBudgetLimitUsd ?? null,
   });
 
   const engine = new OrchestrationEngine();
   const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
     userId: session.user.id,
-    budgetLimitUsd,
+    ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
     signal: request.signal,
   });
 

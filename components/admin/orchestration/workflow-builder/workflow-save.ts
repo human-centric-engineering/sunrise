@@ -27,6 +27,14 @@ export interface WorkflowDetails {
   description: string;
   errorStrategy: 'retry' | 'fallback' | 'skip' | 'fail';
   isTemplate: boolean;
+  /**
+   * Per-execution cost cap (USD). When set, every execution of this
+   * workflow inherits the cap unless the caller passes an explicit
+   * `budgetLimitUsd`. Null inherits the org-wide default
+   * (`AiOrchestrationSettings.defaultMaxCostPerExecutionUsd`).
+   * Runaway-loop guard from improvement #39.
+   */
+  maxCostPerExecutionUsd: number | null;
 }
 
 export interface WorkflowSavePayload {
@@ -63,6 +71,7 @@ export async function saveWorkflow(payload: WorkflowSavePayload): Promise<AiWork
         description: payload.details.description,
         workflowDefinition: definition,
         isTemplate: payload.details.isTemplate,
+        maxCostPerExecutionUsd: payload.details.maxCostPerExecutionUsd,
       },
     });
   }
@@ -79,6 +88,7 @@ export async function saveWorkflow(payload: WorkflowSavePayload): Promise<AiWork
       description: payload.details.description,
       draftDefinition: definition,
       isTemplate: payload.details.isTemplate,
+      maxCostPerExecutionUsd: payload.details.maxCostPerExecutionUsd,
     },
   });
 }

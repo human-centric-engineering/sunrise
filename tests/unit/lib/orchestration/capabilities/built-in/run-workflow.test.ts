@@ -14,6 +14,9 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgentCapability: { findFirst: vi.fn() },
     aiWorkflow: { findFirst: vi.fn() },
+    // Capability spawns a child execution and resolves the effective
+    // cap via `resolveMaxCostPerExecution`. Default null = no org cap.
+    aiOrchestrationSettings: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -81,6 +84,9 @@ function existingWorkflow(
   const row = {
     id: `wf-${slug}`,
     slug,
+    // Required by the capability's cap resolver. Default null = no
+    // workflow-level cap; tests that exercise the cap path can mutate.
+    maxCostPerExecutionUsd: null,
     publishedVersion: { id: `wfv-${slug}`, snapshot: fullDefinition },
   };
   findWorkflow.mockResolvedValue(row);
@@ -164,6 +170,7 @@ describe('RunWorkflowCapability', () => {
       findWorkflow.mockResolvedValue({
         id: 'wf-1',
         slug: 'refund-flow',
+        maxCostPerExecutionUsd: null,
         publishedVersion: {
           id: 'wfv-1',
           snapshot: { entryStepId: 'x' /* missing steps */ },

@@ -21,6 +21,8 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { generateSilentWav } from '@/lib/audio/silent-wav';
+import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
+import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { cuidSchema } from '@/lib/validations/common';
 
 // Wider than the matrix `capabilitySchema` (lib/validations/orchestration.ts):
@@ -147,10 +149,26 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       const wav = generateSilentWav();
       await provider.transcribe!(wav, { model, mimeType: 'audio/wav' });
     } else {
+      // Reasoning models (gpt-5, o-series) bill `max_completion_tokens`
+      // against reasoning tokens AND visible output combined. A tiny
+      // cap (10) gets burnt entirely on reasoning, the API returns
+      // `finish_reason: 'length'` with empty content, and the
+      // openai-compatible provider throws `truncated_no_output` —
+      // surfacing as "Model did not respond" in the connectivity panel
+      // even though the call actually reached the model. Bump the
+      // cap to 256 for reasoning profiles; the test still costs
+      // pennies but leaves room for the reasoning preamble plus
+      // "Hello." Legacy chat models keep the small cap.
+      const registryEntry = getModel(model);
+      const profile = registryEntry?.paramProfile ?? deriveParamProfile(model, providerRow.slug);
+      const isReasoning = profile === 'openai-reasoning';
       await provider.chat([{ role: 'user', content: 'Say hello.' }], {
         model,
-        maxTokens: 10,
-        temperature: 0,
+        maxTokens: isReasoning ? 256 : 10,
+        // gpt-5 / o-series reject non-default temperature. The provider
+        // already drops the field for reasoning profiles, but skipping
+        // here keeps the intent legible.
+        ...(isReasoning ? {} : { temperature: 0 }),
       });
     }
     const latencyMs = Date.now() - start;

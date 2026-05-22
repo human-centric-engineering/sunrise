@@ -132,6 +132,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.maxTokens !== undefined) data.maxTokens = body.maxTokens;
   if (body.reasoningEffort !== undefined) data.reasoningEffort = body.reasoningEffort;
   if (body.monthlyBudgetUsd !== undefined) data.monthlyBudgetUsd = body.monthlyBudgetUsd;
+  if (body.maxCostPerTurnUsd !== undefined) data.maxCostPerTurnUsd = body.maxCostPerTurnUsd;
   if (body.metadata !== undefined) {
     data.metadata = body.metadata as Prisma.InputJsonValue;
   }
@@ -221,6 +222,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'retentionDays',
     'providerConfig',
     'monthlyBudgetUsd',
+    'maxCostPerTurnUsd',
     'metadata',
     'enableVoiceInput',
     'enableImageInput',
@@ -334,6 +336,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           retentionDays: current.retentionDays,
           providerConfig: current.providerConfig,
           monthlyBudgetUsd: current.monthlyBudgetUsd,
+          maxCostPerTurnUsd: current.maxCostPerTurnUsd,
           enableVoiceInput: current.enableVoiceInput,
           enableImageInput: current.enableImageInput,
           enableDocumentInput: current.enableDocumentInput,

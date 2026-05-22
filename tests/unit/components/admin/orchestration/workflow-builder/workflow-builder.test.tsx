@@ -197,8 +197,17 @@ vi.mock('@/components/admin/orchestration/workflow-builder/workflow-canvas', () 
   },
 }));
 
+// Mock the cost-estimate hook so cost-band propagation tests can drive
+// `costEstimate` directly without real debounce / HTTP round-trips.
+// Default: null estimate (no bands set) — existing tests are unaffected.
+vi.mock('@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate', () => ({
+  useWorkflowCostEstimate: vi.fn(() => ({ estimate: null, loading: false, error: null })),
+}));
+
 import { WorkflowBuilder } from '@/components/admin/orchestration/workflow-builder/workflow-builder';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { useWorkflowCostEstimate } from '@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate';
+import type { WorkflowCostEstimateWithCap } from '@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate';
 import type { AiWorkflow, AiWorkflowVersion } from '@prisma/client';
 import type { AiWorkflowWithVersion, WorkflowDefinition } from '@/types/orchestration';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
@@ -1514,6 +1523,313 @@ describe('WorkflowBuilder', () => {
           'Workflow discard-draft failed',
           expect.anything()
         );
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // cost-band propagation — useEffect that maps perStep costUsd shares to
+  // 'warn' / 'over' bands on each PatternNode's data.costBand.
+  //
+  // Assertion strategy: the @xyflow/react mock's useNodesState intercepts
+  // every setNodes(fn) call and applies the function-updater to
+  // `lastNodesStateArg`. After the effect fires we read the resulting node
+  // array directly from `lastNodesStateArg` to check `data.costBand`.
+  // PatternNode is not rendered (WorkflowCanvas is a stub div), so DOM
+  // attribute assertions are not possible — lastNodesStateArg is the only
+  // observable for state updates driven by setNodes function-updaters.
+  // ---------------------------------------------------------------------------
+
+  describe('cost-band propagation', () => {
+    /**
+     * Build a WorkflowCostEstimateWithCap payload that the hook would return
+     * after a successful POST to the cost-estimate endpoint.
+     */
+    function makeCostEstimate(
+      overrides: Partial<WorkflowCostEstimateWithCap>
+    ): WorkflowCostEstimateWithCap {
+      return {
+        midUsd: 0.5,
+        lowUsd: 0.3,
+        highUsd: 0.8,
+        basedOn: 'heuristic',
+        sampleSize: 0,
+        modelUsed: 'gpt-4o-mini',
+        judgeModelUsed: null,
+        modelMix: [],
+        workflowHasSupervisor: false,
+        llmStepCount: 1,
+        perStep: [],
+        notes: '',
+        effectiveCapUsd: null,
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      // Restore the hook mock to its default (null estimate) before each test.
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: null,
+        loading: false,
+        error: null,
+      });
+    });
+
+    it('does not assign costBand when effectiveCapUsd is null', async () => {
+      // Arrange: the hook returns an estimate with a null cap.
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: null,
+          perStep: [
+            {
+              stepId: 'step-1',
+              modelId: 'gpt-4o-mini',
+              role: 'work',
+              inputTokens: 100,
+              outputTokens: 50,
+              costUsd: 5.0,
+              pricingKnown: true,
+            },
+          ],
+        }),
+        loading: false,
+        error: null,
+      });
+
+      // Act: render a saved workflow so the effect has nodes to update.
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-null-cap' })} />);
+
+      // Allow React effects to settle.
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Assert: the cost-band effect exits early when cap is null — no node
+      // receives a costBand. The function-updater still runs (bandByStepId
+      // is empty) but every node.data.costBand should remain undefined.
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        expect(nodes.length).toBeGreaterThan(0);
+        for (const node of nodes) {
+          expect(node.data.costBand).toBeUndefined();
+        }
+      });
+    });
+
+    it('does not assign costBand when effectiveCapUsd is 0', async () => {
+      // Arrange: cap = 0 is treated the same as "no cap" by the guard
+      // (`cap > 0` must be true to enter the per-step loop).
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: 0,
+          perStep: [
+            {
+              stepId: 'step-1',
+              modelId: 'gpt-4o-mini',
+              role: 'work',
+              inputTokens: 100,
+              outputTokens: 50,
+              costUsd: 5.0,
+              pricingKnown: true,
+            },
+          ],
+        }),
+        loading: false,
+        error: null,
+      });
+
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-zero-cap' })} />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        expect(nodes.length).toBeGreaterThan(0);
+        for (const node of nodes) {
+          expect(node.data.costBand).toBeUndefined();
+        }
+      });
+    });
+
+    it('assigns warn band when a step share is between 25% and 100% of cap', async () => {
+      // Arrange: cap = 1.0, step-1 costs 0.4 USD → share = 0.4 ≥ 0.25 (warn).
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: 1.0,
+          perStep: [
+            {
+              stepId: 'step-1',
+              modelId: 'gpt-4o-mini',
+              role: 'work',
+              inputTokens: 100,
+              outputTokens: 50,
+              costUsd: 0.4,
+              pricingKnown: true,
+            },
+          ],
+        }),
+        loading: false,
+        error: null,
+      });
+
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-warn' })} />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // The effect maps the perStep entry into bandByStepId ('warn') and calls
+      // setNodes(prev => prev.map(...)). The mock applies the updater to
+      // lastNodesStateArg, so step-1's costBand should now be 'warn'.
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        const step1 = nodes.find((n) => n.id === 'step-1');
+        expect(step1).toBeDefined();
+        expect(step1?.data.costBand).toBe('warn');
+      });
+    });
+
+    it('assigns over band when a step projected cost meets or exceeds the cap', async () => {
+      // Arrange: cap = 1.0, step-1 costs 1.0 USD → share = 1.0 ≥ 1.0 (over).
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: 1.0,
+          perStep: [
+            {
+              stepId: 'step-1',
+              modelId: 'gpt-4o-mini',
+              role: 'work',
+              inputTokens: 500,
+              outputTokens: 200,
+              costUsd: 1.0,
+              pricingKnown: true,
+            },
+          ],
+        }),
+        loading: false,
+        error: null,
+      });
+
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-over' })} />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        const step1 = nodes.find((n) => n.id === 'step-1');
+        expect(step1).toBeDefined();
+        expect(step1?.data.costBand).toBe('over');
+      });
+    });
+
+    it('does not assign band when share is below 25% of cap', async () => {
+      // Arrange: cap = 1.0, step-1 costs 0.1 USD → share = 0.1 < 0.25 (no band).
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: 1.0,
+          perStep: [
+            {
+              stepId: 'step-1',
+              modelId: 'gpt-4o-mini',
+              role: 'work',
+              inputTokens: 50,
+              outputTokens: 20,
+              costUsd: 0.1,
+              pricingKnown: true,
+            },
+          ],
+        }),
+        loading: false,
+        error: null,
+      });
+
+      render(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-low' })} />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // share < PER_STEP_WARN (0.25) → bandByStepId has no entry for step-1 →
+      // `bandByStepId.get('step-1') ?? undefined` = undefined → no band assigned.
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        const step1 = nodes.find((n) => n.id === 'step-1');
+        expect(step1).toBeDefined();
+        expect(step1?.data.costBand).toBeUndefined();
+      });
+    });
+
+    it('clears costBand when a subsequent estimate removes the step from perStep', async () => {
+      // This test exercises the "band cleared" path: a first estimate marks
+      // step-1 as 'over'; then the hook delivers a new estimate that omits step-1
+      // from perStep entirely. The effect should set step-1.data.costBand back
+      // to undefined because bandByStepId.get('step-1') returns undefined.
+      //
+      // We drive this by rendering with the 'over' estimate first, then
+      // re-rendering with a new mock return value that omits step-1.
+
+      // Phase 1: render with step-1 at 'over' band.
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: 1.0,
+          perStep: [
+            {
+              stepId: 'step-1',
+              modelId: 'gpt-4o-mini',
+              role: 'work',
+              inputTokens: 500,
+              outputTokens: 200,
+              costUsd: 1.0,
+              pricingKnown: true,
+            },
+          ],
+        }),
+        loading: false,
+        error: null,
+      });
+
+      const { rerender } = render(
+        <WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-clear' })} />
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Confirm step-1 is initially 'over'.
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        const step1 = nodes.find((n) => n.id === 'step-1');
+        expect(step1?.data.costBand).toBe('over');
+      });
+
+      // Phase 2: new estimate with cap still set but step-1 absent from perStep.
+      // The effect runs again and finds no entry for step-1 in bandByStepId,
+      // so it updates the node to costBand: undefined.
+      vi.mocked(useWorkflowCostEstimate).mockReturnValue({
+        estimate: makeCostEstimate({
+          effectiveCapUsd: 1.0,
+          perStep: [], // step-1 no longer appears
+        }),
+        loading: false,
+        error: null,
+      });
+
+      await act(async () => {
+        rerender(<WorkflowBuilder mode="edit" workflow={makeWorkflow({ id: 'wf-band-clear' })} />);
+        await Promise.resolve();
+      });
+
+      // step-1.data.costBand should now be undefined (band cleared by the effect).
+      await waitFor(() => {
+        const nodes = lastNodesStateArg as Array<{ id: string; data: { costBand?: string } }>;
+        const step1 = nodes.find((n) => n.id === 'step-1');
+        expect(step1).toBeDefined();
+        expect(step1?.data.costBand).toBeUndefined();
       });
     });
   });

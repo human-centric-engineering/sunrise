@@ -660,12 +660,13 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                           contentClassName="w-96 max-h-96 overflow-y-auto"
                         >
                           <p>
-                            <strong>BM25</strong> (&ldquo;Best Matching 25&rdquo;) is a classic
-                            keyword-ranking algorithm — the same family that traditional search
-                            engines like Lucene and Elasticsearch use. It scores how well a chunk
-                            matches a query based on three signals: which query terms appear in the
-                            chunk, how often they appear, and how rare those terms are across the
-                            whole knowledge base (rarer terms count for more).
+                            <strong>BM25</strong> (&ldquo;Best Match 25&rdquo; — &ldquo;BM&rdquo;
+                            stands for <em>Best Match</em>) is a classic keyword-ranking algorithm —
+                            the same family that traditional search engines like Lucene and
+                            Elasticsearch use. It scores how well a chunk matches a query based on
+                            three signals: which query terms appear in the chunk, how often they
+                            appear, and how rare those terms are across the whole knowledge base
+                            (rarer terms count for more).
                           </p>
                           <p className="text-foreground mt-2 font-medium">How it fits in here</p>
                           <p>

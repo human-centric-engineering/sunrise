@@ -75,6 +75,7 @@ const VALID_DETAILS = {
   description: 'A test workflow',
   errorStrategy: 'fail' as const,
   isTemplate: false,
+  maxCostPerExecutionUsd: null,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

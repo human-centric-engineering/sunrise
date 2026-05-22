@@ -18,6 +18,11 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: 'This agent has reached its monthly budget.',
     action: 'Contact an admin to increase the limit or switch to a local model.',
   },
+  budget_exceeded_per_turn: {
+    title: 'Response Cost Limit Reached',
+    message: "This response stopped early to stay within the agent's per-turn cost limit.",
+    action: 'Try a more specific question, or ask an admin to raise the per-turn cap.',
+  },
   all_providers_exhausted: {
     title: 'No Available Provider',
     message: 'None of the configured AI providers could handle the request.',
@@ -47,6 +52,72 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     title: 'Unable to Connect',
     message: 'Could not reach the AI service. This is usually temporary.',
     action: 'Wait a few seconds and try again.',
+  },
+  // Provider HTTP errors — surfaced when an LLM provider rejects the
+  // request. Keeping these distinct from `internal_error` so the user
+  // knows the issue sits with the upstream model, not the app itself,
+  // and gets an actionable next step.
+  http_400: {
+    title: 'Request Rejected by Provider',
+    message:
+      'The AI provider rejected the request. The conversation history may have got out of sync.',
+    action:
+      'Start a new conversation. If it keeps happening, ask an admin to check the agent or model settings.',
+  },
+  http_401: {
+    title: 'Provider Authentication Failed',
+    message: 'The AI provider rejected the credentials configured for this agent.',
+    action: 'Ask an admin to check the provider API key in Admin → Providers.',
+  },
+  http_403: {
+    title: 'Provider Authentication Failed',
+    message: 'The AI provider rejected the credentials configured for this agent.',
+    action: 'Ask an admin to check the provider API key in Admin → Providers.',
+  },
+  http_404: {
+    title: 'Provider Could Not Find the Model',
+    message:
+      'The configured model does not exist on the upstream provider, or is not available to this account.',
+    action: 'Ask an admin to pick a valid model in Admin → AI Orchestration → Settings.',
+  },
+  http_429: {
+    title: 'Provider Rate Limit Hit',
+    message: 'The AI provider is throttling requests right now.',
+    action: 'Wait a few seconds and try again.',
+  },
+  http_500: {
+    title: 'Provider Is Having Trouble',
+    message: 'The AI provider returned a server error.',
+    action:
+      'Wait a few seconds and try again. If it persists, switch to a different model or provider.',
+  },
+  http_502: {
+    title: 'Provider Is Having Trouble',
+    message: 'The AI provider returned a server error.',
+    action:
+      'Wait a few seconds and try again. If it persists, switch to a different model or provider.',
+  },
+  http_503: {
+    title: 'Provider Is Having Trouble',
+    message: 'The AI provider returned a server error.',
+    action:
+      'Wait a few seconds and try again. If it persists, switch to a different model or provider.',
+  },
+  http_504: {
+    title: 'Provider Timed Out',
+    message: 'The AI provider took too long to respond.',
+    action: 'Try again — the issue is usually temporary.',
+  },
+  provider_error: {
+    title: 'Provider Error',
+    message: 'The AI provider could not complete the request.',
+    action:
+      'Wait a few seconds and try again. If it persists, switch to a different model or provider.',
+  },
+  timeout: {
+    title: 'Request Timed Out',
+    message: 'The AI provider did not respond in time.',
+    action: 'Try again. If it keeps happening, ask an admin to check the provider.',
   },
   rate_limited: {
     title: 'Too Many Requests',
@@ -112,8 +183,14 @@ const ERROR_MAP: Record<string, UserFacingError> = {
 
 /**
  * Look up a user-facing error by code.
- * Unknown codes fall back to the `internal_error` entry.
+ *
+ * Resolution order: exact match → bucket-by-family (any unrecognised
+ * `http_*` code falls back to the generic `provider_error` copy so the
+ * user gets a "the provider is having trouble" message instead of the
+ * scary "Something Went Wrong" default) → `internal_error`.
  */
 export function getUserFacingError(code: string): UserFacingError {
-  return ERROR_MAP[code] ?? ERROR_MAP.internal_error;
+  if (ERROR_MAP[code]) return ERROR_MAP[code];
+  if (code.startsWith('http_')) return ERROR_MAP.provider_error;
+  return ERROR_MAP.internal_error;
 }

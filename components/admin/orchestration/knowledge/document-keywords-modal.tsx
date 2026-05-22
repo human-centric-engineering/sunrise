@@ -194,9 +194,9 @@ export function DocumentKeywordsModal({
           </DialogTitle>
           <DialogDescription>
             Distinct keywords currently indexed across this document&apos;s chunks. These feed the
-            BM25 component of hybrid search — chunks whose keywords match the query get a relevance
-            boost. Keywords affect <em>how</em> a chunk ranks, never <em>who</em> can see it (that
-            is what tags are for).
+            BM25 (&ldquo;Best Match 25&rdquo;) component of hybrid search — chunks whose keywords
+            match the query get a relevance boost. Keywords affect <em>how</em> a chunk ranks, never{' '}
+            <em>who</em> can see it (that is what tags are for).
           </DialogDescription>
         </DialogHeader>
 

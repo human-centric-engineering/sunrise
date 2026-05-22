@@ -26,6 +26,10 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiWorkflow: { findFirst: vi.fn() },
     aiWorkflowExecution: { create: vi.fn() },
+    // Settings singleton lookup for resolveMaxCostPerExecution. Default
+    // null = no org-wide cap; existing assertions about uncapped
+    // executions still hold.
+    aiOrchestrationSettings: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -88,6 +92,11 @@ const mockWorkflow = {
   isActive: true,
   // Webhook trigger now refuses to fire when no version is published.
   publishedVersionId: 'wfv_1',
+  // No per-workflow cap by default — tests assert the execution row is
+  // created without budgetLimitUsd. The route still calls the resolver
+  // (and the settings findUnique mock above returns null) so the
+  // happy-path execution stays uncapped.
+  maxCostPerExecutionUsd: null,
 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

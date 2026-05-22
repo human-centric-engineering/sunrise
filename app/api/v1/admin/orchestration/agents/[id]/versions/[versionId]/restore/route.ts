@@ -56,6 +56,7 @@ const versionSnapshotSchema = z.object({
   retentionDays: z.number().int().nullable().optional(),
   providerConfig: z.unknown().optional(),
   monthlyBudgetUsd: z.number().nullable().optional(),
+  maxCostPerTurnUsd: z.number().nullable().optional(),
   enableVoiceInput: z.boolean().optional(),
   enableImageInput: z.boolean().optional(),
   enableDocumentInput: z.boolean().optional(),
@@ -169,6 +170,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData.providerConfig = snapshot.providerConfig as Prisma.InputJsonValue;
     if (snapshot.monthlyBudgetUsd !== undefined)
       updateData.monthlyBudgetUsd = snapshot.monthlyBudgetUsd;
+    if (snapshot.maxCostPerTurnUsd !== undefined)
+      updateData.maxCostPerTurnUsd = snapshot.maxCostPerTurnUsd;
     if (snapshot.enableVoiceInput !== undefined)
       updateData.enableVoiceInput = snapshot.enableVoiceInput;
     if (snapshot.enableImageInput !== undefined)

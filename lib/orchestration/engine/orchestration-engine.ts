@@ -89,6 +89,7 @@ import {
   stepFailed,
   stepRetry,
   stepStarted,
+  workflowBudgetExceeded,
   workflowCompleted,
   workflowFailed,
   workflowStarted,
@@ -125,6 +126,18 @@ const BUDGET_WARN_FRACTION = 0.8;
 
 /** Hard cap on steps walked in a single run — guards against pathological loops. */
 const MAX_STEPS_PER_RUN = 1000;
+
+/**
+ * Format a deterministic "Budget exceeded" reason string. Persisted to
+ * `AiWorkflowExecution.errorMessage` and surfaced in the executions list
+ * + live-engine page — admin UIs string-match on the `Budget exceeded`
+ * prefix to style the row differently from a generic step failure, so
+ * keep the prefix stable.
+ */
+function formatBudgetExceededReason(usedUsd: number, limitUsd: number, qualifier?: string): string {
+  const q = qualifier ? ` ${qualifier}` : '';
+  return `Budget exceeded${q} ($${usedUsd.toFixed(4)} / $${limitUsd.toFixed(4)} cap)`;
+}
 
 /**
  * Callback-based subscriber for execution events.
@@ -581,9 +594,17 @@ export class OrchestrationEngine {
         }
         if (batchResult.lastOutput !== undefined) finalOutput = batchResult.lastOutput;
 
-        // Budget check after the batch.
+        // Budget check after the batch. Yield the specific
+        // `workflow_budget_exceeded` event first so webhook subscribers
+        // can distinguish a cap breach from a generic step failure; the
+        // standard `workflow_failed` terminal event still follows.
         if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
-          failureReason = 'Budget exceeded';
+          failureReason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
+          // Use the last completed step in the batch as the
+          // attribution point; fall back to the workflow's entry step
+          // if the batch yielded no step ids (degenerate empty batch).
+          const attribStep = batchResult.nextIds[0] ?? workflow.definition.entryStepId;
+          yield workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, attribStep, executionId);
           yield workflowFailed(failureReason);
           failed = true;
           break;
@@ -1110,12 +1131,19 @@ export class OrchestrationEngine {
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
       if (err instanceof BudgetExceeded) {
-        yield workflowFailed('Budget exceeded', step.id);
+        // Executor-thrown `BudgetExceeded` carries its own used/limit
+        // pair (e.g., the `reflect` executor projects the next-iteration
+        // cost before committing it). Emit the specific event first so
+        // the webhook subscriber path is identical regardless of which
+        // of the four cap-check sites triggered the breach.
+        const reason = formatBudgetExceededReason(err.usedUsd, err.limitUsd);
+        yield workflowBudgetExceeded(err.usedUsd, err.limitUsd, step.id, lease.executionId);
+        yield workflowFailed(reason, step.id);
         return {
           failed: true,
           paused: false,
           terminal: true,
-          failureReason: 'Budget exceeded',
+          failureReason: reason,
           nextIds: [],
         };
       }
@@ -1212,12 +1240,14 @@ export class OrchestrationEngine {
     // The trace entry above still records the cost so observability stays
     // intact.
     if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
-      yield workflowFailed('Budget exceeded', step.id);
+      const reason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
+      yield workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, step.id, lease.executionId);
+      yield workflowFailed(reason, step.id);
       return {
         failed: true,
         paused: false,
         terminal: true,
-        failureReason: 'Budget exceeded',
+        failureReason: reason,
         nextIds: [],
       };
     }
@@ -1572,11 +1602,22 @@ export class OrchestrationEngine {
           : step.nextSteps.map((edge) => edge.targetStepId);
       allNextIds.push(...nextIds);
 
-      // Budget check after merging branch cost.
+      // Budget check after merging branch cost. Push the specific
+      // `workflow_budget_exceeded` event before `workflow_failed` so
+      // subscribers can branch on the cap-breach case without
+      // string-matching on the failure reason.
       if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
-        allEvents.push(workflowFailed('Budget exceeded during parallel batch', step.id));
+        const reason = formatBudgetExceededReason(
+          ctx.totalCostUsd,
+          budgetLimitUsd,
+          'during parallel batch'
+        );
+        allEvents.push(
+          workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, step.id, executionId)
+        );
+        allEvents.push(workflowFailed(reason, step.id));
         batchFailed = true;
-        batchFailureReason = 'Budget exceeded during parallel batch';
+        batchFailureReason = reason;
         break;
       }
     }

@@ -156,7 +156,7 @@ The registry refuses to register a capability that declares `processesPii = true
 6. **Approval gate** — `entry.requiresApproval: true` → `{ code: 'requires_approval', skipFollowup: true }`. The handler never runs. (The admin queue that resolves approvals is a later slice.)
 7. **Validate args** — `handler.validate(rawArgs)`. `CapabilityValidationError` → `{ code: 'invalid_args', message }`.
 8. **Execute** — `await handler.execute(validated, context)`. Any thrown error → `{ code: 'execution_error' }` and `logger.error`.
-9. **Log cost** — fire-and-forget `logCost({ operation: 'tool_call', model: 'n/a', provider: 'capability', inputTokens: 0, outputTokens: 0, metadata: { slug, success } })`. Not awaited: the LLM call that triggered the tool already logged its own tokens, and `logCost` returns `null` on DB failure.
+9. **Log cost** — fire-and-forget `logCost({ operation: 'tool_call', model: 'n/a', provider: 'capability', inputTokens: 0, outputTokens: 0, metadata: { slug, success } })`. Not awaited: the LLM call that triggered the tool already logged its own tokens, and `logCost` returns `null` on DB failure. Capabilities that invoke their OWN LLMs internally (the `search_knowledge_base` embedding call, the rolling summariser, `run_workflow`'s child execution) issue their own `logCost` calls for that LLM spend. The chat handler's per-turn cap (improvement #39) only counts the chat-LLM rounds it sees — tool-internal LLM cost is logged to `AiCostLog` for audit but NOT counted against the per-turn cap. Documented in `.context/orchestration/chat.md`.
 10. **Return** the handler's result verbatim. One `logger.info('Capability dispatched', ...)` line with `latencyMs` rounds out each call.
 
 ### Cache semantics
@@ -323,7 +323,16 @@ Lets an agent trigger a named workflow on the user's behalf during a chat turn. 
 Per-agent binding `customConfig`:
 
 - `allowedWorkflowSlugs: string[]` — required, min 1. The LLM may only invoke workflows on this list. Fail-closed if the binding is missing or malformed.
-- `defaultBudgetUsd?: number` — optional. Forwarded to the engine as `budgetLimitUsd` so chat-triggered workflows can't exceed a per-binding spend cap regardless of the system prompt.
+- `defaultBudgetUsd?: number` — optional. Caller-side override on the child execution's per-execution cap, equivalent to passing `budgetLimitUsd` to the engine directly.
+
+**Per-execution cap resolution.** When the agent invokes a workflow, the engine receives a `budgetLimitUsd` resolved by `resolveMaxCostPerExecution` (in `lib/orchestration/llm/cost-caps.ts`) using this fall-back chain:
+
+1. `customConfig.defaultBudgetUsd` (caller override on this binding)
+2. `AiWorkflow.maxCostPerExecutionUsd` (workflow-level default)
+3. `AiOrchestrationSettings.defaultMaxCostPerExecutionUsd` (org-wide default)
+4. _no cap_ — the child execution runs without per-execution enforcement (the org-wide monthly budget still applies)
+
+This applies even when `defaultBudgetUsd` is unset, so workflow- and org-level caps continue to protect chat-triggered runs. The chat per-turn cap is **not** propagated into the child — it's a different scope — but the child's cost still rolls into the parent turn's running total via `logCost`, so a per-turn cap can still trip mid-child.
 
 Result `data` is a discriminated union on `status`:
 

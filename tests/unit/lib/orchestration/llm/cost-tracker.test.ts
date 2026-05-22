@@ -77,13 +77,15 @@ describe('calculateCost', () => {
     expect(cost.isLocal).toBe(true);
   });
 
-  it('returns $0 and warns for unknown models', async () => {
+  it('returns $0 and warns for unknown models, NOT flagged isLocal', async () => {
+    // "Rate unknown" is NOT "local" — an unmapped cloud model id (e.g.
+    // a new gpt-5 variant before the registry catches up) must not be
+    // tagged isLocal=true, or the `calculateLocalSavings` report shows
+    // phantom savings. Mirrors the same invariant on `calculateEmbeddingCost`.
     const { logger } = await import('@/lib/logging');
     const cost = calculateCost('model-that-does-not-exist', 1_000, 1_000);
     expect(cost.totalCostUsd).toBe(0);
-    // test-review:accept tobe_true — structural assertion on isLocal boolean field of CostResult
-    expect(cost.isLocal).toBe(true);
-    // test-review:accept no_arg_called — presence check; stricter toHaveBeenCalledWith assertion exists at line 259
+    expect(cost.isLocal).toBe(false);
     expect(logger.warn).toHaveBeenCalled();
   });
 });
@@ -266,7 +268,7 @@ describe('calculateCost — zero-token branches', () => {
 });
 
 describe('calculateCost — unknown model ID', () => {
-  it('treats unknown model as zero-cost and flags isLocal=true', async () => {
+  it('treats unknown model as zero-cost, NOT flagged isLocal', async () => {
     // Arrange: a model ID that is not in the registry
     const { logger } = await import('@/lib/logging');
     // Act
@@ -275,8 +277,11 @@ describe('calculateCost — unknown model ID', () => {
     expect(cost.inputCostUsd).toBe(0);
     expect(cost.outputCostUsd).toBe(0);
     expect(cost.totalCostUsd).toBe(0);
-    // test-review:accept tobe_true — structural assertion on isLocal boolean field of CostResult
-    expect(cost.isLocal).toBe(true);
+    // "Rate unknown" is NOT "local" — see comment in calculateCost. An
+    // unmapped cloud model must not flow into the Local vs. cloud
+    // savings report; the local flag is reserved for true local
+    // providers (set via `provider.isLocal` on `logCost`).
+    expect(cost.isLocal).toBe(false);
     // Assert: the source logs a warning so operators can add the model
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       'Cost calculation: unknown model, treating as zero cost',

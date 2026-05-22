@@ -33,18 +33,33 @@ const REGISTRY = new Map<string, z.ZodTypeAny>();
 
 /**
  * Register a schema under a stable slug. Calling twice with the same
- * slug throws — registration is meant to happen at module load and
- * silent overwrites would mask import-order bugs that swap schemas
- * out from under live executors.
+ * slug throws in production — registration is meant to happen at
+ * module load and silent overwrites would mask import-order bugs that
+ * swap schemas out from under live executors.
+ *
+ * Dev / test exception: Turbopack Fast Refresh re-evaluates feature
+ * modules without re-evaluating the registry module, so the second
+ * import would otherwise throw mid-request (e.g. the user edits a file
+ * in `lib/orchestration/`, the schemas barrel is invalidated, the next
+ * workflow execute re-imports `audit-proposals.ts`, and that module's
+ * top-level `registerSchema(...)` blows up against the still-populated
+ * Map). In non-production we silently overwrite instead. Prod still
+ * throws — there is no Fast Refresh in prod, so a duplicate registration
+ * there is a genuine bug.
  */
 export function registerSchema(name: string, schema: z.ZodTypeAny): void {
   if (!name || typeof name !== 'string') {
     throw new Error('registerSchema: name must be a non-empty string');
   }
   if (REGISTRY.has(name)) {
-    throw new Error(
-      `registerSchema: a schema named "${name}" is already registered — registration is meant to happen at module load. If you need to override at runtime, call \`unregisterSchema\` first (test-only).`
-    );
+    // Silent-overwrite only under Next.js dev (Fast Refresh). `test`
+    // and `production` both still throw so genuine duplicate-registration
+    // bugs are caught by the test suite and never reach prod.
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error(
+        `registerSchema: a schema named "${name}" is already registered — registration is meant to happen at module load. If you need to override at runtime, call \`unregisterSchema\` first (test-only).`
+      );
+    }
   }
   REGISTRY.set(name, schema);
 }

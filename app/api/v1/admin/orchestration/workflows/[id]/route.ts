@@ -106,6 +106,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.patternsUsed !== undefined) data.patternsUsed = body.patternsUsed;
   if (body.isActive !== undefined) data.isActive = body.isActive;
   if (body.isTemplate !== undefined) data.isTemplate = body.isTemplate;
+  if (body.maxCostPerExecutionUsd !== undefined)
+    data.maxCostPerExecutionUsd = body.maxCostPerExecutionUsd;
   if (body.metadata !== undefined) data.metadata = body.metadata as Prisma.InputJsonValue;
 
   // Skip the workflow.update path entirely when only `draftDefinition` was

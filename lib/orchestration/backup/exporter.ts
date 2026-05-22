@@ -24,6 +24,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         temperature: true,
         maxTokens: true,
         monthlyBudgetUsd: true,
+        maxCostPerTurnUsd: true,
         visibility: true,
         isActive: true,
         metadata: true,

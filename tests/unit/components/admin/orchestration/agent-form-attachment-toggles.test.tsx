@@ -143,6 +143,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     maxTokens: 4096,
     reasoningEffort: null,
     monthlyBudgetUsd: null,
+    maxCostPerTurnUsd: null,
     metadata: null,
     isActive: true,
     inputGuardMode: null,

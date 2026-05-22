@@ -23,6 +23,11 @@ const agentBackupSchema = z.object({
   // includes 'minimal' / 'low' / 'medium' / 'high'.
   reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
   monthlyBudgetUsd: z.number().nullable(),
+  // Per-turn cost cap added with improvement #39. Optional so older
+  // backup bundles round-trip; null preserves "no cap" semantics on
+  // re-import. The validator on read tolerates either omission or
+  // explicit null.
+  maxCostPerTurnUsd: z.number().nullable().optional(),
   visibility: z.string(),
   isActive: z.boolean(),
   metadata: z.unknown().nullable(),

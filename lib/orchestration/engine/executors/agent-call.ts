@@ -35,6 +35,8 @@ import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import {
   getCapabilityDefinitions,
@@ -110,6 +112,17 @@ interface RunSingleTurnOptions {
    * inner loop doesn't have to repeat the resolution per turn.
    */
   effectiveReasoningEffort?: ReasoningEffort;
+  /**
+   * Effective per-turn cost cap in USD, resolved at the entry point via
+   * `resolveMaxCostPerTurn({ agentDefault, settingsDefault })`. Mirrors
+   * the chat streaming handler's per-turn guard so an `agent_call`
+   * delegating to an agent with `maxCostPerTurnUsd` set enforces the
+   * same cap. `undefined` = no cap. When the loop's accumulated cost
+   * crosses the cap we abort with `agent_call_budget_exceeded_per_turn`,
+   * carrying the partial token/cost usage so the trace and cost log
+   * reflect what was actually spent.
+   */
+  turnCap?: number;
 }
 
 /**
@@ -136,6 +149,7 @@ async function runSingleTurn(
     startContent = '',
     recordTurn,
     effectiveReasoningEffort,
+    turnCap,
   } = options;
   let totalTokensUsed = startTokens;
   let totalCostUsd = startCost;
@@ -244,6 +258,46 @@ async function runSingleTurn(
         });
 
         finalContent = response.content;
+
+        // Per-turn cost cap (mirror of the chat streaming handler's
+        // guard at `streaming-handler.ts:1386`). Once the accumulated
+        // step cost crosses the agent's cap, abort with a typed
+        // ExecutorError that carries the partial tokens/cost so the
+        // trace + cost rollup reflect what was actually spent.
+        //
+        // `retriable: false` — re-running won't help: the next attempt
+        // will hit the same cap with the same prompt. Surface as a hard
+        // step failure; the workflow's error strategy (skip / continue
+        // / failure-branch) decides downstream routing.
+        if (turnCap !== undefined && totalCostUsd > turnCap) {
+          if (recordTurn) {
+            await recordTurn({
+              kind: 'agent_call',
+              phase: 'terminal',
+              index: iteration,
+              assistantContent: response.content,
+              tokensUsed: turnTokens,
+              costUsd: turnCost.totalCostUsd,
+            });
+          }
+          logger.warn('agent_call: per-turn cost cap exceeded — aborting tool loop', {
+            executionId: ctx.executionId,
+            stepId: step.id,
+            agentSlug: usedSlug,
+            iteration,
+            usedUsd: totalCostUsd,
+            limitUsd: turnCap,
+          });
+          throw new ExecutorError(
+            step.id,
+            'agent_call_budget_exceeded_per_turn',
+            `Agent "${usedSlug}" exceeded its per-turn cost cap ($${turnCap.toFixed(4)}) after ${iteration + 1} iteration(s): $${totalCostUsd.toFixed(4)} used`,
+            undefined,
+            false,
+            totalTokensUsed,
+            totalCostUsd
+          );
+        }
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           // Final-answer turn — the assistant chose not to call a tool, so the
@@ -472,6 +526,41 @@ export async function executeAgentCall(
   const maxIterations = config.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
   const mode = config.mode ?? 'single-turn';
 
+  // Resolve the per-turn cost cap (agent > org settings > undefined).
+  // Mirrors the chat streaming handler's resolution at
+  // `streaming-handler.ts:421-451` so a per-turn cap set on the agent
+  // protects workflow `agent_call` paths the same way it protects
+  // chat. Settings lookup is best-effort: a transient DB hiccup
+  // shouldn't kill the workflow when the agent itself sets a cap
+  // (resolution short-circuits) and shouldn't fail-closed when it
+  // doesn't (treat as "no org cap").
+  let turnCap: number | undefined;
+  if (agent.maxCostPerTurnUsd !== null && agent.maxCostPerTurnUsd !== undefined) {
+    turnCap = resolveMaxCostPerTurn({
+      agentDefault: agent.maxCostPerTurnUsd,
+      settingsDefault: null,
+    });
+  } else {
+    try {
+      const settings = await getOrchestrationSettings();
+      turnCap = resolveMaxCostPerTurn({
+        agentDefault: null,
+        settingsDefault: settings.defaultMaxCostPerTurnUsd,
+      });
+    } catch (err) {
+      logger.warn(
+        'agent_call: failed to load orchestration settings for per-turn cost cap; proceeding uncapped',
+        {
+          executionId: ctx.executionId,
+          stepId: step.id,
+          agentSlug,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      );
+      turnCap = undefined;
+    }
+  }
+
   if (mode === 'single-turn') {
     // Resume restoration for single-turn mode. Multi-turn entries (those
     // carrying `outerTurn`) belong to a different execution shape and are
@@ -550,6 +639,7 @@ export async function executeAgentCall(
           startContent: lastPrior.assistantContent,
           recordTurn: ctx.recordTurn,
           effectiveReasoningEffort,
+          turnCap,
         }
       );
     }
@@ -567,6 +657,7 @@ export async function executeAgentCall(
       {
         ...(ctx.recordTurn ? { recordTurn: ctx.recordTurn } : {}),
         effectiveReasoningEffort,
+        turnCap,
       }
     );
   }
@@ -609,7 +700,7 @@ export async function executeAgentCall(
         usedSlug,
         resolvedModel,
         maxIterations,
-        { effectiveReasoningEffort }
+        { effectiveReasoningEffort, turnCap }
       );
     } catch (err) {
       if (err instanceof ExecutorError) {

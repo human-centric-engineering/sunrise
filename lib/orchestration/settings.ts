@@ -95,6 +95,8 @@ export function hydrateSettings(row: {
   documentInputGloballyEnabled?: boolean | null;
   activeEmbeddingModelId?: string | null;
   stuckExecutionThresholdMins?: number | null;
+  defaultMaxCostPerExecutionUsd?: number | null;
+  defaultMaxCostPerTurnUsd?: number | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -168,6 +170,8 @@ export function hydrateSettings(row: {
     documentInputGloballyEnabled: row.documentInputGloballyEnabled ?? true,
     activeEmbeddingModelId: row.activeEmbeddingModelId ?? null,
     stuckExecutionThresholdMins: clampStuckThreshold(row.stuckExecutionThresholdMins),
+    defaultMaxCostPerExecutionUsd: row.defaultMaxCostPerExecutionUsd ?? null,
+    defaultMaxCostPerTurnUsd: row.defaultMaxCostPerTurnUsd ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -34,20 +34,33 @@ export function PatternNode({ data, selected }: NodeProps<PatternNodeType>) {
   const inputs = meta?.inputs ?? 1;
   const { outputs, outputLabels } = getStepOutputs(data.type, data.config);
   const hasError = Boolean(data.hasError);
+  // Validation errors always win the ring colour — a step that's both
+  // invalid AND expensive needs the validation fix before the cost
+  // conversation makes sense.
+  const costBand: 'warn' | 'over' | null = hasError ? null : (data.costBand ?? null);
 
   return (
     <div
       data-testid={`pattern-node-${data.type}`}
+      data-cost-band={costBand ?? undefined}
       className={cn(
         'flex max-w-[160px] min-w-[140px] flex-col items-center gap-2 rounded-lg border-2 px-3 py-3 shadow-sm transition-shadow',
         colours.bg,
         colours.border,
         colours.text,
-        selected && !hasError && 'ring-primary shadow-md ring-2',
-        hasError && 'shadow-md ring-2 ring-red-500 dark:ring-red-400'
+        selected && !hasError && !costBand && 'ring-primary shadow-md ring-2',
+        hasError && 'shadow-md ring-2 ring-red-500 dark:ring-red-400',
+        costBand === 'warn' && 'shadow-md ring-2 ring-amber-500 dark:ring-amber-400',
+        costBand === 'over' && 'shadow-md ring-2 ring-red-500 dark:ring-red-400'
       )}
     >
       {hasError && <span className="sr-only">Step has validation errors</span>}
+      {costBand === 'warn' && (
+        <span className="sr-only">Step projected to consume a large share of the cost cap</span>
+      )}
+      {costBand === 'over' && (
+        <span className="sr-only">Step alone projected to exceed the per-execution cost cap</span>
+      )}
       {/* Input handles — stacked on the left side */}
       {Array.from({ length: inputs }).map((_, i) => (
         <Handle
