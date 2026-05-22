@@ -19,9 +19,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { POST } from '@/app/api/v1/admin/orchestration/chat/stream/route';
 import type { NextRequest } from 'next/server';
 
-// Mock Prisma client (needed by withAdminAuth / guards)
+// Mock Prisma client (needed by withAdminAuth / guards + the per-agent
+// rate-limit lookup the route now performs before invoking streamChat).
 vi.mock('@/lib/db/client', () => ({
-  prisma: {},
+  prisma: {
+    aiAgent: {
+      findUnique: vi.fn(),
+    },
+  },
 }));
 
 // Mock auth config (needed by withAdminAuth guard)
@@ -40,6 +45,12 @@ vi.mock('@/lib/security/rate-limit', () => ({
   },
   chatLimiter: {
     check: vi.fn(),
+  },
+  // Per-agent limiter introduced by the per-agent rateLimitRpm
+  // enforcement. Default to "not rate-limited" so tests opting in
+  // explicitly mock failure where they need it.
+  agentChatLimiter: {
+    check: vi.fn(() => ({ success: true, limit: 60, remaining: 59, reset: 0 })),
   },
   imageLimiter: {
     // Default to "not rate-limited" so attachment-bearing tests pass through.
@@ -75,8 +86,10 @@ vi.mock('@/lib/logging/context', () => ({
 
 // Import mocked modules
 import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
 import {
   adminLimiter,
+  agentChatLimiter,
   chatLimiter,
   createRateLimitResponse,
   imageLimiter,
@@ -150,6 +163,13 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(createAdminSession());
     vi.mocked(adminLimiter.check).mockReturnValue(makeRateLimitResult(true));
     vi.mocked(chatLimiter.check).mockReturnValue(makeRateLimitResult(true));
+    // Per-agent rate-limit lookup — return a generic agent row so the
+    // route progresses to streamChat. Individual tests can override.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: 'agent_test',
+      rateLimitRpm: null,
+    } as never);
+    vi.mocked(agentChatLimiter.check).mockReturnValue(makeRateLimitResult(true));
   });
 
   it('returns SSE response on valid request', async () => {
@@ -225,6 +245,37 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
 
     expect(response.status).toBe(429);
     expect(createRateLimitResponse).toHaveBeenCalled();
+    expect(streamChat).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 when the per-agent rate limit is exceeded', async () => {
+    // Per-agent throttling honours `AiAgent.rateLimitRpm`. The bucket
+    // key (agentId:userId) is shared with the consumer route so a user
+    // can't bypass their per-agent throttle by switching surfaces.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: 'agent_capped',
+      rateLimitRpm: 1,
+    } as never);
+    vi.mocked(agentChatLimiter.check).mockReturnValue(makeRateLimitResult(false));
+
+    const req = createMockRequest(validPayload);
+    const response = await POST(req);
+
+    expect(response.status).toBe(429);
+    expect(agentChatLimiter.check).toHaveBeenCalledWith('agent_capped:admin_test123', 1);
+    expect(streamChat).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the agent slug does not exist', async () => {
+    // Defensive: the route resolves the agent before checking its
+    // rate limit. A missing agent short-circuits with NOT_FOUND
+    // rather than letting streamChat throw deeper in the stack.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+
+    const req = createMockRequest(validPayload);
+    const response = await POST(req);
+
+    expect(response.status).toBe(404);
     expect(streamChat).not.toHaveBeenCalled();
   });
 
