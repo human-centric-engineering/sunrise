@@ -617,8 +617,11 @@ describe('parseOpenRouterEntry — entry.id has no provider prefix (no slash)', 
 });
 
 describe('parseOpenRouterEntry — missing optional pricing and metadata fields', () => {
-  it('defaults inputCostPerMillion and outputCostPerMillion to 0 when pricing is absent', async () => {
-    // Arrange: no pricing object at all → costs default to 0, tier classifies as 'local'
+  it('defaults pricing to 0 and classifies $0-priced cloud models as budget, NOT local', async () => {
+    // Locality is a deployment property, not a price property. A free /
+    // unpriced OpenRouter model is still cloud-hosted; previously
+    // classifyTier collapsed it into `'local'` which poisoned the
+    // Local vs. cloud savings panel with phantom savings.
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -639,7 +642,7 @@ describe('parseOpenRouterEntry — missing optional pricing and metadata fields'
     expect(model).toBeDefined();
     expect(model?.inputCostPerMillion).toBe(0);
     expect(model?.outputCostPerMillion).toBe(0);
-    expect(model?.tier).toBe('local');
+    expect(model?.tier).toBe('budget');
   });
 
   it('falls back to canonicalId as name when the name field is absent', async () => {

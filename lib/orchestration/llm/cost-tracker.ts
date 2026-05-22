@@ -243,7 +243,15 @@ export function calculateCost(
   const model = getModel(modelId);
   if (!model) {
     logger.warn('Cost calculation: unknown model, treating as zero cost', { model: modelId });
-    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: true };
+    // "Rate unknown" is NOT "local". An earlier version returned
+    // `isLocal: true` here, which silently flagged every unmapped cloud
+    // model (gpt-5, new OpenRouter ids, anything missing from the
+    // registry) as local and polluted the `calculateLocalSavings` report
+    // with phantom savings. Mirrors the same fix already applied to
+    // `calculateEmbeddingCost`. Callers running real local providers
+    // (Ollama et al.) get the flag set explicitly via `logCost`'s
+    // `params.isLocal ?? cost.isLocal` OR.
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false };
   }
 
   if (model.tier === 'local') {

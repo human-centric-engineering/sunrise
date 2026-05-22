@@ -416,7 +416,15 @@ function parseOpenRouterEntry(entry: OpenRouterModel): ModelInfo | null {
 }
 
 function classifyTier(inputCostPerMillion: number): ModelTier {
-  if (inputCostPerMillion <= 0) return 'local';
+  // Price-only classification. The `'local'` tier is intentionally NOT
+  // returned from this function — locality is a deployment property, not
+  // a price property. OpenRouter is the sole caller and it never serves
+  // genuinely local models; some catalog entries are however $0-priced
+  // (e.g. `:free` variants) and previously collapsed into `'local'`,
+  // which then poisoned the Local vs. cloud savings panel. Free-tier
+  // hosted models now land in `'budget'` like any other cheap model.
+  // The fallback map's local placeholder sets `tier: 'local'` directly
+  // and the DB-curated path uses `mapTierRoleToTier` instead.
   if (inputCostPerMillion <= 0.5) return 'budget';
   if (inputCostPerMillion <= 5) return 'mid';
   return 'frontier';
