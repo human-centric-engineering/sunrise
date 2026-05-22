@@ -95,15 +95,27 @@ export function LearningTabs({
   const [workflowRecommendation, setWorkflowRecommendation] = useState<string | null>(null);
   const [quizScore, setQuizScore] = useState<{ correct: number; total: number } | null>(null);
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingStatus | null>(null);
-  // Five prompts sampled from the advisor pool on mount. Re-rolled
-  // when the operator clears the advisor conversation (see the
-  // `onConversationCleared` callback on the advisor `ChatInterface`)
-  // so revisits get a different set rather than the same four
-  // questions every time. Lazy-init via `() => ...` keeps the random
-  // sample stable across re-renders.
-  const [advisorStarters, setAdvisorStarters] = useState<string[]>(() =>
-    sampleAdvisorPrompts(ADVISOR_STARTER_COUNT)
-  );
+  // Five prompts sampled from the advisor pool. Sampled on mount via
+  // useEffect rather than lazy-init `useState` because this is a
+  // 'use client' component that *also* gets server-rendered for the
+  // initial HTML — running the random sample at render time produces
+  // different sets on the server and client, which trips Next.js's
+  // hydration mismatch warning. Empty initial state suppresses the
+  // starter block on first paint; the mount effect fills it in and
+  // re-rolls on `onConversationCleared`.
+  const [advisorStarters, setAdvisorStarters] = useState<string[]>([]);
+
+  useEffect(() => {
+    // Deferred-on-mount random sample is the hydration-safe pattern
+    // here — the alternative (lazy init at render) trips React's
+    // server/client mismatch warning because SSR and hydration each
+    // draw a different sample. The set-in-effect lint rule flags
+    // this as a perf concern (cascading render), but for a single
+    // mount-time draw of five strings the extra paint is invisible
+    // and the correctness trade is clearly worth it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAdvisorStarters(sampleAdvisorPrompts(ADVISOR_STARTER_COUNT));
+  }, []);
 
   useEffect(() => {
     fetch(API.ADMIN.ORCHESTRATION.KNOWLEDGE_EMBEDDING_STATUS)

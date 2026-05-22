@@ -180,6 +180,25 @@ describe('LearningTabs — Advisor workflow integration', () => {
       expect(screen.getAllByTestId('advisor-starter')).toHaveLength(5);
     });
 
+    it('samples starters in an effect, not at render time (hydration-safe)', async () => {
+      // Regression: lazy-init `useState(() => sample(...))` ran on
+      // both SSR and client, producing different random samples and
+      // tripping React's hydration mismatch. SSR (no useEffect) must
+      // produce no Math.random calls; the sample now lives in a
+      // mount effect that only fires client-side.
+      const { renderToString } = await import('react-dom/server');
+      const rng = vi.spyOn(Math, 'random');
+      try {
+        renderToString(<LearningTabs patterns={MOCK_PATTERNS} />);
+        // Effects don't run under renderToString — if Math.random
+        // fires here, it's at render time and will diverge between
+        // server and client.
+        expect(rng).not.toHaveBeenCalled();
+      } finally {
+        rng.mockRestore();
+      }
+    });
+
     it('passes the full pattern-tagged pool through as suggestionPool', async () => {
       const user = userEvent.setup();
       render(<LearningTabs patterns={MOCK_PATTERNS} />);
