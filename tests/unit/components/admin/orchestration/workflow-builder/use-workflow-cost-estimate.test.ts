@@ -300,6 +300,99 @@ describe('useWorkflowCostEstimate', () => {
     expect(result.current.loading).toBe(false);
   });
 
+  // ─── Cancellation: unmount before post resolves ────────────────────────────
+
+  it('does not update state when the hook unmounts before the POST resolves', async () => {
+    // Drive a pending POST so the cancelled flag is set while the IIFE is
+    // mid-flight. The success branch must skip every `setEstimate` /
+    // `setLoading` write — otherwise React logs "state update on unmounted
+    // component" and `apiClient.post` resolutions would leak through.
+    let resolvePost!: (v: WorkflowCostEstimateWithCap) => void;
+    const pending = new Promise<WorkflowCostEstimateWithCap>((resolve) => {
+      resolvePost = resolve;
+    });
+    vi.mocked(apiClient.post).mockReturnValueOnce(pending);
+
+    const definition = makeDefinition();
+    const { result, unmount } = renderHook(() => useWorkflowCostEstimate(WORKFLOW_ID, definition));
+
+    // Fire the debounced timer so the POST is in-flight.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    });
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+
+    // Unmount BEFORE the post resolves — the effect cleanup flips
+    // `cancelled = true`.
+    unmount();
+
+    // Now resolve the post. Every cancelled-guarded write must be skipped.
+    const estimate = makeEstimate({ midUsd: 99 });
+    await act(async () => {
+      resolvePost(estimate);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // State captured at unmount time — never mutated by the late resolution.
+    expect(result.current.estimate).toBeNull();
+    expect(result.current.loading).toBe(true);
+    expect(result.current.error).toBeNull();
+  });
+
+  it('does not update state when the hook unmounts before the POST rejects', async () => {
+    let rejectPost!: (e: Error) => void;
+    const pending = new Promise<WorkflowCostEstimateWithCap>((_resolve, reject) => {
+      rejectPost = reject;
+    });
+    vi.mocked(apiClient.post).mockReturnValueOnce(pending);
+
+    const definition = makeDefinition();
+    const { result, unmount } = renderHook(() => useWorkflowCostEstimate(WORKFLOW_ID, definition));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    });
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    // The error path's `setError` / `setEstimate(null)` must also be
+    // skipped after unmount.
+    await act(async () => {
+      rejectPost(new Error('boom after unmount'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.estimate).toBeNull();
+    expect(result.current.loading).toBe(true);
+  });
+
+  it('falls back to the literal "Cost estimate failed" message when the thrown value is not an Error', async () => {
+    // The catch block uses `err instanceof Error ? err.message : 'Cost
+    // estimate failed'`. Throwing a non-Error (e.g. a string) is rare in
+    // practice but the guard exists — exercise it so a future refactor
+    // does not silently regress the user-facing copy.
+    vi.mocked(apiClient.post).mockRejectedValueOnce('something broke (string)');
+
+    const definition = makeDefinition();
+    const { result } = renderHook(() => useWorkflowCostEstimate(WORKFLOW_ID, definition));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.error).toBe('Cost estimate failed');
+    expect(result.current.estimate).toBeNull();
+    expect(result.current.loading).toBe(false);
+  });
+
   // ─── Mid-debounce nullification ────────────────────────────────────────────
 
   it('clears estimate and stops loading when inputs become null mid-debounce', async () => {

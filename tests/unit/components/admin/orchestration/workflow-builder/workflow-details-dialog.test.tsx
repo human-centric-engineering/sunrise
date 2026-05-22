@@ -202,4 +202,100 @@ describe('WorkflowDetailsDialog', () => {
     // Assert: onConfirm must never have been invoked
     expect(onConfirm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
+
+  // ── Per-execution cap input ──────────────────────────────────────────────────
+
+  describe('per-execution cost cap', () => {
+    it('pre-fills the cap input from initial.maxCostPerExecutionUsd when provided', () => {
+      render(<WorkflowDetailsDialog {...defaultProps} initial={{ maxCostPerExecutionUsd: 2.5 }} />);
+      expect(screen.getByRole('spinbutton', { name: /per-execution cost cap/i })).toHaveValue(2.5);
+    });
+
+    it('leaves the cap input blank when initial.maxCostPerExecutionUsd is undefined', () => {
+      // Default props don't include initial — cap should start empty.
+      render(<WorkflowDetailsDialog {...defaultProps} />);
+      expect(screen.getByRole('spinbutton', { name: /per-execution cost cap/i })).toHaveValue(null);
+    });
+
+    it('passes maxCostPerExecutionUsd: null when the cap input is left blank', async () => {
+      const user = userEvent.setup();
+      const onConfirm = vi.fn();
+      render(<WorkflowDetailsDialog {...defaultProps} onConfirm={onConfirm} />);
+
+      await user.type(screen.getByRole('textbox', { name: /description/i }), 'A workflow');
+      await user.click(screen.getByRole('button', { name: /save workflow/i }));
+
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      expect(onConfirm.mock.calls[0][0].maxCostPerExecutionUsd).toBeNull();
+    });
+
+    it('passes the parsed numeric cap to onConfirm when a valid value is entered', async () => {
+      const user = userEvent.setup();
+      const onConfirm = vi.fn();
+      render(<WorkflowDetailsDialog {...defaultProps} onConfirm={onConfirm} />);
+
+      await user.type(screen.getByRole('textbox', { name: /description/i }), 'A workflow');
+      await user.type(screen.getByRole('spinbutton', { name: /per-execution cost cap/i }), '1.50');
+      await user.click(screen.getByRole('button', { name: /save workflow/i }));
+
+      expect(onConfirm).toHaveBeenCalledTimes(1);
+      expect(onConfirm.mock.calls[0][0].maxCostPerExecutionUsd).toBe(1.5);
+    });
+
+    it('shows the validation error and disables Confirm when the cap is below $0.01', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowDetailsDialog {...defaultProps} />);
+
+      // Description must be valid so the cap is the only blocker.
+      await user.type(screen.getByRole('textbox', { name: /description/i }), 'A workflow');
+      // Typing "0" parses to 0, which fails the >=0.01 guard.
+      await user.type(screen.getByRole('spinbutton', { name: /per-execution cost cap/i }), '0');
+
+      expect(screen.getByText(/positive number between \$0\.01 and \$10,000/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /save workflow/i })).toBeDisabled();
+    });
+
+    it('shows the validation error when the cap exceeds $10,000', async () => {
+      const user = userEvent.setup();
+      render(<WorkflowDetailsDialog {...defaultProps} />);
+
+      await user.type(screen.getByRole('textbox', { name: /description/i }), 'A workflow');
+      await user.type(screen.getByRole('spinbutton', { name: /per-execution cost cap/i }), '99999');
+
+      expect(screen.getByText(/positive number between \$0\.01 and \$10,000/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /save workflow/i })).toBeDisabled();
+    });
+  });
+
+  // ── Description character counter ────────────────────────────────────────────
+
+  it('renders the description character counter and updates as the user types', async () => {
+    // The counter copy "0/5,000" is rendered on first paint and the colour
+    // class flips destructive once over 5,000 — but the input is capped at
+    // maxLength=5000 so we only need to assert the counter updates.
+    const user = userEvent.setup();
+    render(<WorkflowDetailsDialog {...defaultProps} />);
+    expect(screen.getByText('0/5,000')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: /description/i }), 'Hello');
+    expect(screen.getByText('5/5,000')).toBeInTheDocument();
+  });
+
+  // ── Error strategy selector ──────────────────────────────────────────────────
+
+  it('passes the selected errorStrategy through to onConfirm when changed', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<WorkflowDetailsDialog {...defaultProps} onConfirm={onConfirm} />);
+
+    // Fill description so the form is otherwise valid.
+    await user.type(screen.getByRole('textbox', { name: /description/i }), 'A workflow');
+
+    // Open the Select and pick "Skip step".
+    await user.click(screen.getByRole('combobox', { name: /error strategy/i }));
+    await user.click(screen.getByRole('option', { name: /skip step/i }));
+
+    await user.click(screen.getByRole('button', { name: /save workflow/i }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm.mock.calls[0][0].errorStrategy).toBe('skip');
+  });
 });

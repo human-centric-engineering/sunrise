@@ -74,11 +74,13 @@ export function budgetWarning(usedUsd: number, limitUsd: number): ExecutionEvent
 
 /**
  * Fires when the per-execution cost cap is breached. Emitted by the
- * engine immediately before `workflow_failed` at all three step-loop
- * cap-check sites so subscribers can branch on the more-specific
- * event (runaway-loop guard from improvement #39) without string-matching
- * on `workflow_failed.error`. The standard `workflow_failed` event still
- * follows and remains the terminal-event contract for trace consumers.
+ * engine immediately before `workflow_failed` at all four cap-check
+ * sites — sequential main loop, single-step path, parallel batch, and
+ * executor-thrown `BudgetExceeded` — so subscribers can branch on the
+ * more-specific event (runaway-loop guard from improvement #39) without
+ * string-matching on `workflow_failed.error`. The standard
+ * `workflow_failed` event still follows and remains the terminal-event
+ * contract for trace consumers.
  *
  * Also dispatches the `workflow_budget_exceeded` webhook (fire-and-forget;
  * a webhook failure must never block the terminal event sequence). The

@@ -645,6 +645,99 @@ describe('ExecutionTraceEntryRow', () => {
       );
       expect(result).toBe('Failed — tierRole: "worker" → "thinking"');
     });
+
+    it('returns the raw reason trimmed when both prefix and tail are empty', () => {
+      // Reason starts with `{` (prefix=''), and the JSON is unparseable
+      // (tail=null) — `!prefix && !tail` falls through to `reason.trim()`.
+      expect(summariseRetryReason('  { not valid json  ')).toBe('{ not valid json');
+    });
+
+    it('falls back to the bare prefix when no tail can be produced (no marker)', () => {
+      // The unparseable-JSON path with a prefix that doesn't contain the
+      // canonical "Offending change:" lead-in — the prefix is preserved
+      // exactly and gets a period suffix.
+      expect(summariseRetryReason('Validator complained. { broken')).toBe('Validator complained.');
+    });
+
+    it('handles escaped quotes inside the embedded JSON string', () => {
+      // sliceBalancedBraces walks the JSON character-by-character; the
+      // `\"` escape inside the string must NOT toggle the `inStr` flag,
+      // otherwise the closing `}` is missed and the helper returns null.
+      const result = summariseRetryReason(
+        'Reason. Offending change: { "field": "a\\"b", "currentValue": 1, "proposedValue": 2 }'
+      );
+      // The escape gets resolved by JSON.parse; what matters for coverage
+      // is that sliceBalancedBraces tracked the escape and found the
+      // closing brace, so the tail summary was produced at all.
+      expect(result).toBe('Reason — a"b: 1 → 2');
+    });
+
+    it('falls back to obj.slug when no field/model shape matches', () => {
+      const result = summariseRetryReason('Bad pick: { "slug": "my-capability", "extra": 1 }');
+      expect(result).toBe('Bad pick — my-capability');
+    });
+
+    it('falls back to obj.modelId when no field/model/slug shape matches', () => {
+      const result = summariseRetryReason(
+        'Bad model: { "modelId": "claude-sonnet-4-5", "extra": 1 }'
+      );
+      expect(result).toBe('Bad model — claude-sonnet-4-5');
+    });
+
+    it('falls back to the first two scalar key=value pairs when no specific shape matches', () => {
+      const result = summariseRetryReason(
+        'Generic offending: { "foo": "bar", "count": 3, "deep": { "nested": true } }'
+      );
+      // Only the two scalar keys (foo, count) appear; the nested object is
+      // skipped. The standalone "offending" word in the prefix is stripped
+      // by the Offending-marker regex, leaving the leading "Generic".
+      expect(result).toBe('Generic — foo="bar", count=3');
+    });
+
+    it('returns null tail (and uses prefix-only) when the object has only nested-only keys', () => {
+      const result = summariseRetryReason(
+        'No scalars: { "nested": { "inner": 1 }, "arr": [1, 2] }'
+      );
+      // scalars.length === 0 → summariseOffendingObject returns null →
+      // falls back to the prefix with a trailing period.
+      expect(result).toBe('No scalars.');
+    });
+
+    it('formats null and undefined-shaped values via formatValue', () => {
+      // currentValue: null exercises the `v === null` arm.
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": null, "proposedValue": "next" }'
+      );
+      expect(result).toBe('Reason — x: null → "next"');
+    });
+
+    it('formats empty arrays as []', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": [], "proposedValue": ["a"] }'
+      );
+      expect(result).toBe('Reason — x: [] → ["a"]');
+    });
+
+    it('formats non-string arrays as [...length] summary', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": [1, 2, 3], "proposedValue": [4, 5] }'
+      );
+      expect(result).toBe('Reason — x: […3] → […2]');
+    });
+
+    it('formats object-valued current/proposed values as {…}', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "x", "currentValue": { "a": 1 }, "proposedValue": { "b": 2 } }'
+      );
+      expect(result).toBe('Reason — x: {…} → {…}');
+    });
+
+    it('formats number and boolean current/proposed values', () => {
+      const result = summariseRetryReason(
+        'Reason: { "field": "enabled", "currentValue": false, "proposedValue": 42 }'
+      );
+      expect(result).toBe('Reason — enabled: false → 42');
+    });
   });
 
   // ─── Controlled expansion + JsonPane Copy ──────────────────────────────

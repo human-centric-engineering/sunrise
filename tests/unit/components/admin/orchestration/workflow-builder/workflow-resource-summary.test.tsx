@@ -18,11 +18,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { WorkflowResourceSummary } from '@/components/admin/orchestration/workflow-builder/workflow-resource-summary';
 import type { WorkflowCostEstimateWithCap } from '@/components/admin/orchestration/workflow-builder/use-workflow-cost-estimate';
 import type { CapabilityOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
 import type { AgentOption } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import type { PatternNode } from '@/components/admin/orchestration/workflow-builder/workflow-mappers';
+import type { WorkflowStepType } from '@/types/orchestration';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +59,26 @@ const EMPTY_NODES: readonly never[] = [];
 
 const EMPTY_CAPABILITIES: readonly CapabilityOption[] = [];
 const EMPTY_AGENTS: readonly AgentOption[] = [];
+
+/**
+ * Build a minimal PatternNode for collectResources. React Flow's `Node`
+ * shape requires `id`, `data`, `position`, and `type`. We don't need any
+ * other React Flow plumbing because the component only reads `id` and
+ * `data` (label/type/config).
+ */
+function makeNode(
+  id: string,
+  type: WorkflowStepType,
+  config: Record<string, unknown>,
+  label?: string
+): PatternNode {
+  return {
+    id,
+    type: 'pattern',
+    position: { x: 0, y: 0 },
+    data: { label: label ?? id, type, config },
+  };
+}
 
 const DEFAULT_PROPS = {
   nodes: EMPTY_NODES,
@@ -384,6 +407,262 @@ describe('WorkflowResourceSummary', () => {
       );
       // The component falls back to [] for agents; banner should still render
       expect(screen.getByTestId('cost-banner')).toBeInTheDocument();
+    });
+  });
+
+  // ── Resource collection from nodes ──────────────────────────────────────────
+
+  describe('collectResources — tool_call / agent_call / orchestrator', () => {
+    const CAP_A: CapabilityOption = {
+      id: 'cap-a-id',
+      slug: 'cap-a',
+      name: 'Capability A',
+      description: 'Looks things up',
+    };
+    const CAP_B: CapabilityOption = {
+      id: 'cap-b-id',
+      slug: 'cap-b',
+      name: 'Capability B',
+      description: '',
+    };
+    const AGENT_X: AgentOption = {
+      slug: 'agent-x',
+      name: 'Agent X',
+      description: 'Replies to humans',
+    };
+    const AGENT_Y: AgentOption = { slug: 'agent-y', name: 'Agent Y', description: null };
+
+    it('collects capabilities from tool_call steps and renders the capability badge', () => {
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' }, 'Lookup'),
+      ] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A]} />);
+      expect(screen.getByText('1 capability')).toBeInTheDocument();
+    });
+
+    it('pluralises the capability badge when multiple distinct slugs are referenced', () => {
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' }),
+        makeNode('step-2', 'tool_call', { capabilitySlug: 'cap-b' }),
+      ] as PatternNode[];
+      render(
+        <WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A, CAP_B]} />
+      );
+      expect(screen.getByText('2 capabilities')).toBeInTheDocument();
+    });
+
+    it('collects agents from agent_call steps and renders the agent badge', () => {
+      const nodes = [makeNode('step-1', 'agent_call', { agentSlug: 'agent-x' })] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} agents={[AGENT_X]} />);
+      expect(screen.getByText('1 agent')).toBeInTheDocument();
+    });
+
+    it('pluralises the agent badge with multiple agents', () => {
+      const nodes = [
+        makeNode('step-1', 'agent_call', { agentSlug: 'agent-x' }),
+        makeNode('step-2', 'agent_call', { agentSlug: 'agent-y' }),
+      ] as PatternNode[];
+      render(
+        <WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} agents={[AGENT_X, AGENT_Y]} />
+      );
+      expect(screen.getByText('2 agents')).toBeInTheDocument();
+    });
+
+    it('collects agents from orchestrator availableAgentSlugs', () => {
+      const nodes = [
+        makeNode('step-1', 'orchestrator', {
+          availableAgentSlugs: ['agent-x', 'agent-y'],
+        }),
+      ] as PatternNode[];
+      render(
+        <WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} agents={[AGENT_X, AGENT_Y]} />
+      );
+      expect(screen.getByText('2 agents')).toBeInTheDocument();
+    });
+
+    it('ignores non-string and empty-string entries inside orchestrator availableAgentSlugs', () => {
+      // The collector guards `typeof slug === 'string' && slug` — non-strings
+      // and empty strings must be skipped, otherwise a misconfigured step
+      // would surface a phantom agent row.
+      const nodes = [
+        makeNode('step-1', 'orchestrator', {
+          availableAgentSlugs: ['agent-x', '', null as any, 42 as any],
+        }),
+      ] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} agents={[AGENT_X]} />);
+      // Only "agent-x" should register
+      expect(screen.getByText('1 agent')).toBeInTheDocument();
+    });
+
+    it('ignores tool_call steps with empty/missing capabilitySlug', () => {
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: '' }),
+        makeNode('step-2', 'tool_call', {}),
+
+        makeNode('step-3', 'tool_call', { capabilitySlug: 42 as any }),
+      ] as PatternNode[];
+      const { container } = render(
+        <WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A]} />
+      );
+      // No badge or panel — nothing to show
+      expect(container.firstChild).toBeNull();
+    });
+
+    it('ignores agent_call steps with empty/missing agentSlug', () => {
+      const nodes = [
+        makeNode('step-1', 'agent_call', { agentSlug: '' }),
+        makeNode('step-2', 'agent_call', {}),
+      ] as PatternNode[];
+      const { container } = render(
+        <WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} agents={[AGENT_X]} />
+      );
+      expect(container.firstChild).toBeNull();
+    });
+
+    it('deduplicates the same slug used across multiple steps', () => {
+      // Two tool_call steps using the same capability count as one row.
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' }, 'First lookup'),
+        makeNode('step-2', 'tool_call', { capabilitySlug: 'cap-a' }, 'Second lookup'),
+      ] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A]} />);
+      expect(screen.getByText('1 capability')).toBeInTheDocument();
+    });
+  });
+
+  // ── Expand/collapse and ResourceRow ─────────────────────────────────────────
+
+  describe('expand/collapse and ResourceRow', () => {
+    const CAP_A: CapabilityOption = {
+      id: 'cap-a-id',
+      slug: 'cap-a',
+      name: 'Capability A',
+      description: 'Looks things up',
+    };
+    const AGENT_X: AgentOption = {
+      slug: 'agent-x',
+      name: 'Agent X',
+      description: 'Replies to humans',
+    };
+
+    it('hides resource rows by default and reveals them after clicking the Resources button', async () => {
+      const user = userEvent.setup();
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' }, 'Lookup step'),
+      ] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A]} />);
+
+      // Closed initially — the capability name lives only in the row
+      expect(screen.queryByText('Capability A')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Resources/ })).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      );
+
+      await user.click(screen.getByRole('button', { name: /Resources/ }));
+
+      expect(screen.getByText('Capability A')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Resources/ })).toHaveAttribute(
+        'aria-expanded',
+        'true'
+      );
+    });
+
+    it('collapses again on a second click', async () => {
+      const user = userEvent.setup();
+      const nodes = [makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' })] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A]} />);
+      const button = screen.getByRole('button', { name: /Resources/ });
+      await user.click(button);
+      expect(screen.getByText('Capability A')).toBeInTheDocument();
+      await user.click(button);
+      expect(screen.queryByText('Capability A')).not.toBeInTheDocument();
+    });
+
+    it('renders capability and agent groups separately when expanded', async () => {
+      const user = userEvent.setup();
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' }),
+        makeNode('step-2', 'agent_call', { agentSlug: 'agent-x' }),
+      ] as PatternNode[];
+      render(
+        <WorkflowResourceSummary
+          {...DEFAULT_PROPS}
+          nodes={nodes}
+          capabilities={[CAP_A]}
+          agents={[AGENT_X]}
+        />
+      );
+      await user.click(screen.getByRole('button', { name: /Resources/ }));
+      // Group headers — uppercase via CSS but DOM text is lowercase
+      expect(screen.getByText('Capabilities')).toBeInTheDocument();
+      expect(screen.getByText('Agents')).toBeInTheDocument();
+      expect(screen.getByText('Capability A')).toBeInTheDocument();
+      expect(screen.getByText('Agent X')).toBeInTheDocument();
+    });
+
+    it('falls back to the raw slug as the row name when the lookup misses', async () => {
+      // No capability with slug "cap-a" is supplied — resource entry should
+      // use the slug itself for both name and key.
+      const user = userEvent.setup();
+      const nodes = [makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' })] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[]} />);
+      await user.click(screen.getByRole('button', { name: /Resources/ }));
+      // "cap-a" appears twice: once as the row name (no friendly lookup) and
+      // once as the small mono slug suffix. Use getAllByText to assert both.
+      expect(screen.getAllByText('cap-a').length).toBeGreaterThan(0);
+    });
+
+    it('shows the "N steps" badge only when a slug is used by more than one step', async () => {
+      const user = userEvent.setup();
+      const nodes = [
+        makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-a' }),
+        makeNode('step-2', 'tool_call', { capabilitySlug: 'cap-a' }),
+      ] as PatternNode[];
+      render(<WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[CAP_A]} />);
+      await user.click(screen.getByRole('button', { name: /Resources/ }));
+      expect(screen.getByText('2 steps')).toBeInTheDocument();
+    });
+
+    it('omits the description suffix when description is empty', async () => {
+      const user = userEvent.setup();
+      const NO_DESC_CAP: CapabilityOption = {
+        id: 'cap-b-id',
+        slug: 'cap-b',
+        name: 'Capability B',
+        description: '',
+      };
+      const nodes = [makeNode('step-1', 'tool_call', { capabilitySlug: 'cap-b' })] as PatternNode[];
+      render(
+        <WorkflowResourceSummary {...DEFAULT_PROPS} nodes={nodes} capabilities={[NO_DESC_CAP]} />
+      );
+      await user.click(screen.getByRole('button', { name: /Resources/ }));
+      // The "— {description}" em-dash suffix should not appear
+      expect(screen.queryByText(/—/)).not.toBeInTheDocument();
+    });
+
+    it('fires onFocusNode with the first step id when a resource row is clicked', async () => {
+      const onFocusNode = vi.fn();
+      const user = userEvent.setup();
+      const nodes = [
+        makeNode('step-A', 'tool_call', { capabilitySlug: 'cap-a' }, 'First'),
+        makeNode('step-B', 'tool_call', { capabilitySlug: 'cap-a' }, 'Second'),
+      ] as PatternNode[];
+      render(
+        <WorkflowResourceSummary
+          {...DEFAULT_PROPS}
+          onFocusNode={onFocusNode}
+          nodes={nodes}
+          capabilities={[CAP_A]}
+        />
+      );
+      await user.click(screen.getByRole('button', { name: /Resources/ }));
+      // The row button's accessible name includes the capability label and
+      // the "Used in:" title attr; query by the displayed name text.
+      const rowButton = screen.getByRole('button', { name: /Capability A/ });
+      await user.click(rowButton);
+      expect(onFocusNode).toHaveBeenCalledTimes(1);
+      expect(onFocusNode).toHaveBeenCalledWith('step-A');
     });
   });
 });

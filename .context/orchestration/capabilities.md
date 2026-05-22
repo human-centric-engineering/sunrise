@@ -323,7 +323,16 @@ Lets an agent trigger a named workflow on the user's behalf during a chat turn. 
 Per-agent binding `customConfig`:
 
 - `allowedWorkflowSlugs: string[]` — required, min 1. The LLM may only invoke workflows on this list. Fail-closed if the binding is missing or malformed.
-- `defaultBudgetUsd?: number` — optional. Forwarded to the engine as `budgetLimitUsd` so chat-triggered workflows can't exceed a per-binding spend cap regardless of the system prompt.
+- `defaultBudgetUsd?: number` — optional. Caller-side override on the child execution's per-execution cap, equivalent to passing `budgetLimitUsd` to the engine directly.
+
+**Per-execution cap resolution.** When the agent invokes a workflow, the engine receives a `budgetLimitUsd` resolved by `resolveMaxCostPerExecution` (in `lib/orchestration/llm/cost-caps.ts`) using this fall-back chain:
+
+1. `customConfig.defaultBudgetUsd` (caller override on this binding)
+2. `AiWorkflow.maxCostPerExecutionUsd` (workflow-level default)
+3. `AiOrchestrationSettings.defaultMaxCostPerExecutionUsd` (org-wide default)
+4. _no cap_ — the child execution runs without per-execution enforcement (the org-wide monthly budget still applies)
+
+This applies even when `defaultBudgetUsd` is unset, so workflow- and org-level caps continue to protect chat-triggered runs. The chat per-turn cap is **not** propagated into the child — it's a different scope — but the child's cost still rolls into the parent turn's running total via `logCost`, so a per-turn cap can still trip mid-child.
 
 Result `data` is a discriminated union on `status`:
 
