@@ -148,6 +148,7 @@ describe('proxy (project root)', () => {
       const location = response.headers.get('location');
       expect(location).toContain('/login');
       expect(location).toContain('callbackUrl=%2Fdashboard');
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
     it('redirects to /login when accessing /settings without a session', async () => {
@@ -182,6 +183,7 @@ describe('proxy (project root)', () => {
 
       expect(response.status).toBe(307);
       expect(response.headers.get('location')).toContain('/dashboard');
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
     it('redirects to /dashboard when accessing /signup with the HTTPS cookie', async () => {
@@ -262,6 +264,14 @@ describe('proxy (project root)', () => {
       const response = await proxy(request);
 
       expect(response.status).toBe(403);
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+      const body = (await response.json()) as {
+        success: boolean;
+        error: { code: string; message: string };
+      };
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(body.error.message).toBe('Invalid request origin');
     });
 
     it('allows POST requests when Origin matches Host', async () => {
@@ -308,7 +318,40 @@ describe('proxy (project root)', () => {
       const response = await proxy(request);
 
       expect(response.status).toBe(403);
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+      const body = (await response.json()) as {
+        success: boolean;
+        error: { code: string; message: string };
+      };
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(body.error.message).toBe('Invalid request origin');
     });
+
+    it.each(['PUT', 'DELETE', 'PATCH'] as const)(
+      'rejects %s requests whose Origin does not match Host',
+      async (method) => {
+        const request = createMockRequest('/api/v1/users', {
+          method,
+          headers: {
+            origin: 'https://evil.com',
+            host: 'localhost:3000',
+          },
+        });
+
+        const response = await proxy(request);
+
+        expect(response.status).toBe(403);
+        expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+        const body = (await response.json()) as {
+          success: boolean;
+          error: { code: string; message: string };
+        };
+        expect(body.success).toBe(false);
+        expect(body.error.code).toBe('FORBIDDEN');
+        expect(body.error.message).toBe('Invalid request origin');
+      }
+    );
   });
 
   describe('Rate limiting — delegation to applyRateLimit', () => {
@@ -437,12 +480,20 @@ describe('proxy (project root)', () => {
 
       const request = createMockRequest('/', { cookies: {} });
 
-      await proxy(request);
+      const response = await proxy(request);
 
       expect(setSecurityHeaders).toHaveBeenCalledTimes(1);
       const [, nonceArg] = vi.mocked(setSecurityHeaders).mock.calls[0];
       expect(typeof nonceArg).toBe('string');
       expect((nonceArg as string).length).toBeGreaterThan(0);
+
+      // Finding 4: assert the nonce is end-to-end forwarded to NextResponse.next via
+      // x-nonce request header. NextResponse.next({ request: { headers } }) exposes
+      // overridden request headers on the response with the prefix
+      // 'x-middleware-request-'. If that convention does not fire in the test
+      // environment, the header will be null — which is still a clean assertion.
+      const forwardedNonce = response.headers.get('x-middleware-request-x-nonce');
+      expect(forwardedNonce).toBe(nonceArg as string);
     });
   });
 });

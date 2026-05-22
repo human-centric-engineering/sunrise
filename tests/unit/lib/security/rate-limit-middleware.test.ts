@@ -54,7 +54,10 @@ import { findRateLimitRule, type RateLimitRule } from '@/lib/security/rate-limit
 // ─── Real findRateLimitRule reference ────────────────────────────────────────
 // Captured via vi.importActual in beforeAll so we can restore the real
 // implementation in beforeEach after vi.clearAllMocks() wipes it.
-let realFindRateLimitRule: (pathname: string) => RateLimitRule | null;
+let realFindRateLimitRule: (
+  pathname: string,
+  policy?: readonly RateLimitRule[]
+) => RateLimitRule | null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

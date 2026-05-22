@@ -196,41 +196,47 @@ describe('Rate Limiter', () => {
       // Auth limiter: 5 requests per minute
       // Arrange: capture tokens upfront so check and reset use the same token
       const tokens = Array.from({ length: 6 }, (_, i) => `auth-test-${Date.now()}-${i}`);
-      const results = tokens.map((token) => authLimiter.check(token));
+      try {
+        const results = tokens.map((token) => authLimiter.check(token));
 
-      // Assert: First request should show limit of 5
-      expect(results[0].limit).toBe(5);
-
-      // Cleanup: reuse the same captured tokens
-      tokens.forEach((token) => authLimiter.reset(token));
+        // Assert: First request should show limit of 5
+        expect(results[0].limit).toBe(5);
+      } finally {
+        // Cleanup: reuse the same captured tokens
+        tokens.forEach((token) => authLimiter.reset(token));
+      }
     });
 
     it('apiLimiter should have correct configuration', () => {
       // Arrange: capture token so check and reset reference the same key
       const token = `api-test-${Date.now()}`;
 
-      // Act
-      const result = apiLimiter.check(token);
+      try {
+        // Act
+        const result = apiLimiter.check(token);
 
-      // Assert
-      expect(result.limit).toBe(100);
-
-      // Cleanup
-      apiLimiter.reset(token);
+        // Assert
+        expect(result.limit).toBe(100);
+      } finally {
+        // Cleanup
+        apiLimiter.reset(token);
+      }
     });
 
     it('passwordResetLimiter should have stricter limits', () => {
       // Arrange: capture token so check and reset reference the same key
       const token = `pwd-test-${Date.now()}`;
 
-      // Act
-      const result = passwordResetLimiter.check(token);
+      try {
+        // Act
+        const result = passwordResetLimiter.check(token);
 
-      // Assert
-      expect(result.limit).toBe(3);
-
-      // Cleanup
-      passwordResetLimiter.reset(token);
+        // Assert
+        expect(result.limit).toBe(3);
+      } finally {
+        // Cleanup
+        passwordResetLimiter.reset(token);
+      }
     });
   });
 
