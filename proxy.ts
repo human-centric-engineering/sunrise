@@ -2,15 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { generateRequestId } from '@/lib/logging/context';
 import { setSecurityHeaders } from '@/lib/security/headers';
-import { getClientIP } from '@/lib/security/ip';
-import {
-  apiLimiter,
-  adminLimiter,
-  authLimiter,
-  getRateLimitHeaders,
-  createRateLimitResponse,
-} from '@/lib/security/rate-limit';
-import type { RateLimitResult } from '@/lib/security/rate-limit';
+import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 
 /**
  * Next.js Proxy
@@ -92,7 +84,7 @@ function validateOrigin(request: NextRequest): boolean {
   }
 }
 
-export function proxy(request: NextRequest): NextResponse | Response {
+export async function proxy(request: NextRequest): Promise<NextResponse | Response> {
   const { pathname } = request.nextUrl;
 
   // Generate or extract request ID for distributed tracing
@@ -127,66 +119,24 @@ export function proxy(request: NextRequest): NextResponse | Response {
   }
 
   // ==========================================================================
-  // Security: Rate limiting for API routes
+  // Security: Rate limiting via central policy table
   // ==========================================================================
-  // Store the result so we can reuse it for response headers (avoids a
-  // separate peek() call which would show post-consumption counts).
-  let apiRateLimitResult: RateLimitResult | null = null;
-
-  if (pathname.startsWith('/api/v1/')) {
-    const clientIP = getClientIP(request);
-
-    // Admin endpoints get a tighter limit (30/min) on top of the global API limit
-    if (pathname.startsWith('/api/v1/admin/')) {
-      const adminResult = adminLimiter.check(clientIP);
-      if (!adminResult.success) {
-        const rateLimitResponse = createRateLimitResponse(adminResult);
-        return new NextResponse(rateLimitResponse.body, {
-          status: rateLimitResponse.status,
-          headers: {
-            ...Object.fromEntries(rateLimitResponse.headers),
-            'x-request-id': requestId,
-          },
-        });
-      }
-    }
-
-    apiRateLimitResult = apiLimiter.check(clientIP);
-
-    if (!apiRateLimitResult.success) {
-      const rateLimitResponse = createRateLimitResponse(apiRateLimitResult);
-      // Clone to NextResponse to add request ID
-      return new NextResponse(rateLimitResponse.body, {
-        status: rateLimitResponse.status,
-        headers: {
-          ...Object.fromEntries(rateLimitResponse.headers),
-          'x-request-id': requestId,
-        },
-      });
-    }
-  }
-
-  // Credential-based auth endpoints get rate limited (5/min) to prevent brute-force attacks.
-  // Only targets sign-in, sign-up, forgot/reset-password — NOT session reads, sign-out, or OAuth callbacks.
-  const AUTH_RATE_LIMITED_PATHS = [
-    '/api/auth/sign-in',
-    '/api/auth/sign-up',
-    '/api/auth/forgot-password',
-    '/api/auth/reset-password',
-  ];
-  if (AUTH_RATE_LIMITED_PATHS.some((p) => pathname.startsWith(p))) {
-    const clientIP = getClientIP(request);
-    const authResult = authLimiter.check(clientIP);
-    if (!authResult.success) {
-      const rateLimitResponse = createRateLimitResponse(authResult);
-      return new NextResponse(rateLimitResponse.body, {
-        status: rateLimitResponse.status,
-        headers: {
-          ...Object.fromEntries(rateLimitResponse.headers),
-          'x-request-id': requestId,
-        },
-      });
-    }
+  // The policy table at `lib/security/rate-limit-policy.ts` declares which
+  // tier + key strategy applies to which path. The dispatcher resolves the
+  // matching rule, builds a token, calls the limiter, and returns a 429
+  // response if the cap is exceeded. Anonymous, no-rule, and bypass paths
+  // return null and we fall through.
+  const rateLimitResponse = await applyRateLimit(request);
+  if (rateLimitResponse) {
+    // Re-wrap so the request ID propagates to the client alongside the
+    // standard rate-limit envelope and headers from `createRateLimitResponse`.
+    return new NextResponse(rateLimitResponse.body, {
+      status: rateLimitResponse.status,
+      headers: {
+        ...Object.fromEntries(rateLimitResponse.headers),
+        'x-request-id': requestId,
+      },
+    });
   }
 
   // ==========================================================================
@@ -240,15 +190,6 @@ export function proxy(request: NextRequest): NextResponse | Response {
   // Nonce is included in script-src so Next.js hydration scripts are allowed.
   // NOTE: X-XSS-Protection is intentionally NOT set (deprecated, can cause issues)
   setSecurityHeaders(response, nonce);
-
-  // Add rate limit headers for API routes (informational)
-  // Reuse the result from check() above — no separate peek() needed.
-  if (apiRateLimitResult) {
-    const rateLimitHeaders = getRateLimitHeaders(apiRateLimitResult);
-    for (const [key, value] of Object.entries(rateLimitHeaders)) {
-      response.headers.set(key, value);
-    }
-  }
 
   return response;
 }

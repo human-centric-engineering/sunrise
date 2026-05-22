@@ -1,104 +1,48 @@
 /**
- * Unit Test: Proxy Middleware
+ * Unit Test: Proxy (Next.js project-root proxy.ts)
  *
- * Tests the middleware proxy function that handles:
- * - Authentication detection via session cookies
- * - Protected route access control
- * - Auth route redirection for authenticated users
+ * Tests the proxy function that runs before every matched request:
+ * - Origin validation (CSRF protection for state-changing methods)
+ * - Rate limiting (delegated to applyRateLimit; this file mocks the dispatcher
+ *   and asserts the integration — the dispatcher itself has its own tests at
+ *   tests/unit/lib/security/rate-limit-middleware.test.ts)
+ * - Authentication via better-auth session cookies
+ * - Protected route redirects + auth route redirects
+ * - Request ID generation + propagation
+ * - CSP nonce generation + forwarding via x-nonce header
  * - Security headers
- * - Rate limiting
  *
- * Test Coverage:
- * - isAuthenticated function with both cookie variants
- * - Protected route access (authenticated vs unauthenticated)
- * - Auth route redirection (authenticated users)
- * - Request ID propagation
- * - Security headers
+ * Rate-limit enforcement moved into the policy table + dispatcher pattern
+ * in commit c0a1b5cb. This test file mocks `applyRateLimit` so the proxy
+ * wiring is exercised in isolation — drive its return value per test.
  *
  * @see proxy.ts
+ * @see lib/security/rate-limit-middleware.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { proxy } from '@/proxy';
 
-/**
- * Mock dependencies
- */
-
-// Mock logging
 vi.mock('@/lib/logging/context', () => ({
   generateRequestId: vi.fn(() => 'test-request-id-123'),
 }));
 
-// Mock security headers
 vi.mock('@/lib/security/headers', () => ({
   setSecurityHeaders: vi.fn(),
 }));
 
-// Mock rate limiting
-const mockCheckResult = {
-  success: true,
-  limit: 100,
-  remaining: 99,
-  reset: 1234567890,
-};
-
-const mockAdminCheckResult = {
-  success: true,
-  limit: 30,
-  remaining: 29,
-  reset: 1234567890,
-};
-
-const mockAuthCheckResult = {
-  success: true,
-  limit: 5,
-  remaining: 4,
-  reset: 1234567890,
-};
-
-vi.mock('@/lib/security/rate-limit', () => ({
-  apiLimiter: {
-    check: vi.fn(() => mockCheckResult),
-    peek: vi.fn(() => ({
-      success: true,
-      remaining: 100,
-      limit: 100,
-      reset: Date.now() + 60000,
-    })),
-  },
-  adminLimiter: {
-    check: vi.fn(() => mockAdminCheckResult),
-  },
-  authLimiter: {
-    check: vi.fn(() => mockAuthCheckResult),
-  },
-  getRateLimitHeaders: vi.fn((result) => ({
-    'X-RateLimit-Limit': String(result.limit),
-    'X-RateLimit-Remaining': String(result.remaining),
-    'X-RateLimit-Reset': String(result.reset),
-  })),
-  createRateLimitResponse: vi.fn(() => new Response('Rate limited', { status: 429 })),
+// Rate-limit dispatcher — the unit under integration here. The dispatcher's
+// own behaviour (policy lookup, key resolution, limiter check, 429 shape) is
+// covered in rate-limit-middleware.test.ts; here we drive its return value
+// per test to verify the proxy's wiring (request-ID propagation on 429,
+// pass-through on null).
+vi.mock('@/lib/security/rate-limit-middleware', () => ({
+  applyRateLimit: vi.fn(async () => null),
 }));
 
-// Mock IP extraction
-vi.mock('@/lib/security/ip', () => ({
-  getClientIP: vi.fn((request) => {
-    // Simulate the real behavior: validate X-Forwarded-For
-    const forwarded = request.headers.get('x-forwarded-for');
-    if (forwarded) {
-      const ip = forwarded.split(',')[0].trim();
-      // Basic validation (matches IPV4_PATTERN from ip.ts)
-      if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) return ip;
-    }
-    return '127.0.0.1';
-  }),
-}));
+import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 
-/**
- * Helper function to create a mock NextRequest
- */
 function createMockRequest(
   pathname: string,
   options: {
@@ -125,85 +69,62 @@ function createMockRequest(
   return request;
 }
 
-describe('proxy middleware', () => {
+describe('proxy (project root)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default — dispatcher allows the request through. Specific tests
+    // override this to drive the 429 branch.
+    vi.mocked(applyRateLimit).mockResolvedValue(null);
   });
 
-  describe('isAuthenticated - HTTP cookie (better-auth.session_token)', () => {
-    it('should return true when better-auth.session_token cookie is present', () => {
-      // Arrange
+  describe('isAuthenticated — HTTP cookie (better-auth.session_token)', () => {
+    it('proceeds to the protected route when the HTTP cookie is present', async () => {
       const request = createMockRequest('/dashboard', {
         cookies: { 'better-auth.session_token': 'valid-session-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: authenticated user accessing a protected route proceeds (200)
       expect(response.status).toBe(200);
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
-
-    it('should allow access to protected routes with HTTP cookie', () => {
-      // Arrange
-      const request = createMockRequest('/dashboard', {
-        cookies: { 'better-auth.session_token': 'valid-session-token' },
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert: NextResponse.next() yields 200, not a redirect
-      expect(response.status).toBe(200);
-    });
   });
 
-  describe('isAuthenticated - HTTPS cookie (__Secure-better-auth.session_token)', () => {
-    it('should return true when __Secure-better-auth.session_token cookie is present', () => {
-      // Arrange
+  describe('isAuthenticated — HTTPS cookie (__Secure-better-auth.session_token)', () => {
+    it('proceeds to the protected route when the HTTPS cookie is present', async () => {
       const request = createMockRequest('/dashboard', {
         cookies: { '__Secure-better-auth.session_token': 'valid-secure-session-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: authenticated user proceeds to the protected route (200)
       expect(response.status).toBe(200);
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
-    it('should allow access to protected routes with HTTPS cookie', () => {
-      // Arrange
+    it('allows access to /settings with the HTTPS cookie', async () => {
       const request = createMockRequest('/settings', {
         cookies: { '__Secure-better-auth.session_token': 'valid-secure-session-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: NextResponse.next() → 200, no redirect
       expect(response.status).toBe(200);
     });
 
-    it('should allow access to /profile with HTTPS cookie', () => {
-      // Arrange
+    it('allows access to /profile with the HTTPS cookie', async () => {
       const request = createMockRequest('/profile', {
         cookies: { '__Secure-better-auth.session_token': 'valid-secure-session-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: NextResponse.next() → 200, no redirect
       expect(response.status).toBe(200);
     });
   });
 
-  describe('isAuthenticated - both cookie variants present', () => {
-    it('should authenticate when both HTTP and HTTPS cookies are present', () => {
-      // Arrange
+  describe('isAuthenticated — both cookie variants present', () => {
+    it('authenticates when both HTTP and HTTPS cookies are present', async () => {
       const request = createMockRequest('/dashboard', {
         cookies: {
           'better-auth.session_token': 'http-token',
@@ -211,160 +132,125 @@ describe('proxy middleware', () => {
         },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: authenticated with either cookie → proceeds (200)
       expect(response.status).toBe(200);
     });
   });
 
-  describe('Protected routes - unauthenticated', () => {
-    it('should redirect to login when accessing /dashboard without session', () => {
-      // Arrange
+  describe('Protected routes — unauthenticated', () => {
+    it('redirects to /login when accessing /dashboard without a session', async () => {
       const request = createMockRequest('/dashboard', { cookies: {} });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
-      expect(response.status).toBe(307); // Redirect
+      expect(response.status).toBe(307);
       const location = response.headers.get('location');
       expect(location).toContain('/login');
       expect(location).toContain('callbackUrl=%2Fdashboard');
     });
 
-    it('should redirect to login when accessing /settings without session', () => {
-      // Arrange
+    it('redirects to /login when accessing /settings without a session', async () => {
       const request = createMockRequest('/settings', { cookies: {} });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.status).toBe(307);
       const location = response.headers.get('location');
       expect(location).toContain('/login');
       expect(location).toContain('callbackUrl=%2Fsettings');
     });
 
-    it('should redirect to login when accessing /profile without session', () => {
-      // Arrange
+    it('redirects to /login when accessing /profile without a session', async () => {
       const request = createMockRequest('/profile', { cookies: {} });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.status).toBe(307);
       const location = response.headers.get('location');
       expect(location).toContain('/login');
     });
   });
 
-  describe('Auth routes - authenticated users', () => {
-    it('should redirect to dashboard when accessing /login with HTTP cookie', () => {
-      // Arrange
+  describe('Auth routes — authenticated users', () => {
+    it('redirects to /dashboard when accessing /login with the HTTP cookie', async () => {
       const request = createMockRequest('/login', {
         cookies: { 'better-auth.session_token': 'valid-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.status).toBe(307);
       expect(response.headers.get('location')).toContain('/dashboard');
     });
 
-    it('should redirect to dashboard when accessing /signup with HTTPS cookie', () => {
-      // Arrange
+    it('redirects to /dashboard when accessing /signup with the HTTPS cookie', async () => {
       const request = createMockRequest('/signup', {
         cookies: { '__Secure-better-auth.session_token': 'valid-secure-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.status).toBe(307);
       expect(response.headers.get('location')).toContain('/dashboard');
     });
 
-    it('should redirect to dashboard when accessing /reset-password with session', () => {
-      // Arrange
+    it('redirects to /dashboard when accessing /reset-password with a session', async () => {
       const request = createMockRequest('/reset-password', {
         cookies: { '__Secure-better-auth.session_token': 'valid-token' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.status).toBe(307);
       expect(response.headers.get('location')).toContain('/dashboard');
     });
   });
 
   describe('Public routes', () => {
-    it('should allow unauthenticated access to homepage', () => {
-      // Arrange
+    it('allows unauthenticated access to the homepage', async () => {
       const request = createMockRequest('/', { cookies: {} });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: public route → NextResponse.next() → 200
       expect(response.status).toBe(200);
     });
 
-    it('should allow unauthenticated access to /about', () => {
-      // Arrange
+    it('allows unauthenticated access to /about', async () => {
       const request = createMockRequest('/about', { cookies: {} });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: public route → NextResponse.next() → 200
       expect(response.status).toBe(200);
     });
   });
 
   describe('Request ID propagation', () => {
-    it('should add request ID to response headers', () => {
-      // Arrange
+    it('adds the request ID to response headers', async () => {
       const request = createMockRequest('/', { cookies: {} });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
-    it('should reuse the existing request ID from the header without generating a new one', async () => {
-      // Import the mocked module to assert on its call count
+    it('reuses an existing request ID from the inbound header instead of generating a new one', async () => {
       const { generateRequestId } = await import('@/lib/logging/context');
 
-      // Arrange: request already carries an ID (e.g. propagated from the client)
       const request = createMockRequest('/', {
         cookies: {},
         headers: { 'x-request-id': 'existing-request-id' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: the pre-existing ID is echoed back, and generateRequestId is NOT called
-      // (source: `const requestId = request.headers.get('x-request-id') || generateRequestId()`)
       expect(response.headers.get('x-request-id')).toBe('existing-request-id');
       expect(generateRequestId).not.toHaveBeenCalled();
     });
   });
 
   describe('Origin validation', () => {
-    it('should reject POST requests with invalid origin', () => {
-      // Arrange
+    it('rejects POST requests whose Origin does not match Host', async () => {
       const request = createMockRequest('/api/v1/users', {
         method: 'POST',
         headers: {
@@ -373,15 +259,12 @@ describe('proxy middleware', () => {
         },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(response.status).toBe(403);
     });
 
-    it('should allow POST requests with matching origin', () => {
-      // Arrange
+    it('allows POST requests when Origin matches Host', async () => {
       const request = createMockRequest('/api/v1/users', {
         method: 'POST',
         headers: {
@@ -390,15 +273,12 @@ describe('proxy middleware', () => {
         },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: origin matches host → request proceeds, rate-limit headers present
       expect(response.status).toBe(200);
     });
 
-    it('should allow GET requests without origin validation', () => {
-      // Arrange
+    it('allows GET requests through without an origin check', async () => {
       const request = createMockRequest('/api/v1/users', {
         method: 'GET',
         headers: {
@@ -407,592 +287,140 @@ describe('proxy middleware', () => {
         },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert: GET skips origin check → NextResponse.next() → 200
       expect(response.status).toBe(200);
     });
   });
 
-  describe('Rate limiting (I24 fix)', () => {
-    it('should call apiLimiter.check() exactly once for /api/v1/ routes', async () => {
-      // Import mocked modules
-      const { apiLimiter } = await import('@/lib/security/rate-limit');
-      const { getClientIP } = await import('@/lib/security/ip');
+  describe('Rate limiting — delegation to applyRateLimit', () => {
+    it('calls applyRateLimit for every request that passes origin validation', async () => {
+      const request = createMockRequest('/api/v1/users');
 
-      // Arrange
-      const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
+      await proxy(request);
 
-      // Act
-      proxy(request);
-
-      // Assert
-      expect(getClientIP).toHaveBeenCalledWith(request);
-      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-      expect(apiLimiter.check).toHaveBeenCalledWith('192.168.1.100');
+      expect(applyRateLimit).toHaveBeenCalledTimes(1);
+      expect(applyRateLimit).toHaveBeenCalledWith(request);
     });
 
-    it('should NOT call apiLimiter.peek() when adding rate limit headers', async () => {
-      // Import mocked modules
-      const { apiLimiter, getRateLimitHeaders } = await import('@/lib/security/rate-limit');
-
-      // Arrange
+    it('does not call applyRateLimit when origin validation rejects the request', async () => {
       const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
+        method: 'POST',
+        headers: { origin: 'https://evil.com', host: 'localhost:3000' },
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert - check() is called once, peek() is NOT called
-      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-      expect(apiLimiter.peek).not.toHaveBeenCalled();
+      expect(response.status).toBe(403);
+      // Origin check short-circuits before the rate-limit dispatcher.
+      expect(applyRateLimit).not.toHaveBeenCalled();
+    });
 
-      // Verify getRateLimitHeaders is called with the check result
-      expect(getRateLimitHeaders).toHaveBeenCalledWith(mockCheckResult);
+    it('returns the dispatcher 429 with the request ID propagated', async () => {
+      const fake429 = new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests.' },
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': '60',
+            'X-RateLimit-Limit': '30',
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': '1234567890',
+          },
+        }
+      );
+      vi.mocked(applyRateLimit).mockResolvedValueOnce(fake429);
 
-      // Verify headers are set on response
-      expect(response.headers.get('X-RateLimit-Limit')).toBe('100');
-      expect(response.headers.get('X-RateLimit-Remaining')).toBe('99');
+      const request = createMockRequest('/api/v1/admin/users', { method: 'GET' });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(429);
+      // Re-wrap preserves all dispatcher headers AND attaches the request ID.
+      expect(response.headers.get('Retry-After')).toBe('60');
+      expect(response.headers.get('X-RateLimit-Limit')).toBe('30');
+      expect(response.headers.get('X-RateLimit-Remaining')).toBe('0');
       expect(response.headers.get('X-RateLimit-Reset')).toBe('1234567890');
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
+
+      // Body shape is preserved through the re-wrap.
+      const body = (await response.json()) as {
+        success: boolean;
+        error: { code: string; message: string };
+      };
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('RATE_LIMIT_EXCEEDED');
     });
 
-    it('should reuse check() result for rate limit headers', async () => {
-      // Import mocked modules
-      const { apiLimiter, getRateLimitHeaders } = await import('@/lib/security/rate-limit');
+    it('continues through to auth + headers when applyRateLimit returns null', async () => {
+      vi.mocked(applyRateLimit).mockResolvedValueOnce(null);
 
-      // Create a custom check result
-      const customResult = {
-        success: true,
-        limit: 50,
-        remaining: 25,
-        reset: 9999999999,
-      };
+      const request = createMockRequest('/api/v1/admin/users');
 
-      vi.mocked(apiLimiter.check).mockReturnValueOnce(customResult);
+      const response = await proxy(request);
 
-      // Arrange
-      const request = createMockRequest('/api/v1/posts', {
-        method: 'GET',
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert - getRateLimitHeaders receives the same result from check()
-      expect(getRateLimitHeaders).toHaveBeenCalledWith(customResult);
-      expect(response.headers.get('X-RateLimit-Limit')).toBe('50');
-      expect(response.headers.get('X-RateLimit-Remaining')).toBe('25');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
   });
 
-  describe('Custom auth routes (I13 fix)', () => {
-    it('should add security headers to /api/auth/send-verification-email', async () => {
-      // Import mocked module
+  describe('Custom auth routes (request-ID + security headers propagation)', () => {
+    it('sets security headers on /api/auth/send-verification-email', async () => {
       const { setSecurityHeaders } = await import('@/lib/security/headers');
 
-      // Arrange
       const request = createMockRequest('/api/auth/send-verification-email', {
         method: 'POST',
       });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert - security headers are set (proxy no longer excludes /api/auth/*)
       expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
-    it('should add security headers to /api/auth/accept-invite', async () => {
-      // Import mocked module
+    it('sets security headers on /api/auth/accept-invite', async () => {
       const { setSecurityHeaders } = await import('@/lib/security/headers');
 
-      // Arrange
-      const request = createMockRequest('/api/auth/accept-invite', {
-        method: 'POST',
-      });
+      const request = createMockRequest('/api/auth/accept-invite', { method: 'POST' });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
-    it('should add security headers to /api/auth/clear-session', async () => {
-      // Import mocked module
+    it('sets security headers on /api/auth/clear-session', async () => {
       const { setSecurityHeaders } = await import('@/lib/security/headers');
 
-      // Arrange
-      const request = createMockRequest('/api/auth/clear-session', {
-        method: 'POST',
-      });
+      const request = createMockRequest('/api/auth/clear-session', { method: 'POST' });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert
       expect(setSecurityHeaders).toHaveBeenCalledWith(response, expect.any(String));
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
 
-    it('should add request ID to better-auth catch-all routes', () => {
-      // Arrange
-      const request = createMockRequest('/api/auth/sign-in', {
-        method: 'POST',
-      });
+    it('adds the request ID to better-auth catch-all routes', async () => {
+      const request = createMockRequest('/api/auth/sign-in', { method: 'POST' });
 
-      // Act
-      const response = proxy(request);
+      const response = await proxy(request);
 
-      // Assert - request ID is propagated even to better-auth routes
       expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     });
   });
 
-  describe('IP validation integration', () => {
-    it('should use getClientIP from @/lib/security/ip', async () => {
-      // Import mocked module
-      const { getClientIP } = await import('@/lib/security/ip');
-
-      // Arrange
-      const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '10.0.0.1',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - getClientIP is called with the request
-      expect(getClientIP).toHaveBeenCalledWith(request);
-    });
-
-    it('should fall back to default IP when X-Forwarded-For is invalid', async () => {
-      // Import mocked modules
-      const { apiLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange - invalid X-Forwarded-For value (not an IP)
-      const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': 'malicious-payload',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - check is called with fallback IP (127.0.0.1)
-      expect(apiLimiter.check).toHaveBeenCalledWith('127.0.0.1');
-    });
-
-    it('should extract valid IP from X-Forwarded-For', async () => {
-      // Import mocked modules
-      const { apiLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange
-      const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '203.0.113.45, 192.168.1.1',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - check is called with first valid IP
-      expect(apiLimiter.check).toHaveBeenCalledWith('203.0.113.45');
-    });
-  });
-
-  describe('Admin rate limiting', () => {
-    it('should call adminLimiter.check for /api/v1/admin/* routes', async () => {
-      // Import mocked modules
-      const { adminLimiter, apiLimiter } = await import('@/lib/security/rate-limit');
-      const { getClientIP } = await import('@/lib/security/ip');
-
-      // Arrange
-      const request = createMockRequest('/api/v1/admin/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - both admin and API limiters are checked
-      expect(getClientIP).toHaveBeenCalledWith(request);
-      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
-      expect(adminLimiter.check).toHaveBeenCalledWith('192.168.1.100');
-      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-      expect(apiLimiter.check).toHaveBeenCalledWith('192.168.1.100');
-    });
-
-    it('should NOT call adminLimiter.check for non-admin /api/v1/* routes', async () => {
-      // Import mocked modules
-      const { adminLimiter, apiLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange
-      const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - only API limiter is checked, not admin limiter
-      expect(adminLimiter.check).not.toHaveBeenCalled();
-      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-    });
-
-    it('should return 429 when adminLimiter fails without checking apiLimiter', async () => {
-      // Import mocked modules
-      const { adminLimiter, apiLimiter, createRateLimitResponse } =
-        await import('@/lib/security/rate-limit');
-
-      // Mock admin limiter failure
-      const failedResult = {
-        success: false,
-        limit: 30,
-        remaining: 0,
-        reset: 1234567890,
-      };
-      vi.mocked(adminLimiter.check).mockReturnValueOnce(failedResult);
-
-      // Arrange
-      const request = createMockRequest('/api/v1/admin/settings', {
-        method: 'POST',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert
-      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
-      expect(apiLimiter.check).not.toHaveBeenCalled(); // Should NOT be called
-      expect(createRateLimitResponse).toHaveBeenCalledWith(failedResult);
-      expect(response.status).toBe(429);
-      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
-    });
-
-    it('should check apiLimiter after adminLimiter passes', async () => {
-      // Import mocked modules
-      const { adminLimiter, apiLimiter } = await import('@/lib/security/rate-limit');
-
-      // Both limiters pass
-      vi.mocked(adminLimiter.check).mockReturnValueOnce(mockAdminCheckResult);
-      vi.mocked(apiLimiter.check).mockReturnValueOnce(mockCheckResult);
-
-      // Arrange
-      const request = createMockRequest('/api/v1/admin/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert - both checks happen in sequence and request proceeds
-      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
-      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-      expect(response.status).toBe(200);
-    });
-
-    it('should return 429 when adminLimiter passes but apiLimiter fails', async () => {
-      // Import mocked modules
-      const { adminLimiter, apiLimiter, createRateLimitResponse } =
-        await import('@/lib/security/rate-limit');
-
-      // Admin passes, API fails
-      vi.mocked(adminLimiter.check).mockReturnValueOnce(mockAdminCheckResult);
-      const apiFailedResult = {
-        success: false,
-        limit: 100,
-        remaining: 0,
-        reset: 1234567890,
-      };
-      vi.mocked(apiLimiter.check).mockReturnValueOnce(apiFailedResult);
-
-      // Arrange
-      const request = createMockRequest('/api/v1/admin/roles', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert - both checks happen, API limiter blocks
-      expect(adminLimiter.check).toHaveBeenCalledTimes(1);
-      expect(apiLimiter.check).toHaveBeenCalledTimes(1);
-      expect(createRateLimitResponse).toHaveBeenCalledWith(apiFailedResult);
-      expect(response.status).toBe(429);
-    });
-  });
-
-  describe('Auth rate limiting', () => {
-    it('should call authLimiter.check for /api/auth/* routes', async () => {
-      // Import mocked modules
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-      const { getClientIP } = await import('@/lib/security/ip');
-
-      // Arrange
-      const request = createMockRequest('/api/auth/sign-in', {
-        method: 'POST',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert
-      expect(getClientIP).toHaveBeenCalledWith(request);
-      expect(authLimiter.check).toHaveBeenCalledTimes(1);
-      expect(authLimiter.check).toHaveBeenCalledWith('192.168.1.100');
-    });
-
-    it('should call authLimiter.check for /api/auth/forgot-password', async () => {
-      // Import mocked modules
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange
-      const request = createMockRequest('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: {
-          'x-forwarded-for': '10.0.0.5',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert
-      expect(authLimiter.check).toHaveBeenCalledTimes(1);
-      expect(authLimiter.check).toHaveBeenCalledWith('10.0.0.5');
-    });
-
-    it('should NOT call authLimiter.check for /api/auth/sign-out', async () => {
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      const request = createMockRequest('/api/auth/sign-out', {
-        method: 'POST',
-        headers: { 'x-forwarded-for': '192.168.1.100' },
-      });
-
-      proxy(request);
-
-      expect(authLimiter.check).not.toHaveBeenCalled();
-    });
-
-    it('should NOT call authLimiter.check for /api/auth/callback/*', async () => {
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      const request = createMockRequest('/api/auth/callback/google', {
-        method: 'GET',
-        headers: { 'x-forwarded-for': '192.168.1.100' },
-      });
-
-      proxy(request);
-
-      expect(authLimiter.check).not.toHaveBeenCalled();
-    });
-
-    it('should NOT call authLimiter.check for /api/auth/get-session', async () => {
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      const request = createMockRequest('/api/auth/get-session', {
-        method: 'GET',
-        headers: { 'x-forwarded-for': '192.168.1.100' },
-      });
-
-      proxy(request);
-
-      expect(authLimiter.check).not.toHaveBeenCalled();
-    });
-
-    it('should NOT call authLimiter.check for /api/v1/* routes', async () => {
-      // Import mocked modules
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange
-      const request = createMockRequest('/api/v1/users', {
-        method: 'GET',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - authLimiter should NOT be called for API routes
-      expect(authLimiter.check).not.toHaveBeenCalled();
-    });
-
-    it('should NOT call authLimiter.check for non-API routes', async () => {
-      // Import mocked modules
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange
-      const request = createMockRequest('/dashboard', {
-        method: 'GET',
-        cookies: { 'better-auth.session_token': 'valid-token' },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert
-      expect(authLimiter.check).not.toHaveBeenCalled();
-    });
-
-    it('should return 429 when authLimiter fails', async () => {
-      // Import mocked modules
-      const { authLimiter, createRateLimitResponse } = await import('@/lib/security/rate-limit');
-
-      // Mock auth limiter failure
-      const failedResult = {
-        success: false,
-        limit: 5,
-        remaining: 0,
-        reset: 1234567890,
-      };
-      vi.mocked(authLimiter.check).mockReturnValueOnce(failedResult);
-
-      // Arrange
-      const request = createMockRequest('/api/auth/sign-up/email', {
-        method: 'POST',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert
-      expect(authLimiter.check).toHaveBeenCalledTimes(1);
-      expect(createRateLimitResponse).toHaveBeenCalledWith(failedResult);
-      expect(response.status).toBe(429);
-      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
-    });
-
-    it('should allow request when authLimiter passes', async () => {
-      // Import mocked modules
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      // Auth limiter passes
-      vi.mocked(authLimiter.check).mockReturnValueOnce(mockAuthCheckResult);
-
-      // Arrange
-      const request = createMockRequest('/api/auth/sign-in', {
-        method: 'POST',
-        headers: {
-          'x-forwarded-for': '192.168.1.100',
-        },
-      });
-
-      // Act
-      const response = proxy(request);
-
-      // Assert: auth limiter passes → request proceeds (200)
-      expect(authLimiter.check).toHaveBeenCalledTimes(1);
-      expect(response.status).toBe(200);
-      expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
-    });
-
-    it('should rate limit all credential-based auth endpoints', async () => {
-      // Import mocked modules
-      const { authLimiter } = await import('@/lib/security/rate-limit');
-
-      // Arrange - only credential-based endpoints are rate limited
-      const requests = [
-        createMockRequest('/api/auth/sign-in', {
-          method: 'POST',
-          headers: { 'x-forwarded-for': '192.168.1.100' },
-        }),
-        createMockRequest('/api/auth/sign-up/email', {
-          method: 'POST',
-          headers: { 'x-forwarded-for': '192.168.1.100' },
-        }),
-        createMockRequest('/api/auth/forgot-password', {
-          method: 'POST',
-          headers: { 'x-forwarded-for': '192.168.1.100' },
-        }),
-        createMockRequest('/api/auth/reset-password', {
-          method: 'POST',
-          headers: { 'x-forwarded-for': '192.168.1.100' },
-        }),
-      ];
-
-      // Act - call proxy for each request
-      requests.forEach((request) => {
-        vi.clearAllMocks();
-        proxy(request);
-        // Assert - each call checks auth limiter with same IP
-        expect(authLimiter.check).toHaveBeenCalledWith('192.168.1.100');
-      });
-    });
-  });
-
-  describe('nonce generation', () => {
-    it('should call setSecurityHeaders with a nonce string on normal requests', async () => {
-      // Import mocked module
+  describe('Nonce generation', () => {
+    it('forwards a non-empty nonce string as the second argument to setSecurityHeaders', async () => {
       const { setSecurityHeaders } = await import('@/lib/security/headers');
 
-      // Arrange
       const request = createMockRequest('/', { cookies: {} });
 
-      // Act
-      proxy(request);
+      await proxy(request);
 
-      // Assert - setSecurityHeaders is called with the response and a nonce string
-      expect(setSecurityHeaders).toHaveBeenCalledTimes(1);
-      expect(setSecurityHeaders).toHaveBeenCalledWith(expect.anything(), expect.any(String));
-    });
-
-    it('should forward a non-empty nonce string as the second argument to setSecurityHeaders', async () => {
-      // Import mocked module
-      const { setSecurityHeaders } = await import('@/lib/security/headers');
-
-      // Arrange
-      const request = createMockRequest('/dashboard', {
-        cookies: { 'better-auth.session_token': 'valid-token' },
-      });
-
-      // Act
-      proxy(request);
-
-      // Assert - the nonce argument is a non-empty string
       expect(setSecurityHeaders).toHaveBeenCalledTimes(1);
       const [, nonceArg] = vi.mocked(setSecurityHeaders).mock.calls[0];
       expect(typeof nonceArg).toBe('string');
