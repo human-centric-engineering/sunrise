@@ -80,6 +80,14 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Stub the display-name resolvers — they're called from the
+// execution_crashed dispatch path and would otherwise pull in a real
+// Prisma client. Each returns the "no extra info" shape.
+vi.mock('@/lib/orchestration/webhooks/payload-context', () => ({
+  resolveUserDisplayName: vi.fn().mockResolvedValue(undefined),
+  resolveWorkflowDisplay: vi.fn().mockResolvedValue({}),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import {
@@ -691,15 +699,26 @@ describe('drainEngine: engine crash path', () => {
         userId: 'user_1',
         error: 'engine boom',
       });
-      // Mirror to the webhook subscriptions subsystem so admins can subscribe
-      // via the existing /admin/orchestration/event-subscriptions UI.
-      expect(dispatchWebhookEvent).toHaveBeenCalledWith('execution_crashed', {
-        executionId: 'exec_1',
-        workflowId: 'wf_1',
-        workflowSlug: 'test-workflow',
-        userId: 'user_1',
-        error: 'engine boom',
-      });
+    });
+
+    // Mirror to the webhook subscriptions subsystem so admins can subscribe
+    // via the existing /admin/orchestration/event-subscriptions UI. The
+    // dispatch goes through a fire-and-forget IIFE that also fetches the
+    // workflow display name + actor display name — wait for it separately
+    // and match structurally (display lookups stubbed by the
+    // payload-context mock).
+    await vi.waitFor(() => {
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+        'execution_crashed',
+        expect.objectContaining({
+          executionId: 'exec_1',
+          workflowId: 'wf_1',
+          workflowSlug: 'test-workflow',
+          userId: 'user_1',
+          actorUserId: 'user_1',
+          error: 'engine boom',
+        })
+      );
     });
   });
 

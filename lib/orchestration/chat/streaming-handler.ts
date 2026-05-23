@@ -51,6 +51,7 @@ import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cos
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { resolveUserDisplayName } from '@/lib/orchestration/webhooks/payload-context';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { scanForInjection } from '@/lib/orchestration/chat/input-guard';
 import { scanCitations, scanOutput } from '@/lib/orchestration/chat/output-guard';
@@ -397,12 +398,23 @@ export class StreamingChatHandler {
           'budget_exceeded',
           `This agent has reached its monthly budget of ${limitStr}. Contact an admin to increase the limit or switch to a local model.`
         );
-        void dispatchWebhookEvent('budget_exceeded', {
-          agentId: agent.id,
-          agentSlug: agent.slug,
-          usedUsd: budget.spent,
-          limitUsd: budget.limit,
-        });
+        // Resolve the actor name out-of-band so the synchronous chat-stream
+        // path doesn't block the SSE `error` event we yielded above. The
+        // webhook dispatcher creates the delivery row inside this call,
+        // so ordering against subsequent failures is fine.
+        void (async () => {
+          const actorUserName = await resolveUserDisplayName(request.userId);
+          await dispatchWebhookEvent('budget_exceeded', {
+            agentId: agent.id,
+            agentSlug: agent.slug,
+            agentName: agent.name,
+            actorUserId: request.userId,
+            actorUserName,
+            conversationId,
+            usedUsd: budget.spent,
+            limitUsd: budget.limit,
+          });
+        })();
         return;
       }
 

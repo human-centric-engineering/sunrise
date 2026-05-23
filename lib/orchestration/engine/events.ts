@@ -9,6 +9,10 @@
 import type { ExecutionEvent, WorkflowStepType } from '@/types/orchestration';
 import { logger } from '@/lib/logging';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import {
+  resolveUserDisplayName,
+  resolveWorkflowDisplay,
+} from '@/lib/orchestration/webhooks/payload-context';
 
 export function workflowStarted(executionId: string, workflowId: string): ExecutionEvent {
   return { type: 'workflow_started', executionId, workflowId };
@@ -116,12 +120,55 @@ export function workflowCompleted(
   return { type: 'workflow_completed', output, totalTokensUsed, totalCostUsd };
 }
 
-export function workflowFailed(error: string, failedStepId?: string): ExecutionEvent {
-  dispatchWebhookEvent('workflow_failed', { error, failedStepId }).catch((err) => {
-    logger.warn('Webhook dispatch failed for workflow_failed', {
-      failedStepId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+/**
+ * Optional execution-level context piped into the `workflow_failed`
+ * webhook payload. Every field is best-effort — receivers should treat
+ * missing entries as "not in scope at this call site" rather than as
+ * the value being null.
+ */
+export interface WorkflowFailedWebhookMeta {
+  executionId?: string;
+  workflowId?: string;
+  /** User who initiated the execution. */
+  userId?: string;
+  /** Engine running totals at the point of failure. */
+  totalCostUsd?: number;
+  totalTokensUsed?: number;
+}
+
+export function workflowFailed(
+  error: string,
+  failedStepId?: string,
+  meta?: WorkflowFailedWebhookMeta
+): ExecutionEvent {
+  // Run name lookups + dispatch inside an async IIFE so the synchronous
+  // factory can still return the ExecutionEvent immediately. Errors are
+  // swallowed with a logger.warn — a webhook failure must never block
+  // the engine's terminal event sequence.
+  void (async () => {
+    try {
+      const [workflow, actorUserName] = await Promise.all([
+        resolveWorkflowDisplay(meta?.workflowId),
+        resolveUserDisplayName(meta?.userId),
+      ]);
+      await dispatchWebhookEvent('workflow_failed', {
+        error,
+        failedStepId,
+        executionId: meta?.executionId,
+        workflowId: meta?.workflowId,
+        workflowSlug: workflow.slug,
+        workflowName: workflow.name,
+        actorUserId: meta?.userId,
+        actorUserName,
+        totalCostUsd: meta?.totalCostUsd,
+        totalTokensUsed: meta?.totalTokensUsed,
+      });
+    } catch (err) {
+      logger.warn('Webhook dispatch failed for workflow_failed', {
+        failedStepId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  })();
   return { type: 'workflow_failed', error, failedStepId };
 }

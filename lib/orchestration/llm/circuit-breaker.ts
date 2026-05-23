@@ -72,19 +72,33 @@ export class CircuitBreaker {
     this.pruneWindow(now);
 
     if (this.failures.length >= this.config.failureThreshold) {
+      // Only dispatch the webhook and bump openedAt on the closed→open
+      // transition. Without this guard, every subsequent failure recorded
+      // while the breaker is already open re-fires the webhook (and resets
+      // openedAt, which would distort `openedAt` for receivers that watch
+      // it). The state itself is idempotent so leaving the assignment in
+      // place is harmless.
+      const wasClosed = this._state !== 'open';
       this._state = 'open';
-      this.openedAt = now;
-      void dispatchWebhookEvent('circuit_breaker_opened', {
-        providerSlug: this.slug,
-        failures: this.failures.length,
-        threshold: this.config.failureThreshold,
-      });
-      logger.warn('Circuit breaker tripped', {
-        provider: this.slug,
-        failures: this.failures.length,
-        windowMs: this.config.windowMs,
-        cooldownMs: this.config.cooldownMs,
-      });
+      if (wasClosed) {
+        this.openedAt = now;
+        void dispatchWebhookEvent('circuit_breaker_opened', {
+          providerSlug: this.slug,
+          failures: this.failures.length,
+          threshold: this.config.failureThreshold,
+          // Config the receiver needs to understand how long the breaker
+          // will stay tripped before half-open probes start.
+          windowMs: this.config.windowMs,
+          cooldownMs: this.config.cooldownMs,
+          openedAt: new Date(now).toISOString(),
+        });
+        logger.warn('Circuit breaker tripped', {
+          provider: this.slug,
+          failures: this.failures.length,
+          windowMs: this.config.windowMs,
+          cooldownMs: this.config.cooldownMs,
+        });
+      }
     }
 
     return this._state;

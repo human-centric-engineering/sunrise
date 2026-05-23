@@ -122,6 +122,14 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn(),
 }));
 
+// Display-name resolvers used by the budget_exceeded webhook path —
+// stub so the test doesn't reach for a real Prisma client.
+vi.mock('@/lib/orchestration/webhooks/payload-context', () => ({
+  resolveUserDisplayName: vi.fn().mockResolvedValue(undefined),
+  resolveWorkflowDisplay: vi.fn().mockResolvedValue({}),
+  resolveAgentDisplay: vi.fn().mockResolvedValue({}),
+}));
+
 vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
   queueMessageEmbedding: vi.fn(),
 }));

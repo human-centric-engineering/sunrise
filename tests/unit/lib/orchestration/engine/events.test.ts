@@ -18,6 +18,15 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+// The factory now resolves display names out-of-band — stub the lookups so
+// the test doesn't pull in a real Prisma client. Each returns the
+// "no extra info available" shape so the resulting payload only carries
+// the meta the caller explicitly passed.
+vi.mock('@/lib/orchestration/webhooks/payload-context', () => ({
+  resolveUserDisplayName: vi.fn().mockResolvedValue(undefined),
+  resolveWorkflowDisplay: vi.fn().mockResolvedValue({}),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: {
     info: vi.fn(),
@@ -173,7 +182,7 @@ describe('Event factory helpers', () => {
   });
 
   describe('workflowFailed', () => {
-    it('returns a workflow_failed event and dispatches webhook', () => {
+    it('returns a workflow_failed event and dispatches webhook', async () => {
       const event = workflowFailed('Budget exceeded', 'step-4');
 
       expect(event).toEqual({
@@ -181,9 +190,44 @@ describe('Event factory helpers', () => {
         error: 'Budget exceeded',
         failedStepId: 'step-4',
       });
-      expect(dispatchWebhookEvent).toHaveBeenCalledWith('workflow_failed', {
-        error: 'Budget exceeded',
-        failedStepId: 'step-4',
+
+      // Dispatch is fire-and-forget through an async IIFE — flush microtasks.
+      await vi.waitFor(() => {
+        expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+          'workflow_failed',
+          expect.objectContaining({
+            error: 'Budget exceeded',
+            failedStepId: 'step-4',
+          })
+        );
+      });
+    });
+
+    it('threads ctx-derived meta into the dispatched payload', async () => {
+      workflowFailed('step exploded', 'step-9', {
+        executionId: 'exec_42',
+        workflowId: 'wf_42',
+        userId: 'user_42',
+        totalCostUsd: 1.23,
+        totalTokensUsed: 4567,
+      });
+
+      // The factory does the workflow + user display-name lookups in
+      // parallel; the mocks return empty, so workflowSlug/workflowName
+      // and actorUserName all land as undefined in the payload.
+      await vi.waitFor(() => {
+        expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+          'workflow_failed',
+          expect.objectContaining({
+            error: 'step exploded',
+            failedStepId: 'step-9',
+            executionId: 'exec_42',
+            workflowId: 'wf_42',
+            actorUserId: 'user_42',
+            totalCostUsd: 1.23,
+            totalTokensUsed: 4567,
+          })
+        );
       });
     });
 
