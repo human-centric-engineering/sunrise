@@ -117,18 +117,19 @@ export default async function PatternDetailPage({ params }: PageProps) {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <header>
-        <nav className="text-muted-foreground mb-1 text-xs">
-          <Link href="/admin/orchestration" className="hover:underline">
-            AI Orchestration
-          </Link>
-          {' / '}
-          <Link href="/admin/orchestration/learn" className="hover:underline">
-            Learning
-          </Link>
-          {' / '}
-          <span>{detail.patternName}</span>
-        </nav>
+      <nav className="text-muted-foreground -mb-5 text-xs">
+        <Link href="/admin/orchestration" className="hover:underline">
+          AI Orchestration
+        </Link>
+        {' / '}
+        <Link href="/admin/orchestration/learn" className="hover:underline">
+          Learning
+        </Link>
+        {' / '}
+        <span>{detail.patternName}</span>
+      </nav>
+
+      <header className="bg-background sticky top-0 z-30 -mx-6 border-b px-6 pt-3 pb-3">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{detail.patternName}</h1>
           <div className="flex gap-2">

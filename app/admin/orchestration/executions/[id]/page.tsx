@@ -72,18 +72,19 @@ export default async function ExecutionDetailPage({ params }: { params: Promise<
 
   return (
     <div className="space-y-6">
-      <header>
-        <nav className="text-muted-foreground mb-1 text-xs">
-          <Link href="/admin/orchestration" className="hover:underline">
-            AI Orchestration
-          </Link>
-          {' / '}
-          <Link href="/admin/orchestration/executions" className="hover:underline">
-            Executions
-          </Link>
-          {' / '}
-          <span className="text-foreground">{id.slice(0, 8)}…</span>
-        </nav>
+      <nav className="text-muted-foreground -mb-5 text-xs">
+        <Link href="/admin/orchestration" className="hover:underline">
+          AI Orchestration
+        </Link>
+        {' / '}
+        <Link href="/admin/orchestration/executions" className="hover:underline">
+          Executions
+        </Link>
+        {' / '}
+        <span className="text-foreground">{id.slice(0, 8)}…</span>
+      </nav>
+
+      <header className="bg-background sticky top-0 z-30 -mx-6 border-b px-6 pt-3 pb-3">
         <h1 className="text-2xl font-semibold">
           Execution {id.slice(0, 8)}…{' '}
           <FieldHelp title="What is an execution?" contentClassName="w-96 max-h-80 overflow-y-auto">

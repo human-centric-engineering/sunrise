@@ -33,15 +33,15 @@ export default async function AgentProfilesListPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between gap-4">
+      <nav className="text-muted-foreground -mb-5 text-xs">
+        <Link href="/admin/orchestration" className="hover:underline">
+          AI Orchestration
+        </Link>
+        {' / '}
+        <span>Agent Profiles</span>
+      </nav>
+      <header className="bg-background sticky top-0 z-30 -mx-6 flex items-start justify-between gap-4 border-b px-6 pt-3 pb-3">
         <div>
-          <nav className="text-muted-foreground mb-1 text-xs">
-            <Link href="/admin/orchestration" className="hover:underline">
-              AI Orchestration
-            </Link>
-            {' / '}
-            <span>Agent Profiles</span>
-          </nav>
           <h1 className="text-2xl font-semibold">
             Agent Profiles{' '}
             <FieldHelp title="What is an agent profile?" contentClassName="w-96">

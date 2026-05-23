@@ -47,18 +47,19 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
           Model created successfully. You can now edit its details below.
         </div>
       )}
-      <header>
-        <nav className="text-muted-foreground mb-1 text-xs">
-          <Link href="/admin/orchestration" className="hover:underline">
-            AI Orchestration
-          </Link>
-          {' / '}
-          <Link href="/admin/orchestration/providers?tab=models" className="hover:underline">
-            Provider Models
-          </Link>
-          {' / '}
-          <span>{model.name}</span>
-        </nav>
+      <nav className="text-muted-foreground -mb-5 text-xs">
+        <Link href="/admin/orchestration" className="hover:underline">
+          AI Orchestration
+        </Link>
+        {' / '}
+        <Link href="/admin/orchestration/providers?tab=models" className="hover:underline">
+          Provider Models
+        </Link>
+        {' / '}
+        <span>{model.name}</span>
+      </nav>
+
+      <header className="bg-background sticky top-0 z-30 -mx-6 border-b px-6 pt-3 pb-3">
         <h1 className="text-2xl font-semibold">Edit: {model.name}</h1>
         <p className="text-muted-foreground text-sm">
           Update this model&apos;s characteristics.{' '}

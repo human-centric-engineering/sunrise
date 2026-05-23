@@ -43,7 +43,9 @@ export default async function AdminLayout({
       <div className="flex flex-1 flex-col overflow-hidden">
         <AdminHeader />
         <InFlightExecutionBanner />
-        <main className="flex-1 overflow-y-auto overscroll-contain p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto overscroll-contain">
+          <div className="p-6">{children}</div>
+        </main>
       </div>
     </div>
   );

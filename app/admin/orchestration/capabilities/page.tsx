@@ -62,14 +62,15 @@ export default async function CapabilitiesListPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <nav className="text-muted-foreground mb-1 text-xs">
-          <Link href="/admin/orchestration" className="hover:underline">
-            AI Orchestration
-          </Link>
-          {' / '}
-          <span>Capabilities</span>
-        </nav>
+      <nav className="text-muted-foreground -mb-5 text-xs">
+        <Link href="/admin/orchestration" className="hover:underline">
+          AI Orchestration
+        </Link>
+        {' / '}
+        <span>Capabilities</span>
+      </nav>
+
+      <header className="bg-background sticky top-0 z-30 -mx-6 border-b px-6 pt-3 pb-3">
         <h1 className="text-2xl font-semibold">
           Capabilities{' '}
           <FieldHelp
