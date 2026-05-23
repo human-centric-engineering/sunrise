@@ -407,9 +407,29 @@ describe('System agent protection', () => {
     it('does not dispatch when the PATCH produced no actual changes', async () => {
       // Form save with no edits — every field matches what's already stored.
       // Subscribers don't want a notification in this case.
-      const unchanged = makeCustomAgent({ description: 'same' });
-      mockFindUnique.mockResolvedValue(unchanged);
-      mockUpdate.mockResolvedValue(unchanged);
+      //
+      // The fixtures here simulate two things real Prisma does that the
+      // route has to filter out of the diff:
+      //   - `updatedAt` bumps on every `update()` call (via `@updatedAt`).
+      //   - `current` is fetched with `include: { grantedTags, grantedDocuments }`,
+      //     but the return from `tx.aiAgent.update` has no `include`, so those
+      //     keys are missing on the after-side.
+      // Without an ignoreKeys filter in computeChanges, the diff would
+      // always be non-null and the webhook would always fire.
+      const current = makeCustomAgent({
+        description: 'same',
+        updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+        grantedTags: [{ tagId: 't1' }],
+        grantedDocuments: [{ documentId: 'd1' }],
+      });
+      const updated = {
+        ...makeCustomAgent({ description: 'same' }),
+        updatedAt: new Date('2026-05-01T00:00:01.000Z'), // bumped by Prisma
+        // grantedTags / grantedDocuments deliberately absent — mirrors what
+        // `tx.aiAgent.update({ where, data })` returns when no `include`.
+      };
+      mockFindUnique.mockResolvedValue(current);
+      mockUpdate.mockResolvedValue(updated);
 
       const response = await PATCH(makePatchRequest({ description: 'same' }), makeParams(AGENT_ID));
       expect(response.status).toBe(200);

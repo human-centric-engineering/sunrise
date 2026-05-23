@@ -80,15 +80,24 @@ function sanitizeMetadata(
 /**
  * Compute a shallow diff of changed fields between two objects.
  * Only includes fields that actually changed. Returns null if no changes.
+ *
+ * `options.ignoreKeys` skips the listed keys entirely — useful when one or
+ * both sides include columns that always differ (e.g. Prisma's `@updatedAt`
+ * bumps on every `update()` call so it would otherwise mark every PATCH as
+ * a change) or asymmetric relation arrays (e.g. one side fetched with
+ * `include`, the other without).
  */
 export function computeChanges(
   before: Record<string, unknown>,
-  after: Record<string, unknown>
+  after: Record<string, unknown>,
+  options?: { ignoreKeys?: Iterable<string> }
 ): Record<string, { from: unknown; to: unknown }> | null {
   const changes: Record<string, { from: unknown; to: unknown }> = {};
+  const ignore = options?.ignoreKeys ? new Set(options.ignoreKeys) : null;
 
   const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
   for (const key of allKeys) {
+    if (ignore?.has(key)) continue;
     try {
       const a = JSON.stringify(before[key]);
       const b = JSON.stringify(after[key]);

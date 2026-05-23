@@ -429,9 +429,22 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     // it includes every field in the PATCH body even when the submitted value
     // matches the existing one (e.g. a form save where only one field was
     // edited still ships the whole form payload).
+    //
+    // Ignored keys:
+    //   - `updatedAt` — Prisma's `@updatedAt` bumps on every `update()` call,
+    //     so it would mark every PATCH as a change even when the user-visible
+    //     state is identical. The whole point of the diff is "did the user
+    //     change anything?", not "did the row get touched?".
+    //   - `createdAt` — never changes on update, but safe to filter.
+    //   - `grantedTags` / `grantedDocuments` — `current` carries these from
+    //     the initial `findUnique({ include: ... })`, but `agent` is the
+    //     return from `tx.aiAgent.update` with no `include`, so they'd be
+    //     reported as `array → undefined` on every PATCH. The grant changes
+    //     are tracked separately via `grantsChanged` higher up.
     const changes = computeChanges(
       current as unknown as Record<string, unknown>,
-      agent as unknown as Record<string, unknown>
+      agent as unknown as Record<string, unknown>,
+      { ignoreKeys: ['updatedAt', 'createdAt', 'grantedTags', 'grantedDocuments'] }
     );
     const fieldsChanged = changes ? Object.keys(changes) : [];
 
