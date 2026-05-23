@@ -270,16 +270,20 @@ export function LiveEngineDashboard({
           primary={snapshot.orphaned.count.toLocaleString()}
           secondary={
             snapshot.orphaned.count === 0
-              ? 'All leases healthy'
-              : 'Running rows whose lease has expired'
+              ? 'No orphaned executions'
+              : 'Running rows with no live worker'
           }
           variant={snapshot.orphaned.count > 0 ? 'warning' : 'default'}
           info={
             <>
               <p>
-                Running rows whose lease has expired — the worker that was driving them died or
-                stopped responding. Common causes: deploy rollover, OOM kill, process crash, network
-                partition.
+                When a worker picks up an execution it acquires a <strong>lease</strong> — a
+                time-limited claim it renews while it&apos;s actively driving the run. If the worker
+                dies or stops responding, the lease stops renewing and expires; the row then shows
+                here as orphaned.
+              </p>
+              <p className="mt-2">
+                Common causes: deploy rollover, OOM kill, process crash, network partition.
               </p>
               <p className="mt-2">
                 The maintenance sweep re-claims these every ~60s, so a brief blip during a deploy is
