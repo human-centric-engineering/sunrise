@@ -166,9 +166,6 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
             </SelectContent>
           </Select>
         </div>
-        <Button asChild variant="outline">
-          <Link href="/admin/orchestration/event-subscriptions/dlq">Dead Letter Queue</Link>
-        </Button>
         <Button asChild>
           <Link href="/admin/orchestration/event-subscriptions/new">
             <Plus className="mr-2 h-4 w-4" />

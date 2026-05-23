@@ -6,14 +6,23 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 
 ## Pages
 
-| Route                                           | File                                                        | Purpose                                                                           |
-| ----------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `/admin/orchestration/event-subscriptions`      | `app/admin/orchestration/event-subscriptions/page.tsx`      | List all subscriptions                                                            |
-| `/admin/orchestration/event-subscriptions/new`  | `app/admin/orchestration/event-subscriptions/new/page.tsx`  | Create subscription form                                                          |
-| `/admin/orchestration/event-subscriptions/[id]` | `app/admin/orchestration/event-subscriptions/[id]/page.tsx` | Edit subscription + test button + deliveries                                      |
-| `/admin/orchestration/event-subscriptions/dlq`  | `app/admin/orchestration/event-subscriptions/dlq/page.tsx`  | Cross-subscription dead-letter queue: filter, retry, discard exhausted deliveries |
+| Route                                              | File                                                        | Purpose                                                                            |
+| -------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `/admin/orchestration/event-subscriptions`         | `app/admin/orchestration/event-subscriptions/page.tsx`      | Tabbed surface: Subscriptions list + Dead Letter Queue (URL-synced via `?tab=...`) |
+| `/admin/orchestration/event-subscriptions?tab=dlq` | same page                                                   | Active deep link for the dead-letter queue tab                                     |
+| `/admin/orchestration/event-subscriptions/new`     | `app/admin/orchestration/event-subscriptions/new/page.tsx`  | Create subscription form                                                           |
+| `/admin/orchestration/event-subscriptions/[id]`    | `app/admin/orchestration/event-subscriptions/[id]/page.tsx` | Edit subscription + test button + deliveries                                       |
+| `/admin/orchestration/event-subscriptions/dlq`     | `app/admin/orchestration/event-subscriptions/dlq/page.tsx`  | Redirect to `?tab=dlq` for back-compat with earlier links                          |
 
 ## Components
+
+### `EventSubscriptionsTabs`
+
+`components/admin/orchestration/event-subscriptions-tabs.tsx`
+
+- URL-synced tabs (`useUrlTabs`) at the top of the page: **Subscriptions** (default) and **Dead Letter Queue**.
+- Both tabs are server-seeded by the parent page so `?tab=dlq` deep links render without a client-side fetch flash.
+- The DLQ tab also renders a Dead Letter Queue overview FieldHelp explaining what lands here and the available actions (retry, discard, bulk replay).
 
 ### `WebhooksTable`
 
@@ -23,7 +32,7 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 - Active filter dropdown, pagination
 - Inline active/inactive toggle via `Switch` — optimistic update with revert on failure
 - Row actions dropdown with Edit (navigates to edit page) and Delete (AlertDialog confirmation)
-- Create button links to `/event-subscriptions/new`
+- Create button links to `/event-subscriptions/new`. The DLQ surface is reached via the tabbed nav, not a separate button.
 
 ### `WebhookForm`
 

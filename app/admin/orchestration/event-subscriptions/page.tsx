@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import {
-  WebhooksTable,
-  type WebhookListItem,
-} from '@/components/admin/orchestration/webhooks-table';
+import { EventSubscriptionsTabs } from '@/components/admin/orchestration/event-subscriptions-tabs';
+import { type WebhookListItem } from '@/components/admin/orchestration/webhooks-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -14,12 +12,32 @@ import type { PaginationMeta } from '@/types/api';
 
 export const metadata: Metadata = {
   title: 'Event Subscriptions · AI Orchestration',
-  description: 'Manage webhook subscriptions for orchestration events.',
+  description: 'Manage webhook subscriptions and the dead-letter queue.',
 };
+
+interface DlqDelivery {
+  id: string;
+  eventType: string;
+  status: 'exhausted';
+  lastResponseCode: number | null;
+  lastError: string | null;
+  attempts: number;
+  createdAt: string;
+  lastAttemptAt: string | null;
+  subscriptionId: string;
+  subscription: { id: string; url: string; description: string | null };
+}
 
 const EMPTY_META: PaginationMeta = {
   page: 1,
   limit: 25,
+  total: 0,
+  totalPages: 1,
+};
+
+const EMPTY_DLQ_META: PaginationMeta = {
+  page: 1,
+  limit: 20,
   total: 0,
   totalPages: 1,
 };
@@ -40,8 +58,35 @@ async function getWebhooks(): Promise<{ webhooks: WebhookListItem[]; meta: Pagin
   }
 }
 
-export default async function WebhooksListPage() {
-  const { webhooks, meta } = await getWebhooks();
+async function getDlq(): Promise<{ deliveries: DlqDelivery[]; meta: PaginationMeta }> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WEBHOOK_DLQ}?page=1&pageSize=20`);
+    if (!res.ok) return { deliveries: [], meta: EMPTY_DLQ_META };
+    const body = await parseApiResponse<DlqDelivery[]>(res);
+    if (!body.success) return { deliveries: [], meta: EMPTY_DLQ_META };
+    return {
+      deliveries: body.data,
+      meta: parsePaginationMeta(body.meta) ?? EMPTY_DLQ_META,
+    };
+  } catch (err) {
+    logger.error('event-subscriptions page: dlq fetch failed', err);
+    return { deliveries: [], meta: EMPTY_DLQ_META };
+  }
+}
+
+export default async function EventSubscriptionsPage() {
+  const [{ webhooks, meta }, { deliveries: dlqDeliveries, meta: dlqMeta }] = await Promise.all([
+    getWebhooks(),
+    getDlq(),
+  ]);
+
+  // The DLQ filter dropdown lists the same set of subscriptions returned
+  // from the main list call — no separate fetch needed.
+  const dlqSubscriptions = webhooks.map((w) => ({
+    id: w.id,
+    url: w.url,
+    description: w.description,
+  }));
 
   return (
     <div className="space-y-6">
@@ -65,12 +110,13 @@ export default async function WebhooksListPage() {
               When an event fires, Sunrise sends a signed POST request to your endpoint with the
               event type and payload. The signature (HMAC-SHA256 — a tamper-proof hash using your
               secret key) lets you verify the request genuinely came from Sunrise. Failed deliveries
-              are retried with exponential backoff.
+              are retried with exponential backoff; deliveries that exhaust their configured
+              attempts land in the Dead Letter Queue tab.
             </p>
             <p className="text-foreground mt-2 font-medium">This page</p>
             <p>
-              Create and monitor webhook subscriptions — each subscription tells Sunrise which
-              events to notify you about and where to send them (your endpoint URL).
+              Create and monitor webhook subscriptions, and review or replay deliveries that have
+              been parked in the dead-letter queue.
             </p>
           </FieldHelp>
         </h1>
@@ -79,7 +125,13 @@ export default async function WebhooksListPage() {
         </p>
       </header>
 
-      <WebhooksTable initialWebhooks={webhooks} initialMeta={meta} />
+      <EventSubscriptionsTabs
+        webhooks={webhooks}
+        webhooksMeta={meta}
+        dlqDeliveries={dlqDeliveries}
+        dlqMeta={dlqMeta}
+        dlqSubscriptions={dlqSubscriptions}
+      />
     </div>
   );
 }
