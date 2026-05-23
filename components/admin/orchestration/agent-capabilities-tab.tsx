@@ -16,8 +16,8 @@
  * Errors render inline — nothing toasts.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, Search } from 'lucide-react';
 import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,13 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -58,6 +65,8 @@ const bindingMetaSchema = z.object({
 
 type AttachedLink = AiAgentCapability & { capability: AiCapability };
 
+const ALL_CATEGORIES = '__all__';
+
 export interface AgentCapabilitiesTabProps {
   agentId: string;
 }
@@ -69,6 +78,8 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
   const [error, setError] = useState<string | null>(null);
   const [configureTarget, setConfigureTarget] = useState<AttachedLink | null>(null);
   const [usage, setUsage] = useState<Record<string, number> | null>(null);
+  const [availableSearch, setAvailableSearch] = useState('');
+  const [availableCategory, setAvailableCategory] = useState<string>(ALL_CATEGORIES);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchUsage = useCallback(async () => {
@@ -154,6 +165,31 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
     [agentId, fetchAll]
   );
 
+  const available = useMemo(() => {
+    const attachedIds = new Set(attached?.map((l) => l.capabilityId) ?? []);
+    return (catalogue?.filter((c) => !attachedIds.has(c.id)) ?? [])
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [catalogue, attached]);
+
+  const availableCategories = useMemo(
+    () => Array.from(new Set(available.map((c) => c.category))).sort(),
+    [available]
+  );
+
+  const filteredAvailable = useMemo(() => {
+    const q = availableSearch.trim().toLowerCase();
+    return available.filter((c) => {
+      if (availableCategory !== ALL_CATEGORIES && c.category !== availableCategory) return false;
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.slug.toLowerCase().includes(q) ||
+        (c.description?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [available, availableSearch, availableCategory]);
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm">
@@ -162,9 +198,6 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
       </div>
     );
   }
-
-  const attachedIds = new Set(attached?.map((l) => l.capabilityId) ?? []);
-  const available = catalogue?.filter((c) => !attachedIds.has(c.id)) ?? [];
 
   function usageBadge(link: AttachedLink) {
     const calls = usage?.[link.capability.slug] ?? 0;
@@ -275,10 +308,49 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
 
         {/* Available */}
         <section className="rounded-md border">
-          <header className="border-b px-3 py-2 text-sm font-medium">Available</header>
-          {available.length > 0 ? (
+          <header className="space-y-2 border-b px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium">Available</span>
+              <span className="text-muted-foreground text-xs">
+                {filteredAvailable.length} of {available.length}
+              </span>
+            </div>
+            {available.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="text-muted-foreground absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2" />
+                  <Input
+                    value={availableSearch}
+                    onChange={(e) => setAvailableSearch(e.target.value)}
+                    placeholder="Search name, slug, description…"
+                    className="h-8 pl-8 text-xs"
+                    aria-label="Search available capabilities"
+                  />
+                </div>
+                {availableCategories.length > 1 && (
+                  <Select value={availableCategory} onValueChange={setAvailableCategory}>
+                    <SelectTrigger
+                      className="h-8 w-[140px] text-xs"
+                      aria-label="Filter by category"
+                    >
+                      <SelectValue placeholder="Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
+                      {availableCategories.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            )}
+          </header>
+          {filteredAvailable.length > 0 ? (
             <ul className="divide-y">
-              {available.map((cap) => (
+              {filteredAvailable.map((cap) => (
                 <li key={cap.id} className="flex items-center justify-between gap-2 p-3">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{cap.name}</p>
@@ -302,7 +374,9 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
             </ul>
           ) : (
             <p className="text-muted-foreground p-3 text-sm">
-              Every capability is already attached.
+              {available.length === 0
+                ? 'Every capability is already attached.'
+                : 'No capabilities match the current search or category.'}
             </p>
           )}
         </section>
