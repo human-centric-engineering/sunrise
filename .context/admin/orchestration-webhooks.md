@@ -6,13 +6,23 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 
 ## Pages
 
-| Route                                           | File                                                        | Purpose                                      |
-| ----------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------- |
-| `/admin/orchestration/event-subscriptions`      | `app/admin/orchestration/event-subscriptions/page.tsx`      | List all subscriptions                       |
-| `/admin/orchestration/event-subscriptions/new`  | `app/admin/orchestration/event-subscriptions/new/page.tsx`  | Create subscription form                     |
-| `/admin/orchestration/event-subscriptions/[id]` | `app/admin/orchestration/event-subscriptions/[id]/page.tsx` | Edit subscription + test button + deliveries |
+| Route                                              | File                                                        | Purpose                                                                            |
+| -------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `/admin/orchestration/event-subscriptions`         | `app/admin/orchestration/event-subscriptions/page.tsx`      | Tabbed surface: Subscriptions list + Dead Letter Queue (URL-synced via `?tab=...`) |
+| `/admin/orchestration/event-subscriptions?tab=dlq` | same page                                                   | Active deep link for the dead-letter queue tab                                     |
+| `/admin/orchestration/event-subscriptions/new`     | `app/admin/orchestration/event-subscriptions/new/page.tsx`  | Create subscription form                                                           |
+| `/admin/orchestration/event-subscriptions/[id]`    | `app/admin/orchestration/event-subscriptions/[id]/page.tsx` | Edit subscription + test button + deliveries                                       |
+| `/admin/orchestration/event-subscriptions/dlq`     | `app/admin/orchestration/event-subscriptions/dlq/page.tsx`  | Redirect to `?tab=dlq` for back-compat with earlier links                          |
 
 ## Components
+
+### `EventSubscriptionsTabs`
+
+`components/admin/orchestration/event-subscriptions-tabs.tsx`
+
+- URL-synced tabs (`useUrlTabs`) at the top of the page: **Subscriptions** (default) and **Dead Letter Queue**.
+- Both tabs are server-seeded by the parent page so `?tab=dlq` deep links render without a client-side fetch flash.
+- The DLQ tab also renders a Dead Letter Queue overview FieldHelp explaining what lands here and the available actions (retry, discard, bulk replay).
 
 ### `WebhooksTable`
 
@@ -22,16 +32,17 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 - Active filter dropdown, pagination
 - Inline active/inactive toggle via `Switch` — optimistic update with revert on failure
 - Row actions dropdown with Edit (navigates to edit page) and Delete (AlertDialog confirmation)
-- Create button links to `/event-subscriptions/new`
+- Create button links to `/event-subscriptions/new`. The DLQ surface is reached via the tabbed nav, not a separate button.
 
 ### `WebhookForm`
 
 `components/admin/orchestration/webhook-form.tsx`
 
 - URL input (required) with safety hint (private IPs, localhost, metadata endpoints blocked)
-- Signing secret input with auto-generate button (`whsec_` prefix + 32 random hex chars)
+- Signing secret input with auto-generate, reveal/hide eye toggle, and clipboard-copy buttons. Generating a secret auto-reveals it so the user can capture it before saving. While the field has a value, an amber notice reminds the user to copy now — Sunrise never returns the secret again after save (the API's `SAFE_SELECT` strips it from every GET).
 - 12 event checkboxes from `WEBHOOK_EVENT_TYPES` (including `execution_crashed` for engine-crash alerts — see [Hooks](../orchestration/hooks.md#event-types))
 - Description textarea
+- Retry policy block: `maxAttempts` (1–10) and `retryBackoffSeconds` (comma-separated seconds, each 1–86400). Form input is seconds; API field is `retryBackoffMs` (millisecond array). Defaults: 3 attempts with `10, 60, 300` seconds. The form blocks submit unless the array has at least `maxAttempts - 1` entries.
 - Active toggle
 - In edit mode, empty secret field = keep current secret
 
@@ -44,6 +55,17 @@ Admin UI for managing webhook subscriptions. Full CRUD with delivery history, re
 - If the subscription has no signing secret, returns an error without dispatching ("Webhook has no signing secret. Set a secret before testing.")
 - Displays result inline: green "Ping delivered (status) in Xms" or red error message
 - 5-second timeout, uses the same HMAC signature flow as real deliveries
+
+### `WebhookDlqTable`
+
+`components/admin/orchestration/webhook-dlq-table.tsx`
+
+- Lists `exhausted` deliveries across all subscriptions the calling admin owns — single console for the "what's currently dead-lettered" question that the per-subscription view can't answer cleanly.
+- Filters: subscription, event type, From / To date range. Filter changes refetch from `GET /webhooks/dlq`.
+- Each row links to its parent subscription's edit page and shows event, last response code, attempts, last error.
+- Row actions: retry (calls `POST /webhooks/deliveries/:id/retry`, same path as the per-subscription view) and discard (calls `DELETE /webhooks/deliveries/:id`, AlertDialog confirmation).
+- **Bulk replay** button hits `POST /webhooks/dlq/replay`. With a subscription filter active, replays every exhausted row for that subscription (and respects the "To" date as a cutoff); without one, replays the rows visible on the current page.
+- Pagination through `parsePaginationMeta`.
 
 ### `WebhookDeliveries`
 
@@ -67,6 +89,10 @@ Uses admin orchestration webhook endpoints:
 - `POST /webhooks/:id/test` — send test ping event
 - `GET /webhooks/:id/deliveries` — delivery history (scoped to `session.user.id`)
 - `POST /webhooks/deliveries/:id/retry` — retry failed delivery (verifies parent subscription ownership)
+- `DELETE /webhooks/deliveries/:id` — permanently delete a delivery row (verifies parent subscription ownership, audit-logged as `webhook_delivery.delete`)
+- `GET /webhooks/dlq?page=&pageSize=&subscriptionId=&eventType=&since=&until=` — list exhausted deliveries across all subscriptions the calling admin owns. Always scoped to `status=exhausted` and the caller's subscriptions; filters narrow further.
+- `GET /webhooks/dlq/stats` — depth signal for the health dashboard. Returns `{ exhausted24h, exhaustedTotal, oldestExhaustedAt }` scoped to the caller's subscriptions. Consumed by improvement #41 (health dashboard).
+- `POST /webhooks/dlq/replay` — bulk replay. Body either `{ deliveryIds: string[] }` (explicit selection, max 500) or `{ subscriptionId, before? }` (replay all exhausted rows for one subscription, optionally capped by `createdAt < before`). Loops `retryDelivery()` with concurrency cap of 5. Ownership filter skips rows the caller doesn't own. Audit-logged as `webhook_delivery.replay_batch`.
 
 Consumer-facing:
 

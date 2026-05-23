@@ -474,11 +474,18 @@ describe('WorkflowBuilder', () => {
 
       // In edit mode, details are already set, so Save calls patch directly.
       vi.mocked(apiClient.patch).mockResolvedValue(makeWorkflow());
-      await user.click(screen.getByRole('button', { name: /save draft/i }));
+      // findByRole waits a tick for the toolbar to render — under heavy
+      // parallel load, getByRole has been observed to fire before the click
+      // handler is fully bound.
+      const saveBtn = await screen.findByRole('button', { name: /save draft/i });
+      await user.click(saveBtn);
 
-      await waitFor(() => {
-        expect(apiClient.patch).toHaveBeenCalledTimes(1);
-      });
+      await waitFor(
+        () => {
+          expect(apiClient.patch).toHaveBeenCalledTimes(1);
+        },
+        { timeout: 3000 }
+      );
 
       const [url, options] = vi.mocked(apiClient.patch).mock.calls[0];
       expect(url).toContain('wf-1');

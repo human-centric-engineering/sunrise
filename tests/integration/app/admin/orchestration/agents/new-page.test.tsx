@@ -78,6 +78,55 @@ const MOCK_PROVIDERS = [
 
 const MOCK_MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
 
+// ─── Test helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * URL-aware fetch dispatch. The page makes ≥3 parallel `serverFetch`
+ * calls inside `Promise.all` (providers + 2× provider-models + profiles).
+ * The previous `mockResolvedValueOnce` queue pattern matched by invocation
+ * order, which is non-deterministic under load and intermittently mismatched
+ * the providers response onto a different fetch.
+ *
+ * Dispatch on URL substring + sort patterns by length descending so
+ * `/provider-models` beats `/providers` when both could match.
+ */
+type EndpointResponse = { ok?: boolean; success?: boolean; data?: unknown; error?: unknown };
+function setupServerFetch(
+  serverFetch: ReturnType<typeof vi.fn>,
+  parseApiResponse: ReturnType<typeof vi.fn>,
+  routes: Record<string, EndpointResponse>
+): void {
+  const patterns = Object.entries(routes).sort((a, b) => b[0].length - a[0].length);
+  const dispatch = (url: string | URL): Response => {
+    const urlStr = typeof url === 'string' ? url : url.toString();
+    for (const [pattern, resp] of patterns) {
+      if (urlStr.includes(pattern)) {
+        if (resp.ok === false) return { ok: false } as Response;
+        const body = JSON.stringify({
+          success: resp.success !== false,
+          data: resp.data,
+          ...(resp.error ? { error: resp.error } : {}),
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+    return new Response(JSON.stringify({ success: true, data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  vi.mocked(serverFetch).mockImplementation(((url: string | URL) =>
+    Promise.resolve(dispatch(url))) as never);
+  vi.mocked(parseApiResponse).mockImplementation(((res: Response) => {
+    if (!res.ok)
+      return Promise.resolve({ success: false, error: { message: 'not ok', code: 'NOT_OK' } });
+    return res.json();
+  }) as never);
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('NewAgentPage (server component)', () => {
@@ -90,56 +139,47 @@ describe('NewAgentPage (server component)', () => {
   });
 
   it('renders "New agent" heading in create mode', async () => {
-    // Arrange: both provider and model fetches succeed
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-      .mockResolvedValueOnce({ success: true, data: MOCK_MODELS });
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/provider-models': { data: MOCK_MODELS },
+      '/providers': { data: MOCK_PROVIDERS },
+    });
 
     const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
-    // Act
     render(await NewAgentPage());
 
-    // Assert: form is in create mode
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
     });
   });
 
   it('renders Create agent submit button', async () => {
-    // Arrange
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-      .mockResolvedValueOnce({ success: true, data: MOCK_MODELS });
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/provider-models': { data: MOCK_MODELS },
+      '/providers': { data: MOCK_PROVIDERS },
+    });
 
     const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
-    // Act
     render(await NewAgentPage());
 
-    // Assert
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
     });
   });
 
   it('renders with free-text fallback when provider fetch fails', async () => {
-    // Arrange: provider fetch returns not-ok
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { message: 'Fetch failed', code: 'FETCH_ERROR' },
+    // All fetches return !ok → page falls back to free-text inputs
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/provider-models': { ok: false },
+      '/providers': { ok: false },
     });
 
     const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
-    // Act: should not throw
     let thrown = false;
     try {
       render(await NewAgentPage());
@@ -147,41 +187,35 @@ describe('NewAgentPage (server component)', () => {
       thrown = true;
     }
 
-    // Assert: page renders with fallback
     expect(thrown).toBe(false);
-    expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+    // The form contains both a submit `<button type=submit>` and a top-of-page
+    // "Create agent" heading link in some contexts. Match the submit button
+    // specifically to avoid false multiples.
+    expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
   });
 
   // ── Fallback branches ──────────────────────────────────────────────────────
 
   describe('fallback branches', () => {
     it('renders correctly when serverFetch rejects (network error)', async () => {
-      // Arrange: both fetches reject
       const { serverFetch } = await import('@/lib/api/server-fetch');
       vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
-      // Act: should not throw
       render(await NewAgentPage());
 
-      // Assert: structural stability — page heading still renders
       expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
 
     it('renders correctly when provider fetch returns res.ok=false', async () => {
-      // Arrange: first fetch (providers) returns !ok; second (models) succeeds
       const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) return Promise.resolve({ ok: false } as Response);
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse).mockResolvedValueOnce({
-        success: true,
-        data: MOCK_MODELS,
+      // /providers fails; /provider-models succeeds. URL-aware dispatch is
+      // order-safe even though they share a prefix because longest-pattern wins.
+      setupServerFetch(serverFetch as never, parseApiResponse as never, {
+        '/provider-models': { data: MOCK_MODELS },
+        '/providers': { ok: false },
       });
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
@@ -189,26 +223,25 @@ describe('NewAgentPage (server component)', () => {
       render(await NewAgentPage());
 
       expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
 
     it('renders correctly when model parseApiResponse returns success=false', async () => {
-      // Arrange: providers succeed, model parseApiResponse returns failure
       const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-        .mockResolvedValueOnce({
+      setupServerFetch(serverFetch as never, parseApiResponse as never, {
+        '/provider-models': {
           success: false,
           error: { message: 'Registry error', code: 'SERVICE_ERROR' },
-        });
+        },
+        '/providers': { data: MOCK_PROVIDERS },
+      });
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
       render(await NewAgentPage());
 
       expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
   });
 });

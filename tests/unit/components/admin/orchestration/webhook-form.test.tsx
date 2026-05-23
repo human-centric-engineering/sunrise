@@ -149,6 +149,100 @@ describe('WebhookForm', () => {
     });
   });
 
+  // ── Retry policy ─────────────────────────────────────────────────────────────
+
+  it('renders retry policy fields with sensible defaults in create mode', () => {
+    render(<WebhookForm mode="create" />);
+
+    const maxAttempts = document.getElementById('maxAttempts') as HTMLInputElement;
+    const backoff = document.getElementById('retryBackoffSeconds') as HTMLInputElement;
+    // test-review:accept tobe_literal — default values are part of the form contract
+    expect(maxAttempts.value).toBe('3');
+    expect(backoff.value).toBe('10, 60, 300');
+  });
+
+  it('pre-fills retry policy fields from an existing webhook in edit mode', () => {
+    const webhook = {
+      id: 'wh-policy',
+      url: 'https://x.com',
+      events: ['budget_exceeded'],
+      isActive: true,
+      description: null,
+      maxAttempts: 5,
+      retryBackoffMs: [15_000, 60_000, 120_000, 600_000],
+    };
+    render(<WebhookForm mode="edit" webhook={webhook} />);
+
+    const maxAttempts = document.getElementById('maxAttempts') as HTMLInputElement;
+    const backoff = document.getElementById('retryBackoffSeconds') as HTMLInputElement;
+    expect(maxAttempts.value).toBe('5');
+    // Stored as ms — displayed as seconds.
+    expect(backoff.value).toBe('15, 60, 120, 600');
+  });
+
+  it('submits retry policy as an ms array even though the field is entered in seconds', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.post).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    await user.type(
+      screen.getByRole('textbox', { name: /endpoint url/i }),
+      'https://example.com/hook'
+    );
+    await user.click(screen.getByTitle(/generate a random secret/i));
+    await user.click(screen.getAllByRole('checkbox')[0]);
+
+    // Change attempts to 4 and backoff to "5, 15, 45"
+    const maxAttempts = document.getElementById('maxAttempts') as HTMLInputElement;
+    await user.clear(maxAttempts);
+    await user.type(maxAttempts, '4');
+    const backoff = document.getElementById('retryBackoffSeconds') as HTMLInputElement;
+    await user.clear(backoff);
+    await user.type(backoff, '5, 15, 45');
+
+    await user.click(screen.getByRole('button', { name: /create subscription/i }));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/admin/orchestration/webhooks',
+        expect.objectContaining({
+          body: expect.objectContaining({
+            maxAttempts: 4,
+            retryBackoffMs: [5_000, 15_000, 45_000],
+          }),
+        })
+      );
+    });
+  });
+
+  it('blocks submission when backoff has fewer entries than maxAttempts - 1', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    await user.type(
+      screen.getByRole('textbox', { name: /endpoint url/i }),
+      'https://example.com/hook'
+    );
+    await user.click(screen.getByTitle(/generate a random secret/i));
+    await user.click(screen.getAllByRole('checkbox')[0]);
+
+    const maxAttempts = document.getElementById('maxAttempts') as HTMLInputElement;
+    await user.clear(maxAttempts);
+    await user.type(maxAttempts, '5'); // needs 4 backoff entries
+    const backoff = document.getElementById('retryBackoffSeconds') as HTMLInputElement;
+    await user.clear(backoff);
+    await user.type(backoff, '10, 60'); // only 2 entries
+
+    await user.click(screen.getByRole('button', { name: /create subscription/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/at least \(maxAttempts - 1\) backoff/i)).toBeInTheDocument();
+    });
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
   // ── New tests ────────────────────────────────────────────────────────────────
 
   it('shows events validation error when no event is selected on submit', async () => {
@@ -217,6 +311,8 @@ describe('WebhookForm', () => {
       events: ['budget_exceeded'],
       isActive: false,
       description: 'note',
+      maxAttempts: 3,
+      retryBackoffMs: [10000, 60000],
     };
 
     // Act
@@ -257,6 +353,8 @@ describe('WebhookForm', () => {
       events: ['budget_exceeded'],
       isActive: true,
       description: 'note',
+      maxAttempts: 3,
+      retryBackoffMs: [10000, 60000],
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -292,6 +390,8 @@ describe('WebhookForm', () => {
       events: ['workflow_failed'],
       isActive: true,
       description: null,
+      maxAttempts: 3,
+      retryBackoffMs: [10000, 60000],
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -329,6 +429,8 @@ describe('WebhookForm', () => {
       events: ['budget_exceeded'],
       isActive: true,
       description: null,
+      maxAttempts: 3,
+      retryBackoffMs: [10000, 60000],
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -422,6 +524,8 @@ describe('WebhookForm', () => {
       events: ['budget_exceeded'],
       isActive: true,
       description: null,
+      maxAttempts: 3,
+      retryBackoffMs: [10000, 60000],
     };
     const user = userEvent.setup();
     render(<WebhookForm mode="edit" webhook={webhook} />);
@@ -441,6 +545,156 @@ describe('WebhookForm', () => {
     // Assert — checkbox is now unchecked
     await waitFor(() => {
       expect(budgetCheckbox).not.toBeChecked();
+    });
+  });
+
+  // ── Secret affordances: reveal / copy / capture cue ─────────────────────────
+
+  // ── Event picklist: unwired events are disabled ────────────────────────────
+
+  it('disables event checkboxes whose dispatch path is not wired yet', () => {
+    render(<WebhookForm mode="create" />);
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    // Map each checkbox to its visible label text.
+    const states = checkboxes.map((cb) => ({
+      label: cb.closest('label')?.textContent ?? '',
+      disabled: (cb as HTMLInputElement).disabled,
+    }));
+
+    // Wired events — must be enabled. Source of truth:
+    // WIRED_WEBHOOK_EVENT_TYPES in lib/validations/orchestration.ts.
+    const wired = [
+      'Budget Exceeded',
+      'Workflow Failed',
+      'Approval Required',
+      'Circuit Breaker Opened',
+      'Agent Updated',
+      'Execution Crashed',
+    ];
+    for (const label of wired) {
+      const entry = states.find((s) => s.label.startsWith(label));
+      expect(entry, `${label} should be in the picklist`).toBeDefined();
+      expect(entry!.disabled, `${label} should be enabled`).toBe(false);
+    }
+
+    // Unwired events — present but disabled.
+    const unwired = [
+      'Conversation Started',
+      'Conversation Completed',
+      'Message Created',
+      'Budget Threshold Reached',
+      'Execution Completed',
+      'Execution Failed',
+    ];
+    for (const label of unwired) {
+      const entry = states.find((s) => s.label.startsWith(label));
+      expect(entry, `${label} should be in the picklist`).toBeDefined();
+      expect(entry!.disabled, `${label} should be disabled`).toBe(true);
+    }
+  });
+
+  it('clicking a disabled event checkbox does not select it', async () => {
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    const messageCreated = checkboxes.find((cb) => {
+      const label = cb.closest('label');
+      return label?.textContent?.includes('Message Created');
+    });
+    expect(messageCreated).toBeDefined();
+    expect((messageCreated as HTMLInputElement).disabled).toBe(true);
+
+    // Browsers ignore clicks on disabled inputs; assert state stays unchecked.
+    await user.click(messageCreated!);
+    expect((messageCreated as HTMLInputElement).checked).toBe(false);
+  });
+
+  // ── Secret affordances: reveal / copy / capture cue ─────────────────────────
+
+  it('reveal/copy buttons are disabled when the secret field is empty', () => {
+    render(<WebhookForm mode="create" />);
+
+    const reveal = screen.getByRole('button', { name: /reveal secret/i });
+    const copy = screen.getByRole('button', { name: /copy secret to clipboard/i });
+    expect(reveal).toBeDisabled();
+    expect(copy).toBeDisabled();
+  });
+
+  it('does not show the "copy this secret now" cue when no secret has been entered', () => {
+    render(<WebhookForm mode="create" />);
+    expect(screen.queryByText(/copy this secret now/i)).not.toBeInTheDocument();
+  });
+
+  it('reveals the secret when the eye toggle is clicked', async () => {
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    // Generate a secret so the toggle is enabled.
+    await user.click(screen.getByTitle(/generate a random secret/i));
+
+    const secret = document.getElementById('secret') as HTMLInputElement;
+    // The generate action auto-reveals so the user can capture immediately.
+    // test-review:accept tobe_literal — input type is part of the reveal contract
+    expect(secret.type).toBe('text');
+
+    // Click hide.
+    await user.click(screen.getByRole('button', { name: /hide secret/i }));
+    expect(secret.type).toBe('password');
+
+    // Click reveal again.
+    await user.click(screen.getByRole('button', { name: /reveal secret/i }));
+    expect(secret.type).toBe('text');
+  });
+
+  it('shows the capture cue as soon as the secret field has a value', async () => {
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    // No cue yet.
+    expect(screen.queryByText(/copy this secret now/i)).not.toBeInTheDocument();
+
+    // Generate.
+    await user.click(screen.getByTitle(/generate a random secret/i));
+
+    await waitFor(() => {
+      expect(screen.getByText(/copy this secret now/i)).toBeInTheDocument();
+    });
+  });
+
+  it('copies the current secret to the clipboard and flashes a confirmation', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(<WebhookForm mode="create" />);
+    await user.click(screen.getByTitle(/generate a random secret/i));
+
+    const secret = (document.getElementById('secret') as HTMLInputElement).value;
+    expect(secret.length).toBeGreaterThan(16);
+
+    await user.click(screen.getByRole('button', { name: /copy secret to clipboard/i }));
+
+    expect(writeText).toHaveBeenCalledWith(secret);
+  });
+
+  it('surfaces a clipboard error when navigator.clipboard rejects', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('insecure context')) },
+      configurable: true,
+    });
+
+    render(<WebhookForm mode="create" />);
+    await user.click(screen.getByTitle(/generate a random secret/i));
+    await user.click(screen.getByRole('button', { name: /copy secret to clipboard/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/could not copy to clipboard/i)).toBeInTheDocument();
     });
   });
 });

@@ -19,6 +19,29 @@ vi.mock('@/lib/logging', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// DatePicker → plain native input so existing change-event drivers still work
+vi.mock('@/components/ui/date-picker', () => ({
+  DatePicker: ({
+    id,
+    value,
+    onChange,
+    className,
+  }: {
+    id?: string;
+    value: string;
+    onChange: (value: string) => void;
+    className?: string;
+  }) => (
+    <input
+      id={id}
+      type="date"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+    />
+  ),
+}));
+
 import { ApprovalsHistoryTable } from '@/components/admin/orchestration/approvals-history-table';
 import type { ApprovalHistoryEntry } from '@/types/orchestration';
 import type { APIResponse } from '@/types/api';

@@ -97,6 +97,10 @@ import {
 import { getExecutor } from '@/lib/orchestration/engine/executor-registry';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import {
+  resolveUserDisplayName,
+  resolveWorkflowDisplay,
+} from '@/lib/orchestration/webhooks/payload-context';
 import { buildApprovalUrls } from '@/lib/orchestration/approval-tokens';
 import { dispatchApprovalNotification } from '@/lib/orchestration/notifications/dispatcher';
 import { env } from '@/lib/env';
@@ -330,7 +334,7 @@ export class OrchestrationEngine {
       while (queue.length > 0 || pending.size > 0) {
         if (options.signal?.aborted) {
           failureReason = 'Execution aborted by client';
-          yield workflowFailed(failureReason);
+          yield workflowFailed(failureReason, undefined, ctx);
           failed = true;
           break;
         }
@@ -342,7 +346,7 @@ export class OrchestrationEngine {
         });
         if (row?.status === WorkflowStatus.CANCELLED) {
           failureReason = 'Execution cancelled by user';
-          yield workflowFailed(failureReason);
+          yield workflowFailed(failureReason, undefined, ctx);
           failed = true;
           break;
         }
@@ -359,7 +363,7 @@ export class OrchestrationEngine {
           // All remaining steps are pending with unmet dependencies — deadlock.
           const pendingIds = [...pending].join(', ');
           failureReason = `Workflow deadlocked: steps [${pendingIds}] have unmet dependencies`;
-          yield workflowFailed(failureReason);
+          yield workflowFailed(failureReason, undefined, ctx);
           failed = true;
           break;
         }
@@ -384,7 +388,7 @@ export class OrchestrationEngine {
           const stepId = ready[0];
           if (stepCount++ >= MAX_STEPS_PER_RUN) {
             failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
-            yield workflowFailed(failureReason);
+            yield workflowFailed(failureReason, undefined, ctx);
             failed = true;
             break;
           }
@@ -392,7 +396,7 @@ export class OrchestrationEngine {
           const step = byId.get(stepId);
           if (!step) {
             failureReason = `Unknown step id "${stepId}"`;
-            yield workflowFailed(failureReason, stepId);
+            yield workflowFailed(failureReason, stepId, ctx);
             failed = true;
             break;
           }
@@ -548,7 +552,7 @@ export class OrchestrationEngine {
         // Validate batch size against step count cap.
         if (stepCount + ready.length > MAX_STEPS_PER_RUN) {
           failureReason = `Step count exceeded ${MAX_STEPS_PER_RUN}`;
-          yield workflowFailed(failureReason);
+          yield workflowFailed(failureReason, undefined, ctx);
           failed = true;
           break;
         }
@@ -561,7 +565,7 @@ export class OrchestrationEngine {
           const step = byId.get(stepId);
           if (!step) {
             failureReason = `Unknown step id "${stepId}"`;
-            yield workflowFailed(failureReason, stepId);
+            yield workflowFailed(failureReason, stepId, ctx);
             failed = true;
             batchValid = false;
             break;
@@ -605,7 +609,7 @@ export class OrchestrationEngine {
           // if the batch yielded no step ids (degenerate empty batch).
           const attribStep = batchResult.nextIds[0] ?? workflow.definition.entryStepId;
           yield workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, attribStep, executionId);
-          yield workflowFailed(failureReason);
+          yield workflowFailed(failureReason, undefined, ctx);
           failed = true;
           break;
         }
@@ -1138,7 +1142,7 @@ export class OrchestrationEngine {
         // of the four cap-check sites triggered the breach.
         const reason = formatBudgetExceededReason(err.usedUsd, err.limitUsd);
         yield workflowBudgetExceeded(err.usedUsd, err.limitUsd, step.id, lease.executionId);
-        yield workflowFailed(reason, step.id);
+        yield workflowFailed(reason, step.id, ctx);
         return {
           failed: true,
           paused: false,
@@ -1193,7 +1197,7 @@ export class OrchestrationEngine {
       await this.checkpoint(lease, ctx, trace);
       await this.clearRunningStep(executionId, step.id, baseLogger);
       const reason = sanitizeError(stepError);
-      yield workflowFailed(reason, step.id);
+      yield workflowFailed(reason, step.id, ctx);
       return { failed: true, paused: false, terminal: true, failureReason: reason, nextIds: [] };
     }
 
@@ -1242,7 +1246,7 @@ export class OrchestrationEngine {
     if (budgetLimitUsd && ctx.totalCostUsd > budgetLimitUsd) {
       const reason = formatBudgetExceededReason(ctx.totalCostUsd, budgetLimitUsd);
       yield workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, step.id, lease.executionId);
-      yield workflowFailed(reason, step.id);
+      yield workflowFailed(reason, step.id, ctx);
       return {
         failed: true,
         paused: false,
@@ -1284,7 +1288,7 @@ export class OrchestrationEngine {
     // loop sees `failed: true` and finalises the row accordingly.
     if (typeof result.failWorkflow === 'string' && result.failWorkflow.length > 0) {
       const reason = result.failWorkflow;
-      yield workflowFailed(reason, step.id);
+      yield workflowFailed(reason, step.id, ctx);
       return {
         failed: true,
         paused: false,
@@ -1529,7 +1533,7 @@ export class OrchestrationEngine {
         });
         await this.checkpoint(lease, ctx, trace);
         await this.clearRunningStep(executionId, step.id, baseLogger);
-        allEvents.push(workflowFailed(sanitizeError(error), step.id));
+        allEvents.push(workflowFailed(sanitizeError(error), step.id, ctx));
         batchFailed = true;
         batchFailureReason = sanitizeError(error);
         continue;
@@ -1590,7 +1594,7 @@ export class OrchestrationEngine {
       // already records each branch's trace row above, so the operator
       // can see which branch tripped the failure.
       if (typeof stepResult.failWorkflow === 'string' && stepResult.failWorkflow.length > 0) {
-        allEvents.push(workflowFailed(stepResult.failWorkflow, step.id));
+        allEvents.push(workflowFailed(stepResult.failWorkflow, step.id, ctx));
         batchFailed = true;
         batchFailureReason = stepResult.failWorkflow;
         continue;
@@ -1615,7 +1619,7 @@ export class OrchestrationEngine {
         allEvents.push(
           workflowBudgetExceeded(ctx.totalCostUsd, budgetLimitUsd, step.id, executionId)
         );
-        allEvents.push(workflowFailed(reason, step.id));
+        allEvents.push(workflowFailed(reason, step.id, ctx));
         batchFailed = true;
         batchFailureReason = reason;
         break;
@@ -2279,7 +2283,24 @@ export class OrchestrationEngine {
     };
 
     emitHookEvent('workflow.paused_for_approval', eventData);
-    void dispatchWebhookEvent('approval_required', eventData);
+
+    // Webhook subscribers get the same event-hook payload plus human-readable
+    // display names so receivers (Slack / email templates / Zapier) can
+    // render a sentence without resolving IDs server-side. Threaded through
+    // a fire-and-forget IIFE so the DB reads can't block the engine.
+    void (async () => {
+      const [actorUserName, workflowDisplay] = await Promise.all([
+        resolveUserDisplayName(ctx.userId),
+        resolveWorkflowDisplay(ctx.workflowId),
+      ]);
+      await dispatchWebhookEvent('approval_required', {
+        ...eventData,
+        actorUserId: ctx.userId,
+        actorUserName,
+        workflowSlug: workflowDisplay.slug,
+        workflowName: workflowDisplay.name,
+      });
+    })();
     return true;
   }
 

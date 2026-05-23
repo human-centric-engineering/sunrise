@@ -8,10 +8,12 @@
  * Delivery tracking: each dispatch creates an `AiWebhookDelivery` record
  * so admins can audit delivery history and manually retry failures.
  *
- * Retry strategy: 3 attempts with exponential backoff (10s, 60s, 300s).
- * Uses in-process `setTimeout`-based delayed retry — suitable for
- * single-server deployments. Future multi-server deployments can swap
- * to a Redis-backed queue without changing the public API.
+ * Retry strategy: configured per-subscription via `maxAttempts` +
+ * `retryBackoffMs`. Defaults match the historical hardcoded values
+ * (3 attempts, 10s/60s backoff). Uses in-process `setTimeout`-based
+ * delayed retry — suitable for single-server deployments. Future
+ * multi-server deployments can swap to a Redis-backed queue without
+ * changing the public API.
  */
 
 import { createHmac } from 'crypto';
@@ -28,11 +30,31 @@ function toJsonRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
-/** Maximum delivery attempts (initial + retries). */
-const MAX_ATTEMPTS = 3;
+/**
+ * Fallback retry policy used when a subscription row is missing the new
+ * `maxAttempts` / `retryBackoffMs` columns (defensive — Prisma defaults
+ * mean this should never happen in practice).
+ */
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_RETRY_BACKOFF_MS = [10_000, 60_000, 300_000];
 
-/** Backoff delays in milliseconds: 10s, 60s, 5min. */
-const RETRY_DELAYS_MS = [10_000, 60_000, 300_000];
+interface RetryPolicy {
+  maxAttempts: number;
+  retryBackoffMs: number[];
+}
+
+function resolveRetryPolicy(sub: {
+  maxAttempts?: number | null;
+  retryBackoffMs?: number[] | null;
+}): RetryPolicy {
+  return {
+    maxAttempts: sub.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
+    retryBackoffMs:
+      sub.retryBackoffMs && sub.retryBackoffMs.length > 0
+        ? sub.retryBackoffMs
+        : DEFAULT_RETRY_BACKOFF_MS,
+  };
+}
 
 /**
  * Dispatch a webhook event to all active subscribers for the given event type.
@@ -75,7 +97,7 @@ export async function dispatchWebhookEvent(
           },
         });
 
-        await attemptDelivery(delivery.id, sub.url, sub.secret, body);
+        await attemptDelivery(delivery.id, sub.url, sub.secret, body, resolveRetryPolicy(sub));
       })
     );
   } catch (err) {
@@ -88,8 +110,17 @@ export async function dispatchWebhookEvent(
 
 /**
  * Retry a specific delivery. Used by the manual retry admin endpoint.
+ *
+ * By default the outbound HTTP attempt is fire-and-forget so the single-row
+ * retry endpoint can return immediately (the receiver's response time isn't
+ * in the request budget). Bulk replay opts into `awaitDelivery: true` so
+ * its chunk-by-chunk `Promise.all` actually gates outbound HTTPs and the
+ * stated concurrency cap holds.
  */
-export async function retryDelivery(deliveryId: string): Promise<boolean> {
+export async function retryDelivery(
+  deliveryId: string,
+  options?: { awaitDelivery?: boolean }
+): Promise<boolean> {
   const delivery = await prisma.aiWebhookDelivery.findUnique({
     where: { id: deliveryId },
     include: { subscription: true },
@@ -116,8 +147,20 @@ export async function retryDelivery(deliveryId: string): Promise<boolean> {
     timestamp: new Date().toISOString(),
   });
 
-  // Fire-and-forget — the attempt will update the delivery record
-  void attemptDelivery(deliveryId, delivery.subscription.url, delivery.subscription.secret, body);
+  const attempt = attemptDelivery(
+    deliveryId,
+    delivery.subscription.url,
+    delivery.subscription.secret,
+    body,
+    resolveRetryPolicy(delivery.subscription)
+  );
+
+  if (options?.awaitDelivery) {
+    await attempt;
+  } else {
+    // Fire-and-forget — the attempt will update the delivery record
+    void attempt;
+  }
 
   return true;
 }
@@ -127,11 +170,14 @@ export async function retryDelivery(deliveryId: string): Promise<boolean> {
  * Picks up deliveries whose `nextRetryAt` has passed.
  */
 export async function processPendingRetries(): Promise<number> {
+  // `status='failed'` already implies attempts < maxAttempts — the dispatcher
+  // transitions to `exhausted` the moment the cap is hit, so no extra
+  // `attempts < N` filter is needed (which would have been per-subscription
+  // and not expressible as a single SQL predicate anyway).
   const pending = await prisma.aiWebhookDelivery.findMany({
     where: {
       status: 'failed',
       nextRetryAt: { lte: new Date() },
-      attempts: { lt: MAX_ATTEMPTS },
     },
     include: { subscription: true },
     take: 50, // batch size to avoid overload
@@ -159,7 +205,8 @@ export async function processPendingRetries(): Promise<number> {
         delivery.id,
         delivery.subscription.url,
         delivery.subscription.secret,
-        body
+        body,
+        resolveRetryPolicy(delivery.subscription)
       );
     })
   );
@@ -175,7 +222,8 @@ async function attemptDelivery(
   deliveryId: string,
   url: string,
   secret: string,
-  body: string
+  body: string,
+  policy: RetryPolicy
 ): Promise<void> {
   const now = new Date();
   let statusCode: number | undefined;
@@ -256,9 +304,13 @@ async function attemptDelivery(
   if (!delivery) return;
 
   const newAttempts = delivery.attempts + 1;
-  const exhausted = newAttempts >= MAX_ATTEMPTS;
+  const exhausted = newAttempts >= policy.maxAttempts;
 
-  const retryDelay = RETRY_DELAYS_MS[newAttempts - 1];
+  // After attempt N fails, the next delay is policy.retryBackoffMs[N-1].
+  // If the array is shorter than maxAttempts-1, fall back to the last
+  // configured delay so we never trip an out-of-bounds undefined.
+  const backoffIndex = Math.min(newAttempts - 1, policy.retryBackoffMs.length - 1);
+  const retryDelay = backoffIndex >= 0 ? policy.retryBackoffMs[backoffIndex] : undefined;
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
 
   await prisma.aiWebhookDelivery.update({
@@ -273,17 +325,15 @@ async function attemptDelivery(
     },
   });
 
-  if (!exhausted && nextRetryAt) {
-    // Schedule in-process retry via setTimeout
-    const delay = retryDelay ?? RETRY_DELAYS_MS[0];
-    scheduleRetry(deliveryId, delivery.subscriptionId, delay);
+  if (!exhausted && nextRetryAt && retryDelay) {
+    scheduleRetry(deliveryId, delivery.subscriptionId, retryDelay);
   }
 
   logger.warn('Webhook delivery failed', {
     deliveryId,
     url,
     attempt: newAttempts,
-    maxAttempts: MAX_ATTEMPTS,
+    maxAttempts: policy.maxAttempts,
     exhausted,
     error,
     statusCode,
@@ -324,7 +374,7 @@ function scheduleRetry(deliveryId: string, subscriptionId: string, delayMs: numb
             ...storedPayload,
             timestamp: new Date().toISOString(),
           });
-          await attemptDelivery(deliveryId, sub.url, sub.secret, body);
+          await attemptDelivery(deliveryId, sub.url, sub.secret, body, resolveRetryPolicy(sub));
         } catch (err) {
           logger.error('Webhook scheduled retry error', {
             deliveryId,

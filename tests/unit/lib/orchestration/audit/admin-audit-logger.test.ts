@@ -119,6 +119,38 @@ describe('computeChanges', () => {
     // Assert — captured as [unserializable]
     expect(result).toEqual({ config: { from: '[unserializable]', to: '[unserializable]' } });
   });
+
+  it('ignoreKeys filters out the listed keys from the diff', () => {
+    // Real-world case: Prisma's `@updatedAt` bumps on every `update()` call
+    // and relation arrays differ when only one side was fetched with
+    // `include`. Without ignoreKeys those drown out the actual user diff.
+    const before = {
+      name: 'Old',
+      updatedAt: new Date('2026-01-01'),
+      grantedTags: [{ tagId: 't1' }],
+    };
+    const after = {
+      name: 'Old', // unchanged
+      updatedAt: new Date('2026-01-02'), // Prisma bumped it
+      grantedTags: undefined, // tx.update returned without include
+    };
+
+    const result = computeChanges(before, after, {
+      ignoreKeys: ['updatedAt', 'grantedTags'],
+    });
+
+    // With both noisy keys filtered out, nothing actually changed → null.
+    expect(result).toBeNull();
+  });
+
+  it('ignoreKeys still reports real changes on non-ignored keys', () => {
+    const before = { name: 'Old', updatedAt: new Date('2026-01-01') };
+    const after = { name: 'New', updatedAt: new Date('2026-01-02') };
+
+    const result = computeChanges(before, after, { ignoreKeys: ['updatedAt'] });
+
+    expect(result).toEqual({ name: { from: 'Old', to: 'New' } });
+  });
 });
 
 // ─── logAdminAction ───────────────────────────────────────────────────────────

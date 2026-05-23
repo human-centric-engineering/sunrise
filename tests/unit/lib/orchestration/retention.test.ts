@@ -128,7 +128,9 @@ describe('enforceRetentionPolicies', () => {
 
     const result = await enforceRetentionPolicies();
 
-    expect(result.webhookDeliveriesDeleted).toBe(12);
+    // With DLQ retention falling back to webhookRetentionDays the prune
+    // runs twice (base + DLQ slice), each returning the mocked count.
+    expect(result.webhookDeliveriesDeleted).toBe(24);
     expect(result.costLogsDeleted).toBe(8);
     expect(result.auditLogsDeleted).toBe(3);
   });
@@ -161,47 +163,91 @@ describe('pruneWebhookDeliveries', () => {
     expect(prisma.aiWebhookDelivery.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('deletes rows older than configured webhookRetentionDays', async () => {
+  it('deletes both non-exhausted and exhausted rows when DLQ retention is null (falls back to base)', async () => {
+    // Settings: webhookRetentionDays=14, webhookDlqRetentionDays=null
+    // DLQ falls back to the base value, so we expect TWO deleteMany
+    // calls — one scoped to pending/delivered/failed, one to exhausted —
+    // both with the same 14-day cutoff.
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
       webhookRetentionDays: 14,
+      webhookDlqRetentionDays: null,
     } as never);
-    vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 25 } as never);
+    vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 12 } as never);
 
     const result = await pruneWebhookDeliveries();
 
-    expect(result).toEqual({ deleted: 25 });
-    expect(prisma.aiWebhookDelivery.deleteMany).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ deleted: 24 });
+    expect(prisma.aiWebhookDelivery.deleteMany).toHaveBeenCalledTimes(2);
 
-    expect(prisma.aiWebhookDelivery.deleteMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          createdAt: expect.objectContaining({ lt: expect.any(Date) }),
-        }),
-      })
+    const calls = vi.mocked(prisma.aiWebhookDelivery.deleteMany).mock.calls;
+    const statuses = calls.map((c) => (c[0]?.where as Record<string, unknown>).status);
+    expect(statuses).toEqual(
+      expect.arrayContaining([{ in: ['pending', 'delivered', 'failed'] }, 'exhausted'])
     );
   });
 
-  it('uses explicit maxAgeDays over settings', async () => {
+  it('uses webhookDlqRetentionDays for exhausted rows when set', async () => {
+    // Base 7 days, DLQ 30 days — exhausted rows live longer than the
+    // rest. Both queries should run with their respective cutoffs.
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      webhookRetentionDays: 7,
+      webhookDlqRetentionDays: 30,
+    } as never);
+    vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 4 } as never);
+
+    const result = await pruneWebhookDeliveries();
+
+    expect(result).toEqual({ deleted: 8 });
+    const calls = vi.mocked(prisma.aiWebhookDelivery.deleteMany).mock.calls;
+    expect(calls).toHaveLength(2);
+
+    const baseCall = calls.find(
+      (c) => (c[0]?.where as Record<string, unknown>).status !== 'exhausted'
+    );
+    const dlqCall = calls.find(
+      (c) => (c[0]?.where as Record<string, unknown>).status === 'exhausted'
+    );
+    expect(baseCall).toBeDefined();
+    expect(dlqCall).toBeDefined();
+
+    const now = Date.now();
+    const baseCutoff = (baseCall![0]!.where as Record<string, { lt: Date }>).createdAt.lt;
+    const dlqCutoff = (dlqCall![0]!.where as Record<string, { lt: Date }>).createdAt.lt;
+    // Cutoffs are now - days*24h; later cutoff means closer to now.
+    // Base (7d) cutoff is closer to now than DLQ (30d) cutoff.
+    expect(now - baseCutoff.getTime()).toBeLessThan(now - dlqCutoff.getTime());
+  });
+
+  it('honours explicit maxAgeDays + dlqMaxAgeDays args over settings', async () => {
     vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 3 } as never);
 
-    const result = await pruneWebhookDeliveries(7);
+    const result = await pruneWebhookDeliveries(7, 90);
 
-    expect(result).toEqual({ deleted: 3 });
-    // Should not read settings when explicit value passed
+    expect(result).toEqual({ deleted: 6 });
+    // Should not consult settings when both explicit values supplied.
     expect(prisma.aiOrchestrationSettings.findUnique).not.toHaveBeenCalled();
-    expect(prisma.aiWebhookDelivery.deleteMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          createdAt: expect.objectContaining({ lt: expect.any(Date) }),
-        }),
-      })
-    );
+    expect(prisma.aiWebhookDelivery.deleteMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('only deletes DLQ rows when base retention is null but DLQ retention is set', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      webhookRetentionDays: null,
+      webhookDlqRetentionDays: 30,
+    } as never);
+    vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 5 } as never);
+
+    const result = await pruneWebhookDeliveries();
+
+    expect(result).toEqual({ deleted: 5 });
+    expect(prisma.aiWebhookDelivery.deleteMany).toHaveBeenCalledTimes(1);
+    const onlyCall = vi.mocked(prisma.aiWebhookDelivery.deleteMany).mock.calls[0][0];
+    expect((onlyCall?.where as Record<string, unknown>).status).toBe('exhausted');
   });
 
   it('returns deleted: 0 when no rows match cutoff', async () => {
     vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 0 } as never);
 
-    const result = await pruneWebhookDeliveries(30);
+    const result = await pruneWebhookDeliveries(30, 30);
 
     expect(result).toEqual({ deleted: 0 });
   });

@@ -21,6 +21,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { DatePicker } from '@/components/ui/date-picker';
 import { FieldHelp } from '@/components/ui/field-help';
 import {
   Select,
@@ -104,24 +105,22 @@ export function AnalyticsView({
             <label htmlFor="filter-from" className="text-muted-foreground text-xs font-medium">
               From
             </label>
-            <input
+            <DatePicker
               id="filter-from"
-              type="date"
-              className="border-input bg-background ring-offset-background focus-visible:ring-ring block h-9 rounded-md border px-3 py-1 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+              className="w-[160px]"
               value={filters.from}
-              onChange={(e) => updateFilter('from', e.target.value)}
+              onChange={(v) => updateFilter('from', v)}
             />
           </div>
           <div className="space-y-1">
             <label htmlFor="filter-to" className="text-muted-foreground text-xs font-medium">
               To
             </label>
-            <input
+            <DatePicker
               id="filter-to"
-              type="date"
-              className="border-input bg-background ring-offset-background focus-visible:ring-ring block h-9 rounded-md border px-3 py-1 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+              className="w-[160px]"
               value={filters.to}
-              onChange={(e) => updateFilter('to', e.target.value)}
+              onChange={(v) => updateFilter('to', v)}
             />
           </div>
           <div className="space-y-1">

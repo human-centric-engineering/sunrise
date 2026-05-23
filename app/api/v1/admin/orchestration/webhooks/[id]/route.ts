@@ -27,6 +27,8 @@ const SAFE_SELECT = {
   events: true,
   isActive: true,
   description: true,
+  maxAttempts: true,
+  retryBackoffMs: true,
   createdAt: true,
   updatedAt: true,
 } as const;

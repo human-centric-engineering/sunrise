@@ -66,6 +66,8 @@ export const POST = withAdminAuth(async (request, session) => {
       events: body.events,
       description: body.description,
       isActive: body.isActive ?? true,
+      maxAttempts: body.maxAttempts,
+      retryBackoffMs: body.retryBackoffMs,
       createdBy: session.user.id,
     },
     select: {
@@ -74,6 +76,8 @@ export const POST = withAdminAuth(async (request, session) => {
       events: true,
       isActive: true,
       description: true,
+      maxAttempts: true,
+      retryBackoffMs: true,
       createdAt: true,
       updatedAt: true,
     },

@@ -1149,15 +1149,21 @@ model AiCostLog {
 
 // Webhook subscriptions for outbound event notifications
 model AiWebhookSubscription {
-  id          String   @id @default(cuid())
-  url         String // destination URL (validated as safe)
-  secret      String // HMAC-SHA256 signing key
-  events      String[] // e.g. ["budget_exceeded","workflow_failed"]
-  isActive    Boolean  @default(true)
-  description String?
-  createdBy   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(cuid())
+  url             String // destination URL (validated as safe)
+  secret          String // HMAC-SHA256 signing key
+  events          String[] // e.g. ["budget_exceeded","workflow_failed"]
+  isActive        Boolean  @default(true)
+  description     String?
+  // Total delivery attempts before the delivery is marked `exhausted` (1–10).
+  maxAttempts     Int      @default(3)
+  // Backoff delays in ms between successive attempts. Must contain at least
+  // (maxAttempts - 1) entries; the dispatcher only reads the first
+  // (maxAttempts - 1) values. Each entry capped at 24h.
+  retryBackoffMs  Int[]    @default([10000, 60000, 300000])
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   user       User                @relation("AiWebhookUser", fields: [createdBy], references: [id])
   deliveries AiWebhookDelivery[]
@@ -1337,6 +1343,10 @@ model AiOrchestrationSettings {
   outputGuardMode              String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   citationGuardMode            String?   @default("log_only") // "log_only", "warn_and_continue", "block"
   webhookRetentionDays         Int?
+  // Separate retention window for `exhausted` (DLQ) webhook deliveries.
+  // Null falls back to webhookRetentionDays so behaviour matches the
+  // pre-DLQ retention model.
+  webhookDlqRetentionDays      Int?
   costLogRetentionDays         Int?
   auditLogRetentionDays        Int?
   maxConversationsPerUser      Int?

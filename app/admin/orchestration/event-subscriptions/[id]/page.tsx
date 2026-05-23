@@ -20,6 +20,8 @@ interface WebhookDetail {
   events: string[];
   isActive: boolean;
   description: string | null;
+  maxAttempts: number;
+  retryBackoffMs: number[];
   createdAt: string;
   updatedAt: string;
 }

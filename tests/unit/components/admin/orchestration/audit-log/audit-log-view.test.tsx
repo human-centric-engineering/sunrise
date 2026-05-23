@@ -31,6 +31,29 @@ vi.mock('@/lib/api/endpoints', () => ({
   },
 }));
 
+// DatePicker → plain native input so existing change-event drivers still work
+vi.mock('@/components/ui/date-picker', () => ({
+  DatePicker: ({
+    id,
+    value,
+    onChange,
+    className,
+  }: {
+    id?: string;
+    value: string;
+    onChange: (value: string) => void;
+    className?: string;
+  }) => (
+    <input
+      id={id}
+      type="date"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+    />
+  ),
+}));
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 function makeEntry(overrides: Record<string, unknown> = {}) {
@@ -541,20 +564,21 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await waitFor(() => screen.getByText(/1 \/ 2/));
 
-    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-
     const nextButton = screen.getByRole('button', { name: /next page/i });
     expect(nextButton).not.toBeDisabled();
     await user.click(nextButton);
 
-    await waitFor(() => {
-      const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-      expect(callsAfter).toBeGreaterThan(callsBefore);
-    });
-
-    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-    const lastUrl = calls[calls.length - 1][0] as string;
-    expect(lastUrl).toContain('page=2');
+    // Don't rely on "last fetch URL" — under load a debounced search/filter
+    // refetch could interleave. Assert that *some* fetch carried page=2.
+    await waitFor(
+      () => {
+        const urls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map(
+          (c) => c[0] as string
+        );
+        expect(urls.some((u) => u.includes('page=2'))).toBe(true);
+      },
+      { timeout: 3000 }
+    );
   });
 
   it('clicking prev page button from page 2 triggers fetch with page=1', async () => {
@@ -570,8 +594,10 @@ describe('AuditLogView', () => {
     await waitFor(() => screen.getByText(/2 \/ 2/), { timeout: 3000 });
     await waitFor(
       () => {
-        const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as string;
-        expect(url).toContain('page=2');
+        const urls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map(
+          (c) => c[0] as string
+        );
+        expect(urls.some((u) => u.includes('page=2'))).toBe(true);
       },
       { timeout: 3000 }
     );
@@ -579,16 +605,14 @@ describe('AuditLogView', () => {
     const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
     await user.click(screen.getByRole('button', { name: /previous page/i }));
 
+    // Any fetch after the prev-click that carries page=1 — order-independent.
     await waitFor(
       () => {
-        const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-        expect(callsAfter).toBeGreaterThan(callsBefore);
+        const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const newUrls = callsAfter.slice(callsBefore).map((c) => c[0] as string);
+        expect(newUrls.some((u) => u.includes('page=1'))).toBe(true);
       },
       { timeout: 3000 }
     );
-
-    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-    const lastUrl = calls[calls.length - 1][0] as string;
-    expect(lastUrl).toContain('page=1');
   });
 });

@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tip } from '@/components/ui/tooltip';
@@ -212,21 +212,11 @@ export function McpAuditLog({ initialEntries, initialMeta }: McpAuditLogProps) {
             </div>
             <div>
               <Label htmlFor="filter-date-from">From</Label>
-              <Input
-                id="filter-date-from"
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
+              <DatePicker id="filter-date-from" value={dateFrom} onChange={setDateFrom} />
             </div>
             <div>
               <Label htmlFor="filter-date-to">To</Label>
-              <Input
-                id="filter-date-to"
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
+              <DatePicker id="filter-date-to" value={dateTo} onChange={setDateTo} />
             </div>
           </div>
           <div className="mt-3 flex items-center gap-3">

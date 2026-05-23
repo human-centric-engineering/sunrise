@@ -204,6 +204,74 @@ describe('CircuitBreaker', () => {
     );
   });
 
+  it('does not re-dispatch circuit_breaker_opened on additional failures while already open', async () => {
+    // Trip the breaker.
+    vi.clearAllMocks();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    await Promise.resolve();
+
+    // Verify the trip dispatched once.
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledTimes(1);
+
+    // Record additional failures while the breaker is still open. Each one
+    // crosses the threshold check inside recordFailure(), so without the
+    // closed→open guard each would re-fire the webhook.
+    breaker.recordFailure();
+    breaker.recordFailure();
+    await Promise.resolve();
+
+    // Still exactly one dispatch — the guard suppressed the duplicates.
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-dispatches circuit_breaker_opened on a fresh half_open → open transition', async () => {
+    // Trip → cool down → half_open → fail probe → back to open. This is
+    // a NEW opening event from the receiver's perspective; the guard must
+    // allow it through.
+    vi.clearAllMocks();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    await Promise.resolve();
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledTimes(1);
+
+    // Advance time past cooldown — also past the 5s sliding window, so the
+    // original failures are pruned. The half_open probe needs threshold
+    // fresh failures to re-trip.
+    const baseNow = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(baseNow + 10_000);
+    breaker.canAttempt(); // transitions open → half_open
+    expect(breaker.state).toBe('half_open');
+
+    // Three fresh failures to re-trip the breaker.
+    breaker.recordFailure();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    await Promise.resolve();
+    expect(breaker.state).toBe('open');
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledTimes(2);
+  });
+
+  it('payload includes windowMs / cooldownMs / openedAt so receivers know the breaker config', async () => {
+    vi.clearAllMocks();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    breaker.recordFailure();
+    await Promise.resolve();
+
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
+      'circuit_breaker_opened',
+      expect.objectContaining({
+        providerSlug: 'test-provider',
+        windowMs: expect.any(Number),
+        cooldownMs: expect.any(Number),
+        openedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      })
+    );
+  });
+
   it('recordSuccess logs info when transitioning from non-closed to closed state', () => {
     // Arrange — trip the breaker and advance past cooldown to half_open
     for (let i = 0; i < 3; i++) breaker.recordFailure();

@@ -13,6 +13,7 @@ import { Copy, Loader2, Plus, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import {
   Dialog,
   DialogContent,
@@ -334,12 +335,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
                   expires.
                 </FieldHelp>
               </Label>
-              <Input
-                id="token-expires"
-                type="date"
-                value={newExpiresAt}
-                onChange={(e) => setNewExpiresAt(e.target.value)}
-              />
+              <DatePicker id="token-expires" value={newExpiresAt} onChange={setNewExpiresAt} />
             </div>
           </div>
           <DialogFooter>

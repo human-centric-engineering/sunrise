@@ -257,6 +257,58 @@ describe('Webhook Subscription API', () => {
       );
     });
 
+    it('persists per-subscription retry policy when sent', async () => {
+      // Arrange
+      vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue(mockWebhook as never);
+
+      // Act
+      await POST(
+        makePostRequest({
+          ...validPayload,
+          maxAttempts: 5,
+          retryBackoffMs: [10_000, 30_000, 60_000, 300_000],
+        })
+      );
+
+      // Assert: both fields reach the create call so the dispatcher reads
+      // them on every delivery.
+      expect(prisma.aiWebhookSubscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            maxAttempts: 5,
+            retryBackoffMs: [10_000, 30_000, 60_000, 300_000],
+          }),
+        })
+      );
+    });
+
+    it('rejects retry policy with too few backoff entries for maxAttempts', async () => {
+      // maxAttempts=5 needs at least 4 backoff entries.
+      const res = await POST(
+        makePostRequest({
+          ...validPayload,
+          maxAttempts: 5,
+          retryBackoffMs: [10_000, 30_000],
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(prisma.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects retry policy with backoff entries above the 24h cap', async () => {
+      const res = await POST(
+        makePostRequest({
+          ...validPayload,
+          maxAttempts: 2,
+          retryBackoffMs: [25 * 60 * 60 * 1000], // 25h
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(prisma.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    });
+
     it('respects isActive=false when explicitly set', async () => {
       // Arrange
       vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue({

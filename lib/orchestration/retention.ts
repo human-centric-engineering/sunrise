@@ -93,23 +93,64 @@ export interface PruneResult {
 }
 
 /**
- * Delete webhook delivery rows older than `maxAgeDays`.
- * Reads `webhookRetentionDays` from AiOrchestrationSettings if not passed.
- * Skips if no value is configured.
+ * Delete webhook delivery rows older than the configured retention windows.
+ *
+ * Splits cleanup by status so operators can keep dead-lettered failures
+ * around longer than successful deliveries:
+ *
+ * - Non-exhausted rows (`pending` / `delivered` / `failed`) use
+ *   `webhookRetentionDays`.
+ * - `exhausted` rows use `webhookDlqRetentionDays`, falling back to
+ *   `webhookRetentionDays` when the DLQ-specific value is null. That
+ *   fallback preserves the pre-DLQ unified behaviour for environments
+ *   that haven't set the new column.
+ *
+ * Returns the combined deletion count.
  */
-export async function pruneWebhookDeliveries(maxAgeDays?: number): Promise<PruneResult> {
-  const days = maxAgeDays ?? (await resolveRetentionDays('webhookRetentionDays'));
-  if (days === null) return { deleted: 0 };
+export async function pruneWebhookDeliveries(
+  maxAgeDays?: number,
+  dlqMaxAgeDays?: number
+): Promise<PruneResult> {
+  const baseDays = maxAgeDays ?? (await resolveRetentionDays('webhookRetentionDays'));
+  const dlqDays =
+    dlqMaxAgeDays ?? (await resolveRetentionDays('webhookDlqRetentionDays')) ?? baseDays;
 
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const result = await prisma.aiWebhookDelivery.deleteMany({
-    where: { createdAt: { lt: cutoff } },
-  });
+  let deleted = 0;
 
-  if (result.count > 0) {
-    logger.info('Webhook delivery rows pruned', { deleted: result.count, maxAgeDays: days });
+  if (baseDays !== null) {
+    const cutoff = new Date(Date.now() - baseDays * 24 * 60 * 60 * 1000);
+    const result = await prisma.aiWebhookDelivery.deleteMany({
+      where: {
+        createdAt: { lt: cutoff },
+        status: { in: ['pending', 'delivered', 'failed'] },
+      },
+    });
+    if (result.count > 0) {
+      logger.info('Webhook delivery rows pruned', {
+        deleted: result.count,
+        maxAgeDays: baseDays,
+        scope: 'non-exhausted',
+      });
+    }
+    deleted += result.count;
   }
-  return { deleted: result.count };
+
+  if (dlqDays !== null) {
+    const cutoff = new Date(Date.now() - dlqDays * 24 * 60 * 60 * 1000);
+    const result = await prisma.aiWebhookDelivery.deleteMany({
+      where: { createdAt: { lt: cutoff }, status: 'exhausted' },
+    });
+    if (result.count > 0) {
+      logger.info('Webhook DLQ rows pruned', {
+        deleted: result.count,
+        maxAgeDays: dlqDays,
+        scope: 'exhausted',
+      });
+    }
+    deleted += result.count;
+  }
+
+  return { deleted };
 }
 
 /**
@@ -175,7 +216,11 @@ export async function pruneAuditLogs(maxAgeDays?: number): Promise<PruneResult> 
 
 /** Read a named retention column from the singleton settings row. */
 async function resolveRetentionDays(
-  field: 'webhookRetentionDays' | 'costLogRetentionDays' | 'auditLogRetentionDays'
+  field:
+    | 'webhookRetentionDays'
+    | 'webhookDlqRetentionDays'
+    | 'costLogRetentionDays'
+    | 'auditLogRetentionDays'
 ): Promise<number | null> {
   try {
     const row = await prisma.aiOrchestrationSettings.findUnique({

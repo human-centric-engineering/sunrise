@@ -34,6 +34,9 @@ vi.mock('next/headers', () => ({
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
+const mockVersionFindFirst = vi.fn();
+const mockVersionCreate = vi.fn();
+
 vi.mock('@/lib/db/client', () => {
   const mock = {
     aiAgent: {
@@ -41,8 +44,8 @@ vi.mock('@/lib/db/client', () => {
       update: (...args: unknown[]) => mockUpdate(...args),
     },
     aiAgentVersion: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({}),
+      findFirst: (...args: unknown[]) => mockVersionFindFirst(...args),
+      create: (...args: unknown[]) => mockVersionCreate(...args),
     },
     $transaction: vi.fn(),
   };
@@ -54,14 +57,32 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
-vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
-  logAdminAction: vi.fn(),
-  computeChanges: vi.fn(),
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', async () => {
+  // `computeChanges` is a pure utility — let the real implementation run so
+  // tests exercise the real before/after diff. Only `logAdminAction` is
+  // stubbed out (it performs a DB write we don't want in unit tests).
+  const actual = await vi.importActual<
+    typeof import('@/lib/orchestration/audit/admin-audit-logger')
+  >('@/lib/orchestration/audit/admin-audit-logger');
+  return {
+    ...actual,
+    logAdminAction: vi.fn(),
+  };
+});
+
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  emitHookEvent: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -120,6 +141,9 @@ describe('System agent protection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    // Sensible defaults — most tests don't exercise the version path.
+    mockVersionFindFirst.mockResolvedValue(null);
+    mockVersionCreate.mockResolvedValue({});
   });
 
   describe('DELETE', () => {
@@ -249,6 +273,170 @@ describe('System agent protection', () => {
       );
 
       expect(response.status).toBe(200);
+    });
+  });
+
+  describe('PATCH — outbound notifications', () => {
+    it('dual-dispatches agent.updated to event hooks AND agent_updated to webhook subscriptions', async () => {
+      // The two outbound subsystems use different event-name conventions
+      // (dotted vs underscore). Both must fire so admins configured via
+      // either surface receive the notification — historically the
+      // webhook-subscription side was silently dropped, which is what
+      // this test guards against.
+      const before = makeCustomAgent({ description: 'old description' });
+      const after = { ...before, description: 'new description' };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+      // Previous max version is 4 → snapshot creates v5 → payload says agentVersion=5.
+      mockVersionFindFirst.mockResolvedValue({ version: 4 });
+
+      const response = await PATCH(
+        makePatchRequest({ description: 'new description' }),
+        makeParams(AGENT_ID)
+      );
+      expect(response.status).toBe(200);
+
+      const expectedShape = expect.objectContaining({
+        agentId: AGENT_ID,
+        agentSlug: after.slug,
+        agentName: after.name,
+        actorUserId: expect.any(String),
+        actorUserName: expect.any(String),
+        agentVersion: 5,
+        changes: { description: { from: 'old description', to: 'new description' } },
+      });
+      expect(emitHookEvent).toHaveBeenCalledWith('agent.updated', expectedShape);
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('agent_updated', expectedShape);
+    });
+
+    it('agentName reflects the post-update name even when name itself changed', async () => {
+      // Rename case: the payload's top-level agentName carries the NEW
+      // name, while changes.name carries the from/to transition.
+      const before = makeCustomAgent({ name: 'Old Name' });
+      const after = { ...before, name: 'New Name' };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+
+      await PATCH(makePatchRequest({ name: 'New Name' }), makeParams(AGENT_ID));
+
+      const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
+        agentName: string;
+        changes: Record<string, { from: unknown; to: unknown }>;
+      };
+      expect(payload.agentName).toBe('New Name');
+      expect(payload.changes.name).toEqual({ from: 'Old Name', to: 'New Name' });
+    });
+
+    it('changes contains only fields that actually changed value, with from/to', async () => {
+      // The form submits the entire record on save; the route must filter
+      // down to fields whose value actually differs between before/after.
+      // Object.keys(data) would over-report and ship `name` here even
+      // though the submitted value matches what's already stored.
+      const before = makeCustomAgent({
+        name: 'Same Name',
+        description: 'old',
+        isActive: true,
+        model: 'claude-sonnet-4-6',
+      });
+      const after = { ...before, description: 'new', isActive: false };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+
+      const response = await PATCH(
+        // PATCH body includes name (unchanged) plus two real edits.
+        makePatchRequest({ name: 'Same Name', description: 'new', isActive: false }),
+        makeParams(AGENT_ID)
+      );
+      expect(response.status).toBe(200);
+
+      const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
+        changes: Record<string, { from: unknown; to: unknown }>;
+      };
+      expect(Object.keys(payload.changes).sort()).toEqual(['description', 'isActive']);
+      expect(payload.changes).toEqual({
+        description: { from: 'old', to: 'new' },
+        isActive: { from: true, to: false },
+      });
+      // Belt-and-braces: `name` (submitted but unchanged) is not in the diff.
+      expect(payload.changes).not.toHaveProperty('name');
+    });
+
+    it('truncates from/to values that exceed the per-field length cap', async () => {
+      // systemInstructions can run to tens of thousands of characters —
+      // sending the full before/after on every edit would blow through a
+      // typical webhook receiver's body-size limit.
+      const longBefore = 'a'.repeat(2_000);
+      const longAfter = 'b'.repeat(2_000);
+      const before = makeCustomAgent({ systemInstructions: longBefore });
+      const after = { ...before, systemInstructions: longAfter };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+
+      await PATCH(makePatchRequest({ systemInstructions: longAfter }), makeParams(AGENT_ID));
+
+      const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
+        changes: Record<string, { from: unknown; to: unknown }>;
+      };
+      const { from, to } = payload.changes.systemInstructions;
+      // Both values are capped; the truncation marker proves the truncation
+      // happened on purpose (versus the field somehow arriving short).
+      expect(from).toMatch(/\[truncated\]$/);
+      expect(to).toMatch(/\[truncated\]$/);
+      expect(String(from).length).toBeLessThan(longBefore.length);
+      expect(String(to).length).toBeLessThan(longAfter.length);
+    });
+
+    it('includes actorUserId and actorUserName for the admin who made the change', async () => {
+      const before = makeCustomAgent({ description: 'old' });
+      const after = { ...before, description: 'new' };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+
+      await PATCH(makePatchRequest({ description: 'new' }), makeParams(AGENT_ID));
+
+      // mockAdminUser() returns a session with this fixed CUID + name —
+      // any change here means the auth fixture rotated.
+      const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
+        actorUserId: string;
+        actorUserName: string;
+      };
+      expect(payload.actorUserId).toBe('cmjbv4i3x00003wsloputgwul');
+      expect(payload.actorUserName).toBe('Test User');
+    });
+
+    it('does not dispatch when the PATCH produced no actual changes', async () => {
+      // Form save with no edits — every field matches what's already stored.
+      // Subscribers don't want a notification in this case.
+      //
+      // The fixtures here simulate two things real Prisma does that the
+      // route has to filter out of the diff:
+      //   - `updatedAt` bumps on every `update()` call (via `@updatedAt`).
+      //   - `current` is fetched with `include: { grantedTags, grantedDocuments }`,
+      //     but the return from `tx.aiAgent.update` has no `include`, so those
+      //     keys are missing on the after-side.
+      // Without an ignoreKeys filter in computeChanges, the diff would
+      // always be non-null and the webhook would always fire.
+      const current = makeCustomAgent({
+        description: 'same',
+        updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+        grantedTags: [{ tagId: 't1' }],
+        grantedDocuments: [{ documentId: 'd1' }],
+      });
+      const updated = {
+        ...makeCustomAgent({ description: 'same' }),
+        updatedAt: new Date('2026-05-01T00:00:01.000Z'), // bumped by Prisma
+        // grantedTags / grantedDocuments deliberately absent — mirrors what
+        // `tx.aiAgent.update({ where, data })` returns when no `include`.
+      };
+      mockFindUnique.mockResolvedValue(current);
+      mockUpdate.mockResolvedValue(updated);
+
+      const response = await PATCH(makePatchRequest({ description: 'same' }), makeParams(AGENT_ID));
+      expect(response.status).toBe(200);
+
+      // test-review:accept no_arg_called — guards a noise-suppression path; assertion that nothing fires is the contract
+      expect(emitHookEvent).not.toHaveBeenCalled();
+      expect(dispatchWebhookEvent).not.toHaveBeenCalled();
     });
   });
 });

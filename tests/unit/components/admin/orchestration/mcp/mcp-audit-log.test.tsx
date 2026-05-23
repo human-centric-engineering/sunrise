@@ -27,6 +27,29 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
+// DatePicker → plain native input so existing change-event drivers still work
+vi.mock('@/components/ui/date-picker', () => ({
+  DatePicker: ({
+    id,
+    value,
+    onChange,
+    className,
+  }: {
+    id?: string;
+    value: string;
+    onChange: (value: string) => void;
+    className?: string;
+  }) => (
+    <input
+      id={id}
+      type="date"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className}
+    />
+  ),
+}));
+
 import { apiClient } from '@/lib/api/client';
 import { McpAuditLog } from '@/components/admin/orchestration/mcp/mcp-audit-log';
 

@@ -8,10 +8,10 @@ In-process event dispatch for orchestration lifecycle events. Admins configure h
 
 These are two different subsystems — don't confuse them:
 
-| System                     | Model                                         | Purpose                                                      | Signing                             | Retry                     |
-| -------------------------- | --------------------------------------------- | ------------------------------------------------------------ | ----------------------------------- | ------------------------- |
-| **Event Hooks** (this doc) | `AiEventHook` / `AiEventHookDelivery`         | Lightweight fire-and-forget dispatch on lifecycle events     | Optional HMAC-SHA256 (`secret` set) | 3 attempts (10s/60s/300s) |
-| Webhook Subscriptions      | `AiWebhookSubscription` / `AiWebhookDelivery` | Durable outbound notifications with per-delivery audit trail | HMAC-SHA256 via `secret` field      | 3 attempts (10s/60s/300s) |
+| System                     | Model                                         | Purpose                                                      | Signing                             | Retry                                      |
+| -------------------------- | --------------------------------------------- | ------------------------------------------------------------ | ----------------------------------- | ------------------------------------------ |
+| **Event Hooks** (this doc) | `AiEventHook` / `AiEventHookDelivery`         | Lightweight fire-and-forget dispatch on lifecycle events     | Optional HMAC-SHA256 (`secret` set) | 3 attempts (10s/60s/300s)                  |
+| Webhook Subscriptions      | `AiWebhookSubscription` / `AiWebhookDelivery` | Durable outbound notifications with per-delivery audit trail | HMAC-SHA256 via `secret` field      | Per-subscription (default 3: 10s/60s/300s) |
 
 Both subsystems can sign outbound payloads. Pick the subsystem based on delivery semantics (lightweight in-process dispatch vs. durable per-delivery audit); for signing setup and headers, see the table above.
 
@@ -44,19 +44,19 @@ lib/orchestration/hooks/
 
 Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 
-| Event Type                      | Currently Emitted By                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------------------- |
-| `workflow.started`              | `lib/orchestration/engine/orchestration-engine.ts`                                    |
-| `workflow.completed`            | `lib/orchestration/engine/orchestration-engine.ts`                                    |
-| `workflow.failed`               | `lib/orchestration/engine/orchestration-engine.ts`                                    |
-| `workflow.execution.failed`     | `lib/orchestration/scheduling/scheduler.ts`                                           |
-| `workflow.paused_for_approval`  | `lib/orchestration/engine/orchestration-engine.ts`                                    |
-| `message.created`               | `lib/orchestration/chat/streaming-handler.ts`                                         |
-| `conversation.started`          | `lib/orchestration/chat/streaming-handler.ts`                                         |
-| `agent.updated`                 | `app/api/v1/admin/orchestration/agents/[id]/route.ts`                                 |
-| `execution.force_failed`        | `app/api/v1/admin/orchestration/executions/[id]/force-fail/route.ts`                  |
-| `workflow_budget_exceeded`      | `lib/orchestration/engine/events.ts` (improvement #39 — webhook system only)          |
-| `chat_budget_exceeded_per_turn` | `lib/orchestration/chat/streaming-handler.ts` (improvement #39 — webhook system only) |
+| Event Type                      | Currently Emitted By                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow.started`              | `lib/orchestration/engine/orchestration-engine.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `workflow.completed`            | `lib/orchestration/engine/orchestration-engine.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `workflow.failed`               | `lib/orchestration/engine/orchestration-engine.ts` (webhook payload: `{ error, failedStepId, executionId, workflowId, workflowSlug, workflowName, actorUserId, actorUserName, totalCostUsd, totalTokensUsed }` — workflow + actor display names resolved lazily, missing fields are absent rather than null when context wasn't in scope at the call site)                                                                                                                                                    |
+| `workflow.execution.failed`     | `lib/orchestration/scheduling/scheduler.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `workflow.paused_for_approval`  | `lib/orchestration/engine/orchestration-engine.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `message.created`               | `lib/orchestration/chat/streaming-handler.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `conversation.started`          | `lib/orchestration/chat/streaming-handler.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `agent.updated`                 | `app/api/v1/admin/orchestration/agents/[id]/route.ts` (also dual-dispatched as `agent_updated` to webhook subscriptions; payload: `{ agentId, agentSlug, agentName, actorUserId, actorUserName, agentVersion, changes: { field: { from, to } } }` — slug + name are post-update; `agentVersion` is the new snapshot number when this PATCH bumped the version (most cases) or null when it only touched unversioned fields; values >500 chars truncated; suppressed when the PATCH produced no actual change) |
+| `execution.force_failed`        | `app/api/v1/admin/orchestration/executions/[id]/force-fail/route.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `workflow_budget_exceeded`      | `lib/orchestration/engine/events.ts` (improvement #39 — webhook system only)                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `chat_budget_exceeded_per_turn` | `lib/orchestration/chat/streaming-handler.ts` (improvement #39 — webhook system only)                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 `execution.force_failed` fires from the admin force-fail route (live-engine surface) **in addition to** `workflow.failed`, not in place of it. Existing Slack / PagerDuty integrations subscribed to `workflow.failed` keep firing unchanged; subscribers that want to distinguish admin-driven termination from a natural engine failure should also subscribe to `execution.force_failed`. The dual emit is intentional — see `.context/admin/orchestration-executions-live-engine.md`. Payload: `{ executionId, workflowId, actorUserId, reason, previousStatus }`. The `workflow.failed` payload emitted alongside includes `source: 'admin-force-fail'` so a single subscriber can detect the case from either event.
 
@@ -71,7 +71,38 @@ Use `workflow.execution.failed` for "background workflow crashed entirely" alert
 
 The `error` field in the `workflow.execution.failed` payload is sanitised before dispatch — absolute filesystem paths (POSIX and Windows) are replaced with `<path>` and the message is truncated to 200 characters. Webhook receivers are admin-trusted but may forward to broader-audience destinations; the unsanitised message is still persisted to `AiWorkflowExecution.errorMessage` and visible to admins via `/executions/:id` and `/executions/:id/status`. See `sanitiseHookErrorMessage` in `lib/orchestration/scheduling/scheduler.ts`.
 
-**Dual dispatch on engine crash.** The same engine-crash event is mirrored into the [Webhook Subscriptions](../admin/orchestration-webhooks.md) subsystem as `execution_crashed` so admins who configure outbound notifications via the webhook UI (rather than the API-only event hooks) receive the alert. Both subsystems get the same sanitised payload. Subscribe via either system depending on your delivery requirements: event hooks for in-process filterable dispatch, webhook subscriptions for durable per-delivery audit + admin-UI configuration.
+**Dual dispatch on engine crash.** The same engine-crash event is mirrored into the [Webhook Subscriptions](../admin/orchestration-webhooks.md) subsystem as `execution_crashed` so admins who configure outbound notifications via the webhook UI (rather than the API-only event hooks) receive the alert. The webhook payload is the in-process payload plus `workflowName`, `actorUserId`, and `actorUserName` — the in-process subsystem keeps its leaner shape since it predates the webhook UI. Subscribe via either system depending on your delivery requirements: event hooks for in-process filterable dispatch, webhook subscriptions for durable per-delivery audit + admin-UI configuration.
+
+### Two event-type vocabularies
+
+Event hooks and webhook subscriptions use **different naming conventions** for the same logical event:
+
+| Subsystem                                 | Vocabulary            | Convention                      | Source of truth                                             |
+| ----------------------------------------- | --------------------- | ------------------------------- | ----------------------------------------------------------- |
+| Event hooks (in-process, API-only)        | `HOOK_EVENT_TYPES`    | dot-separated (`agent.updated`) | `lib/orchestration/hooks/types.ts`                          |
+| Webhook subscriptions (durable, admin-UI) | `WEBHOOK_EVENT_TYPES` | snake_case (`agent_updated`)    | `WEBHOOK_EVENT_TYPES` in `lib/validations/orchestration.ts` |
+
+Dual-dispatched events (agent updates, engine crashes, paused-for-approval) fire **both** — the in-process name with its dot-separated form and the webhook name with its snake-case form — so subscribers configured via either subsystem receive the alert.
+
+### Wired vs. disabled webhook event types
+
+`WEBHOOK_EVENT_TYPES` lists every event type the schema accepts. The subset that actually has a `dispatchWebhookEvent` call site lives in `WIRED_WEBHOOK_EVENT_TYPES` (same file). The Subscription form **disables** the rest in the picklist so admins can't subscribe to events that will never fire:
+
+- **Wired (admins can subscribe):** `budget_exceeded`, `workflow_failed`, `approval_required`, `circuit_breaker_opened`, `agent_updated`, `execution_crashed`.
+- **Defined but disabled:** `conversation_started`, `conversation_completed`, `message_created`, `budget_threshold_reached`, `execution_completed`, `execution_failed` — reserved for future emit sites; the form greys them out with an explanatory tooltip.
+
+When you wire a new event, move it from the disabled set to `WIRED_WEBHOOK_EVENT_TYPES` and update the emit-site table above. `isWiredWebhookEvent()` is the runtime check used by the schema and form.
+
+### Granularity convention
+
+Every wired webhook payload follows the same display-identity contract — opaque IDs are always paired with the human-readable slug + name, plus actor display info where the call site has it. This keeps receivers from needing a second round-trip to resolve IDs and makes Slack-style notification templates simple to author. The unified set of identity fields is:
+
+- `agentId` + `agentSlug` + `agentName` (for agent-scoped events)
+- `workflowId` + `workflowSlug` + `workflowName` (for workflow-scoped events)
+- `actorUserId` + `actorUserName` (whenever a human triggered the dispatch)
+- `executionId` (for workflow runs)
+
+Display names are resolved lazily via `resolveUserDisplayName` / `resolveWorkflowDisplay` / `resolveAgentDisplay` in `lib/orchestration/webhooks/payload-context.ts`. A DB lookup failure leaves the field absent rather than blocking dispatch.
 
 ## Event Payload
 
@@ -267,6 +298,7 @@ Delivery rows persist across process restarts so admins can audit failures and m
 - **Setting**: shares the `webhookRetentionDays` column on `AiOrchestrationSettings` with outbound webhook subscriptions — event-hook deliveries and subscription deliveries are the same class of dispatch-audit data.
 - **Null setting → skip**: if `webhookRetentionDays` is unset the sweep is a no-op and rows accumulate indefinitely.
 - **Target table**: `AiEventHookDelivery`. Deletes rows whose `createdAt` is older than `now - webhookRetentionDays`.
+- **DLQ split** (webhook subscriptions only, not event hooks): `pruneWebhookDeliveries` uses `webhookRetentionDays` for `pending`/`delivered`/`failed` rows and `webhookDlqRetentionDays` for `exhausted` rows. When `webhookDlqRetentionDays` is null the prune falls back to the base value so the pre-DLQ unified retention behaviour is preserved.
 
 See [Retention Pruning](./scheduling.md#retention-pruning) for the full list of prune sweeps.
 
@@ -296,6 +328,32 @@ Workflow steps can specify `approverUserIds` (array of CUIDs) in the `human_appr
 - **Admin endpoints** (`/admin/orchestration/executions/:id/approve|reject|cancel`): Allow access if the caller owns the execution OR their user ID is in the `approverUserIds` list from the trace's `awaiting_approval` output entry. Delegated approvers can only cancel `paused_for_approval` executions, not `running` ones. Non-authorized users get 404 (not 403).
 - **Token endpoints** (`/orchestration/approvals/:id/approve|reject`): Token is the authorization — no ownership check needed. Anyone with a valid, unexpired token can act.
 - **Event payloads**: `approverUserIds` is included in hook/webhook payloads so external routing systems can target specific approvers.
+
+## Webhook Payload Conventions
+
+Outbound events follow a consistent shape so receivers can write one
+template that covers any update event:
+
+- **Opaque IDs come paired with display names** — `agentId` /
+  `agentSlug` / `agentName`, `workflowId` / `workflowSlug` /
+  `workflowName`, `actorUserId` / `actorUserName`. Slug + name are
+  post-update; when a rename is the event itself, the top-level fields
+  show the new values and `changes.{slug,name}` carries the from/to.
+- **Actor info is best-effort.** `actorUserName` comes from a fresh
+  DB lookup (`resolveUserDisplayName` in
+  `lib/orchestration/webhooks/payload-context.ts`); a DB failure is
+  swallowed and the field is omitted rather than blocking the event.
+  `actorUserId` is always present when the call site has it in scope.
+- **`changes` is `{ field: { from, to } }`.** Mirrors GitHub `changes`
+  and Stripe `previous_attributes`. String values over 500 chars are
+  truncated to `<first 500>… [truncated]` to keep receivers under
+  their body-size limits. Used today by `agent_updated`; planned
+  rollout for other update events.
+- **`circuit_breaker_opened`** dispatches once per closed→open or
+  half_open→open transition. The dispatch is guarded against
+  duplicates while the breaker stays open; receivers don't get a new
+  event from a flapping provider until the breaker actually cycles.
+  Payload: `{ providerSlug, failures, threshold, windowMs, cooldownMs, openedAt }`.
 
 ## Related Docs
 

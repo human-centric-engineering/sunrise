@@ -807,8 +807,12 @@ describe('ApprovalCard — error and cleanup paths', () => {
     const pollSignal = capturedSignals[1];
     expect(pollSignal.aborted).toBe(false);
 
-    // Act: unmount — the cleanup effect aborts both controllers
-    unmount();
+    // Act: unmount — the cleanup effect aborts both controllers. Wrap in act
+    // so the useEffect cleanup fires synchronously before the assertion. Under
+    // load, a bare unmount() can leave cleanup queued behind a microtask.
+    await act(async () => {
+      unmount();
+    });
 
     // Assert: both signals are now aborted
     expect(submitSignal.aborted).toBe(true);

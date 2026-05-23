@@ -11,6 +11,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -176,30 +177,28 @@ export function AuditLogView() {
             <Label htmlFor="audit-date-from" className="text-muted-foreground text-xs">
               From
             </Label>
-            <Input
+            <DatePicker
               id="audit-date-from"
-              type="date"
               value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
+              onChange={(v) => {
+                setDateFrom(v);
                 setPage(1);
               }}
-              className="w-[140px]"
+              className="w-[160px]"
             />
           </div>
           <div>
             <Label htmlFor="audit-date-to" className="text-muted-foreground text-xs">
               To
             </Label>
-            <Input
+            <DatePicker
               id="audit-date-to"
-              type="date"
               value={dateTo}
-              onChange={(e) => {
-                setDateTo(e.target.value);
+              onChange={(v) => {
+                setDateTo(v);
                 setPage(1);
               }}
-              className="w-[140px]"
+              className="w-[160px]"
             />
           </div>
         </div>

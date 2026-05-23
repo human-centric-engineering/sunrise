@@ -744,8 +744,10 @@ describe('AuditModelsDialog', () => {
       );
 
       // Initiate an audit so the dialog swaps into the inline-progress view.
-      await user.click(screen.getByRole('button', { name: /^select all$/i }));
-      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      // findByRole instead of getByRole — Radix renders into a portal and
+      // under load the portal may not be mounted on the first sync tick.
+      await user.click(await screen.findByRole('button', { name: /^select all$/i }));
+      await user.click(await screen.findByRole('button', { name: /audit 2 models/i }));
       await waitFor(() => screen.getByTestId('execution-progress-inline'));
 
       // Dismiss via the running-state "Run in background" footer button —
@@ -808,8 +810,8 @@ describe('AuditModelsDialog', () => {
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
 
-      await user.click(screen.getByRole('button', { name: /^select all$/i }));
-      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      await user.click(await screen.findByRole('button', { name: /^select all$/i }));
+      await user.click(await screen.findByRole('button', { name: /audit 2 models/i }));
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalled();
@@ -843,10 +845,12 @@ describe('AuditModelsDialog', () => {
 
       // Initial state is empty; select only the OpenAI model via row click
       // (avoids the double-toggle that would fire if we clicked the input).
-      const gptCheckbox = screen.getByRole('checkbox', { name: /select gpt-5 for audit/i });
+      const gptCheckbox = await screen.findByRole('checkbox', {
+        name: /select gpt-5 for audit/i,
+      });
       const gptRow = gptCheckbox.closest('[role="button"]') as HTMLElement;
       await user.click(gptRow);
-      await user.click(screen.getByRole('button', { name: /audit 1 model$/i }));
+      await user.click(await screen.findByRole('button', { name: /audit 1 model$/i }));
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalled();
@@ -955,8 +959,8 @@ describe('AuditModelsDialog', () => {
       const user = userEvent.setup();
       render(<AuditModelsDialog {...DEFAULT_PROPS} />);
 
-      await user.click(screen.getByRole('button', { name: /^select all$/i }));
-      await user.click(screen.getByRole('button', { name: /audit 2 models/i }));
+      await user.click(await screen.findByRole('button', { name: /^select all$/i }));
+      await user.click(await screen.findByRole('button', { name: /audit 2 models/i }));
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument();

@@ -233,14 +233,21 @@ describe('background workflow crash flow (e2e)', () => {
 
     // 6b. The webhook subscriptions subsystem should also receive the event so
     // admins who configured a webhook via the /admin/orchestration/event-subscriptions UI
-    // (instead of the API-only event hooks) get the same notification.
-    expect(dispatchWebhookEvent).toHaveBeenCalledWith('execution_crashed', {
-      executionId: EXECUTION_ID,
-      workflowId: WORKFLOW_ID,
-      workflowSlug: WORKFLOW_SLUG,
-      userId: ADMIN_ID,
-      error: 'engine internal failure',
-    });
+    // (instead of the API-only event hooks) get the same notification. The
+    // webhook payload also carries display names (workflowName, actorUserName)
+    // resolved on dispatch — assert the core crash fields and tolerate the
+    // resolved/undefined name fields without coupling to the exact payload shape.
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'execution_crashed',
+      expect.objectContaining({
+        executionId: EXECUTION_ID,
+        workflowId: WORKFLOW_ID,
+        workflowSlug: WORKFLOW_SLUG,
+        userId: ADMIN_ID,
+        actorUserId: ADMIN_ID,
+        error: 'engine internal failure',
+      })
+    );
 
     // 7. A subscriber polling /status after the hook fires sees the failed row
     const statusResponse = await GetStatus(

@@ -102,6 +102,60 @@ const MOCK_PROVIDERS = [
 
 const MOCK_MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
 
+// ─── Test helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * The page makes ≥6 parallel `serverFetch` calls inside `Promise.all`
+ * (agent + providers + 2× provider-models + evaluation-trend + profiles).
+ * The previous `mockResolvedValueOnce` queue pattern matched responses by
+ * invocation order, which is non-deterministic under load — under the
+ * full test suite it could drift, causing the wrong response to land on
+ * the agent fetch and crashing downstream code (e.g. `agent.provider`
+ * undefined → TypeError in getEffectiveAgentDefaults).
+ *
+ * This helper dispatches on URL substring so order doesn't matter.
+ * `parseApiResponse` is then mocked to read the JSON body of whatever
+ * Response it receives, preserving end-to-end fidelity.
+ */
+type EndpointResponse = { ok?: boolean; success?: boolean; data?: unknown; error?: unknown };
+function setupServerFetch(
+  serverFetch: ReturnType<typeof vi.fn>,
+  parseApiResponse: ReturnType<typeof vi.fn>,
+  routes: Record<string, EndpointResponse>
+): void {
+  // Sort by pattern length descending so the most specific pattern wins —
+  // otherwise `/providers` would also match `/provider-models`.
+  const patterns = Object.entries(routes).sort((a, b) => b[0].length - a[0].length);
+  const dispatch = (url: string | URL): Response => {
+    const urlStr = typeof url === 'string' ? url : url.toString();
+    for (const [pattern, resp] of patterns) {
+      if (urlStr.includes(pattern)) {
+        const body = JSON.stringify({
+          success: resp.success !== false,
+          data: resp.data,
+          ...(resp.error ? { error: resp.error } : {}),
+        });
+        return new Response(body, {
+          status: resp.ok === false ? 500 : 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+    // Safe default for unspecified endpoints (e.g. evaluation-trend, profiles)
+    return new Response(JSON.stringify({ success: true, data: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  vi.mocked(serverFetch).mockImplementation(((url: string | URL) =>
+    Promise.resolve(dispatch(url))) as never);
+  vi.mocked(parseApiResponse).mockImplementation(((res: Response) => {
+    if (!res.ok)
+      return Promise.resolve({ success: false, error: { message: 'not ok', code: 'NOT_OK' } });
+    return res.json();
+  }) as never);
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditAgentPage (server component)', () => {
@@ -114,60 +168,51 @@ describe('EditAgentPage (server component)', () => {
   });
 
   it('renders agent name as heading in edit mode', async () => {
-    // Arrange
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENT })
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-      .mockResolvedValueOnce({ success: true, data: MOCK_MODELS });
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/agents/agent-edit-id': { data: MOCK_AGENT },
+      '/providers': { data: MOCK_PROVIDERS },
+      '/provider-models': { data: MOCK_MODELS },
+    });
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
-    // Act
     render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
 
-    // Assert: agent name rendered
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /my edit agent/i })).toBeInTheDocument();
     });
   });
 
   it('shows "Save changes" button in edit mode', async () => {
-    // Arrange
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENT })
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-      .mockResolvedValueOnce({ success: true, data: MOCK_MODELS });
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/agents/agent-edit-id': { data: MOCK_AGENT },
+      '/providers': { data: MOCK_PROVIDERS },
+      '/provider-models': { data: MOCK_MODELS },
+    });
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
-    // Act
     render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
 
-    // Assert
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
     });
   });
 
   it('slug field is pre-filled and disabled in edit mode', async () => {
-    // Arrange
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_AGENT })
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-      .mockResolvedValueOnce({ success: true, data: MOCK_MODELS });
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/agents/agent-edit-id': { data: MOCK_AGENT },
+      '/providers': { data: MOCK_PROVIDERS },
+      '/provider-models': { data: MOCK_MODELS },
+    });
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
-    // Act
     render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
 
-    // Assert: slug pre-filled and disabled
     await waitFor(() => {
       const slugInput = screen.getByRole('textbox', { name: /^slug/i });
       expect((slugInput as HTMLInputElement).value).toBe('my-edit-agent');
@@ -176,22 +221,21 @@ describe('EditAgentPage (server component)', () => {
   });
 
   it('calls notFound() when agent fetch returns null', async () => {
-    // Arrange
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { message: 'Not found', code: 'NOT_FOUND' },
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/agents/nonexistent-id': {
+        ok: false,
+        success: false,
+        error: { message: 'Not found', code: 'NOT_FOUND' },
+      },
     });
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
-    // Act: notFound() throws NEXT_NOT_FOUND
     await expect(
       EditAgentPage({ params: Promise.resolve({ id: 'nonexistent-id' }) })
     ).rejects.toThrow('NEXT_NOT_FOUND');
 
-    // Assert: notFound was called
     expect(mockNotFound).toHaveBeenCalledOnce();
   });
 
@@ -199,41 +243,56 @@ describe('EditAgentPage (server component)', () => {
 
   describe('provider/model fetch fallbacks', () => {
     it('renders with null providers when provider fetch rejects', async () => {
-      // Arrange: agent fetch succeeds; provider fetch rejects; model fetch succeeds
       const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 2) throw new Error('Network error');
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_AGENT }) // agent
-        .mockResolvedValueOnce({ success: true, data: MOCK_MODELS }); // models
+      // URL-aware mock: the provider fetch throws, everything else succeeds.
+      vi.mocked(serverFetch).mockImplementation(((url: string | URL) => {
+        const urlStr = typeof url === 'string' ? url : url.toString();
+        if (urlStr.includes('/providers') && !urlStr.includes('provider-models')) {
+          return Promise.reject(new Error('Network error'));
+        }
+        const body = (data: unknown): Response =>
+          new Response(JSON.stringify({ success: true, data }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        if (urlStr.includes('/agents/agent-edit-id')) return Promise.resolve(body(MOCK_AGENT));
+        if (urlStr.includes('/provider-models')) return Promise.resolve(body(MOCK_MODELS));
+        return Promise.resolve(body([]));
+      }) as never);
+      vi.mocked(parseApiResponse).mockImplementation(((res: Response) => res.json()) as never);
 
       const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
-      // Act: should not throw
       render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
 
-      // Assert: page still renders its structural heading (graceful degradation)
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: /my edit agent/i })).toBeInTheDocument();
       });
     });
 
     it('renders with null providers when provider fetch returns res.ok=false', async () => {
-      // Arrange: agent ok, provider not ok, model ok
       const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 2) return Promise.resolve({ ok: false } as Response);
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_AGENT }) // agent
-        .mockResolvedValueOnce({ success: true, data: MOCK_MODELS }); // models (provider skips parseApiResponse)
+      // /providers and /provider-models share a prefix, so use explicit URL
+      // matching instead of substring-based setupServerFetch.
+      vi.mocked(serverFetch).mockImplementation(((url: string | URL) => {
+        const urlStr = typeof url === 'string' ? url : url.toString();
+        const body = (data: unknown): Response =>
+          new Response(JSON.stringify({ success: true, data }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        if (urlStr.includes('/agents/agent-edit-id')) return Promise.resolve(body(MOCK_AGENT));
+        if (urlStr.includes('/provider-models')) return Promise.resolve(body(MOCK_MODELS));
+        if (urlStr.endsWith('/admin/orchestration/providers')) {
+          return Promise.resolve({ ok: false } as Response);
+        }
+        return Promise.resolve(body([]));
+      }) as never);
+      vi.mocked(parseApiResponse).mockImplementation(((res: Response) => {
+        if (!res.ok)
+          return Promise.resolve({ success: false, error: { message: 'not ok', code: 'NOT_OK' } });
+        return res.json();
+      }) as never);
 
       const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -245,16 +304,15 @@ describe('EditAgentPage (server component)', () => {
     });
 
     it('renders with null models when model parseApiResponse returns success=false', async () => {
-      // Arrange: agent and provider succeed; model parseApiResponse returns failure
       const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_AGENT })
-        .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS })
-        .mockResolvedValueOnce({
+      setupServerFetch(serverFetch as never, parseApiResponse as never, {
+        '/agents/agent-edit-id': { data: MOCK_AGENT },
+        '/provider-models': {
           success: false,
           error: { message: 'Registry unavailable', code: 'SERVICE_ERROR' },
-        });
+        },
+        '/providers': { data: MOCK_PROVIDERS },
+      });
 
       const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 

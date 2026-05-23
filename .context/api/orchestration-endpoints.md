@@ -115,6 +115,10 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/webhooks/:id/test`                      | POST               | Send test ping (requires signing secret)                                                                                                                                                                                   | 5.1     |
 | `/webhooks/:id/deliveries`                | GET                | List delivery history (owner-scoped)                                                                                                                                                                                       | 5.1     |
 | `/webhooks/deliveries/:id/retry`          | POST               | Retry a failed delivery (owner-scoped)                                                                                                                                                                                     | 5.1     |
+| `/webhooks/deliveries/:id`                | DELETE             | Discard a single delivery row from the DLQ (owner-scoped)                                                                                                                                                                  | 5.1     |
+| `/webhooks/dlq`                           | GET                | Cross-subscription dead-letter list (owner-scoped, `status=exhausted`); filters: `subscriptionId?`, `eventType?`, `since?`, `until?`                                                                                       | 5.1     |
+| `/webhooks/dlq/stats`                     | GET                | DLQ depth signal: `exhausted24h`, `exhaustedTotal`, `oldestExhaustedAt`                                                                                                                                                    | 5.1     |
+| `/webhooks/dlq/replay`                    | POST               | Bulk re-dispatch: `{ deliveryIds[] }` (max 500) OR `{ subscriptionId, before? }`. Non-owned ids are silently skipped                                                                                                       | 5.1     |
 | `/hooks/:id/deliveries`                   | GET                | Paginated delivery history for an event hook                                                                                                                                                                               | 5.1     |
 | `/hooks/:id/rotate-secret`                | POST, DELETE       | Rotate or clear event hook HMAC signing secret                                                                                                                                                                             | 5.1     |
 | `/hooks/deliveries/:id/retry`             | POST               | Retry a failed / exhausted event-hook delivery                                                                                                                                                                             | 5.1     |
@@ -1259,11 +1263,27 @@ Paginated list of the caller's webhook subscriptions. Query: `page`, `limit`, `i
 
 ### `POST /webhooks`
 
-Create a webhook subscription. Body: `{ url: string, secret: string, events: string[], description?: string, isActive?: boolean }`. Secret is required (min 16 chars). Returns `201` with the created subscription (secret is never returned in responses).
+Create a webhook subscription. Body: `{ url: string, secret: string, events: string[], description?: string, isActive?: boolean, maxAttempts?: number, retryBackoffMs?: number[] }`. Secret is required (min 16 chars). `maxAttempts` 1–10 (default 3) and `retryBackoffMs` (each entry 1s–24h, length ≥ `maxAttempts - 1`) configure per-subscription retry behaviour. Returns `201` with the created subscription (secret is never returned in responses).
 
 ### `GET / PATCH / DELETE /webhooks/:id`
 
-Standard CRUD for a single webhook subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ url?, secret?, events?, description?, isActive? }`. `DELETE` is a hard delete.
+Standard CRUD for a single webhook subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ url?, secret?, events?, description?, isActive?, maxAttempts?, retryBackoffMs? }`. `DELETE` is a hard delete.
+
+### `DELETE /webhooks/deliveries/:id`
+
+Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription; audit-logged as `webhook_delivery.delete`.
+
+### `GET /webhooks/dlq`
+
+List exhausted deliveries across all subscriptions the calling admin owns. Query: `page`, `pageSize`, `subscriptionId?`, `eventType?`, `since?` (ISO date), `until?` (ISO date). Always filtered to `status=exhausted` + the caller's subscriptions.
+
+### `GET /webhooks/dlq/stats`
+
+Lightweight depth signal for the health dashboard. Returns `{ exhausted24h, exhaustedTotal, oldestExhaustedAt }` scoped to the caller's subscriptions. Improvement #41 (health dashboard) will surface this.
+
+### `POST /webhooks/dlq/replay`
+
+Bulk re-dispatch of exhausted deliveries. Body is either `{ deliveryIds: string[] }` (max 500 entries) or `{ subscriptionId, before?: ISO date }` (replay all exhausted rows for a single subscription, optionally capped by `createdAt < before`). Loops the per-row `retryDelivery()` with concurrency cap 5. Rows not owned by the caller are silently skipped (a partial selection doesn't 403 the batch). Returns `{ replayed, skipped, deliveryIds }`. Audit-logged as `webhook_delivery.replay_batch`.
 
 ---
 

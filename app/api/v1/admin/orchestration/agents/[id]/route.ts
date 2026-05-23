@@ -23,6 +23,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
 import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
@@ -39,6 +40,35 @@ function parseAgentId(raw: string): string {
     throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
   }
   return parsed.data;
+}
+
+/**
+ * Cap on each string value inside an outbound `changes` payload. Agents'
+ * `systemInstructions` can be 50k+ chars and `metadata` is unbounded; we
+ * truncate so a single update doesn't blow through a typical receiver's
+ * body-size limit. Matches the spirit of the 200-char error truncation in
+ * `lib/orchestration/scheduling/scheduler.ts`.
+ */
+const WEBHOOK_FIELD_VALUE_MAX_LEN = 500;
+
+function truncateForWebhookPayload(value: unknown): unknown {
+  if (typeof value === 'string' && value.length > WEBHOOK_FIELD_VALUE_MAX_LEN) {
+    return `${value.slice(0, WEBHOOK_FIELD_VALUE_MAX_LEN)}… [truncated]`;
+  }
+  return value;
+}
+
+function truncateChangesForPayload(
+  changes: Record<string, { from: unknown; to: unknown }>
+): Record<string, { from: unknown; to: unknown }> {
+  const out: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [field, { from, to }] of Object.entries(changes)) {
+    out[field] = {
+      from: truncateForWebhookPayload(from),
+      to: truncateForWebhookPayload(to),
+    };
+  }
+  return out;
 }
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
@@ -286,6 +316,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     !arraysEqualUnordered(body.grantedDocumentIds, currentGrantedDocumentIds);
   const grantsChanged = tagGrantsChanged || docGrantsChanged;
 
+  // Captured inside the version-snapshot branch and surfaced in the
+  // agent_updated payload so subscribers can fetch the snapshot via
+  // /agents/:id/versions/:v. Stays null when the PATCH only touched
+  // unversioned fields.
+  let bumpedToVersion: number | null = null;
+
   try {
     // Auto-create version snapshot if versioned fields changed.
     // Both the snapshot and the update run inside a transaction so an
@@ -299,6 +335,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           select: { version: true },
         });
         const nextVersion = (lastVersion?.version ?? 0) + 1;
+        bumpedToVersion = nextVersion;
 
         // Snapshot the current (pre-update) agent config
         const snapshot = {
@@ -388,10 +425,33 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       invalidateAgentAccess(id);
     }
 
+    // Shallow diff of before-vs-after. `Object.keys(data)` would over-report —
+    // it includes every field in the PATCH body even when the submitted value
+    // matches the existing one (e.g. a form save where only one field was
+    // edited still ships the whole form payload).
+    //
+    // Ignored keys:
+    //   - `updatedAt` — Prisma's `@updatedAt` bumps on every `update()` call,
+    //     so it would mark every PATCH as a change even when the user-visible
+    //     state is identical. The whole point of the diff is "did the user
+    //     change anything?", not "did the row get touched?".
+    //   - `createdAt` — never changes on update, but safe to filter.
+    //   - `grantedTags` / `grantedDocuments` — `current` carries these from
+    //     the initial `findUnique({ include: ... })`, but `agent` is the
+    //     return from `tx.aiAgent.update` with no `include`, so they'd be
+    //     reported as `array → undefined` on every PATCH. The grant changes
+    //     are tracked separately via `grantsChanged` higher up.
+    const changes = computeChanges(
+      current as unknown as Record<string, unknown>,
+      agent as unknown as Record<string, unknown>,
+      { ignoreKeys: ['updatedAt', 'createdAt', 'grantedTags', 'grantedDocuments'] }
+    );
+    const fieldsChanged = changes ? Object.keys(changes) : [];
+
     log.info('Agent updated', {
       agentId: id,
       adminId: session.user.id,
-      fieldsChanged: Object.keys(data),
+      fieldsChanged,
     });
 
     logAdminAction({
@@ -400,18 +460,50 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       entityType: 'agent',
       entityId: id,
       entityName: agent.name,
-      changes: computeChanges(
-        current as unknown as Record<string, unknown>,
-        agent as unknown as Record<string, unknown>
-      ),
+      changes,
       clientIp: clientIP,
     });
 
-    emitHookEvent('agent.updated', {
-      agentId: id,
-      agentSlug: agent.slug,
-      fieldsChanged: Object.keys(data),
-    });
+    // Only notify subscribers when something actually changed. A no-op PATCH
+    // (form save with no edits) shouldn't generate webhook traffic.
+    if (changes) {
+      const agentUpdatedPayload = {
+        agentId: id,
+        // Post-update slug + name so receivers have human-readable
+        // identifiers without an extra API call. When the rename is the
+        // change itself, these reflect the new values and `changes.name`
+        // / `changes.slug` carry the from/to transition.
+        agentSlug: agent.slug,
+        agentName: agent.name,
+        // Who initiated the change — `actorUserId` matches the convention
+        // already used by `execution.force_failed`. `actorUserName` is
+        // the display-name counterpart, same reasoning as `agentName`:
+        // human-readable text for Slack / email receivers without an
+        // extra API call. Email is intentionally omitted — names are
+        // already shown in the admin UI; emails are stronger PII and
+        // should stay server-side.
+        actorUserId: session.user.id,
+        actorUserName: session.user.name,
+        // Number of the snapshot this PATCH created (so receivers can
+        // GET /agents/:id/versions/:v). Null when only unversioned
+        // fields were touched and no snapshot was created — not every
+        // PATCH bumps the version.
+        agentVersion: bumpedToVersion,
+        // `{ field: { from, to } }` matches GitHub's `changes` and Stripe's
+        // `previous_attributes` conventions. Large string values are
+        // truncated to keep payloads under receiver size limits — agents'
+        // `systemInstructions` can be 50k+ chars and would otherwise blow
+        // through a typical 1MB webhook receiver cap.
+        changes: truncateChangesForPayload(changes),
+      };
+
+      // Two distinct outbound subsystems — see .context/orchestration/hooks.md.
+      // Event hooks (AiEventHook) use dotted event names; webhook subscriptions
+      // (AiWebhookSubscription) use underscore names. Dual-dispatch so admins
+      // configured via either surface receive the notification.
+      emitHookEvent('agent.updated', agentUpdatedPayload);
+      void dispatchWebhookEvent('agent_updated', agentUpdatedPayload);
+    }
 
     return successResponse(agent);
   } catch (err) {

@@ -16,6 +16,7 @@ import { ChevronLeft, ChevronRight, Download, Loader2, RotateCcw } from 'lucide-
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -264,22 +265,20 @@ export function ApprovalsHistoryTable(): ReactElement {
           <Label htmlFor="approval-history-from" className="text-xs">
             From
           </Label>
-          <Input
+          <DatePicker
             id="approval-history-from"
-            type="date"
             value={filters.dateFrom}
-            onChange={(e) => setFilters((f) => ({ ...f, dateFrom: e.target.value }))}
+            onChange={(v) => setFilters((f) => ({ ...f, dateFrom: v }))}
           />
         </div>
         <div className="space-y-1">
           <Label htmlFor="approval-history-to" className="text-xs">
             To
           </Label>
-          <Input
+          <DatePicker
             id="approval-history-to"
-            type="date"
             value={filters.dateTo}
-            onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value }))}
+            onChange={(v) => setFilters((f) => ({ ...f, dateTo: v }))}
           />
         </div>
       </div>
