@@ -28,6 +28,7 @@ import {
   WEBHOOK_EVENT_TYPES,
   WEBHOOK_MAX_ATTEMPTS_MIN,
   WEBHOOK_MAX_ATTEMPTS_MAX,
+  isWiredWebhookEvent,
 } from '@/lib/validations/orchestration';
 
 // ─── Schema ────────────────────────────────────────────────────────────────
@@ -390,15 +391,26 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
         <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
           {WEBHOOK_EVENT_TYPES.map((event) => {
             const checked = currentEvents.includes(event);
+            // An event is "wired" when there's a dispatchWebhookEvent call
+            // for it somewhere in the codebase. Unwired events stay in
+            // the list (so admins know the full set) but are disabled.
+            const wired = isWiredWebhookEvent(event);
             return (
-              <label key={event} className="flex items-center gap-2 text-sm">
+              <label
+                key={event}
+                className={`flex items-center gap-2 text-sm ${
+                  wired ? '' : 'text-muted-foreground cursor-not-allowed opacity-60'
+                }`}
+                title={wired ? undefined : 'This event is not yet supported.'}
+              >
                 <input
                   type="checkbox"
-                  className="rounded border-gray-300"
+                  className="rounded border-gray-300 disabled:cursor-not-allowed"
                   checked={checked}
-                  onChange={() => toggleEvent(event)}
+                  disabled={!wired}
+                  onChange={() => wired && toggleEvent(event)}
                 />
-                {EVENT_LABELS[event] ?? event}
+                <span>{EVENT_LABELS[event] ?? event}</span>
               </label>
             );
           })}

@@ -814,6 +814,28 @@ export const WEBHOOK_EVENT_TYPES = [
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 
 /**
+ * Subset of `WEBHOOK_EVENT_TYPES` that actually has a `dispatchWebhookEvent`
+ * call site in the codebase. The form greys out everything else so admins
+ * don't subscribe to events that will never fire.
+ *
+ * Keep this in sync with the emit-site table in
+ * `.context/orchestration/hooks.md`. When you wire a previously unwired
+ * event, move it into this list.
+ */
+export const WIRED_WEBHOOK_EVENT_TYPES = [
+  'budget_exceeded',
+  'workflow_failed',
+  'approval_required',
+  'circuit_breaker_opened',
+  'agent_updated',
+  'execution_crashed',
+] as const satisfies readonly WebhookEventType[];
+
+export function isWiredWebhookEvent(event: string): event is WebhookEventType {
+  return (WIRED_WEBHOOK_EVENT_TYPES as readonly string[]).includes(event);
+}
+
+/**
  * Retry policy bounds — picked to keep behaviour predictable for partners.
  * 10 attempts × 24h ceiling per backoff entry is enough headroom for any
  * realistic notification stream while preventing a misconfigured row from

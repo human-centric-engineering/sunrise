@@ -550,6 +550,69 @@ describe('WebhookForm', () => {
 
   // ── Secret affordances: reveal / copy / capture cue ─────────────────────────
 
+  // ── Event picklist: unwired events are disabled ────────────────────────────
+
+  it('disables event checkboxes whose dispatch path is not wired yet', () => {
+    render(<WebhookForm mode="create" />);
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    // Map each checkbox to its visible label text.
+    const states = checkboxes.map((cb) => ({
+      label: cb.closest('label')?.textContent ?? '',
+      disabled: (cb as HTMLInputElement).disabled,
+    }));
+
+    // Wired events — must be enabled. Source of truth:
+    // WIRED_WEBHOOK_EVENT_TYPES in lib/validations/orchestration.ts.
+    const wired = [
+      'Budget Exceeded',
+      'Workflow Failed',
+      'Approval Required',
+      'Circuit Breaker Opened',
+      'Agent Updated',
+      'Execution Crashed',
+    ];
+    for (const label of wired) {
+      const entry = states.find((s) => s.label.startsWith(label));
+      expect(entry, `${label} should be in the picklist`).toBeDefined();
+      expect(entry!.disabled, `${label} should be enabled`).toBe(false);
+    }
+
+    // Unwired events — present but disabled.
+    const unwired = [
+      'Conversation Started',
+      'Conversation Completed',
+      'Message Created',
+      'Budget Threshold Reached',
+      'Execution Completed',
+      'Execution Failed',
+    ];
+    for (const label of unwired) {
+      const entry = states.find((s) => s.label.startsWith(label));
+      expect(entry, `${label} should be in the picklist`).toBeDefined();
+      expect(entry!.disabled, `${label} should be disabled`).toBe(true);
+    }
+  });
+
+  it('clicking a disabled event checkbox does not select it', async () => {
+    const user = userEvent.setup();
+    render(<WebhookForm mode="create" />);
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    const messageCreated = checkboxes.find((cb) => {
+      const label = cb.closest('label');
+      return label?.textContent?.includes('Message Created');
+    });
+    expect(messageCreated).toBeDefined();
+    expect((messageCreated as HTMLInputElement).disabled).toBe(true);
+
+    // Browsers ignore clicks on disabled inputs; assert state stays unchecked.
+    await user.click(messageCreated!);
+    expect((messageCreated as HTMLInputElement).checked).toBe(false);
+  });
+
+  // ── Secret affordances: reveal / copy / capture cue ─────────────────────────
+
   it('reveal/copy buttons are disabled when the secret field is empty', () => {
     render(<WebhookForm mode="create" />);
 
