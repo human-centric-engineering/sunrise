@@ -54,10 +54,18 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
-vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
-  logAdminAction: vi.fn(),
-  computeChanges: vi.fn(),
-}));
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', async () => {
+  // `computeChanges` is a pure utility — let the real implementation run so
+  // tests exercise the real before/after diff. Only `logAdminAction` is
+  // stubbed out (it performs a DB write we don't want in unit tests).
+  const actual = await vi.importActual<
+    typeof import('@/lib/orchestration/audit/admin-audit-logger')
+  >('@/lib/orchestration/audit/admin-audit-logger');
+  return {
+    ...actual,
+    logAdminAction: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
@@ -269,12 +277,13 @@ describe('System agent protection', () => {
       // either surface receive the notification — historically the
       // webhook-subscription side was silently dropped, which is what
       // this test guards against.
-      const agent = makeCustomAgent({ description: 'updated description' });
-      mockFindUnique.mockResolvedValue(agent);
-      mockUpdate.mockResolvedValue(agent);
+      const before = makeCustomAgent({ description: 'old description' });
+      const after = { ...before, description: 'new description' };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
 
       const response = await PATCH(
-        makePatchRequest({ description: 'updated description' }),
+        makePatchRequest({ description: 'new description' }),
         makeParams(AGENT_ID)
       );
       expect(response.status).toBe(200);
@@ -283,7 +292,7 @@ describe('System agent protection', () => {
         'agent.updated',
         expect.objectContaining({
           agentId: AGENT_ID,
-          agentSlug: agent.slug,
+          agentSlug: after.slug,
           fieldsChanged: ['description'],
         })
       );
@@ -291,10 +300,54 @@ describe('System agent protection', () => {
         'agent_updated',
         expect.objectContaining({
           agentId: AGENT_ID,
-          agentSlug: agent.slug,
+          agentSlug: after.slug,
           fieldsChanged: ['description'],
         })
       );
+    });
+
+    it('fieldsChanged contains only the fields that actually changed value', async () => {
+      // The form submits the entire record on save; the route must filter
+      // down to fields whose value actually differs between before/after.
+      // Object.keys(data) would over-report and ship `name` here even
+      // though the submitted value matches what's already stored.
+      const before = makeCustomAgent({
+        name: 'Same Name',
+        description: 'old',
+        model: 'claude-sonnet-4-6',
+      });
+      const after = { ...before, description: 'new' }; // only description changed
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+
+      const response = await PATCH(
+        // PATCH body includes name (unchanged) AND description (changed).
+        makePatchRequest({ name: 'Same Name', description: 'new' }),
+        makeParams(AGENT_ID)
+      );
+      expect(response.status).toBe(200);
+
+      const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
+        fieldsChanged: string[];
+      };
+      expect(payload.fieldsChanged).toEqual(['description']);
+      // Belt-and-braces: explicitly assert `name` did not slip through.
+      expect(payload.fieldsChanged).not.toContain('name');
+    });
+
+    it('does not dispatch when the PATCH produced no actual changes', async () => {
+      // Form save with no edits — every field matches what's already stored.
+      // Subscribers don't want a notification in this case.
+      const unchanged = makeCustomAgent({ description: 'same' });
+      mockFindUnique.mockResolvedValue(unchanged);
+      mockUpdate.mockResolvedValue(unchanged);
+
+      const response = await PATCH(makePatchRequest({ description: 'same' }), makeParams(AGENT_ID));
+      expect(response.status).toBe(200);
+
+      // test-review:accept no_arg_called — guards a noise-suppression path; assertion that nothing fires is the contract
+      expect(emitHookEvent).not.toHaveBeenCalled();
+      expect(dispatchWebhookEvent).not.toHaveBeenCalled();
     });
   });
 });

@@ -389,10 +389,20 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       invalidateAgentAccess(id);
     }
 
+    // Shallow diff of before-vs-after. `Object.keys(data)` would over-report —
+    // it includes every field in the PATCH body even when the submitted value
+    // matches the existing one (e.g. a form save where only one field was
+    // edited still ships the whole form payload).
+    const changes = computeChanges(
+      current as unknown as Record<string, unknown>,
+      agent as unknown as Record<string, unknown>
+    );
+    const fieldsChanged = changes ? Object.keys(changes) : [];
+
     log.info('Agent updated', {
       agentId: id,
       adminId: session.user.id,
-      fieldsChanged: Object.keys(data),
+      fieldsChanged,
     });
 
     logAdminAction({
@@ -401,25 +411,26 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       entityType: 'agent',
       entityId: id,
       entityName: agent.name,
-      changes: computeChanges(
-        current as unknown as Record<string, unknown>,
-        agent as unknown as Record<string, unknown>
-      ),
+      changes,
       clientIp: clientIP,
     });
 
-    const agentUpdatedPayload = {
-      agentId: id,
-      agentSlug: agent.slug,
-      fieldsChanged: Object.keys(data),
-    };
+    // Only notify subscribers when something actually changed. A no-op PATCH
+    // (form save with no edits) shouldn't generate webhook traffic.
+    if (fieldsChanged.length > 0) {
+      const agentUpdatedPayload = {
+        agentId: id,
+        agentSlug: agent.slug,
+        fieldsChanged,
+      };
 
-    // Two distinct outbound subsystems — see .context/orchestration/hooks.md.
-    // Event hooks (AiEventHook) use dotted event names; webhook subscriptions
-    // (AiWebhookSubscription) use underscore names. We dual-dispatch so admins
-    // configured via either surface receive the notification.
-    emitHookEvent('agent.updated', agentUpdatedPayload);
-    void dispatchWebhookEvent('agent_updated', agentUpdatedPayload);
+      // Two distinct outbound subsystems — see .context/orchestration/hooks.md.
+      // Event hooks (AiEventHook) use dotted event names; webhook subscriptions
+      // (AiWebhookSubscription) use underscore names. Dual-dispatch so admins
+      // configured via either surface receive the notification.
+      emitHookEvent('agent.updated', agentUpdatedPayload);
+      void dispatchWebhookEvent('agent_updated', agentUpdatedPayload);
+    }
 
     return successResponse(agent);
   } catch (err) {
