@@ -34,6 +34,9 @@ vi.mock('next/headers', () => ({
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
+const mockVersionFindFirst = vi.fn();
+const mockVersionCreate = vi.fn();
+
 vi.mock('@/lib/db/client', () => {
   const mock = {
     aiAgent: {
@@ -41,8 +44,8 @@ vi.mock('@/lib/db/client', () => {
       update: (...args: unknown[]) => mockUpdate(...args),
     },
     aiAgentVersion: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({}),
+      findFirst: (...args: unknown[]) => mockVersionFindFirst(...args),
+      create: (...args: unknown[]) => mockVersionCreate(...args),
     },
     $transaction: vi.fn(),
   };
@@ -138,6 +141,9 @@ describe('System agent protection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    // Sensible defaults — most tests don't exercise the version path.
+    mockVersionFindFirst.mockResolvedValue(null);
+    mockVersionCreate.mockResolvedValue({});
   });
 
   describe('DELETE', () => {
@@ -281,6 +287,8 @@ describe('System agent protection', () => {
       const after = { ...before, description: 'new description' };
       mockFindUnique.mockResolvedValue(before);
       mockUpdate.mockResolvedValue(after);
+      // Previous max version is 4 → snapshot creates v5 → payload says agentVersion=5.
+      mockVersionFindFirst.mockResolvedValue({ version: 4 });
 
       const response = await PATCH(
         makePatchRequest({ description: 'new description' }),
@@ -291,11 +299,32 @@ describe('System agent protection', () => {
       const expectedShape = expect.objectContaining({
         agentId: AGENT_ID,
         agentSlug: after.slug,
+        agentName: after.name,
         actorUserId: expect.any(String),
+        actorUserName: expect.any(String),
+        agentVersion: 5,
         changes: { description: { from: 'old description', to: 'new description' } },
       });
       expect(emitHookEvent).toHaveBeenCalledWith('agent.updated', expectedShape);
       expect(dispatchWebhookEvent).toHaveBeenCalledWith('agent_updated', expectedShape);
+    });
+
+    it('agentName reflects the post-update name even when name itself changed', async () => {
+      // Rename case: the payload's top-level agentName carries the NEW
+      // name, while changes.name carries the from/to transition.
+      const before = makeCustomAgent({ name: 'Old Name' });
+      const after = { ...before, name: 'New Name' };
+      mockFindUnique.mockResolvedValue(before);
+      mockUpdate.mockResolvedValue(after);
+
+      await PATCH(makePatchRequest({ name: 'New Name' }), makeParams(AGENT_ID));
+
+      const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
+        agentName: string;
+        changes: Record<string, { from: unknown; to: unknown }>;
+      };
+      expect(payload.agentName).toBe('New Name');
+      expect(payload.changes.name).toEqual({ from: 'Old Name', to: 'New Name' });
     });
 
     it('changes contains only fields that actually changed value, with from/to', async () => {
@@ -357,7 +386,7 @@ describe('System agent protection', () => {
       expect(String(to).length).toBeLessThan(longAfter.length);
     });
 
-    it('includes actorUserId for the admin who made the change', async () => {
+    it('includes actorUserId and actorUserName for the admin who made the change', async () => {
       const before = makeCustomAgent({ description: 'old' });
       const after = { ...before, description: 'new' };
       mockFindUnique.mockResolvedValue(before);
@@ -365,12 +394,14 @@ describe('System agent protection', () => {
 
       await PATCH(makePatchRequest({ description: 'new' }), makeParams(AGENT_ID));
 
-      // mockAdminUser() returns a session with this fixed CUID — any change
-      // here means the auth fixture rotated.
+      // mockAdminUser() returns a session with this fixed CUID + name —
+      // any change here means the auth fixture rotated.
       const payload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1] as {
         actorUserId: string;
+        actorUserName: string;
       };
       expect(payload.actorUserId).toBe('cmjbv4i3x00003wsloputgwul');
+      expect(payload.actorUserName).toBe('Test User');
     });
 
     it('does not dispatch when the PATCH produced no actual changes', async () => {

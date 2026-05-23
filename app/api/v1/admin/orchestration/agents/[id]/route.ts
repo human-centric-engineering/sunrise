@@ -316,6 +316,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     !arraysEqualUnordered(body.grantedDocumentIds, currentGrantedDocumentIds);
   const grantsChanged = tagGrantsChanged || docGrantsChanged;
 
+  // Captured inside the version-snapshot branch and surfaced in the
+  // agent_updated payload so subscribers can fetch the snapshot via
+  // /agents/:id/versions/:v. Stays null when the PATCH only touched
+  // unversioned fields.
+  let bumpedToVersion: number | null = null;
+
   try {
     // Auto-create version snapshot if versioned fields changed.
     // Both the snapshot and the update run inside a transaction so an
@@ -329,6 +335,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           select: { version: true },
         });
         const nextVersion = (lastVersion?.version ?? 0) + 1;
+        bumpedToVersion = nextVersion;
 
         // Snapshot the current (pre-update) agent config
         const snapshot = {
@@ -449,10 +456,26 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     if (changes) {
       const agentUpdatedPayload = {
         agentId: id,
+        // Post-update slug + name so receivers have human-readable
+        // identifiers without an extra API call. When the rename is the
+        // change itself, these reflect the new values and `changes.name`
+        // / `changes.slug` carry the from/to transition.
         agentSlug: agent.slug,
-        // Who initiated the change — matches `actorUserId` already used by
-        // `execution.force_failed` (see .context/orchestration/hooks.md).
+        agentName: agent.name,
+        // Who initiated the change — `actorUserId` matches the convention
+        // already used by `execution.force_failed`. `actorUserName` is
+        // the display-name counterpart, same reasoning as `agentName`:
+        // human-readable text for Slack / email receivers without an
+        // extra API call. Email is intentionally omitted — names are
+        // already shown in the admin UI; emails are stronger PII and
+        // should stay server-side.
         actorUserId: session.user.id,
+        actorUserName: session.user.name,
+        // Number of the snapshot this PATCH created (so receivers can
+        // GET /agents/:id/versions/:v). Null when only unversioned
+        // fields were touched and no snapshot was created — not every
+        // PATCH bumps the version.
+        agentVersion: bumpedToVersion,
         // `{ field: { from, to } }` matches GitHub's `changes` and Stripe's
         // `previous_attributes` conventions. Large string values are
         // truncated to keep payloads under receiver size limits — agents'
