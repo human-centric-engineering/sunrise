@@ -52,6 +52,7 @@ vi.mock('@/lib/api/context', () => ({
 vi.mock('@/lib/orchestration/mcp', () => ({
   clearMcpResourceCache: vi.fn(),
   broadcastMcpResourcesChanged: vi.fn(),
+  broadcastMcpResourceUpdated: vi.fn(),
 }));
 
 // ─── Imports ─────────────────────────────────────────────────────────────────

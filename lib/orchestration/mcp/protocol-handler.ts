@@ -32,7 +32,9 @@ import {
   listMcpResources,
   readMcpResource,
   listMcpResourceTemplates,
+  isRegisteredMcpResourceUri,
 } from '@/lib/orchestration/mcp/resource-registry';
+import { getMcpSessionManager } from '@/lib/orchestration/mcp/singletons';
 import { listMcpPrompts, getMcpPrompt } from '@/lib/orchestration/mcp/prompt-registry';
 import type { McpRateLimiter } from '@/lib/orchestration/mcp/rate-limiter';
 import type { McpServerState } from '@/lib/orchestration/mcp/types';
@@ -157,6 +159,16 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
       requireScope(auth, McpScope.RESOURCES_READ);
       return handleResourcesRead(request.params, auth);
 
+    case 'resources/subscribe':
+      requireInitialized(session);
+      requireScope(auth, McpScope.RESOURCES_READ);
+      return handleResourcesSubscribe(request.params, session);
+
+    case 'resources/unsubscribe':
+      requireInitialized(session);
+      requireScope(auth, McpScope.RESOURCES_READ);
+      return handleResourcesUnsubscribe(request.params, session);
+
     case 'prompts/list':
       requireInitialized(session);
       requireScope(auth, McpScope.PROMPTS_READ);
@@ -202,13 +214,13 @@ function handleInitialize(
 
   // Advertise only features that have working handlers in this build.
   // tools / resources / prompts broadcast list_changed when the admin mutates
-  // their catalogue (see broadcastMcp{Tools,Resources,Prompts}Changed).
-  // resources.subscribe, logging, and completions land in later phases —
-  // leave them unset until then so compliant clients don't call methods
-  // that aren't implemented.
+  // their catalogue. resources.subscribe accepts resources/subscribe +
+  // resources/unsubscribe and pushes notifications/resources/updated to
+  // subscribers. logging and completions land in later phases — leave them
+  // unset until then so compliant clients don't call unimplemented methods.
   const capabilities: McpCapabilities = {
     tools: { listChanged: true },
-    resources: { listChanged: true },
+    resources: { listChanged: true, subscribe: true },
     prompts: { listChanged: true },
   };
 
@@ -314,6 +326,65 @@ async function handleResourcesRead(
   }
 
   return { contents: [content] };
+}
+
+async function handleResourcesSubscribe(
+  params: Record<string, unknown> | undefined,
+  session: McpSession
+): Promise<Record<string, never>> {
+  const uri = extractUri(params);
+
+  // Subscriptions are for concrete URIs only — clients can't subscribe
+  // to a template (`sunrise://patterns/{id}`). Detect template syntax
+  // before any registry lookup so we give a clear error.
+  if (uri.includes('{') || uri.includes('}')) {
+    throw new McpProtocolError(
+      JsonRpcErrorCode.INVALID_PARAMS,
+      'Cannot subscribe to a template URI. Subscribe to concrete instances only (e.g. sunrise://patterns/5, not sunrise://patterns/{id}).'
+    );
+  }
+
+  // Reject ghost subscriptions to URIs the registry doesn't know about —
+  // those clients would never receive an update notification anyway.
+  if (!(await isRegisteredMcpResourceUri(uri))) {
+    throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, `Unknown resource URI: ${uri}`);
+  }
+
+  const result = getMcpSessionManager().subscribe(session.id, uri);
+  if (result === 'limit-exceeded') {
+    throw new McpProtocolError(
+      JsonRpcErrorCode.INVALID_REQUEST,
+      'Subscription limit exceeded. Unsubscribe from existing URIs before adding more.'
+    );
+  }
+  if (result === 'session-not-found') {
+    throw new McpProtocolError(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found or expired');
+  }
+  // Per spec, the response payload is an empty object.
+  return {};
+}
+
+async function handleResourcesUnsubscribe(
+  params: Record<string, unknown> | undefined,
+  session: McpSession
+): Promise<Record<string, never>> {
+  const uri = extractUri(params);
+  const result = getMcpSessionManager().unsubscribe(session.id, uri);
+  if (result === 'session-not-found') {
+    throw new McpProtocolError(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found or expired');
+  }
+  return Promise.resolve({});
+}
+
+function extractUri(params: Record<string, unknown> | undefined): string {
+  const uri = params?.uri;
+  if (typeof uri !== 'string' || uri.length === 0) {
+    throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, 'uri is required');
+  }
+  if (uri.length > 500) {
+    throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, 'uri exceeds 500 char limit');
+  }
+  return uri;
 }
 
 async function handlePromptsList(

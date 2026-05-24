@@ -27,6 +27,7 @@ import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
 import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import {
   systemInstructionsHistorySchema,
   updateAgentSchema,
@@ -505,6 +506,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       void dispatchWebhookEvent('agent_updated', agentUpdatedPayload);
     }
 
+    notifyMcpAgentsChanged();
+
     return successResponse(agent);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -549,6 +552,8 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     entityName: current.name,
     clientIp: clientIP,
   });
+
+  notifyMcpAgentsChanged();
 
   return successResponse({ id, isActive: false });
 });

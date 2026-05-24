@@ -23,6 +23,7 @@ import { cuidSchema } from '@/lib/validations/common';
 import { updateKnowledgeDocumentSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { notifyMcpKnowledgeChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 
 function parseDocumentId(raw: string): string {
   const parsed = cuidSchema.safeParse(raw);
@@ -113,6 +114,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     },
   });
   const { tags, ...rest } = updated!;
+
+  notifyMcpKnowledgeChanged();
+
   return successResponse({ document: { ...rest, tagIds: (tags ?? []).map((t) => t.tagId) } });
 });
 
@@ -140,6 +144,8 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     entityName: existing.fileName,
     clientIp: clientIP,
   });
+
+  notifyMcpKnowledgeChanged();
 
   return successResponse({ deleted: true });
 });

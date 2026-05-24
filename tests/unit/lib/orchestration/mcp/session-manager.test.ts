@@ -125,6 +125,103 @@ describe('McpSessionManager', () => {
     });
   });
 
+  describe('subscriptions', () => {
+    it('subscribe is idempotent (duplicate calls return ok and do not double-count)', () => {
+      const s = manager.createSession(KEY_ID, 5)!;
+      expect(manager.subscribe(s.id, 'sunrise://agents')).toBe('ok');
+      expect(manager.subscribe(s.id, 'sunrise://agents')).toBe('ok');
+      expect(manager.getSubscriptionCount(s.id)).toBe(1);
+    });
+
+    it('rejects subscribe when session is unknown', () => {
+      expect(manager.subscribe('no-session', 'sunrise://agents')).toBe('session-not-found');
+    });
+
+    it('rejects subscribe at the per-session cap', () => {
+      // Build a manager with a non-default TTL so this is fast; uses real cap.
+      const s = manager.createSession(KEY_ID, 5)!;
+      for (let i = 0; i < 50; i++) {
+        expect(manager.subscribe(s.id, `sunrise://x/${String(i)}`)).toBe('ok');
+      }
+      expect(manager.subscribe(s.id, 'sunrise://x/51')).toBe('limit-exceeded');
+      expect(manager.getSubscriptionCount(s.id)).toBe(50);
+    });
+
+    it('unsubscribe is idempotent (no error when not subscribed)', () => {
+      const s = manager.createSession(KEY_ID, 5)!;
+      expect(manager.unsubscribe(s.id, 'sunrise://nothing')).toBe('ok');
+    });
+
+    it('unsubscribe removes a previously-subscribed URI', () => {
+      const s = manager.createSession(KEY_ID, 5)!;
+      manager.subscribe(s.id, 'sunrise://agents');
+      manager.unsubscribe(s.id, 'sunrise://agents');
+      expect(manager.getSubscriptionCount(s.id)).toBe(0);
+    });
+
+    it('getSubscribers returns sessions that have subscribed to the URI', () => {
+      const a = manager.createSession(KEY_ID, 5)!;
+      const b = manager.createSession(KEY_ID_2, 5)!;
+      manager.subscribe(a.id, 'sunrise://agents');
+      manager.subscribe(b.id, 'sunrise://agents');
+      const subscribers = manager.getSubscribers('sunrise://agents');
+      expect(subscribers.sort()).toEqual([a.id, b.id].sort());
+    });
+
+    it("destroySession clears the session's subscriptions", () => {
+      const s = manager.createSession(KEY_ID, 5)!;
+      manager.subscribe(s.id, 'sunrise://agents');
+      manager.destroySession(s.id);
+      expect(manager.getSubscribers('sunrise://agents')).toEqual([]);
+    });
+
+    it('expired session no longer appears as a subscriber', async () => {
+      const shortTtl = new McpSessionManager(50);
+      const s = shortTtl.createSession(KEY_ID, 5)!;
+      shortTtl.subscribe(s.id, 'sunrise://agents');
+      await new Promise((r) => setTimeout(r, 60));
+      expect(shortTtl.getSubscribers('sunrise://agents')).toEqual([]);
+      shortTtl.destroy();
+    });
+  });
+
+  describe('broadcastNotification targeting', () => {
+    it('only delivers to listed sessions when targetSessionIds is set', () => {
+      const a = manager.createSession(KEY_ID, 5)!;
+      const b = manager.createSession(KEY_ID_2, 5)!;
+      const aRecv: unknown[] = [];
+      const bRecv: unknown[] = [];
+      manager.registerSseListener(a.id, (n) => aRecv.push(n));
+      manager.registerSseListener(b.id, (n) => bRecv.push(n));
+
+      manager.broadcastNotification(
+        {
+          jsonrpc: '2.0',
+          method: 'notifications/resources/updated',
+          params: { uri: 'sunrise://agents' },
+        },
+        [a.id]
+      );
+
+      expect(aRecv).toHaveLength(1);
+      expect(bRecv).toHaveLength(0);
+    });
+
+    it('silently skips target sessions without an SSE listener', () => {
+      const a = manager.createSession(KEY_ID, 5)!;
+      const aRecv: unknown[] = [];
+      manager.registerSseListener(a.id, (n) => aRecv.push(n));
+
+      manager.broadcastNotification({ jsonrpc: '2.0', method: 'notifications/resources/updated' }, [
+        a.id,
+        'never-existed',
+        'also-never-existed',
+      ]);
+
+      expect(aRecv).toHaveLength(1);
+    });
+  });
+
   describe('setProtocolVersion', () => {
     it('replaces the default with the negotiated version', () => {
       const session = manager.createSession(KEY_ID, 5);

@@ -20,6 +20,7 @@ import { confirmPreview } from '@/lib/orchestration/knowledge/document-manager';
 import { confirmDocumentPreviewSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { notifyMcpKnowledgeChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -57,6 +58,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     metadata: { chunkCount: document.chunkCount },
     clientIp: clientIP,
   });
+
+  notifyMcpKnowledgeChanged();
 
   return successResponse({ document });
 });

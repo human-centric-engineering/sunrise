@@ -124,6 +124,32 @@ When a URI does not match any registered resource exactly, `readMcpResource` fal
 
 After creation, **`uri` and `resourceType` are immutable** — the registry routes reads by URI prefix and dispatches by `resourceType`, so changing either mid-life would orphan in-flight client subscriptions. To rename or re-type a resource, delete it and create a new one (per the dialog warning in the admin UI).
 
+### Subscriptions
+
+MCP clients can call `resources/subscribe { uri }` to receive `notifications/resources/updated { uri }` whenever the underlying data changes. `resources/unsubscribe { uri }` removes the subscription. The server advertises `resources: { subscribe: true }` in `initialize` so clients know the methods are supported.
+
+Limits and rules (enforced in the protocol handler / session manager):
+
+- **Concrete URIs only.** Subscribing to a template URI (`sunrise://patterns/{id}`) is rejected with `INVALID_PARAMS` — subscribe to concrete instances (`sunrise://patterns/5`) instead. The check rejects on `{` or `}` before any registry lookup so clients cannot probe what's registered.
+- **Registered URIs only.** Subscribing to a URI the registry doesn't know about is rejected — ghost subscriptions would never receive an update notification anyway.
+- **50 subscriptions per session.** Excess returns `INVALID_REQUEST` with a "Subscription limit exceeded" message. Unsubscribe first.
+- **Idempotent.** Duplicate subscribe / unsubscribe returns `ok` with no side effect.
+- **Tied to session lifetime.** Subscriptions are cleared on `destroySession` and on session-expiry eviction (1 h TTL). Clients that lose their session re-subscribe after re-initialise.
+- **Per-session fan-out.** `broadcastMcpResourceUpdated(uri)` only delivers to sessions subscribed to that URI, not to every connected client.
+
+What fires an updated notification:
+
+| Mutation                                                    | Fires for URI                |
+| ----------------------------------------------------------- | ---------------------------- |
+| Admin `PATCH /api/v1/admin/orchestration/mcp/resources/:id` | the row's `uri`              |
+| Knowledge document POST / confirm / PATCH / DELETE          | `sunrise://knowledge/search` |
+| Agent POST / PATCH / DELETE                                 | `sunrise://agents`           |
+| Workflow POST / PATCH / DELETE                              | `sunrise://workflows`        |
+
+The wiring lives in `lib/orchestration/mcp/resource-update-hooks.ts` as named helpers (`notifyMcpAgentsChanged`, `notifyMcpWorkflowsChanged`, `notifyMcpKnowledgeChanged`). Mutation routes import the named helper rather than hard-coding the URI string — one place to change if a resource URI ever moves.
+
+**Known limit — multi-process deploys:** the subscription map is per-Node.js-process, so a mutation on instance A doesn't notify subs on instance B. Acceptable for the common single-instance deploy; horizontally-scaled production would need a Redis pub/sub layer (captured as a future improvement).
+
 ## Prompts
 
 Prompts are admin-editable slash-command templates surfaced by MCP clients to end users. They are **not** auto-invoked by the model — a human picks them from a menu (e.g. typing `/analyze-pattern` in Claude Desktop). The distinction matters for design:

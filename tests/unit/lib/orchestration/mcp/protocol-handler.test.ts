@@ -21,6 +21,11 @@ vi.mock('@/lib/orchestration/mcp/resource-registry', () => ({
   listMcpResources: vi.fn(),
   readMcpResource: vi.fn(),
   listMcpResourceTemplates: vi.fn(),
+  isRegisteredMcpResourceUri: vi.fn(),
+}));
+
+vi.mock('@/lib/orchestration/mcp/singletons', () => ({
+  getMcpSessionManager: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/mcp/prompt-registry', () => ({
@@ -42,8 +47,10 @@ import {
   listMcpResources,
   readMcpResource,
   listMcpResourceTemplates,
+  isRegisteredMcpResourceUri,
 } from '@/lib/orchestration/mcp/resource-registry';
 import { listMcpPrompts, getMcpPrompt } from '@/lib/orchestration/mcp/prompt-registry';
+import { getMcpSessionManager } from '@/lib/orchestration/mcp/singletons';
 import {
   JsonRpcErrorCode,
   MCP_LATEST_PROTOCOL_VERSION,
@@ -223,12 +230,12 @@ describe('handleMcpRequest', () => {
       expect((data.serverInfo as Record<string, string>).name).toBe('Test MCP Server');
       expect((data.serverInfo as Record<string, string>).version).toBe('1.0.0');
       // Only advertise features the server actually implements. tools,
-      // resources, and prompts now all broadcast list_changed (prompts
-      // landed in Phase 2). resources.subscribe, logging, and completions
-      // land in later phases.
+      // resources, and prompts broadcast list_changed; resources also
+      // accepts subscribe/unsubscribe + pushes updated notifications
+      // (Phase 4). logging + completions land in later phases.
       expect(data.capabilities).toEqual({
         tools: { listChanged: true },
-        resources: { listChanged: true },
+        resources: { listChanged: true, subscribe: true },
         prompts: { listChanged: true },
       });
     });
@@ -778,6 +785,126 @@ describe('handleMcpRequest', () => {
       const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
       expect(result?.error?.message).toBe('Bad tool params');
       expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+    });
+  });
+
+  describe('resources/subscribe', () => {
+    const subscribeMock = vi.fn();
+    beforeEach(() => {
+      subscribeMock.mockReset();
+      vi.mocked(getMcpSessionManager).mockReturnValue({
+        subscribe: subscribeMock,
+        unsubscribe: vi.fn(),
+      } as never);
+    });
+
+    it('returns {} on success', async () => {
+      vi.mocked(isRegisteredMcpResourceUri).mockResolvedValue(true);
+      subscribeMock.mockReturnValue('ok');
+
+      const req = makeRequest({
+        method: 'resources/subscribe',
+        params: { uri: 'sunrise://agents' },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+
+      expect(result?.error).toBeUndefined();
+      expect(result?.result).toEqual({});
+      expect(subscribeMock).toHaveBeenCalledWith(session.id, 'sunrise://agents');
+    });
+
+    it('rejects template URIs with INVALID_PARAMS', async () => {
+      const req = makeRequest({
+        method: 'resources/subscribe',
+        params: { uri: 'sunrise://patterns/{id}' },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+      expect(result?.error?.message).toContain('template');
+      // Must not even check the registry — fast-fail on the template
+      // syntax so a misbehaving client can't probe what's registered.
+      expect(isRegisteredMcpResourceUri).not.toHaveBeenCalled();
+    });
+
+    it('rejects unregistered URIs with INVALID_PARAMS', async () => {
+      vi.mocked(isRegisteredMcpResourceUri).mockResolvedValue(false);
+      const req = makeRequest({
+        method: 'resources/subscribe',
+        params: { uri: 'sunrise://nobody/here' },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+      expect(result?.error?.message).toContain('Unknown resource');
+      expect(subscribeMock).not.toHaveBeenCalled();
+    });
+
+    it('maps limit-exceeded to INVALID_REQUEST', async () => {
+      vi.mocked(isRegisteredMcpResourceUri).mockResolvedValue(true);
+      subscribeMock.mockReturnValue('limit-exceeded');
+
+      const req = makeRequest({
+        method: 'resources/subscribe',
+        params: { uri: 'sunrise://agents' },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+      expect(result?.error?.message).toContain('Subscription limit');
+    });
+
+    it('requires resources:read scope', async () => {
+      const noScopeAuth = makeAuth({ scopes: [] });
+      const req = makeRequest({
+        method: 'resources/subscribe',
+        params: { uri: 'sunrise://agents' },
+      });
+      const result = await handleMcpRequest(req, {
+        auth: noScopeAuth,
+        session,
+        serverState,
+        rateLimiter,
+      });
+      expect(result?.error).toBeDefined();
+      expect(result?.error?.message).toContain('resources:read');
+    });
+
+    it('rejects missing uri with INVALID_PARAMS', async () => {
+      const req = makeRequest({ method: 'resources/subscribe', params: {} });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+    });
+  });
+
+  describe('resources/unsubscribe', () => {
+    it('returns {} and forwards to session manager', async () => {
+      const unsubscribeMock = vi.fn().mockReturnValue('ok');
+      vi.mocked(getMcpSessionManager).mockReturnValue({
+        subscribe: vi.fn(),
+        unsubscribe: unsubscribeMock,
+      } as never);
+
+      const req = makeRequest({
+        method: 'resources/unsubscribe',
+        params: { uri: 'sunrise://agents' },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+
+      expect(result?.error).toBeUndefined();
+      expect(result?.result).toEqual({});
+      expect(unsubscribeMock).toHaveBeenCalledWith(session.id, 'sunrise://agents');
+    });
+  });
+
+  describe('initialize advertises resources.subscribe', () => {
+    it('includes subscribe: true in the capabilities response', async () => {
+      const req = makeRequest({
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18' },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      const data = result?.result as {
+        capabilities: { resources: { subscribe?: boolean } };
+      };
+      expect(data.capabilities.resources.subscribe).toBe(true);
     });
   });
 });

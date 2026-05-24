@@ -184,3 +184,30 @@ export function clearMcpResourceCache(): void {
   cachedResources = null;
   cachedAt = 0;
 }
+
+/**
+ * Check whether a concrete URI is registered (exactly or as the
+ * concrete instance of a parameterised template).
+ *
+ * Used by `resources/subscribe` to reject ghost subscriptions — the spec
+ * lets a client subscribe to any URI, but accepting subs for URIs that
+ * have no handler is misleading (the client will never get an `updated`
+ * notification). Reject early instead.
+ *
+ * Returns true when:
+ *   - the URI matches an enabled resource exactly, OR
+ *   - it is a concrete instance of an enabled parameterised template
+ *     (e.g. `sunrise://knowledge/patterns/5` is a concrete instance of
+ *     `sunrise://knowledge/patterns/{number}`).
+ */
+export async function isRegisteredMcpResourceUri(uri: string): Promise<boolean> {
+  const all = await listMcpResources();
+  for (const r of all) {
+    if (r.uri === uri) return true;
+    // Strip template params + query suffix from the registered URI to get
+    // a prefix that concrete instances should start with.
+    const prefix = r.uri.replace(/\{[^}]+\}.*$/, '').replace(/\?.*$/, '');
+    if (prefix && prefix !== r.uri && uri.startsWith(prefix)) return true;
+  }
+  return false;
+}
