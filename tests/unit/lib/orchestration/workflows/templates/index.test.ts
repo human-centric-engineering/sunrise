@@ -32,11 +32,15 @@ const BUILTIN_CAPABILITY_SLUGS = new Set([
   'apply_audit_changes',
   'add_provider_models',
   'deactivate_provider_models',
+  // Item #24 (SMS / WhatsApp) shipped this — used by the inbound
+  // conversation handler template to dispatch the reply back on the
+  // same channel the inbound came in on.
+  'send_message_to_channel',
 ]);
 
 describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
-  it('exports eleven built-in templates', () => {
-    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(11);
+  it('exports twelve built-in templates', () => {
+    expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(12);
   });
 
   it('has unique slugs across all templates', () => {

@@ -69,12 +69,20 @@ vi.mock('@/lib/db/client', () => ({
     aiOrchestrationSettings: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    // Used by `resolveConversation` for Twilio / WhatsApp Cloud inbound
+    // when the trigger metadata declares `conversationAgentId`. Default
+    // findUnique null = create branch fires.
+    aiConversation: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
   },
 }));
 
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
-import { POST } from '@/app/api/v1/inbound/[channel]/[slug]/route';
+import { POST, GET } from '@/app/api/v1/inbound/[channel]/[slug]/route';
 import { prisma } from '@/lib/db/client';
 import { inboundLimiter } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -288,11 +296,18 @@ type ApiResponse<T> = SuccessEnvelope<T> | ErrorEnvelope;
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
+const TWILIO_TEST_TOKEN = 'twilio-integration-token';
+const WHATSAPP_TEST_VERIFY = 'wa-verify-token';
+const WHATSAPP_TEST_APP_SECRET = 'wa-app-secret';
+
 beforeAll(() => {
   // Stub env vars — real adapters read these at bootstrap.
   vi.stubEnv('SLACK_SIGNING_SECRET', SLACK_TEST_SECRET);
   vi.stubEnv('POSTMARK_INBOUND_USER', POSTMARK_TEST_USER);
   vi.stubEnv('POSTMARK_INBOUND_PASS', POSTMARK_TEST_PASS);
+  vi.stubEnv('TWILIO_AUTH_TOKEN', TWILIO_TEST_TOKEN);
+  vi.stubEnv('WHATSAPP_VERIFY_TOKEN', WHATSAPP_TEST_VERIFY);
+  vi.stubEnv('WHATSAPP_APP_SECRET', WHATSAPP_TEST_APP_SECRET);
 
   // Reset any prior adapter state, then bootstrap fresh against the test secrets.
   resetInboundAdapters();
@@ -1388,5 +1403,262 @@ describe('error paths', () => {
     const respBody = await parseJSON<ErrorEnvelope>(response);
     expect(respBody.success).toBe(false);
     expect(respBody.error.code).toBe('INTERNAL_ERROR');
+  });
+});
+
+// ─── Twilio channel + GET handshake + conversation enrichment ───────────────
+
+function makeTwilioRequest(
+  channel: string,
+  slug: string,
+  params: Record<string, string>,
+  { token = TWILIO_TEST_TOKEN, ip = '10.0.2.1' }: { token?: string; ip?: string } = {}
+): NextRequest {
+  const url = `http://localhost:3000/api/v1/inbound/${channel}/${slug}`;
+  const form = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) form.set(k, v);
+  const body = form.toString();
+  const sortedKeys = Object.keys(params).sort();
+  const concat = sortedKeys.map((k) => `${k}${params[k]}`).join('');
+  const sig = createHmac('sha1', token).update(`${url}${concat}`).digest('base64');
+  return new NextRequest(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'x-twilio-signature': sig,
+      'x-forwarded-for': ip,
+    },
+    body,
+  });
+}
+
+describe('Twilio channel + conversation enrichment', () => {
+  it('bootstraps the Twilio inbound adapter when TWILIO_AUTH_TOKEN is set', () => {
+    const adapter = getInboundAdapter('twilio');
+    expect(adapter).not.toBeNull();
+    expect(adapter?.channel).toBe('twilio');
+  });
+
+  it('creates an AiConversation row + threads conversationId into triggerMeta when conversationAgentId is set', async () => {
+    const params = {
+      From: '+12133734253',
+      To: '+12025550100',
+      Body: 'help with my booking',
+      MessageSid: 'SM' + 'a'.repeat(32),
+    };
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({
+        id: 'trig_twilio',
+        channel: 'twilio',
+        metadata: { conversationAgentId: 'agent-twilio-1' },
+      }) as never
+    );
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.aiConversation.create).mockResolvedValue({ id: 'conv-new-1' } as never);
+
+    const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params);
+    const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(202);
+    // Conversation row was created with the resolved channel + provider.
+    expect(prisma.aiConversation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          channel: 'sms',
+          provider: 'twilio',
+          fromAddress: '+12133734253',
+          agentId: 'agent-twilio-1',
+        }),
+      })
+    );
+    // conversationId was threaded into the execution's triggerMeta.
+    const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
+    const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
+      | { inputData?: { triggerMeta?: { conversationId?: string } } }
+      | undefined;
+    expect(lastCall?.inputData?.triggerMeta?.conversationId).toBe('conv-new-1');
+  });
+
+  it('updates an existing conversation (lastInboundAt) when one already exists for this (agent, channel, fromAddress)', async () => {
+    const params = {
+      From: '+12133734253',
+      Body: 'follow-up',
+      MessageSid: 'SM' + 'b'.repeat(32),
+    };
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({
+        id: 'trig_twilio_2',
+        channel: 'twilio',
+        metadata: { conversationAgentId: 'agent-twilio-1' },
+      }) as never
+    );
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv-existing',
+      smsOptedOut: false,
+      provider: 'twilio',
+    } as never);
+    vi.mocked(prisma.aiConversation.update).mockResolvedValue({} as never);
+
+    const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params, { ip: '10.0.2.2' });
+    const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(202);
+    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'conv-existing' },
+        data: expect.objectContaining({ lastInboundAt: expect.any(Date) }),
+      })
+    );
+  });
+
+  it('STOP keyword flips smsOptedOut + flags optOutStateChanged in triggerMeta', async () => {
+    const params = { From: '+12133734253', Body: 'STOP', MessageSid: 'SM' + 'c'.repeat(32) };
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({
+        id: 'trig_twilio_3',
+        channel: 'twilio',
+        metadata: { conversationAgentId: 'agent-twilio-1' },
+      }) as never
+    );
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv-existing',
+      smsOptedOut: false,
+      provider: 'twilio',
+    } as never);
+    vi.mocked(prisma.aiConversation.update).mockResolvedValue({} as never);
+
+    const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params, { ip: '10.0.2.3' });
+    const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(202);
+    expect(prisma.aiConversation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ smsOptedOut: true }),
+      })
+    );
+    const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
+    const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
+      | { inputData?: { triggerMeta?: { optOutStateChanged?: boolean } } }
+      | undefined;
+    expect(lastCall?.inputData?.triggerMeta?.optOutStateChanged).toBe(true);
+  });
+
+  it('skips conversation enrichment when trigger metadata omits conversationAgentId', async () => {
+    const params = { From: '+12133734253', Body: 'hi', MessageSid: 'SM' + 'd'.repeat(32) };
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({
+        id: 'trig_twilio_4',
+        channel: 'twilio',
+        metadata: {}, // no conversationAgentId
+      }) as never
+    );
+
+    const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params, { ip: '10.0.2.4' });
+    const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(202);
+    expect(prisma.aiConversation.findUnique).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+  });
+
+  it('continues with the workflow even if conversation resolution throws', async () => {
+    const params = { From: '+12133734253', Body: 'hi', MessageSid: 'SM' + 'e'.repeat(32) };
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({
+        id: 'trig_twilio_5',
+        channel: 'twilio',
+        metadata: { conversationAgentId: 'agent-twilio-1' },
+      }) as never
+    );
+    vi.mocked(prisma.aiConversation.findUnique).mockRejectedValue(new Error('DB down'));
+
+    const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params, { ip: '10.0.2.5' });
+    const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));
+
+    // Workflow still runs — resolver failure is logged but non-fatal.
+    expect(response.status).toBe(202);
+    const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
+    const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
+      | { inputData?: { triggerMeta?: { conversationId?: string } } }
+      | undefined;
+    // No conversationId since the resolver crashed.
+    expect(lastCall?.inputData?.triggerMeta?.conversationId).toBeUndefined();
+  });
+});
+
+describe('GET handshake', () => {
+  it('WhatsApp Cloud GET verify-token handshake echoes the challenge as 200 plain text', async () => {
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/inbound/whatsapp_cloud/${WORKFLOW_SLUG}?hub.mode=subscribe&hub.verify_token=${WHATSAPP_TEST_VERIFY}&hub.challenge=ping-1234`,
+      { method: 'GET', headers: { 'x-forwarded-for': '10.0.3.1' } }
+    );
+
+    const response = await GET(request, makeParams('whatsapp_cloud', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+    await expect(response.text()).resolves.toBe('ping-1234');
+    // Notably: NO trigger lookup happens — verification runs before any trigger row exists.
+    expect(prisma.aiWorkflowTrigger.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('GET rejects an incorrect verify token with 403', async () => {
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/inbound/whatsapp_cloud/${WORKFLOW_SLUG}?hub.mode=subscribe&hub.verify_token=wrong-token&hub.challenge=x`,
+      { method: 'GET', headers: { 'x-forwarded-for': '10.0.3.2' } }
+    );
+
+    const response = await GET(request, makeParams('whatsapp_cloud', WORKFLOW_SLUG));
+    expect(response.status).toBe(403);
+  });
+
+  it('GET returns 400 when the adapter handshake returns null (missing challenge param)', async () => {
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/inbound/whatsapp_cloud/${WORKFLOW_SLUG}?hub.mode=subscribe&hub.verify_token=${WHATSAPP_TEST_VERIFY}`, // no challenge
+      { method: 'GET', headers: { 'x-forwarded-for': '10.0.3.3' } }
+    );
+    const response = await GET(request, makeParams('whatsapp_cloud', WORKFLOW_SLUG));
+    expect(response.status).toBe(400);
+  });
+
+  it('GET returns 405 for adapters that do not expose handleVerificationGet (Slack)', async () => {
+    const request = new NextRequest(`http://localhost:3000/api/v1/inbound/slack/${WORKFLOW_SLUG}`, {
+      method: 'GET',
+      headers: { 'x-forwarded-for': '10.0.3.4' },
+    });
+    const response = await GET(request, makeParams('slack', WORKFLOW_SLUG));
+    expect(response.status).toBe(405);
+  });
+
+  it('GET returns 404 for an unknown channel slug', async () => {
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/inbound/no-such-channel/${WORKFLOW_SLUG}`,
+      { method: 'GET', headers: { 'x-forwarded-for': '10.0.3.5' } }
+    );
+    const response = await GET(request, makeParams('no-such-channel', WORKFLOW_SLUG));
+    expect(response.status).toBe(404);
+  });
+
+  it('GET respects the rate-limit bucket separately from POST', async () => {
+    vi.mocked(inboundLimiter.check).mockReturnValueOnce({
+      success: false,
+      limit: 60,
+      remaining: 0,
+      reset: 0,
+    } as never);
+
+    const request = new NextRequest(
+      `http://localhost:3000/api/v1/inbound/whatsapp_cloud/${WORKFLOW_SLUG}?hub.mode=subscribe&hub.verify_token=${WHATSAPP_TEST_VERIFY}&hub.challenge=y`,
+      { method: 'GET', headers: { 'x-forwarded-for': '10.0.3.6' } }
+    );
+
+    const response = await GET(request, makeParams('whatsapp_cloud', WORKFLOW_SLUG));
+    expect(response.status).toBe(429);
+    // The rate-limit key for GET is distinct from POST so probes don't
+    // exhaust the POST budget.
+    expect(inboundLimiter.check).toHaveBeenCalledWith(
+      expect.stringContaining('inbound-get:whatsapp_cloud:')
+    );
   });
 });

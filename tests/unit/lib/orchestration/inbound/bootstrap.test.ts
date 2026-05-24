@@ -39,6 +39,8 @@ import { registerInboundAdapter } from '@/lib/orchestration/inbound/registry';
 import { GenericHmacAdapter } from '@/lib/orchestration/inbound/adapters/generic-hmac';
 import { PostmarkAdapter } from '@/lib/orchestration/inbound/adapters/postmark';
 import { SlackAdapter } from '@/lib/orchestration/inbound/adapters/slack';
+import { TwilioAdapter } from '@/lib/orchestration/inbound/adapters/twilio';
+import { WhatsAppCloudAdapter } from '@/lib/orchestration/inbound/adapters/whatsapp-cloud';
 import {
   bootstrapInboundAdapters,
   resetBootstrapState,
@@ -162,15 +164,84 @@ describe('bootstrapInboundAdapters — SlackAdapter', () => {
 });
 
 // ---------------------------------------------------------------------------
+// TwilioAdapter — conditional on TWILIO_AUTH_TOKEN
+// ---------------------------------------------------------------------------
+
+describe('bootstrapInboundAdapters — TwilioAdapter', () => {
+  it('registers TwilioAdapter when TWILIO_AUTH_TOKEN is set', () => {
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'twilio-auth-token-abc');
+
+    bootstrapInboundAdapters();
+
+    expect(vi.mocked(registerInboundAdapter)).toHaveBeenCalledWith(expect.any(TwilioAdapter));
+  });
+
+  it('does NOT register TwilioAdapter when env var is empty string', () => {
+    vi.stubEnv('TWILIO_AUTH_TOKEN', '');
+    bootstrapInboundAdapters();
+    const calls = vi.mocked(registerInboundAdapter).mock.calls;
+    expect(calls.some((args) => args[0] instanceof TwilioAdapter)).toBe(false);
+  });
+
+  it('does NOT register TwilioAdapter when env var is missing', () => {
+    bootstrapInboundAdapters();
+    const calls = vi.mocked(registerInboundAdapter).mock.calls;
+    expect(calls.some((args) => args[0] instanceof TwilioAdapter)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WhatsAppCloudAdapter — conditional on BOTH WHATSAPP_VERIFY_TOKEN + WHATSAPP_APP_SECRET
+// ---------------------------------------------------------------------------
+
+describe('bootstrapInboundAdapters — WhatsAppCloudAdapter', () => {
+  it('registers WhatsAppCloudAdapter when both env vars are set', () => {
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', 'wa-verify');
+    vi.stubEnv('WHATSAPP_APP_SECRET', 'wa-secret');
+
+    bootstrapInboundAdapters();
+
+    expect(vi.mocked(registerInboundAdapter)).toHaveBeenCalledWith(
+      expect.any(WhatsAppCloudAdapter)
+    );
+  });
+
+  it('does NOT register when only verify token is set (partial config)', () => {
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', 'wa-verify');
+    bootstrapInboundAdapters();
+    const calls = vi.mocked(registerInboundAdapter).mock.calls;
+    expect(calls.some((args) => args[0] instanceof WhatsAppCloudAdapter)).toBe(false);
+  });
+
+  it('does NOT register when only app secret is set (partial config)', () => {
+    vi.stubEnv('WHATSAPP_APP_SECRET', 'wa-secret');
+    bootstrapInboundAdapters();
+    const calls = vi.mocked(registerInboundAdapter).mock.calls;
+    expect(calls.some((args) => args[0] instanceof WhatsAppCloudAdapter)).toBe(false);
+  });
+
+  it('does NOT register when both env vars are empty strings', () => {
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', '');
+    vi.stubEnv('WHATSAPP_APP_SECRET', '');
+    bootstrapInboundAdapters();
+    const calls = vi.mocked(registerInboundAdapter).mock.calls;
+    expect(calls.some((args) => args[0] instanceof WhatsAppCloudAdapter)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Idempotency
 // ---------------------------------------------------------------------------
 
 describe('bootstrapInboundAdapters — idempotency', () => {
   it('makes zero new registrations on the second call (idempotent)', () => {
-    // Arrange — set env vars so all three adapters would register on first call
+    // Arrange — set env vars so all five adapters would register on first call
     vi.stubEnv('POSTMARK_INBOUND_USER', 'pm-user');
     vi.stubEnv('POSTMARK_INBOUND_PASS', 'pm-pass');
     vi.stubEnv('SLACK_SIGNING_SECRET', 'slack-secret');
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'twilio-token');
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', 'wa-verify');
+    vi.stubEnv('WHATSAPP_APP_SECRET', 'wa-secret');
 
     // Act — call twice
     bootstrapInboundAdapters();
@@ -179,9 +250,9 @@ describe('bootstrapInboundAdapters — idempotency', () => {
     const countAfterSecond = vi.mocked(registerInboundAdapter).mock.calls.length;
 
     // Assert — total call count does not grow after the second invocation
-    // (3 adapters registered: GenericHmac, Postmark, Slack)
-    expect(countAfterFirst).toBe(3);
-    expect(countAfterSecond).toBe(3);
+    // (5 adapters: GenericHmac, Postmark, Slack, Twilio, WhatsAppCloud)
+    expect(countAfterFirst).toBe(5);
+    expect(countAfterSecond).toBe(5);
   });
 });
 

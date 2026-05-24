@@ -18,6 +18,7 @@ import { CONTENT_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/content
 import { CONVERSATIONAL_LEARNING_TEMPLATE } from '@/prisma/seeds/data/templates/conversational-learning';
 import { CUSTOMER_SUPPORT_TEMPLATE } from '@/prisma/seeds/data/templates/customer-support';
 import { DATA_PIPELINE_TEMPLATE } from '@/prisma/seeds/data/templates/data-pipeline';
+import { INBOUND_CONVERSATION_HANDLER_TEMPLATE } from '@/prisma/seeds/data/templates/inbound-conversation-handler';
 import { OUTREACH_SAFETY_TEMPLATE } from '@/prisma/seeds/data/templates/outreach-safety';
 import { RESEARCH_AGENT_TEMPLATE } from '@/prisma/seeds/data/templates/research-agent';
 import { SAAS_BACKEND_TEMPLATE } from '@/prisma/seeds/data/templates/saas-backend';
@@ -42,4 +43,5 @@ export const BUILTIN_WORKFLOW_TEMPLATES: readonly WorkflowTemplate[] = [
   AUTONOMOUS_RESEARCH_TEMPLATE,
   CITED_KNOWLEDGE_ADVISOR_TEMPLATE,
   SCHEDULED_SOURCE_MONITOR_TEMPLATE,
+  INBOUND_CONVERSATION_HANDLER_TEMPLATE,
 ];

@@ -719,22 +719,66 @@ model AiConversation {
   summaryUpToMessageId String?
   tags                 String[] @default([])
   isActive             Boolean  @default(true)
+  // Channel/provider split — see plan decision 3.
+  // `channel` is the semantic medium (sms / whatsapp / email / slack / chat).
+  // `provider` is the vendor slug (twilio / meta / vonage / ...). The
+  // @@unique([agentId, channel, fromAddress]) below deliberately excludes
+  // provider so memory continuity survives a provider swap mid-deployment,
+  // and the DB-side UNIQUE serialises concurrent inbound webhooks to a
+  // single conversation row (without it, a find-or-create race could
+  // duplicate rows and let the STOP/opt-out flag land on the wrong one,
+  // bypassing TCPA/PECR compliance on subsequent outbound).
+  channel              String?
+  provider             String?
+  fromAddress          String?
+  lastInboundAt        DateTime?
+  smsOptedOut          Boolean  @default(false)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   // Relations
-  user     User                 @relation("AiConversationUser", fields: [userId], references: [id])
-  agent    AiAgent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  messages AiMessage[]
-  costLogs AiCostLog[]
-  share    AiConversationShare?
+  user             User                @relation("AiConversationUser", fields: [userId], references: [id])
+  agent            AiAgent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  messages         AiMessage[]
+  costLogs         AiCostLog[]
+  share            AiConversationShare?
+  outboundMessages AiOutboundMessage[]
 
   @@index([userId])
   @@index([agentId])
   @@index([contextType, contextId])
   @@index([isActive])
   @@index([updatedAt])
+  @@unique([agentId, channel, fromAddress], name: "ai_conversation_inbound_key")
   @@map("ai_conversation")
+}
+
+// Outbound message ledger for SMS / WhatsApp / future channels.
+//
+// Purpose: idempotency + per-recipient throttling for outbound messages
+// dispatched via the `send_message_to_channel` capability. Each row records
+// a dispatch attempt with a deterministic `dedupKey` so workflow retries
+// don't send the same SMS twice; a UNIQUE collision returns the cached
+// `transactionId` instead of re-dispatching.
+//
+// The (conversationId, createdAt) index powers the per-recipient hour
+// window throttle check inside the capability. See plan decision 5.
+model AiOutboundMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  dedupKey       String   @unique
+  channel        String   // 'sms' | 'whatsapp' | future
+  provider       String   // 'twilio' | 'meta' | future
+  transactionId  String?
+  status         String   // 'pending' | 'sent' | 'failed'
+  errorCode      String?
+  errorMessage   String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_outbound_message")
 }
 
 // Consent record for cross-user conversation access.
@@ -825,6 +869,19 @@ model AiMessage {
 // whenever the active embedding model in `AiOrchestrationSettings` changes,
 // since pgvector locks dimension at the column level. Today's active model
 // is `text-embedding-3-small` (1536-dim).
+// ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
+// The Postgres HNSW index `idx_message_embedding` on the `embedding`
+// column is managed via raw SQL — Prisma cannot model HNSW indexes on
+// `Unsupported("vector(N)")` columns natively, so it doesn't appear here.
+//
+// `npx prisma migrate dev` WILL try to add a `DROP INDEX
+// "idx_message_embedding"` line on every schema-diff run. Always inspect
+// generated migration SQL and remove that line before applying — the
+// drop would silently break similarity search.
+//
+// Source of truth:
+//   prisma/migrations/20260420063847_add_message_embedding_hnsw_index/
+//   prisma/migrations/20260514151915_flexible_embedding_models_and_kb_grouping/ (re-creates)
 model AiMessageEmbedding {
   id                 String                      @id @default(cuid())
   messageId          String                      @unique
@@ -954,7 +1011,21 @@ model AiKnowledgeDocument {
   @@map("ai_knowledge_document")
 }
 
-// Vector store for knowledge base content
+// Vector store for knowledge base content.
+//
+// ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
+// The Postgres GIN index `idx_ai_knowledge_chunk_search_vector` on
+// `searchVector` (and the `GENERATED ALWAYS` DEFAULT on the same column)
+// are managed via raw SQL in migrations — Prisma cannot model `tsvector`
+// GIN indexes or generated columns natively, so they don't appear here.
+//
+// `npx prisma migrate dev` WILL try to add DROP statements for both on
+// every schema-diff run. Always inspect generated migration SQL and
+// remove any lines touching `idx_ai_knowledge_chunk_search_vector` or
+// the `searchVector` DEFAULT before applying. The drops would silently
+// break hybrid search.
+//
+// Source of truth: prisma/migrations/20260501172919_add_knowledge_chunk_search_vector/
 model AiKnowledgeChunk {
   id                 String                       @id @default(cuid())
   chunkKey           String                       @unique

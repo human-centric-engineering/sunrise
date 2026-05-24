@@ -48,13 +48,14 @@ describe('registerBuiltInCapabilities', () => {
     expect(capabilityDispatcher.has('call_external_api')).toBe(true);
     expect(capabilityDispatcher.has('run_workflow')).toBe(true);
     expect(capabilityDispatcher.has('upload_to_storage')).toBe(true);
+    expect(capabilityDispatcher.has('send_message_to_channel')).toBe(true);
   });
 
   it('is idempotent (second call is a no-op)', () => {
     const spy = vi.spyOn(capabilityDispatcher, 'register');
     registerBuiltInCapabilities();
     registerBuiltInCapabilities();
-    expect(spy).toHaveBeenCalledTimes(12); // only from the first call
+    expect(spy).toHaveBeenCalledTimes(13); // only from the first call (was 12 before #24)
     spy.mockRestore();
   });
 });

@@ -106,6 +106,14 @@ export const CostOperation = {
    * much operators have spent on this opt-in enrichment.
    */
   KNOWLEDGE_ENRICH_KEYWORDS: 'knowledge.enrich_keywords',
+  /**
+   * Outbound messages dispatched via `send_message_to_channel`
+   * (SMS, WhatsApp, future channels). Separated from `chat` and
+   * `tool_call` so Costs analytics can isolate per-channel vendor spend
+   * (Twilio per-segment SMS, Meta WhatsApp conversation pricing) from
+   * LLM spend. Metadata carries `{ provider, channel }`.
+   */
+  OUTBOUND_MESSAGE: 'outbound_message',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 
@@ -166,6 +174,7 @@ export const KNOWN_STEP_TYPES = [
   'evaluate',
   'external_call',
   'agent_call',
+  'chat_turn',
   'send_notification',
   'orchestrator',
   'supervisor',

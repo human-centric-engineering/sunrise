@@ -48,6 +48,48 @@ Multi-workspace OAuth is **explicitly out of scope for v1** — the adapter assu
 
 Attachments pass through with their Postmark-supplied base64 `Content` intact in `inputData.trigger.attachments[]`. Forks that don't want binaries on the execution row can filter them in a workflow transform step or persist them via `upload_to_storage` early in the workflow.
 
+### Twilio (SMS + Twilio-routed WhatsApp)
+
+Twilio webhooks deliver SMS and Twilio-WhatsApp messages on the same URL with the same HMAC scheme. The adapter discriminates via the `From` form field: SMS arrives as `+E.164`, WhatsApp arrives as `whatsapp:+E.164`.
+
+1. **Sunrise** — set the env var:
+   ```bash
+   TWILIO_AUTH_TOKEN=<your-twilio-auth-token>
+   ```
+   Behind a proxy (Vercel, Cloudflare) Sunrise reconstructs the public URL via `X-Forwarded-Proto`/`X-Forwarded-Host`. Set `TWILIO_EXTERNAL_BASE_URL` explicitly if your proxy doesn't set those, or to override.
+2. **Sunrise** — create a workflow trigger row with `channel = 'twilio'` and `metadata.conversationAgentId = '<agent-id>'` (the agent that owns conversations from this trigger; without it, conversations are not enriched and outbound replies will fail with `no_inbound_channel`).
+3. **Twilio Console** → your phone number → Messaging Configuration → Webhook URL:
+   ```
+   POST https://<your-sunrise>/api/v1/inbound/twilio/<trigger-slug>
+   ```
+   Twilio WhatsApp messages route through the same URL (configured under Messaging → Senders → WhatsApp).
+
+### WhatsApp Cloud (Meta-direct)
+
+Meta WhatsApp Business Cloud is the direct API for partners not going through a BSP. Same semantic channel (`whatsapp`) as Twilio-WhatsApp; distinct provider slug (`meta`) so both can run side-by-side without conversation collisions.
+
+1. **Sunrise** — set both env vars:
+   ```bash
+   WHATSAPP_VERIFY_TOKEN=<random-string-you-choose>
+   WHATSAPP_APP_SECRET=<from-meta-app-dashboard-basic-settings>
+   ```
+   Both required; setting only one logs a warn and skips registration.
+2. **Sunrise** — create a workflow trigger row with `channel = 'whatsapp_cloud'` and `metadata.conversationAgentId = '<agent-id>'`.
+3. **Meta App Dashboard** → WhatsApp → Configuration → Webhook:
+   - **Callback URL:** `https://<your-sunrise>/api/v1/inbound/whatsapp_cloud/<trigger-slug>`
+   - **Verify Token:** the same value you set in `WHATSAPP_VERIFY_TOKEN`.
+   - **Subscribe** to the `messages` field at minimum.
+
+   Meta sends a `GET` request to verify URL ownership; Sunrise's GET handler validates the token (constant-time) and echoes `hub.challenge`. Subsequent inbound deliveries arrive as `POST` and verify via `X-Hub-Signature-256`.
+
+### Channel slug vs semantic channel — read this once
+
+The `:channel` URL segment is an **adapter slug** (`twilio`, `whatsapp_cloud`, `slack`, `postmark`, `hmac`). It identifies which `InboundAdapter` handles the verify/normalise pipeline.
+
+The `AiConversation.channel` and `AiConversation.provider` columns are the **semantic medium** + **vendor**. Twilio inbound produces `channel='sms'` or `channel='whatsapp'` (read from the `whatsapp:` prefix on `From`) and `provider='twilio'`. WhatsApp Cloud inbound produces `channel='whatsapp'` + `provider='meta'`.
+
+A partner who later swaps Twilio for Vonage SMS keeps their conversation history because the `(agentId, channel, fromAddress)` UNIQUE key omits provider — only the `provider` column updates on the next inbound message. The same UNIQUE serialises concurrent inbound webhooks for the same sender to a single conversation row (find-or-create races would otherwise duplicate rows and let the STOP/opt-out flag land on the wrong one).
+
 ### Generic HMAC
 
 For any sender that can produce a SHA-256 HMAC over `${timestamp}.${rawBody}` with a per-trigger secret. Reuses Sunrise's outbound webhook signing scheme (`X-Sunrise-Signature: sha256=…` + `X-Sunrise-Timestamp`).
@@ -200,6 +242,52 @@ The `payload` field of `NormalisedTriggerPayload` is **per-channel and versioned
 `externalId` is set from `body.MessageID`.
 `eventType` is hard-coded to `'inbound_email'`.
 
+### Twilio
+
+| Field         | Type                        | Source                                                                |
+| ------------- | --------------------------- | --------------------------------------------------------------------- |
+| `from`        | string                      | `From` form field, normalised to E.164 (strips `whatsapp:` prefix)    |
+| `to`          | string                      | `To` form field, normalised to E.164                                  |
+| `text`        | string                      | `Body` form field                                                     |
+| `messageSid`  | string                      | `MessageSid` (used as `externalId` for dedup)                         |
+| `subChannel`  | `'sms' \| 'whatsapp'`       | Derived from `From` (`whatsapp:` prefix → whatsapp, else sms)         |
+| `attachments` | `Array<{url, contentType}>` | `MediaUrl0..N` + `MediaContentType0..N` (URLs only — no I/O on parse) |
+| `numSegments` | number                      | `NumSegments` form field (default 1)                                  |
+| `status`      | string                      | `MessageStatus` (only set for status callbacks)                       |
+| `errorCode`   | string                      | `ErrorCode` (only set for failed status callbacks)                    |
+
+`externalId` is `MessageSid`. `eventType` is `'status_callback'` when `MessageStatus` is present, else `'message'`.
+
+Also set on `NormalisedTriggerPayload` for inbound `message` events only (not status callbacks):
+
+- `conversationChannel`: `'sms'` or `'whatsapp'`
+- `conversationProvider`: `'twilio'`
+- `fromAddress`: the E.164 `from`
+
+**MMS attachments:** the URLs in `attachments` require Basic auth against Twilio (Account SID + Auth Token) to fetch. Downstream capabilities that fetch them (e.g. `vision`) must use the HTTP fetcher's `basic` auth mode.
+
+### WhatsApp Cloud
+
+| Field             | Type                                             | Source                                                      |
+| ----------------- | ------------------------------------------------ | ----------------------------------------------------------- |
+| `from`            | string                                           | `entry[0].changes[0].value.messages[0].from`, E.164         |
+| `toPhoneNumberId` | string                                           | `entry[0].changes[0].value.metadata.phone_number_id`        |
+| `text`            | string                                           | `messages[0].text.body` (fallback to attachment caption)    |
+| `messageId`       | string                                           | `messages[0].id` (wamid.…, used as `externalId`)            |
+| `subChannel`      | `'whatsapp'`                                     | Constant                                                    |
+| `messageType`     | string                                           | `messages[0].type` (`text`, `image`, `audio`, `video`, ...) |
+| `attachment`      | `{mediaId, mimeType, caption, filename} \| null` | `messages[0].image`/`audio`/`video`/`document` if present   |
+
+`externalId` is `messages[0].id`. `eventType` is `'message'` for inbound messages, `'status'` for delivery receipts (filtered by default).
+
+Also set on `NormalisedTriggerPayload` for inbound `message` events only:
+
+- `conversationChannel`: `'whatsapp'`
+- `conversationProvider`: `'meta'`
+- `fromAddress`: the E.164 `from`
+
+**Media attachments:** the `mediaId` is opaque — fetch it via Meta's Graph API (`GET /v20.0/{media-id}`) which returns a download URL with a short TTL. Downstream capabilities handle this; the adapter does not perform any I/O.
+
 ### Generic HMAC
 
 | Field  | Type    | Source                                  |
@@ -216,10 +304,10 @@ Workflow templates reference fields with `{{ trigger.body.<field> }}`.
 
 Every successful execution insert carries a `dedupKey` column with a Postgres `UNIQUE` constraint. The route computes `dedupKey` per-channel based on whether the channel uses a shared signing secret across workflows:
 
-| Channel             | Secret model             | `dedupKey` shape                 | Why                                                                                              |
-| ------------------- | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `slack`, `postmark` | One secret instance-wide | `<channel>:<externalId>`         | Signing envelope does NOT bind the workflow URL → captured request can replay to other workflows |
-| `hmac`              | Per-trigger secret       | `hmac:<workflowId>:<externalId>` | Different secrets per workflow → cross-workflow replay is structurally impossible                |
+| Channel                                         | Secret model             | `dedupKey` shape                 | Why                                                                                              |
+| ----------------------------------------------- | ------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `slack`, `postmark`, `twilio`, `whatsapp_cloud` | One secret instance-wide | `<channel>:<externalId>`         | Signing envelope does NOT bind the workflow URL → captured request can replay to other workflows |
+| `hmac`                                          | Per-trigger secret       | `hmac:<workflowId>:<externalId>` | Different secrets per workflow → cross-workflow replay is structurally impossible                |
 
 When `externalId` is null (sender omitted dedup material), `dedupKey` is also null. Postgres treats NULLs as distinct in UNIQUE indexes, so no constraint is enforced — every request inserts a fresh execution row.
 
@@ -239,12 +327,18 @@ When `dedupKey` collision happens, the route returns `200 { success: true, data:
 
 ## Environment variables
 
-| Variable                | Channel    | Required to enable           | Notes                                                          |
-| ----------------------- | ---------- | ---------------------------- | -------------------------------------------------------------- |
-| `SLACK_SIGNING_SECRET`  | `slack`    | Yes (or channel returns 404) | App's Signing Secret from Slack's "Basic Information"          |
-| `POSTMARK_INBOUND_USER` | `postmark` | Yes (with `_PASS`)           | Inbound stream's Basic-auth username                           |
-| `POSTMARK_INBOUND_PASS` | `postmark` | Yes (with `_USER`)           | Inbound stream's Basic-auth password                           |
-| (none)                  | `hmac`     | Always registered            | Per-trigger secret stored on `AiWorkflowTrigger.signingSecret` |
+| Variable                         | Channel                     | Required to enable           | Notes                                                                                                |
+| -------------------------------- | --------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `SLACK_SIGNING_SECRET`           | `slack`                     | Yes (or channel returns 404) | App's Signing Secret from Slack's "Basic Information"                                                |
+| `POSTMARK_INBOUND_USER`          | `postmark`                  | Yes (with `_PASS`)           | Inbound stream's Basic-auth username                                                                 |
+| `POSTMARK_INBOUND_PASS`          | `postmark`                  | Yes (with `_USER`)           | Inbound stream's Basic-auth password                                                                 |
+| (none)                           | `hmac`                      | Always registered            | Per-trigger secret stored on `AiWorkflowTrigger.signingSecret`                                       |
+| `TWILIO_AUTH_TOKEN`              | `twilio`                    | Yes                          | From Twilio console → Account Info → Auth Token                                                      |
+| `TWILIO_EXTERNAL_BASE_URL`       | `twilio`                    | Optional                     | Override for the public URL Twilio signed against (precedence over `X-Forwarded-*` headers)          |
+| `TWILIO_TRUST_FORWARDED_HEADERS` | `twilio`                    | Optional (default true)      | Set to `false` to disable the `X-Forwarded-Proto/Host` fallback when reconstructing the URL          |
+| `INBOUND_DEFAULT_COUNTRY`        | `twilio` + `whatsapp_cloud` | Optional                     | ISO-3166 country (default `GB`) used when normalising numbers without a leading `+` (Meta does this) |
+| `WHATSAPP_VERIFY_TOKEN`          | `whatsapp_cloud`            | Yes (with `_APP_SECRET`)     | Random string of your choosing; configured on Meta App Dashboard → WhatsApp → Configuration          |
+| `WHATSAPP_APP_SECRET`            | `whatsapp_cloud`            | Yes (with `_VERIFY_TOKEN`)   | From Meta App Dashboard → Settings → Basic → App Secret (used for HMAC-SHA256 over POST body)        |
 
 Empty-string env vars are treated as unset (truthiness check). Bootstrap logs the registered channels at INFO; nothing alerts when an expected channel is missing — operators should verify the boot log when shipping a new channel.
 
@@ -269,9 +363,20 @@ Test fixtures notable enough to know about:
 
 156 tests across 7 files at the time of writing.
 
+## Building the workflow that fires
+
+The trigger row gives you a webhook URL; the workflow it fires is up to you. For inbound-conversation flows (SMS / WhatsApp / future channels) the canonical shape is the `chat_turn` workflow step:
+
+- **`chat_turn`** loads prior `AiMessage` rows for the conversation referenced by `{{trigger.conversationId}}` (the inbound route's resolver populates this on every inbound for Twilio + WhatsApp Cloud), composes `[system, ...history, user]` and calls the agent's provider. It then persists the new user + assistant turns to `AiMessage` so the NEXT inbound on the same conversation inherits them.
+- This closes the parity gap between the streaming chat handler (which has always loaded conversation history) and the workflow engine (where `llm_call` is single-shot and `agent_call` only does within-step multi-turn).
+- The `tpl-inbound-conversation-handler` template (`prisma/seeds/data/templates/inbound-conversation-handler.ts`) seeds a two-step shape — `chat_turn` → `tool_call(send_message_to_channel)` — that's the minimum viable end-to-end SMS / WhatsApp handler. The "Create a workflow (pre-filled for inbound)" CTA on `/admin/orchestration/triggers/new` seeds the same shape.
+
+If your inbound workflow is genuinely stateless (e.g. classify-and-route only, no continuing conversation), reach for `llm_call` instead. Anywhere the user might say "as I mentioned before…", use `chat_turn`.
+
 ## Related docs
 
 - [Scheduling & webhooks](./scheduling.md) — outbound webhook subscriptions and the existing `POST /api/v1/webhooks/trigger/:slug` API-key-auth path; use that when the sender can issue an `Authorization: Bearer sk_…` header and you don't need vendor-specific normalisation.
 - [Workflow versioning](./workflow-versioning.md) — every inbound-triggered execution is pinned to the workflow's published version at insert time.
 - [Tracing (OTEL plug-in)](./tracing.md) — the architectural template this feature follows: vendor-neutral interface, env-driven adapter registration, opt-in shipping.
 - [Hooks](./hooks.md) — outbound event dispatch (the inverse direction of inbound triggers).
+- [Recipe: SMS / WhatsApp inbound reply](./recipes/sms-whatsapp-inbound-reply.md) — end-to-end worked walkthrough for the trigger + workflow + capability binding.

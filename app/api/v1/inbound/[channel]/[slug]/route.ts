@@ -39,6 +39,7 @@ import { drainEngine } from '@/lib/orchestration/scheduling/scheduler';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
+import { resolveConversation } from '@/lib/orchestration/inbound/conversation-resolver';
 
 // Module-level bootstrap. Idempotent — first call registers adapters from env.
 bootstrapInboundAdapters();
@@ -49,6 +50,14 @@ const triggerSlugSchema = slugSchema.pipe(z.string().max(100));
 interface TriggerMetadata {
   /** Optional allow-list of normalised eventType values. Empty/missing = accept all. */
   eventTypes?: string[];
+  /**
+   * Optional agent id that owns conversations created from this trigger
+   * (Twilio / WhatsApp Cloud). Required to populate `AiConversation` for
+   * inbound messages — without it the workflow still runs, but no
+   * conversation row is created and outbound replies cannot be addressed.
+   * Slack / generic-HMAC inbound traffic ignores this field.
+   */
+  conversationAgentId?: string;
 }
 
 function parseMetadata(raw: unknown): TriggerMetadata {
@@ -57,6 +66,9 @@ function parseMetadata(raw: unknown): TriggerMetadata {
   const out: TriggerMetadata = {};
   if (Array.isArray(md.eventTypes)) {
     out.eventTypes = md.eventTypes.filter((v): v is string => typeof v === 'string');
+  }
+  if (typeof md.conversationAgentId === 'string' && md.conversationAgentId.length > 0) {
+    out.conversationAgentId = md.conversationAgentId;
   }
   return out;
 }
@@ -188,8 +200,10 @@ export async function POST(
     return errorResponse('Unauthorized', { code: 'UNAUTHORIZED', status: 401 });
   }
 
-  // Normalise. Adapters MUST NOT perform I/O here.
-  const normalised = adapter.normalise(bodyParsed, request.headers);
+  // Normalise. Adapters MUST NOT perform I/O here. `rawBody` is passed so
+  // form-encoded adapters (Twilio) can parse — `bodyParsed` is null for
+  // non-JSON bodies.
+  const normalised = adapter.normalise(bodyParsed, request.headers, rawBody);
 
   // Optional event-type allow-list (per-trigger metadata).
   const metadata = parseMetadata(trigger.metadata);
@@ -242,12 +256,57 @@ export async function POST(
   }
 
   const triggerSource = `inbound:${channel}`;
+
+  // Conversation enrichment — only for adapters that carry a real end-user
+  // identity (Twilio, WhatsApp Cloud) AND a trigger metadata that names the
+  // conversation-owning agent. Slack / Postmark / generic-HMAC skip this
+  // block because they don't set the conversation-key fields. Triggers
+  // without `metadata.conversationAgentId` skip too — workflow still runs,
+  // but no conversation row is created (the outbound capability will
+  // surface `no_inbound_channel` if invoked).
+  let resolvedConversationId: string | null = null;
+  let optOutStateChanged = false;
+  if (
+    normalised.conversationChannel &&
+    normalised.conversationProvider &&
+    normalised.fromAddress &&
+    metadata.conversationAgentId
+  ) {
+    try {
+      const inboundText =
+        typeof (normalised.payload as { text?: unknown })?.text === 'string'
+          ? (normalised.payload as { text: string }).text
+          : undefined;
+      const resolved = await resolveConversation({
+        agentId: metadata.conversationAgentId,
+        userId: trigger.createdBy,
+        channel: normalised.conversationChannel,
+        provider: normalised.conversationProvider,
+        fromAddress: normalised.fromAddress,
+        text: inboundText,
+      });
+      resolvedConversationId = resolved.conversationId;
+      optOutStateChanged = resolved.optOutStateChanged;
+    } catch (err) {
+      // Conversation resolution is best-effort — log and continue. The
+      // workflow can still run; the outbound capability will return
+      // `no_inbound_channel` cleanly if conv enrichment failed.
+      logger.warn('Inbound: conversation resolver failed; proceeding without it', {
+        channel,
+        slug,
+        resolverError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   const inputData: Prisma.InputJsonValue = {
     trigger: normalised.payload as Prisma.InputJsonValue,
     triggerMeta: {
       channel: normalised.channel,
       eventType: normalised.eventType ?? null,
       externalId,
+      ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
+      ...(optOutStateChanged ? { optOutStateChanged: true } : {}),
     },
   };
 
@@ -359,4 +418,63 @@ export async function POST(
     undefined,
     { status: 202 }
   );
+}
+
+/**
+ * GET — webhook URL-ownership verification (Meta WhatsApp Cloud).
+ *
+ * Meta verifies a webhook URL via a GET request with
+ * `hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y` BEFORE any
+ * trigger row exists. We dispatch to the adapter's optional
+ * `handleVerificationGet` method without consulting `AiWorkflowTrigger`
+ * (there's nothing to consult — the partner is registering the URL).
+ *
+ * Adapters that don't expose this method (Slack, Postmark, generic-HMAC,
+ * Twilio) → 405. Adapters that do (WhatsApp Cloud) → response from the
+ * adapter (200 with challenge body, or 403 on wrong token).
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ channel: string; slug: string }> }
+): Promise<Response> {
+  const { channel, slug } = await params;
+  const clientIP = getClientIP(request);
+
+  // Separate rate-limit bucket from POST so GET verification probes can't
+  // exhaust the POST budget.
+  const rateLimit = inboundLimiter.check(`inbound-get:${channel}:${clientIP}`);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  if (!channelSchema.safeParse(channel).success) {
+    return errorResponse('Invalid channel', { code: 'NOT_FOUND', status: 404 });
+  }
+  if (!triggerSlugSchema.safeParse(slug).success) {
+    return errorResponse('Invalid workflow slug', { code: 'NOT_FOUND', status: 404 });
+  }
+
+  const adapter = getInboundAdapter(channel);
+  if (!adapter) {
+    return errorResponse('Inbound channel not configured', {
+      code: 'NOT_FOUND',
+      status: 404,
+    });
+  }
+
+  if (!adapter.handleVerificationGet) {
+    return errorResponse('Method Not Allowed', { code: 'METHOD_NOT_ALLOWED', status: 405 });
+  }
+
+  const response = adapter.handleVerificationGet(request);
+  if (response === null) {
+    return errorResponse('Bad Request', { code: 'BAD_REQUEST', status: 400 });
+  }
+
+  logger.info('Inbound: GET verification handshake', {
+    channel,
+    slug,
+    status: response.status,
+    clientIP,
+  });
+
+  return response;
 }

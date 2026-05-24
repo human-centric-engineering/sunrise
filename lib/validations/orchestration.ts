@@ -3303,6 +3303,51 @@ export const externalCallConfigSchema = stepErrorConfigSchema
     }
   );
 
+// ---------- Chat turn ───────────────────────────────────────────────────
+//
+// The conversational analog of `llm_call`. Loads prior `AiMessage` rows
+// from the named conversation, builds a [system + history + user]
+// messages array, calls the agent's provider, optionally persists the
+// new user + assistant turns back so the next call inherits them.
+//
+// Fills the gap between `llm_call` (single-shot, no history) and
+// `agent_call` (multi-turn within ONE invocation, but no cross-run
+// memory). Used by inbound-trigger workflows where each fired
+// `AiWorkflowExecution` must see what the user said in earlier turns.
+//
+// v1 scope: no tool calls. Operators who need them chain a
+// `tool_call` step after, or use `agent_call`. Adding tools is
+// additive when the use case lands.
+export const chatTurnConfigSchema = stepErrorConfigSchema.extend({
+  /** Which agent's system prompt + provider + model to use. */
+  agentSlug: z.string().min(1),
+  /**
+   * Conversation to load history from. Template-interpolated, so
+   * `{{trigger.conversationId}}` works for inbound-trigger workflows.
+   * Required — there's no "anonymous" chat-turn.
+   */
+  conversationId: z.string().min(1),
+  /**
+   * New user message for this turn. Template-interpolated, so
+   * `{{trigger.text}}` works.
+   */
+  message: z.string().min(1),
+  /** How many prior `AiMessage` rows to load (oldest-first). Default 20. */
+  historyLimit: z.number().int().min(0).max(100).optional(),
+  /**
+   * Whether to write the new user + assistant messages back to
+   * `AiMessage` so future runs see them. Default true. Set false for
+   * "preview" or "what-if" turns that shouldn't pollute the
+   * conversation log.
+   */
+  persistMessages: z.boolean().optional(),
+  /** Per-call reasoning-effort override (beats the agent's default). */
+  reasoningEffort: reasoningEffortConfigSchema,
+  modelOverride: z.string().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().min(1).max(100000).optional(),
+});
+
 export const agentCallConfigSchema = stepErrorConfigSchema.extend({
   agentSlug: z.string().optional(),
   message: z.string().optional(),

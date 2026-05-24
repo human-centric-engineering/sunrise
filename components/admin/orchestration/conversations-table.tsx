@@ -54,6 +54,16 @@ export interface ConversationListItem {
   _count?: { messages: number };
   createdAt: string;
   updatedAt: string;
+  /**
+   * Inbound channel + sender — populated only for conversations created
+   * via Twilio / WhatsApp Cloud / future messaging inbound. Null on
+   * conversations started via the embed widget or admin chat surface.
+   */
+  channel: string | null;
+  provider: string | null;
+  fromAddress: string | null;
+  lastInboundAt: string | null;
+  smsOptedOut: boolean;
 }
 
 export interface AgentOption {
@@ -319,6 +329,11 @@ export function ConversationsTable({
                   <span>Agent</span>
                 </Tip>
               </TableHead>
+              <TableHead>
+                <Tip label="Inbound channel + sender. Empty for web/admin chats; populated for SMS / WhatsApp / future messaging channels.">
+                  <span>Channel</span>
+                </Tip>
+              </TableHead>
               <TableHead className="text-center">
                 <Tip label="Total messages exchanged">
                   <span>Messages</span>
@@ -331,7 +346,7 @@ export function ConversationsTable({
           <TableBody>
             {conversations.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground py-8 text-center text-sm">
+                <TableCell colSpan={6} className="text-muted-foreground py-8 text-center text-sm">
                   {isLoading ? 'Loading…' : 'No conversations found.'}
                 </TableCell>
               </TableRow>
@@ -348,6 +363,30 @@ export function ConversationsTable({
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {conv.agent?.name ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
+                    {conv.channel ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono text-xs">
+                          {conv.channel}
+                          {conv.provider ? (
+                            <span className="text-muted-foreground/70"> · {conv.provider}</span>
+                          ) : null}
+                        </span>
+                        {conv.fromAddress && (
+                          <span className="text-muted-foreground/70 font-mono text-[10px]">
+                            {conv.fromAddress}
+                          </span>
+                        )}
+                        {conv.smsOptedOut && (
+                          <Badge variant="destructive" className="w-fit text-[10px]">
+                            opted out
+                          </Badge>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-center text-sm">
                     {conv._count?.messages ?? 0}

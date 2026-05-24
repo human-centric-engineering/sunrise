@@ -241,6 +241,28 @@ export const STEP_REGISTRY: readonly StepRegistryEntry[] = [
     estimatedDuration: '~3-15s',
   },
   {
+    type: 'chat_turn',
+    label: 'Chat Turn',
+    description:
+      'Conversational analog of llm_call — loads prior AiMessage rows for the named conversation so the LLM sees the full multi-turn history. Persists the new user + assistant messages back so future runs inherit them.',
+    category: 'agent',
+    icon: MessageSquareCode,
+    inputs: 1,
+    outputs: 1,
+    // Memory Management — this step IS the canonical workflow-side
+    // implementation of the pattern: pulls long-term conversational
+    // memory (prior AiMessage rows) into a single LLM call.
+    relatedPatterns: [8],
+    defaultConfig: {
+      agentSlug: '',
+      conversationId: '{{trigger.conversationId}}',
+      message: '{{trigger.text}}',
+      historyLimit: 20,
+      persistMessages: true,
+    },
+    estimatedDuration: '~2-8s',
+  },
+  {
     type: 'send_notification',
     label: 'Send Notification',
     description: 'Send an email or webhook notification with templated content.',

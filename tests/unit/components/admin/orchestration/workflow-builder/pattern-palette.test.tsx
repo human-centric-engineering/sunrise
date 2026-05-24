@@ -42,13 +42,13 @@ describe('PatternPalette', () => {
     }
   });
 
-  it('renders exactly 17 palette blocks (one per step type)', () => {
+  it('renders exactly 18 palette blocks (one per step type)', () => {
     render(<PatternPalette />);
 
-    // STEP_REGISTRY has 17 entries (15 originals + supervisor + report)
-    expect(STEP_REGISTRY.length).toBe(17);
+    // STEP_REGISTRY: 15 originals + supervisor + report + chat_turn = 18
+    expect(STEP_REGISTRY.length).toBe(18);
     const blocks = document.querySelectorAll('[data-testid^="palette-block-"]');
-    expect(blocks.length).toBe(17);
+    expect(blocks.length).toBe(18);
   });
 
   it('all palette blocks have draggable attribute', () => {
@@ -248,6 +248,7 @@ describe('PatternPalette', () => {
         evaluate: [19], // Evaluation & Monitoring
         external_call: [], // generic HTTP — not an agentic pattern
         agent_call: [7, 15], // Multi-Agent Collaboration + A2A
+        chat_turn: [8], // Memory Management — loads prior AiMessage rows into the prompt
         send_notification: [], // delivery — not an agentic pattern
         orchestrator: [6, 7], // Planning + Multi-Agent Collaboration
         supervisor: [19], // Evaluation & Monitoring (cross-step audit)

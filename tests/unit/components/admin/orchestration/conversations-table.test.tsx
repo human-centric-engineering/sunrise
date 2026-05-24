@@ -55,6 +55,11 @@ const CONVERSATIONS = [
     _count: { messages: 7 },
     createdAt: '2025-03-01T10:00:00Z',
     updatedAt: '2025-03-02T12:00:00Z',
+    channel: null,
+    provider: null,
+    fromAddress: null,
+    lastInboundAt: null,
+    smsOptedOut: false,
   },
   {
     id: 'conv-2',
@@ -65,6 +70,11 @@ const CONVERSATIONS = [
     _count: { messages: 0 },
     createdAt: '2025-03-03T10:00:00Z',
     updatedAt: '2025-03-03T10:00:00Z',
+    channel: null,
+    provider: null,
+    fromAddress: null,
+    lastInboundAt: null,
+    smsOptedOut: false,
   },
 ];
 
@@ -135,8 +145,9 @@ describe('ConversationsTable', () => {
       />
     );
 
-    // The second conversation has null agent
-    expect(screen.getByText('—')).toBeInTheDocument();
+    // The second conversation has both null agent + null channel — both
+    // columns render an em-dash, so we expect at least one match.
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders message count column', () => {
@@ -149,6 +160,82 @@ describe('ConversationsTable', () => {
     );
 
     expect(screen.getByText('7')).toBeInTheDocument();
+  });
+
+  it('renders the Channel column with channel/provider/fromAddress for WhatsApp conversations', () => {
+    const inboundConv = {
+      id: 'conv-wa',
+      title: 'WhatsApp inquiry',
+      isActive: true,
+      agentId: 'agent-1',
+      agent: { id: 'agent-1', name: 'Support Bot', slug: 'support-bot' },
+      _count: { messages: 3 },
+      createdAt: '2025-03-04T10:00:00Z',
+      updatedAt: '2025-03-04T10:00:00Z',
+      channel: 'whatsapp',
+      provider: 'meta',
+      fromAddress: '+447400123456',
+      lastInboundAt: '2025-03-04T10:00:00Z',
+      smsOptedOut: false,
+    };
+
+    render(
+      <ConversationsTable
+        initialConversations={[inboundConv]}
+        initialMeta={makeMeta({ total: 1 })}
+        agents={AGENTS}
+      />
+    );
+
+    // Channel + provider rendered together in the same span (separator
+    // is " · ", so the visible text fragment is `whatsapp · meta`).
+    expect(screen.getByText(/whatsapp/)).toBeTruthy();
+    expect(screen.getByText(/· meta/)).toBeInTheDocument();
+    expect(screen.getByText('+447400123456')).toBeInTheDocument();
+    // No opted-out badge for this row.
+    expect(screen.queryByText('opted out')).not.toBeInTheDocument();
+  });
+
+  it('renders the "opted out" badge when smsOptedOut is true', () => {
+    const optedOutConv = {
+      id: 'conv-opt',
+      title: 'STOPped user',
+      isActive: true,
+      agentId: 'agent-1',
+      agent: { id: 'agent-1', name: 'Support Bot', slug: 'support-bot' },
+      _count: { messages: 2 },
+      createdAt: '2025-03-05T10:00:00Z',
+      updatedAt: '2025-03-05T10:00:00Z',
+      channel: 'sms',
+      provider: 'twilio',
+      fromAddress: '+12025550100',
+      lastInboundAt: '2025-03-05T10:00:00Z',
+      smsOptedOut: true,
+    };
+
+    render(
+      <ConversationsTable
+        initialConversations={[optedOutConv]}
+        initialMeta={makeMeta({ total: 1 })}
+        agents={AGENTS}
+      />
+    );
+
+    expect(screen.getByText('opted out')).toBeInTheDocument();
+  });
+
+  it('renders an em-dash in the Channel column for web/admin conversations (channel=null)', () => {
+    // The first CONVERSATIONS fixture has channel: null.
+    render(
+      <ConversationsTable
+        initialConversations={[CONVERSATIONS[0]]}
+        initialMeta={makeMeta({ total: 1 })}
+        agents={AGENTS}
+      />
+    );
+
+    // The em-dash placeholder is rendered when channel is null.
+    expect(screen.getByText('—')).toBeInTheDocument();
   });
 
   it('shows Active and Inactive badges', () => {
@@ -491,6 +578,11 @@ describe('ConversationsTable', () => {
       _count: { messages: 0 },
       createdAt: '2025-01-01T00:00:00Z',
       updatedAt: badDate,
+      channel: null,
+      provider: null,
+      fromAddress: null,
+      lastInboundAt: null,
+      smsOptedOut: false,
     };
 
     render(

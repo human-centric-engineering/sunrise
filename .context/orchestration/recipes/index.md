@@ -40,14 +40,15 @@ Each recipe follows the same 12-section template so they're scannable side-by-si
 
 ## Recipes
 
-| Pattern                             | File                                               | Vendors illustrated                        |
-| ----------------------------------- | -------------------------------------------------- | ------------------------------------------ |
-| Send a transactional email          | [transactional-email.md](./transactional-email.md) | Postmark, SendGrid, Resend, AWS SES        |
-| Charge / refund / capture a payment | [payment-charge.md](./payment-charge.md)           | Stripe-shaped, Adyen-shaped, Mollie-shaped |
-| Post a message to a chat platform   | [chat-notification.md](./chat-notification.md)     | Slack, Discord, Microsoft Teams            |
-| Create a calendar event             | [calendar-event.md](./calendar-event.md)           | Google Calendar, Microsoft Graph, CalDAV   |
-| Render a PDF / HTML document        | [document-render.md](./document-render.md)         | DocRaptor, PDFShift, Gotenberg             |
-| In-chat user approval before action | [in-chat-approval.md](./in-chat-approval.md)       | (none — uses `run_workflow` capability)    |
+| Pattern                             | File                                                             | Vendors illustrated                                                     |
+| ----------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Send a transactional email          | [transactional-email.md](./transactional-email.md)               | Postmark, SendGrid, Resend, AWS SES                                     |
+| Charge / refund / capture a payment | [payment-charge.md](./payment-charge.md)                         | Stripe-shaped, Adyen-shaped, Mollie-shaped                              |
+| Post a message to a chat platform   | [chat-notification.md](./chat-notification.md)                   | Slack, Discord, Microsoft Teams                                         |
+| Create a calendar event             | [calendar-event.md](./calendar-event.md)                         | Google Calendar, Microsoft Graph, CalDAV                                |
+| Render a PDF / HTML document        | [document-render.md](./document-render.md)                       | DocRaptor, PDFShift, Gotenberg                                          |
+| In-chat user approval before action | [in-chat-approval.md](./in-chat-approval.md)                     | (none — uses `run_workflow` capability)                                 |
+| Reply to a user via SMS / WhatsApp  | [sms-whatsapp-inbound-reply.md](./sms-whatsapp-inbound-reply.md) | Twilio (SMS + WA), Meta WhatsApp Cloud — uses `send_message_to_channel` |
 
 ## Workflow assembly recipes
 

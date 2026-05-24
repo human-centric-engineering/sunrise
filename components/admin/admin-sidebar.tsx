@@ -178,10 +178,16 @@ const navSections: NavSection[] = [
             description: 'Pending approvals',
           },
           {
+            href: '/admin/orchestration/triggers',
+            label: 'Inbound Triggers',
+            icon: Webhook,
+            description: 'Webhook URLs that fire workflows',
+          },
+          {
             href: '/admin/orchestration/event-subscriptions',
             label: 'Event Subscriptions',
             icon: Webhook,
-            description: 'Webhook notifications',
+            description: 'Outbound webhook notifications',
           },
           {
             href: '/admin/orchestration/evaluations',

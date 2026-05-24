@@ -96,6 +96,7 @@
     "epub2": "^3.0.2",
     "gpt-tokenizer": "^3.4.0",
     "jmespath": "^0.16.0",
+    "libphonenumber-js": "^1.13.3",
     "lru-cache": "^11.2.6",
     "lucide-react": "^0.563.0",
     "mammoth": "^1.12.0",
