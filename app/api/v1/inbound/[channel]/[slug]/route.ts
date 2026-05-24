@@ -39,6 +39,7 @@ import { drainEngine } from '@/lib/orchestration/scheduling/scheduler';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
+import { resolveConversation } from '@/lib/orchestration/inbound/conversation-resolver';
 
 // Module-level bootstrap. Idempotent — first call registers adapters from env.
 bootstrapInboundAdapters();
@@ -49,6 +50,14 @@ const triggerSlugSchema = slugSchema.pipe(z.string().max(100));
 interface TriggerMetadata {
   /** Optional allow-list of normalised eventType values. Empty/missing = accept all. */
   eventTypes?: string[];
+  /**
+   * Optional agent id that owns conversations created from this trigger
+   * (Twilio / WhatsApp Cloud). Required to populate `AiConversation` for
+   * inbound messages — without it the workflow still runs, but no
+   * conversation row is created and outbound replies cannot be addressed.
+   * Slack / generic-HMAC inbound traffic ignores this field.
+   */
+  conversationAgentId?: string;
 }
 
 function parseMetadata(raw: unknown): TriggerMetadata {
@@ -57,6 +66,9 @@ function parseMetadata(raw: unknown): TriggerMetadata {
   const out: TriggerMetadata = {};
   if (Array.isArray(md.eventTypes)) {
     out.eventTypes = md.eventTypes.filter((v): v is string => typeof v === 'string');
+  }
+  if (typeof md.conversationAgentId === 'string' && md.conversationAgentId.length > 0) {
+    out.conversationAgentId = md.conversationAgentId;
   }
   return out;
 }
@@ -244,12 +256,57 @@ export async function POST(
   }
 
   const triggerSource = `inbound:${channel}`;
+
+  // Conversation enrichment — only for adapters that carry a real end-user
+  // identity (Twilio, WhatsApp Cloud) AND a trigger metadata that names the
+  // conversation-owning agent. Slack / Postmark / generic-HMAC skip this
+  // block because they don't set the conversation-key fields. Triggers
+  // without `metadata.conversationAgentId` skip too — workflow still runs,
+  // but no conversation row is created (the outbound capability will
+  // surface `no_inbound_channel` if invoked).
+  let resolvedConversationId: string | null = null;
+  let optOutStateChanged = false;
+  if (
+    normalised.conversationChannel &&
+    normalised.conversationProvider &&
+    normalised.fromAddress &&
+    metadata.conversationAgentId
+  ) {
+    try {
+      const inboundText =
+        typeof (normalised.payload as { text?: unknown })?.text === 'string'
+          ? (normalised.payload as { text: string }).text
+          : undefined;
+      const resolved = await resolveConversation({
+        agentId: metadata.conversationAgentId,
+        userId: trigger.createdBy,
+        channel: normalised.conversationChannel,
+        provider: normalised.conversationProvider,
+        fromAddress: normalised.fromAddress,
+        text: inboundText,
+      });
+      resolvedConversationId = resolved.conversationId;
+      optOutStateChanged = resolved.optOutStateChanged;
+    } catch (err) {
+      // Conversation resolution is best-effort — log and continue. The
+      // workflow can still run; the outbound capability will return
+      // `no_inbound_channel` cleanly if conv enrichment failed.
+      logger.warn('Inbound: conversation resolver failed; proceeding without it', {
+        channel,
+        slug,
+        resolverError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   const inputData: Prisma.InputJsonValue = {
     trigger: normalised.payload as Prisma.InputJsonValue,
     triggerMeta: {
       channel: normalised.channel,
       eventType: normalised.eventType ?? null,
       externalId,
+      ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
+      ...(optOutStateChanged ? { optOutStateChanged: true } : {}),
     },
   };
 

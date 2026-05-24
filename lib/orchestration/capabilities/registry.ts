@@ -35,6 +35,7 @@ import { DeactivateProviderModelsCapability } from '@/lib/orchestration/capabili
 import { CallExternalApiCapability } from '@/lib/orchestration/capabilities/built-in/call-external-api';
 import { RunWorkflowCapability } from '@/lib/orchestration/capabilities/built-in/run-workflow';
 import { UploadToStorageCapability } from '@/lib/orchestration/capabilities/built-in/upload-to-storage';
+import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
@@ -57,6 +58,7 @@ export function registerBuiltInCapabilities(): void {
   capabilityDispatcher.register(new CallExternalApiCapability());
   capabilityDispatcher.register(new RunWorkflowCapability());
   capabilityDispatcher.register(new UploadToStorageCapability());
+  capabilityDispatcher.register(new SendMessageToChannelCapability());
   registered = true;
 }
 
