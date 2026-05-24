@@ -27,6 +27,15 @@ interface ConversationDetail {
   updatedAt: string;
   agent?: { id: string; name: string; slug: string } | null;
   _count?: { messages: number };
+  /**
+   * Inbound messaging channel — populated for Twilio / WhatsApp Cloud
+   * conversations, null for embed-widget / admin chats.
+   */
+  channel: string | null;
+  provider: string | null;
+  fromAddress: string | null;
+  lastInboundAt: string | null;
+  smsOptedOut: boolean;
 }
 
 async function getConversation(id: string): Promise<ConversationDetail | null> {
@@ -110,6 +119,56 @@ export default async function ConversationDetailPage({
         <span className="text-muted-foreground text-sm">Tags:</span>
         <ConversationTags conversationId={conversation.id} initialTags={conversation.tags ?? []} />
       </div>
+
+      {conversation.channel && (
+        <div className="bg-muted/30 rounded-lg border p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-medium">
+                Inbound channel{' '}
+                <FieldHelp title="What is this section?">
+                  <p>
+                    This conversation was created by an inbound webhook (SMS / WhatsApp / future
+                    messaging channel) rather than the embed widget or admin chat. The fields below
+                    are populated by the inbound adapter and read by the{' '}
+                    <code>send_message_to_channel</code> capability when the agent replies.
+                  </p>
+                </FieldHelp>
+              </h3>
+              <dl className="text-muted-foreground mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
+                <div>
+                  <dt className="font-medium">Channel</dt>
+                  <dd className="font-mono">{conversation.channel}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium">Provider</dt>
+                  <dd className="font-mono">{conversation.provider ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium">From</dt>
+                  <dd className="font-mono">{conversation.fromAddress ?? '—'}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium">Last inbound</dt>
+                  <dd>
+                    {conversation.lastInboundAt
+                      ? new Date(conversation.lastInboundAt).toLocaleString()
+                      : '—'}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+            {conversation.smsOptedOut && (
+              <div className="bg-destructive/10 text-destructive border-destructive/30 rounded-md border px-3 py-1.5 text-xs font-medium">
+                Opted out (STOP)
+                <p className="text-destructive/80 mt-0.5 text-[10px] font-normal">
+                  Outbound dispatches refused
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <ConversationTraceViewer messages={messages} conversationId={conversation.id} />
     </div>

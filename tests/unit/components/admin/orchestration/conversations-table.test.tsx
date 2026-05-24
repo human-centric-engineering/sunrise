@@ -55,6 +55,11 @@ const CONVERSATIONS = [
     _count: { messages: 7 },
     createdAt: '2025-03-01T10:00:00Z',
     updatedAt: '2025-03-02T12:00:00Z',
+    channel: null,
+    provider: null,
+    fromAddress: null,
+    lastInboundAt: null,
+    smsOptedOut: false,
   },
   {
     id: 'conv-2',
@@ -65,6 +70,11 @@ const CONVERSATIONS = [
     _count: { messages: 0 },
     createdAt: '2025-03-03T10:00:00Z',
     updatedAt: '2025-03-03T10:00:00Z',
+    channel: null,
+    provider: null,
+    fromAddress: null,
+    lastInboundAt: null,
+    smsOptedOut: false,
   },
 ];
 
@@ -135,8 +145,9 @@ describe('ConversationsTable', () => {
       />
     );
 
-    // The second conversation has null agent
-    expect(screen.getByText('—')).toBeInTheDocument();
+    // The second conversation has both null agent + null channel — both
+    // columns render an em-dash, so we expect at least one match.
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders message count column', () => {
@@ -491,6 +502,11 @@ describe('ConversationsTable', () => {
       _count: { messages: 0 },
       createdAt: '2025-01-01T00:00:00Z',
       updatedAt: badDate,
+      channel: null,
+      provider: null,
+      fromAddress: null,
+      lastInboundAt: null,
+      smsOptedOut: false,
     };
 
     render(

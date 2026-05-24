@@ -207,6 +207,8 @@ export const API = {
       KNOWLEDGE_EMBEDDING_STATUS: '/api/v1/admin/orchestration/knowledge/embedding-status',
       KNOWLEDGE_TAGS: '/api/v1/admin/orchestration/knowledge/tags',
       knowledgeTagById: (id: string): string => `/api/v1/admin/orchestration/knowledge/tags/${id}`,
+      TRIGGERS: '/api/v1/admin/orchestration/triggers',
+      triggerById: (id: string): string => `/api/v1/admin/orchestration/triggers/${id}`,
       WEBHOOKS: '/api/v1/admin/orchestration/webhooks',
       webhookById: (id: string): string => `/api/v1/admin/orchestration/webhooks/${id}`,
       webhookDeliveries: (id: string): string =>
