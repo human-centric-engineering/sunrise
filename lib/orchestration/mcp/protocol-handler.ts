@@ -39,6 +39,10 @@ import {
 import { getMcpSessionManager } from '@/lib/orchestration/mcp/singletons';
 import { listMcpPrompts, getMcpPrompt } from '@/lib/orchestration/mcp/prompt-registry';
 import { extractProgressToken } from '@/lib/orchestration/mcp/progress-tracker';
+import {
+  completeMcpReference,
+  type McpCompletionRef,
+} from '@/lib/orchestration/mcp/completion-registry';
 import type { McpRateLimiter } from '@/lib/orchestration/mcp/rate-limiter';
 import type { McpServerState } from '@/lib/orchestration/mcp/types';
 
@@ -183,6 +187,12 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
       // scope. Anyone with a valid session can ask for less verbose logs.
       return handleLoggingSetLevel(request.params, session);
 
+    case 'completion/complete':
+      requireInitialized(session);
+      // Scope check is per ref-type and happens inside the handler — a
+      // prompt-ref needs prompts:read, a resource-ref needs resources:read.
+      return handleCompletionComplete(request.params, auth);
+
     case 'prompts/list':
       requireInitialized(session);
       requireScope(auth, McpScope.PROMPTS_READ);
@@ -230,13 +240,14 @@ function handleInitialize(
   // tools / resources / prompts broadcast list_changed when the admin mutates
   // their catalogue. resources.subscribe accepts resources/subscribe +
   // resources/unsubscribe and pushes notifications/resources/updated.
-  // logging:{} signals support for logging/setLevel + notifications/message.
-  // completions land in Phase 6.
+  // logging:{} signals logging/setLevel + notifications/message support.
+  // completions:{} signals completion/complete support.
   const capabilities: McpCapabilities = {
     tools: { listChanged: true },
     resources: { listChanged: true, subscribe: true },
     prompts: { listChanged: true },
     logging: {},
+    completions: {},
   };
 
   return {
@@ -389,6 +400,68 @@ async function handleResourcesUnsubscribe(
     throw new McpProtocolError(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found or expired');
   }
   return Promise.resolve({});
+}
+
+async function handleCompletionComplete(
+  params: Record<string, unknown> | undefined,
+  auth: McpAuthContext
+): Promise<unknown> {
+  const ref = parseCompletionRef(params?.ref);
+  const argument = params?.argument;
+  if (
+    argument === null ||
+    typeof argument !== 'object' ||
+    typeof (argument as { name?: unknown }).name !== 'string' ||
+    typeof (argument as { value?: unknown }).value !== 'string'
+  ) {
+    throw new McpProtocolError(
+      JsonRpcErrorCode.INVALID_PARAMS,
+      'argument must be { name: string, value: string }'
+    );
+  }
+  const { name: argName, value } = argument as { name: string; value: string };
+
+  // Scope per ref-type — a prompt completion is metadata about a prompt
+  // (prompts:read), a resource template completion is metadata about a
+  // resource (resources:read). Without this gate, completion would be a
+  // free side-channel around the scope check on prompts/list and
+  // resources/list.
+  const requiredScope = ref.type === 'ref/prompt' ? McpScope.PROMPTS_READ : McpScope.RESOURCES_READ;
+  requireScope(auth, requiredScope);
+
+  try {
+    return await completeMcpReference(ref, argName, value);
+  } catch (err) {
+    if (err instanceof RangeError) {
+      throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, err.message);
+    }
+    throw err;
+  }
+}
+
+function parseCompletionRef(raw: unknown): McpCompletionRef {
+  if (raw === null || typeof raw !== 'object') {
+    throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, 'ref is required');
+  }
+  const type = (raw as { type?: unknown }).type;
+  if (type === 'ref/prompt') {
+    const name = (raw as { name?: unknown }).name;
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, 'ref/prompt requires name');
+    }
+    return { type: 'ref/prompt', name };
+  }
+  if (type === 'ref/resource') {
+    const uri = (raw as { uri?: unknown }).uri;
+    if (typeof uri !== 'string' || uri.length === 0) {
+      throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, 'ref/resource requires uri');
+    }
+    return { type: 'ref/resource', uri };
+  }
+  throw new McpProtocolError(
+    JsonRpcErrorCode.INVALID_PARAMS,
+    'ref.type must be "ref/prompt" or "ref/resource"'
+  );
 }
 
 function handleLoggingSetLevel(

@@ -187,6 +187,48 @@ Server-side calls into `emitMcpLog(sessionId, level, logger?, data)` (or `null` 
 
 Use sparingly — this is for events the client genuinely cares about (cost-cap hits, resource handler fallbacks). Internal server-side logging continues to go to `lib/logging`, not the MCP wire.
 
+## Completion API
+
+`completion/complete` lets clients ask the server for autocomplete candidates for a prompt argument or a resource URI template variable, given a partial value the user has typed.
+
+```
+client → completion/complete {
+  ref: { type: "ref/prompt", name: "analyze-pattern" },
+  argument: { name: "pattern_number", value: "1" }
+}
+server → { completion: { values: ["1", "10", …], hasMore: false, total: 11 } }
+```
+
+**Hard rule: completion lookups are purely static.** They never invoke a tool, never read a resource, never call an LLM. This bounds the cost of every autocomplete keystroke and prevents accidental recursion (a completion that triggers a tool that triggers another completion lookup…). Admins supply candidate lists upfront:
+
+- **For prompts**: the `completionsSpec` JSON column on `McpExposedPrompt` — shape `{ [argName: string]: string[] }`. Editable per-arg in the prompts admin UI (Phase 6 UI work captured in Phase 2's `completionsSpec` column).
+- **For resources**: the `completionsSpec` key inside `handlerConfig` — same shape.
+- **Special case**: `sunrise://knowledge/patterns/{number}` enumerates 1-21 dynamically without admin maintenance.
+
+### Limits
+
+| Limit                                 | Value                                      |
+| ------------------------------------- | ------------------------------------------ |
+| Max stored candidates per argument    | 500 (excess truncated server-side)         |
+| Max returned candidates per request   | 100 (with `hasMore: true` when more match) |
+| Max `argument.value` (partial) length | 1024 chars (excess → `INVALID_PARAMS`)     |
+
+### Scope enforcement
+
+| Ref type       | Required scope   | Why                                                                              |
+| -------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `ref/prompt`   | `prompts:read`   | Completion is metadata about a prompt the client must already be allowed to read |
+| `ref/resource` | `resources:read` | Same logic for resources                                                         |
+
+Without this gate, completion would be a free side-channel around the scope check on `prompts/list` and `resources/list`. The scope is checked per-request inside `handleCompletionComplete`.
+
+### Edge behaviour
+
+- Prefix match is case-insensitive (`f` matches `France` and `finland`).
+- Empty partial returns all candidates (subject to the 100/500 cap).
+- Unknown prompt name / unknown resource URI returns an empty completion (`values: []`) rather than an error — clients should show "no suggestions" UX.
+- Non-string entries in admin-saved candidate lists are silently skipped (defensive narrowing).
+
 ## Prompts
 
 Prompts are admin-editable slash-command templates surfaced by MCP clients to end users. They are **not** auto-invoked by the model — a human picks them from a menu (e.g. typing `/analyze-pattern` in Claude Desktop). The distinction matters for design:
