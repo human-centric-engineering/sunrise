@@ -7,6 +7,7 @@ import {
   type AgentOption,
   type WorkflowOption,
 } from '@/components/admin/orchestration/trigger-form';
+import { WhatsAppWorkedExample } from '@/components/admin/orchestration/whatsapp-worked-example';
 import { API } from '@/lib/api/endpoints';
 import { getBaseUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -80,6 +81,8 @@ export default async function NewTriggerPage() {
           Configure how an external system fires a workflow.
         </p>
       </div>
+
+      <WhatsAppWorkedExample />
 
       {workflows.length === 0 ? (
         <div className="bg-card space-y-4 rounded-lg border p-6 text-sm">
