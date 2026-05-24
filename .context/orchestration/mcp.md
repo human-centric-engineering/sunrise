@@ -19,26 +19,33 @@ POST /api/v1/mcp           ← Streamable HTTP transport
   v
 lib/orchestration/mcp/protocol-handler.ts
   |
-  |-- tools/list  → tool-registry.ts → McpExposedTool + AiCapability
-  |-- tools/call  → tool-registry.ts → capabilityDispatcher.dispatch()
-  |-- resources/* → resource-registry.ts → sunrise:// URI handlers
-  |-- prompts/*   → prompt-registry.ts → hardcoded templates
+  |-- tools/list                → tool-registry.ts → McpExposedTool + AiCapability (+ annotations on 2025-06-18)
+  |-- tools/call                → tool-registry.ts → capabilityDispatcher.dispatch() (+ rich content blocks)
+  |-- resources/list, /templates, /read
+  |                             → resource-registry.ts → sunrise:// URI handlers
+  |-- resources/subscribe, /unsubscribe
+  |                             → session-manager.ts subscriptionsBySession map
+  |-- prompts/list, /get        → prompt-registry.ts (DB-backed cache, legacy fallback)
+  |-- logging/setLevel          → session-manager.ts setLogLevel
+  |-- completion/complete       → completion-registry.ts (static lookup only)
   v
 Audit log (fire-and-forget → McpAuditLog)
+SSE push (notifications/{tools,resources,prompts}/list_changed,
+          notifications/resources/updated, /message, /progress)
 ```
 
 ## Key Files
 
-| Area          | Files                                                                                         |
-| ------------- | --------------------------------------------------------------------------------------------- |
-| Core library  | `lib/orchestration/mcp/` (11 files, platform-agnostic)                                        |
-| Transport     | `app/api/v1/mcp/route.ts` (POST/GET/DELETE)                                                   |
-| Admin API     | `app/api/v1/admin/orchestration/mcp/` (10 route files)                                        |
-| Admin UI      | `app/admin/orchestration/mcp/` (6 pages)                                                      |
-| Components    | `components/admin/orchestration/mcp/` (7 components)                                          |
-| Types         | `types/mcp.ts`                                                                                |
-| Validation    | `lib/validations/mcp.ts`                                                                      |
-| Prisma models | McpServerConfig, McpExposedTool, McpExposedResource, McpExposedPrompt, McpApiKey, McpAuditLog |
+| Area          | Files                                                                                                             |
+| ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Core library  | `lib/orchestration/mcp/` (16 files, platform-agnostic)                                                            |
+| Transport     | `app/api/v1/mcp/route.ts` (POST/GET/DELETE)                                                                       |
+| Admin API     | `app/api/v1/admin/orchestration/mcp/` (7 route trees: tools, resources, prompts, keys, sessions, settings, audit) |
+| Admin UI      | `app/admin/orchestration/mcp/` (7 pages: dashboard + tools, resources, prompts, keys, sessions, settings, audit)  |
+| Components    | `components/admin/orchestration/mcp/` (9 components)                                                              |
+| Types         | `types/mcp.ts`                                                                                                    |
+| Validation    | `lib/validations/mcp.ts`                                                                                          |
+| Prisma models | McpServerConfig, McpExposedTool, McpExposedResource, McpExposedPrompt, McpApiKey, McpAuditLog                     |
 
 ## Security Model
 

@@ -17,7 +17,7 @@ vi.mock('@/components/admin/orchestration/mcp/mcp-dashboard', () => ({
     stats,
   }: {
     initialSettings: unknown;
-    stats: { tools: number; resources: number; keys: number };
+    stats: { tools: number; resources: number; prompts: number; keys: number };
   }) => (
     <div
       data-testid="mcp-dashboard"
@@ -25,6 +25,7 @@ vi.mock('@/components/admin/orchestration/mcp/mcp-dashboard', () => ({
       data-settings={initialSettings ? JSON.stringify(initialSettings) : ''}
       data-tools={stats.tools}
       data-resources={stats.resources}
+      data-prompts={stats.prompts}
       data-keys={stats.keys}
     />
   ),
@@ -78,11 +79,18 @@ function makeNotOkResponse(src: string): FakeResponse {
 
 /** Default serverFetch mock: all endpoints succeed */
 function setupDefaultServerFetch(
-  overrides: Partial<Record<'settings' | 'tools' | 'resources' | 'keys', FakeResponse>> = {}
+  overrides: Partial<
+    Record<'settings' | 'tools' | 'resources' | 'prompts' | 'keys', FakeResponse>
+  > = {}
 ) {
   vi.mocked(serverFetch).mockImplementation(async (url: string) => {
     if (url.includes(API.ADMIN.ORCHESTRATION.MCP_SETTINGS))
       return (overrides.settings ?? makeOkResponse('settings')) as unknown as Response;
+    // Prompts must come before Tools — MCP_PROMPTS substring would otherwise
+    // be shadowed if MCP_TOOLS were checked first against an unrelated URL.
+    // (Defensive: prefer specific routes first.)
+    if (url.includes(API.ADMIN.ORCHESTRATION.MCP_PROMPTS))
+      return (overrides.prompts ?? makeOkResponse('prompts')) as unknown as Response;
     if (url.includes(API.ADMIN.ORCHESTRATION.MCP_TOOLS))
       return (overrides.tools ?? makeOkResponse('tools')) as unknown as Response;
     if (url.includes(API.ADMIN.ORCHESTRATION.MCP_RESOURCES))
@@ -95,7 +103,7 @@ function setupDefaultServerFetch(
 
 /** Default parseApiResponse mock: returns appropriate data per _src tag */
 function setupDefaultParseApiResponse(
-  statTotals: { tools?: number; resources?: number; keys?: number } = {},
+  statTotals: { tools?: number; resources?: number; prompts?: number; keys?: number } = {},
   settingsOverride?: unknown
 ) {
   vi.mocked(parseApiResponse).mockImplementation(async (res: Response) => {
@@ -114,6 +122,12 @@ function setupDefaultParseApiResponse(
           success: true,
           data: [],
           meta: { total: statTotals.resources ?? 5 },
+        } as never;
+      case 'prompts':
+        return {
+          success: true,
+          data: [],
+          meta: { total: statTotals.prompts ?? 4 },
         } as never;
       case 'keys':
         return {
@@ -251,6 +265,8 @@ describe('McpDashboardPage', () => {
           return { success: true, data: [], meta: { total: 'five' } } as never;
         case 'resources':
           return { success: true, data: [], meta: { total: 5 } } as never;
+        case 'prompts':
+          return { success: true, data: [], meta: { total: 4 } } as never;
         case 'keys':
           return { success: true, data: [], meta: { total: 2 } } as never;
         default:
@@ -263,6 +279,7 @@ describe('McpDashboardPage', () => {
     const dashboard = screen.getByTestId('mcp-dashboard');
     expect(dashboard).toHaveAttribute('data-tools', '0');
     expect(dashboard).toHaveAttribute('data-resources', '5');
+    expect(dashboard).toHaveAttribute('data-prompts', '4');
     expect(dashboard).toHaveAttribute('data-keys', '2');
   });
 

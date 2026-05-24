@@ -59,7 +59,11 @@ vi.mock('@/lib/orchestration/mcp', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { clearMcpResourceCache, broadcastMcpResourcesChanged } from '@/lib/orchestration/mcp';
+import {
+  broadcastMcpResourceUpdated,
+  broadcastMcpResourcesChanged,
+  clearMcpResourceCache,
+} from '@/lib/orchestration/mcp';
 import {
   mockAdminUser,
   mockUnauthenticatedUser,
@@ -184,10 +188,12 @@ describe('PATCH /mcp/resources/:id', () => {
     );
   });
 
-  it('clears cache and broadcasts change after update', async () => {
+  it('clears cache and broadcasts list_changed + resource updated after update', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
-    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
+    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(
+      makeResource({ uri: 'sunrise://knowledge/search' }) as never
+    );
 
     await PATCH(makePatchRequest({ isEnabled: false }), makeParams(RESOURCE_ID));
 
@@ -195,6 +201,10 @@ describe('PATCH /mcp/resources/:id', () => {
     expect(clearMcpResourceCache).toHaveBeenCalled();
     // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
+    // Per-URI fan-out lets subscribed clients refresh just this resource
+    // without re-running resources/list. Asserting the URI argument
+    // exercises the new Phase 4 wiring.
+    expect(broadcastMcpResourceUpdated).toHaveBeenCalledWith('sunrise://knowledge/search');
   });
 
   it('toggles isEnabled to false', async () => {
@@ -212,6 +222,55 @@ describe('PATCH /mcp/resources/:id', () => {
         data: expect.objectContaining({ isEnabled: false }),
       })
     );
+  });
+
+  it('persists a non-null handlerConfig object verbatim', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
+    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
+
+    const config = { limit: 10, mode: 'strict' };
+    await PATCH(makePatchRequest({ handlerConfig: config }), makeParams(RESOURCE_ID));
+
+    expect(prisma.mcpExposedResource.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ handlerConfig: config }),
+      })
+    );
+  });
+
+  it('persists handlerConfig:null as Prisma.JsonNull (explicit clear)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
+    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
+
+    // Passing null in the body is the admin's "clear it" signal — the
+    // route must translate that to Prisma.JsonNull so the column is
+    // overwritten with SQL NULL rather than left untouched.
+    await PATCH(makePatchRequest({ handlerConfig: null }), makeParams(RESOURCE_ID));
+
+    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0]?.[0];
+    const data = updateCall?.data as Record<string, unknown>;
+    // Prisma.JsonNull is a symbol-like sentinel — assert it's not the
+    // literal JS null (which Prisma rejects) or undefined (which would
+    // leave the column unchanged).
+    expect(data.handlerConfig).toBeDefined();
+    expect(data.handlerConfig).not.toBeNull();
+  });
+
+  it('omits handlerConfig from the update when not in the request body', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
+    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
+
+    // Only `name` in the body — `handlerConfig` should NOT appear in the
+    // update data, so the column retains its existing value rather than
+    // being overwritten or implicitly cleared.
+    await PATCH(makePatchRequest({ name: 'Updated only' }), makeParams(RESOURCE_ID));
+
+    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0]?.[0];
+    const data = updateCall?.data as Record<string, unknown>;
+    expect(data).not.toHaveProperty('handlerConfig');
   });
 });
 

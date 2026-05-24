@@ -40,6 +40,7 @@ import {
   readMcpResource,
   clearMcpResourceCache,
   listMcpResourceTemplates,
+  isRegisteredMcpResourceUri,
 } from '@/lib/orchestration/mcp/resource-registry';
 
 // ---------------------------------------------------------------------------
@@ -547,5 +548,67 @@ describe('listMcpResourceTemplates', () => {
       'sunrise://agents/{agentId}',
       'sunrise://knowledge/patterns/{number}',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRegisteredMcpResourceUri
+// ---------------------------------------------------------------------------
+
+describe('isRegisteredMcpResourceUri', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearMcpResourceCache();
+  });
+
+  it('returns true for an exact match on a registered URI', async () => {
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({ uri: 'sunrise://agents' }),
+    ] as never);
+
+    expect(await isRegisteredMcpResourceUri('sunrise://agents')).toBe(true);
+  });
+
+  it('returns true for a concrete instance of a parameterised template', async () => {
+    // Template `sunrise://knowledge/patterns/{number}` should match
+    // `sunrise://knowledge/patterns/5`.
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({
+        uri: 'sunrise://knowledge/patterns/{number}',
+        resourceType: 'pattern_detail',
+      }),
+    ] as never);
+
+    expect(await isRegisteredMcpResourceUri('sunrise://knowledge/patterns/5')).toBe(true);
+  });
+
+  it('returns true for a concrete instance with multiple path segments after the prefix', async () => {
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({ uri: 'sunrise://knowledge/search?q={query}' }),
+    ] as never);
+
+    expect(await isRegisteredMcpResourceUri('sunrise://knowledge/search?q=patterns')).toBe(true);
+  });
+
+  it('returns false for a URI no registered resource covers', async () => {
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({ uri: 'sunrise://agents' }),
+    ] as never);
+
+    expect(await isRegisteredMcpResourceUri('sunrise://unknown')).toBe(false);
+  });
+
+  it('returns false when no resources are registered', async () => {
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([]);
+    expect(await isRegisteredMcpResourceUri('sunrise://anything')).toBe(false);
+  });
+
+  it('does not match a different template prefix', async () => {
+    // `sunrise://workflows/{id}` must not match `sunrise://agents/foo`.
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({ uri: 'sunrise://workflows/{id}' }),
+    ] as never);
+
+    expect(await isRegisteredMcpResourceUri('sunrise://agents/foo')).toBe(false);
   });
 });
