@@ -101,8 +101,12 @@ vi.mock('@/lib/db/client', () => ({
         }
       ),
     },
-    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
-      fn({
+    // Typed loosely-as-`unknown` then cast at the boundary so the vi.fn
+    // signature satisfies Prisma's strict `$transaction` overload set
+    // without us re-importing all of the Prisma type plumbing into a
+    // test helper. The runtime fn body is fully type-safe.
+    $transaction: vi.fn((fn: unknown) =>
+      (fn as (tx: unknown) => Promise<unknown>)({
         aiMessage: {
           create: vi.fn(async ({ data }: { data: InMemoryMessage }) => {
             messageStore.push({

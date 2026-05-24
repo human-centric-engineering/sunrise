@@ -363,9 +363,20 @@ Test fixtures notable enough to know about:
 
 156 tests across 7 files at the time of writing.
 
+## Building the workflow that fires
+
+The trigger row gives you a webhook URL; the workflow it fires is up to you. For inbound-conversation flows (SMS / WhatsApp / future channels) the canonical shape is the `chat_turn` workflow step:
+
+- **`chat_turn`** loads prior `AiMessage` rows for the conversation referenced by `{{trigger.conversationId}}` (the inbound route's resolver populates this on every inbound for Twilio + WhatsApp Cloud), composes `[system, ...history, user]` and calls the agent's provider. It then persists the new user + assistant turns to `AiMessage` so the NEXT inbound on the same conversation inherits them.
+- This closes the parity gap between the streaming chat handler (which has always loaded conversation history) and the workflow engine (where `llm_call` is single-shot and `agent_call` only does within-step multi-turn).
+- The `tpl-inbound-conversation-handler` template (`prisma/seeds/data/templates/inbound-conversation-handler.ts`) seeds a two-step shape — `chat_turn` → `tool_call(send_message_to_channel)` — that's the minimum viable end-to-end SMS / WhatsApp handler. The "Create a workflow (pre-filled for inbound)" CTA on `/admin/orchestration/triggers/new` seeds the same shape.
+
+If your inbound workflow is genuinely stateless (e.g. classify-and-route only, no continuing conversation), reach for `llm_call` instead. Anywhere the user might say "as I mentioned before…", use `chat_turn`.
+
 ## Related docs
 
 - [Scheduling & webhooks](./scheduling.md) — outbound webhook subscriptions and the existing `POST /api/v1/webhooks/trigger/:slug` API-key-auth path; use that when the sender can issue an `Authorization: Bearer sk_…` header and you don't need vendor-specific normalisation.
 - [Workflow versioning](./workflow-versioning.md) — every inbound-triggered execution is pinned to the workflow's published version at insert time.
 - [Tracing (OTEL plug-in)](./tracing.md) — the architectural template this feature follows: vendor-neutral interface, env-driven adapter registration, opt-in shipping.
 - [Hooks](./hooks.md) — outbound event dispatch (the inverse direction of inbound triggers).
+- [Recipe: SMS / WhatsApp inbound reply](./recipes/sms-whatsapp-inbound-reply.md) — end-to-end worked walkthrough for the trigger + workflow + capability binding.

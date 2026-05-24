@@ -112,17 +112,21 @@ A user texts your Twilio number: "Hi, I need help with my booking from yesterday
 2. The TwilioAdapter verifies HMAC-SHA1 over URL + sorted form params, normalises to `{from: '+447400123456', text: 'Hi, I need help...', subChannel: 'sms', conversationChannel: 'sms', conversationProvider: 'twilio', fromAddress: '+447400123456'}`.
 3. The route runs `resolveConversation` — find-or-create an `AiConversation` keyed on `(agentId, channel='sms', fromAddress='+447400123456')`, updates `lastInboundAt`.
 4. The route inserts `AiWorkflowExecution` with `inputData.triggerMeta.conversationId` set.
-5. The workflow fires. The first step is a `tool_call` that runs the agent with the user's text as context. The agent calls `send_message_to_channel`:
-   ```json
-   {
-     "conversationId": "<conv-id>",
-     "message": "Hi! I can help with that. Which booking — could you share the reference?"
-   }
-   ```
+5. The workflow fires. The recommended shape (used by the `tpl-inbound-conversation-handler` template) is two steps:
+   - **`chat_turn`** — loads prior `AiMessage` rows for this conversation (empty array on the first inbound; populated on every subsequent one), composes `[system, ...history, user]`, calls the agent's provider, persists the new user + assistant turns back to `AiMessage`. Returns the assistant text as the step output.
+   - **`tool_call` invoking `send_message_to_channel`** with `conversationId: '{{trigger.conversationId}}'` and `message: '{{respond_to_inbound.output}}'`. The capability call looks like:
+     ```json
+     {
+       "conversationId": "<conv-id>",
+       "message": "Hi! I can help with that. Which booking — could you share the reference?"
+     }
+     ```
 6. The capability loads the conversation (channel `sms`, provider `twilio`), runs guards (not opted-out ✓, length OK ✓, throttle 0/5 ✓), creates an `AiOutboundMessage` row with a `dedupKey`, resolves the `twilio` outbound adapter from the registry, delegates `send`.
 7. The Twilio outbound adapter POSTs to `https://api.twilio.com/2010-04-01/Accounts/<SID>/Messages.json` with Basic auth, form body `From=+12025550100&To=+447400123456&Body=Hi! I can help...`. Returns 201 with the `MessageSid`.
 8. The capability marks the ledger row `sent`, logs cost under `CostOperation.OUTBOUND_MESSAGE` with `metadata: {channel: 'sms', provider: 'twilio', transactionId: 'SM...'}`.
 9. Twilio delivers the SMS. The user sees the agent's reply in their messages app.
+
+When the user replies "the reference is XYZ-12345", the next inbound goes through the same pipe but this time the `chat_turn` step loads the prior turns from `AiMessage` first — the agent sees "Hi, I need help with my booking" + "Hi! I can help with that..." + the new "the reference is XYZ-12345" and responds with full context.
 
 If the same user later starts a WhatsApp Cloud conversation (after Meta is wired up), they get a fresh conversation row because the `channel` is different (`whatsapp` vs `sms`), even though the `fromAddress` is the same phone number.
 

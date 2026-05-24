@@ -164,6 +164,71 @@ describe('ConversationDetailPage', () => {
     ).rejects.toThrow('NEXT_NOT_FOUND');
   });
 
+  it('renders the Inbound channel card when the conversation has a channel set', async () => {
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          ...conversationFixture,
+          channel: 'whatsapp',
+          provider: 'meta',
+          fromAddress: '+447400123456',
+          lastInboundAt: '2026-05-18T00:04:00Z',
+          smsOptedOut: false,
+        },
+      })
+      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+
+    const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
+    render(ui);
+
+    // The card heading renders with the help-popover label.
+    expect(screen.getByText(/Inbound channel/)).toBeInTheDocument();
+    // The field grid shows channel + provider + fromAddress.
+    expect(screen.getByText('whatsapp')).toBeInTheDocument();
+    expect(screen.getByText('meta')).toBeInTheDocument();
+    expect(screen.getByText('+447400123456')).toBeInTheDocument();
+    // Not opted out → no STOP callout.
+    expect(screen.queryByText(/Opted out/)).not.toBeInTheDocument();
+  });
+
+  it('renders the "Opted out (STOP)" callout when smsOptedOut is true', async () => {
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          ...conversationFixture,
+          channel: 'sms',
+          provider: 'twilio',
+          fromAddress: '+12025550100',
+          lastInboundAt: '2026-05-18T00:04:00Z',
+          smsOptedOut: true,
+        },
+      })
+      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+
+    const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
+    render(ui);
+
+    expect(screen.getByText(/Opted out \(STOP\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Outbound dispatches refused/)).toBeInTheDocument();
+  });
+
+  it('does NOT render the Inbound channel card when channel is missing (web/admin chat)', async () => {
+    // Existing fixture has no channel field — verify the conditional omits the card.
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: conversationFixture })
+      .mockResolvedValueOnce({ success: true, data: { messages: [] } });
+
+    const ui = await ConversationDetailPage({ params: Promise.resolve({ id: CONV_ID }) });
+    render(ui);
+
+    expect(screen.queryByText(/Inbound channel/)).not.toBeInTheDocument();
+  });
+
   it('logs and treats the conversation as missing if its fetch throws', async () => {
     vi.mocked(serverFetch).mockImplementation((url: string) => {
       // First call (conversation): throw. Second call (messages): succeed.
