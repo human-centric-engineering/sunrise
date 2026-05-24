@@ -90,6 +90,14 @@ function mockDefaultFetch(getMock: Mock) {
   });
 }
 
+// `getByText('X', { selector: 'header' })` no longer matches the Available
+// column because its label is wrapped in a <span> alongside search/filter
+// controls. This finds any node with the given text whose closest ancestor
+// is a <header>, which is what the original assertion was disambiguating.
+function textInsideHeader(label: string) {
+  return screen.queryAllByText(label).find((el) => el.closest('header'));
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('AgentCapabilitiesTab', () => {
@@ -116,8 +124,8 @@ describe('AgentCapabilitiesTab', () => {
       // and "Available" also appear in the panel intro copy, so a plain
       // getByText would match multiple nodes.
       await waitFor(() => {
-        expect(screen.getByText('Attached', { selector: 'header' })).toBeInTheDocument();
-        expect(screen.getByText('Available', { selector: 'header' })).toBeInTheDocument();
+        expect(textInsideHeader('Attached')).toBeTruthy();
+        expect(textInsideHeader('Available')).toBeTruthy();
       });
     });
 
@@ -454,8 +462,8 @@ describe('AgentCapabilitiesTab', () => {
       });
 
       // Both column headings still rendered (layout intact)
-      expect(screen.getByText('Attached', { selector: 'header' })).toBeInTheDocument();
-      expect(screen.getByText('Available', { selector: 'header' })).toBeInTheDocument();
+      expect(textInsideHeader('Attached')).toBeTruthy();
+      expect(textInsideHeader('Available')).toBeTruthy();
     });
 
     it('renders "No capabilities attached yet" when agent capabilities fetch returns empty array', async () => {

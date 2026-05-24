@@ -190,7 +190,7 @@ describe('LiveEngineDashboard', () => {
       // Assert — one message per card
       expect(screen.getByText('No executions in flight')).toBeInTheDocument();
       expect(screen.getByText('Nothing waiting to start')).toBeInTheDocument();
-      expect(screen.getByText('All leases healthy')).toBeInTheDocument();
+      expect(screen.getByText('No orphaned executions')).toBeInTheDocument();
       // ProviderCard renders "No active provider calls." when providers=[]
       expect(screen.getByText(/No active provider calls/i)).toBeInTheDocument();
     });
