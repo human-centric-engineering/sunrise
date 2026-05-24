@@ -142,6 +142,54 @@ describe('Agent Comparison', () => {
     expect(res.status).toBe(404);
   });
 
+  it('returns 404 with only agentB id in the message when only agentB is missing', async () => {
+    // Covers lines 84 (if (!agentB) missing.push(idB)) and the structured-return
+    // block (55-67) for agentA, which must be fully walked to prove getAgentStats
+    // returns a real object before the null-check on agentB is reached.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    // agentA is present — full Promise.all path executes for agentA
+    vi.mocked(prisma.aiAgent.findUnique)
+      .mockResolvedValueOnce(mockAgent(AGENT_A, 'Agent Alpha') as never)
+      .mockResolvedValueOnce(null as never); // agentB is missing
+
+    // Counts for agentA (6 calls: cost×1, conversation×1, capability×1, eval×2; agentB: cost×1, conversation×1, capability×1, eval×2 — all resolve before the null check)
+    vi.mocked(prisma.aiCostLog.aggregate).mockResolvedValue(mockCostAgg() as never);
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(0 as never);
+    vi.mocked(prisma.aiAgentCapability.count).mockResolvedValue(0 as never);
+    vi.mocked(prisma.aiEvaluationSession.count).mockResolvedValue(0 as never);
+
+    const res = await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+    const body = (await res.json()) as { success: false; error: { message: string } };
+
+    expect(res.status).toBe(404);
+    // The route joins missing ids; only idB should appear
+    expect(body.error.message).toContain(AGENT_B);
+    expect(body.error.message).not.toContain(AGENT_A);
+  });
+
+  it('returns 404 with both agent ids in the message when both agents are missing', async () => {
+    // Covers the case where missing.join(', ') concatenates two ids
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null as never); // both null
+
+    // Both agents null — Promise.all still resolves the count queries before
+    // getAgentStats returns null, so defensive mocks prevent brittleness.
+    vi.mocked(prisma.aiCostLog.aggregate).mockResolvedValue(mockCostAgg() as never);
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(0 as never);
+    vi.mocked(prisma.aiAgentCapability.count).mockResolvedValue(0 as never);
+    vi.mocked(prisma.aiEvaluationSession.count).mockResolvedValue(0 as never);
+
+    const res = await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+    const body = (await res.json()) as { success: false; error: { message: string } };
+
+    expect(res.status).toBe(404);
+    // Both ids must appear in the message — proves missing.push(idA) AND missing.push(idB) ran
+    expect(body.error.message).toContain(AGENT_A);
+    expect(body.error.message).toContain(AGENT_B);
+  });
+
   it('returns comparison data for two valid agents', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     setupAgentMocks();

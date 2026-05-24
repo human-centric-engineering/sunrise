@@ -214,6 +214,73 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
         })
       );
     });
+
+    it('passes a 3-field OR clause to Prisma when q is provided (line 43)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.aiCapability.count).mockResolvedValue(0);
+
+      await listGet(makeListRequest({ q: 'search-term' }));
+
+      // The route builds an OR clause with case-insensitive contains over three fields.
+      // Asserting the exact shape of each entry catches regressions that: drop a field
+      // from the OR, swap 'contains' for 'equals', or remove the 'insensitive' mode.
+      expect(vi.mocked(prisma.aiCapability.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { name: { contains: 'search-term', mode: 'insensitive' } },
+              { slug: { contains: 'search-term', mode: 'insensitive' } },
+              { description: { contains: 'search-term', mode: 'insensitive' } },
+            ],
+          }),
+        })
+      );
+      // Also assert length to catch regressions that add or drop OR branches.
+      const passedWhere = vi.mocked(prisma.aiCapability.findMany).mock.calls[0]?.[0]?.where as {
+        OR?: unknown[];
+      };
+      expect(passedWhere?.OR).toHaveLength(3);
+    });
+
+    it('flattens pivot rows into _agents and strips pivot metadata (line 69)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+        makeCapability({
+          agents: [
+            {
+              id: 'pivot-1',
+              customConfig: { secret: 'leak' },
+              agent: { id: 'agent-1', name: 'My Agent', slug: 'my-agent', isActive: true },
+            },
+          ],
+        }),
+      ] as never);
+      vi.mocked(prisma.aiCapability.count).mockResolvedValue(1);
+
+      const response = await listGet(makeListRequest());
+      expect(response.status).toBe(200);
+
+      const body = await parseJson<{
+        success: boolean;
+        data: Array<{
+          _agents: Array<{ id: string; name: string; slug: string; isActive: boolean }>;
+          agents?: unknown;
+        }>;
+      }>(response);
+
+      // Load-bearing assertion: _agents must contain only the agent sub-object,
+      // not the raw pivot row. If line 69's `.map((l) => l.agent)` were replaced
+      // with just `links`, this assertion would fail because the object would also
+      // have `id: 'pivot-1'` and `customConfig: { secret: 'leak' }`.
+      expect(body.data[0]._agents).toEqual([
+        { id: 'agent-1', name: 'My Agent', slug: 'my-agent', isActive: true },
+      ]);
+      // Pivot-row metadata must NOT be present on the extracted agent object.
+      expect(body.data[0]._agents[0]).not.toHaveProperty('customConfig');
+      // The raw `agents` pivot relation must be destructured away — not exposed on the item.
+      expect(body.data[0]).not.toHaveProperty('agents');
+    });
   });
 });
 
@@ -331,6 +398,22 @@ describe('POST /api/v1/admin/orchestration/capabilities', () => {
       );
 
       expect(response.status).toBe(201);
+    });
+
+    it('rethrows non-P2002 errors — guard returns 500, not 409 (line 124)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.create).mockRejectedValue(new Error('connection lost'));
+
+      // The route's catch block only intercepts P2002 (slug conflict); all other
+      // errors are re-thrown via `throw err`. The withAdminAuth guard then converts
+      // the rethrown error to a 500 INTERNAL_ERROR response. A regression that
+      // accidentally caught this error and returned 409 instead of rethrowing would
+      // fail this assertion — the status would be 409, not 500.
+      const response = await POST(makeBodyRequest('POST', VALID_CAPABILITY));
+      expect(response.status).toBe(500);
+      const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).not.toBe('CONFLICT');
     });
   });
 });
