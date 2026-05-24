@@ -67,6 +67,56 @@ Audit log (fire-and-forget → McpAuditLog)
 5. Keys can be revoked immediately; `expiresAt` for automatic expiry
 6. **Key rotation:** `POST /api/v1/admin/orchestration/mcp/keys/:id/rotate` — generates new key material, returns new plaintext once, immediately invalidates the old key. Optionally set `{ expiresAt }` in the body.
 
+## Authentication & OAuth 2.1 Roadmap
+
+The server currently authenticates clients with **bearer tokens** (the `smcp_` keys above). The 2025-06-18 MCP spec recommends OAuth 2.1 + Dynamic Client Registration (DCR) for HTTP transport but explicitly permits bearer auth, which is what Sunrise ships today.
+
+### Bridge for 2025-spec clients
+
+401 responses include a `WWW-Authenticate: Bearer realm="sunrise-mcp", error="invalid_token"` header (RFC 6750 / RFC 9728). 2025-spec OAuth-capable clients use this to detect that the server is bearer-only and skip OAuth discovery rather than failing on the missing `/.well-known/oauth-authorization-server` endpoint. End users keep pasting an `smcp_` key into their client config exactly as before.
+
+This is sufficient for the common deployment shape (single org, dev or internal use, admins distributing keys to developers they trust). It is **not** sufficient for multi-tenant SaaS where end-users connect their own MCP clients with their own identity — that's what OAuth solves.
+
+### When OAuth becomes necessary
+
+| Symptom                                                                | OAuth required?                         |
+| ---------------------------------------------------------------------- | --------------------------------------- |
+| Single org, devs paste keys into Claude Desktop / Cursor configs       | No — bearer is fine                     |
+| Audit log needs per-end-user identity, not per-key                     | Yes                                     |
+| Want to revoke a single user without kicking everyone on a shared key  | Yes                                     |
+| SOC 2 / SAML / SSO buyers ask "how are individual users authenticated" | Yes                                     |
+| Future MCP client refuses bearer auth                                  | Yes (no current client does as of 2026) |
+
+### Roadmap — what a full OAuth 2.1 + DCR implementation needs
+
+When this becomes load-bearing, the work splits into six pieces. Captured here so a future contributor has the full picture without spec spelunking:
+
+1. **Authorization Server Metadata (RFC 8414).** Static JSON at `/.well-known/oauth-authorization-server` advertising `issuer`, `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `scopes_supported`, `response_types_supported: ["code"]`, `code_challenge_methods_supported: ["S256"]`. ~30 lines.
+
+2. **Dynamic Client Registration (RFC 7591).** `POST /oauth/register` accepting `{ client_name, redirect_uris, grant_types }` and returning a `client_id` (+ optional `client_secret` for confidential clients). Without DCR, the OAuth flow is dead on arrival for desktop MCP clients — users won't pre-register apps with your admin. **Risk:** anyone on the internet can register. Mitigations: rate-limit the register endpoint, expose an admin list of registered clients with revoke, optional "trusted client_id allowlist" for auto-approved consent.
+
+3. **Authorization endpoint** `/oauth/authorize` with **PKCE mandatory** (`code_challenge` + `code_challenge_method=S256` required). The client makes up a random verifier, sends its hash to the authorize endpoint, sends the verifier to the token endpoint. Stops an attacker who intercepts the authorization code from redeeming it. ~50 lines including hash comparison.
+
+4. **Token endpoint** `/oauth/token` with `authorization_code` + `refresh_token` grants. Rotating refresh tokens (rotate-on-use). Bind tokens to **resource indicators (RFC 8707)** — clients pass `resource=https://your-app/api/v1/mcp` at auth + token endpoints; server enforces the audience claim on validation so a token issued for Sunrise MCP can't be replayed against some other API.
+
+5. **Consent UI** at `/oauth/consent` — a styled page where end-users approve scope grants. Skip the screen entirely for "first-party" trusted `client_id`s (whitelisted via env / admin UI).
+
+6. **Auth middleware change**: replace `authenticateMcpRequest` in `lib/orchestration/mcp/auth.ts` with a function that accepts EITHER an `smcp_` bearer key OR an OAuth JWT bearer, validating JWT signature, expiry, audience, and scope. Both auth paths resolve into the same `McpAuthContext` shape so per-method handlers don't branch on auth source.
+
+### Prisma models needed
+
+```
+OAuthClient                  // DCR-registered or admin-registered apps
+OAuthAuthorizationCode       // single-use, ~10 min TTL
+OAuthAccessToken             // can be stateless JWT instead
+OAuthRefreshToken            // long-lived, rotates on each use
+OAuthConsent                 // per-user, per-client, per-scope grants
+```
+
+### Honest sizing
+
+Rough estimate: 2–3 weeks of one engineer for a production-ready implementation including the admin UI for registered clients + consent UX. No partial credit available — DCR-less OAuth is unusable for desktop MCP clients, so the work has to ship together. Bearer auth keeps every current client working in the meantime.
+
 ## Tool Exposure Flow
 
 1. Admin enables a capability as an MCP tool via the Tools page
