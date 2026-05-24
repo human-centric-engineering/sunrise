@@ -188,8 +188,10 @@ export async function POST(
     return errorResponse('Unauthorized', { code: 'UNAUTHORIZED', status: 401 });
   }
 
-  // Normalise. Adapters MUST NOT perform I/O here.
-  const normalised = adapter.normalise(bodyParsed, request.headers);
+  // Normalise. Adapters MUST NOT perform I/O here. `rawBody` is passed so
+  // form-encoded adapters (Twilio) can parse — `bodyParsed` is null for
+  // non-JSON bodies.
+  const normalised = adapter.normalise(bodyParsed, request.headers, rawBody);
 
   // Optional event-type allow-list (per-trigger metadata).
   const metadata = parseMetadata(trigger.metadata);
@@ -359,4 +361,63 @@ export async function POST(
     undefined,
     { status: 202 }
   );
+}
+
+/**
+ * GET — webhook URL-ownership verification (Meta WhatsApp Cloud).
+ *
+ * Meta verifies a webhook URL via a GET request with
+ * `hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y` BEFORE any
+ * trigger row exists. We dispatch to the adapter's optional
+ * `handleVerificationGet` method without consulting `AiWorkflowTrigger`
+ * (there's nothing to consult — the partner is registering the URL).
+ *
+ * Adapters that don't expose this method (Slack, Postmark, generic-HMAC,
+ * Twilio) → 405. Adapters that do (WhatsApp Cloud) → response from the
+ * adapter (200 with challenge body, or 403 on wrong token).
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ channel: string; slug: string }> }
+): Promise<Response> {
+  const { channel, slug } = await params;
+  const clientIP = getClientIP(request);
+
+  // Separate rate-limit bucket from POST so GET verification probes can't
+  // exhaust the POST budget.
+  const rateLimit = inboundLimiter.check(`inbound-get:${channel}:${clientIP}`);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
+
+  if (!channelSchema.safeParse(channel).success) {
+    return errorResponse('Invalid channel', { code: 'NOT_FOUND', status: 404 });
+  }
+  if (!triggerSlugSchema.safeParse(slug).success) {
+    return errorResponse('Invalid workflow slug', { code: 'NOT_FOUND', status: 404 });
+  }
+
+  const adapter = getInboundAdapter(channel);
+  if (!adapter) {
+    return errorResponse('Inbound channel not configured', {
+      code: 'NOT_FOUND',
+      status: 404,
+    });
+  }
+
+  if (!adapter.handleVerificationGet) {
+    return errorResponse('Method Not Allowed', { code: 'METHOD_NOT_ALLOWED', status: 405 });
+  }
+
+  const response = adapter.handleVerificationGet(request);
+  if (response === null) {
+    return errorResponse('Bad Request', { code: 'BAD_REQUEST', status: 400 });
+  }
+
+  logger.info('Inbound: GET verification handshake', {
+    channel,
+    slug,
+    status: response.status,
+    clientIP,
+  });
+
+  return response;
 }

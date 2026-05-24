@@ -58,6 +58,15 @@ export type VerifyFailureReason =
  *   - `GenericHmacTriggerPayload`  in `./adapters/generic-hmac.ts`
  * Adapters MUST keep the shape stable — additive changes only.
  */
+/**
+ * Semantic conversation channel — the medium the end user reached us on.
+ * Distinct from the adapter slug (`twilio` / `whatsapp_cloud`) used in the
+ * inbound URL; the same adapter slug can produce different semantic
+ * channels (Twilio can carry both `sms` and `whatsapp`). See plan
+ * decision 3 in the item #24 design.
+ */
+export type ConversationChannel = 'sms' | 'whatsapp' | 'email' | 'slack' | 'chat';
+
 export interface NormalisedTriggerPayload {
   channel: string;
   /** Vendor identifier when present, used for replay dedup. */
@@ -66,6 +75,27 @@ export interface NormalisedTriggerPayload {
   payload: Record<string, unknown>;
   /** Raw vendor-supplied event type (`message.channels`, `Inbound`, ...) for trigger filtering. */
   eventType?: string;
+  /**
+   * Semantic medium the end user reached us on. Set by adapters that
+   * carry real end-user conversations (Twilio, WhatsApp Cloud, Postmark).
+   * Slack and generic-HMAC leave this undefined. Drives find-or-create of
+   * `AiConversation` keyed on `(channel, fromAddress)`.
+   */
+  conversationChannel?: ConversationChannel;
+  /**
+   * Vendor slug for the provider that delivered this message
+   * (`twilio`, `meta`, future `vonage` / `messagebird` / ...). Recorded on
+   * `AiConversation.provider` so outbound dispatch can find the right
+   * `OutboundAdapter`. Independent of `conversationChannel` so a partner
+   * who swaps providers retains conversation history.
+   */
+  conversationProvider?: string;
+  /**
+   * The canonical address the end user reached us from. Phone numbers
+   * already normalised to E.164; emails as-is. Used as the second half
+   * of the `(channel, fromAddress)` conversation key.
+   */
+  fromAddress?: string;
 }
 
 export interface InboundAdapter {
@@ -84,6 +114,17 @@ export interface InboundAdapter {
   handleHandshake?(parsedBody: unknown): Response | null;
 
   /**
+   * Optional GET-method handshake for providers that verify webhook URL
+   * ownership before allowing POST registration (Meta WhatsApp Cloud's
+   * `hub.mode=subscribe` flow). Return `null` to 405 the GET, or a
+   * `Response` to echo the provider's challenge.
+   *
+   * Runs without consulting `AiWorkflowTrigger` — the provider validates
+   * the URL itself before any trigger row exists.
+   */
+  handleVerificationGet?(req: NextRequest): Response | null;
+
+  /**
    * Verify the request authenticity. MUST NOT throw — return a structured
    * failure instead. Constant-time comparisons required for all HMAC checks.
    */
@@ -92,6 +133,13 @@ export interface InboundAdapter {
   /**
    * Normalise the verified payload into the channel-agnostic shape. Called
    * only after `verify` returns `valid: true`. MUST NOT perform I/O.
+   *
+   * @param bodyParsed - JSON-parsed body (`null` if the body wasn't JSON,
+   *   as for form-encoded vendors like Twilio).
+   * @param headers - Request headers.
+   * @param rawBody - Raw body string. Most adapters ignore this; Twilio
+   *   (and other form-encoded vendors) parse it here because `bodyParsed`
+   *   is null for them.
    */
-  normalise(rawBody: unknown, headers: Headers): NormalisedTriggerPayload;
+  normalise(bodyParsed: unknown, headers: Headers, rawBody?: string): NormalisedTriggerPayload;
 }
