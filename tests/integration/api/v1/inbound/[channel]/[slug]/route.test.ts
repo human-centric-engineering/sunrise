@@ -71,9 +71,9 @@ vi.mock('@/lib/db/client', () => ({
     },
     // Used by `resolveConversation` for Twilio / WhatsApp Cloud inbound
     // when the trigger metadata declares `conversationAgentId`. Default
-    // findFirst null = create branch fires.
+    // findUnique null = create branch fires.
     aiConversation: {
-      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn(),
       update: vi.fn(),
     },
@@ -1453,7 +1453,7 @@ describe('Twilio channel + conversation enrichment', () => {
         metadata: { conversationAgentId: 'agent-twilio-1' },
       }) as never
     );
-    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(null as never);
     vi.mocked(prisma.aiConversation.create).mockResolvedValue({ id: 'conv-new-1' } as never);
 
     const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params);
@@ -1492,7 +1492,7 @@ describe('Twilio channel + conversation enrichment', () => {
         metadata: { conversationAgentId: 'agent-twilio-1' },
       }) as never
     );
-    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue({
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
       id: 'conv-existing',
       smsOptedOut: false,
       provider: 'twilio',
@@ -1521,7 +1521,7 @@ describe('Twilio channel + conversation enrichment', () => {
         metadata: { conversationAgentId: 'agent-twilio-1' },
       }) as never
     );
-    vi.mocked(prisma.aiConversation.findFirst).mockResolvedValue({
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
       id: 'conv-existing',
       smsOptedOut: false,
       provider: 'twilio',
@@ -1558,7 +1558,7 @@ describe('Twilio channel + conversation enrichment', () => {
     const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));
 
     expect(response.status).toBe(202);
-    expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.findUnique).not.toHaveBeenCalled();
     expect(prisma.aiConversation.create).not.toHaveBeenCalled();
   });
 
@@ -1571,7 +1571,7 @@ describe('Twilio channel + conversation enrichment', () => {
         metadata: { conversationAgentId: 'agent-twilio-1' },
       }) as never
     );
-    vi.mocked(prisma.aiConversation.findFirst).mockRejectedValue(new Error('DB down'));
+    vi.mocked(prisma.aiConversation.findUnique).mockRejectedValue(new Error('DB down'));
 
     const request = makeTwilioRequest('twilio', WORKFLOW_SLUG, params, { ip: '10.0.2.5' });
     const response = await POST(request, makeParams('twilio', WORKFLOW_SLUG));

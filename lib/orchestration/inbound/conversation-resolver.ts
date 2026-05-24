@@ -23,11 +23,17 @@
  * never sends an outbound — the agent / workflow chooses whether to.
  */
 
+import { Prisma } from '@prisma/client';
+
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { detectStopIntent } from '@/lib/orchestration/inbound/stop-keywords';
 import type { ConversationChannel } from '@/lib/orchestration/inbound/types';
+
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
 
 export interface ResolveConversationArgs {
   agentId: string;
@@ -64,82 +70,98 @@ export async function resolveConversation(
   const stopIntent = detectStopIntent(args.text);
   const optOutChange = stopIntent === 'stop' ? true : stopIntent === 'start' ? false : null;
 
-  const existing = await prisma.aiConversation.findFirst({
-    where: {
+  // Lookup keyed on the @@unique([agentId, channel, fromAddress]) defined
+  // on AiConversation. Two concurrent inbound webhooks for the same sender
+  // race here: the loser hits P2002 on the create below and re-reads.
+  const lookup = {
+    ai_conversation_inbound_key: {
       agentId: args.agentId,
       channel: args.channel,
       fromAddress: args.fromAddress,
     },
+  };
+
+  let existing = await prisma.aiConversation.findUnique({
+    where: lookup,
     select: { id: true, smsOptedOut: true, provider: true },
   });
 
-  if (existing) {
-    const updates: Record<string, unknown> = { lastInboundAt: new Date() };
-    if (existing.provider !== args.provider) {
-      // Provider swap (e.g. Twilio SMS → Vonage SMS for the same end user).
-      // Keep the conversation; update the provider so outbound goes through
-      // the new vendor on the next reply.
-      updates.provider = args.provider;
-    }
-    let optOutStateChanged = false;
-    if (optOutChange !== null && existing.smsOptedOut !== optOutChange) {
-      updates.smsOptedOut = optOutChange;
-      optOutStateChanged = true;
-    }
-    await prisma.aiConversation.update({
-      where: { id: existing.id },
-      data: updates,
-    });
-
-    if (optOutStateChanged) {
-      try {
-        logAdminAction({
-          action: optOutChange ? 'inbound.opt_out_recorded' : 'inbound.opt_in_recorded',
-          entityType: 'ai_conversation',
-          entityId: existing.id,
+  if (!existing) {
+    // No row yet — try create. New users who open with STOP start opted-out
+    // immediately (regulatory: honour the very first signal); START starts
+    // opted-in (which is the column default anyway).
+    try {
+      const created = await prisma.aiConversation.create({
+        data: {
           userId: args.userId,
-          metadata: {
-            channel: args.channel,
-            provider: args.provider,
-            source: 'inbound-stop-keyword',
-          },
-        });
-      } catch (err) {
-        logger.warn('conversation-resolver: failed to write opt-state audit log', {
-          conversationId: existing.id,
-          logError: err instanceof Error ? err.message : String(err),
-        });
-      }
+          agentId: args.agentId,
+          channel: args.channel,
+          provider: args.provider,
+          fromAddress: args.fromAddress,
+          lastInboundAt: new Date(),
+          smsOptedOut: optOutChange === true,
+          title: args.conversationTitle ?? `${args.channel}:${args.fromAddress}`,
+        },
+        select: { id: true },
+      });
+      return {
+        conversationId: created.id,
+        wasCreated: true,
+        optOutStateChanged: optOutChange === true,
+      };
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      // Race: a concurrent inbound created the row between our findUnique
+      // and create. Re-fetch and fall through to the existing-row branch.
+      existing = await prisma.aiConversation.findUnique({
+        where: lookup,
+        select: { id: true, smsOptedOut: true, provider: true },
+      });
+      if (!existing) throw err;
     }
-
-    return {
-      conversationId: existing.id,
-      wasCreated: false,
-      optOutStateChanged,
-    };
   }
 
-  // No existing conversation — create. New users who open with STOP
-  // start opted-out immediately (regulatory: honour the very first
-  // signal); new users who open with START start opted-in (the default
-  // is opted-in anyway, but recording it is harmless).
-  const created = await prisma.aiConversation.create({
-    data: {
-      userId: args.userId,
-      agentId: args.agentId,
-      channel: args.channel,
-      provider: args.provider,
-      fromAddress: args.fromAddress,
-      lastInboundAt: new Date(),
-      smsOptedOut: optOutChange === true,
-      title: args.conversationTitle ?? `${args.channel}:${args.fromAddress}`,
-    },
-    select: { id: true },
+  const updates: Record<string, unknown> = { lastInboundAt: new Date() };
+  if (existing.provider !== args.provider) {
+    // Provider swap (e.g. Twilio SMS → Vonage SMS for the same end user).
+    // Keep the conversation; update the provider so outbound goes through
+    // the new vendor on the next reply.
+    updates.provider = args.provider;
+  }
+  let optOutStateChanged = false;
+  if (optOutChange !== null && existing.smsOptedOut !== optOutChange) {
+    updates.smsOptedOut = optOutChange;
+    optOutStateChanged = true;
+  }
+  await prisma.aiConversation.update({
+    where: { id: existing.id },
+    data: updates,
   });
 
+  if (optOutStateChanged) {
+    try {
+      logAdminAction({
+        action: optOutChange ? 'inbound.opt_out_recorded' : 'inbound.opt_in_recorded',
+        entityType: 'ai_conversation',
+        entityId: existing.id,
+        userId: args.userId,
+        metadata: {
+          channel: args.channel,
+          provider: args.provider,
+          source: 'inbound-stop-keyword',
+        },
+      });
+    } catch (err) {
+      logger.warn('conversation-resolver: failed to write opt-state audit log', {
+        conversationId: existing.id,
+        logError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   return {
-    conversationId: created.id,
-    wasCreated: true,
-    optOutStateChanged: optOutChange === true,
+    conversationId: existing.id,
+    wasCreated: false,
+    optOutStateChanged,
   };
 }

@@ -722,8 +722,12 @@ model AiConversation {
   // Channel/provider split — see plan decision 3.
   // `channel` is the semantic medium (sms / whatsapp / email / slack / chat).
   // `provider` is the vendor slug (twilio / meta / vonage / ...). The
-  // (channel, fromAddress) index deliberately excludes provider so memory
-  // continuity survives a provider swap mid-deployment.
+  // @@unique([agentId, channel, fromAddress]) below deliberately excludes
+  // provider so memory continuity survives a provider swap mid-deployment,
+  // and the DB-side UNIQUE serialises concurrent inbound webhooks to a
+  // single conversation row (without it, a find-or-create race could
+  // duplicate rows and let the STOP/opt-out flag land on the wrong one,
+  // bypassing TCPA/PECR compliance on subsequent outbound).
   channel              String?
   provider             String?
   fromAddress          String?
@@ -745,7 +749,7 @@ model AiConversation {
   @@index([contextType, contextId])
   @@index([isActive])
   @@index([updatedAt])
-  @@index([channel, fromAddress])
+  @@unique([agentId, channel, fromAddress], name: "ai_conversation_inbound_key")
   @@map("ai_conversation")
 }
 

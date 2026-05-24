@@ -88,7 +88,7 @@ The `:channel` URL segment is an **adapter slug** (`twilio`, `whatsapp_cloud`, `
 
 The `AiConversation.channel` and `AiConversation.provider` columns are the **semantic medium** + **vendor**. Twilio inbound produces `channel='sms'` or `channel='whatsapp'` (read from the `whatsapp:` prefix on `From`) and `provider='twilio'`. WhatsApp Cloud inbound produces `channel='whatsapp'` + `provider='meta'`.
 
-A partner who later swaps Twilio for Vonage SMS keeps their conversation history because the `(channel, fromAddress)` key omits provider — only the `provider` column updates on the next inbound message.
+A partner who later swaps Twilio for Vonage SMS keeps their conversation history because the `(agentId, channel, fromAddress)` UNIQUE key omits provider — only the `provider` column updates on the next inbound message. The same UNIQUE serialises concurrent inbound webhooks for the same sender to a single conversation row (find-or-create races would otherwise duplicate rows and let the STOP/opt-out flag land on the wrong one).
 
 ### Generic HMAC
 
