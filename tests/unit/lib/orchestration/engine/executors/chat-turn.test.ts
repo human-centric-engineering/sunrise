@@ -137,7 +137,7 @@ const mockAgent = {
   temperature: 0.5,
   maxTokens: 500,
   reasoningEffort: null,
-  publishedVersionId: 'agentver_1',
+  versions: [{ id: 'agentver_1' }],
 };
 
 const mockChatResponse = {
@@ -497,14 +497,14 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
     expect(err.message).toBe('Provider chat() call failed');
   });
 
-  it('persistTurnMessages uses null for agentVersionId when agent has no publishedVersionId', async () => {
+  it('persistTurnMessages uses null for agentVersionId when agent has no published version', async () => {
     vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
       ...mockAgent,
-      publishedVersionId: null,
+      versions: [],
     } as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
@@ -528,6 +528,35 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
     expect(writes).toHaveLength(2);
     expect(writes[0].data.agentVersionId).toBeNull();
     expect(writes[1].data.agentVersionId).toBeNull();
+  });
+
+  it('persistTurnMessages pins agentVersionId to the latest AiAgentVersion when the agent has versions', async () => {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+    } as never);
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      ...mockAgent,
+      versions: [{ id: 'agentver_42' }],
+    } as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
+
+    const writes: Array<{ data: Record<string, unknown> }> = [];
+    vi.mocked(prisma.$transaction).mockImplementationOnce(((fn: unknown) =>
+      (fn as (tx: unknown) => Promise<unknown>)({
+        aiMessage: {
+          create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+            writes.push({ data });
+            return { id: 'm' };
+          }),
+        },
+      })) as never);
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    expect(writes).toHaveLength(2);
+    expect(writes[0].data.agentVersionId).toBe('agentver_42');
+    expect(writes[1].data.agentVersionId).toBe('agentver_42');
   });
 });
 

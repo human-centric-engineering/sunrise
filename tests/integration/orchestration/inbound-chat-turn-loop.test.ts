@@ -87,7 +87,7 @@ vi.mock('@/lib/db/client', () => ({
         temperature: 0.4,
         maxTokens: 500,
         reasoningEffort: null,
-        publishedVersionId: null,
+        versions: [],
       })),
     },
     aiMessage: {

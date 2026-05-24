@@ -90,7 +90,10 @@ export async function executeChatTurn(
     }),
     prisma.aiAgent.findUnique({
       where: { slug: config.agentSlug },
-      include: { profile: true },
+      include: {
+        profile: true,
+        versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true } },
+      },
     }),
   ]);
 
@@ -253,11 +256,10 @@ export async function executeChatTurn(
         providerSlug,
         model,
         executionId: ctx.executionId,
-        // workflowVersionId pinning is best-effort omitted in v1 — audit
-        // consumers can join via AiWorkflowExecution.versionId. Item #47
-        // (conversation provenance bundle) reads from there.
-        agentVersionId:
-          (agent as { publishedVersionId?: string | null }).publishedVersionId ?? null,
+        // agentVersionId pins persisted messages to the latest AiAgentVersion
+        // snapshot for audit. Workflow version pinning stays best-effort in v1
+        // — audit consumers can join via AiWorkflowExecution.versionId.
+        agentVersionId: agent.versions[0]?.id ?? null,
         inputTokens: response.usage?.inputTokens ?? 0,
         outputTokens: response.usage?.outputTokens ?? 0,
         costUsd: totalCostUsd,
