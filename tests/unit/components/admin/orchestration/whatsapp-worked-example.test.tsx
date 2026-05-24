@@ -17,7 +17,7 @@ describe('WhatsAppWorkedExample', () => {
   it('renders the top-level heading + framing sentence', () => {
     render(<WhatsAppWorkedExample />);
     expect(
-      screen.getByText(/Worked example — tenant-rights enquiry via WhatsApp/)
+      screen.getByText(/Worked example — answering an inbound WhatsApp message/)
     ).toBeInTheDocument();
   });
 
