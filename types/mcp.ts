@@ -276,6 +276,34 @@ export type McpResourceType = (typeof McpResourceType)[keyof typeof McpResourceT
 // MCP Session
 // ============================================================================
 
+/**
+ * MCP logging severity levels per RFC 5424, ordered most → least verbose.
+ * The ordering must be preserved — `McpLogLevelRank` uses index lookup.
+ */
+export const MCP_LOG_LEVELS = [
+  'debug',
+  'info',
+  'notice',
+  'warning',
+  'error',
+  'critical',
+  'alert',
+  'emergency',
+] as const;
+export type McpLogLevel = (typeof MCP_LOG_LEVELS)[number];
+
+/** Numeric rank — useful for "emit if rank ≥ session level rank" comparisons. */
+export const McpLogLevelRank: Record<McpLogLevel, number> = {
+  debug: 0,
+  info: 1,
+  notice: 2,
+  warning: 3,
+  error: 4,
+  critical: 5,
+  alert: 6,
+  emergency: 7,
+};
+
 export interface McpSession {
   id: string;
   apiKeyId: string;
@@ -287,6 +315,12 @@ export interface McpSession {
    * on this to gate features that exist only in newer spec revisions.
    */
   protocolVersion: McpProtocolVersion;
+  /**
+   * Minimum severity the client wants pushed via `notifications/message`.
+   * Defaults to `warning` so clients that never call `logging/setLevel`
+   * don't drown in `info`/`debug` chatter. Replaced via `setLogLevel`.
+   */
+  logLevel: McpLogLevel;
   createdAt: number;
   lastActivityAt: number;
 }

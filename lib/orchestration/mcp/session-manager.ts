@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@/lib/logging';
 import {
   MCP_LATEST_PROTOCOL_VERSION,
+  type McpLogLevel,
   type McpProtocolVersion,
   type McpSession,
   type JsonRpcNotification,
@@ -70,6 +71,9 @@ export class McpSessionManager {
       apiKeyId,
       initialized: false,
       protocolVersion: MCP_LATEST_PROTOCOL_VERSION,
+      // Default to 'warning' so clients that never call logging/setLevel
+      // don't get flooded with info/debug noise.
+      logLevel: 'warning',
       createdAt: now,
       lastActivityAt: now,
     };
@@ -86,6 +90,18 @@ export class McpSessionManager {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.protocolVersion = version;
+      session.lastActivityAt = Date.now();
+    }
+  }
+
+  /**
+   * Update the minimum log level the client wants pushed via
+   * `notifications/message`. Called from `logging/setLevel`.
+   */
+  setLogLevel(sessionId: string, level: McpLogLevel): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.logLevel = level;
       session.lastActivityAt = Date.now();
     }
   }

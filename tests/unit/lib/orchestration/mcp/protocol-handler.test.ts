@@ -83,6 +83,7 @@ function makeSession(overrides: Partial<McpSession> = {}): McpSession {
     apiKeyId: 'key-1',
     initialized: true,
     protocolVersion: MCP_LATEST_PROTOCOL_VERSION,
+    logLevel: 'warning',
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     ...overrides,
@@ -229,14 +230,16 @@ describe('handleMcpRequest', () => {
       expect(data.protocolVersion).toBe(MCP_LATEST_PROTOCOL_VERSION);
       expect((data.serverInfo as Record<string, string>).name).toBe('Test MCP Server');
       expect((data.serverInfo as Record<string, string>).version).toBe('1.0.0');
-      // Only advertise features the server actually implements. tools,
-      // resources, and prompts broadcast list_changed; resources also
-      // accepts subscribe/unsubscribe + pushes updated notifications
-      // (Phase 4). logging + completions land in later phases.
+      // Only advertise features the server actually implements. Tools,
+      // resources, prompts broadcast list_changed; resources also accepts
+      // subscribe/unsubscribe (Phase 4); logging:{} signals support for
+      // logging/setLevel + notifications/message (Phase 5). Completions
+      // land in Phase 6.
       expect(data.capabilities).toEqual({
         tools: { listChanged: true },
         resources: { listChanged: true, subscribe: true },
         prompts: { listChanged: true },
+        logging: {},
       });
     });
 
@@ -902,9 +905,77 @@ describe('handleMcpRequest', () => {
       });
       const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
       const data = result?.result as {
-        capabilities: { resources: { subscribe?: boolean } };
+        capabilities: { resources: { subscribe?: boolean }; logging?: Record<string, never> };
       };
       expect(data.capabilities.resources.subscribe).toBe(true);
+      expect(data.capabilities.logging).toEqual({});
+    });
+  });
+
+  describe('logging/setLevel', () => {
+    const setLogLevelMock = vi.fn();
+    beforeEach(() => {
+      setLogLevelMock.mockReset();
+      vi.mocked(getMcpSessionManager).mockReturnValue({
+        setLogLevel: setLogLevelMock,
+        subscribe: vi.fn(),
+        unsubscribe: vi.fn(),
+      } as never);
+    });
+
+    it('sets the level on the session and returns {}', async () => {
+      const req = makeRequest({ method: 'logging/setLevel', params: { level: 'debug' } });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error).toBeUndefined();
+      expect(result?.result).toEqual({});
+      expect(setLogLevelMock).toHaveBeenCalledWith(session.id, 'debug');
+    });
+
+    it('rejects an unknown level with INVALID_PARAMS', async () => {
+      const req = makeRequest({ method: 'logging/setLevel', params: { level: 'verbose' } });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+      expect(result?.error?.message).toContain('verbose');
+    });
+
+    it('rejects missing level with INVALID_PARAMS', async () => {
+      const req = makeRequest({ method: 'logging/setLevel', params: {} });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+    });
+  });
+
+  describe('progress token validation on tools/call and resources/read', () => {
+    it('accepts a valid string progressToken', async () => {
+      vi.mocked(callMcpTool).mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+      const req = makeRequest({
+        method: 'tools/call',
+        params: { name: 'tool', _meta: { progressToken: 'abc' } },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error).toBeUndefined();
+    });
+
+    it('rejects an object progressToken on tools/call', async () => {
+      const req = makeRequest({
+        method: 'tools/call',
+        params: { name: 'tool', _meta: { progressToken: { x: 1 } } },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
+      expect(result?.error?.message).toContain('string or number');
+    });
+
+    it('rejects a 257-char progressToken on resources/read', async () => {
+      const req = makeRequest({
+        method: 'resources/read',
+        params: {
+          uri: 'sunrise://x',
+          _meta: { progressToken: 'x'.repeat(257) },
+        },
+      });
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INVALID_PARAMS);
     });
   });
 });

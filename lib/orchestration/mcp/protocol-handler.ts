@@ -11,6 +11,7 @@
 import { logger } from '@/lib/logging';
 import {
   JsonRpcErrorCode,
+  MCP_LOG_LEVELS,
   McpScope,
   negotiateMcpProtocolVersion,
   type JsonRpcRequest,
@@ -18,6 +19,7 @@ import {
   type McpAuthContext,
   type McpCapabilities,
   type McpInitializeResult,
+  type McpLogLevel,
   type McpSession,
 } from '@/types/mcp';
 import {
@@ -36,6 +38,7 @@ import {
 } from '@/lib/orchestration/mcp/resource-registry';
 import { getMcpSessionManager } from '@/lib/orchestration/mcp/singletons';
 import { listMcpPrompts, getMcpPrompt } from '@/lib/orchestration/mcp/prompt-registry';
+import { extractProgressToken } from '@/lib/orchestration/mcp/progress-tracker';
 import type { McpRateLimiter } from '@/lib/orchestration/mcp/rate-limiter';
 import type { McpServerState } from '@/lib/orchestration/mcp/types';
 
@@ -142,6 +145,10 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
     case 'tools/call':
       requireInitialized(session);
       requireScope(auth, McpScope.TOOLS_EXECUTE);
+      // Validate the optional progress token early so a bad shape gets a
+      // clean INVALID_PARAMS instead of silently being ignored. Reporter
+      // wiring into capabilities is opt-in and lands per-capability.
+      validateProgressToken(request.params);
       return handleToolsCall(request.params, auth);
 
     case 'resources/list':
@@ -157,6 +164,7 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
     case 'resources/read':
       requireInitialized(session);
       requireScope(auth, McpScope.RESOURCES_READ);
+      validateProgressToken(request.params);
       return handleResourcesRead(request.params, auth);
 
     case 'resources/subscribe':
@@ -168,6 +176,12 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
       requireInitialized(session);
       requireScope(auth, McpScope.RESOURCES_READ);
       return handleResourcesUnsubscribe(request.params, session);
+
+    case 'logging/setLevel':
+      requireInitialized(session);
+      // Logging level is a per-session knob; the spec does not require a
+      // scope. Anyone with a valid session can ask for less verbose logs.
+      return handleLoggingSetLevel(request.params, session);
 
     case 'prompts/list':
       requireInitialized(session);
@@ -215,13 +229,14 @@ function handleInitialize(
   // Advertise only features that have working handlers in this build.
   // tools / resources / prompts broadcast list_changed when the admin mutates
   // their catalogue. resources.subscribe accepts resources/subscribe +
-  // resources/unsubscribe and pushes notifications/resources/updated to
-  // subscribers. logging and completions land in later phases — leave them
-  // unset until then so compliant clients don't call unimplemented methods.
+  // resources/unsubscribe and pushes notifications/resources/updated.
+  // logging:{} signals support for logging/setLevel + notifications/message.
+  // completions land in Phase 6.
   const capabilities: McpCapabilities = {
     tools: { listChanged: true },
     resources: { listChanged: true, subscribe: true },
     prompts: { listChanged: true },
+    logging: {},
   };
 
   return {
@@ -374,6 +389,44 @@ async function handleResourcesUnsubscribe(
     throw new McpProtocolError(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found or expired');
   }
   return Promise.resolve({});
+}
+
+function handleLoggingSetLevel(
+  params: Record<string, unknown> | undefined,
+  session: McpSession
+): Record<string, never> {
+  const level = params?.level;
+  if (typeof level !== 'string') {
+    throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, 'level is required');
+  }
+  if (!(MCP_LOG_LEVELS as readonly string[]).includes(level)) {
+    throw new McpProtocolError(
+      JsonRpcErrorCode.INVALID_PARAMS,
+      `Unknown level: ${level}. Expected one of: ${MCP_LOG_LEVELS.join(', ')}`
+    );
+  }
+  getMcpSessionManager().setLogLevel(session.id, level as McpLogLevel);
+  return {};
+}
+
+/**
+ * Validate `params._meta.progressToken` shape if present. Throws
+ * `INVALID_PARAMS` for malformed tokens; no-op for absent tokens.
+ */
+function validateProgressToken(params: Record<string, unknown> | undefined): void {
+  const meta = params?._meta;
+  if (meta === undefined || meta === null) return;
+  if (typeof meta !== 'object') {
+    throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, '_meta must be an object');
+  }
+  try {
+    extractProgressToken(meta as Record<string, unknown>);
+  } catch (err) {
+    if (err instanceof RangeError) {
+      throw new McpProtocolError(JsonRpcErrorCode.INVALID_PARAMS, err.message);
+    }
+    throw err;
+  }
 }
 
 function extractUri(params: Record<string, unknown> | undefined): string {

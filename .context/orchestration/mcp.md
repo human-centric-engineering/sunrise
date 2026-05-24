@@ -150,6 +150,43 @@ The wiring lives in `lib/orchestration/mcp/resource-update-hooks.ts` as named he
 
 **Known limit — multi-process deploys:** the subscription map is per-Node.js-process, so a mutation on instance A doesn't notify subs on instance B. Acceptable for the common single-instance deploy; horizontally-scaled production would need a Redis pub/sub layer (captured as a future improvement).
 
+## Progress notifications
+
+Long-running `tools/call` and `resources/read` requests can carry an optional `_meta.progressToken` (string or number, max 256 chars, must be finite). The server validates the token shape on dispatch and rejects malformed tokens with `INVALID_PARAMS` rather than ignoring them silently.
+
+A capability that opts into progress reporting receives a `report(progress, total?)` callback wired through `createProgressReporter` in `lib/orchestration/mcp/progress-tracker.ts`. The reporter:
+
+- Pushes `notifications/progress { progressToken, progress, total? }` to **only the originating session** (not broadcast to other clients).
+- Rate-limits to **50 notifications per session per second** (sliding 1 s window). Excess is silently dropped — progress is a UX hint, never a correctness signal, so the underlying operation must never block on backpressure.
+- Drops notifications safely after session expiry or SSE disconnect.
+
+Capabilities that don't opt in get a no-op reporter (`NOOP_PROGRESS_REPORTER`) so they can always call `progress(...)` without guarding.
+
+## Logging API
+
+Clients call `logging/setLevel { level }` to set the minimum severity they want pushed via `notifications/message`. The session-level filter defaults to `warning` so clients that never call `setLevel` don't get flooded with `info`/`debug` chatter. The 8 levels per RFC 5424:
+
+| Level       | Rank | Typical use                                           |
+| ----------- | ---- | ----------------------------------------------------- |
+| `debug`     | 0    | Diagnostic detail (resource handler fallbacks)        |
+| `info`      | 1    | Normal operational events                             |
+| `notice`    | 2    | Notable conditions (e.g. cost-cap hit on a tool call) |
+| `warning`   | 3    | Recoverable issues — default                          |
+| `error`     | 4    | Operation failed                                      |
+| `critical`  | 5    | Component failure                                     |
+| `alert`     | 6    | Immediate action required                             |
+| `emergency` | 7    | System unusable                                       |
+
+Server-side calls into `emitMcpLog(sessionId, level, logger?, data)` (or `null` to broadcast to every session that passes its filter) push `notifications/message { level, logger?, data }`. Caps applied per session:
+
+| Cap                                  | Value                                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Notifications per second per session | 100 (sliding window; excess silently dropped)                                                                                  |
+| `logger` field length                | 64 chars (truncated)                                                                                                           |
+| `data` payload                       | 4 KB serialised — overlong payloads are replaced with `{ truncated: true, reason: '...' }` so clients still see a notification |
+
+Use sparingly — this is for events the client genuinely cares about (cost-cap hits, resource handler fallbacks). Internal server-side logging continues to go to `lib/logging`, not the MCP wire.
+
 ## Prompts
 
 Prompts are admin-editable slash-command templates surfaced by MCP clients to end users. They are **not** auto-invoked by the model — a human picks them from a menu (e.g. typing `/analyze-pattern` in Claude Desktop). The distinction matters for design:
