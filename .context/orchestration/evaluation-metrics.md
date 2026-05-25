@@ -5,6 +5,14 @@ LLM-as-judge scoring of AI responses against three named rubrics —
 evaluation session is completed (or re-scored). Lives alongside the
 existing AI-written summary; doesn't replace it.
 
+**Phase 1 update:** the same three rubrics are now also registered as
+individual graders in the grader registry (`lib/orchestration/evaluations/
+graders/model/`) so dataset-driven batch runs can pick any subset of
+them. The manual-session path still uses the bundled `scoreResponse()`
+call (one judge call for all three rubrics together); batch runs use
+the registry (one judge call per case × grader). See
+`.context/orchestration/evaluations.md` for the registry architecture.
+
 This doc is the canonical spec. Cross-references:
 
 - Admin UI: `.context/admin/orchestration-evaluations.md` (Named metric scoring section)
