@@ -193,7 +193,13 @@ describe('WebhookDlqTable', () => {
       );
 
       await waitFor(() => screen.getByText(/Page 2 of 3/));
-      expect(screen.getByRole('button', { name: /next/i })).toBeEnabled();
+      // The mount fetch flips `loading` true, which disables both nav buttons
+      // (`|| loading`). The page text is present from initialMeta before that
+      // settles, so wait for the buttons to re-enable rather than asserting
+      // mid-fetch — otherwise this races under CI load.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /next/i })).toBeEnabled();
+      });
       expect(screen.getByRole('button', { name: /prev/i })).toBeEnabled();
     });
   });
