@@ -43,6 +43,8 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 // CostsPage's server component awaits refreshFromOpenRouter() before

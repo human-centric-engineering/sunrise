@@ -34,7 +34,19 @@ Columns:
 ### Name cell enrichments
 
 - **Visibility badge** — `public` and `invite_only` agents show an outline badge (`Public` with Eye icon, `Invite` with Link2 icon) next to the name. `internal` agents show no badge (default).
+- **System badge** — `isSystem: true` agents (mcp-system, pattern-advisor, the six seeded evaluation judges, etc.) show a `Shield`-iconed secondary badge. Cannot be deleted or deactivated.
+- **Judge badge** — `kind: 'judge'` agents show an amber outline badge with the `Scale` icon. Judge agents are driven by the evaluation worker (and the manual-session scorer) to score AI responses. Their `systemInstructions` IS the rubric. See `.context/orchestration/evaluations.md` for the agents-as-judges architecture.
 - **Description subtitle** — when `agent.description` is set, a truncated muted line appears below the name.
+
+### Kind discriminator
+
+`AiAgent.kind` (`'chat' | 'judge'`) controls the agent's role. The list page's API call (`GET /api/v1/admin/orchestration/agents`) accepts an optional `?kind=chat|judge` filter; when the parameter is omitted, every kind is returned and the badges above let an operator tell them apart.
+
+- The run-create form's **subject** picker calls `?kind=chat` so judges never appear as candidates to be evaluated.
+- The run-create form's **metric / judge** picker calls `?kind=judge` so the available judges are shown.
+- The agents list page passes no filter, so all kinds show with badges.
+
+Judges are created via the agent form with `?kind=judge` in the URL (the "Create custom judge" CTA on the run-create form passes this). `kind` is set at create time only — see `.context/admin/agent-form.md` § "Agent kind: chat vs judge".
 
 ### Bulk export
 

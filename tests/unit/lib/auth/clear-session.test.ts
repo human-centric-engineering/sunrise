@@ -30,6 +30,7 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT: ${url}`);
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 import { redirect } from 'next/navigation';

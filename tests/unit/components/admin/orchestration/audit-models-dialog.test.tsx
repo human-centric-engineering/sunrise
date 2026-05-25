@@ -33,6 +33,7 @@ vi.mock('next/navigation', () => ({
     refresh: vi.fn(),
     back: vi.fn(),
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({

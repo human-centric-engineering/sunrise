@@ -29,6 +29,8 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/analytics', () => ({

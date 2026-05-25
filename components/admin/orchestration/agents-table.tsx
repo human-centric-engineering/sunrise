@@ -41,6 +41,7 @@ import {
   Plus,
   Power,
   PowerOff,
+  Scale,
   Search,
   Shield,
   Trash2,
@@ -571,6 +572,17 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                             >
                               <Shield className="h-3 w-3" />
                               System
+                            </Badge>
+                          </Tip>
+                        )}
+                        {agent.kind === 'judge' && (
+                          <Tip label="Judge agent — driven by the evaluation worker (and the manual-session scorer) to score AI responses. Edit the system instructions to change its rubric.">
+                            <Badge
+                              variant="outline"
+                              className="gap-1 border-amber-300 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:border-amber-700 dark:text-amber-300"
+                            >
+                              <Scale className="h-3 w-3" />
+                              Judge
                             </Badge>
                           </Tip>
                         )}

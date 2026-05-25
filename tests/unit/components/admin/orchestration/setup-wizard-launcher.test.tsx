@@ -26,6 +26,8 @@ vi.mock('next/navigation', () => ({
     refresh: vi.fn(),
   })),
   usePathname: vi.fn(() => '/admin/orchestration'),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 // Mock SetupWizard so tests don't need to deal with its complex internal state

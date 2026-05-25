@@ -237,6 +237,19 @@ export const API = {
       evaluationRescore: (id: string): string =>
         `/api/v1/admin/orchestration/evaluations/${id}/rescore`,
       evaluationLogs: (id: string): string => `/api/v1/admin/orchestration/evaluations/${id}/logs`,
+      // Phase 1 dataset-driven evaluations
+      EVAL_DATASETS: '/api/v1/admin/orchestration/evaluations/datasets',
+      evalDatasetById: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/datasets/${id}`,
+      evalDatasetCases: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/datasets/${id}/cases`,
+      EVAL_RUNS: '/api/v1/admin/orchestration/evaluations/runs',
+      evalRunById: (id: string): string => `/api/v1/admin/orchestration/evaluations/runs/${id}`,
+      evalRunCases: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/runs/${id}/cases`,
+      evalRunCancel: (id: string): string =>
+        `/api/v1/admin/orchestration/evaluations/runs/${id}/cancel`,
+      EVAL_GRADERS: '/api/v1/admin/orchestration/evaluations/graders',
       agentEvaluationTrend: (id: string): string =>
         `/api/v1/admin/orchestration/agents/${id}/evaluation-trend`,
       OBSERVABILITY_DASHBOARD_STATS: '/api/v1/admin/orchestration/observability/dashboard-stats',

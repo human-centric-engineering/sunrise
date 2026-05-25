@@ -1,4 +1,3 @@
-/* eslint-disable no-console -- CLI smoke script */
 /**
  * Orchestration admin-API smoke script
  *

@@ -114,6 +114,21 @@ export const CostOperation = {
    * LLM spend. Metadata carries `{ provider, channel }`.
    */
   OUTBOUND_MESSAGE: 'outbound_message',
+  /**
+   * Subject execution (agent chat or workflow run) inside a batch
+   * evaluation run. One row per case; tagged with `evaluationRunId`
+   * in metadata. Split from `chat` so Costs analytics can isolate the
+   * cost of running test cases from the cost of serving real users.
+   */
+  EVALUATION_BATCH: 'evaluation.batch',
+  /**
+   * Model-based grader call (faithfulness, groundedness, relevance,
+   * custom rubric, RAG metrics) inside an evaluation run. One row per
+   * case×grader pair (aggregated per run when written). Split from
+   * `evaluation` so the existing manual-session summary spend stays
+   * comparable to historical rows.
+   */
+  EVALUATION_JUDGE: 'evaluation.judge',
 } as const;
 export type CostOperation = (typeof CostOperation)[keyof typeof CostOperation];
 

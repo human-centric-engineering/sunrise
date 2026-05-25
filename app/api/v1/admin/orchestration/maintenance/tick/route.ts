@@ -39,6 +39,7 @@ import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
+import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 
 /** Module-level guard against overlapping tick executions. */
 let tickRunning = false;
@@ -65,6 +66,7 @@ const BACKGROUND_TASK_NAMES = [
   'embeddingBackfill',
   'retention',
   'pendingExecutionRecovery',
+  'evaluationRuns',
 ] as const;
 
 /**
@@ -115,6 +117,7 @@ export const POST = withAdminAuth(async (_request) => {
     backfillMissingEmbeddings(),
     enforceRetentionPolicies(),
     processPendingExecutions(),
+    processPendingEvaluationRuns(),
   ])
     .then((settled) => {
       const summary = Object.fromEntries(

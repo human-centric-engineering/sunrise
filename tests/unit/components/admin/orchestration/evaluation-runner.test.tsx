@@ -36,6 +36,8 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   })),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────

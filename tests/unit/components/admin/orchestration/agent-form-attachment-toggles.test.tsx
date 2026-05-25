@@ -31,6 +31,7 @@ vi.mock('next/navigation', () => ({
     forward: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -171,6 +172,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     enableDocumentInput: false,
     deletedAt: null,
     isSystem: false,
+    kind: 'chat',
     createdBy: 'u',
     createdAt: new Date(),
     updatedAt: new Date(),

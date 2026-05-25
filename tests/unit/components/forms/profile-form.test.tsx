@@ -43,6 +43,8 @@ vi.mock('next/navigation', () => ({
     refresh: vi.fn(),
   })),
   usePathname: vi.fn(() => '/profile'),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/analytics', () => ({

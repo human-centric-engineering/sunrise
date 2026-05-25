@@ -16,6 +16,8 @@ const pathnameMock = vi.fn(() => '/admin/overview');
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathnameMock(),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 function countsResponse(counts: Record<string, number>) {

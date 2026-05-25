@@ -24,6 +24,7 @@ vi.mock('next/navigation', () => ({
   redirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/auth/utils', () => ({

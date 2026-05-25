@@ -41,7 +41,10 @@ vi.mock('@/lib/hooks/use-execution-live-poll', () => ({
   EXECUTION_LIVE_POLL_INTERVAL_MS: 1000,
 }));
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+  useSearchParams: () => ({ get: () => null }),
+}));
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 

@@ -10,6 +10,8 @@ import { renderHook, act } from '@testing-library/react';
 const mockRouterRefresh = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: mockRouterRefresh }),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', async () => {

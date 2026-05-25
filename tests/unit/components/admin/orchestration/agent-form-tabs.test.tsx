@@ -25,6 +25,7 @@ vi.mock('next/navigation', () => ({
     forward: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({

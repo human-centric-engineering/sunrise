@@ -21,6 +21,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({

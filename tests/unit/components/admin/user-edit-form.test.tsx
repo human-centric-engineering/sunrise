@@ -35,6 +35,8 @@ vi.mock('next/navigation', () => ({
     prefetch: vi.fn(),
   })),
   usePathname: vi.fn(() => '/admin/users/user-1/edit'),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({

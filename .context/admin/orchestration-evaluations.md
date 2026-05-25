@@ -1,18 +1,41 @@
 # Evaluation pages
 
-Admin list/create/run flows for `AiEvaluationSession`. Landed in Phase 7 Session 7.1, revised in 7.2.
+Admin surface for two complementary evaluation flows: **manual sessions** (a human chats with one agent and annotates each turn) and **dataset-driven batch runs** (the worker fires every case in a dataset at an agent or workflow, then a judge agent scores each response). Sessions landed in Phase 7; batch runs in Phase 1 of the eval-foundations work.
 
-> **Scope note.** Evaluation **sessions** are for auditing an _agent's chat turns_ (faithfulness, groundedness, relevance — see `.context/orchestration/evaluation-metrics.md`). For auditing a _workflow execution_, use the `supervisor` step type or the retroactive review endpoint. Both share the same independent-judge-model env vars (`EVALUATION_JUDGE_PROVIDER` / `EVALUATION_JUDGE_MODEL` via `lib/orchestration/evaluations/judge-model.ts`); their scope and output shape differ. See `.context/admin/workflow-builder.md` (§ Supervisor step) and `.context/orchestration/patterns-and-steps.md` (§ `evaluate` vs `supervisor`).
+> **Scope note.** Evaluation **sessions** are for auditing an _agent's chat turns_ (faithfulness, groundedness, relevance — see `.context/orchestration/evaluation-metrics.md`). For auditing a _workflow execution_, use the `supervisor` step type or the retroactive review endpoint. Batch **runs** are the larger story — see `.context/orchestration/evaluations.md` for the worker, the agent-as-judges architecture, the grader registry, and the dataset/result schema. Both flows now drive the same six seeded judge agents.
 
 **Pages**
 
-| Route                                   | File                                                | Role                                   |
-| --------------------------------------- | --------------------------------------------------- | -------------------------------------- |
-| `/admin/orchestration/evaluations`      | `app/admin/orchestration/evaluations/page.tsx`      | List table with filters                |
-| `/admin/orchestration/evaluations/new`  | `app/admin/orchestration/evaluations/new/page.tsx`  | Create form, prefetches agents         |
-| `/admin/orchestration/evaluations/[id]` | `app/admin/orchestration/evaluations/[id]/page.tsx` | Runner/viewer, `notFound()` on missing |
+| Route                                            | File                                                         | Role                                                                                    |
+| ------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `/admin/orchestration/evaluations`               | `app/admin/orchestration/evaluations/page.tsx`               | Sessions + Experiments tabs. Top strip links to Datasets and Batch runs sub-pages.      |
+| `/admin/orchestration/evaluations/new`           | `app/admin/orchestration/evaluations/new/page.tsx`           | Manual session create form                                                              |
+| `/admin/orchestration/evaluations/[id]`          | `app/admin/orchestration/evaluations/[id]/page.tsx`          | Manual session runner/viewer                                                            |
+| `/admin/orchestration/evaluations/datasets`      | `app/admin/orchestration/evaluations/datasets/page.tsx`      | Datasets list with the "Evaluation 101" empty-state card                                |
+| `/admin/orchestration/evaluations/datasets/new`  | `app/admin/orchestration/evaluations/datasets/new/page.tsx`  | Upload form — CSV / JSONL with auto-seeded name and FieldHelp on every field            |
+| `/admin/orchestration/evaluations/datasets/[id]` | `app/admin/orchestration/evaluations/datasets/[id]/page.tsx` | Read-only detail + first 50 cases preview + "Run against this dataset" CTA              |
+| `/admin/orchestration/evaluations/runs`          | `app/admin/orchestration/evaluations/runs/page.tsx`          | Batch runs list (status badges, progress %, cost)                                       |
+| `/admin/orchestration/evaluations/runs/new`      | `app/admin/orchestration/evaluations/runs/new/page.tsx`      | Single-page create form — basics / subject / dataset / heuristic graders / judge agents |
+| `/admin/orchestration/evaluations/runs/[id]`     | `app/admin/orchestration/evaluations/runs/[id]/page.tsx`     | Run detail with 3 s polling, summary table, per-case drill-in dialog                    |
 
-All three are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to empty state or `notFound()`.
+All pages are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to empty state or `notFound()`. The run-detail and form pages hand off to client components for interactive parts.
+
+## Batch run flow (Phase 1)
+
+The headline new surface. End-to-end journey:
+
+1. **Upload a dataset** (`/datasets/new`). Drag-drop CSV or JSONL; required column is `input`, everything else optional (`expectedOutput`, `tags`, `metadata`, `referenceCitations`). The form auto-seeds the dataset name from the filename stem, validates extension + size client-side, posts multipart to `POST /api/v1/admin/orchestration/evaluations/datasets`.
+2. **Queue a run** (`/runs/new`). Pick subject (agent only in Phase 1), pick dataset, tick metrics from two sections — heuristic graders (cheap deterministic) and judge agents (built-in + custom). Submit → `POST /api/v1/admin/orchestration/evaluations/runs` validates ownership, pre-flights graders, pins `subjectBrandVoice` into the brand-voice judge config, queues the run.
+3. **Watch it process** (`/runs/[id]`). Polls every 3 s while queued/running. Shows progress bar, then summary table after completion (mean / median / p95 / passRate per metric). Per-case results table; click a row → drill-in dialog with the judge's full reasoning + chain-of-thought `evaluation_steps`.
+4. **Cancel anytime**. The Cancel button on the detail page flips the run to 'cancelled'; the worker picks it up between cases.
+
+The Evaluation 101 card on the empty-state for both datasets and runs explains the model — what datasets are, what graders do, what runs produce. Tone is plain English with concrete actions; copy lives in `components/admin/orchestration/evaluations-foundations/help-text.ts` so the FieldHelp wording stays auditable in one place.
+
+## Judge agent picker
+
+The run-create form loads judge agents live from `/api/v1/admin/orchestration/evaluations/graders` and groups them into **Built-in** and **Custom** subsections. Each row shows the agent's name, slug, model, description, and an `[edit]` link that opens the agent form in a new tab so admins can tune the rubric without leaving the picker. A "Create custom judge" CTA navigates to `/admin/orchestration/agents/new?kind=judge` — the agent form pre-selects `kind=judge` and shows a judge-creation explainer.
+
+Ticking a judge adds `{ slug: 'judge_agent', config: { agentSlug } }` to the run's metric configs. The API resolves the agent at queue time, verifies it's `kind='judge'` + active, and pins `subjectBrandVoice` for the brand-voice judge.
 
 ## List page
 

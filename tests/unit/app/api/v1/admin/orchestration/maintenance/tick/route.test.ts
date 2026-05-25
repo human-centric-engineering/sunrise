@@ -67,6 +67,10 @@ vi.mock('@/lib/orchestration/retention', () => ({
   enforceRetentionPolicies: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
+  processPendingEvaluationRuns: vi.fn(),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -81,6 +85,7 @@ import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
+import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import {
   POST,
@@ -130,6 +135,7 @@ const DEFAULT_RETENTION_RESULT = {
 };
 const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
 const DEFAULT_ORPHAN_RESULT = { recovered: 0, exhausted: 0, errors: [] };
+const DEFAULT_EVAL_RUN_RESULT = { claimed: 0, completed: 0, released: 0, failed: 0, cancelled: 0 };
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -153,6 +159,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(DEFAULT_RETENTION_RESULT);
     vi.mocked(processPendingExecutions).mockResolvedValue(DEFAULT_PENDING_RECOVERY_RESULT);
     vi.mocked(processOrphanedExecutions).mockResolvedValue(DEFAULT_ORPHAN_RESULT);
+    vi.mocked(processPendingEvaluationRuns).mockResolvedValue(DEFAULT_EVAL_RUN_RESULT);
   });
 
   // ── Authentication ───────────────────────────────────────────────────────
@@ -201,6 +208,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'embeddingBackfill',
       'retention',
       'pendingExecutionRecovery',
+      'evaluationRuns',
     ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
@@ -217,6 +225,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data).not.toHaveProperty('embeddingBackfill');
     expect(body.data).not.toHaveProperty('retention');
     expect(body.data).not.toHaveProperty('pendingExecutionRecovery');
+    expect(body.data).not.toHaveProperty('evaluationRuns');
   });
 
   it('still invokes all seven maintenance tasks (six in background)', async () => {
@@ -250,6 +259,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
         embeddingBackfill: DEFAULT_EMBEDDER_RESULT,
         retention: DEFAULT_RETENTION_RESULT,
         pendingExecutionRecovery: DEFAULT_PENDING_RECOVERY_RESULT,
+        evaluationRuns: DEFAULT_EVAL_RUN_RESULT,
         totalDurationMs: expect.any(Number),
       })
     );
@@ -282,8 +292,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
 
     expect(response.status).toBe(202);
     expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
-    // Background tasks still kick off even when schedules fail (7 tasks since orphanSweep added).
-    expect(body.data.backgroundTasks).toHaveLength(7);
+    // Background tasks still kick off even when schedules fail
+    // (8 tasks since evaluationRuns added in Phase 1).
+    expect(body.data.backgroundTasks).toHaveLength(8);
   });
 
   it('still kicks off background tasks when schedules reject', async () => {

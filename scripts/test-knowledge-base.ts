@@ -1,4 +1,4 @@
-/* eslint-disable no-console, @typescript-eslint/explicit-function-return-type -- CLI script */
+/* eslint-disable @typescript-eslint/explicit-function-return-type -- CLI script */
 /**
  * Test script for the knowledge base seeder and search.
  *

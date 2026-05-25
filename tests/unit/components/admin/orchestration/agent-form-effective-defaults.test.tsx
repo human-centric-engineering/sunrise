@@ -34,6 +34,7 @@ vi.mock('next/navigation', () => ({
     forward: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -116,6 +117,7 @@ function makeSystemSeededAgent(): AiAgent {
     maxCostPerTurnUsd: null,
     isActive: true,
     isSystem: true,
+    kind: 'chat',
     createdBy: 'system',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),

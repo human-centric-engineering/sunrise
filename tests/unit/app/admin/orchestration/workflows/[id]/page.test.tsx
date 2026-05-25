@@ -31,6 +31,7 @@ vi.mock('next/navigation', () => ({
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/components/admin/orchestration/workflow-builder/workflow-builder', () => ({

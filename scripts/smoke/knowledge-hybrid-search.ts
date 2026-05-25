@@ -1,4 +1,3 @@
-/* eslint-disable no-console -- CLI smoke script */
 /**
  * Hybrid knowledge-base search smoke script (`lib/orchestration/knowledge/search`)
  *

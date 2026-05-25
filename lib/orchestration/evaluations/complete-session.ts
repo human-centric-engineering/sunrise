@@ -49,10 +49,12 @@ import {
 } from '@/lib/orchestration/evaluations/parse-structured';
 import { scoreResponse } from '@/lib/orchestration/evaluations/score-response';
 import {
+  type Annotation,
+  deserializeAnnotations,
+} from '@/lib/orchestration/evaluations/annotation-serializer';
+import {
   EVALUATION_DEFAULT_MODEL as DEFAULT_MODEL,
   EVALUATION_DEFAULT_PROVIDER as DEFAULT_PROVIDER,
-  JUDGE_MODEL,
-  JUDGE_PROVIDER,
 } from '@/lib/orchestration/evaluations/judge-model';
 
 /** Maximum number of log events included in the analysis prompt. */
@@ -136,10 +138,22 @@ export async function completeEvaluationSession(
 
   const provider = await getProvider(providerSlug);
 
+  // Annotations the reviewer captured in the runner UI are persisted on
+  // `session.metadata` as flat keys (see annotation-serializer.ts). Feed
+  // them into the summariser so the AI's "what happened in this session"
+  // explanation is informed by the human's per-turn judgement, not just
+  // the raw transcript.
+  const metadataObject =
+    session.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
+      ? (session.metadata as Record<string, unknown>)
+      : null;
+  const annotations = deserializeAnnotations(metadataObject);
+
   const messages = buildAnalysisMessages({
     sessionTitle: session.title,
     sessionDescription: session.description,
     logs,
+    annotations,
   });
 
   let analysis: AnalysisResult;
@@ -182,6 +196,7 @@ export async function completeEvaluationSession(
   try {
     metricSummary = await scoreEvaluationLogs({
       sessionId: session.id,
+      userId: params.userId,
       logs,
       agentId: session.agentId,
       previousScoringCostUsd: 0,
@@ -256,6 +271,7 @@ export async function rescoreEvaluationSession(
 
   const metricSummary = await scoreEvaluationLogs({
     sessionId: session.id,
+    userId: params.userId,
     logs,
     agentId: session.agentId,
     previousScoringCostUsd: previousCost,
@@ -314,26 +330,51 @@ interface BuildMessagesOptions {
     content: string | null;
     capabilitySlug: string | null;
   }>;
+  annotations: Map<number, Annotation>;
 }
 
 function buildAnalysisMessages(opts: BuildMessagesOptions): LlmMessage[] {
-  const transcript = opts.logs
-    .map((log) => {
-      const prefix = `#${log.sequenceNumber} [${log.eventType}]`;
-      const body =
-        log.eventType === 'capability_call' || log.eventType === 'capability_result'
-          ? `${log.capabilitySlug ?? 'unknown'}: ${truncate(log.content ?? '', 500)}`
-          : truncate(log.content ?? '', 500);
-      return `${prefix} ${body}`;
-    })
-    .join('\n');
+  // The runner stores annotations against the index of the assistant turn
+  // in its visible chat list (user_input + ai_response with non-empty
+  // content; capability events excluded). Mirror that filter exactly so
+  // annotation indices line up with the right ai_response.
+  let chatTurnIdx = 0;
+  let hasAnnotations = false;
+  const transcriptLines: string[] = [];
+  for (const log of opts.logs) {
+    const prefix = `#${log.sequenceNumber} [${log.eventType}]`;
+    const body =
+      log.eventType === 'capability_call' || log.eventType === 'capability_result'
+        ? `${log.capabilitySlug ?? 'unknown'}: ${truncate(log.content ?? '', 500)}`
+        : truncate(log.content ?? '', 500);
+    transcriptLines.push(`${prefix} ${body}`);
+
+    const isChatTurn =
+      (log.eventType === 'user_input' || log.eventType === 'ai_response') && !!log.content;
+    if (isChatTurn) {
+      if (log.eventType === 'ai_response') {
+        const ann = opts.annotations.get(chatTurnIdx);
+        if (ann && isAnnotationActive(ann)) {
+          transcriptLines.push(`   ↳ reviewer: ${formatAnnotationForPrompt(ann)}`);
+          hasAnnotations = true;
+        }
+      }
+      chatTurnIdx++;
+    }
+  }
+  const transcript = transcriptLines.join('\n');
 
   const systemContent = [
     'You are an evaluation analyst reviewing a transcript between a user and an AI agent.',
+    hasAnnotations
+      ? "A human reviewer has annotated some assistant responses with `↳ reviewer:` lines (category, 1-5 rating, optional notes); treat these as the reviewer's judgement and weight them heavily in your summary and suggestions."
+      : null,
     'Analyse the transcript and produce a concise performance summary plus actionable improvement suggestions.',
     'Respond ONLY with a JSON object of the form {"summary": "...", "improvementSuggestions": ["...", "..."]}.',
     'Do not wrap the JSON in code fences. Do not include any prose outside the JSON.',
-  ].join(' ');
+  ]
+    .filter((line): line is string => line !== null)
+    .join(' ');
 
   const userContent = [
     `Evaluation title: ${opts.sessionTitle}`,
@@ -349,6 +390,18 @@ function buildAnalysisMessages(opts: BuildMessagesOptions): LlmMessage[] {
     { role: 'system', content: systemContent },
     { role: 'user', content: userContent },
   ];
+}
+
+function isAnnotationActive(ann: Annotation): boolean {
+  return ann.category !== null || ann.rating !== 3 || ann.notes.length > 0;
+}
+
+function formatAnnotationForPrompt(ann: Annotation): string {
+  const parts: string[] = [];
+  if (ann.category) parts.push(`category=${ann.category}`);
+  if (ann.rating !== 3) parts.push(`rating=${ann.rating}/5`);
+  if (ann.notes) parts.push(`notes="${truncate(ann.notes, 280)}"`);
+  return parts.join(', ');
 }
 
 function truncate(input: string, max: number): string {
@@ -380,6 +433,7 @@ function parseAnalysis(raw: string): EvaluationAnalysis | null {
 
 interface ScoreLogsOptions {
   sessionId: string;
+  userId: string;
   logs: Array<{
     id: string;
     sequenceNumber: number;
@@ -399,33 +453,17 @@ interface ScoreLogsOptions {
  * single bad turn doesn't void the whole pass.
  */
 async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMetricSummary> {
-  // Resolve the judge model + provider.
-  // Priority: EVALUATION_JUDGE_* env vars > EVALUATION_DEFAULT_* env vars >
-  // system default chat model. Drops the previous hard-coded anthropic
-  // fallback so deployments without an Anthropic provider get a working
-  // judge.
-  let judgeProviderSlug: string;
-  let judgeModelId: string;
-  if (JUDGE_PROVIDER !== null && JUDGE_MODEL !== null) {
-    judgeProviderSlug = JUDGE_PROVIDER;
-    judgeModelId = JUDGE_MODEL;
-  } else {
-    const resolved = await resolveAgentProviderAndModel(
-      { provider: '', model: '', fallbackProviders: [] },
-      'chat'
-    );
-    judgeProviderSlug = resolved.providerSlug;
-    judgeModelId = resolved.model;
-  }
-  const judgeProvider = await getProvider(judgeProviderSlug);
-
+  // Phase 1.5 refactor: judge calls go through the three seeded judge
+  // agents (eval-judge-faithfulness/groundedness/relevance) via
+  // streamChat. The agents' own model/provider config takes precedence;
+  // each judge call's cost lands on the judge agent's own CHAT row, so
+  // we no longer write a per-session EVALUATION cost rollup here — the
+  // judge spend is queryable per-agent on the existing costs page.
   const faithfulnessScores: number[] = [];
   const groundednessScores: number[] = [];
   const relevanceScores: number[] = [];
   let scoredCount = 0;
   let totalRunCostUsd = 0;
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
 
   let lastUserContent: string | null = null;
   for (const log of opts.logs) {
@@ -442,15 +480,27 @@ async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMe
         userQuestion: lastUserContent,
         aiResponse: log.content ?? '',
         citations,
-        judgeProvider,
-        judgeModel: judgeModelId,
+        userId: opts.userId,
       });
       const { faithfulness, groundedness, relevance } = result.scores;
 
       const judgeReasoning: Prisma.InputJsonValue = {
-        faithfulness: { reasoning: faithfulness.reasoning },
-        groundedness: { reasoning: groundedness.reasoning },
-        relevance: { reasoning: relevance.reasoning },
+        faithfulness: {
+          reasoning: faithfulness.reasoning,
+          ...(faithfulness.evaluationSteps
+            ? { evaluationSteps: faithfulness.evaluationSteps }
+            : {}),
+        },
+        groundedness: {
+          reasoning: groundedness.reasoning,
+          ...(groundedness.evaluationSteps
+            ? { evaluationSteps: groundedness.evaluationSteps }
+            : {}),
+        },
+        relevance: {
+          reasoning: relevance.reasoning,
+          ...(relevance.evaluationSteps ? { evaluationSteps: relevance.evaluationSteps } : {}),
+        },
       };
       await prisma.aiEvaluationLog.update({
         where: { id: log.id },
@@ -467,8 +517,6 @@ async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMe
       if (relevance.score !== null) relevanceScores.push(relevance.score);
       scoredCount++;
       totalRunCostUsd += result.costUsd;
-      totalInputTokens += result.tokenUsage.input;
-      totalOutputTokens += result.tokenUsage.output;
     } catch (err) {
       logger.warn('Per-turn metric scoring failed (run continues)', {
         sessionId: opts.sessionId,
@@ -478,34 +526,16 @@ async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMe
     }
   }
 
-  // Aggregate cost into a single AiCostLog row tagged phase=scoring so
-  // analytics can split summary spend from scoring spend without a new
-  // CostOperation enum value.
-  if (scoredCount > 0) {
-    const costParams: Parameters<typeof logCost>[0] = {
-      model: judgeModelId,
-      provider: judgeProviderSlug,
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      operation: CostOperation.EVALUATION,
-      metadata: { phase: 'scoring', logsScored: scoredCount },
-    };
-    if (opts.agentId) costParams.agentId = opts.agentId;
-    void logCost(costParams).catch((err) => {
-      logger.error('Failed to log evaluation scoring cost', {
-        sessionId: opts.sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
   return {
     avgFaithfulness: average(faithfulnessScores),
     avgGroundedness: average(groundednessScores),
     avgRelevance: average(relevanceScores),
     scoredLogCount: scoredCount,
-    judgeProvider: judgeProviderSlug,
-    judgeModel: judgeModelId,
+    // Markers — the actual judge agents own their own provider/model
+    // configs. Keep the legacy fields populated so any UI relying on
+    // them sees coherent values.
+    judgeProvider: 'agents',
+    judgeModel: 'eval-judge-{faithfulness,groundedness,relevance}',
     scoredAt: new Date().toISOString(),
     totalScoringCostUsd: opts.previousScoringCostUsd + totalRunCostUsd,
   };

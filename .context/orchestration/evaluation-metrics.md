@@ -5,6 +5,14 @@ LLM-as-judge scoring of AI responses against three named rubrics —
 evaluation session is completed (or re-scored). Lives alongside the
 existing AI-written summary; doesn't replace it.
 
+**Phase 1 update:** the same three rubrics are now also registered as
+individual graders in the grader registry (`lib/orchestration/evaluations/
+graders/model/`) so dataset-driven batch runs can pick any subset of
+them. The manual-session path still uses the bundled `scoreResponse()`
+call (one judge call for all three rubrics together); batch runs use
+the registry (one judge call per case × grader). See
+`.context/orchestration/evaluations.md` for the registry architecture.
+
 This doc is the canonical spec. Cross-references:
 
 - Admin UI: `.context/admin/orchestration-evaluations.md` (Named metric scoring section)
@@ -97,6 +105,34 @@ the running total, doesn't replace it).
 No score history is retained. If versioned scoring becomes important
 later, an `AiEvaluationScoreSnapshot` table can be added without
 schema upheaval.
+
+### Reviewer annotations in the AI summary
+
+While a session is open, the runner UI lets a reviewer flag each AI
+response with a **category** (`expected | unexpected | issue |
+observation`), a **1-5 rating**, and free-text **notes**. These are
+serialized to `AiEvaluationSession.metadata` by
+`annotation-serializer.ts`.
+
+At completion (and only for the summary call — not the per-turn judge),
+the summariser builds the transcript with each annotated AI response
+followed by a one-line `↳ reviewer:` annotation block. Indexing mirrors
+the runner's filtered message list (user + AI turns only, capability
+events skipped), so an annotation against the 3rd assistant turn lands
+under the 3rd `ai_response` log regardless of capability calls in
+between. Default annotations (rating=3, no category, no notes) are
+omitted to keep the prompt clean. Notes longer than 280 chars are
+truncated.
+
+When at least one active annotation is present the system prompt gains
+an extra sentence directing the LLM to weight reviewer judgement heavily
+in its summary and improvement suggestions. The per-turn judge scorer is
+untouched — it remains a blind grader against the citations, not the
+human's verdict.
+
+Lives in `lib/orchestration/evaluations/complete-session.ts` —
+`buildAnalysisMessages` for the prompt assembly, `isAnnotationActive`
+and `formatAnnotationForPrompt` for the per-annotation rendering.
 
 ## Judge prompt
 

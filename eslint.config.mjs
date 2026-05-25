@@ -133,6 +133,16 @@ export default tseslint.config(
     },
   },
 
+  // CLI-style verification + maintenance scripts. They print to stdout
+  // for interactive use; logger's structured-JSON output would be
+  // unreadable for an operator running them by hand.
+  {
+    files: ['scripts/**/*.{ts,tsx}'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
   // Test file overrides to prevent auto-fix issues with async/await
   {
     files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}', '**/tests/**/*.{ts,tsx}'],

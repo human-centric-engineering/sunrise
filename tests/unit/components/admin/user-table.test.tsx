@@ -37,6 +37,8 @@ vi.mock('next/navigation', () => ({
     refresh: vi.fn(),
   })),
   usePathname: vi.fn(() => '/admin/users'),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({

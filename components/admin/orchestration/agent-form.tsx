@@ -17,10 +17,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
-import { AlertCircle, Check, Loader2, Save, Shield } from 'lucide-react';
+import { AlertCircle, Check, Loader2, Save, Scale, Shield } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -73,6 +73,9 @@ export type { ModelOption };
 const agentFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   slug: slugSchema.min(1, 'Slug is required').max(100),
+  // Set at create time only (via ?kind= query param); not editable on
+  // existing agents. 'chat' or 'judge'.
+  kind: z.enum(['chat', 'judge']),
   description: z.string().min(1, 'Description is required').max(5000),
   // Profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
   profileId: z.string().nullable().optional(),
@@ -177,7 +180,17 @@ export function AgentForm({
   profiles,
 }: AgentFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const isEdit = mode === 'edit';
+
+  // On a fresh create, honour `?kind=judge` from the URL (used by the
+  // "Create custom judge" CTA in the run-create form). On edit, the
+  // existing agent's kind is the source of truth.
+  const initialKind: 'chat' | 'judge' = isEdit
+    ? ((agent?.kind as 'chat' | 'judge' | undefined) ?? 'chat')
+    : searchParams.get('kind') === 'judge'
+      ? 'judge'
+      : 'chat';
 
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -209,6 +222,7 @@ export function AgentForm({
     defaultValues: {
       name: agent?.name ?? '',
       slug: agent?.slug ?? '',
+      kind: initialKind,
       description: agent?.description ?? '',
       systemInstructions: agent?.systemInstructions ?? '',
       provider: initialProvider,
@@ -454,15 +468,36 @@ export function AgentForm({
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold">{isEdit ? agent?.name : 'New agent'}</h1>
+            <h1 className="text-xl font-semibold">
+              {isEdit ? agent?.name : initialKind === 'judge' ? 'New judge agent' : 'New agent'}
+            </h1>
             {isEdit && agent?.isSystem && (
               <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
                 <Shield className="h-3 w-3" />
                 System
               </Badge>
             )}
+            {(isEdit ? agent?.kind === 'judge' : initialKind === 'judge') && (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-300 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:border-amber-700 dark:text-amber-300"
+              >
+                <Scale className="h-3 w-3" />
+                Judge
+              </Badge>
+            )}
           </div>
           {isEdit && <p className="text-muted-foreground font-mono text-xs">{agent?.slug}</p>}
+          {!isEdit && initialKind === 'judge' && (
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              The system instructions you write below ARE the rubric. The evaluation worker sends
+              the case as a structured user message; the judge responds with{' '}
+              <code className="bg-muted rounded px-1 text-[10px]">
+                {'{"score": ..., "reasoning": "..."}'}
+              </code>{' '}
+              JSON.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" asChild>

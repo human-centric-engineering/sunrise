@@ -22,6 +22,8 @@ import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn() }),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({

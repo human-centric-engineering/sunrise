@@ -6,6 +6,23 @@ Shared create/edit form for `AiAgent`. Eight shadcn tabs, one underlying `<form>
 **Pattern:** raw `react-hook-form` + `zodResolver(agentFormSchema)`, no shadcn Form wrapper (mirrors `components/admin/feature-flag-form.tsx`).
 **Persistence:** one submit writes one request — tabs are layout, not save boundaries.
 
+## Agent kind: chat vs judge
+
+The form serves two distinct agent kinds, both stored in the same `AiAgent` table and differentiated by the `kind` column (`'chat' | 'judge'`).
+
+- **Chat agents** (default) — end-user-facing conversational agents driven by `streamChat`. Show up in the agents list, the embed widget, the chat surface.
+- **Judge agents** (`kind='judge'`) — driven by the evaluation worker and the manual-session scorer to score AI responses. Never appear to end users. Six built-in judges seed via `prisma/seeds/016-evaluation-judges.ts` (correctness, relevance, coherence, faithfulness, groundedness, brand-voice). Admins can create custom judges from the run-create form's "Create custom judge" CTA.
+
+`kind` is **set at create time only** and never editable on existing agents. The form reads `?kind=judge` from the URL on a fresh create (the CTA links pass this); on edit, the existing agent's kind is the source of truth.
+
+When the form is in judge-create mode:
+
+- Header reads "New judge agent" with a **Judge** badge (amber `Scale` icon)
+- A one-line explainer under the header tells the admin: _"The system instructions you write below ARE the rubric. The evaluation worker sends the case as a structured user message; the judge responds with `{"score": ..., "reasoning": "..."}` JSON."_
+- After save, the new judge appears automatically in the judge picker on `/admin/orchestration/evaluations/runs/new`.
+
+The agents list page filters to `kind='chat'` by default but renders a **Judge** badge alongside the existing **System** badge for any judge agent that does appear (e.g. when the kind filter is loosened). See `.context/admin/orchestration-evaluations.md` for the judge picker UI and `.context/orchestration/evaluations.md` for the worker's judge-invocation contract.
+
 ## Tab structure
 
 | #   | Tab           | Create | Edit | Notes                                                                                                                                                                                                                  |

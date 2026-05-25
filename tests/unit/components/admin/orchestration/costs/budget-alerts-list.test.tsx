@@ -44,6 +44,7 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     refresh: vi.fn(),
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 import { apiClient, APIClientError } from '@/lib/api/client';

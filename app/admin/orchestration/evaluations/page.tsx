@@ -105,6 +105,26 @@ export default async function TestingPage() {
         </p>
       </header>
 
+      <div className="bg-muted/30 flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm">
+        <span className="text-muted-foreground">More:</span>
+        <Link
+          href="/admin/orchestration/evaluations/datasets"
+          className="underline-offset-4 hover:underline"
+        >
+          Datasets
+        </Link>
+        <span className="text-muted-foreground/50">·</span>
+        <Link
+          href="/admin/orchestration/evaluations/runs"
+          className="underline-offset-4 hover:underline"
+        >
+          Batch runs
+        </Link>
+        <span className="text-muted-foreground text-xs">
+          (dataset-driven evaluations — Phase 1)
+        </span>
+      </div>
+
       <TestingTabs
         evaluationsContent={
           <EvaluationsTable initialEvaluations={evaluations} initialMeta={meta} agents={agents} />

@@ -17,7 +17,10 @@ import type { ExecutionTraceEntry } from '@/types/orchestration';
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockRefresh = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: mockRefresh }),
+  useSearchParams: () => ({ get: () => null }),
+}));
 
 const mockPost = vi.fn().mockResolvedValue({ success: true });
 vi.mock('@/lib/api/client', () => ({

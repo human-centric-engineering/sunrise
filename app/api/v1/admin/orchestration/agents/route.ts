@@ -26,13 +26,20 @@ export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
 
   const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, provider, isSystem, q } = validateQueryParams(
+  const { page, limit, isActive, provider, isSystem, q, kind } = validateQueryParams(
     searchParams,
     listAgentsQuerySchema
   );
   const skip = (page - 1) * limit;
 
+  // Optional kind filter. When the caller doesn't specify, return
+  // every kind — judges and chat agents alike. The agents list page
+  // renders a "Judge" badge alongside the existing "System" badge so
+  // operators can tell them apart at a glance. Callers that want a
+  // single kind (the run-create subject picker passes `kind=chat`;
+  // the run-create metric picker passes `kind=judge`) opt in.
   const where: Prisma.AiAgentWhereInput = {};
+  if (kind !== undefined) where.kind = kind;
   if (isActive !== undefined) where.isActive = isActive;
   if (provider) where.provider = provider;
   if (isSystem !== undefined) where.isSystem = isSystem;
@@ -129,6 +136,7 @@ export const POST = withAdminAuth(async (request, session) => {
       data: {
         name: body.name,
         slug: body.slug,
+        kind: body.kind,
         description: body.description,
         systemInstructions: body.systemInstructions,
         systemInstructionsHistory: [],

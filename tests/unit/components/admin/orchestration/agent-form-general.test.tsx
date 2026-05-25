@@ -29,6 +29,7 @@ vi.mock('next/navigation', () => ({
     forward: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/api/client', () => ({
@@ -162,6 +163,7 @@ describe('AgentForm — General tab', () => {
         maxCostPerTurnUsd: null,
         isActive: true,
         isSystem: false,
+        kind: 'chat',
         createdBy: 'system',
         createdAt: new Date(),
         updatedAt: new Date(),

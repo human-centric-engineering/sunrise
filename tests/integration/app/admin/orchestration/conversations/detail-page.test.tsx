@@ -44,6 +44,8 @@ vi.mock('next/navigation', () => ({
   notFound: mockNotFound,
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() })),
   usePathname: vi.fn(() => '/'),
+
+  useSearchParams: () => ({ get: () => null }),
 }));
 
 // next/link is used by the page — keep real implementation

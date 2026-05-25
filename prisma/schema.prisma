@@ -50,6 +50,8 @@ model User {
   aiUserMemories         AiUserMemory[]          @relation("AiUserMemoryUser")
   aiKnowledgeDocuments   AiKnowledgeDocument[]   @relation("AiKnowledgeDocumentUploader")
   aiEvaluationSessions   AiEvaluationSession[]   @relation("AiEvaluationSessionUser")
+  aiDatasets             AiDataset[]             @relation("AiDatasetUser")
+  aiEvaluationRuns       AiEvaluationRun[]       @relation("AiEvaluationRunUser")
   aiProviderConfigs      AiProviderConfig[]      @relation("AiProviderConfigCreator")
   aiWebhookSubscriptions AiWebhookSubscription[] @relation("AiWebhookUser")
   aiInviteTokens         AiAgentInviteToken[]    @relation("InviteTokenCreator")
@@ -221,6 +223,14 @@ model AiAgent {
   enableDocumentInput       Boolean  @default(false) // when true, surfaces an attach-PDF control on chat surfaces (admin + embed) and accepts PDF attachments. Effective state also depends on AiOrchestrationSettings.documentInputGloballyEnabled and the resolved chat model carrying the `documents` capability.
   isActive                  Boolean  @default(true)
   isSystem                  Boolean  @default(false)
+  // Discriminator for "what role does this agent play". Chat agents serve
+  // end users via streamChat / the embed widget. Judge agents are driven
+  // by the evaluation worker (and the manual-session scorer) and never
+  // appear in the chat-agents list or the embed picker. Mutually
+  // exclusive at the DB layer so list filters can rely on it.
+  // Values: 'chat' (default) | 'judge'. New roles added by future phases
+  // (e.g. 'subject' for workflow-only) become new enum values here.
+  kind                      String   @default("chat")
   createdBy                 String
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
@@ -232,6 +242,7 @@ model AiAgent {
   conversations    AiConversation[]
   userMemories     AiUserMemory[]
   evaluations      AiEvaluationSession[]
+  evaluationRuns   AiEvaluationRun[]          @relation("AiEvaluationRunAgent")
   costLogs         AiCostLog[]
   inviteTokens     AiAgentInviteToken[]
   versions         AiAgentVersion[]
@@ -425,6 +436,7 @@ model AiWorkflow {
   executions       AiWorkflowExecution[]
   schedules        AiWorkflowSchedule[]
   triggers         AiWorkflowTrigger[]
+  evaluationRuns   AiEvaluationRun[]     @relation("AiEvaluationRunWorkflow")
 
   @@index([createdBy])
   @@index([isActive])
@@ -1180,6 +1192,173 @@ model AiEvaluationLog {
   @@map("ai_evaluation_log")
 }
 
+// ---------------------------------------------------------------------------
+// Dataset-driven evaluations (Phase 1)
+// ---------------------------------------------------------------------------
+
+/// A curated collection of test cases run against an agent (or workflow).
+/// Datasets are immutable in content via `contentHash` — edits change the
+/// hash, which makes them visible (but not destructive) to historical runs.
+model AiDataset {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?  @db.Text
+  // Free-text tags for filtering. Mirrors the AiKnowledgeDocument tag
+  // pattern; lower-case, no separate tag table.
+  tags        String[] @default([])
+  caseCount   Int      @default(0)
+  // SHA-256 of the normalised case array (positions sorted, JSON-stringified).
+  // Pinned on every AiEvaluationRun so an edit doesn't silently invalidate
+  // historical run comparisons.
+  contentHash String
+  // Provenance: how this dataset was created — 'upload' (CSV/JSONL),
+  // 'manual' (created case-by-case in UI), 'synthetic' (Phase 2 LLM gen),
+  // 'conversation_capture' (Phase 2 trace-to-dataset).
+  source      String   @default("upload")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user           User                @relation("AiDatasetUser", fields: [userId], references: [id])
+  cases          AiDatasetCase[]
+  evaluationRuns AiEvaluationRun[]
+
+  @@index([userId, updatedAt])
+  @@map("ai_dataset")
+}
+
+/// One test case inside an AiDataset. `input` is JSON to allow both
+/// string-shaped (agent message) and object-shaped (workflow input vars)
+/// cases without a schema split. `expectedOutput` is optional — required
+/// only by reference-dependent graders (exact_match, contains, …).
+model AiDatasetCase {
+  id                 String  @id @default(cuid())
+  datasetId          String
+  // 0-based stable order inside the dataset; drives iteration & result joins.
+  position           Int
+  input              Json
+  expectedOutput     String? @db.Text
+  // Optional ground-truth retrieval contexts for RAG-style graders
+  // (context_recall, context_precision) — added by Phase 2 work.
+  referenceCitations Json?
+  // Author-supplied case-level metadata: tags, difficulty, expectedTrajectory,
+  // source ('synthetic' | 'conversation_capture'), …
+  metadata           Json?
+
+  dataset AiDataset                  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  results AiEvaluationCaseResult[]
+
+  @@unique([datasetId, position])
+  @@index([datasetId])
+  @@map("ai_dataset_case")
+}
+
+/// A queued/running/completed evaluation run: pairs a dataset with a
+/// subject (agent OR workflow), records grader configs and judge model,
+/// owns the per-case results and aggregated summary. Drained by the
+/// maintenance-tick worker via lease/orphan-claim semantics.
+///
+/// Invariant: exactly one of `agentId` / `workflowId` is non-null. Enforced
+/// at the application layer (Zod) and by the worker dispatch branch — no
+/// DB CHECK constraint to keep migrations portable across Postgres
+/// versions / hosted offerings that restrict DDL.
+model AiEvaluationRun {
+  id                    String    @id @default(cuid())
+  userId                String
+  name                  String
+  description           String?   @db.Text
+  // 'agent' | 'workflow' — drives the worker's per-case dispatch.
+  subjectKind           String
+  agentId               String?
+  workflowId            String?
+  datasetId             String
+  // Dataset content hash captured at submit time. The worker validates
+  // this against the dataset's current hash on claim; mismatch ⇒ fail.
+  datasetContentHash    String
+  // Array<{ slug: string; config: unknown }> — pinned at submit time so
+  // grader-registry edits don't silently invalidate historical runs.
+  // Rubric prompts for `custom_rubric` are embedded here verbatim.
+  metricConfigs         Json
+  // Judge model resolution: explicit override > env default > system
+  // chat default. Null fields = "use the resolver".
+  judgeProvider         String?
+  judgeModel            String?
+  // Optional: for workflow subjects, which step's output to grade.
+  // { kind: 'final_report' | 'last_step' | 'step_id', stepId?: string }.
+  // Phase 1 UI is agent-only; this field is wired so Phase 3 ships
+  // without schema rework.
+  subjectOutputSelector Json?
+  status                String    @default("queued") // queued | running | completed | failed | cancelled
+  // { casesTotal, casesDone, casesFailed } — updated by the worker
+  // every few cases (throttled to avoid hot DB writes per iteration).
+  progress              Json      @default("{\"casesTotal\":0,\"casesDone\":0,\"casesFailed\":0}")
+  // Per-metric aggregates after completion:
+  // { metricSlugs: string[], stats: { [slug]: { mean, median, p95, passRate, scoredCount } },
+  //   judgeProvider, judgeModel, completedAt, note? }
+  summary               Json?
+  totalCostUsd          Float?
+  // For "Rescore as new run" — copies metrics/judge but fresh result rows.
+  parentRunId           String?
+  // Worker lease — mirrors processOrphanedExecutions semantics. Cleared
+  // on completion or after the 5-min orphan threshold.
+  lockedBy              String?
+  lockedAt              DateTime?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user      User                     @relation("AiEvaluationRunUser", fields: [userId], references: [id])
+  agent     AiAgent?                 @relation("AiEvaluationRunAgent", fields: [agentId], references: [id], onDelete: SetNull)
+  workflow  AiWorkflow?              @relation("AiEvaluationRunWorkflow", fields: [workflowId], references: [id], onDelete: SetNull)
+  dataset   AiDataset                @relation(fields: [datasetId], references: [id])
+  parent    AiEvaluationRun?         @relation("AiEvaluationRunRescore", fields: [parentRunId], references: [id], onDelete: SetNull)
+  rescores  AiEvaluationRun[]        @relation("AiEvaluationRunRescore")
+  results   AiEvaluationCaseResult[]
+  variants  AiExperimentVariant[]
+
+  @@index([userId, updatedAt])
+  @@index([status, lockedAt])
+  @@index([datasetId])
+  @@index([agentId])
+  @@index([workflowId])
+  @@map("ai_evaluation_run")
+}
+
+/// Result row for a single (run × case) pair. Written by the worker
+/// after subject execution + grading. `metricScores` is keyed by grader
+/// slug; a missing key means the grader was skipped (e.g. `exact_match`
+/// without `expectedOutput`).
+model AiEvaluationCaseResult {
+  id              String  @id @default(cuid())
+  runId           String
+  datasetCaseId   String
+  // Mirror of position at result-write time; lets us order results
+  // without joining the dataset case row.
+  casePosition    Int
+  subjectOutput   String  @db.Text
+  // Token usage, citations, capability calls — whatever the agent/workflow
+  // emitted that graders need to inspect.
+  subjectMetadata Json?
+  // { [graderSlug]: { score: number | null, passed?: boolean,
+  //                   reasoning?: string, costUsd?: number } }
+  metricScores    Json
+  latencyMs       Int
+  costUsd         Float   @default(0)
+  // Set when subject execution itself failed (not when a grader skipped).
+  errorCode       String?
+  errorMessage    String? @db.Text
+  createdAt       DateTime @default(now())
+
+  run         AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  datasetCase AiDatasetCase   @relation(fields: [datasetCaseId], references: [id])
+
+  @@unique([runId, casePosition])
+  @@index([runId])
+  @@index([datasetCaseId])
+  @@map("ai_evaluation_case_result")
+}
+
 // Granular cost tracking
 model AiCostLog {
   id                  String   @id @default(cuid())
@@ -1510,15 +1689,21 @@ model AiExperimentVariant {
   id                  String  @id @default(cuid())
   experimentId        String
   agentVersionId      String? // references AiAgentVersion.id (null if using live agent)
-  evaluationSessionId String? // filled when experiment is run
+  // Wired in Phase 1 alongside AiEvaluationRun; the legacy
+  // `evaluationSessionId` stays for the manual chat path (Phase 2 will
+  // promote experiment.finalize to read from evaluationRun.summary).
+  evaluationSessionId String?
+  evaluationRunId     String?
   label               String // e.g. "Control", "Variant A"
   score               Float? // aggregated evaluation score after run
 
   experiment        AiExperiment         @relation(fields: [experimentId], references: [id], onDelete: Cascade)
   evaluationSession AiEvaluationSession? @relation(fields: [evaluationSessionId], references: [id], onDelete: SetNull)
+  evaluationRun     AiEvaluationRun?     @relation(fields: [evaluationRunId], references: [id], onDelete: SetNull)
 
   @@index([experimentId])
   @@index([evaluationSessionId])
+  @@index([evaluationRunId])
   @@map("ai_experiment_variant")
 }
 

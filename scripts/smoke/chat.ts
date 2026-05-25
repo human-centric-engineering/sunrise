@@ -1,4 +1,4 @@
-/* eslint-disable no-console, @typescript-eslint/require-await -- CLI smoke script; fake provider methods need the async signature to match the LlmProvider interface */
+/* eslint-disable @typescript-eslint/require-await -- CLI smoke script; fake provider methods need the async signature to match the LlmProvider interface */
 /**
  * Streaming chat handler smoke script (`lib/orchestration/chat`)
  *
