@@ -63,6 +63,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -219,6 +220,33 @@ describe('POST /api/v1/admin/orchestration/agents/:id/capabilities', () => {
 describe('PATCH /api/v1/admin/orchestration/agents/:id/capabilities/:capId', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('PATCH — agentId CUID guard (line 60)', () => {
+    it('returns 400 and flags id in details when agentId is not a valid CUID', async () => {
+      // The capId guard test covers `if (!capIdParse.success)` (line 61).
+      // This test covers the symmetric `if (!agentIdParse.success)` branch (line 60).
+      // Both branches must short-circuit before Prisma is touched.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await PATCH(
+        makeCapIdRequest('PATCH', { isEnabled: false }),
+        makeCapIdParams('not-a-cuid', CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{
+        success: boolean;
+        error: { code: string; details: Record<string, unknown> };
+      }>(response);
+      expect(data.success).toBe(false);
+      expect(data.error.code).toBe('VALIDATION_ERROR');
+      // Load-bearing: the WRONG field would still produce status 400. Asserting
+      // `details.id` specifically catches a regression that mis-flagged `capId`.
+      expect(data.error.details).toHaveProperty('id');
+      // Guard must short-circuit before Prisma is touched.
+      expect(vi.mocked(prisma.aiAgentCapability.update)).not.toHaveBeenCalled();
+    });
   });
 
   describe('Authentication & Authorization', () => {
@@ -489,6 +517,89 @@ describe('GET /api/v1/admin/orchestration/agents/:id/capabilities', () => {
       const response = await GET(makeAttachRequest({}), makeAttachParams('bad-id'));
       expect(response.status).toBe(400);
     });
+  });
+});
+
+// ─── Tests: capId CUID guard and non-P2025 rethrow (branch coverage) ────────
+
+describe('PATCH — capId CUID guard (line 63)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 400 and flags capId in details when capId is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', { isEnabled: false }),
+      makeCapIdParams(AGENT_ID, 'not-a-cuid')
+    );
+
+    expect(response.status).toBe(400);
+    const data = await parseJson<{
+      success: boolean;
+      error: { code: string; details: Record<string, unknown> };
+    }>(response);
+    expect(data.error.code).toBe('VALIDATION_ERROR');
+    // Proves the validator flagged capId specifically — an id-only regression would put the key under "id"
+    expect(data.error.details).toHaveProperty('capId');
+    expect(vi.mocked(prisma.aiAgentCapability.update)).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH — non-P2025 rethrow (line 114)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does not map a generic DB error to 404, and does not clear cache or audit', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentCapability.update).mockRejectedValue(new Error('connection lost'));
+
+    let status: number | undefined;
+    try {
+      status = (
+        await PATCH(
+          makeCapIdRequest('PATCH', { isEnabled: false }),
+          makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+        )
+      ).status;
+    } catch {
+      status = undefined;
+    }
+
+    // A regression converting all catch branches to NotFoundError would yield 404 — must not happen
+    expect(status).not.toBe(404);
+    if (status !== undefined) expect(status).toBeGreaterThanOrEqual(500);
+    // Success path is the only place that clears cache and audits — rethrown error must not trigger either
+    expect(vi.mocked(capabilityDispatcher.clearCache)).not.toHaveBeenCalled();
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+});
+
+describe('DELETE — non-P2025 rethrow (line 151)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('does not map a generic DB error to 404, and does not clear cache or audit', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentCapability.delete).mockRejectedValue(new Error('connection lost'));
+
+    let status: number | undefined;
+    try {
+      status = (await DELETE(makeCapIdRequest('DELETE'), makeCapIdParams(AGENT_ID, CAPABILITY_ID)))
+        .status;
+    } catch {
+      status = undefined;
+    }
+
+    // A regression converting all catch branches to NotFoundError would yield 404 — must not happen
+    expect(status).not.toBe(404);
+    if (status !== undefined) expect(status).toBeGreaterThanOrEqual(500);
+    // Success path is the only place that clears cache and audits — rethrown error must not trigger either
+    expect(vi.mocked(capabilityDispatcher.clearCache)).not.toHaveBeenCalled();
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
   });
 });
 

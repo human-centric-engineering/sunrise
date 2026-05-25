@@ -243,5 +243,70 @@ describe('NewAgentPage (server component)', () => {
       expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
+
+    it('renders correctly when agent-profiles parseApiResponse returns success=false', async () => {
+      // Covers the body.success === false branch of `return body.success ? body.data : [];`
+      // (sibling of the !res.ok short-circuit). parseApiResponse succeeds in returning,
+      // but the body envelope reports failure — page must still render with profiles: [].
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      const { logger } = await import('@/lib/logging');
+
+      setupServerFetch(serverFetch as never, parseApiResponse as never, {
+        '/provider-models': { data: MOCK_MODELS },
+        '/providers': { data: MOCK_PROVIDERS },
+        '/agent-profiles': {
+          success: false,
+          error: { message: 'Profile service down', code: 'SERVICE_ERROR' },
+        },
+      });
+
+      const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+      render(await NewAgentPage());
+
+      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
+      // Same differentiator as the !res.ok test: this branch is silent (returns []
+      // via the ternary). The catch branch is the only one that logs. If the ternary
+      // were removed and body.data was accessed when success=false, the destructure
+      // could explode (depends on the body shape), surfacing into the catch and logging.
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('renders correctly when agent-profiles fetch returns res.ok=false', async () => {
+      // Covers the silent short-circuit `if (!res.ok) return [];` in getAgentProfiles().
+      // Unlike the catch branch, this path does NOT call logger.error — that assertion
+      // differentiates the two [] return paths: !res.ok (silent) vs catch (logged).
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      const { logger } = await import('@/lib/logging');
+
+      // /provider-models and /providers succeed normally; /agent-profiles returns !ok.
+      // Pattern length order: /agent-profiles (15) > /provider-models (15, tie but no
+      // overlap) > /providers (10) — no collision risk.
+      setupServerFetch(serverFetch as never, parseApiResponse as never, {
+        '/provider-models': { data: MOCK_MODELS },
+        '/providers': { data: MOCK_PROVIDERS },
+        '/agent-profiles': { ok: false },
+      });
+
+      const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+      let thrown = false;
+      try {
+        render(await NewAgentPage());
+      } catch {
+        thrown = true;
+      }
+
+      // Page must not throw — the !res.ok guard silently returns [].
+      expect(thrown).toBe(false);
+      // Content assertions confirm the page rendered normally, not into an error state.
+      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
+      // logger.error must NOT have been called — proves the silent !res.ok branch fired,
+      // not the catch branch (which logs). If the guard were removed and parseApiResponse
+      // threw on a non-OK Response, the catch would log and this assertion would fail.
+      expect(logger.error).not.toHaveBeenCalled();
+    });
   });
 });

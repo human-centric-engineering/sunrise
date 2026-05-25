@@ -106,4 +106,17 @@ describe('POST /hooks/deliveries/:id/retry', () => {
 
     expect(retryHookDelivery).toHaveBeenCalledWith(DELIVERY_ID);
   });
+
+  it('returns 400 and does not call retryHookDelivery when id is not a valid CUID', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await RetryDelivery(makeRequest('not-a-cuid'), makeParams('not-a-cuid'));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    // Guard must short-circuit BEFORE the registry call; catches regressions where
+    // the cuidSchema.safeParse check is moved below retryHookDelivery(id).
+    expect(retryHookDelivery).not.toHaveBeenCalled();
+  });
 });

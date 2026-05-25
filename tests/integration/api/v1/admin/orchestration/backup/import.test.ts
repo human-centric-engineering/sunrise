@@ -161,6 +161,27 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
     });
   });
 
+  describe('Non-ZodError rethrow', () => {
+    it('does not return 400 VALIDATION_ERROR and does not audit when importOrchestrationConfig rejects with a plain Error', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(importOrchestrationConfig).mockRejectedValue(new Error('database connection lost'));
+
+      let status: number | undefined;
+      try {
+        const res = await POST(makePostRequest(makeValidPayload()));
+        status = res.status;
+      } catch {
+        status = undefined;
+      }
+
+      // Load-bearing assertion: a regression that catches all errors as ZodErrors would
+      // return 400 VALIDATION_ERROR. The rethrow must NOT produce a 400.
+      expect(status).not.toBe(400);
+      // The rethrow fires before the success audit — logAdminAction must not have been called.
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Successful import', () => {
     it('returns 200 with import result', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

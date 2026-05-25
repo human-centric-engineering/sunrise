@@ -18,6 +18,7 @@
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
     "test:ui": "vitest --ui",
+    "test:ui:coverage": "vitest --ui --coverage",
     "email:dev": "email dev",
     "email:export": "email export",
     "db:generate": "prisma generate",

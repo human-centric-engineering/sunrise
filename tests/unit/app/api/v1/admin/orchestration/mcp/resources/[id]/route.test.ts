@@ -20,6 +20,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 
@@ -224,53 +225,53 @@ describe('PATCH /mcp/resources/:id', () => {
     );
   });
 
-  it('persists a non-null handlerConfig object verbatim', async () => {
+  it('maps handlerConfig: null to Prisma.JsonNull sentinel (not JS null)', async () => {
+    // Verifies the ternary on line 36 of route.ts correctly translates JS null
+    // into the Prisma.JsonNull sentinel. Prisma 7 requires this sentinel to store
+    // a JSON null literal; passing raw JS null stores SQL NULL instead.
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
     vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
 
-    const config = { limit: 10, mode: 'strict' };
-    await PATCH(makePatchRequest({ handlerConfig: config }), makeParams(RESOURCE_ID));
-
-    expect(prisma.mcpExposedResource.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ handlerConfig: config }),
-      })
-    );
-  });
-
-  it('persists handlerConfig:null as Prisma.JsonNull (explicit clear)', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
-    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
-
-    // Passing null in the body is the admin's "clear it" signal — the
-    // route must translate that to Prisma.JsonNull so the column is
-    // overwritten with SQL NULL rather than left untouched.
     await PATCH(makePatchRequest({ handlerConfig: null }), makeParams(RESOURCE_ID));
 
-    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0]?.[0];
-    const data = updateCall?.data as Record<string, unknown>;
-    // Prisma.JsonNull is a symbol-like sentinel — assert it's not the
-    // literal JS null (which Prisma rejects) or undefined (which would
-    // leave the column unchanged).
-    expect(data.handlerConfig).toBeDefined();
-    expect(data.handlerConfig).not.toBeNull();
+    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0][0];
+    // toBe checks reference identity — this fails if the ternary is removed and
+    // JS null is passed straight through.
+    expect((updateCall.data as Record<string, unknown>).handlerConfig).toBe(Prisma.JsonNull);
   });
 
-  it('omits handlerConfig from the update when not in the request body', async () => {
+  it('passes handlerConfig object through unchanged', async () => {
+    // Verifies the ternary passes non-null handlerConfig values through as-is.
+    const config = { foo: 'bar' };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
+    vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(
+      makeResource({ handlerConfig: config }) as never
+    );
+
+    await PATCH(makePatchRequest({ handlerConfig: config }), makeParams(RESOURCE_ID));
+
+    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0][0];
+    expect((updateCall.data as Record<string, unknown>).handlerConfig).toEqual({ foo: 'bar' });
+  });
+
+  it('omits handlerConfig key entirely when not present in request body', async () => {
+    // Verifies the outer if (handlerConfig !== undefined) guard: a request that
+    // does not send handlerConfig must not write the key to data at all. An absent
+    // key is semantically different from { handlerConfig: undefined } and must not
+    // accidentally store null or Prisma.JsonNull in the column.
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.mcpExposedResource.findUnique).mockResolvedValue(makeResource() as never);
     vi.mocked(prisma.mcpExposedResource.update).mockResolvedValue(makeResource() as never);
 
-    // Only `name` in the body — `handlerConfig` should NOT appear in the
-    // update data, so the column retains its existing value rather than
-    // being overwritten or implicitly cleared.
-    await PATCH(makePatchRequest({ name: 'Updated only' }), makeParams(RESOURCE_ID));
+    await PATCH(makePatchRequest({ name: 'NoConfigChange' }), makeParams(RESOURCE_ID));
 
-    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0]?.[0];
-    const data = updateCall?.data as Record<string, unknown>;
-    expect(data).not.toHaveProperty('handlerConfig');
+    const updateCall = vi.mocked(prisma.mcpExposedResource.update).mock.calls[0][0];
+    // not.toHaveProperty is stronger than checking === undefined: an object with
+    // { handlerConfig: undefined } would pass the undefined check but still
+    // contain the key.
+    expect(updateCall.data).not.toHaveProperty('handlerConfig');
   });
 });
 

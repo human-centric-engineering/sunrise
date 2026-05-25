@@ -54,6 +54,20 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   testProvider: vi.fn(),
 }));
 
+// Stub the route logger so we can force log.warn to throw in the defensive
+// branch test without any real I/O side-effects in other tests.
+const mockLogWarn = vi.fn();
+const mockLogInfo = vi.fn();
+
+vi.mock('@/lib/api/context', () => ({
+  getRouteLogger: vi.fn().mockResolvedValue({
+    warn: (...args: unknown[]) => mockLogWarn(...args),
+    info: (...args: unknown[]) => mockLogInfo(...args),
+    error: vi.fn(),
+    debug: vi.fn(),
+  }),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -318,6 +332,57 @@ describe('POST /api/v1/admin/orchestration/providers/test-bulk', () => {
       const body = await parseJson<SuccessBody>(response);
       expect(body.data.results).toEqual([]);
       expect(testProvider).not.toHaveBeenCalled();
+    });
+
+    it('sanitises the row when log.warn itself throws — defensive branch (line 77)', async () => {
+      // Scenario: testProvider throws so the inner catch runs. Inside the
+      // catch, log.warn is called to record the error. If log.warn itself
+      // throws (e.g. a broken Pino transport, a crashing Sentry adapter),
+      // that secondary throw escapes the try/catch and causes
+      // Promise.allSettled to yield { status: 'rejected' } for that slot.
+      // The outer .map() defensive branch (line 77) must sanitise that
+      // rejected slot into the same uniform shape as any other failure row.
+      //
+      // Anti-green-bar: if the defensive branch were replaced with
+      // `return r.value` (trusting allSettled never rejects), `r.value`
+      // would be `undefined` for a rejected promise, breaking the
+      // BulkTestResult[] contract — and this test would fail because
+      // body.data.results[0] would be undefined, not the sanitised shape.
+
+      const LOGGER_THROW_MESSAGE = 'pino-transport-broken-error';
+
+      // Step 1: testProvider rejects — the inner catch fires.
+      vi.mocked(testProvider).mockRejectedValueOnce(new Error('upstream broken'));
+
+      // Step 2: inside the inner catch, log.warn is called. Make it throw,
+      // so the async function itself rejects (escaping the try/catch).
+      mockLogWarn.mockImplementationOnce(() => {
+        throw new Error(LOGGER_THROW_MESSAGE);
+      });
+
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValueOnce([PROVIDER_ROW_A] as never);
+
+      const response = await POST(makePostRequest({ providerIds: [PROVIDER_A] }));
+
+      // The defensive branch must keep the response well-formed.
+      expect(response.status).toBe(200);
+      const body = await parseJson<SuccessBody>(response);
+      expect(body.success).toBe(true);
+
+      // Exactly one sanitised row — the same contract as a normal failure row.
+      expect(body.data.results).toHaveLength(1);
+      expect(body.data.results[0]).toEqual({
+        id: PROVIDER_A,
+        ok: false,
+        models: [],
+        error: 'connection_failed',
+      });
+
+      // Security-critical: neither the original upstream error nor the
+      // logger throw must appear in the response body.
+      const rawText = JSON.stringify(body);
+      expect(rawText).not.toContain('upstream broken');
+      expect(rawText).not.toContain(LOGGER_THROW_MESSAGE);
     });
   });
 });
