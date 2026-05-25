@@ -20,11 +20,15 @@ import '@/lib/orchestration/evaluations/graders/heuristic/json-path-equals';
 import '@/lib/orchestration/evaluations/graders/heuristic/tool-was-called';
 import '@/lib/orchestration/evaluations/graders/heuristic/citation-count-at-least';
 
-// Model graders — registered in 1.2c (refactor of score-response.ts)
-// import '@/lib/orchestration/evaluations/graders/model/faithfulness';
-// import '@/lib/orchestration/evaluations/graders/model/groundedness';
-// import '@/lib/orchestration/evaluations/graders/model/relevance';
-// import '@/lib/orchestration/evaluations/graders/model/custom-rubric';
+// Model graders — one judge call per (case × grader), so a run that
+// selects only `relevance` doesn't pay for faithfulness + groundedness.
+// The manual-session path keeps using `scoreResponse()` from
+// score-response.ts, which bundles all three rubrics into a single
+// judge call for efficiency.
+import '@/lib/orchestration/evaluations/graders/model/faithfulness';
+import '@/lib/orchestration/evaluations/graders/model/groundedness';
+import '@/lib/orchestration/evaluations/graders/model/relevance';
+import '@/lib/orchestration/evaluations/graders/model/custom-rubric';
 
 export * from '@/lib/orchestration/evaluations/graders/types';
 export {
@@ -53,9 +57,9 @@ export const KNOWN_GRADER_SLUGS = [
   'json_path_equals',
   'tool_was_called',
   'citation_count_at_least',
-  // model (filled in 1.2c)
-  // 'faithfulness',
-  // 'groundedness',
-  // 'relevance',
-  // 'custom_rubric',
+  // model
+  'faithfulness',
+  'groundedness',
+  'relevance',
+  'custom_rubric',
 ] as const;
