@@ -41,6 +41,7 @@ Instructions for Claude Code when working in this repository.
 - **Server components by default** — add `'use client'` only when needed
 - **No N+1 client-side fetches** — list/table pages get all data from a single enriched list endpoint; never fire per-row API calls in `useEffect`
 - **Contextual help on form fields** — every non-trivial form field gets a `<FieldHelp>` ⓘ popover; see `.context/ui/contextual-help.md`
+- **New `User` relations need an `onDelete` policy** — any new model with a `userId`/`createdBy` FK must declare `onDelete: Cascade` (personal data) or `onDelete: SetNull` (retained config/audit, FK nullable). Omitting it defaults to `Restrict` and silently breaks GDPR erasure. Never call `prisma.user.delete()` directly — route account deletion through `eraseUser()`. See `.context/privacy/data-erasure.md`.
 
 ## MCP Integration
 

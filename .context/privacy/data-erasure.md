@@ -62,6 +62,24 @@ Consequently `userId` is `string | null` through the engine, and the
 `user-memory` capability returns a `no_user_context` error for system runs
 rather than assuming a user.
 
+### Adding a new `User` relation (required step)
+
+This is the easiest way to silently regress erasure, and it has happened twice.
+Any **new** model with a `userId` or `createdBy` FK to `User` **must** declare an
+explicit `onDelete` — Prisma's default is `Restrict`, which makes
+`prisma.user.delete()` throw `P2003` for any user who has touched that table:
+
+1. Decide the policy: **personal data → `onDelete: Cascade`**; **reusable config,
+   audit, or logs → `onDelete: SetNull`** (and make the FK column nullable).
+2. If `SetNull` leaves any residual PII on the retained row (an IP, a name, an
+   email), scrub it in `eraseUser()` inside the transaction — `SetNull` drops the
+   link, not the column.
+3. Add an assertion to `scripts/smoke/erasure.ts` proving the new row is erased
+   or de-attributed against a real DB.
+
+When bringing an erasure branch up to date with `main`, **re-scan for new `User`
+relations the merge introduced** — they reintroduce this bug unnoticed.
+
 ## What `eraseUser()` Does Beyond the Cascade
 
 The DB cascade can't reach everything. The service adds three steps; the scrub,

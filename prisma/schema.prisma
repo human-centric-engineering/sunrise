@@ -16,6 +16,14 @@ datasource db {
 // ID Generation: @default(cuid()) generates 25-character CUIDs (format: c[a-z0-9]{24})
 // better-auth is configured to delegate ID generation to Prisma (see lib/auth/config.ts)
 // This ensures consistent CUID format across all user creation methods (UI, API, OAuth, seed)
+//
+// ⚠️ ERASURE POLICY — any NEW relation that points at User (a `userId` or
+// `createdBy` FK) MUST declare an explicit `onDelete`:
+//   • personal data            → onDelete: Cascade   (erased with the user)
+//   • org config / audit / logs → onDelete: SetNull  (retained, de-attributed; make the FK nullable)
+// Omitting it defaults to Restrict, which silently breaks GDPR erasure
+// (prisma.user.delete throws P2003 for any user with activity). After adding
+// one, extend scripts/smoke/erasure.ts to prove it. See .context/privacy/data-erasure.md.
 model User {
   id            String   @id @default(cuid())
   name          String
@@ -1219,7 +1227,7 @@ model AiDataset {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user           User?              @relation("AiDatasetUser", fields: [userId], references: [id], onDelete: SetNull)
+  user           User?             @relation("AiDatasetUser", fields: [userId], references: [id], onDelete: SetNull)
   cases          AiDatasetCase[]
   evaluationRuns AiEvaluationRun[]
 
