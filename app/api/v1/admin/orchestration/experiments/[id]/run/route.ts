@@ -37,9 +37,11 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
   const { id } = await params;
   const log = await getRouteLogger(request);
 
-  // Quick 404 check before opening a transaction.
-  const exists = await prisma.aiExperiment.findUnique({
-    where: { id },
+  // Quick 404 check before opening a transaction. Cross-user 404 (not
+  // 403) so the existence of another admin's experiment never leaks —
+  // matching the posture every other Phase 2 evaluation route uses.
+  const exists = await prisma.aiExperiment.findFirst({
+    where: { id, createdBy: session.user.id },
     select: { id: true },
   });
   if (!exists) throw new NotFoundError('Experiment not found');
@@ -47,11 +49,18 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
   const now = new Date();
 
   const updated = await prisma.$transaction(async (tx) => {
-    const experiment = await tx.aiExperiment.findUnique({
-      where: { id },
+    const experiment = await tx.aiExperiment.findFirst({
+      where: { id, createdBy: session.user.id },
       include: {
         variants: true,
-        dataset: { select: { id: true, contentHash: true, caseCount: true } },
+        // Pull dataset.userId here so we can defence-in-depth verify
+        // it belongs to the caller before we copy its content into a
+        // run we own. Today's create-experiment route enforces dataset
+        // ownership at write time, but a future writer adding a new
+        // create path would silently bypass it without this check.
+        dataset: {
+          select: { id: true, userId: true, contentHash: true, caseCount: true },
+        },
       },
     });
     if (!experiment) throw new NotFoundError('Experiment not found');
@@ -65,6 +74,15 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
     }
 
     const datasetDriven = !!experiment.dataset && !!experiment.metricConfigs;
+
+    // Defence in depth: the dataset bound to this experiment must
+    // belong to the caller. Create-time validation at
+    // `POST /experiments` already enforces this, but checking again
+    // here means a future writer can add a new experiment-create path
+    // without re-introducing the cross-user-dataset hole.
+    if (datasetDriven && experiment.dataset && experiment.dataset.userId !== session.user.id) {
+      throw new NotFoundError('Experiment not found');
+    }
 
     for (const variant of experiment.variants) {
       if (datasetDriven && experiment.dataset && experiment.metricConfigs) {
