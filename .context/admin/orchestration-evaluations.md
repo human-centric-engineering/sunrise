@@ -20,6 +20,47 @@ Admin surface for two complementary evaluation flows: **manual sessions** (a hum
 
 All pages are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to empty state or `notFound()`. The run-detail and form pages hand off to client components for interactive parts.
 
+## What landed in Phase 2
+
+All four items shipped end-to-end. See
+[`.context/orchestration/evaluations.md`](../orchestration/evaluations.md)
+for the route/component-level spec; this section is the operator's
+quick map.
+
+1. **Empirical cost estimator on the run-create form.** Replaces the
+   old "cases × ~600 tokens" UI-copy heuristic with a live
+   `POST /evaluations/runs/estimate` call (debounced 350ms). Shows
+   mid + range + an `empirical` / `heuristic` badge. Empirical mode
+   kicks in once ≥3 prior runs match `(agentId, judgeAgentSlugs,
+datasetContentHash)`.
+2. **Trace-to-dataset capture.** `POST /datasets/:id/capture` lets an
+   admin convert a real prod conversation turn or workflow execution
+   output into a new dataset case. The case picks up the source
+   message's citations as `referenceCitations`. Three-layer ownership
+   check (dataset + source conversation + source execution) so a user
+   can't capture another user's traffic.
+3. **Synthetic case generation.** Two modes — `kb` (sample the agent's
+   accessible knowledge chunks) and `failure_mining` (sample
+   low-scoring prior cases). Preview via
+   `POST /datasets/:id/generate-cases` (sub-capped at 10/min/user),
+   commit accepted cases via `.../generate-cases/commit`. The
+   generator agent is `kind='generator'` (new kind, seeded by
+   `017-case-generator-agent`) — kept distinct from `kind='judge'` so
+   it doesn't pollute the judge picker.
+4. **Experiment compare view.** Dataset-driven experiments
+   (`AiExperiment.datasetId` + `metricConfigs`, Phase 2.4 migration)
+   create one `AiEvaluationRun` per variant against a shared dataset.
+   `/experiments/:id/compare` renders a per-metric × variant grid
+   with Welch's t-test + Cohen's d badges and a winner badge when all
+   three thresholds pass (higher mean ∧ p < 0.05 ∧ |d| ≥ 0.5).
+
+**UI wiring that still needs hooking up.** The capture and synthesis
+APIs are live but the admin entry points (a "Save to dataset" button
+on the conversations + workflow execution detail pages, a "Generate
+cases" button on the dataset detail page) are tracked as follow-up UI
+polish. Operators can drive both flows via the API today; the buttons
+are mechanical to add and will land in the next UI sweep.
+
 ## Batch run flow (Phase 1)
 
 The headline new surface. End-to-end journey:
