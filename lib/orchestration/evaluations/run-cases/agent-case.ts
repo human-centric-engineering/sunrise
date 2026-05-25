@@ -24,6 +24,12 @@ export interface AgentCaseInput {
   message: string;
   /** Per-case cancellation. */
   signal?: AbortSignal;
+  /**
+   * Set by the batch worker so the underlying `streamChat` call tags
+   * its `AiCostLog` rows with `{ evaluationRunId, role: 'subject' }`.
+   * Drives the empirical cost-estimator's per-role spend lookup.
+   */
+  evaluationRunId?: string;
 }
 
 export type AgentCaseResult = DrainResult;
@@ -35,5 +41,8 @@ export async function runAgentCase(input: AgentCaseInput): Promise<AgentCaseResu
     message: input.message,
     includeTrace: true,
     ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.evaluationRunId
+      ? { costLogMetadata: { evaluationRunId: input.evaluationRunId, role: 'subject' } }
+      : {}),
   });
 }

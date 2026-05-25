@@ -104,4 +104,27 @@ describe('runAgentCase', () => {
       /network down/
     );
   });
+
+  it('omits costLogMetadata when evaluationRunId is absent (regular chat path stays untagged)', async () => {
+    mockedDrain.mockResolvedValueOnce(drainResult());
+
+    await runAgentCase({ agentSlug: 'a', userId: 'u', message: 'm' });
+
+    const call = mockedDrain.mock.calls[0][0];
+    expect(call).not.toHaveProperty('costLogMetadata');
+  });
+
+  it('passes costLogMetadata with role=subject when evaluationRunId is provided', async () => {
+    mockedDrain.mockResolvedValueOnce(drainResult());
+
+    await runAgentCase({
+      agentSlug: 'sales-bot',
+      userId: 'u',
+      message: 'm',
+      evaluationRunId: 'run-42',
+    });
+
+    const call = mockedDrain.mock.calls[0][0];
+    expect(call.costLogMetadata).toEqual({ evaluationRunId: 'run-42', role: 'subject' });
+  });
 });

@@ -51,6 +51,14 @@ export interface ChatRequest {
    * never leak through public chat surfaces.
    */
   includeTrace?: boolean;
+  /**
+   * Free-form metadata merged into every `AiCostLog.metadata` row this
+   * call writes. Used by the evaluation batch worker to tag rows with
+   * `{ evaluationRunId, role: 'subject' | 'judge' }` so the empirical
+   * cost estimator can join past runs by role. The handler does not
+   * inspect these keys — they're a pass-through marker for analytics.
+   */
+  costLogMetadata?: Record<string, unknown>;
 }
 
 /** Return type of `streamChat` and `StreamingChatHandler.run`. */

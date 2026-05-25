@@ -350,6 +350,7 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
         agentSlug,
         userId: run.userId,
         message: typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input),
+        evaluationRunId: run.id,
       });
       subjectOutput = result.assistantText;
       subjectCostUsd = result.costUsd;
@@ -377,6 +378,7 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
           ? (caseRow.input as Record<string, unknown>)
           : { input: caseRow.input },
       subjectOutputSelector: run.subjectOutputSelector,
+      evaluationRunId: run.id,
     });
     subjectOutput = result.assistantText;
     subjectCostUsd = result.costUsd;
@@ -421,7 +423,8 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
         ...(caseRow.expectedOutput ? { expectedOutput: caseRow.expectedOutput } : {}),
         citations,
         toolCalls,
-        judge: grader.family === 'model' ? { userId: run.userId } : undefined,
+        judge:
+          grader.family === 'model' ? { userId: run.userId, evaluationRunId: run.id } : undefined,
         config: parsed.data,
       });
       metricScores[key] = {

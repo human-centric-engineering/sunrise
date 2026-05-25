@@ -34,6 +34,12 @@ import type { Citation } from '@/types/orchestration';
  */
 export interface JudgeUserContext {
   userId: string;
+  /**
+   * Set by the batch worker so model graders can tag the underlying
+   * `AiCostLog` rows with `{ evaluationRunId, role: 'judge' }`. Used by
+   * the empirical cost estimator to attribute spend per role.
+   */
+  evaluationRunId?: string;
 }
 
 /** Family of grader — drives the registry's dispatch type. */

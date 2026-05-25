@@ -21,6 +21,12 @@ export interface WorkflowCaseInput {
   input: Record<string, unknown>;
   subjectOutputSelector: unknown;
   signal?: AbortSignal;
+  /**
+   * Forward-compat: Phase 3 wires this through to the workflow executor
+   * so per-step `AiCostLog` rows are tagged `{ evaluationRunId,
+   * role: 'subject' }`. Today's stub ignores it.
+   */
+  evaluationRunId?: string;
 }
 
 export interface WorkflowCaseResult {

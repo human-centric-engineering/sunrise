@@ -143,6 +143,35 @@ describe('judge_agent grader — drainStreamChat dispatch', () => {
       judgeAgentSlug: 'eval-judge-faithfulness',
     });
   });
+
+  it('omits costLogMetadata when judge.evaluationRunId is absent (back-compat)', async () => {
+    mockedDrain.mockResolvedValueOnce(drainOk());
+
+    await judgeAgentGrader.grade({ ...baseInput() });
+
+    const call = mockedDrain.mock.calls[0][0] as Record<string, unknown>;
+    expect(call).not.toHaveProperty('costLogMetadata');
+  });
+
+  it('tags costLogMetadata with role=judge + the run id + judge slug when run id is set', async () => {
+    mockedDrain.mockResolvedValueOnce(drainOk());
+
+    await judgeAgentGrader.grade({
+      ...baseInput({
+        config: { agentSlug: 'eval-judge-relevance' },
+        judge: { userId: 'user-1', evaluationRunId: 'run-77' },
+      }),
+    });
+
+    const call = mockedDrain.mock.calls[0][0] as {
+      costLogMetadata: Record<string, unknown>;
+    };
+    expect(call.costLogMetadata).toEqual({
+      evaluationRunId: 'run-77',
+      role: 'judge',
+      judgeAgentSlug: 'eval-judge-relevance',
+    });
+  });
 });
 
 describe('judge_agent grader — response parsing', () => {
