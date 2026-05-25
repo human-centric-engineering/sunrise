@@ -276,11 +276,180 @@ code, no "AI flourishes". One grep audits the whole surface.
   returning a typed `workflow_subject_not_supported_in_phase_1` error,
   the run-creation API rejects `subjectKind: 'workflow'` at the route
   boundary. Phase 3 ships the UI.
-- Pairwise graders, RAG-specific Ragas metrics, trace-to-dataset
-  capture, synthetic case generation — all land in Phase 2/3.
-- Cost estimate on the run-create form is a coarse heuristic; the
-  proper estimator is a Phase 2 follow-up.
+- Pairwise graders, RAG-specific Ragas metrics — Phase 3.
 - No CI gating endpoint yet — Phase 4.
+
+## Phase 2 — cost estimator
+
+Replaces the UI-copy-only heuristic with a real two-mode estimator that
+mirrors the workflow cost estimator's contract.
+
+- **Empirical mode** — when ≥3 prior `completed` runs match the
+  fingerprint `(agentId, sorted judgeAgentSlugs, datasetContentHash)`,
+  the estimator takes the median per-case cost from those runs
+  (`totalCostUsd / casesDone`) and multiplies by the dataset's current
+  case count. Range is tight (±15–50%, scaled by relative MAD).
+- **Heuristic mode** — otherwise. Per-case shape is one subject call
+  (~1.5k input + 500 output tokens at the subject agent's bound model)
+  plus one call per judge agent (~600 input + 150 output at the judge's
+  bound model). Heuristic graders cost nothing. Range is wide (×0.5 / ×2)
+  to signal uncertainty.
+- The fingerprint is **strict** on purpose: a judge swap, a model swap
+  on the subject agent, or a dataset re-upload (which changes the
+  content hash) resets the empirical floor until 3 fresh runs
+  accumulate. Looser keys would silently misprice when the operator
+  changes the setup.
+- Models with no registry pricing surface with `pricingKnown: false` on
+  the relevant `modelMix` entry. The form shows an explicit "no pricing
+  data" callout rather than masking the gap as $0.
+- Subject vs. judge `AiCostLog` rows are tagged with
+  `metadata.role: 'subject' | 'judge'` (and `evaluationRunId`) so future
+  per-role breakdowns work without re-instrumenting. The plumbing
+  shipped in 2.0 and is forward-compat for Phase 3 workflow subjects.
+
+The estimate is served by `POST /evaluations/runs/estimate` and called
+from the run-create form on a 350 ms debounce keyed on
+`(agentId, datasetId, sorted judgeAgentSlugs)`. Toggling a heuristic
+grader does not re-fetch — heuristics are free.
+
+## Phase 2 — trace-to-dataset capture
+
+Admins can convert a real prod conversation turn or workflow execution
+output into a new `AiDatasetCase` row on any existing dataset. Two
+helpers + one endpoint:
+
+- `captureConversationTurnAsCase({ datasetId, messageId, edits? })` —
+  pairs an assistant `AiMessage` with its immediately preceding user
+  turn. The user message becomes `input`; the assistant becomes
+  `expectedOutput`; `provenance.citations` maps to `referenceCitations`.
+- `captureWorkflowExecutionAsCase({ datasetId, executionId, selector, edits? })`
+  — resolves the execution's output via the same `subjectOutputSelector`
+  contract the eval worker uses (`final_report` / `last_step` /
+  `step_id`). `inputData` becomes the case input; the resolved output
+  becomes `expectedOutput`. Only `status='completed'` executions can be
+  captured.
+
+Both helpers delegate to `appendCasesToDataset()`, which validates each
+new case via the same Zod schema upload uses, writes the row at the
+next contiguous position, and **recomputes the dataset's `contentHash`**
+over the full case array. Without the hash recompute, every queued eval
+run pinned to the old hash would fail with `dataset_changed_post_submit`
+on the next worker tick.
+
+`POST /evaluations/datasets/:id/capture` is the wire route — Zod
+discriminated union on `kind`, ownership enforced at three layers:
+dataset (caller must own), source message's conversation (caller must
+own), and source execution (caller must own). Without the source-side
+check, a user could capture another user's prod traffic. UI entry
+points land in 2.6.
+
+## Phase 2 — synthetic case generation
+
+A new `kind='generator'` `AiAgent` (`eval-case-generator`, seeded by
+`017-case-generator-agent`) writes proposed cases from one of two
+seed sources. The agent kind is deliberately distinct from `'judge'`
+so the run-create form's judge picker (which filters
+`WHERE kind = 'judge'`) never accidentally surfaces the generator.
+
+Two modes:
+
+- **`kb`** — `seed-loader.loadKbSeed()` pulls a representative breadth
+  sample of chunks from the subject agent's accessible documents
+  (via `resolveAgentDocumentAccess`). The generator turns those into
+  grounded `{ input, expectedOutput, citations }` cases.
+- **`failure_mining`** — `seed-loader.loadFailureSeed()` pulls
+  low-scoring (`mean < 0.6`) prior `AiEvaluationCaseResult` rows for
+  the subject agent, joined to their source case + worst-grader
+  reasoning. The generator writes "similar but harder" variants
+  targeting the same failure mode.
+
+Two-step route flow:
+
+- `POST /datasets/:id/generate-cases` — preview only. One LLM call,
+  no writes. Sub-capped at **10/min/user** via `synthesisLimiter`
+  (genuinely expensive — every request invokes the case-generator
+  agent). Returns proposed cases for the admin to review and edit.
+- `POST /datasets/:id/generate-cases/commit` — writes accepted cases
+  via `appendCasesToDataset` with `source: 'synthetic'`. No LLM call,
+  inherits the default 100/min.
+
+Cost is tagged: the generator's chat call stamps
+`costLogMetadata: { role: 'generator', mode, agentSlug }` so synthesis
+spend appears as a third role alongside `'subject'` and `'judge'` in
+the cost analytics. Existing role filters (`role: 'subject' | 'judge'`)
+ignore the new value, so they don't double-count synthesis spend as
+either of the other two.
+
+## Phase 2 — variant runs + raw scores
+
+A/B experiments now run against a shared dataset, with one
+`AiEvaluationRun` per variant instead of the legacy `AiEvaluationSession`
+manual chat. Schema additions on `AiExperiment` (migration
+`20260525173530_add_experiment_dataset_fields`):
+
+- `datasetId: String?` — every variant's eval run fires against this
+  dataset. Nullable on legacy rows that pre-date the change.
+- `metricConfigs: Json?` — pinned at create time, mirrors
+  `AiEvaluationRun.metricConfigs`. Required when `datasetId` is set
+  (`.refine()` on the create-experiment schema).
+
+The run route at `POST /experiments/:id/run` branches:
+
+- **Dataset-driven**: `datasetId` and `metricConfigs` are both set →
+  create one `AiEvaluationRun` per variant against the experiment's
+  dataset, hash-pinned via the dataset's current `contentHash` (same
+  pinning the existing run-create route does). Variants compare via
+  `AiEvaluationRun.summary.stats` per metric.
+- **Legacy session**: otherwise → create one `AiEvaluationSession`
+  per variant (the existing manual-chat path). Preserved for the
+  back-compat window so experiments running at deploy time keep
+  completing.
+
+`AiEvaluationRun.summary` gains a `rawScores: Record<graderSlug, number[]>`
+field, populated by the worker's aggregator at completion. Pure additive
+JSON — no migration. The raw scores power the experiment compare view's
+statistical tests (Welch's t-test + Cohen's d) — `mean`/`median`/`p95`
+throw away the variance the test statistic needs, so the raw array is
+the source of truth for "are these two variants distinguishable".
+
+Phase 2.4 is back-end only. The compare view UI lands in 2.5.
+
+## Phase 2 — variant compare view + winner badge
+
+`/admin/orchestration/experiments/:id/compare` renders a side-by-side
+per-metric grid for every variant of a dataset-driven experiment.
+Server-rendered Next.js page that loads the experiment + each variant's
+`AiEvaluationRun.summary.rawScores` and computes pairwise statistics
+against the control variant (variant index 0).
+
+Three pure libraries do the stats lifting:
+
+- `stats/welch.ts` — Welch's two-sample t-test with the Lanczos log-Γ
+  approximation + Lentz's continued-fraction expansion of the
+  regularised incomplete beta function. Cross-validated against
+  scipy's `ttest_ind(equal_var=False)`.
+- `stats/cohens-d.ts` — pooled-SD Cohen's d with the conventional
+  `negligible / small / medium / large` classification.
+- `stats/winner.ts` — `decidePairwiseWinner(a, b, options)` composes
+  the two. A variant "wins" only when ALL THREE conditions hold:
+  higher mean ∧ `p < 0.05` ∧ `|d| ≥ 0.5`. Anything else returns
+  `'no_clear_winner'` with a typed `reason` (`insufficient_samples` /
+  `p_above_threshold` / `effect_size_too_small`) the UI can surface.
+
+The compare table (`components/admin/orchestration/experiments/
+variant-compare-table.tsx`) renders one row per metric with `mean ±
+(n)` per variant cell, p-value and Cohen's d badges under each
+challenger, and a Trophy + variant label in the winner column when the
+threshold passes.
+
+**Stats methodology caveat** (also shown in the UI's `FieldHelp`):
+Welch's t-test assumes the per-sample mean is approximately normal.
+Rubric scores on `[0, 1]` often aren't — they pile up at the ends.
+The Central Limit Theorem rescues us when N is large enough (~30+ per
+variant); below that, read p-values with extra caution. A permutation-
+test fallback was considered and rejected — ~10× the implementation
+cost for marginal accuracy at sample sizes a partner pilot would
+realistically generate.
 
 ## Roadmap: judges in workflows
 
@@ -357,25 +526,42 @@ type; `workflow_as_judge` reuses the same workflow execution path).
 
 ## Critical files
 
-| Concern             | Path                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------ |
-| Schema              | `prisma/schema.prisma` (AiDataset, AiDatasetCase, AiEvaluationRun, AiEvaluationCaseResult) |
-| Worker              | `lib/orchestration/evaluations/run-worker.ts`                                              |
-| Lease helpers       | `lib/orchestration/evaluations/run-claim.ts`                                               |
-| Agent case dispatch | `lib/orchestration/evaluations/run-cases/agent-case.ts`                                    |
-| Workflow case stub  | `lib/orchestration/evaluations/run-cases/workflow-case.ts`                                 |
-| Dataset upload      | `lib/orchestration/evaluations/datasets/upload-handler.ts`                                 |
-| CSV parser          | `lib/orchestration/evaluations/datasets/parsers/csv-parser.ts`                             |
-| JSONL parser        | `lib/orchestration/evaluations/datasets/parsers/jsonl-parser.ts`                           |
-| Hash function       | `lib/orchestration/evaluations/datasets/hash.ts`                                           |
-| Grader registry     | `lib/orchestration/evaluations/graders/registry.ts`                                        |
-| Grader types        | `lib/orchestration/evaluations/graders/types.ts`                                           |
-| judge_agent grader  | `lib/orchestration/evaluations/graders/model/judge-agent.ts`                               |
-| Judge agents seed   | `prisma/seeds/016-evaluation-judges.ts`                                                    |
-| drainStreamChat     | `lib/orchestration/evaluations/drain-stream-chat.ts`                                       |
-| Tick wiring         | `app/api/v1/admin/orchestration/maintenance/tick/route.ts`                                 |
-| API routes          | `app/api/v1/admin/orchestration/evaluations/{datasets,runs,graders}/`                      |
-| UI pages            | `app/admin/orchestration/evaluations/{datasets,runs}/`                                     |
-| UI components       | `components/admin/orchestration/evaluations-foundations/`                                  |
-| UI copy             | `components/admin/orchestration/evaluations-foundations/help-text.ts`                      |
-| Validation schemas  | `lib/validations/orchestration-evaluations.ts`                                             |
+| Concern                 | Path                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| Schema                  | `prisma/schema.prisma` (AiDataset, AiDatasetCase, AiEvaluationRun, AiEvaluationCaseResult) |
+| Worker                  | `lib/orchestration/evaluations/run-worker.ts`                                              |
+| Lease helpers           | `lib/orchestration/evaluations/run-claim.ts`                                               |
+| Agent case dispatch     | `lib/orchestration/evaluations/run-cases/agent-case.ts`                                    |
+| Workflow case stub      | `lib/orchestration/evaluations/run-cases/workflow-case.ts`                                 |
+| Dataset upload          | `lib/orchestration/evaluations/datasets/upload-handler.ts`                                 |
+| CSV parser              | `lib/orchestration/evaluations/datasets/parsers/csv-parser.ts`                             |
+| JSONL parser            | `lib/orchestration/evaluations/datasets/parsers/jsonl-parser.ts`                           |
+| Hash function           | `lib/orchestration/evaluations/datasets/hash.ts`                                           |
+| Grader registry         | `lib/orchestration/evaluations/graders/registry.ts`                                        |
+| Grader types            | `lib/orchestration/evaluations/graders/types.ts`                                           |
+| judge_agent grader      | `lib/orchestration/evaluations/graders/model/judge-agent.ts`                               |
+| Judge agents seed       | `prisma/seeds/016-evaluation-judges.ts`                                                    |
+| drainStreamChat         | `lib/orchestration/evaluations/drain-stream-chat.ts`                                       |
+| Tick wiring             | `app/api/v1/admin/orchestration/maintenance/tick/route.ts`                                 |
+| Cost estimator          | `lib/orchestration/cost-estimation/evaluation-cost.ts`                                     |
+| Estimate route          | `app/api/v1/admin/orchestration/evaluations/runs/estimate/route.ts`                        |
+| Append helper           | `lib/orchestration/evaluations/datasets/append-cases.ts`                                   |
+| Capture helpers         | `lib/orchestration/evaluations/datasets/capture.ts`                                        |
+| Capture route           | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/capture/route.ts`                |
+| Synthesis seed-loader   | `lib/orchestration/evaluations/synthesis/seed-loader.ts`                                   |
+| Case generator          | `lib/orchestration/evaluations/synthesis/case-generator.ts`                                |
+| Generator agent seed    | `prisma/seeds/017-case-generator-agent.ts`                                                 |
+| Synthesis preview route | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/route.ts`         |
+| Synthesis commit route  | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/commit/route.ts`  |
+| Experiment run route    | `app/api/v1/admin/orchestration/experiments/[id]/run/route.ts`                             |
+| Phase 2.4 migration     | `prisma/migrations/20260525173530_add_experiment_dataset_fields/`                          |
+| Welch t-test            | `lib/orchestration/evaluations/stats/welch.ts`                                             |
+| Cohen's d               | `lib/orchestration/evaluations/stats/cohens-d.ts`                                          |
+| Winner decision         | `lib/orchestration/evaluations/stats/winner.ts`                                            |
+| Compare page            | `app/admin/orchestration/experiments/[id]/compare/page.tsx`                                |
+| Compare table component | `components/admin/orchestration/experiments/variant-compare-table.tsx`                     |
+| API routes              | `app/api/v1/admin/orchestration/evaluations/{datasets,runs,graders}/`                      |
+| UI pages                | `app/admin/orchestration/evaluations/{datasets,runs}/`                                     |
+| UI components           | `components/admin/orchestration/evaluations-foundations/`                                  |
+| UI copy                 | `components/admin/orchestration/evaluations-foundations/help-text.ts`                      |
+| Validation schemas      | `lib/validations/orchestration-evaluations.ts`                                             |

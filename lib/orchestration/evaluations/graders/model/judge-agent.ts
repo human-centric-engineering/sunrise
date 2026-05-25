@@ -88,6 +88,15 @@ async function grade(input: GraderInput & { config: Config }): Promise<GraderRes
       source: 'evaluation_judge',
       judgeAgentSlug: input.config.agentSlug,
     },
+    ...(input.judge.evaluationRunId
+      ? {
+          costLogMetadata: {
+            evaluationRunId: input.judge.evaluationRunId,
+            role: 'judge',
+            judgeAgentSlug: input.config.agentSlug,
+          },
+        }
+      : {}),
   });
 
   if (result.errorCode) {

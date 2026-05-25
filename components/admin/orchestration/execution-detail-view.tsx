@@ -59,6 +59,7 @@ import {
 } from '@/components/admin/orchestration/workflow-builder/execution-trace-entry';
 import { ExecutionAggregates } from '@/components/admin/orchestration/execution-aggregates';
 import { ExecutionTimelineStrip } from '@/components/admin/orchestration/execution-timeline-strip';
+import { SaveToDatasetButton } from '@/components/admin/orchestration/evaluations-foundations/save-to-dataset-button';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import {
   MarkdownContent,
@@ -984,6 +985,12 @@ export function ExecutionDetailView({
     liveSnap.status === 'cancelled' ||
     liveSnap.status === 'rejected';
 
+  // Capture-to-dataset is only meaningful on completed runs — the
+  // capture helper rejects non-completed executions with a typed
+  // error, and there's no useful expectedOutput to snapshot until the
+  // run has finished anyway.
+  const canCaptureToDataset = liveSnap.status === 'completed';
+
   // Extract approval prompt from awaiting trace entry
   const approvalPrompt = canApprove ? getApprovalPrompt(displayTrace) : null;
 
@@ -1116,6 +1123,16 @@ export function ExecutionDetailView({
               <Repeat className="mr-2 h-4 w-4" />
               Re-run
             </Button>
+          )}
+          {canCaptureToDataset && (
+            <SaveToDatasetButton
+              source={{
+                kind: 'workflow_execution',
+                executionId: execution.id,
+                selector: { kind: 'last_step' },
+              }}
+              label="Save as test case"
+            />
           )}
         </div>
       )}

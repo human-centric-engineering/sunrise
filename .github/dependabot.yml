@@ -35,6 +35,23 @@ updates:
         update-types:
           - 'minor'
           - 'patch'
+    # Temporarily held bumps. Each is blocked on an upstream/coordination issue,
+    # not a decision to stay behind forever — remove the entry when its
+    # condition is met. Security updates still come through for ignored ranges.
+    ignore:
+      # eslint-plugin-react crashes under ESLint 10 (getFilename is not a
+      # function). Remove once the React ESLint plugins support ESLint 10.
+      - dependency-name: 'eslint'
+        versions: ['>=10']
+      # @vitejs/plugin-react 6 imports vite/internal, which needs a Vite major
+      # we don't have. Remove when we do the coordinated Vite/Vitest bump.
+      - dependency-name: '@vitejs/plugin-react'
+        versions: ['>=6']
+      # typescript-eslint >8.55 + TypeScript 6 makes no-unnecessary-type-assertion
+      # flag ~500 files. Pinned so the rest of the dev-tooling group can flow.
+      # Remove and land a dedicated `eslint --fix` PR to adopt the stricter rule.
+      - dependency-name: 'typescript-eslint'
+        versions: ['>8.55.0']
 
   # GitHub Actions pinned in .github/workflows/**
   - package-ecosystem: 'github-actions'
@@ -46,3 +63,11 @@ updates:
       - 'dependencies'
     commit-message:
       prefix: 'chore(ci)'
+    # Collapse all action bumps — including majors — into a single PR. Action
+    # version bumps are low-risk and CI catches regressions, so reviewing them
+    # one-per-PR is pure noise (unlike npm majors, which stay individual above).
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - '*'

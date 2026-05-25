@@ -202,6 +202,16 @@ To add a cost estimate to a workflow trigger dialog:
 - `tests/unit/lib/orchestration/cost-estimation/workflow-cost.test.ts` — unit tests (heuristic, empirical, shape detection, input parsing)
 - `tests/integration/api/v1/admin/orchestration/workflows.id.cost-estimate.test.ts` — endpoint integration tests
 
+## Related: evaluation cost estimator
+
+The same two-mode contract is used by the **evaluation run estimator** at
+`lib/orchestration/cost-estimation/evaluation-cost.ts`. Different
+fingerprint — `(agentId, sorted judgeAgentSlugs, datasetContentHash)` — but
+the empirical / heuristic / pricing-known split is identical. See
+[`.context/orchestration/evaluations.md`](./evaluations.md#phase-2--cost-estimator)
+for the evaluation-specific shape and the `POST /evaluations/runs/estimate`
+endpoint that fronts it.
+
 ## Calibration notes
 
 The heuristic constants were initially calibrated against the provider-model-audit workflow (13 LLM-producing steps, supervisor, scales with selected model count). When the empirical floor is reached for a given workflow + supervisor combination, the ratio adapts to whatever that workflow actually consumes. If a workflow consistently runs at 2x the heuristic prediction, the calibration ratio will reflect that.

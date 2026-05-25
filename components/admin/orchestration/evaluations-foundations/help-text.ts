@@ -43,7 +43,7 @@ export const datasetHelp = {
     'A fingerprint of the dataset contents at the moment a run was queued. Editing the dataset later changes this hash, but runs already in flight use the original — your historical results stay comparable.',
 
   source:
-    'How this dataset was created. `upload` means it came from a CSV or JSONL file. Other values arrive in later phases (`synthetic` for AI-generated cases, `conversation_capture` for ones lifted from real chats).',
+    'How this dataset was created. `upload` means it came from a CSV or JSONL file. `synthetic` is AI-generated cases (Generate cases button). `conversation_capture` and `workflow_capture` are cases lifted from a real chat turn or workflow execution via Save to dataset.',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,10 @@ export const runHelp = {
     'Leave blank to use the system default judge model (set via `EVALUATION_JUDGE_*` env vars, or your default chat model if those are unset). Most teams never need to override this per-run.',
 
   totalCostEstimate:
-    'A rough estimate. Cases × selected model graders × ~600 tokens per judge call. Heuristic graders are free; the subject (the agent under test) bills against its usual budget.',
+    'Predicted USD cost of running the dataset against the agent + judges you picked. **Empirical** when 3+ past runs match the same agent + judges + dataset — the median per-case cost from those runs, repriced at current rates. **Heuristic** otherwise — a per-call token guess priced at each model. Heuristic graders are free; the subject bills against its usual budget.',
+
+  costEstimateUnknownPricing:
+    "One or more models in the mix have no pricing data, so the total is missing a slice. Add a row to the provider model matrix (Costs → Provider models) to set `costPerMillionTokens`, or use a model that's already priced.",
 } as const;
 
 // ---------------------------------------------------------------------------

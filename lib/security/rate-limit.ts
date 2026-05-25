@@ -388,6 +388,19 @@ export const embedChatLimiter = createRateLimiter({
 });
 
 /**
+ * Synthetic case generation (admin) — 10 calls per minute per user ID.
+ * Each call invokes the case-generator agent (one LLM call), so this
+ * is a genuinely expensive sub-flow that warrants tighter scrutiny
+ * than the default orchestration tier. Mirrors the contact/audio
+ * shape: per-flow sub-cap layered on top of the section tier.
+ */
+export const synthesisLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: 10,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
  * Rate limiter for admin bulk-export endpoints (e.g. conversation export).
  * Limit: 10 requests per minute per user.
  *

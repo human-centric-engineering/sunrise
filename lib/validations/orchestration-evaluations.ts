@@ -136,3 +136,113 @@ export type ListDatasetCasesQuery = z.infer<typeof listDatasetCasesQuerySchema>;
 export type ListRunsQuery = z.infer<typeof listRunsQuerySchema>;
 export type CreateRunInput = z.infer<typeof createRunSchema>;
 export type ListRunCasesQuery = z.infer<typeof listRunCasesQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// Runs — cost estimate
+// ---------------------------------------------------------------------------
+
+/**
+ * Body of `POST /evaluations/runs/estimate`. Heuristic mode runs without
+ * a judge list; empirical mode requires the same `(agentId, judgeAgentSlugs,
+ * datasetId)` fingerprint that the eventual run will carry, so the
+ * caller (the form) sends them all even if the user hasn't selected
+ * any judges yet.
+ */
+export const estimateRunCostSchema = z.object({
+  agentId: z.string().min(1),
+  datasetId: z.string().min(1),
+  judgeAgentSlugs: z.array(z.string().min(1)).default([]),
+  caseCount: z.coerce.number().int().nonnegative().optional(),
+});
+
+export type EstimateRunCostInput = z.infer<typeof estimateRunCostSchema>;
+
+// ---------------------------------------------------------------------------
+// Datasets — trace-to-dataset capture
+// ---------------------------------------------------------------------------
+
+const captureEditsSchema = z
+  .object({
+    input: z.union([z.string().min(1).max(50_000), z.record(z.string(), z.unknown())]).optional(),
+    expectedOutput: z.string().max(50_000).optional(),
+    referenceCitations: z.array(z.unknown()).optional(),
+    metadataPatch: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const captureDatasetCaseSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('conversation_turn'),
+      messageId: z.string().min(1),
+      edits: captureEditsSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('workflow_execution'),
+      executionId: z.string().min(1),
+      selector: z
+        .object({
+          kind: z.enum(['final_report', 'last_step', 'step_id']),
+          stepId: z.string().optional(),
+        })
+        .refine((s) => s.kind !== 'step_id' || (s.stepId && s.stepId.length > 0), {
+          message: 'selector.stepId is required when selector.kind="step_id"',
+        }),
+      edits: captureEditsSchema.optional(),
+    })
+    .strict(),
+]);
+
+export type CaptureDatasetCaseInput = z.infer<typeof captureDatasetCaseSchema>;
+
+// ---------------------------------------------------------------------------
+// Datasets — synthetic case generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Body of `POST /evaluations/datasets/:id/generate-cases`.
+ *
+ * `mode` picks the seed source:
+ *   - `'kb'` — pull representative chunks from the subject agent's
+ *     accessible knowledge. Optional `topic` anchors the prompt.
+ *   - `'failure_mining'` — pull low-scoring prior cases for the subject
+ *     agent and generate "similar but harder" variants.
+ *
+ * `commit: false` (default) returns proposed cases for preview only —
+ * the form shows them to the admin to edit/accept. `commit: true` is
+ * the second call: the form sends the *accepted* cases back so the
+ * route writes them via `appendCasesToDataset`. Two-step keeps the
+ * generator's spend on the preview path and the write transactional
+ * on the accept path.
+ */
+export const generateCasesPreviewSchema = z
+  .object({
+    agentId: z.string().min(1),
+    mode: z.enum(['kb', 'failure_mining']),
+    count: z.coerce.number().int().min(1).max(25).default(5),
+    topic: z.string().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const generateCasesCommitSchema = z
+  .object({
+    cases: z
+      .array(
+        z
+          .object({
+            input: z.union([z.string().min(1).max(50_000), z.record(z.string(), z.unknown())]),
+            expectedOutput: z.string().max(50_000).optional(),
+            metadata: z.record(z.string(), z.unknown()).optional(),
+            referenceCitations: z.array(z.unknown()).optional(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(25),
+  })
+  .strict();
+
+export type GenerateCasesPreviewInput = z.infer<typeof generateCasesPreviewSchema>;
+export type GenerateCasesCommitInput = z.infer<typeof generateCasesCommitSchema>;

@@ -110,6 +110,8 @@ export function RunCreateForm({
   const builtInJudges = judgeAgents.filter((j) => j.isSystem);
   const customJudges = judgeAgents.filter((j) => !j.isSystem);
 
+  const estimate = useEvaluationCostEstimate({ agentId, datasetId, selectedMetrics });
+
   function toggleHeuristic(g: HeuristicGraderOption): void {
     setSelectedMetrics((prev) => {
       const existing = prev.find((m) => m.kind === 'heuristic' && m.slug === g.slug);
@@ -461,6 +463,8 @@ export function RunCreateForm({
         </div>
       ) : null}
 
+      <CostEstimateBanner estimate={estimate} />
+
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-xs">
           <strong>{heuristicCount}</strong> heuristic, <strong>{judgeCount}</strong> judge agent
@@ -558,6 +562,182 @@ function stringifyConfigValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return '';
+}
+
+// ─── Cost estimate hook + banner ───────────────────────────────────────────
+
+interface EvaluationCostEstimateModel {
+  modelId: string;
+  role: 'subject' | 'judge';
+  judgeAgentSlug?: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  pricingKnown: boolean;
+}
+
+interface EvaluationCostEstimate {
+  midUsd: number;
+  lowUsd: number;
+  highUsd: number;
+  basedOn: 'empirical' | 'heuristic';
+  sampleSize: number;
+  caseCount: number;
+  modelMix: EvaluationCostEstimateModel[];
+  notes: string;
+}
+
+interface EstimateState {
+  status: 'idle' | 'loading' | 'ok' | 'error';
+  data?: EvaluationCostEstimate;
+  error?: string;
+}
+
+const ESTIMATE_DEBOUNCE_MS = 350;
+
+/**
+ * Debounced cost-estimate fetch keyed on `(agentId, datasetId, judge slugs)`.
+ * Heuristic graders don't affect the estimate (they're free), so we
+ * intentionally exclude them from the dependency key — re-fetching when
+ * the user toggles a heuristic checkbox would burn requests for no UI
+ * change.
+ */
+function useEvaluationCostEstimate(args: {
+  agentId: string;
+  datasetId: string;
+  selectedMetrics: MetricSelection[];
+}): EstimateState {
+  const [state, setState] = React.useState<EstimateState>({ status: 'idle' });
+
+  const judgeSlugs = React.useMemo(
+    () =>
+      args.selectedMetrics
+        .filter((m): m is Extract<MetricSelection, { kind: 'judge' }> => m.kind === 'judge')
+        .map((m) => m.agentSlug)
+        .sort(),
+    [args.selectedMetrics]
+  );
+  const judgeKey = judgeSlugs.join(',');
+
+  React.useEffect(() => {
+    if (!args.agentId || !args.datasetId) {
+      setState({ status: 'idle' });
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setState((prev) => ({ status: 'loading', data: prev.data }));
+      void fetch(API.ADMIN.ORCHESTRATION.EVAL_RUN_ESTIMATE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: args.agentId,
+          datasetId: args.datasetId,
+          judgeAgentSlugs: judgeSlugs,
+        }),
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          const payload = (await res.json()) as
+            | { success: true; data: EvaluationCostEstimate }
+            | { success: false; error: { message: string } };
+          if (!res.ok || !payload.success) {
+            const message = !payload.success ? payload.error.message : `Failed (${res.status})`;
+            setState({ status: 'error', error: message });
+            return;
+          }
+          // Defensive shape check — drop the banner cleanly when a test
+          // (or a misbehaving route) returns success: true with the
+          // wrong payload. Avoids a runtime crash on the unknown-pricing
+          // check below.
+          const data = payload.data;
+          if (!data || typeof data.midUsd !== 'number' || !Array.isArray(data.modelMix)) {
+            setState({ status: 'idle' });
+            return;
+          }
+          setState({ status: 'ok', data });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          setState({
+            status: 'error',
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }, ESTIMATE_DEBOUNCE_MS);
+
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+    // judgeSlugs is captured via judgeKey; including the array directly
+    // would re-fire on every selectedMetrics change even when the judge
+    // set is identical.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [args.agentId, args.datasetId, judgeKey]);
+
+  return state;
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '$0.00';
+  if (value === 0) return '$0.00';
+  if (value < 0.01) return `<$0.01`;
+  if (value < 1) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(2)}`;
+}
+
+function CostEstimateBanner({ estimate }: { estimate: EstimateState }): React.ReactElement | null {
+  if (estimate.status === 'idle') return null;
+  if (estimate.status === 'error') {
+    return (
+      <div className="text-muted-foreground border-muted-foreground/30 rounded-md border border-dashed bg-transparent p-3 text-xs">
+        Cost estimate unavailable: {estimate.error}.
+      </div>
+    );
+  }
+  const data = estimate.data;
+  const isLoading = estimate.status === 'loading';
+  if (!data) {
+    return (
+      <div className="text-muted-foreground rounded-md border p-3 text-xs">
+        <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden />
+        Estimating cost…
+      </div>
+    );
+  }
+
+  const anyUnknownPricing = data.modelMix.some((m) => !m.pricingKnown);
+
+  return (
+    <div className="bg-muted/30 space-y-1 rounded-md border p-3 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="text-foreground font-medium">
+          Estimated cost: {formatUsd(data.midUsd)}
+        </span>
+        <span className="text-muted-foreground">
+          (range {formatUsd(data.lowUsd)} – {formatUsd(data.highUsd)})
+        </span>
+        <Badge
+          variant={data.basedOn === 'empirical' ? 'default' : 'secondary'}
+          className="text-[10px]"
+        >
+          {data.basedOn === 'empirical' ? `empirical · ${data.sampleSize} past runs` : 'heuristic'}
+        </Badge>
+        <FieldHelp title="Cost estimate">{runHelp.totalCostEstimate}</FieldHelp>
+        {isLoading ? (
+          <Loader2 className="text-muted-foreground h-3 w-3 animate-spin" aria-hidden />
+        ) : null}
+      </div>
+      <p className="text-muted-foreground">{data.notes}</p>
+      {anyUnknownPricing ? (
+        <p className="text-amber-700 dark:text-amber-500">
+          One or more models in the mix have no pricing data — the total is missing a slice.{' '}
+          <FieldHelp title="Pricing unknown">{runHelp.costEstimateUnknownPricing}</FieldHelp>
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function ConfigEditor({

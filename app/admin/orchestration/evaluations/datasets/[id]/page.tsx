@@ -23,6 +23,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { datasetHelp } from '@/components/admin/orchestration/evaluations-foundations/help-text';
+import { GenerateCasesButton } from '@/components/admin/orchestration/evaluations-foundations/generate-cases-button';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -52,6 +53,26 @@ interface DatasetDetail {
     updatedAt: string;
   };
   cases: DatasetDetailCase[];
+}
+
+interface AgentOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+async function loadChatAgents(): Promise<AgentOption[]> {
+  try {
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?limit=100&kind=chat`);
+    if (!res.ok) return [];
+    const parsed = await parseApiResponse<AgentOption[]>(res);
+    return parsed.success && Array.isArray(parsed.data) ? parsed.data : [];
+  } catch (err) {
+    logger.warn('Dataset detail: failed to load agents for synthesis button', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
 }
 
 async function loadDataset(id: string): Promise<DatasetDetail | null> {
@@ -88,7 +109,7 @@ export default async function DatasetDetailPage({
   params: Promise<{ id: string }>;
 }): Promise<React.ReactElement> {
   const { id } = await params;
-  const detail = await loadDataset(id);
+  const [detail, chatAgents] = await Promise.all([loadDataset(id), loadChatAgents()]);
   if (!detail) notFound();
 
   const { dataset, cases } = detail;
@@ -110,13 +131,16 @@ export default async function DatasetDetailPage({
             <p className="text-muted-foreground mt-1 text-sm">{dataset.description}</p>
           ) : null}
         </div>
-        <Button asChild>
-          <Link
-            href={`/admin/orchestration/evaluations/runs/new?datasetId=${encodeURIComponent(dataset.id)}`}
-          >
-            Run against this dataset
-          </Link>
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <GenerateCasesButton datasetId={dataset.id} agents={chatAgents} />
+          <Button asChild>
+            <Link
+              href={`/admin/orchestration/evaluations/runs/new?datasetId=${encodeURIComponent(dataset.id)}`}
+            >
+              Run against this dataset
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">

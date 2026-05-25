@@ -613,6 +613,7 @@ export class StreamingChatHandler {
           operation: CostOperation.VISION,
           imageCount,
           pdfCount,
+          ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
         });
       }
 
@@ -1361,6 +1362,7 @@ export class StreamingChatHandler {
               operation: CostOperation.CHAT,
               traceId: llmTraceId,
               spanId: llmSpanId,
+              ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
             });
           }
 
@@ -1452,6 +1454,7 @@ export class StreamingChatHandler {
             operation: CostOperation.CHAT,
             traceId: llmTraceId,
             spanId: llmSpanId,
+            ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
           });
         }
 

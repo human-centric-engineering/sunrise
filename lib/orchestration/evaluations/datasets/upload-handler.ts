@@ -26,12 +26,12 @@ import { parseDatasetCsv } from '@/lib/orchestration/evaluations/datasets/parser
 import { parseDatasetJsonl } from '@/lib/orchestration/evaluations/datasets/parsers/jsonl-parser';
 import { hashParsedCases } from '@/lib/orchestration/evaluations/datasets/hash';
 
-const MAX_CASES = 10_000;
-const MAX_INPUT_CHARS = 50_000;
-const MAX_EXPECTED_CHARS = 50_000;
+export const MAX_CASES = 10_000;
+export const MAX_INPUT_CHARS = 50_000;
+export const MAX_EXPECTED_CHARS = 50_000;
 
 /** Zod schema validating one parser-output case. */
-const caseSchema = z
+export const datasetCaseSchema = z
   .object({
     input: z
       .union([z.string().min(1).max(MAX_INPUT_CHARS), z.record(z.string(), z.unknown())])
@@ -46,6 +46,8 @@ const caseSchema = z
     referenceCitations: z.array(z.unknown()).optional(),
   })
   .strict();
+
+const caseSchema = datasetCaseSchema;
 
 export interface UploadDatasetParams {
   userId: string;
