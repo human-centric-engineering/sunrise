@@ -1,0 +1,33 @@
+name: Dependency Review
+
+# Blocks a PR that introduces a dependency with a known high/critical
+# vulnerability, and surfaces license changes for review. Complements
+# Dependabot (which patches existing deps) by gating new ones at PR time.
+# Requires the dependency graph, which is on by default for this repo.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # post the summary comment on failure
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Fail only on high+ vulnerabilities. License findings are reported
+          # but not blocking — a starter template should not hard-fail forks on
+          # license policy they haven't defined yet.
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

@@ -1,0 +1,48 @@
+# Dependabot keeps dependencies and GitHub Actions patched.
+#
+# Version updates (below) open scheduled PRs for outdated packages. Security
+# updates — the vulnerability-driven PRs that matter most for SOC 2 — are
+# enabled separately in the repo's Settings → Code security → "Dependabot
+# security updates". Turn that on; it does not live in this file.
+#
+# Forks inherit this file as-is. No secrets or org-specific config required.
+version: 2
+updates:
+  # npm packages
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 10
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'chore(deps)'
+      prefix-development: 'chore(deps-dev)'
+    # Group minor/patch bumps to cut PR noise; majors still arrive individually
+    # so breaking changes get reviewed one at a time.
+    groups:
+      production-minor-patch:
+        applies-to: version-updates
+        dependency-type: 'production'
+        update-types:
+          - 'minor'
+          - 'patch'
+      development-minor-patch:
+        applies-to: version-updates
+        dependency-type: 'development'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  # GitHub Actions pinned in .github/workflows/**
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'chore(ci)'
