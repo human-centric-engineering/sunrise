@@ -59,6 +59,8 @@ type Config = z.infer<typeof configSchema>;
 interface JudgeOutput {
   score: number | null;
   reasoning: string;
+  /** G-Eval chain-of-thought trace — optional for back-compat. */
+  evaluationSteps?: string[];
 }
 
 async function grade(input: GraderInput & { config: Config }): Promise<GraderResult> {
@@ -111,12 +113,16 @@ async function grade(input: GraderInput & { config: Config }): Promise<GraderRes
     };
   }
 
-  return {
+  const out: GraderResult = {
     score: parsed.score,
     reasoning: parsed.reasoning,
     costUsd: result.costUsd,
     tokenUsage: result.tokenUsage,
   };
+  if (parsed.evaluationSteps && parsed.evaluationSteps.length > 0) {
+    out.evaluationSteps = parsed.evaluationSteps;
+  }
+  return out;
 }
 
 export const judgeAgentGrader: Grader<Config> = {
@@ -200,10 +206,19 @@ function parseJudgeOutput(raw: string): JudgeOutput | null {
     if (!parsed || typeof parsed !== 'object') return null;
     const obj = parsed as Record<string, unknown>;
     if (typeof obj.reasoning !== 'string') return null;
-    if (obj.score === null) {
-      return { score: null, reasoning: obj.reasoning };
-    }
+    // evaluation_steps is the new v2 contract; accept its absence so a
+    // judge agent customised by an admin (with an older rubric) still
+    // parses. Snake-case in the wire shape, camelCase in TS.
+    const stepsRaw = (obj as { evaluation_steps?: unknown }).evaluation_steps;
+    const evaluationSteps = Array.isArray(stepsRaw)
+      ? stepsRaw.filter((s): s is string => typeof s === 'string')
+      : undefined;
+    const base = (s: number | null): JudgeOutput =>
+      evaluationSteps && evaluationSteps.length > 0
+        ? { score: s, reasoning: obj.reasoning as string, evaluationSteps }
+        : { score: s, reasoning: obj.reasoning as string };
+    if (obj.score === null) return base(null);
     if (typeof obj.score !== 'number' || !Number.isFinite(obj.score)) return null;
-    return { score: obj.score, reasoning: obj.reasoning };
+    return base(obj.score);
   });
 }

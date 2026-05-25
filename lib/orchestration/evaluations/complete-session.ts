@@ -485,9 +485,22 @@ async function scoreEvaluationLogs(opts: ScoreLogsOptions): Promise<EvaluationMe
       const { faithfulness, groundedness, relevance } = result.scores;
 
       const judgeReasoning: Prisma.InputJsonValue = {
-        faithfulness: { reasoning: faithfulness.reasoning },
-        groundedness: { reasoning: groundedness.reasoning },
-        relevance: { reasoning: relevance.reasoning },
+        faithfulness: {
+          reasoning: faithfulness.reasoning,
+          ...(faithfulness.evaluationSteps
+            ? { evaluationSteps: faithfulness.evaluationSteps }
+            : {}),
+        },
+        groundedness: {
+          reasoning: groundedness.reasoning,
+          ...(groundedness.evaluationSteps
+            ? { evaluationSteps: groundedness.evaluationSteps }
+            : {}),
+        },
+        relevance: {
+          reasoning: relevance.reasoning,
+          ...(relevance.evaluationSteps ? { evaluationSteps: relevance.evaluationSteps } : {}),
+        },
       };
       await prisma.aiEvaluationLog.update({
         where: { id: log.id },

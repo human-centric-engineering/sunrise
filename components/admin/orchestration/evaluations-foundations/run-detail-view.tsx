@@ -76,7 +76,14 @@ interface CaseResult {
   subjectMetadata: Record<string, unknown> | null;
   metricScores: Record<
     string,
-    { score: number | null; passed?: boolean; reasoning?: string; costUsd?: number }
+    {
+      score: number | null;
+      passed?: boolean;
+      reasoning?: string;
+      /** G-Eval chain-of-thought trace from the judge. */
+      evaluationSteps?: string[];
+      costUsd?: number;
+    }
   >;
   latencyMs: number;
   costUsd: number;
@@ -480,6 +487,20 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
                         </div>
                         {cell.reasoning ? (
                           <p className="text-muted-foreground mt-1 text-xs">{cell.reasoning}</p>
+                        ) : null}
+                        {cell.evaluationSteps && cell.evaluationSteps.length > 0 ? (
+                          <details className="mt-2">
+                            <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-[11px]">
+                              Show judge&apos;s working ({cell.evaluationSteps.length} steps)
+                            </summary>
+                            <ol className="text-muted-foreground bg-muted/40 mt-1.5 list-inside space-y-1 rounded p-2 text-[11px]">
+                              {cell.evaluationSteps.map((step, i) => (
+                                <li key={i} className="list-decimal">
+                                  {step}
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
                         ) : null}
                       </div>
                     ))}

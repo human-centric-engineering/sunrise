@@ -37,11 +37,13 @@ export const MANUAL_SESSION_JUDGE_SLUGS = {
 const MAX_CITATIONS_IN_PROMPT = 12;
 const MAX_EXCERPT_CHARS = 600;
 
-/** Per-metric score with the judge's reasoning. */
+/** Per-metric score with the judge's reasoning + (optional) chain-of-thought trace. */
 export interface MetricScore {
   /** 0..1, or `null` when the metric does not apply (e.g. faithfulness with no citations). */
   score: number | null;
   reasoning: string;
+  /** G-Eval chain-of-thought trace — present when the judge returned one. */
+  evaluationSteps?: string[];
 }
 
 export interface MetricScores {
@@ -200,9 +202,20 @@ function parseJudgeOutput(raw: string): MetricScore | null {
     if (!parsed || typeof parsed !== 'object') return null;
     const obj = parsed as Record<string, unknown>;
     if (typeof obj.reasoning !== 'string') return null;
-    if (obj.score === null) return { score: null, reasoning: obj.reasoning };
+    // evaluation_steps is the new v2 contract (snake-case on the wire,
+    // camelCase in TS). Accept its absence so customised/legacy judges
+    // parse cleanly.
+    const stepsRaw = (obj as { evaluation_steps?: unknown }).evaluation_steps;
+    const evaluationSteps = Array.isArray(stepsRaw)
+      ? stepsRaw.filter((s): s is string => typeof s === 'string')
+      : undefined;
+    const base = (score: number | null): MetricScore =>
+      evaluationSteps && evaluationSteps.length > 0
+        ? { score, reasoning: obj.reasoning as string, evaluationSteps }
+        : { score, reasoning: obj.reasoning as string };
+    if (obj.score === null) return base(null);
     if (typeof obj.score !== 'number' || !Number.isFinite(obj.score)) return null;
     if (obj.score < 0 || obj.score > 1) return null;
-    return { score: obj.score, reasoning: obj.reasoning };
+    return base(obj.score);
   });
 }

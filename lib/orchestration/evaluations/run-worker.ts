@@ -406,6 +406,7 @@ async function processOneCase(args: ProcessCaseArgs): Promise<CaseResultRowInput
         score: r.score,
         passed: r.passed,
         reasoning: r.reasoning,
+        evaluationSteps: r.evaluationSteps,
         costUsd: r.costUsd,
       };
       if (r.costUsd) graderCost += r.costUsd;

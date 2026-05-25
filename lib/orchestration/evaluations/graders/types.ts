@@ -97,6 +97,14 @@ export interface GraderResult {
   passed?: boolean;
   /** Free-text reasoning. Optional — heuristic graders usually skip it. */
   reasoning?: string;
+  /**
+   * Ordered string array of the chain-of-thought micro-steps a model
+   * grader walked through before producing the score. Surfaced in the
+   * per-case drill-in UI so admins can audit the judge's working
+   * (the G-Eval pattern: forces the LLM to actually think rather than
+   * pattern-match a score). Heuristic graders omit this.
+   */
+  evaluationSteps?: string[];
   /** Tokens consumed by a model grader. Heuristic graders skip. */
   tokenUsage?: { input: number; output: number };
   /** USD spent on this single grade call. */
