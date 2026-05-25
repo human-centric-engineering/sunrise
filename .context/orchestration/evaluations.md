@@ -282,6 +282,79 @@ code, no "AI flourishes". One grep audits the whole surface.
   proper estimator is a Phase 2 follow-up.
 - No CI gating endpoint yet — Phase 4.
 
+## Roadmap: judges in workflows
+
+Confirmed as future work. Two complementary integrations let workflows
+use the judge agents that already exist; no schema changes needed for
+either, just new code in `lib/orchestration/engine/executors/` and the
+grader registry.
+
+### Direction 1 — `judge_call` workflow step type
+
+A new step executor in `lib/orchestration/engine/executors/judge-call.ts`,
+modelled on the existing `evaluate.ts` step. Config shape:
+
+```ts
+{
+  judgeAgentSlug: string;
+  question: string | TemplateRef;
+  answer: string | TemplateRef;
+  expectedOutput?: string | TemplateRef;
+  citations?: CitationsRef;
+}
+```
+
+The executor constructs the same structured user-message payload the
+batch worker uses, drives the named judge agent via `streamChat`,
+parses the `{score, reasoning, evaluationSteps}` envelope, and returns
+a typed step output workflows can route on. Unlocks:
+
+| Pattern              | What it enables                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| Inline QA gate       | Workflow → agent_call → judge_call → branch: publish if score ≥ threshold, escalate otherwise            |
+| Self-review loop     | agent_call → judge_call → if score < threshold, agent_call again with feedback in prompt → max-N retries |
+| Multi-judge approval | Parallel branches of 3 judge_calls → aggregate → require all 3 above threshold                           |
+| Cost-aware routing   | Cheap heuristic check first (existing step); only run a judge_call if uncertain                          |
+
+Estimated lift: ~150 LOC + tests. The reusable surface (judge agents,
+`drainStreamChat`, JSON parser) is already in place from Phase 1.5.
+
+### Direction 2 — `workflow_as_judge` grader family
+
+The inverse: an entire workflow used AS a judge in evaluation runs. A
+new grader-family entry alongside `judge_agent`:
+
+```ts
+{ slug: 'workflow_as_judge', config: { workflowSlug, inputMapping } }
+```
+
+The grader executes the workflow with the case input + subject output
+as workflow variables, expects the workflow to output a
+`{score, reasoning}` envelope from its final step. Unlocks:
+
+- Pairwise grading (workflow runs two candidates, judge picks the winner)
+- Knowledge-grounded judging with capability use (judge agent can call
+  `lookup_authoritative_answer` mid-judging before scoring)
+- Conditional rubric application (different scoring path per question type)
+- A/B in production (workflow routes traffic to two variants and
+  records the score delta as an evaluation result)
+
+Estimated lift: ~200 LOC + tests + a `workflow_as_judge.test.ts` round-
+trip integration test. Schema is already forward-compatible
+(`AiEvaluationRun.subjectKind` already supports `workflow` as a subject
+type; `workflow_as_judge` reuses the same workflow execution path).
+
+### What's NOT being added
+
+- Workflow-per-case (every dataset case its own workflow execution).
+  Considered, rejected: 100s of WorkflowExecution rows per run pollutes
+  the executions list and the workflow engine is tuned for tens of
+  executions per workflow, not hundreds per dataset. Workflow-as-judge
+  uses one workflow definition driving many cases — the right shape.
+- A first-class "evaluation workflow" template type. Keep workflows
+  generic; let the `judge_call` step + `workflow_as_judge` grader
+  compose into eval-shaped workflows organically.
+
 ## Critical files
 
 | Concern             | Path                                                                                       |
