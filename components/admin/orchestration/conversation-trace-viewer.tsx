@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils';
 import { messageMetadataSchema, messageProvenanceSchema } from '@/lib/validations/orchestration';
 import { MessageWithCitations } from '@/components/admin/orchestration/chat/message-with-citations';
 import { MessageTrace } from '@/components/admin/orchestration/chat/message-trace';
+import { SaveToDatasetButton } from '@/components/admin/orchestration/evaluations-foundations/save-to-dataset-button';
 import type { Citation, ToolCallTrace } from '@/types/orchestration';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -136,9 +137,17 @@ function MessageCard({ message }: { message: ConversationMessage }) {
             <span className="text-muted-foreground text-xs">{message.capabilitySlug}</span>
           )}
         </div>
-        <span className="text-muted-foreground shrink-0 text-xs">
-          {formatTimestamp(message.createdAt)}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {message.role === 'assistant' && message.content.length > 0 ? (
+            <SaveToDatasetButton
+              source={{ kind: 'conversation_turn', messageId: message.id }}
+              label="Save"
+            />
+          ) : null}
+          <span className="text-muted-foreground text-xs">
+            {formatTimestamp(message.createdAt)}
+          </span>
+        </div>
       </div>
 
       <div className="mt-2">
