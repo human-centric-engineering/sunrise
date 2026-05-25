@@ -8,6 +8,7 @@ Sunrise includes a GDPR/PECR-compliant cookie consent system that gives users co
 
 - [Components](./components.md) - CookieBanner and PreferencesModal UI components
 - [API Reference](./api.md) - Hooks, functions, types, and exports
+- [Account Deletion & Right to Erasure](./data-erasure.md) - GDPR Art. 17 erasure, the erase-vs-retain data model, and `eraseUser()`
 
 ## Architecture
 
@@ -233,5 +234,6 @@ window.gtag('consent', 'update', {
 
 - [Components](./components.md) - CookieBanner and PreferencesModal
 - [API Reference](./api.md) - Hooks, functions, types, and exports
+- [Account Deletion & Right to Erasure](./data-erasure.md) - GDPR Art. 17 erasure and `eraseUser()`
 - [Security Overview](../security/overview.md) - Application security features
 - [Environment Reference](../environment/reference.md) - Environment variable configuration

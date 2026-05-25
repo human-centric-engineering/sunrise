@@ -133,6 +133,7 @@ import { FormError } from './form-error'; // ❌ no exception for siblings
 | Rate-limit primitives | `authLimiter`, `apiLimiter`, `chatLimiter`, etc. (per-flow sub-caps) | `lib/security/rate-limit.ts`            |
 | Client IP             | `getClientIP()`                                                      | `lib/security/ip.ts`                    |
 | Sanitization          | `escapeHtml()`, `sanitizeUrl()`                                      | `lib/security/sanitize.ts`              |
+| User erasure (GDPR)   | `eraseUser()`                                                        | `lib/privacy/erase-user.ts`             |
 | Server fetch          | `serverFetch()`                                                      | `lib/api/server-fetch.ts`               |
 | Logging               | `logger.info()`, `logger.error()`                                    | `lib/logging/index.ts`                  |
 | Local storage         | `useLocalStorage()`                                                  | `lib/hooks/use-local-storage.ts`        |
