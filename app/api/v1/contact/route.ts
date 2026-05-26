@@ -61,7 +61,7 @@ import { env } from '@/lib/env';
  * @throws ValidationError if invalid request body or honeypot triggered
  * @throws RateLimitError if too many submissions
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
 
   try {

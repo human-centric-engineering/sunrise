@@ -59,7 +59,14 @@ import type { FormSubmittedEventProps } from '@/lib/analytics/events/types';
  * // → tracks: feedback_form_submitted { source: 'footer', rating: 5 }
  * ```
  */
-export function useFormAnalytics() {
+export interface UseFormAnalyticsResult {
+  trackFormSubmitted: (
+    formName: string,
+    properties?: FormSubmittedEventProps
+  ) => Promise<TrackResult>;
+}
+
+export function useFormAnalytics(): UseFormAnalyticsResult {
   const { track } = useAnalytics();
 
   /**

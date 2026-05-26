@@ -18,7 +18,7 @@ function resolveDateRange(query: AnalyticsQuery) {
   return resolveAnalyticsDateRange(query);
 }
 
-function agentFilter(agentId?: string) {
+function agentFilter(agentId?: string): { agentId?: string } {
   return agentId ? { agentId } : {};
 }
 

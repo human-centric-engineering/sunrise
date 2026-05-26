@@ -52,7 +52,7 @@ const querySchema = z.object({
  * @throws ValidationError if invalid query parameters
  * @throws NotFoundError if invitation not found
  */
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
   try {
     // 1. Validate query parameters

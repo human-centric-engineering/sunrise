@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type -- CLI script */
 /**
  * Test script for the knowledge base seeder and search.
  *

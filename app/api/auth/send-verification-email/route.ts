@@ -44,7 +44,7 @@ import { getRouteLogger } from '@/lib/api/context';
  * @returns Success message (always returns success to prevent enumeration)
  * @throws RateLimitError if too many requests
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
 
   try {

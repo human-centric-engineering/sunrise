@@ -208,7 +208,7 @@ export const __test__ = {
   buildProjection: (
     ctx: { stepOutputs: Record<string, unknown> },
     mode: 'auto' | 'all' | 'terminal-only'
-  ) => _build(ctx.stepOutputs, mode),
+  ): ReturnType<typeof _build> => _build(ctx.stepOutputs, mode),
   buildPrompt: _bp,
   tryParse: _tp,
   validateCitations: _vc,

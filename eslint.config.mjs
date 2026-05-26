@@ -57,18 +57,33 @@ export default tseslint.config(
           objectLiteralTypeAssertions: 'never',
         },
       ],
-      '@typescript-eslint/explicit-function-return-type': [
-        'warn',
+      // Require explicit return/argument types only at *module boundaries*
+      // (exported functions) — the cross-module contracts where an inferred
+      // type silently drifting is a real maintenance hazard. We deliberately
+      // do NOT use `explicit-function-return-type` (which flags every
+      // file-local helper too): annotating internal helpers is ceremony, the
+      // same reason component returns aren't annotated (see the `.tsx`
+      // override below). See `.context/architecture/lint-toolchain.md`.
+      '@typescript-eslint/explicit-module-boundary-types': [
+        'error',
         {
-          allowExpressions: true,
-          allowTypedFunctionExpressions: true,
-          allowHigherOrderFunctions: true,
+          allowArgumentsExplicitlyTypedAsAny: false,
           allowDirectConstAssertionInArrowFunctions: true,
-          allowConciseArrowFunctionExpressionsStartingWithVoid: false,
-          allowFunctionsWithoutTypeParameters: false,
-          allowedNames: [],
+          allowHigherOrderFunctions: true,
+          allowTypedFunctionExpressions: true,
         },
       ],
+    },
+  },
+
+  // React components are exported but their return type (`React.JSX.Element`,
+  // or `Promise<…>` for async Server Components) is ceremony the ecosystem
+  // infers reliably — and annotating it is error-prone for components that
+  // return null or are async. So module-boundary types are off for `.tsx`.
+  {
+    files: ['**/*.tsx'],
+    rules: {
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
     },
   },
 
@@ -195,7 +210,7 @@ export default tseslint.config(
 
       // Skip return type annotations in tests
       // Reason: Test helpers/factories don't benefit from explicit return types
-      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
 
       // Disable the React Compiler render-purity rules for tests. Test
       // components intentionally do "impure" things a shipped component never

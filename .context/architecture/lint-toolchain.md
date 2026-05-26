@@ -71,7 +71,9 @@ and no `reactCompiler` flag in `next.config`. That splits the ruleset cleanly:
 - `immutability`, `globals`, `gating`, `static-components`, `use-memo`, `config` —
   preset defaults; zero violations.
 - `exhaustive-deps` (preset `warn`) — real stale-closure bugs, compiler-independent,
-  low false-positive rate. **Stays on at `warn`.**
+  low false-positive rate. **Stays on at `warn`.** The handful of existing warnings
+  were triaged and fixed (add the missing dep / `useMemo` an unstable derived dep /
+  drop a redundant one), so it currently sits at zero.
 
 ### Optimization-only advisories — `off`
 
@@ -102,14 +104,31 @@ assigning render output to an outer variable to assert on it, mutating shared
 fixtures. `rules-of-hooks` stays on for tests — conditional hook calls are a real
 bug there too.
 
+## TypeScript return types — module boundaries only
+
+We enforce explicit return/argument types at **module boundaries** (exported
+functions) via `@typescript-eslint/explicit-module-boundary-types` at `error` —
+NOT `explicit-function-return-type` (which also flags every file-local helper).
+
+Rationale: an exported function's signature is a cross-module contract, where an
+inferred return type silently drifting is a real maintenance hazard. A file-local
+helper's return type is not a contract — annotating it is the same ceremony we
+avoid on component returns. So:
+
+- **`.ts`**: `explicit-module-boundary-types` at `error` — exported functions need
+  explicit return (and argument) types; internal helpers stay inferred.
+- **`.tsx`**: rule `off` — exported React components return `JSX.Element` /
+  `Promise<…>` (async Server Components); the ecosystem infers this reliably and
+  hand-annotating it is error-prone.
+- **tests**: `off`.
+
+This replaced a blanket `explicit-function-return-type` that produced ~540 warnings
+(514 on `.tsx` components — pure ceremony). The switch also surfaced exported API
+surfaces the blanket rule had missed (e.g. the `apiClient` methods in
+`lib/api/client.ts`), which now carry explicit return types.
+
 ## Backlog (post-fork-readiness, not blockers)
 
-- **`@typescript-eslint/explicit-function-return-type`** (~540 `warn`, mostly `.tsx`).
-  Config in `eslint.config.mjs` already tuned (`allowExpressions`,
-  `allowTypedFunctionExpressions`, `allowHigherOrderFunctions`; `off` for tests).
-  ~515 are React components (annotating `: React.JSX.Element` is ceremony the React
-  ecosystem avoids); ~25 are `.ts`. Recommendation: fix the `.ts` ones and relax the
-  rule for `.tsx` via an override.
 - **Enabling the React Compiler** — if/when adopted, re-enable `set-state-in-effect`
   and `incompatible-library` and work through their diagnostics (they become
   actionable once the compiler runs). Not planned.

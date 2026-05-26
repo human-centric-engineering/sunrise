@@ -154,7 +154,7 @@ export function AcceptInviteForm() {
     }
 
     void fetchInvitation();
-  }, [token, emailFromUrl]);
+  }, [token, emailFromUrl, oauthError]);
 
   // Update token and email when URL params change
   useEffect(() => {

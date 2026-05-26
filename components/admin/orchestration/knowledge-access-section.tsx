@@ -59,7 +59,9 @@ export function KnowledgeAccessSection({
   // defaults settle; coerce up front so the MultiSelect never sees a
   // missing value.
   const tagIds = rawTagIds ?? [];
-  const documentIds = rawDocumentIds ?? [];
+  // Memoised because `documentIds` is a useEffect dependency below — a fresh
+  // `?? []` array each render would otherwise re-fire that effect every render.
+  const documentIds = useMemo(() => rawDocumentIds ?? [], [rawDocumentIds]);
   const [tags, setTags] = useState<TagRow[]>([]);
   const [selectedDocLabels, setSelectedDocLabels] = useState<Record<string, string>>({});
 

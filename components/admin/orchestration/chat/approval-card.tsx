@@ -143,7 +143,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
 
       void tick();
     },
-    [pendingApproval.executionId, onResolved]
+    [pendingApproval.executionId, pendingApproval.approveToken, onResolved]
   );
 
   const submit = useCallback(

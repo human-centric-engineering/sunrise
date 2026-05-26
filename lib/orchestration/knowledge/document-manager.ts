@@ -94,7 +94,7 @@ const documentMetadataSchema = z
   .nullable();
 
 /** Safely parse document metadata from Prisma JSON field */
-export function parseDocumentMetadata(raw: unknown) {
+export function parseDocumentMetadata(raw: unknown): z.infer<typeof documentMetadataSchema> {
   const result = documentMetadataSchema.safeParse(raw);
   return result.success ? result.data : null;
 }

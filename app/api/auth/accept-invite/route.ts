@@ -73,7 +73,7 @@ import { getClientIP } from '@/lib/security/ip';
  * @throws ValidationError if invalid request body
  * @throws APIError if token invalid, user not found, or invitation already accepted
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
 
   try {

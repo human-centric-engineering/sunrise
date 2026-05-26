@@ -70,7 +70,7 @@ function determineServiceStatus(connected: boolean, latency?: number): ServiceSt
  * - 200: All services operational
  * - 503: One or more services unavailable
  */
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
 
   try {

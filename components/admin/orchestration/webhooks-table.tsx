@@ -107,7 +107,7 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
         setLoading(false);
       }
     },
-    [activeFilter, meta.limit, meta]
+    [activeFilter, meta]
   );
 
   useEffect(() => {

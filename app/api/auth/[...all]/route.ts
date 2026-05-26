@@ -19,7 +19,7 @@ import { getRouteLogger } from '@/lib/api/context';
  */
 const { POST: betterAuthPOST, GET: betterAuthGET } = toNextJsHandler(auth);
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
   const authPath = request.nextUrl.pathname.replace('/api/auth/', '');
   log.info('Auth POST request', { authPath });
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
   const authPath = request.nextUrl.pathname.replace('/api/auth/', '');
   log.info('Auth GET request', { authPath });

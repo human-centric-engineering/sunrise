@@ -1038,6 +1038,7 @@ export function ChatInterface({
       contextType,
       contextId,
       streaming,
+      showInlineTrace,
       enableTypingAnimation,
       typing,
       onCapabilityResult,

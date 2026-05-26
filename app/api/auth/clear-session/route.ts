@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sanitizeRedirectUrl } from '@/lib/security';
 import { getRouteLogger } from '@/lib/api/context';
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
 
   // Get return URL from query params

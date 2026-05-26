@@ -241,7 +241,7 @@ export const apiClient = {
    * });
    * ```
    */
-  get: <T>(path: string, options?: Omit<RequestOptions, 'body'>) =>
+  get: <T>(path: string, options?: Omit<RequestOptions, 'body'>): Promise<T> =>
     request<T>('GET', path, options),
 
   /**
@@ -260,7 +260,8 @@ export const apiClient = {
    * });
    * ```
    */
-  post: <T>(path: string, options?: RequestOptions) => request<T>('POST', path, options),
+  post: <T>(path: string, options?: RequestOptions): Promise<T> =>
+    request<T>('POST', path, options),
 
   /**
    * PATCH request
@@ -278,7 +279,8 @@ export const apiClient = {
    * });
    * ```
    */
-  patch: <T>(path: string, options?: RequestOptions) => request<T>('PATCH', path, options),
+  patch: <T>(path: string, options?: RequestOptions): Promise<T> =>
+    request<T>('PATCH', path, options),
 
   /**
    * DELETE request
@@ -294,5 +296,6 @@ export const apiClient = {
    * await apiClient.delete('/api/v1/users/123');
    * ```
    */
-  delete: <T = void>(path: string, options?: RequestOptions) => request<T>('DELETE', path, options),
+  delete: <T = void>(path: string, options?: RequestOptions): Promise<T> =>
+    request<T>('DELETE', path, options),
 };
