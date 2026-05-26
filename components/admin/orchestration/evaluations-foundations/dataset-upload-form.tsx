@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { datasetHelp } from '@/components/admin/orchestration/evaluations-foundations/help-text';
+import { SampleDownloadButtons } from '@/components/admin/orchestration/evaluations-foundations/sample-download-buttons';
 import { API } from '@/lib/api/endpoints';
 
 const ACCEPTED_EXTENSIONS = ['.csv', '.jsonl', '.ndjson'];
@@ -110,6 +111,16 @@ export function DatasetUploadForm(): React.ReactElement {
 
   return (
     <form onSubmit={(e) => void handleSubmit(e)} className="max-w-2xl space-y-6">
+      <Card className="border-primary/30 bg-primary/5">
+        <CardHeader>
+          <CardTitle className="text-base">Need a starting point?</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-muted-foreground text-sm">{datasetHelp.starterDownload}</p>
+          <SampleDownloadButtons />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Upload file</CardTitle>

@@ -12,6 +12,11 @@ import { parseDatasetCsv } from '@/lib/orchestration/evaluations/datasets/parser
 import { parseDatasetJsonl } from '@/lib/orchestration/evaluations/datasets/parsers/jsonl-parser';
 import { DatasetParseError } from '@/lib/orchestration/evaluations/datasets/parsers/types';
 import { hashDatasetCases, hashParsedCases } from '@/lib/orchestration/evaluations/datasets/hash';
+import {
+  samplesToCsv,
+  samplesToJsonl,
+} from '@/lib/orchestration/evaluations/datasets/sample-formatters';
+import { datasetSamples } from '@/components/admin/orchestration/evaluations-foundations/help-text';
 
 // ---------------------------------------------------------------------------
 // CSV
@@ -136,5 +141,56 @@ describe('hashDatasetCases', () => {
       { position: 1, input: 'B' },
     ]);
     expect(hashParsedCases(cases)).toBe(explicit);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Starter samples — Phase 3.6 round-trip
+// ---------------------------------------------------------------------------
+
+describe('starter dataset samples round-trip', () => {
+  it('CSV output parses back into the same normalised cases', () => {
+    const csv = samplesToCsv(datasetSamples);
+    const out = parseDatasetCsv(csv);
+    expect(out.cases).toHaveLength(datasetSamples.length);
+
+    // Case 0: input + expectedOutput + metadata.category + tags folded
+    expect(out.cases[0].input).toBe(datasetSamples[0].input);
+    expect(out.cases[0].expectedOutput).toBe(datasetSamples[0].expectedOutput);
+    expect(out.cases[0].metadata).toEqual({
+      category: 'policy',
+      tags: ['returns', 'policy'],
+    });
+
+    // Case 1: referenceCitations survive JSON serialisation
+    expect(out.cases[1].referenceCitations).toEqual(datasetSamples[1].referenceCitations);
+
+    // Case 2: metadata fields preserved
+    expect(out.cases[2].metadata).toMatchObject({
+      intent: 'damage_claim',
+      priority: 'high',
+    });
+  });
+
+  it('JSONL output parses back into the same normalised cases', () => {
+    const jsonl = samplesToJsonl(datasetSamples);
+    const out = parseDatasetJsonl(jsonl);
+    expect(out.cases).toHaveLength(datasetSamples.length);
+
+    expect(out.cases[0].input).toBe(datasetSamples[0].input);
+    expect(out.cases[0].expectedOutput).toBe(datasetSamples[0].expectedOutput);
+    // tags fold into metadata.tags so JSONL and CSV converge.
+    expect(out.cases[0].metadata).toEqual({
+      category: 'policy',
+      tags: ['returns', 'policy'],
+    });
+
+    expect(out.cases[1].referenceCitations).toEqual(datasetSamples[1].referenceCitations);
+  });
+
+  it('CSV and JSONL produce identical case shapes after parsing', () => {
+    const csvCases = parseDatasetCsv(samplesToCsv(datasetSamples)).cases;
+    const jsonlCases = parseDatasetJsonl(samplesToJsonl(datasetSamples)).cases;
+    expect(csvCases).toEqual(jsonlCases);
   });
 });
