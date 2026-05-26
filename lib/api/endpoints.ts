@@ -249,6 +249,11 @@ export const API = {
         `/api/v1/admin/orchestration/evaluations/datasets/${id}/generate-cases`,
       evalDatasetGenerateCasesCommit: (id: string): string =>
         `/api/v1/admin/orchestration/evaluations/datasets/${id}/generate-cases/commit`,
+      // Phase 3.6 — cold-start dataset creation (no existing dataset)
+      EVAL_DATASETS_GENERATE_FROM_DESCRIPTION:
+        '/api/v1/admin/orchestration/evaluations/datasets/generate-from-description',
+      EVAL_DATASETS_GENERATE_FROM_DESCRIPTION_COMMIT:
+        '/api/v1/admin/orchestration/evaluations/datasets/generate-from-description/commit',
       experimentCompareById: (id: string): string =>
         `/api/v1/admin/orchestration/experiments/${id}/compare`,
       EVAL_RUNS: '/api/v1/admin/orchestration/evaluations/runs',
