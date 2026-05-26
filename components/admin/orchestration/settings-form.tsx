@@ -65,6 +65,8 @@ export interface OrchestrationSettings {
   webhookRetentionDays: number | null;
   costLogRetentionDays: number | null;
   auditLogRetentionDays: number | null;
+  executionRetentionDays: number | null;
+  evaluationRetentionDays: number | null;
   maxConversationsPerUser: number | null;
   maxMessagesPerConversation: number | null;
   stuckExecutionThresholdMins?: number;
@@ -109,6 +111,8 @@ const settingsFormSchema = z.object({
   webhookRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
   costLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(365).nullable()),
   auditLogRetentionDays: nullableNumber.pipe(z.number().int().positive().max(3650).nullable()),
+  executionRetentionDays: nullableNumber.pipe(z.number().int().positive().max(3650).nullable()),
+  evaluationRetentionDays: nullableNumber.pipe(z.number().int().positive().max(3650).nullable()),
   // Approvals
   approvalTimeout: nullableNumber.pipe(z.number().int().positive().max(3_600_000).nullable()),
   approvalDefaultAction: z.enum(APPROVAL_ACTIONS),
@@ -196,6 +200,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
       webhookRetentionDays: toStr(initialSettings.webhookRetentionDays),
       costLogRetentionDays: toStr(initialSettings.costLogRetentionDays),
       auditLogRetentionDays: toStr(initialSettings.auditLogRetentionDays),
+      executionRetentionDays: toStr(initialSettings.executionRetentionDays),
+      evaluationRetentionDays: toStr(initialSettings.evaluationRetentionDays),
       approvalTimeout: toStr(initialSettings.defaultApprovalTimeoutMs),
       approvalDefaultAction: (initialSettings.approvalDefaultAction ?? 'deny') as 'deny' | 'allow',
       voiceInputGloballyEnabled: initialSettings.voiceInputGloballyEnabled ?? true,
@@ -292,6 +298,8 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
           webhookRetentionDays: values.webhookRetentionDays,
           costLogRetentionDays: values.costLogRetentionDays,
           auditLogRetentionDays: values.auditLogRetentionDays,
+          executionRetentionDays: values.executionRetentionDays,
+          evaluationRetentionDays: values.evaluationRetentionDays,
           defaultApprovalTimeoutMs: values.approvalTimeout,
           approvalDefaultAction: values.approvalDefaultAction,
           voiceInputGloballyEnabled: values.voiceInputGloballyEnabled,
@@ -780,6 +788,52 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
             />
             {errors.auditLogRetentionDays && (
               <p className="text-xs text-red-600">{errors.auditLogRetentionDays.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="executionRetentionDays" className="flex items-center gap-1">
+              Workflow execution retention (days)
+              <FieldHelp title="Workflow execution history cleanup">
+                Finished workflow executions (completed, failed, or cancelled) older than this are
+                automatically deleted, along with their steps, dispatches, and inbound-trigger
+                payloads. In-flight and awaiting-approval executions are never deleted. Leave blank
+                to keep all history indefinitely.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="executionRetentionDays"
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="Keep indefinitely"
+              {...register('executionRetentionDays')}
+            />
+            {errors.executionRetentionDays && (
+              <p className="text-xs text-red-600">{errors.executionRetentionDays.message}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="evaluationRetentionDays" className="flex items-center gap-1">
+              Evaluation history retention (days)
+              <FieldHelp title="Evaluation history cleanup">
+                Finished evaluation sessions and runs older than this are automatically deleted.
+                Keep this at or below the workflow-execution window — evaluation runs reference the
+                executions they tested, so a longer window would leave dangling links. Leave blank
+                to keep all evaluation history indefinitely.
+              </FieldHelp>
+            </Label>
+            <Input
+              id="evaluationRetentionDays"
+              type="number"
+              min={1}
+              max={3650}
+              placeholder="Keep indefinitely"
+              {...register('evaluationRetentionDays')}
+            />
+            {errors.evaluationRetentionDays && (
+              <p className="text-xs text-red-600">{errors.evaluationRetentionDays.message}</p>
             )}
           </div>
         </CardContent>

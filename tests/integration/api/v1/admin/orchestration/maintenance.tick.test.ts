@@ -120,6 +120,10 @@ const RETENTION_RESULT = {
   hookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
   auditLogsDeleted: 0,
+  executionsDeleted: 0,
+  evaluationSessionsDeleted: 0,
+  evaluationRunsDeleted: 0,
+  mcpAuditLogsDeleted: 0,
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

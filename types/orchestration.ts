@@ -1487,6 +1487,10 @@ export interface OrchestrationSettings {
   costLogRetentionDays: number | null;
   /** Days to retain admin audit log rows, or `null` for no auto-cleanup. */
   auditLogRetentionDays: number | null;
+  /** Days to retain terminal workflow executions, or `null` for no auto-cleanup. */
+  executionRetentionDays: number | null;
+  /** Days to retain terminal evaluation sessions/runs, or `null` for no auto-cleanup. */
+  evaluationRetentionDays: number | null;
   /** Max active conversations per user per agent, or `null` for unlimited. */
   maxConversationsPerUser: number | null;
   /** Max messages per conversation, or `null` for unlimited. */

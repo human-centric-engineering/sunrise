@@ -129,6 +129,8 @@ const settingsBackupSchema = z.object({
   webhookRetentionDays: z.number().nullable(),
   costLogRetentionDays: z.number().nullable(),
   auditLogRetentionDays: z.number().nullable().optional().default(null),
+  executionRetentionDays: z.number().nullable().optional().default(null),
+  evaluationRetentionDays: z.number().nullable().optional().default(null),
   maxConversationsPerUser: z.number().nullable(),
   maxMessagesPerConversation: z.number().nullable(),
   escalationConfig: z.unknown().nullable(),

@@ -74,6 +74,8 @@ function makeRow(
     webhookRetentionDays: number | null;
     costLogRetentionDays: number | null;
     auditLogRetentionDays: number | null;
+    executionRetentionDays: number | null;
+    evaluationRetentionDays: number | null;
     maxConversationsPerUser: number | null;
     maxMessagesPerConversation: number | null;
     embedAllowedOrigins: Prisma.JsonValue;
@@ -100,6 +102,8 @@ function makeRow(
     webhookRetentionDays: null as number | null,
     costLogRetentionDays: null as number | null,
     auditLogRetentionDays: null as number | null,
+    executionRetentionDays: null as number | null,
+    evaluationRetentionDays: null as number | null,
     maxConversationsPerUser: null as number | null,
     maxMessagesPerConversation: null as number | null,
     stuckExecutionThresholdMins: null as number | null,

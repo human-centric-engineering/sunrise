@@ -37,6 +37,8 @@ const DEFAULT_SETTINGS: OrchestrationSettings = {
   webhookRetentionDays: null,
   costLogRetentionDays: null,
   auditLogRetentionDays: null,
+  executionRetentionDays: null,
+  evaluationRetentionDays: null,
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
   stuckExecutionThresholdMins: 5,

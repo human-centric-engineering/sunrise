@@ -132,6 +132,10 @@ const DEFAULT_RETENTION_RESULT = {
   hookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
   auditLogsDeleted: 0,
+  executionsDeleted: 0,
+  evaluationSessionsDeleted: 0,
+  evaluationRunsDeleted: 0,
+  mcpAuditLogsDeleted: 0,
 };
 const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
 const DEFAULT_ORPHAN_RESULT = { recovered: 0, exhausted: 0, errors: [] };

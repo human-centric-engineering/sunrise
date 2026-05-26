@@ -2587,6 +2587,20 @@ export const updateOrchestrationSettingsSchema = z
       .max(3650, 'Audit log retention must be at most 3650 days')
       .nullable()
       .optional(),
+    executionRetentionDays: z
+      .number()
+      .int()
+      .positive('Execution retention must be a positive number of days')
+      .max(3650, 'Execution retention must be at most 3650 days')
+      .nullable()
+      .optional(),
+    evaluationRetentionDays: z
+      .number()
+      .int()
+      .positive('Evaluation retention must be a positive number of days')
+      .max(3650, 'Evaluation retention must be at most 3650 days')
+      .nullable()
+      .optional(),
     maxConversationsPerUser: z
       .number()
       .int()
@@ -2681,6 +2695,8 @@ export const updateOrchestrationSettingsSchema = z
       v.webhookRetentionDays !== undefined ||
       v.costLogRetentionDays !== undefined ||
       v.auditLogRetentionDays !== undefined ||
+      v.executionRetentionDays !== undefined ||
+      v.evaluationRetentionDays !== undefined ||
       v.maxConversationsPerUser !== undefined ||
       v.maxMessagesPerConversation !== undefined ||
       v.stuckExecutionThresholdMins !== undefined ||

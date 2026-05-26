@@ -215,6 +215,12 @@ export const PATCH = withAdminAuth(async (request, session) => {
   if (body.auditLogRetentionDays !== undefined) {
     updateData.auditLogRetentionDays = body.auditLogRetentionDays;
   }
+  if (body.executionRetentionDays !== undefined) {
+    updateData.executionRetentionDays = body.executionRetentionDays;
+  }
+  if (body.evaluationRetentionDays !== undefined) {
+    updateData.evaluationRetentionDays = body.evaluationRetentionDays;
+  }
   if (body.maxConversationsPerUser !== undefined) {
     updateData.maxConversationsPerUser = body.maxConversationsPerUser;
   }

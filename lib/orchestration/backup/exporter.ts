@@ -104,6 +104,8 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         webhookRetentionDays: true,
         costLogRetentionDays: true,
         auditLogRetentionDays: true,
+        executionRetentionDays: true,
+        evaluationRetentionDays: true,
         maxConversationsPerUser: true,
         maxMessagesPerConversation: true,
         escalationConfig: true,

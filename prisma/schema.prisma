@@ -1628,6 +1628,18 @@ model AiOrchestrationSettings {
   webhookDlqRetentionDays       Int?
   costLogRetentionDays          Int?
   auditLogRetentionDays         Int?
+  // Workflow-execution history retention. Prunes terminal executions
+  // (completed / failed / cancelled) older than N days; the cascade removes
+  // steps, dispatches, lease events, per-step cost logs, and inbound-trigger
+  // payloads (which live in AiWorkflowExecution.inputData). Null = keep
+  // forever. Running / pending / awaiting-approval executions are never
+  // pruned regardless of age.
+  executionRetentionDays        Int?
+  // Evaluation history retention (AiEvaluationSession / Run / Log). Null =
+  // keep forever. Should be <= executionRetentionDays: eval runs JSON-
+  // reference the executions they ran (no FK), so a shorter execution window
+  // would dangle those links. See .context/orchestration/retention.md.
+  evaluationRetentionDays       Int?
   maxConversationsPerUser       Int?
   maxMessagesPerConversation    Int?
   escalationConfig              Json? // { emailAddresses, webhookUrl?, notifyOnPriority }

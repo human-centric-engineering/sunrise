@@ -56,6 +56,8 @@ const FULL_SETTINGS: OrchestrationSettings = {
   webhookRetentionDays: 30,
   costLogRetentionDays: 90,
   auditLogRetentionDays: 365,
+  executionRetentionDays: 180,
+  evaluationRetentionDays: 90,
   maxConversationsPerUser: 50,
   maxMessagesPerConversation: 200,
 };
@@ -73,6 +75,8 @@ const EMPTY_SETTINGS: OrchestrationSettings = {
   webhookRetentionDays: null,
   costLogRetentionDays: null,
   auditLogRetentionDays: null,
+  executionRetentionDays: null,
+  evaluationRetentionDays: null,
   maxConversationsPerUser: null,
   maxMessagesPerConversation: null,
 };
