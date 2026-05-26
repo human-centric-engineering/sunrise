@@ -1,8 +1,9 @@
 /**
  * /admin/orchestration/evaluations/datasets/new
  *
- * Server page that renders the upload form (client component). Heavy
- * lifting lives in the form; this page is the shell + nav crumb.
+ * Server page that renders the upload form (client component) alongside
+ * an "Anatomy of a case" sidebar. Heavy lifting lives in the form;
+ * this page is the shell, nav crumb, and guidance layout.
  */
 
 import type { Metadata } from 'next';
@@ -11,6 +12,7 @@ import { ChevronLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { DatasetUploadForm } from '@/components/admin/orchestration/evaluations-foundations/dataset-upload-form';
+import { DatasetAnatomyCard } from '@/components/admin/orchestration/evaluations-foundations/dataset-anatomy-card';
 
 export const metadata: Metadata = {
   title: 'Upload dataset · AI Orchestration',
@@ -37,7 +39,10 @@ export default function NewDatasetPage(): React.ReactElement {
         </p>
       </div>
 
-      <DatasetUploadForm />
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <DatasetUploadForm />
+        <DatasetAnatomyCard />
+      </div>
     </div>
   );
 }
