@@ -43,6 +43,11 @@ updates:
       # function). Remove once the React ESLint plugins support ESLint 10.
       - dependency-name: 'eslint'
         versions: ['>=10']
+      # @eslint/js ships in lockstep with eslint and must move together — it's a
+      # separate package name, so the `eslint` rule above doesn't cover it.
+      # Remove alongside the `eslint` hold when ESLint 10 is adopted.
+      - dependency-name: '@eslint/js'
+        versions: ['>=10']
       # @vitejs/plugin-react 6 imports vite/internal, which needs a Vite major
       # we don't have. Remove when we do the coordinated Vite/Vitest bump.
       - dependency-name: '@vitejs/plugin-react'
