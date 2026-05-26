@@ -70,6 +70,7 @@ function setEnv(vars: Record<string, string | undefined>) {
     'NODE_ENV',
     'REQUIRE_EMAIL_VERIFICATION',
     'EMAIL_FROM',
+    'TENANCY_MODE',
   ];
   for (const key of keysToManage) {
     delete process.env[key];
@@ -266,6 +267,41 @@ describe('server path (typeof window === undefined)', () => {
 
       // Assert
       expect(env.REQUIRE_EMAIL_VERIFICATION).toBeUndefined();
+    });
+  });
+
+  describe('TENANCY_MODE', () => {
+    it("should default to 'single' when the variable is absent", async () => {
+      // Arrange — validServerEnv does not set TENANCY_MODE
+      setEnv(validServerEnv);
+
+      // Act
+      const env = await importEnv();
+
+      // Assert — Zod .default('single') makes single-tenant the baseline
+      expect(env.TENANCY_MODE).toBe('single');
+    });
+
+    it("should accept 'multi' at the env layer (the client.ts guard enforces it, not Zod)", async () => {
+      // Arrange — 'multi' is a valid enum value; rejecting it is the client's job
+      setEnv({ ...validServerEnv, TENANCY_MODE: 'multi' });
+
+      // Act
+      const env = await importEnv();
+
+      // Assert — env validation passes; the seam in lib/db/client.ts is what throws
+      expect(env.TENANCY_MODE).toBe('multi');
+    });
+
+    it('should throw when TENANCY_MODE is set to a value outside the enum', async () => {
+      // Arrange — 'cluster' is not in z.enum(['single', 'multi'])
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      setEnv({ ...validServerEnv, TENANCY_MODE: 'cluster' });
+
+      // Act & Assert
+      await expect(importEnv()).rejects.toThrow('.context/environment');
+      const allCallArgs = consoleErrorSpy.mock.calls.flat().join(' ');
+      expect(allCallArgs).toContain('TENANCY_MODE');
     });
   });
 

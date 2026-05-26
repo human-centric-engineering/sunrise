@@ -96,6 +96,7 @@ export default tseslint.config(
         module: 'readonly',
         require: 'readonly',
         process: 'readonly',
+        console: 'readonly',
         __dirname: 'readonly',
         __filename: 'readonly',
       },

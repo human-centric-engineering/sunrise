@@ -71,6 +71,18 @@ const serverEnvSchema = z.object({
   // App Configuration
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
+  // Tenancy model (see .context/architecture/multi-tenancy.md)
+  TENANCY_MODE: z
+    .enum(['single', 'multi'])
+    .default('single')
+    .describe(
+      'Deployment tenancy model. "single" (default) = standard single-tenant install. ' +
+        '"multi" is NOT implemented by the template — it requires the Postgres-RLS retrofit ' +
+        'in .context/architecture/multi-tenancy.md. Setting "multi" without that work makes the ' +
+        'Prisma client throw at startup (see the tenancy seam in lib/db/client.ts) rather than ' +
+        'silently run unscoped queries.'
+    ),
+
   // Logging Configuration (optional)
   LOG_LEVEL: z
     .enum(['debug', 'info', 'warn', 'error'])

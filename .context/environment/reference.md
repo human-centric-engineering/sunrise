@@ -26,6 +26,7 @@ Complete reference for all environment variables used in Sunrise.
 | [`EMAIL_FROM_NAME`](./email-env.md)                       | ❌ No    | String       | -             | Sender display name                   |
 | [`CONTACT_EMAIL`](./email-env.md)                         | ❌ No    | Email        | `EMAIL_FROM`  | Contact form notifications            |
 | [`NODE_ENV`](./services-env.md)                           | ✅ Yes   | Enum         | `development` | Environment name                      |
+| [`TENANCY_MODE`](../architecture/multi-tenancy.md)        | ❌ No    | Enum         | `single`      | Tenancy model (`multi` = opt-in RLS)  |
 | [`NEXT_PUBLIC_APP_URL`](./services-env.md)                | ✅ Yes   | URL          | -             | Public app URL (client-side)          |
 | [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](./services-env.md) | ❌ No    | Boolean      | `true`        | Enable cookie consent banner          |
 | [`LOG_LEVEL`](./services-env.md)                          | ❌ No    | Enum         | Auto          | Minimum log level                     |

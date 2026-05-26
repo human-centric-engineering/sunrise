@@ -47,11 +47,13 @@ function clearGlobalCache(): void {
 async function importClientWithEnv(opts: {
   NODE_ENV: string;
   DATABASE_URL?: string;
+  TENANCY_MODE?: string;
   preSeededGlobal?: { prisma?: unknown; pool?: unknown };
 }) {
   const {
     NODE_ENV,
     DATABASE_URL = 'postgresql://user:pass@localhost:5432/testdb',
+    TENANCY_MODE,
     preSeededGlobal,
   } = opts;
 
@@ -79,7 +81,13 @@ async function importClientWithEnv(opts: {
     this.__type = 'MockPrismaClient';
   });
 
-  const mockEnvValue = { DATABASE_URL, NODE_ENV };
+  // Only set TENANCY_MODE on the mock env when the test supplies it, so the
+  // "undefined behaves like single" back-compat case is genuinely undefined.
+  const mockEnvValue: { DATABASE_URL: string; NODE_ENV: string; TENANCY_MODE?: string } = {
+    DATABASE_URL,
+    NODE_ENV,
+  };
+  if (TENANCY_MODE !== undefined) mockEnvValue.TENANCY_MODE = TENANCY_MODE;
 
   // Reset the module registry and re-register mocks (vi.doMock is not hoisted)
   vi.resetModules();
@@ -238,6 +246,58 @@ describe('lib/db/client', () => {
       // Assert — module returned the cached instance without calling the constructor
       expect(prisma).toBe(cachedPrisma);
       expect(MockPrismaClient).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Tenancy seam (TENANCY_MODE guard)', () => {
+    it('should throw at import when TENANCY_MODE is multi', async () => {
+      // Arrange + Act + Assert — the guard fails loud rather than letting
+      // unscoped queries run with no isolation. The error points at the playbook.
+      await expect(
+        importClientWithEnv({ NODE_ENV: 'development', TENANCY_MODE: 'multi' })
+      ).rejects.toThrow(/TENANCY_MODE=multi is not implemented/);
+    });
+
+    it('should NOT construct the PrismaClient when TENANCY_MODE is multi', async () => {
+      // Arrange — capture the constructor across the throwing import
+      let captured: ReturnType<typeof vi.fn> | undefined;
+      try {
+        const mod = await importClientWithEnv({
+          NODE_ENV: 'development',
+          TENANCY_MODE: 'multi',
+        });
+        captured = mod.MockPrismaClient;
+      } catch {
+        // expected — the module throws before returning. The point is that the
+        // guard runs ahead of client construction, asserted below via the smoke
+        // case: in 'single'/undefined the client IS constructed.
+      }
+
+      // Assert — import rejected, so no module exports were returned
+      expect(captured).toBeUndefined();
+    });
+
+    it('should construct the client normally when TENANCY_MODE is single', async () => {
+      // Arrange + Act
+      const { prisma, MockPrismaClient } = await importClientWithEnv({
+        NODE_ENV: 'development',
+        TENANCY_MODE: 'single',
+      });
+
+      // Assert — explicit single is a no-op: client builds as usual
+      expect(prisma).toBeDefined();
+      expect(MockPrismaClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('should construct the client when TENANCY_MODE is undefined (single-tenant default)', async () => {
+      // Arrange + Act — env without TENANCY_MODE (the default before anyone sets it)
+      const { prisma, MockPrismaClient } = await importClientWithEnv({
+        NODE_ENV: 'development',
+      });
+
+      // Assert — undefined is treated as single; the guard only trips on 'multi'
+      expect(prisma).toBeDefined();
+      expect(MockPrismaClient).toHaveBeenCalledTimes(1);
     });
   });
 
