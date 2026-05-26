@@ -48,6 +48,7 @@ import type {
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
+import { isRecord } from '@/lib/utils';
 
 const INPUT_REFS = ['$.userInput', '$.modelOutput', '$.expectedOutput', '$.citations'] as const;
 type InputRef = (typeof INPUT_REFS)[number];
@@ -81,10 +82,6 @@ function resolveRef(ref: InputRef, input: GraderInput): unknown {
     default:
       return undefined;
   }
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function grade(input: GraderInput & { config: Config }): Promise<GraderResult> {
@@ -223,7 +220,7 @@ async function grade(input: GraderInput & { config: Config }): Promise<GraderRes
   // `judge_agent` grader.
   const rawForParse = ((): string => {
     if (typeof lastStepOutput === 'string') return lastStepOutput;
-    if (isObjectRecord(lastStepOutput) || Array.isArray(lastStepOutput)) {
+    if (isRecord(lastStepOutput) || Array.isArray(lastStepOutput)) {
       return JSON.stringify(lastStepOutput);
     }
     if (lastStepOutput === null || lastStepOutput === undefined) return '';

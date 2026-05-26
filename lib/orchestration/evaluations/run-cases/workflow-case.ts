@@ -22,6 +22,7 @@ import {
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { Citation, ToolCallTrace, WorkflowDefinition } from '@/types/orchestration';
+import { isRecord } from '@/lib/utils';
 
 export interface WorkflowCaseInput {
   workflowId: string;
@@ -51,15 +52,11 @@ export interface WorkflowCaseResult {
 
 const log = logger.child({ component: 'workflow-case' });
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function parseSelector(raw: unknown): WorkflowSubjectOutputSelector {
   // Default: last_step. Matches what the API route stores when the caller
   // omits the selector — keeps the worker's behaviour deterministic when
   // the column carries a partial / legacy shape.
-  if (!isObjectRecord(raw)) return { kind: 'last_step' };
+  if (!isRecord(raw)) return { kind: 'last_step' };
   const kind = raw.kind;
   if (kind === 'final_report' || kind === 'last_step' || kind === 'step_id') {
     const stepId = typeof raw.stepId === 'string' ? raw.stepId : undefined;
