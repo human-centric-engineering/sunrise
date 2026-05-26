@@ -18,12 +18,24 @@ const CONTENT_TYPE_TO_EXT: Record<string, string> = {
   'text/markdown': '.md',
   'text/csv': '.csv',
   'application/csv': '.csv',
+  'text/html': '.html',
+  'application/xhtml+xml': '.html',
   'application/pdf': '.pdf',
   'application/epub+zip': '.epub',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
 };
 
-const ALLOWED_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.csv', '.pdf', '.docx', '.epub']);
+const ALLOWED_EXTENSIONS = new Set([
+  '.md',
+  '.markdown',
+  '.txt',
+  '.csv',
+  '.html',
+  '.htm',
+  '.pdf',
+  '.docx',
+  '.epub',
+]);
 
 export interface FetchedDocument {
   content: Buffer;
@@ -50,7 +62,7 @@ export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument
     headers: {
       'User-Agent': 'Sunrise-KnowledgeBase/1.0',
       Accept:
-        'text/plain, text/markdown, application/pdf, application/epub+zip, application/vnd.openxmlformats-officedocument.wordprocessingml.document, */*',
+        'text/html, application/xhtml+xml, text/plain, text/markdown, application/pdf, application/epub+zip, application/vnd.openxmlformats-officedocument.wordprocessingml.document, */*',
     },
     redirect: 'follow',
   });

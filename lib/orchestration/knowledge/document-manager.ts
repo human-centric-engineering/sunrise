@@ -314,10 +314,16 @@ export async function uploadDocumentFromBuffer(
     });
   }
 
+  // When the caller didn't supply an explicit name, prefer the title the
+  // parser derived from the document itself (e.g. an HTML <title>, an EPUB's
+  // embedded title) over the bare filename. parsed.title already falls back
+  // to the filename, so txt/md/csv behaviour is unchanged.
+  const effectiveDisplayName = displayName?.trim() || parsed.title;
+
   // CSV uses row-level chunking via chunkCsvDocument (not the markdown
   // chunker), so it bypasses uploadDocument and runs the full lifecycle here.
   if (parsed.metadata.format === 'csv') {
-    return uploadCsvFromParsed(parsed, buffer, fileName, userId, sourceUrl, displayName);
+    return uploadCsvFromParsed(parsed, buffer, fileName, userId, sourceUrl, effectiveDisplayName);
   }
 
   // For markdown files, use the raw text directly (the markdown chunker
@@ -326,7 +332,7 @@ export async function uploadDocumentFromBuffer(
   const ext = extname(fileName).toLowerCase();
   const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
 
-  return uploadDocument(content, fileName, userId, sourceUrl, displayName);
+  return uploadDocument(content, fileName, userId, sourceUrl, effectiveDisplayName);
 }
 
 /**

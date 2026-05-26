@@ -28,7 +28,6 @@ import { cuidSchema } from '@/lib/validations/common';
 
 const fetchUrlSchema = z.object({
   url: z.string().url().max(2000),
-  category: z.string().max(100).optional(),
   tagIds: z.array(cuidSchema).max(50).optional(),
 });
 
@@ -54,19 +53,14 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   } else if (isText) {
     const content = fetched.content.toString('utf-8');
-    document = await uploadDocument(
-      content,
-      fetched.fileName,
-      session.user.id,
-      body.category,
-      body.url
-    );
+    // Record the source URL; let the document name derive from the content
+    // (or filename) rather than passing the URL as the display name.
+    document = await uploadDocument(content, fetched.fileName, session.user.id, body.url);
   } else {
     document = await uploadDocumentFromBuffer(
       fetched.content,
       fetched.fileName,
       session.user.id,
-      body.category,
       body.url
     );
   }
