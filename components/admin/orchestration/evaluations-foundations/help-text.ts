@@ -44,7 +44,62 @@ export const datasetHelp = {
 
   source:
     'How this dataset was created. `upload` means it came from a CSV or JSONL file. `synthetic` is AI-generated cases (Generate cases button). `conversation_capture` and `workflow_capture` are cases lifted from a real chat turn or workflow execution via Save to dataset.',
+
+  goodCase:
+    'A good case is short, has one obvious right answer, and tests one thing. Phrase the `input` the way a real user would ask. Put the answer you would accept in `expectedOutput`, exact phrasing if it matters (so `exact_match` can grade it). Add `referenceCitations` only when you want a RAG grader to check the agent grounded its answer in those sources.',
+
+  starterDownload:
+    'Downloads a 3-case starter file with the right columns already in place. Open it in a spreadsheet or text editor, swap in your own questions and answers, save, then upload it back here.',
+
+  generateFromDescription:
+    'Describe the kind of questions your agent should handle and the AI builds a starter dataset for you. You see the proposed cases before anything is saved.',
+
+  domainPrompt:
+    'A 1–3 sentence description of what the agent does and the kind of questions it should handle well. Example: `Customer support agent for a fintech card issuer. Handles declined transactions, lost cards, fee disputes, and refund timelines.` More specific = better cases.',
+
+  seedInputs:
+    'Optional. 1–3 real user questions you want the generator to anchor around. The AI will produce variants and adjacent cases that sit close to these — useful when you have a few concrete examples but want breadth.',
 } as const;
+
+// ---------------------------------------------------------------------------
+// Starter samples — 3 plain-English cases shown in the upload guidance panel
+// and emitted by the "Download CSV / JSONL" buttons. Domain-neutral
+// (returns / customer support) so they read sensibly without context. Order
+// matters: each case demonstrates a different optional field combination.
+// ---------------------------------------------------------------------------
+
+export interface DatasetSampleCase {
+  input: string;
+  expectedOutput?: string;
+  metadata?: Record<string, unknown>;
+  referenceCitations?: Array<{ title: string; uri: string }>;
+  tags?: string;
+}
+
+export const datasetSamples: readonly DatasetSampleCase[] = [
+  {
+    input: 'What is the return window for online orders?',
+    expectedOutput: '30 days from delivery for unopened items, 14 days for opened items.',
+    metadata: { category: 'policy' },
+    tags: 'returns, policy',
+  },
+  {
+    input: 'Can I get a refund after using the product for a week?',
+    expectedOutput:
+      'Yes, within 14 days of delivery if the product is faulty. Otherwise the return window for opened items has passed.',
+    referenceCitations: [
+      { title: 'Returns Policy — opened items', uri: 'https://example.com/returns#opened' },
+    ],
+    tags: 'returns, edge-case',
+  },
+  {
+    input: 'Order #ABC-12345 arrived damaged. What should I do?',
+    expectedOutput:
+      'File a damage claim within 7 days. Include photos of the packaging and the item. We either refund or replace once the claim is approved.',
+    metadata: { intent: 'damage_claim', priority: 'high' },
+    tags: 'claims, damage',
+  },
+] as const;
 
 // ---------------------------------------------------------------------------
 // Runs
