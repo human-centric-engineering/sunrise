@@ -97,6 +97,16 @@ const PENDING_DOC = makeDocument({
   chunkCount: 0,
 });
 
+/**
+ * Open a document row's ⋯ actions menu and click "Delete", which switches the
+ * row into the inline "Delete?" confirmation. Delete lives behind the actions
+ * menu (no standalone trash icon), so every delete-path test goes through here.
+ */
+async function openDeleteConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /document actions/i }));
+  await user.click(await screen.findByRole('menuitem', { name: /^delete$/i }));
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ManageTab', () => {
@@ -565,20 +575,41 @@ describe('ManageTab', () => {
     expect(screen.getByText('+ Add')).toBeInTheDocument();
   });
 
-  // ── Delete action ─────────────────────────────────────────────────────────
+  // ── Row actions menu ───────────────────────────────────────────────────────
 
-  it('shows delete confirmation when trash button is clicked', async () => {
+  it('opens the rename dialog from the actions menu', async () => {
     const user = userEvent.setup();
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    // Find the trash button via its SVG icon class
-    const allButtons = screen.getAllByRole('button');
-    const deleteBtn = allButtons.find(
-      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
-    );
-    if (deleteBtn) {
-      await user.click(deleteBtn);
-    }
+    await user.click(screen.getByRole('button', { name: /document actions/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /edit name/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /rename document/i })).toBeInTheDocument();
+    });
+    // Seeded with the current document name.
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue('My Custom Doc');
+  });
+
+  it('opens the tags editor from the actions menu', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /document actions/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /edit tags/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tags — My Custom Doc/i)).toBeInTheDocument();
+    });
+  });
+
+  // ── Delete action ─────────────────────────────────────────────────────────
+
+  it('shows delete confirmation when Delete is chosen from the actions menu', async () => {
+    const user = userEvent.setup();
+    render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+
+    await openDeleteConfirm(user);
 
     await waitFor(() => {
       expect(screen.getByText(/Delete\?/)).toBeInTheDocument();
@@ -593,13 +624,7 @@ describe('ManageTab', () => {
     render(<ManageTab documents={[USER_DOC]} onRefresh={onRefresh} />);
 
     // Find and click the delete button
-    const allButtons = screen.getAllByRole('button');
-    const deleteBtn = allButtons.find(
-      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
-    );
-    if (deleteBtn) {
-      await user.click(deleteBtn);
-    }
+    await openDeleteConfirm(user);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
@@ -621,13 +646,7 @@ describe('ManageTab', () => {
     const user = userEvent.setup();
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    const allButtons = screen.getAllByRole('button');
-    const deleteBtn = allButtons.find(
-      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
-    );
-    if (deleteBtn) {
-      await user.click(deleteBtn);
-    }
+    await openDeleteConfirm(user);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^no$/i })).toBeInTheDocument();
@@ -693,11 +712,7 @@ describe('ManageTab', () => {
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
     // Open delete confirm
-    const allButtons = screen.getAllByRole('button');
-    const deleteBtn = allButtons.find(
-      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
-    );
-    if (deleteBtn) await user.click(deleteBtn);
+    await openDeleteConfirm(user);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
@@ -721,11 +736,7 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    const allButtons = screen.getAllByRole('button');
-    const deleteBtn = allButtons.find(
-      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
-    );
-    if (deleteBtn) await user.click(deleteBtn);
+    await openDeleteConfirm(user);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
@@ -1039,11 +1050,7 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    const allButtons = screen.getAllByRole('button');
-    const deleteBtn = allButtons.find(
-      (btn) => btn.querySelector('.lucide-trash-2') || btn.querySelector('[class*="trash"]')
-    );
-    if (deleteBtn) await user.click(deleteBtn);
+    await openDeleteConfirm(user);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^yes$/i })).toBeInTheDocument();
