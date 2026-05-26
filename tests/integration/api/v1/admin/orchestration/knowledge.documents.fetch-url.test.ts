@@ -205,11 +205,13 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
 
       await POST(makePostRequest({ url: VALID_URL }));
 
+      // The source URL is recorded as sourceUrl (4th arg); the display name is
+      // left undefined so it derives from the document content / filename
+      // rather than being the raw URL.
       expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(
         expect.any(String),
         'guide.md',
         ADMIN_ID,
-        undefined,
         VALID_URL
       );
     });
@@ -263,22 +265,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
       expect(response.status).toBe(201);
       expect(vi.mocked(uploadDocumentFromBuffer)).toHaveBeenCalled();
       expect(vi.mocked(uploadDocument)).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('Category parameter', () => {
-    it('passes category to uploadDocument when provided', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-
-      await POST(makePostRequest({ url: VALID_URL, category: 'guides' }));
-
-      expect(vi.mocked(uploadDocument)).toHaveBeenCalledWith(
-        expect.any(String),
-        'guide.md',
-        ADMIN_ID,
-        'guides',
-        VALID_URL
-      );
     });
   });
 

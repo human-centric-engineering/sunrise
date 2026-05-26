@@ -818,8 +818,11 @@ describe('uploadDocumentFromBuffer', () => {
     const buffer = Buffer.from(rawMarkdown, 'utf-8');
     await uploadDocumentFromBuffer(buffer, 'doc.md', 'user-1');
 
-    // chunkMarkdownDocument should receive the raw markdown, not the parsed text
-    expect(chunkMarkdownDocument).toHaveBeenCalledWith(rawMarkdown, 'doc', 'doc-id-001');
+    // chunkMarkdownDocument should receive the raw markdown, not the parsed text.
+    // The document name comes from the parser-derived title ('Doc') when no
+    // explicit display name is supplied (real .md parsing derives the title
+    // from the filename, so this is a no-op in production).
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(rawMarkdown, 'Doc', 'doc-id-001');
   });
 
   it('propagates parseDocument errors without creating a document record', async () => {
