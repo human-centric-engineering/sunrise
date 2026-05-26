@@ -79,6 +79,18 @@ describe('Input Sanitization', () => {
       expect(stripHtml('Hello<br/>World')).toBe('HelloWorld');
       expect(stripHtml('Image: <img src="x"/>')).toBe('Image: ');
     });
+
+    it('should strip interleaved/nested tag markup without leaving a tag', () => {
+      // Adversarial markup must not survive as a usable <...> tag.
+      expect(stripHtml('<scr<script>ipt>alert(1)')).not.toContain('<script');
+      const stripped = stripHtml('<<a>b<c>d>');
+      expect(stripped).not.toMatch(/<[^>]*>/);
+    });
+
+    it('should be idempotent', () => {
+      const once = stripHtml('<div><span>x</span></div>');
+      expect(stripHtml(once)).toBe(once);
+    });
   });
 
   describe('sanitizeUrl', () => {
@@ -270,6 +282,13 @@ describe('Input Sanitization', () => {
     it('should remove path traversal sequences', () => {
       expect(sanitizeFilename('../../../etc/passwd')).toBe('etc_passwd');
       expect(sanitizeFilename('..\\..\\windows\\system32')).toBe('windows_system32');
+    });
+
+    it('should not leave a traversal sequence that a single pass would re-form', () => {
+      // `....//` collapses to `../` under a single non-looping replace.
+      expect(sanitizeFilename('....//etc')).not.toContain('..');
+      expect(sanitizeFilename('....\\\\etc')).not.toContain('..');
+      expect(sanitizeFilename('....//etc/passwd')).toBe('etc_passwd');
     });
 
     it('should remove absolute path indicators', () => {

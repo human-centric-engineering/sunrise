@@ -18,10 +18,22 @@ const KEY_BYTE_LENGTH = 32;
 /** Base62 alphabet for compact key encoding */
 const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 
-function toBase62(buf: Buffer): string {
+/**
+ * Generate `length` base62 characters using rejection sampling.
+ *
+ * A naive `byte % 62` is biased: 256 is not a multiple of 62, so byte values
+ * 0–7 would map to the first 8 characters slightly more often. Rejecting
+ * bytes ≥ 248 (= 4 × 62) keeps the remaining range an exact multiple of 62,
+ * so the modulo is uniform.
+ */
+function randomBase62(length: number): string {
   let result = '';
-  for (const byte of buf) {
-    result += BASE62[byte % 62];
+  while (result.length < length) {
+    for (const byte of randomBytes(length)) {
+      if (byte >= 248) continue;
+      result += BASE62[byte % 62];
+      if (result.length === length) break;
+    }
   }
   return result;
 }
@@ -38,8 +50,7 @@ export function hashApiKey(plaintext: string): string {
  * Keys are prefixed with `smcp_` for easy identification in logs and configs.
  */
 export function generateApiKey(): { plaintext: string; hash: string; prefix: string } {
-  const raw = randomBytes(KEY_BYTE_LENGTH);
-  const encoded = toBase62(raw);
+  const encoded = randomBase62(KEY_BYTE_LENGTH);
   const plaintext = `${KEY_PREFIX}${encoded}`;
   const hash = hashApiKey(plaintext);
   const prefix = plaintext.slice(0, 12);

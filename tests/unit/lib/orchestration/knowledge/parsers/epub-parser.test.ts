@@ -11,13 +11,12 @@
  * - Near-empty chapters are skipped (< 10 chars)
  * - Chapters that fail extraction are skipped with a warning
  * - Empty EPUB (no flow chapters) → empty sections, title from filename
- * - Temp file is always cleaned up (even on error)
+ * - Temp directory is always cleaned up (even on error)
  * - HTML stripping: style/script tags, entities, block-element newlines
  *
  * Mocking strategy:
- * - `fs/promises` is mocked via vi.hoisted + vi.mock
+ * - `fs/promises` (writeFile / mkdtemp / rm) is mocked via vi.hoisted + vi.mock
  * - `epub2` default export — EPub class constructor + parse + metadata/toc/flow/getChapterRaw
- * - `crypto` randomUUID — deterministic temp path
  *
  * @see lib/orchestration/knowledge/parsers/epub-parser.ts
  */
@@ -50,8 +49,8 @@ const mocks = vi.hoisted(() => {
 
   return {
     writeFile: vi.fn(),
-    unlink: vi.fn(),
-    randomUUID: vi.fn(() => 'test-uuid-1234'),
+    mkdtemp: vi.fn(),
+    rm: vi.fn(),
     epubInstance,
     EPub: MockEPubConstructor,
   };
@@ -63,21 +62,14 @@ vi.mock('epub2', () => ({
   default: mocks.EPub,
 }));
 
-vi.mock('crypto', () => ({
-  randomUUID: mocks.randomUUID,
-  createHmac: vi.fn(),
-  default: {
-    randomUUID: mocks.randomUUID,
-    createHmac: vi.fn(),
-  },
-}));
-
 vi.mock('fs/promises', () => ({
   writeFile: mocks.writeFile,
-  unlink: mocks.unlink,
+  mkdtemp: mocks.mkdtemp,
+  rm: mocks.rm,
   default: {
     writeFile: mocks.writeFile,
-    unlink: mocks.unlink,
+    mkdtemp: mocks.mkdtemp,
+    rm: mocks.rm,
   },
 }));
 
@@ -112,8 +104,8 @@ describe('parseEpub', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.writeFile.mockResolvedValue(undefined);
-    mocks.unlink.mockResolvedValue(undefined);
-    mocks.randomUUID.mockReturnValue('test-uuid-1234');
+    mocks.mkdtemp.mockResolvedValue('/tmp/sunrise-epub-abc123');
+    mocks.rm.mockResolvedValue(undefined);
     resetEpubInstance();
   });
 
@@ -122,7 +114,7 @@ describe('parseEpub', () => {
   // ---------------------------------------------------------------------------
 
   describe('temp file lifecycle', () => {
-    it('should write the buffer to a temp file before parsing', async () => {
+    it('should write the buffer into a private temp directory before parsing', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
       mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Content here.</p>');
@@ -130,14 +122,17 @@ describe('parseEpub', () => {
       // Act
       await parseEpub(fakeBuffer(), 'book.epub');
 
-      // Assert
+      // Assert: temp dir created with mkdtemp (unpredictable, mode 0700) and
+      // the buffer written inside it.
+      expect(mocks.mkdtemp).toHaveBeenCalledTimes(1);
+      expect(mocks.mkdtemp.mock.calls[0][0] as string).toContain('sunrise-epub-');
       expect(mocks.writeFile).toHaveBeenCalledTimes(1);
       const [path, buf] = mocks.writeFile.mock.calls[0] as [string, Buffer];
-      expect(path).toContain('sunrise-epub-test-uuid-1234.epub');
+      expect(path).toBe('/tmp/sunrise-epub-abc123/book.epub');
       expect(Buffer.isBuffer(buf)).toBe(true);
     });
 
-    it('should always clean up the temp file after successful parse', async () => {
+    it('should always remove the temp directory after successful parse', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
       mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Content here.</p>');
@@ -145,27 +140,31 @@ describe('parseEpub', () => {
       // Act
       await parseEpub(fakeBuffer(), 'book.epub');
 
-      // Assert: temp file removed
-      expect(mocks.unlink).toHaveBeenCalledTimes(1);
-      const [path] = mocks.unlink.mock.calls[0] as [string];
-      expect(path).toContain('sunrise-epub-test-uuid-1234.epub');
+      // Assert: temp dir removed recursively
+      expect(mocks.rm).toHaveBeenCalledTimes(1);
+      const [path, opts] = mocks.rm.mock.calls[0] as [
+        string,
+        { recursive: boolean; force: boolean },
+      ];
+      expect(path).toBe('/tmp/sunrise-epub-abc123');
+      expect(opts).toEqual({ recursive: true, force: true });
     });
 
-    it('should clean up the temp file even when epub.parse() throws', async () => {
+    it('should remove the temp directory even when epub.parse() throws', async () => {
       // Arrange: simulate corrupt EPUB
       mocks.epubInstance.parse.mockRejectedValue(new Error('Corrupt EPUB'));
 
       // Act + Assert: error re-thrown after cleanup
       await expect(parseEpub(fakeBuffer(), 'bad.epub')).rejects.toThrow('Corrupt EPUB');
-      expect(mocks.unlink).toHaveBeenCalledTimes(1);
+      expect(mocks.rm).toHaveBeenCalledTimes(1);
     });
 
-    it('should not throw if unlink fails for the temp file', async () => {
-      // Arrange: unlink fails (e.g. temp dir already cleaned)
+    it('should not throw if removing the temp directory fails', async () => {
+      // Arrange: rm fails (e.g. temp dir already cleaned)
       mocks.epubInstance.flow = [];
-      mocks.unlink.mockRejectedValue(new Error('File not found'));
+      mocks.rm.mockRejectedValue(new Error('Directory not found'));
 
-      // Act + Assert: resolves cleanly despite unlink failure
+      // Act + Assert: resolves cleanly despite rm failure
       await expect(parseEpub(fakeBuffer(), 'book.epub')).resolves.toBeDefined();
     });
   });

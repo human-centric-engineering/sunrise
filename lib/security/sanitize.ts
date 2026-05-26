@@ -84,8 +84,18 @@ export function escapeHtml(input: string): string {
  */
 export function stripHtml(input: string): string {
   if (!input || typeof input !== 'string') return '';
-  // Remove HTML tags but preserve content between them
-  return input.replace(/<[^>]*>/g, '');
+  // Remove HTML tags but preserve content between them. The loop re-runs the
+  // strip until the string stops changing: it guarantees idempotence and
+  // defends against any future narrowing of the pattern that could leave a
+  // re-formable tag. This yields plaintext — it is NOT an XSS-safe sanitiser;
+  // use a dedicated sanitiser (e.g. DOMPurify) before rendering as HTML.
+  let prev: string;
+  let out = input;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, '');
+  } while (out !== prev);
+  return out;
 }
 
 /**
@@ -290,13 +300,17 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 export function sanitizeFilename(filename: string): string {
   if (!filename || typeof filename !== 'string') return '';
 
+  // Strip traversal sequences repeatedly until stable. A single pass is
+  // non-idempotent — e.g. `....//` collapses to `../`, which would survive.
+  let out = filename.replace(/\0/g, '');
+  let prev: string;
+  do {
+    prev = out;
+    out = out.replace(/\.\.[/\\]/g, '');
+  } while (out !== prev);
+
   return (
-    filename
-      // Remove null bytes
-      .replace(/\0/g, '')
-      // Remove path traversal
-      .replace(/\.\.\//g, '')
-      .replace(/\.\.\\/g, '')
+    out
       // Remove absolute path indicators
       .replace(/^\//, '')
       .replace(/^\\/, '')

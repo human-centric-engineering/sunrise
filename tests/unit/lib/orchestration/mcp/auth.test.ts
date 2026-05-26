@@ -99,6 +99,11 @@ describe('generateApiKey', () => {
     const encoded = plaintext.slice('smcp_'.length);
     expect(encoded).toMatch(/^[0-9A-Za-z]+$/);
   });
+
+  it('encodes a 32-character base62 body (rejection sampling preserves length)', () => {
+    const { plaintext } = generateApiKey();
+    expect(plaintext.slice('smcp_'.length)).toHaveLength(32);
+  });
 });
 
 describe('hashApiKey', () => {

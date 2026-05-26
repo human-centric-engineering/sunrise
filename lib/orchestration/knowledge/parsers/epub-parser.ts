@@ -9,14 +9,25 @@
  * reads from the filesystem (not from a buffer).
  */
 
-import { writeFile, unlink } from 'fs/promises';
+import { writeFile, rm, mkdtemp } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { randomUUID } from 'crypto';
 import EPub from 'epub2';
 import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
-/** Strip HTML tags and decode basic entities. */
+/**
+ * Strip HTML tags and decode basic entities to plain text.
+ *
+ * SECURITY INVARIANT — this is a best-effort *plaintext extractor*, not an
+ * XSS-safe HTML sanitiser. The regex passes can be defeated by adversarial
+ * markup (nested `<scr<script>ipt>`, `</script >`, double-encoded entities),
+ * and that is acceptable here because the output is never rendered as HTML:
+ * it is stored as knowledge-base text and rendered downstream by
+ * `react-markdown` with no `rehype-raw` plugin, so any surviving tag is inert
+ * (same contract as `pdf-parser.ts`). If a future change feeds this output to
+ * an HTML sink or enables raw-HTML rendering, replace this with a real
+ * sanitiser (e.g. DOMPurify) before doing so.
+ */
 function stripHtml(html: string): string {
   return html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -39,8 +50,12 @@ function stripHtml(html: string): string {
 export async function parseEpub(buffer: Buffer, fileName: string): Promise<ParsedDocument> {
   const warnings: string[] = [];
 
-  // Write buffer to temp file (epub2 requires a file path)
-  const tempPath = join(tmpdir(), `sunrise-epub-${randomUUID()}.epub`);
+  // epub2 reads from a file path, so write the upload into a private temp
+  // directory created with mkdtemp (mode 0700, unpredictable name) — this
+  // avoids the predictable-name / symlink races a shared os.tmpdir() path
+  // would invite.
+  const tempDir = await mkdtemp(join(tmpdir(), 'sunrise-epub-'));
+  const tempPath = join(tempDir, 'book.epub');
   await writeFile(tempPath, buffer);
 
   try {
@@ -92,7 +107,7 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
       warnings,
     };
   } finally {
-    // Clean up temp file
-    await unlink(tempPath).catch(() => {});
+    // Clean up the temp directory and its contents
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
 }
