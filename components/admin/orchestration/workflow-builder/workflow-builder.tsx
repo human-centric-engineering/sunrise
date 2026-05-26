@@ -345,11 +345,15 @@ function WorkflowBuilderInner({
   // Live cost estimate against the draft definition. Hook is internally
   // debounced + keyed on a JSON snapshot so it survives the validator
   // re-rendering hasError back into node data without re-firing.
+  // Extracted to a plain local so the memo's dependency is a simple
+  // identifier — React Compiler can't preserve a manual memo whose dep is an
+  // optional-member expression (`details?.errorStrategy`).
+  const errorStrategy = details?.errorStrategy;
   const draftDefinitionForCost = useMemo<WorkflowDefinition | null>(() => {
     if (nodes.length === 0) return null;
     try {
       const raw = flowToWorkflowDefinition(nodes, edges, {
-        errorStrategy: details?.errorStrategy,
+        errorStrategy,
       });
       // Only ask the estimator about *valid* drafts — a half-wired
       // canvas would just generate noise. Zod parse is cheap.
@@ -358,7 +362,7 @@ function WorkflowBuilderInner({
     } catch {
       return null;
     }
-  }, [nodes, edges, details?.errorStrategy]);
+  }, [nodes, edges, errorStrategy]);
 
   const { estimate: costEstimate, loading: costLoading } = useWorkflowCostEstimate(
     workflow?.id ?? null,
@@ -517,6 +521,10 @@ function WorkflowBuilderInner({
   // Save flow
   // ------------------------------------------------------------------
 
+  // Extracted so the callback's dependency is a simple identifier — React
+  // Compiler can't preserve a manual memo keyed on an optional-member
+  // expression (`workflow?.id`).
+  const editingWorkflowId = workflow?.id;
   const performSave = useCallback(
     async (resolvedDetails: WorkflowDetails) => {
       if (nodes.length === 0) {
@@ -528,7 +536,7 @@ function WorkflowBuilderInner({
       try {
         const savedWorkflow = await saveWorkflow({
           mode,
-          workflowId: workflow?.id,
+          workflowId: editingWorkflowId,
           name: workflowName.trim() || 'Untitled workflow',
           nodes,
           edges,
@@ -559,7 +567,7 @@ function WorkflowBuilderInner({
         setSaving(false);
       }
     },
-    [edges, mode, nodes, router, workflow?.id, workflowName]
+    [edges, mode, nodes, router, editingWorkflowId, workflowName]
   );
 
   const handleSave = useCallback(() => {

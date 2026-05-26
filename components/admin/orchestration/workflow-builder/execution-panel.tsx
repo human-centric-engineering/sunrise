@@ -86,75 +86,6 @@ export function ExecutionPanel({
   const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const streamRun = useCallback(
-    async (resumeId?: string) => {
-      if (abortRef.current) abortRef.current.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      setStatus('running');
-      setErrorMessage(null);
-      if (!resumeId) {
-        setEntries([]);
-        setTotalTokens(0);
-        setTotalCost(0);
-        setBudgetWarning(null);
-        setApprovingStepId(null);
-        setExecutionId(null);
-      }
-
-      const url = resumeId
-        ? `${API.ADMIN.ORCHESTRATION.workflowExecute(workflowId)}?resumeFromExecutionId=${encodeURIComponent(resumeId)}`
-        : API.ADMIN.ORCHESTRATION.workflowExecute(workflowId);
-
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          credentials: 'include',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inputData, budgetLimitUsd }),
-        });
-
-        if (!res.ok || !res.body) {
-          setStatus('failed');
-          setErrorMessage('Execution failed to start. Check server logs for details.');
-          return;
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let sepIndex;
-          while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
-            const block = buffer.slice(0, sepIndex);
-            buffer = buffer.slice(sepIndex + 2);
-            const parsed = parseSseBlock(block);
-            if (parsed) applyEvent(parsed);
-          }
-        }
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          setStatus((prev) => (prev === 'running' ? 'aborted' : prev));
-          return;
-        }
-        logger.error('Execution stream failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        setStatus('failed');
-        setErrorMessage('Connection to the execution stream was lost.');
-      } finally {
-        abortRef.current = null;
-      }
-    },
-    [workflowId, inputData, budgetLimitUsd]
-  );
-
   const applyEvent = useCallback((frame: ParsedFrame): void => {
     const d = frame.data;
     const eventType = typeof d.type === 'string' ? d.type : null;
@@ -287,6 +218,75 @@ export function ExecutionPanel({
         break;
     }
   }, []);
+
+  const streamRun = useCallback(
+    async (resumeId?: string) => {
+      if (abortRef.current) abortRef.current.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setStatus('running');
+      setErrorMessage(null);
+      if (!resumeId) {
+        setEntries([]);
+        setTotalTokens(0);
+        setTotalCost(0);
+        setBudgetWarning(null);
+        setApprovingStepId(null);
+        setExecutionId(null);
+      }
+
+      const url = resumeId
+        ? `${API.ADMIN.ORCHESTRATION.workflowExecute(workflowId)}?resumeFromExecutionId=${encodeURIComponent(resumeId)}`
+        : API.ADMIN.ORCHESTRATION.workflowExecute(workflowId);
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          credentials: 'include',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inputData, budgetLimitUsd }),
+        });
+
+        if (!res.ok || !res.body) {
+          setStatus('failed');
+          setErrorMessage('Execution failed to start. Check server logs for details.');
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sepIndex;
+          while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
+            const block = buffer.slice(0, sepIndex);
+            buffer = buffer.slice(sepIndex + 2);
+            const parsed = parseSseBlock(block);
+            if (parsed) applyEvent(parsed);
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          setStatus((prev) => (prev === 'running' ? 'aborted' : prev));
+          return;
+        }
+        logger.error('Execution stream failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        setStatus('failed');
+        setErrorMessage('Connection to the execution stream was lost.');
+      } finally {
+        abortRef.current = null;
+      }
+    },
+    [workflowId, inputData, budgetLimitUsd, applyEvent]
+  );
 
   // Open trigger — kick off the stream whenever `open` flips true.
   useEffect(() => {

@@ -153,6 +153,12 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     };
   }, []);
 
+  const showSuccess = useCallback((msg: string) => {
+    setSuccessMsg(msg);
+    if (successTimer.current) clearTimeout(successTimer.current);
+    successTimer.current = setTimeout(() => setSuccessMsg(null), 4000);
+  }, []);
+
   // ─── Fetch list ─────────────────────────────────────────────────────────
 
   const fetchApprovals = useCallback(
@@ -250,7 +256,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     } finally {
       setApproveLoading(false);
     }
-  }, [approveTarget, approveNotes, approvePayload]);
+  }, [approveTarget, approveNotes, approvePayload, showSuccess]);
 
   // ─── Reject ─────────────────────────────────────────────────────────────
 
@@ -282,13 +288,7 @@ export function ApprovalsTable({ initialApprovals, initialMeta }: ApprovalsTable
     } finally {
       setRejectLoading(false);
     }
-  }, [rejectTarget, rejectReason]);
-
-  function showSuccess(msg: string) {
-    setSuccessMsg(msg);
-    if (successTimer.current) clearTimeout(successTimer.current);
-    successTimer.current = setTimeout(() => setSuccessMsg(null), 4000);
-  }
+  }, [rejectTarget, rejectReason, showSuccess]);
 
   // ─── Extract approval prompt from trace ─────────────────────────────────
 

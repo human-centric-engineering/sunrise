@@ -201,7 +201,9 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const statusPatched = useRef(false);
   const annotationsRef = useRef(annotations);
-  annotationsRef.current = annotations;
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
 
   // Terminal-style typing animation for streamed assistant replies.
   const typing = useTypingAnimation({ chunkSize: 2 });
@@ -256,12 +258,6 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
   }, [evaluation.id, evaluation.status]);
 
   // Load existing logs on mount for resumable evaluations
-  useEffect(() => {
-    if (evaluation.status === 'completed' || evaluation.status === 'archived') return;
-    void loadExistingLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   async function loadExistingLogs() {
     setLogsLoading(true);
     try {
@@ -284,6 +280,12 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
       setLogsLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (evaluation.status === 'completed' || evaluation.status === 'archived') return;
+    void loadExistingLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── Chat ───────────────────────────────────────────────────────────────
 
@@ -407,21 +409,6 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
 
   // ─── Annotations ────────────────────────────────────────────────────────
 
-  const updateAnnotation = useCallback((msgIdx: number, update: Partial<Annotation>) => {
-    setAnnotations((prev) => {
-      const next = new Map(prev);
-      const existing = next.get(msgIdx) ?? { category: null, rating: 3, notes: '' };
-      next.set(msgIdx, { ...existing, ...update });
-      return next;
-    });
-
-    // Debounced auto-save using ref to avoid stale closure
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      void persistAnnotations();
-    }, 30_000);
-  }, []);
-
   /** Persist current annotations to server — uses ref to always get latest state. */
   const persistAnnotations = useCallback(async () => {
     setSaving(true);
@@ -439,6 +426,24 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
       setSaving(false);
     }
   }, [evaluation.id]);
+
+  const updateAnnotation = useCallback(
+    (msgIdx: number, update: Partial<Annotation>) => {
+      setAnnotations((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(msgIdx) ?? { category: null, rating: 3, notes: '' };
+        next.set(msgIdx, { ...existing, ...update });
+        return next;
+      });
+
+      // Debounced auto-save using ref to avoid stale closure
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+        void persistAnnotations();
+      }, 30_000);
+    },
+    [persistAnnotations]
+  );
 
   /** Manual save triggered by button click */
   const handleManualSave = useCallback(() => {
@@ -526,6 +531,37 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
     }
   }, [evaluation.id]);
 
+  // ─── Load logs for completed view ──────────────────────────────────────
+
+  const [transcript, setTranscript] = useState<ChatMessage[] | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+
+  async function loadTranscript() {
+    setTranscriptLoading(true);
+    try {
+      const res = await fetch(
+        `${API.ADMIN.ORCHESTRATION.evaluationLogs(evaluation.id)}?limit=500`,
+        { credentials: 'include' }
+      );
+      if (!res.ok) return;
+      const body = (await res.json()) as { data?: { logs?: LogEntry[] } };
+      const logs = body?.data?.logs;
+      if (logs && logs.length > 0) {
+        setTranscript(logsToMessages(logs));
+      }
+    } catch {
+      // Non-critical
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (evaluation.status !== 'completed') return;
+    void loadTranscript();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ─── Re-score (completed sessions only) ────────────────────────────────
 
   const handleRescore = useCallback(async () => {
@@ -561,37 +597,6 @@ export function EvaluationRunner({ evaluation }: EvaluationRunnerProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evaluation.id]);
-
-  // ─── Load logs for completed view ──────────────────────────────────────
-
-  const [transcript, setTranscript] = useState<ChatMessage[] | null>(null);
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
-
-  useEffect(() => {
-    if (evaluation.status !== 'completed') return;
-    void loadTranscript();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function loadTranscript() {
-    setTranscriptLoading(true);
-    try {
-      const res = await fetch(
-        `${API.ADMIN.ORCHESTRATION.evaluationLogs(evaluation.id)}?limit=500`,
-        { credentials: 'include' }
-      );
-      if (!res.ok) return;
-      const body = (await res.json()) as { data?: { logs?: LogEntry[] } };
-      const logs = body?.data?.logs;
-      if (logs && logs.length > 0) {
-        setTranscript(logsToMessages(logs));
-      }
-    } catch {
-      // Non-critical
-    } finally {
-      setTranscriptLoading(false);
-    }
-  }
 
   // ─── Render ─────────────────────────────────────────────────────────────
 

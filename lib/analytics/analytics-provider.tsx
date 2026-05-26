@@ -82,7 +82,6 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       // Reset the analytics client singleton so it can be re-initialized later
       resetAnalyticsClient();
       // Trigger re-render to update isReady (legitimate external state sync)
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       forceUpdate((v) => v + 1);
       return;
     }

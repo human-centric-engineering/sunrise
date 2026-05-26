@@ -19,7 +19,7 @@
  * via the file picker dialog.
  */
 
-import { useCallback, useEffect, useImperativeHandle, useRef } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Paperclip, X, FileText, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -157,7 +157,9 @@ export function AttachmentPickerButton({
     allowedMimes: acceptMime,
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const isBusyRef = useRef(false);
+  // Busy flag for the upload spinner. Must be state, not a ref: a ref write
+  // doesn't re-render, so the spinner would never appear while `attach` runs.
+  const [isBusy, setIsBusy] = useState(false);
 
   // Compose an aria-label that reflects what's actually accepted so a
   // screen reader user knows whether the button takes images, PDFs, or
@@ -242,11 +244,11 @@ export function AttachmentPickerButton({
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const files = event.target.files;
       if (!files || files.length === 0) return;
-      isBusyRef.current = true;
+      setIsBusy(true);
       try {
         await attach(files);
       } finally {
-        isBusyRef.current = false;
+        setIsBusy(false);
         // Clear the input value so picking the same file twice re-fires
         // the change event.
         event.target.value = '';
@@ -272,7 +274,7 @@ export function AttachmentPickerButton({
         className={cn('shrink-0', className)}
         data-testid="attachment-picker-button"
       >
-        {isBusyRef.current ? (
+        {isBusy ? (
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
         ) : (
           <Paperclip className="h-4 w-4" aria-hidden="true" />

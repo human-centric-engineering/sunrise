@@ -109,6 +109,23 @@ export default tseslint.config(
       ...nextPlugin.configs.recommended.rules,
       ...nextPlugin.configs['core-web-vitals'].rules,
 
+      // React Compiler ruleset. eslint-plugin-react-hooks 7.1's `recommended`
+      // preset turns the full ruleset on, but Sunrise does NOT run the React
+      // Compiler (no babel-plugin-react-compiler / `reactCompiler` flag). The
+      // rules split in two:
+      //   - Correctness rules — rules-of-hooks, refs, purity, error-boundaries,
+      //     set-state-in-render, immutability, globals — catch real bugs whether
+      //     or not the compiler runs. Kept at the preset's `error`.
+      //   - Optimization-only advisories flag code the compiler can't
+      //     auto-memoize. With no compiler running they warn about an
+      //     optimization we don't use, so they are off (not deferred-as-warn —
+      //     off). The two below cover ~67 sites that are all intentional
+      //     patterns, not bugs. See `.context/architecture/lint-toolchain.md`.
+      // `exhaustive-deps` (preset `warn`) stays on — it catches real stale-
+      // closure bugs and is compiler-independent.
+      'react-hooks/set-state-in-effect': 'off', // advisory (extra render); the real bug, set-state-in-render, stays error
+      'react-hooks/incompatible-library': 'off', // RHF watch() — only matters under the compiler
+
       // Custom rules
       'no-console': 'error',
       'react/react-in-jsx-scope': 'off', // Not needed with Next.js
@@ -179,6 +196,19 @@ export default tseslint.config(
       // Skip return type annotations in tests
       // Reason: Test helpers/factories don't benefit from explicit return types
       '@typescript-eslint/explicit-function-return-type': 'off',
+
+      // Disable the React Compiler render-purity rules for tests. Test
+      // components intentionally do "impure" things a shipped component never
+      // would — assigning render output to an outer variable to assert on it,
+      // mutating shared fixtures. `rules-of-hooks` stays on — calling hooks
+      // conditionally is a real bug in tests too. (set-state-in-effect and
+      // incompatible-library are off globally, so they aren't repeated here.)
+      'react-hooks/globals': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/exhaustive-deps': 'off',
     },
   }
 );

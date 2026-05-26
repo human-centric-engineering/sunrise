@@ -1067,7 +1067,9 @@ export function ChatInterface({
   // would silently drop the follow-up because of its `if (streaming) return`
   // guard, and the LLM would never get the workflow output).
   const streamingRef = useRef(streaming);
-  streamingRef.current = streaming;
+  useEffect(() => {
+    streamingRef.current = streaming;
+  }, [streaming]);
 
   const sendFollowupWhenIdle = useCallback(
     (text: string) => {

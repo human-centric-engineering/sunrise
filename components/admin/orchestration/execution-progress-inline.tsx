@@ -84,10 +84,13 @@ export function ExecutionProgressInline({
   // running entry's durationMs ticks up smoothly between server polls.
   // Mirrors the full execution detail view; without it parallel branches
   // would freeze at their last server-reported width between 1s polls.
-  const [tickClock, setTickClock] = useState(0);
+  // Store the timestamp itself (not a counter) so the memo below can read
+  // "now" from a dependency rather than calling Date.now() during render
+  // (which React Compiler forbids).
+  const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (terminal) return;
-    const id = setInterval(() => setTickClock((t) => t + 1), 1_000);
+    const id = setInterval(() => setNowMs(Date.now()), 1_000);
     return () => clearInterval(id);
   }, [terminal]);
 
@@ -96,9 +99,8 @@ export function ExecutionProgressInline({
   // the timeline strip while the batch is still in flight, instead of
   // appearing only after each branch persists.
   const displayTrace = useMemo(
-    () => buildDisplayTrace(live.trace, live.currentRunningSteps, Date.now()),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [live.trace, live.currentRunningSteps, tickClock]
+    () => buildDisplayTrace(live.trace, live.currentRunningSteps, nowMs),
+    [live.trace, live.currentRunningSteps, nowMs]
   );
 
   // Wall-clock format: fast, lossy, and always rendered (running runs

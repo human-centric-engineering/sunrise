@@ -177,6 +177,32 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
     };
   }, [teardownStream]);
 
+  const stop = useCallback(async (): Promise<VoiceRecording | null> => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      setState('idle');
+      return null;
+    }
+
+    setState('stopping');
+    stoppedDurationRef.current = Date.now() - startedAtRef.current;
+    return new Promise<VoiceRecording | null>((resolve) => {
+      resolveStopRef.current = resolve;
+      try {
+        recorder.stop();
+      } catch (err) {
+        setError({
+          code: 'capture_failed',
+          message: err instanceof Error ? err.message : 'Recorder failed to stop',
+        });
+        teardownStream();
+        resolve(null);
+        resolveStopRef.current = null;
+        setState('idle');
+      }
+    });
+  }, [teardownStream]);
+
   const start = useCallback(async () => {
     if (state !== 'idle') return;
     setError(null);
@@ -281,36 +307,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions = {}): UseVo
     }, maxDurationMs);
 
     setState('recording');
-    // `stop` is referenced above before declaration via the auto-stop closure;
-    // guarded by the `recording` state check inside it, so there's no race.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, supported, teardownStream, cancel, maxDurationMs]);
-
-  const stop = useCallback(async (): Promise<VoiceRecording | null> => {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === 'inactive') {
-      setState('idle');
-      return null;
-    }
-
-    setState('stopping');
-    stoppedDurationRef.current = Date.now() - startedAtRef.current;
-    return new Promise<VoiceRecording | null>((resolve) => {
-      resolveStopRef.current = resolve;
-      try {
-        recorder.stop();
-      } catch (err) {
-        setError({
-          code: 'capture_failed',
-          message: err instanceof Error ? err.message : 'Recorder failed to stop',
-        });
-        teardownStream();
-        resolve(null);
-        resolveStopRef.current = null;
-        setState('idle');
-      }
-    });
-  }, [teardownStream]);
+  }, [state, supported, teardownStream, cancel, maxDurationMs, stop]);
 
   return {
     state,

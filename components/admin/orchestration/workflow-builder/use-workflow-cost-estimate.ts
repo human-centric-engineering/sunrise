@@ -62,10 +62,15 @@ export function useWorkflowCostEstimate(
 
   // Read the latest values inside the deferred fetch without listing
   // them as effect deps (which would defeat the content-key gating).
+  // Sync the refs in an effect rather than during render (which React
+  // Compiler forbids); they settle after commit, long before the
+  // debounced timer fires.
   const workflowIdRef = useRef(workflowId);
   const definitionRef = useRef(definition);
-  workflowIdRef.current = workflowId;
-  definitionRef.current = definition;
+  useEffect(() => {
+    workflowIdRef.current = workflowId;
+    definitionRef.current = definition;
+  }, [workflowId, definition]);
 
   useEffect(() => {
     if (!contentKey) {

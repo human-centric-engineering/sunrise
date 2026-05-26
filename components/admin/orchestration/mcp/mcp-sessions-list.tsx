@@ -57,6 +57,11 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
   const [sessions, setSessions] = useState(initialSessions);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Reference time for the relative "… ago" / duration columns, captured
+  // when the data was (re)loaded rather than read with Date.now() during
+  // render (which React Compiler forbids). It tracks data freshness: the
+  // displayed ages are as-of the last fetch.
+  const [now, setNow] = useState(() => Date.now());
 
   async function handleTerminate(sessionId: string) {
     setError(null);
@@ -74,14 +79,13 @@ export function McpSessionsList({ initialSessions }: McpSessionsListProps) {
     try {
       const data = await apiClient.get<SessionRow[]>(API.ADMIN.ORCHESTRATION.MCP_SESSIONS);
       setSessions(data);
+      setNow(Date.now());
     } catch {
       setError('Failed to refresh sessions.');
     } finally {
       setRefreshing(false);
     }
   }
-
-  const now = Date.now();
 
   return (
     <div className="space-y-4">

@@ -80,9 +80,15 @@ export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>, ()
   const [value, setInternalValue] = useState<T>(initial);
 
   // Keep a ref to the latest value so the setter's updater form can read it
-  // without stale closures when `value` dependencies change.
+  // without stale closures when `value` dependencies change. The imperative
+  // paths (setValue/remove/sync effects) update the ref eagerly; this effect
+  // guarantees it tracks the committed value after every render without
+  // writing to a ref during render (which React Compiler forbids). The setter
+  // only reads the ref from event handlers, which run after commit.
   const valueRef = useRef(value);
-  valueRef.current = value;
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   // Hydrate from storage after mount — covers the SSR render path where the
   // initial state was `initial` instead of the stored value.

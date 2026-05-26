@@ -185,7 +185,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           trackFn = value.track;
         }
         return null;
@@ -215,7 +214,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           identifyFn = value.identify;
         }
         return null;
@@ -245,7 +243,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           pageFn = value.page;
         }
         return null;
@@ -365,7 +362,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           trackFn = value.track;
         }
         return null;
@@ -398,7 +394,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           identifyFn = value.identify;
         }
         return null;
@@ -431,7 +426,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           pageFn = value.page;
         }
         return null;
@@ -464,7 +458,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           resetFn = value.reset;
         }
         return null;
@@ -591,13 +584,9 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           trackFn = value.track;
-          // eslint-disable-next-line react-hooks/globals
           identifyFn = value.identify;
-          // eslint-disable-next-line react-hooks/globals
           pageFn = value.page;
-          // eslint-disable-next-line react-hooks/globals
           resetFn = value.reset;
         }
         return null;
@@ -635,7 +624,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           trackFn = value.track;
         }
         return null;
@@ -667,7 +655,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           identifyFn = value.identify;
         }
         return null;
@@ -699,7 +686,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           pageFn = value.page;
         }
         return null;
@@ -731,7 +717,6 @@ describe('lib/analytics/analytics-provider', () => {
       const TestComponent = () => {
         const value = useContext(AnalyticsContext);
         if (value) {
-          // eslint-disable-next-line react-hooks/globals
           resetFn = value.reset;
         }
         return null;

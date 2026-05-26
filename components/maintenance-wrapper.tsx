@@ -69,19 +69,20 @@ export async function MaintenanceWrapper({ children }: MaintenanceWrapperProps) 
     return <>{children}</>;
   }
 
-  // Check if user is admin (they can bypass maintenance mode)
+  // Check if user is admin (they can bypass maintenance mode). On any
+  // failure, treat as non-admin and show the maintenance page for safety.
+  let isAdmin = false;
   try {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders });
-
-    const isAdmin = session?.user?.role === 'ADMIN';
-
-    // Admins can bypass maintenance mode
-    if (isAdmin) {
-      return <>{children}</>;
-    }
+    isAdmin = session?.user?.role === 'ADMIN';
   } catch {
     // If session check fails, show maintenance page for safety
+  }
+
+  // Admins can bypass maintenance mode
+  if (isAdmin) {
+    return <>{children}</>;
   }
 
   // Show maintenance page for non-admin users
@@ -108,26 +109,27 @@ export async function MaintenanceWrapperWithAdminNotice({ children }: Maintenanc
     return <>{children}</>;
   }
 
-  // Check if user is admin
+  // Check if user is admin. On any failure, treat as non-admin and show the
+  // maintenance page for safety.
+  let isAdmin = false;
   try {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders });
-
-    const isAdmin = session?.user?.role === 'ADMIN';
-
-    // Admins can bypass but see a notice
-    if (isAdmin) {
-      return (
-        <>
-          <div className="border-b border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
-            Maintenance mode is active. You can access the site because you are an admin.
-          </div>
-          {children}
-        </>
-      );
-    }
+    isAdmin = session?.user?.role === 'ADMIN';
   } catch {
     // If session check fails, show maintenance page for safety
+  }
+
+  // Admins can bypass but see a notice
+  if (isAdmin) {
+    return (
+      <>
+        <div className="border-b border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
+          Maintenance mode is active. You can access the site because you are an admin.
+        </div>
+        {children}
+      </>
+    );
   }
 
   // Show maintenance page for non-admin users

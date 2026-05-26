@@ -113,7 +113,6 @@ export function LearningTabs({
     // this as a perf concern (cascading render), but for a single
     // mount-time draw of five strings the extra paint is invisible
     // and the correctness trade is clearly worth it.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAdvisorStarters(sampleAdvisorPrompts(ADVISOR_STARTER_COUNT));
   }, []);
 

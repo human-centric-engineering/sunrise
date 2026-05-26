@@ -565,12 +565,15 @@ export function ExecutionDetailView({
   const liveCostEntries = live.costEntries;
   const liveRunningSteps = live.currentRunningSteps;
 
-  // Tick clock — advances every second while polling so each synthesised
-  // running entry's durationMs ticks up smoothly between server polls.
-  const [tickClock, setTickClock] = useState(0);
+  // Live clock — refreshes every second while polling so each synthesised
+  // running entry's durationMs ticks up smoothly between server polls. We
+  // store the timestamp itself (not a counter) so the memoised computations
+  // below can read "now" from a dependency rather than calling Date.now()
+  // during render (which React Compiler forbids).
+  const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!live.isPolling) return;
-    const id = setInterval(() => setTickClock((t) => t + 1), 1_000);
+    const id = setInterval(() => setNowMs(Date.now()), 1_000);
     return () => clearInterval(id);
   }, [live.isPolling]);
 
@@ -578,7 +581,7 @@ export function ExecutionDetailView({
   // in-flight step. During a parallel fan-out this surfaces every branch
   // simultaneously instead of just whichever started last. Defensive
   // filter drops any persisted entry with a stepId we're about to render
-  // as running, in case a tick races the engine writing both. `tickClock`
+  // as running, in case a tick races the engine writing both. `nowMs`
   // is included so durationMs recomputes every second between server polls.
   //
   // When a parallel branch's running-step row carries `completedAt`, the
@@ -587,9 +590,8 @@ export function ExecutionDetailView({
   // strip uses it to render the coloured processing portion plus a
   // greyed wait portion that grows until the slowest sibling ends.
   const displayTrace: ExecutionTraceEntry[] = useMemo(() => {
-    return buildDisplayTrace(liveTrace, liveRunningSteps, Date.now());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveTrace, liveRunningSteps, tickClock]);
+    return buildDisplayTrace(liveTrace, liveRunningSteps, nowMs);
+  }, [liveTrace, liveRunningSteps, nowMs]);
 
   // Per-step turnCount lookup for the synthesized running rows. Lives
   // outside the trace entry shape because ExecutionTraceEntry is also
@@ -667,8 +669,8 @@ export function ExecutionDetailView({
   // means no wait segment is shown for that row.
   //
   // While any sibling is still running, the wait is computed against
-  // the wall clock (`Date.now()`), so depending on tickClock keeps the
-  // displayed value ticking up smoothly between server polls.
+  // the live `nowMs` clock, so depending on it keeps the displayed value
+  // ticking up smoothly between server polls.
   const parallelWaitMsByStepId = useMemo(() => {
     const map = new Map<string, number>();
     const branchMap = buildParallelBranchMap(displayTrace);
@@ -702,7 +704,6 @@ export function ExecutionDetailView({
       if (cur === undefined || endMs > cur) joinByFork.set(parentFork, endMs);
     }
 
-    const nowMs = Date.now();
     for (const [forkId, joinEnd] of joinByFork.entries()) {
       if (stillRunningByFork.get(forkId)) {
         joinByFork.set(forkId, Math.max(joinEnd, nowMs));
@@ -722,9 +723,8 @@ export function ExecutionDetailView({
     }
 
     return map;
-    // tickClock keeps the wait ticking for still-running forks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayTrace, tickClock]);
+    // nowMs keeps the wait ticking for still-running forks.
+  }, [displayTrace, nowMs]);
 
   // Filter chip state — local to this view; not persisted.
   const [filter, setFilter] = useState<TraceFilter>('all');
