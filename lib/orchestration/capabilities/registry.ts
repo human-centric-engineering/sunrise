@@ -36,10 +36,13 @@ import { CallExternalApiCapability } from '@/lib/orchestration/capabilities/buil
 import { RunWorkflowCapability } from '@/lib/orchestration/capabilities/built-in/run-workflow';
 import { UploadToStorageCapability } from '@/lib/orchestration/capabilities/built-in/upload-to-storage';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
+import { initAppCapabilities } from '@/lib/app/capabilities';
 import type { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
+/** Whether the auto-wired app capability init (`lib/app/capabilities.ts`) has run. */
+let appInited = false;
 
 // ─── App capability registration (fork-readiness seam) ───────────────────────
 
@@ -109,6 +112,16 @@ export function registerBuiltInCapabilities(): void {
     capabilityDispatcher.register(new SendMessageToChannelCapability());
     registered = true;
   }
+  // Auto-wire the app's capability registrations (fork-readiness — the
+  // `lib/app/` bootstrap surface). Runs once, here in the server route-handler
+  // realm, so a fork's `registerAppCapability()` calls in `lib/app/capabilities.ts`
+  // land before the flush below — no separate wiring step. Guarded so it isn't
+  // re-run on every dispatch; direct `registerAppCapability()` callers still
+  // flush via the `appRegistered` path.
+  if (!appInited) {
+    initAppCapabilities();
+    appInited = true;
+  }
   // App capabilities register on the same lazy path, right after the
   // built-ins. Cheap when already flushed (one boolean check).
   registerAppCapabilities();
@@ -122,6 +135,7 @@ export function registerBuiltInCapabilities(): void {
 export function __resetRegistrationForTests(): void {
   registered = false;
   appRegistered = false;
+  appInited = false;
   appCapabilities.clear();
 }
 

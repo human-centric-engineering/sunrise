@@ -26,7 +26,7 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
    inherit rate limiting automatically), add pages to a route group, register
    capabilities/agents/workflows in the orchestration layer, declare your env
    vars in `lib/app/env.ts`, register app-scoped rate-limit tiers/rules, swap
-   email/storage/analytics providers via their adapters ([§4](#4-configuration--environment)).
+   email/storage/analytics providers via their adapters ([§4](#4-configuration--environment--the-libapp-surface)).
    The fewer existing Sunrise files you modify, the smaller every future merge conflict.
 
 2. **Depend on the public surface, not internals.** Build against Sunrise's
@@ -51,8 +51,8 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 | Business logic / utilities | `lib/`                                                                                          |
 | Database models            | the Prisma schema + a migration                                                                 |
 | Agent tools                | a capability in the orchestration layer                                                         |
-| Environment variables      | `lib/app/env.ts` (`appEnvSchema`) — see [§4](#4-configuration--environment)                     |
-| App rate-limit tier / rule | `registerRateLimitTier()` / `registerRateLimitRule()` — see [§4](#4-configuration--environment) |
+| Environment variables      | `lib/app/env.ts` (`appEnvSchema`) — see [§4](#4-configuration--environment--the-libapp-surface)                     |
+| App rate-limit tier / rule | `registerRateLimitTier()` / `registerRateLimitRule()` — see [§4](#4-configuration--environment--the-libapp-surface) |
 | Dependencies & scripts     | `package.json` — see [§7](#7-adding-dependencies--scripts)                                      |
 
 ---
@@ -136,18 +136,28 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 
 ---
 
-## 4. Configuration & environment
+## 4. Configuration & environment — the `lib/app/` surface
 
-Sunrise exposes three "configure the platform for your app without editing core
-files" seams. Each lives in an app-owned location so an upstream merge stays a
-clean merge.
+`lib/app/` is the **auto-wired extension surface**. Each file is imported by the
+Sunrise core consumer that lives in the right runtime, so your registrations
+take effect with **zero wiring** — you fill in the file, you never hunt for a
+startup hook to call it from. Every file ships as an empty no-op; an upstream
+merge never touches it.
 
-**Framework-agnostic platform code — the `lib/app/` surface.** This is the
-supported home for app-level code the platform wires in (the env seam below lives
-at `lib/app/env.ts`). An ESLint boundary keeps `lib/app/` portable: it forbids
-runtime `next/*` imports (type-only imports are fine) and applies the `@/`-alias
-rule. Glue that needs framework runtime APIs belongs in `app/` or a
-`lib/app/<name>/server/` module. See
+| Edit this file              | To register                                   | Auto-wired by (runtime)                              |
+| --------------------------- | --------------------------------------------- | ---------------------------------------------------- |
+| `lib/app/env.ts`            | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)                  |
+| `lib/app/rate-limit.ts`     | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)           |
+| `lib/app/capabilities.ts`   | agent capabilities (tools)                    | the capability registry (server route-handler)       |
+| `lib/app/admin-nav.ts`      | admin sidebar sections                        | `admin-sidebar.tsx` (client)                         |
+
+**Why four files and not one bootstrap call?** Next.js bundles middleware,
+server route-handlers, and the client as three separate module realms — a
+registration only takes effect in the realm where it runs. So each concern lives
+in its own file, imported by the consumer in the matching realm. (It also keeps
+the lean middleware bundle free of capability/Prisma code.) An ESLint boundary
+keeps `lib/app/` portable: no runtime `next/*` imports (type-only is fine), `@/`
+alias only; framework glue goes in `app/` or `lib/app/<name>/server/`. See
 [`.context/architecture/lint-toolchain.md`](./.context/architecture/lint-toolchain.md#app-boundary--libapp).
 
 **Environment variables — `lib/app/env.ts`.** Declare your own server-side env
@@ -167,37 +177,51 @@ A missing/invalid app var aborts boot like a missing `DATABASE_URL` would. Scope
 server-side only — for client values use a `NEXT_PUBLIC_*` var read via `process.env`.
 Full guide: [`.context/environment/overview.md`](./.context/environment/overview.md#app-defined-variables-forks).
 
-**Rate-limit tiers & rules — `registerRateLimitTier()` / `registerRateLimitRule()`.**
-Give your own `/api/v1/**` paths a custom section cap without editing the policy
-table. Register at startup:
+**Rate-limit tiers & rules — `lib/app/rate-limit.ts`.** Give your own `/api/v1/**`
+paths a custom section cap. Fill in the auto-wired `registerAppRateLimits()`:
 
 ```typescript
+// lib/app/rate-limit.ts — called once by the rate-limit middleware at load
 import { createRateLimiter, registerRateLimitTier } from '@/lib/security/rate-limit';
 import { registerRateLimitRule } from '@/lib/security/rate-limit-policy';
 import { SECURITY_CONSTANTS } from '@/lib/security/constants';
 
-registerRateLimitTier(
-  'billing',
-  createRateLimiter({
-    interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
-    maxRequests: 40,
-    uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
-  })
-);
-registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+export function registerAppRateLimits(): void {
+  registerRateLimitTier(
+    'billing',
+    createRateLimiter({
+      interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+      maxRequests: 40,
+      uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+    })
+  );
+  registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+}
 ```
 
 App rules are spliced in after every built-in Sunrise rule and before the
 `/api/v1/` catch-all, so they govern your namespace only. Registration **throws**
 if a rule could match a Sunrise-protected surface (`/api/v1/admin/**`,
 `/api/auth/**`, `/api/v1/auth/**`, `/api/v1/mcp/**`) or if a tier name collides with
-a built-in — you can't accidentally loosen the auth/admin caps. The section tiers
-and per-flow caps are also env-tunable via `RATE_LIMIT_*` overrides. Full reference:
+a built-in — you can't accidentally loosen the auth/admin caps, and the failure
+aborts boot rather than passing silently. The section tiers and per-flow caps are
+also env-tunable via `RATE_LIMIT_*` overrides. Full reference:
 [`.context/security/rate-limiting.md`](./.context/security/rate-limiting.md#app--fork-extension).
 
 > Most apps never need a custom tier — every new `/api/v1/**` route already inherits
 > the 100/min `api` cap automatically. Reach for this only when a route needs a
 > genuinely different cap or keying.
+
+**Agent capabilities — `lib/app/capabilities.ts`.** Fill in the auto-wired
+`initAppCapabilities()` with `registerAppCapability(new YourTool())` calls (your
+tools extend `BaseCapability`). The capability registry runs it once before the
+first agent dispatch. See
+[`.context/orchestration/capabilities.md`](./.context/orchestration/capabilities.md).
+
+**Admin sidebar sections — `lib/app/admin-nav.ts`.** Fill in the auto-wired
+`initAppNav()` with `registerNavSection({ … })` calls; the admin sidebar renders
+your sections after the core ones. Keep this file client-safe (registrar + icon
+imports only — no server code). Use a `title` distinct from the core sections.
 
 ---
 

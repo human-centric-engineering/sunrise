@@ -275,28 +275,31 @@ Three edits, in order:
 
 ## App / Fork Extension
 
-The three edits above ("Adding a New Tier") are how **Sunrise itself** adds a built-in tier — they edit core files. Apps and forks should NOT edit `RATE_LIMIT_POLICY`, the `RateLimitTier` union, or the `RATE_LIMIT_TIERS` registry. Instead, register an app tier/rule at startup so an upstream merge stays clean:
+The three edits above ("Adding a New Tier") are how **Sunrise itself** adds a built-in tier — they edit core files. Apps and forks should NOT edit `RATE_LIMIT_POLICY`, the `RateLimitTier` union, or the `RATE_LIMIT_TIERS` registry. Instead, fill in **`lib/app/rate-limit.ts`** — its `registerAppRateLimits()` is **auto-wired**: the rate-limit middleware imports and calls it once at module load (in the middleware runtime, the realm `proxy.ts` evaluates the policy in), so you never hunt for a startup hook:
 
 ```typescript
+// lib/app/rate-limit.ts
 import { createRateLimiter, registerRateLimitTier } from '@/lib/security/rate-limit';
 import { registerRateLimitRule } from '@/lib/security/rate-limit-policy';
 import { SECURITY_CONSTANTS } from '@/lib/security/constants';
 
-// 1. (optional) register an app-specific section tier
-registerRateLimitTier(
-  'billing',
-  createRateLimiter({
-    interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
-    maxRequests: 40,
-    uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
-  })
-);
+export function registerAppRateLimits(): void {
+  // 1. (optional) register an app-specific section tier
+  registerRateLimitTier(
+    'billing',
+    createRateLimiter({
+      interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+      maxRequests: 40,
+      uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+    })
+  );
 
-// 2. point an app path at it (or at a built-in tier)
-registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+  // 2. point an app path at it (or at a built-in tier)
+  registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+}
 ```
 
-Run registration once at startup, before the first request — e.g. from the same module that bootstraps your app's other extensions. `registerRateLimitTier` / `registerRateLimitRule` and `appEnvSchema` are the platform's three "configure without editing core" seams.
+`lib/app/rate-limit.ts` is one of the `lib/app/` auto-wired bootstrap files (alongside `lib/app/env.ts`, `lib/app/capabilities.ts`, `lib/app/admin-nav.ts`) — each imported by the core consumer in its runtime so a fork registers without wiring. **Why a per-file split rather than one shared bootstrap call:** Next.js bundles middleware, server route-handlers, and the client as three separate module realms, so a module-level registration only takes effect in the realm where it runs; rate-limit state lives in the middleware realm, so it's wired from the middleware. See [Building on Sunrise → §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface).
 
 **How app rules are merged.** `getEffectiveRateLimitPolicy()` (called by the dispatcher on every request) returns the base policy with app rules spliced in **after every built-in Sunrise rule and before the `/api/v1/` catch-all**. So an app rule governs the app's own namespace without restating — or being able to shadow — any Sunrise rule. `resolveRateLimitTier(name)` resolves built-in and app tiers from one registry.
 

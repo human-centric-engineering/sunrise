@@ -46,7 +46,17 @@ import {
   type NavSection,
   type NavSubgroup,
 } from '@/lib/admin-nav/registry';
+import { initAppNav } from '@/lib/app/admin-nav';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+
+// Auto-wire the app's admin-nav registrations (fork-readiness — the `lib/app/`
+// bootstrap surface). Runs once when this client module loads (and during the
+// component's server render), so a fork's `registerNavSection()` calls in
+// `lib/app/admin-nav.ts` populate the registry before `getRegisteredNavSections()`
+// is read below. Module-level registries don't cross Next.js's
+// middleware/server/client bundle boundaries, so the client-side nav registry
+// is wired here rather than in a shared server bootstrap. Idempotent by title.
+initAppNav();
 
 const coreNavSections: NavSection[] = [
   {

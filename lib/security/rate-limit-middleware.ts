@@ -37,6 +37,18 @@ import {
   type RateLimitKey,
   type RateLimitRule,
 } from '@/lib/security/rate-limit-policy';
+import { registerAppRateLimits } from '@/lib/app/rate-limit';
+
+// Auto-wire the app's rate-limit registrations (fork-readiness — the `lib/app/`
+// bootstrap surface). Runs ONCE when this module loads, which is in the
+// middleware runtime — the same realm `proxy.ts` evaluates the policy in, so an
+// app-registered tier/rule is present before the first `applyRateLimit` call.
+// (Module-level registries don't cross Next.js's middleware/server/client
+// bundle boundaries, so each `lib/app/` file is imported by its realm's
+// consumer rather than a single shared bootstrap.) Default is a no-op; if a
+// fork's registration throws — e.g. a rule that would shadow a protected
+// surface — it aborts boot, which is the intended fail-fast.
+registerAppRateLimits();
 
 /**
  * Apply the rate-limit policy to an incoming request.
