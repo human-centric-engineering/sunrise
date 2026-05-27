@@ -9,15 +9,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentType } from 'react';
 
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
+import { registerNavSection, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 
 const pathnameMock = vi.fn(() => '/admin/overview');
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathnameMock(),
-
-  useSearchParams: () => ({ get: () => null }),
 }));
 
 function countsResponse(counts: Record<string, number>) {
@@ -40,13 +40,17 @@ describe('AdminSidebar', () => {
     pathnameMock.mockReset();
     pathnameMock.mockReturnValue('/admin/overview');
     mockFetch = vi.fn<typeof fetch>();
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
     // Default: counts endpoint returns zeros for every requested status.
     mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    // Clear any app nav sections registered during tests in this suite so
+    // they don't bleed into the integration suite below.
+    __resetNavRegistryForTests();
   });
 
   it('renders all four top-level sections', () => {
@@ -71,7 +75,7 @@ describe('AdminSidebar', () => {
       { label: 'Knowledge Base', href: '/admin/orchestration/knowledge' },
       { label: 'Costs & Budget', href: '/admin/orchestration/costs' },
       { label: 'Learning', href: '/admin/orchestration/learn' },
-      { label: 'Evaluations', href: '/admin/orchestration/evaluations' },
+      { label: 'Testing', href: '/admin/orchestration/evaluations' },
     ];
 
     for (const { href } of expected) {
@@ -94,7 +98,7 @@ describe('AdminSidebar', () => {
     const orchestrationDashboard = dashboardLinks.find(
       (el) => el.getAttribute('href') === '/admin/orchestration'
     );
-    expect(orchestrationDashboard).toBeDefined();
+    expect(orchestrationDashboard, 'link for /admin/orchestration not found').toBeDefined();
     expect(orchestrationDashboard).not.toHaveAttribute('aria-current', 'page');
   });
 
@@ -106,6 +110,7 @@ describe('AdminSidebar', () => {
     const orchestrationDashboard = dashboardLinks.find(
       (el) => el.getAttribute('href') === '/admin/orchestration'
     );
+    expect(orchestrationDashboard, 'link for /admin/orchestration not found').toBeDefined();
     expect(orchestrationDashboard).toHaveAttribute('aria-current', 'page');
   });
 
@@ -165,14 +170,15 @@ describe('AdminSidebar', () => {
 
     render(<AdminSidebar />);
 
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled();
-    });
-
     // The previous implementation fanned out 3 list-endpoint calls per tick
     // (one per status). The new endpoint collapses them — anything > 1 call
     // on initial mount means the regression is back.
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // Both conditions are asserted inside waitFor so there is no window
+    // between "at least one" and "exactly one" where a second tick could fire.
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit?];
     expect(url).toContain('/api/v1/admin/orchestration/executions/counts');
     // Comma is an RFC 3986 sub-delim and is not percent-encoded by template
@@ -237,5 +243,88 @@ describe('AdminSidebar', () => {
     });
     expect(screen.queryByText('99')).toBeNull();
     expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
+  });
+});
+
+// ─── Integration: admin nav registry seam (Seam 4) ───────────────────────────
+//
+// Proves the end-to-end wiring: registerNavSection() → AdminSidebar renders
+// app sections appended after the core sections, in DOM order.
+
+describe('AdminSidebar – nav registry integration (Seam 4)', () => {
+  const StubIcon: ComponentType<{ className?: string }> = () => null;
+
+  let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
+
+  beforeEach(() => {
+    pathnameMock.mockReset();
+    pathnameMock.mockReturnValue('/admin/overview');
+    mockFetch = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { counts: ZERO_COUNTS } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    // Prevent registered app sections from leaking into other tests.
+    __resetNavRegistryForTests();
+  });
+
+  it('renders an app-registered section title and its nav link', async () => {
+    // Arrange — register an app section before the sidebar renders.
+    registerNavSection({
+      title: 'My App',
+      items: [
+        {
+          href: '/admin/my-app/dashboard',
+          label: 'App Dashboard',
+          icon: StubIcon,
+          description: 'Main app page',
+        },
+      ],
+    });
+
+    // Act
+    render(<AdminSidebar />);
+
+    // Assert — the section heading is present.
+    expect(screen.getByText('My App')).toBeInTheDocument();
+    // The nav link is present and has the correct href.
+    const link = screen.getByRole('link', { name: /app dashboard/i });
+    expect(link).toHaveAttribute('href', '/admin/my-app/dashboard');
+  });
+
+  it('app section appears in the DOM AFTER the core "System" section', () => {
+    // Arrange — register an app section.
+    registerNavSection({
+      title: 'App Section',
+      items: [
+        {
+          href: '/admin/app/page',
+          label: 'App Page',
+          icon: StubIcon,
+          description: 'An app page',
+        },
+      ],
+    });
+
+    // Act
+    render(<AdminSidebar />);
+
+    // Assert — the "System" heading (last core section) must come before the
+    // "App Section" heading in DOM order.
+    const systemHeading = screen.getByText('System');
+    const appHeading = screen.getByText('App Section');
+
+    // Node.DOCUMENT_POSITION_FOLLOWING (4) means appHeading is after systemHeading.
+    const position = systemHeading.compareDocumentPosition(appHeading);
+    const appIsAfterSystem = Boolean(position & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(appIsAfterSystem, 'app section must render after the core "System" section').toBe(true);
   });
 });

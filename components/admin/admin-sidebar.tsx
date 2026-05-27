@@ -40,30 +40,15 @@ import {
 import { Button } from '@/components/ui/button';
 import { API } from '@/lib/api/endpoints';
 import { executionCountsResponseSchema } from '@/lib/validations/orchestration';
+import {
+  getRegisteredNavSections,
+  type NavItem,
+  type NavSection,
+  type NavSubgroup,
+} from '@/lib/admin-nav/registry';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  description: string;
-  exact?: boolean;
-  badge?: number;
-}
-
-interface NavSubgroup {
-  label: string;
-  icon?: React.ComponentType<{ className?: string }>;
-  items: NavItem[];
-}
-
-interface NavSection {
-  title: string;
-  items?: NavItem[];
-  subgroups?: NavSubgroup[];
-}
-
-const navSections: NavSection[] = [
+const coreNavSections: NavSection[] = [
   {
     title: 'Overview',
     items: [
@@ -496,7 +481,10 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
   const inProgressCount = sumCounts(counts, IN_PROGRESS_STATUSES);
   const sections = useMemo(
     () =>
-      injectBadges(navSections, {
+      // Core sections first, then any app-registered sections. Registration
+      // is module-import-time and synchronous, so reading it during render is
+      // safe — see lib/admin-nav/registry.ts.
+      injectBadges([...coreNavSections, ...getRegisteredNavSections()], {
         '/admin/orchestration/approvals': approvalCount,
         '/admin/orchestration/executions': inProgressCount,
       }),

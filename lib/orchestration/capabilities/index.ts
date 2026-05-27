@@ -3,7 +3,8 @@
  *
  * Callers go through `capabilityDispatcher` and
  * `registerBuiltInCapabilities` — the built-in capability classes
- * themselves are intentionally not re-exported.
+ * themselves are intentionally not re-exported. Apps add their own tools
+ * via `registerAppCapability` (extend `BaseCapability`).
  */
 
 export * from '@/lib/orchestration/capabilities/types';
@@ -14,5 +15,7 @@ export {
 export { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 export {
   registerBuiltInCapabilities,
+  registerAppCapability,
+  registerAppCapabilities,
   getCapabilityDefinitions,
 } from '@/lib/orchestration/capabilities/registry';

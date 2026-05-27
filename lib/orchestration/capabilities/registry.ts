@@ -36,38 +36,93 @@ import { CallExternalApiCapability } from '@/lib/orchestration/capabilities/buil
 import { RunWorkflowCapability } from '@/lib/orchestration/capabilities/built-in/run-workflow';
 import { UploadToStorageCapability } from '@/lib/orchestration/capabilities/built-in/upload-to-storage';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
+import type { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
 
 let registered = false;
 
+// ─── App capability registration (fork-readiness seam) ───────────────────────
+
 /**
- * Register every built-in capability with the dispatcher. Idempotent
- * — repeated imports (HMR, multiple entrypoints) are safe.
+ * App-contributed capabilities, keyed by slug. An app built on Sunrise
+ * pushes into this map at module-import time via `registerAppCapability()`;
+ * the map is flushed into the dispatcher on the same lazy path as the
+ * built-ins (see `registerBuiltInCapabilities`). Keyed by slug so
+ * re-registration under HMR / repeated imports replaces rather than
+ * duplicates — mirroring the dispatcher's own per-slug `register()`.
  */
-export function registerBuiltInCapabilities(): void {
-  if (registered) return;
-  capabilityDispatcher.register(new SearchKnowledgeCapability());
-  capabilityDispatcher.register(new GetPatternDetailCapability());
-  capabilityDispatcher.register(new EstimateCostCapability());
-  capabilityDispatcher.register(new ReadUserMemoryCapability());
-  capabilityDispatcher.register(new WriteUserMemoryCapability());
-  capabilityDispatcher.register(new EscalateToHumanCapability());
-  capabilityDispatcher.register(new ApplyAuditChangesCapability());
-  capabilityDispatcher.register(new AddProviderModelsCapability());
-  capabilityDispatcher.register(new DeactivateProviderModelsCapability());
-  capabilityDispatcher.register(new CallExternalApiCapability());
-  capabilityDispatcher.register(new RunWorkflowCapability());
-  capabilityDispatcher.register(new UploadToStorageCapability());
-  capabilityDispatcher.register(new SendMessageToChannelCapability());
-  registered = true;
+const appCapabilities = new Map<string, BaseCapability>();
+let appRegistered = false;
+
+/**
+ * Register an app-owned capability so it joins the dispatcher on the next
+ * lazy registration pass. Call this at module-import time (alongside the
+ * app's other startup wiring), before any dispatch.
+ *
+ * This is the seam that lets a fork add agent tools without editing
+ * `registerBuiltInCapabilities()`. Idempotent by slug: re-registering the
+ * same slug replaces the prior instance.
+ *
+ * @see .context/orchestration/capabilities.md — the app-author guide
+ */
+export function registerAppCapability(capability: BaseCapability): void {
+  appCapabilities.set(capability.slug, capability);
+  // A new registration must be flushed even if a prior pass already ran
+  // (e.g. an app registers after the first dispatch under HMR).
+  appRegistered = false;
 }
 
 /**
- * Test-only: reset the registration flag so each test can re-register
- * with a fresh dispatcher state. Not exported from the barrel.
+ * Flush all registered app capabilities into the dispatcher. Idempotent —
+ * short-circuits once flushed and re-runs only after a new
+ * `registerAppCapability()` call. Invoked from `registerBuiltInCapabilities()`
+ * right after the built-ins, so app capabilities are present before the
+ * first dispatch in dev and prod alike — NOT a startup hook.
+ */
+export function registerAppCapabilities(): void {
+  if (appRegistered) return;
+  for (const capability of appCapabilities.values()) {
+    capabilityDispatcher.register(capability);
+  }
+  appRegistered = true;
+}
+
+/**
+ * Register every built-in capability with the dispatcher, then flush any
+ * app-registered capabilities. Idempotent — repeated imports (HMR, multiple
+ * entrypoints) are safe.
+ */
+export function registerBuiltInCapabilities(): void {
+  if (!registered) {
+    capabilityDispatcher.register(new SearchKnowledgeCapability());
+    capabilityDispatcher.register(new GetPatternDetailCapability());
+    capabilityDispatcher.register(new EstimateCostCapability());
+    capabilityDispatcher.register(new ReadUserMemoryCapability());
+    capabilityDispatcher.register(new WriteUserMemoryCapability());
+    capabilityDispatcher.register(new EscalateToHumanCapability());
+    capabilityDispatcher.register(new ApplyAuditChangesCapability());
+    capabilityDispatcher.register(new AddProviderModelsCapability());
+    capabilityDispatcher.register(new DeactivateProviderModelsCapability());
+    capabilityDispatcher.register(new CallExternalApiCapability());
+    capabilityDispatcher.register(new RunWorkflowCapability());
+    capabilityDispatcher.register(new UploadToStorageCapability());
+    capabilityDispatcher.register(new SendMessageToChannelCapability());
+    registered = true;
+  }
+  // App capabilities register on the same lazy path, right after the
+  // built-ins. Cheap when already flushed (one boolean check).
+  registerAppCapabilities();
+}
+
+/**
+ * Test-only: reset the registration flags and clear app-registered
+ * capabilities so each test starts from a known state. Not exported from
+ * the barrel.
  */
 export function __resetRegistrationForTests(): void {
   registered = false;
+  appRegistered = false;
+  appCapabilities.clear();
 }
 
 /**
