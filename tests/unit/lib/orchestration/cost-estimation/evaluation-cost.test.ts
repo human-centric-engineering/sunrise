@@ -540,3 +540,176 @@ describe('estimateEvaluationRunCost — workflow subjects (Phase 3.5b)', () => {
     ).rejects.toThrow(/workflowId is required/);
   });
 });
+
+describe('estimateEvaluationRunCost — defensive paths', () => {
+  it('throws when subjectKind=agent is passed without an agentId', async () => {
+    await expect(
+      estimateEvaluationRunCost({
+        subjectKind: 'agent',
+        userId: 'caller-id',
+        judgeAgentSlugs: [],
+        datasetId: 'ds-1',
+      })
+    ).rejects.toThrow(/agentId is required/);
+  });
+
+  it('falls back to FALLBACK_MODEL_ID when no chat default is configured', async () => {
+    mockedChatDefault.mockResolvedValueOnce(null);
+    mockSubjectAgent(null); // no bound model → uses chat default
+    mockJudgeAgents([]);
+    mockDataset(2, 'hash-1');
+    mockPastRuns([]);
+
+    const result = await estimateEvaluationRunCost({
+      agentId: 'agent-x',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-1',
+    });
+
+    expect(result.basedOn).toBe('heuristic');
+    // The fallback id is hard-coded in the module; we just need the
+    // estimator to produce a real subject row rather than skip it entirely.
+    expect(result.modelMix.find((m) => m.role === 'subject')).toBeDefined();
+  });
+
+  it('treats a missing dataset row as zero cases (no crash)', async () => {
+    mockSubjectAgent(SUBJECT_MODEL.id);
+    mockJudgeAgents([]);
+    mockedPrisma.aiDataset.findUnique.mockResolvedValue(null);
+    mockPastRuns([]);
+
+    const result = await estimateEvaluationRunCost({
+      agentId: 'agent-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-missing',
+    });
+
+    expect(result.caseCount).toBe(0);
+    expect(result.midUsd).toBe(0);
+  });
+
+  it('treats a subject-agent lookup failure as a chat-default fallback', async () => {
+    mockedPrisma.aiAgent.findUnique.mockRejectedValueOnce(new Error('db hiccup'));
+    mockJudgeAgents([]);
+    mockDataset(1, 'hash-1');
+    mockPastRuns([]);
+
+    const result = await estimateEvaluationRunCost({
+      agentId: 'agent-x',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-1',
+    });
+
+    // No throw; subject still appears in the mix on the chat-default model.
+    expect(result.basedOn).toBe('heuristic');
+    expect(result.modelMix.some((m) => m.role === 'subject')).toBe(true);
+  });
+
+  it('treats a judge-agents lookup failure as a chat-default fallback per slug', async () => {
+    mockSubjectAgent(SUBJECT_MODEL.id);
+    mockedPrisma.aiAgent.findMany.mockRejectedValueOnce(new Error('db hiccup'));
+    mockDataset(1, 'hash-1');
+    mockPastRuns([]);
+
+    const result = await estimateEvaluationRunCost({
+      agentId: 'agent-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: ['judge-a', 'judge-b'],
+      datasetId: 'ds-1',
+    });
+
+    // Both judges still appear, attributed to the chat default.
+    const judgeEntries = result.modelMix.filter((m) => m.role === 'judge');
+    expect(judgeEntries).toHaveLength(2);
+    expect(judgeEntries.every((j) => j.modelId === 'default-chat')).toBe(true);
+  });
+
+  it('keeps the empirical floor empty when prior-run metricConfigs are not an array (defensive)', async () => {
+    mockSubjectAgent(SUBJECT_MODEL.id);
+    mockJudgeAgents([{ slug: 'judge-a', model: JUDGE_MODEL.id }]);
+    mockDataset(5, 'hash-stable');
+    // metricConfigs intentionally malformed: object instead of array, then
+    // missing slug, then judge_agent with non-object config, then with no
+    // agentSlug. Each row must be silently dropped by extractJudgeSlugs.
+    mockedPrisma.aiEvaluationRun.findMany.mockResolvedValueOnce([
+      {
+        id: 'r1',
+        metricConfigs: { broken: 'not-an-array' },
+        totalCostUsd: 1,
+        progress: { casesDone: 5 },
+      },
+      {
+        id: 'r2',
+        metricConfigs: [{ slug: 'other' }],
+        totalCostUsd: 1,
+        progress: { casesDone: 5 },
+      },
+      {
+        id: 'r3',
+        metricConfigs: [{ slug: 'judge_agent', config: 'not-an-object' }],
+        totalCostUsd: 1,
+        progress: { casesDone: 5 },
+      },
+      {
+        id: 'r4',
+        metricConfigs: [{ slug: 'judge_agent', config: { agentSlug: '' } }],
+        totalCostUsd: 1,
+        progress: { casesDone: 5 },
+      },
+    ] as never);
+
+    const result = await estimateEvaluationRunCost({
+      agentId: 'agent-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: ['judge-a'],
+      datasetId: 'ds-1',
+    });
+
+    // None of the malformed rows should count toward the empirical floor.
+    expect(result.basedOn).toBe('heuristic');
+    expect(result.sampleSize).toBe(0);
+  });
+
+  it('drops past runs whose progress shape is malformed (defensive readCasesDone)', async () => {
+    mockSubjectAgent(SUBJECT_MODEL.id);
+    mockJudgeAgents([{ slug: 'judge-a', model: JUDGE_MODEL.id }]);
+    mockDataset(5, 'hash-stable');
+    const metricConfigs = [{ slug: 'judge_agent', config: { agentSlug: 'judge-a' } }];
+    // Three near-matches that each fail readCasesDone for a different reason.
+    mockedPrisma.aiEvaluationRun.findMany.mockResolvedValueOnce([
+      { id: 'r-null', metricConfigs, totalCostUsd: 1, progress: null },
+      { id: 'r-array', metricConfigs, totalCostUsd: 1, progress: [1, 2, 3] },
+      {
+        id: 'r-negative',
+        metricConfigs,
+        totalCostUsd: 1,
+        progress: { casesDone: -5 },
+      },
+      {
+        id: 'r-zero',
+        metricConfigs,
+        totalCostUsd: 1,
+        progress: { casesDone: 0 },
+      },
+      {
+        id: 'r-noncost',
+        metricConfigs,
+        totalCostUsd: null,
+        progress: { casesDone: 5 },
+      },
+    ] as never);
+
+    const result = await estimateEvaluationRunCost({
+      agentId: 'agent-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: ['judge-a'],
+      datasetId: 'ds-1',
+    });
+
+    expect(result.basedOn).toBe('heuristic');
+    expect(result.sampleSize).toBe(0);
+  });
+});

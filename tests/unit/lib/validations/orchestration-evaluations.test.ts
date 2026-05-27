@@ -11,11 +11,14 @@ import { describe, it, expect } from 'vitest';
 import {
   createDatasetJsonSchema,
   createRunSchema,
+  estimateRunCostSchema,
+  gateConfigSchema,
   listDatasetCasesQuerySchema,
   listDatasetsQuerySchema,
   listRunCasesQuerySchema,
   listRunsQuerySchema,
   patchDatasetSchema,
+  runPairwiseVerdictSchema,
 } from '@/lib/validations/orchestration-evaluations';
 
 // ---------------------------------------------------------------------------
@@ -332,5 +335,166 @@ describe('createRunSchema', () => {
 
   it('rejects empty name', () => {
     expect(() => createRunSchema.parse({ ...baseAgentRun, name: '' })).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// estimateRunCostSchema (Phase 3.5b — workflow-aware)
+// ---------------------------------------------------------------------------
+
+describe('estimateRunCostSchema', () => {
+  it("defaults subjectKind to 'agent' when omitted", () => {
+    const r = estimateRunCostSchema.parse({ agentId: 'agent-1', datasetId: 'ds-1' });
+    expect(r.subjectKind).toBe('agent');
+    expect(r.judgeAgentSlugs).toEqual([]);
+  });
+
+  it('accepts a workflow subject with workflowId', () => {
+    const r = estimateRunCostSchema.parse({
+      subjectKind: 'workflow',
+      workflowId: 'wf-1',
+      datasetId: 'ds-1',
+    });
+    expect(r.subjectKind).toBe('workflow');
+    expect(r.workflowId).toBe('wf-1');
+  });
+
+  it('rejects subjectKind=agent without agentId', () => {
+    expect(() =>
+      estimateRunCostSchema.parse({ subjectKind: 'agent', datasetId: 'ds-1' })
+    ).toThrow();
+  });
+
+  it('rejects subjectKind=workflow without workflowId', () => {
+    expect(() =>
+      estimateRunCostSchema.parse({ subjectKind: 'workflow', datasetId: 'ds-1' })
+    ).toThrow();
+  });
+
+  it('accepts an explicit caseCount override (for in-progress dataset previews)', () => {
+    const r = estimateRunCostSchema.parse({
+      agentId: 'a',
+      datasetId: 'ds-1',
+      caseCount: '42',
+    });
+    expect(r.caseCount).toBe(42);
+  });
+
+  it('rejects a negative caseCount', () => {
+    expect(() =>
+      estimateRunCostSchema.parse({ agentId: 'a', datasetId: 'ds-1', caseCount: -3 })
+    ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gateConfigSchema (Phase 4 — minimal CI gate)
+// ---------------------------------------------------------------------------
+
+describe('gateConfigSchema', () => {
+  it('accepts a single mean-only threshold', () => {
+    const r = gateConfigSchema.parse({
+      thresholds: [{ metricSlug: 'judge_agent', minMean: 0.8 }],
+    });
+    expect(r.thresholds).toHaveLength(1);
+    expect(r.thresholds[0].minMean).toBe(0.8);
+  });
+
+  it('accepts a single passRate-only threshold', () => {
+    const r = gateConfigSchema.parse({
+      thresholds: [{ metricSlug: 'judge_agent', minPassRate: 0.9 }],
+    });
+    expect(r.thresholds[0].minPassRate).toBe(0.9);
+  });
+
+  it('accepts thresholds with both mean and passRate set', () => {
+    const r = gateConfigSchema.parse({
+      thresholds: [{ metricSlug: 'judge_agent', minMean: 0.8, minPassRate: 0.9 }],
+    });
+    expect(r.thresholds[0].minMean).toBe(0.8);
+    expect(r.thresholds[0].minPassRate).toBe(0.9);
+  });
+
+  it('rejects a threshold with neither minMean nor minPassRate', () => {
+    expect(() => gateConfigSchema.parse({ thresholds: [{ metricSlug: 'judge_agent' }] })).toThrow();
+  });
+
+  it('rejects an empty thresholds array', () => {
+    expect(() => gateConfigSchema.parse({ thresholds: [] })).toThrow();
+  });
+
+  it('rejects more than 20 thresholds (anti-abuse cap)', () => {
+    const tooMany = Array.from({ length: 21 }, () => ({
+      metricSlug: 'judge_agent',
+      minMean: 0.5,
+    }));
+    expect(() => gateConfigSchema.parse({ thresholds: tooMany })).toThrow();
+  });
+
+  it('rejects minMean outside [0, 1]', () => {
+    expect(() =>
+      gateConfigSchema.parse({
+        thresholds: [{ metricSlug: 'judge_agent', minMean: 1.5 }],
+      })
+    ).toThrow();
+    expect(() =>
+      gateConfigSchema.parse({
+        thresholds: [{ metricSlug: 'judge_agent', minMean: -0.1 }],
+      })
+    ).toThrow();
+  });
+
+  it('rejects an empty metricSlug', () => {
+    expect(() =>
+      gateConfigSchema.parse({ thresholds: [{ metricSlug: '', minMean: 0.5 }] })
+    ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runPairwiseVerdictSchema (Phase 3.5a)
+// ---------------------------------------------------------------------------
+
+describe('runPairwiseVerdictSchema', () => {
+  it('accepts a valid body with distinct variant ids', () => {
+    const r = runPairwiseVerdictSchema.parse({
+      judgeAgentSlug: 'eval-judge-correctness',
+      variantAId: 'v-a',
+      variantBId: 'v-b',
+    });
+    expect(r.judgeAgentSlug).toBe('eval-judge-correctness');
+    expect(r.variantAId).toBe('v-a');
+    expect(r.variantBId).toBe('v-b');
+  });
+
+  it('rejects equal variantAId / variantBId', () => {
+    expect(() =>
+      runPairwiseVerdictSchema.parse({
+        judgeAgentSlug: 'eval-judge-correctness',
+        variantAId: 'v-a',
+        variantBId: 'v-a',
+      })
+    ).toThrow();
+  });
+
+  it('rejects empty judgeAgentSlug', () => {
+    expect(() =>
+      runPairwiseVerdictSchema.parse({
+        judgeAgentSlug: '',
+        variantAId: 'v-a',
+        variantBId: 'v-b',
+      })
+    ).toThrow();
+  });
+
+  it('rejects extra unknown fields (.strict())', () => {
+    expect(() =>
+      runPairwiseVerdictSchema.parse({
+        judgeAgentSlug: 'eval-judge-correctness',
+        variantAId: 'v-a',
+        variantBId: 'v-b',
+        unexpectedField: 'should not be here',
+      })
+    ).toThrow();
   });
 });

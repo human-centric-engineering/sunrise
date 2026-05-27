@@ -213,7 +213,12 @@ describe('executeAgentCall', () => {
     await executeAgentCall(makeStep(), makeCtx());
 
     const messages = mockChat.mock.calls[0][0];
-    expect(messages[0]).toEqual({ role: 'system', content: 'You are a summarizer.' });
+    // composeSections wraps systemInstructions in an `[Instructions]` block
+    // (see lib/orchestration/agents/resolve-effective-prompt.ts:composeSections).
+    expect(messages[0]).toEqual({
+      role: 'system',
+      content: '[Instructions]\nYou are a summarizer.',
+    });
     expect(messages[1]).toEqual({ role: 'user', content: 'Summarize: hello' });
   });
 

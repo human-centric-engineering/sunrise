@@ -189,3 +189,49 @@ describe('POST /evaluations/runs/estimate — happy path', () => {
     );
   });
 });
+
+describe('POST /evaluations/runs/estimate — workflow subjects (Phase 3.5b)', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: 'ds-1' } as never);
+    vi.mocked(estimateEvaluationRunCost).mockResolvedValue(SAMPLE_ESTIMATE);
+  });
+
+  it('threads subjectKind=workflow + workflowId to the estimator (no agentId)', async () => {
+    const res = await POST(
+      makeRequest({
+        subjectKind: 'workflow',
+        workflowId: 'wf-42',
+        datasetId: 'ds-1',
+      })
+    );
+
+    expect(res.status).toBe(200);
+    const args = vi.mocked(estimateEvaluationRunCost).mock.calls[0][0];
+    expect(args.subjectKind).toBe('workflow');
+    expect(args.workflowId).toBe('wf-42');
+    expect(args.agentId).toBeUndefined();
+  });
+
+  it('rejects subjectKind=workflow without workflowId (Zod refine)', async () => {
+    const res = await POST(
+      makeRequest({
+        subjectKind: 'workflow',
+        datasetId: 'ds-1',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(vi.mocked(estimateEvaluationRunCost)).not.toHaveBeenCalled();
+  });
+
+  it('rejects subjectKind=agent without agentId (Zod refine)', async () => {
+    const res = await POST(
+      makeRequest({
+        subjectKind: 'agent',
+        datasetId: 'ds-1',
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(vi.mocked(estimateEvaluationRunCost)).not.toHaveBeenCalled();
+  });
+});
