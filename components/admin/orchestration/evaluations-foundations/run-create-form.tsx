@@ -871,15 +871,17 @@ function useEvaluationCostEstimate(args: {
   const judgeKey = judgeSlugs.join(',');
 
   React.useEffect(() => {
-    // Workflow-subject runs don't have a fingerprint-tight cost estimator
-    // yet — the empirical past-runs query keys on agentId only. Suppress
-    // the banner for workflow subjects rather than showing a misleading
-    // heuristic. A workflow-aware estimator is a Phase 3.5 follow-up.
-    if (args.subjectKind === 'workflow') {
+    // Need a subject (matching the chosen kind) + dataset before there's
+    // anything to estimate.
+    if (!args.datasetId) {
       setState({ status: 'idle' });
       return;
     }
-    if (!args.agentId || !args.datasetId) {
+    if (args.subjectKind === 'agent' && !args.agentId) {
+      setState({ status: 'idle' });
+      return;
+    }
+    if (args.subjectKind === 'workflow' && !args.workflowId) {
       setState({ status: 'idle' });
       return;
     }
@@ -890,7 +892,9 @@ function useEvaluationCostEstimate(args: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agentId: args.agentId,
+          subjectKind: args.subjectKind,
+          ...(args.subjectKind === 'agent' ? { agentId: args.agentId } : {}),
+          ...(args.subjectKind === 'workflow' ? { workflowId: args.workflowId } : {}),
           datasetId: args.datasetId,
           judgeAgentSlugs: judgeSlugs,
         }),
@@ -933,7 +937,7 @@ function useEvaluationCostEstimate(args: {
     // would re-fire on every selectedMetrics change even when the judge
     // set is identical.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [args.subjectKind, args.agentId, args.datasetId, judgeKey]);
+  }, [args.subjectKind, args.agentId, args.workflowId, args.datasetId, judgeKey]);
 
   return state;
 }

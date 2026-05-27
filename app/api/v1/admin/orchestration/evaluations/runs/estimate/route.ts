@@ -34,7 +34,9 @@ export const POST = withAdminAuth(async (request, session) => {
   if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);
 
   const estimate = await estimateEvaluationRunCost({
-    agentId: body.agentId,
+    subjectKind: body.subjectKind,
+    ...(body.agentId ? { agentId: body.agentId } : {}),
+    ...(body.workflowId ? { workflowId: body.workflowId } : {}),
     userId: session.user.id,
     judgeAgentSlugs: body.judgeAgentSlugs,
     datasetId: body.datasetId,
@@ -42,7 +44,9 @@ export const POST = withAdminAuth(async (request, session) => {
   });
 
   log.info('Eval run cost estimated', {
+    subjectKind: body.subjectKind,
     agentId: body.agentId,
+    workflowId: body.workflowId,
     datasetId: body.datasetId,
     judgeCount: body.judgeAgentSlugs.length,
     basedOn: estimate.basedOn,

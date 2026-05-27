@@ -39,6 +39,10 @@ import { logger } from '@/lib/logging';
 import { getModel, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
+import {
+  loadWorkflowShape,
+  type WorkflowShape,
+} from '@/lib/orchestration/cost-estimation/workflow-cost';
 
 /** Heuristic per-case token shape — calibrated against Phase 1 judge prompts. */
 const HEURISTIC = {
@@ -46,6 +50,13 @@ const HEURISTIC = {
   SUBJECT_OUTPUT_TOKENS_PER_CASE: 500,
   JUDGE_INPUT_TOKENS_PER_CASE: 600,
   JUDGE_OUTPUT_TOKENS_PER_CASE: 150,
+  // Workflow-subject case: each LLM-producing step in the published
+  // workflow definition contributes its own slice. The numbers mirror
+  // `workflow-cost.ts`'s base per-step heuristic (3k in / 1k out) so the
+  // two estimators stay aligned when the same workflow appears as both
+  // an orchestration target and an eval subject.
+  WORKFLOW_STEP_INPUT_TOKENS_PER_CASE: 3_000,
+  WORKFLOW_STEP_OUTPUT_TOKENS_PER_CASE: 1_000,
 } as const;
 
 /** Last-resort model id if neither the agent nor the chat default resolves. */
@@ -95,8 +106,15 @@ export interface EvaluationCostEstimate {
 }
 
 export interface EstimateEvaluationRunCostInput {
-  /** Subject agent id (the agent under test). */
-  agentId: string;
+  /**
+   * Whether the subject is an agent or a workflow. Defaults to 'agent'
+   * (the Phase 1 shape) when omitted so existing callers keep working.
+   */
+  subjectKind?: 'agent' | 'workflow';
+  /** Subject agent id (the agent under test). Required when `subjectKind === 'agent'`. */
+  agentId?: string;
+  /** Subject workflow id. Required when `subjectKind === 'workflow'`. */
+  workflowId?: string;
   /** Slugs of the judge agents (model graders) in this run, in any order. */
   judgeAgentSlugs: string[];
   /** Dataset id — drives `caseCount` and the fingerprint. */
@@ -120,10 +138,19 @@ export interface EstimateEvaluationRunCostInput {
   caseCount?: number;
 }
 
-interface SubjectShape {
+interface AgentSubjectShape {
+  kind: 'agent';
   agentId: string;
   modelId: string;
 }
+
+interface WorkflowSubjectShape {
+  kind: 'workflow';
+  workflowId: string;
+  shape: WorkflowShape;
+}
+
+type SubjectShape = AgentSubjectShape | WorkflowSubjectShape;
 
 interface JudgeShape {
   agentSlug: string;
@@ -139,7 +166,15 @@ interface PastRunSummary {
 export async function estimateEvaluationRunCost(
   input: EstimateEvaluationRunCostInput
 ): Promise<EvaluationCostEstimate> {
-  const { agentId, judgeAgentSlugs, datasetId, userId } = input;
+  const subjectKind = input.subjectKind ?? 'agent';
+  const { judgeAgentSlugs, datasetId, userId } = input;
+
+  if (subjectKind === 'agent' && !input.agentId) {
+    throw new Error('estimateEvaluationRunCost: agentId is required when subjectKind=agent');
+  }
+  if (subjectKind === 'workflow' && !input.workflowId) {
+    throw new Error('estimateEvaluationRunCost: workflowId is required when subjectKind=workflow');
+  }
 
   // Warm the registry once. Both helpers are cached (24h / 60s) so the
   // network/DB cost is paid once per process, not per estimate.
@@ -148,7 +183,9 @@ export async function estimateEvaluationRunCost(
   const chatDefaultModelId = (await getDefaultModelForTaskOrNull('chat')) ?? FALLBACK_MODEL_ID;
 
   const [subjectShape, judgeShapes, datasetMeta] = await Promise.all([
-    loadSubjectShape(agentId, chatDefaultModelId),
+    subjectKind === 'agent'
+      ? loadSubjectShape(input.agentId as string, chatDefaultModelId)
+      : loadWorkflowSubjectShape(input.workflowId as string, chatDefaultModelId),
     loadJudgeShapes(judgeAgentSlugs, chatDefaultModelId),
     loadDatasetMeta(datasetId),
   ]);
@@ -158,14 +195,18 @@ export async function estimateEvaluationRunCost(
   let pastRuns: PastRunSummary[] = [];
   try {
     pastRuns = await loadMatchingPastRuns({
-      agentId,
+      subjectKind,
+      ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       userId,
       judgeAgentSlugs,
       datasetContentHash: datasetMeta.contentHash,
     });
   } catch (err) {
     logger.warn('estimateEvaluationRunCost: past-runs query failed, falling back to heuristic', {
-      agentId,
+      subjectKind,
+      agentId: input.agentId,
+      workflowId: input.workflowId,
       datasetId,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -188,6 +229,14 @@ export async function estimateEvaluationRunCost(
   });
 }
 
+async function loadWorkflowSubjectShape(
+  workflowId: string,
+  chatDefault: string
+): Promise<WorkflowSubjectShape> {
+  const shape = await loadWorkflowShape(workflowId, chatDefault);
+  return { kind: 'workflow', workflowId, shape };
+}
+
 function buildHeuristicEstimate(params: {
   caseCount: number;
   subjectShape: SubjectShape;
@@ -200,18 +249,47 @@ function buildHeuristicEstimate(params: {
   let midUsd = 0;
 
   if (caseCount > 0) {
-    const subjectInput = HEURISTIC.SUBJECT_INPUT_TOKENS_PER_CASE * caseCount;
-    const subjectOutput = HEURISTIC.SUBJECT_OUTPUT_TOKENS_PER_CASE * caseCount;
-    const subjectCost = priceTokens(subjectShape.modelId, subjectInput, subjectOutput);
-    midUsd += subjectCost;
-    modelMix.push({
-      modelId: subjectShape.modelId,
-      role: 'subject',
-      inputTokens: subjectInput,
-      outputTokens: subjectOutput,
-      costUsd: subjectCost,
-      pricingKnown: isModelPriced(subjectShape.modelId),
-    });
+    if (subjectShape.kind === 'agent') {
+      const subjectInput = HEURISTIC.SUBJECT_INPUT_TOKENS_PER_CASE * caseCount;
+      const subjectOutput = HEURISTIC.SUBJECT_OUTPUT_TOKENS_PER_CASE * caseCount;
+      const subjectCost = priceTokens(subjectShape.modelId, subjectInput, subjectOutput);
+      midUsd += subjectCost;
+      modelMix.push({
+        modelId: subjectShape.modelId,
+        role: 'subject',
+        inputTokens: subjectInput,
+        outputTokens: subjectOutput,
+        costUsd: subjectCost,
+        pricingKnown: isModelPriced(subjectShape.modelId),
+      });
+    } else {
+      // Workflow subject — union per-LLM-step tokens by resolved model.
+      // Each workSteps entry already has its multiplier (agent_call × 3,
+      // reflect × 2, etc.) baked in by `summariseShape`.
+      const byModel = new Map<string, { input: number; output: number }>();
+      for (const step of subjectShape.shape.workSteps) {
+        const inputTokens =
+          HEURISTIC.WORKFLOW_STEP_INPUT_TOKENS_PER_CASE * step.multiplier * caseCount;
+        const outputTokens =
+          HEURISTIC.WORKFLOW_STEP_OUTPUT_TOKENS_PER_CASE * step.multiplier * caseCount;
+        const existing = byModel.get(step.modelId) ?? { input: 0, output: 0 };
+        existing.input += inputTokens;
+        existing.output += outputTokens;
+        byModel.set(step.modelId, existing);
+      }
+      for (const [modelId, tokens] of byModel) {
+        const cost = priceTokens(modelId, tokens.input, tokens.output);
+        midUsd += cost;
+        modelMix.push({
+          modelId,
+          role: 'subject',
+          inputTokens: tokens.input,
+          outputTokens: tokens.output,
+          costUsd: cost,
+          pricingKnown: isModelPriced(modelId),
+        });
+      }
+    }
 
     for (const judge of judgeShapes) {
       const judgeInput = HEURISTIC.JUDGE_INPUT_TOKENS_PER_CASE * caseCount;
@@ -299,20 +377,20 @@ function buildEmpiricalEstimate(params: {
   };
 }
 
-async function loadSubjectShape(agentId: string, chatDefault: string): Promise<SubjectShape> {
+async function loadSubjectShape(agentId: string, chatDefault: string): Promise<AgentSubjectShape> {
   try {
     const row = await prisma.aiAgent.findUnique({
       where: { id: agentId },
       select: { model: true },
     });
     const modelId = row?.model && row.model.length > 0 ? row.model : chatDefault;
-    return { agentId, modelId };
+    return { kind: 'agent', agentId, modelId };
   } catch (err) {
     logger.warn('estimateEvaluationRunCost: subject agent lookup failed', {
       agentId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return { agentId, modelId: chatDefault };
+    return { kind: 'agent', agentId, modelId: chatDefault };
   }
 }
 
@@ -386,21 +464,24 @@ function extractJudgeSlugs(metricConfigs: unknown): string[] {
 }
 
 async function loadMatchingPastRuns(params: {
-  agentId: string;
+  subjectKind: 'agent' | 'workflow';
+  agentId?: string;
+  workflowId?: string;
   userId: string;
   judgeAgentSlugs: string[];
   datasetContentHash: string | null;
 }): Promise<PastRunSummary[]> {
-  const { agentId, userId, judgeAgentSlugs, datasetContentHash } = params;
+  const { subjectKind, agentId, workflowId, userId, judgeAgentSlugs, datasetContentHash } = params;
   if (!datasetContentHash) return [];
 
   const candidates = await prisma.aiEvaluationRun.findMany({
     where: {
-      agentId,
       userId,
       datasetContentHash,
       status: 'completed',
-      subjectKind: 'agent',
+      subjectKind,
+      ...(subjectKind === 'agent' && agentId ? { agentId } : {}),
+      ...(subjectKind === 'workflow' && workflowId ? { workflowId } : {}),
     },
     select: {
       id: true,

@@ -566,9 +566,63 @@ in Phase 3.5a (see below).
 - A first-class "evaluation workflow" template type. Keep workflows
   generic; let the `judge_call` step + `workflow_as_judge` grader
   compose into eval-shaped workflows organically.
-- A workflow-aware cost estimator. The form suppresses the cost
-  banner for workflow subjects; the per-step token mix needs to be
-  unioned across the workflow's defined steps. Phase 3.5.
+
+## Phase 3.5b — workflow-aware cost estimator
+
+The cost estimator now handles workflow subjects so the `/runs/new`
+form's cost banner is no longer suppressed when the operator picks a
+workflow subject.
+
+### Server
+
+`estimateEvaluationRunCost` (`lib/orchestration/cost-estimation/evaluation-cost.ts`)
+branches on `subjectKind`:
+
+- `'agent'` — unchanged. Bound model lookup + heuristic per-case
+  subject tokens.
+- `'workflow'` — calls `loadWorkflowShape(workflowId, chatDefault)`
+  from `workflow-cost.ts` (the same helper the workflow builder
+  uses), walks the resulting `workSteps`, and applies the heuristic
+  `WORKFLOW_STEP_INPUT_TOKENS_PER_CASE / OUTPUT_TOKENS_PER_CASE`
+  (3,000 / 1,000 — same baseline as `workflow-cost.ts`) multiplied
+  by each step's `multiplier` (`agent_call × 3`, `reflect × 2`,
+  others × 1) and `caseCount`. Tokens are aggregated by resolved
+  model — a workflow that calls two different agents binds two
+  `modelMix` rows tagged `role: 'subject'`.
+
+Empirical mode keys on `(subjectKind, agentId | workflowId, sorted
+judgeAgentSlugs, datasetContentHash)` so workflow-subject and
+agent-subject past runs never cross-pollute the estimate.
+
+### UI
+
+`run-create-form.tsx` no longer early-returns for workflow subjects
+in `useEvaluationCostEstimate`. The hook now sends
+`{ subjectKind, agentId|workflowId, datasetId, judgeAgentSlugs }`
+and the response renders through the same banner (one `subject`
+entry per resolved model, plus per-judge rows). Debounce stays at
+350ms; suppression still kicks in until the chosen subject is
+populated.
+
+### What's NOT included
+
+- A per-step cost breakdown in the eval banner. The estimator
+  internally tracks tokens per step, but the UI sums them by model —
+  the workflow builder's per-step tint is the right surface for
+  that detail.
+- Conditional-branch awareness (every LLM step is assumed to fire
+  on every case). Matches the workflow-builder estimator's posture
+  and is documented as a heuristic upper bound.
+
+### Critical files
+
+| Concern                | Path                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------- |
+| Estimator              | `lib/orchestration/cost-estimation/evaluation-cost.ts`                                       |
+| Shape loader (re-used) | `lib/orchestration/cost-estimation/workflow-cost.ts` (`loadWorkflowShape`, `summariseShape`) |
+| Zod schema             | `lib/validations/orchestration-evaluations.ts` (`estimateRunCostSchema`)                     |
+| Estimate route         | `app/api/v1/admin/orchestration/evaluations/runs/estimate/route.ts`                          |
+| Form hook              | `components/admin/orchestration/evaluations-foundations/run-create-form.tsx`                 |
 
 ## Phase 3.5a — pairwise verdicts endpoint + compare badge
 

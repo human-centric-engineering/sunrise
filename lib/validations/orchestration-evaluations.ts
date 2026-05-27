@@ -165,12 +165,22 @@ export type ListRunCasesQuery = z.infer<typeof listRunCasesQuerySchema>;
  * caller (the form) sends them all even if the user hasn't selected
  * any judges yet.
  */
-export const estimateRunCostSchema = z.object({
-  agentId: z.string().min(1),
-  datasetId: z.string().min(1),
-  judgeAgentSlugs: z.array(z.string().min(1)).default([]),
-  caseCount: z.coerce.number().int().nonnegative().optional(),
-});
+export const estimateRunCostSchema = z
+  .object({
+    /**
+     * Defaults to 'agent' so callers that pre-date the Phase 3.5b widening
+     * (and tests that don't care about workflow subjects) keep working.
+     */
+    subjectKind: z.enum(['agent', 'workflow']).default('agent'),
+    agentId: z.string().min(1).optional(),
+    workflowId: z.string().min(1).optional(),
+    datasetId: z.string().min(1),
+    judgeAgentSlugs: z.array(z.string().min(1)).default([]),
+    caseCount: z.coerce.number().int().nonnegative().optional(),
+  })
+  .refine((v) => (v.subjectKind === 'agent' ? !!v.agentId : !!v.workflowId), {
+    message: 'agentId required for agent subjects; workflowId required for workflow subjects',
+  });
 
 export type EstimateRunCostInput = z.infer<typeof estimateRunCostSchema>;
 

@@ -42,10 +42,17 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   getDefaultModelForTaskOrNull: vi.fn(),
 }));
 
+// Workflow-subject path delegates shape resolution to workflow-cost.ts.
+// Mocking it keeps these tests fully unit-scoped.
+vi.mock('@/lib/orchestration/cost-estimation/workflow-cost', () => ({
+  loadWorkflowShape: vi.fn(),
+}));
+
 import { prisma } from '@/lib/db/client';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import { estimateEvaluationRunCost } from '@/lib/orchestration/cost-estimation/evaluation-cost';
+import { loadWorkflowShape } from '@/lib/orchestration/cost-estimation/workflow-cost';
 
 const SUBJECT_MODEL = {
   id: 'subject-model',
@@ -383,5 +390,153 @@ describe('estimateEvaluationRunCost — robustness', () => {
     });
 
     expect(result.caseCount).toBe(3);
+  });
+});
+
+describe('estimateEvaluationRunCost — workflow subjects (Phase 3.5b)', () => {
+  const mockedLoadShape = vi.mocked(loadWorkflowShape);
+
+  it('aggregates per-step tokens by resolved model for a multi-step workflow', async () => {
+    mockedLoadShape.mockResolvedValue({
+      llmStepCount: 3,
+      hasSupervisor: false,
+      supervisorStepIds: new Set(),
+      workSteps: [
+        { stepId: 's1', type: 'agent_call', modelId: SUBJECT_MODEL.id, multiplier: 1 },
+        { stepId: 's2', type: 'llm_call', modelId: SUBJECT_MODEL.id, multiplier: 1 },
+        { stepId: 's3', type: 'llm_call', modelId: JUDGE_MODEL.id, multiplier: 1 },
+      ],
+      supervisorStepId: null,
+      supervisorModelId: null,
+    });
+    mockJudgeAgents([]);
+    mockDataset(4, 'wf-hash');
+    mockPastRuns([]);
+
+    const result = await estimateEvaluationRunCost({
+      subjectKind: 'workflow',
+      workflowId: 'wf-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-1',
+    });
+
+    expect(result.basedOn).toBe('heuristic');
+    expect(result.caseCount).toBe(4);
+
+    // Two SUBJECT_MODEL steps → 2 × (3000 in, 1000 out) × 4 cases = 24k in, 8k out
+    //   cost = 24000/1M * 3 + 8000/1M * 15 = 0.072 + 0.12 = 0.192
+    // One JUDGE_MODEL step → 1 × (3000 in, 1000 out) × 4 cases = 12k in, 4k out
+    //   cost = 12000/1M * 1 + 4000/1M * 5 = 0.012 + 0.020 = 0.032
+    expect(result.midUsd).toBeCloseTo(0.192 + 0.032, 4);
+
+    // Two subject rows (one per resolved model). No judge rows.
+    expect(result.modelMix.filter((m) => m.role === 'subject')).toHaveLength(2);
+    expect(result.modelMix.filter((m) => m.role === 'judge')).toHaveLength(0);
+    const subjectByModel = new Map(
+      result.modelMix.filter((m) => m.role === 'subject').map((m) => [m.modelId, m])
+    );
+    expect(subjectByModel.get(SUBJECT_MODEL.id)?.inputTokens).toBe(24_000);
+    expect(subjectByModel.get(SUBJECT_MODEL.id)?.outputTokens).toBe(8_000);
+    expect(subjectByModel.get(JUDGE_MODEL.id)?.inputTokens).toBe(12_000);
+    expect(subjectByModel.get(JUDGE_MODEL.id)?.outputTokens).toBe(4_000);
+  });
+
+  it('respects per-step multipliers (agent_call counts as 3 LLM calls)', async () => {
+    mockedLoadShape.mockResolvedValue({
+      llmStepCount: 3,
+      hasSupervisor: false,
+      supervisorStepIds: new Set(),
+      workSteps: [{ stepId: 's1', type: 'agent_call', modelId: SUBJECT_MODEL.id, multiplier: 3 }],
+      supervisorStepId: null,
+      supervisorModelId: null,
+    });
+    mockJudgeAgents([]);
+    mockDataset(2, 'wf-hash');
+    mockPastRuns([]);
+
+    const result = await estimateEvaluationRunCost({
+      subjectKind: 'workflow',
+      workflowId: 'wf-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-1',
+    });
+
+    // Tokens scale linearly with multiplier:
+    //   input = 3000 * 3 * 2 cases = 18000
+    //   output = 1000 * 3 * 2 cases = 6000
+    const subjectEntry = result.modelMix.find((m) => m.role === 'subject');
+    expect(subjectEntry?.inputTokens).toBe(18_000);
+    expect(subjectEntry?.outputTokens).toBe(6_000);
+  });
+
+  it('falls back to heuristic when fewer than 3 matching workflow runs exist', async () => {
+    mockedLoadShape.mockResolvedValue({
+      llmStepCount: 1,
+      hasSupervisor: false,
+      supervisorStepIds: new Set(),
+      workSteps: [{ stepId: 's1', type: 'llm_call', modelId: SUBJECT_MODEL.id, multiplier: 1 }],
+      supervisorStepId: null,
+      supervisorModelId: null,
+    });
+    mockJudgeAgents([]);
+    mockDataset(5, 'wf-hash');
+    mockPastRuns([
+      { id: 'r1', metricConfigs: [], totalCostUsd: 0.1, casesDone: 5 },
+      { id: 'r2', metricConfigs: [], totalCostUsd: 0.1, casesDone: 5 },
+    ]);
+
+    const result = await estimateEvaluationRunCost({
+      subjectKind: 'workflow',
+      workflowId: 'wf-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-1',
+    });
+
+    expect(result.basedOn).toBe('heuristic');
+    expect(result.sampleSize).toBe(2);
+  });
+
+  it('queries past runs scoped to subjectKind=workflow + workflowId', async () => {
+    mockedLoadShape.mockResolvedValue({
+      llmStepCount: 1,
+      hasSupervisor: false,
+      supervisorStepIds: new Set(),
+      workSteps: [{ stepId: 's1', type: 'llm_call', modelId: SUBJECT_MODEL.id, multiplier: 1 }],
+      supervisorStepId: null,
+      supervisorModelId: null,
+    });
+    mockJudgeAgents([]);
+    mockDataset(5, 'wf-hash');
+    mockPastRuns([]);
+
+    await estimateEvaluationRunCost({
+      subjectKind: 'workflow',
+      workflowId: 'wf-42',
+      userId: 'caller-id',
+      judgeAgentSlugs: [],
+      datasetId: 'ds-1',
+    });
+
+    expect(mockedPrisma.aiEvaluationRun.findMany).toHaveBeenCalledOnce();
+    const arg = mockedPrisma.aiEvaluationRun.findMany.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(arg.where.subjectKind).toBe('workflow');
+    expect(arg.where.workflowId).toBe('wf-42');
+    expect(arg.where).not.toHaveProperty('agentId');
+  });
+
+  it('throws when subjectKind=workflow is passed without a workflowId', async () => {
+    await expect(
+      estimateEvaluationRunCost({
+        subjectKind: 'workflow',
+        userId: 'caller-id',
+        judgeAgentSlugs: [],
+        datasetId: 'ds-1',
+      })
+    ).rejects.toThrow(/workflowId is required/);
   });
 });

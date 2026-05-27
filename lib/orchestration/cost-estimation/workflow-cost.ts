@@ -225,7 +225,7 @@ interface StepModelEntry {
   multiplier: number;
 }
 
-interface WorkflowShape {
+export interface WorkflowShape {
   llmStepCount: number;
   hasSupervisor: boolean;
   /** Step ids that have type 'supervisor' — used to split past run costs. */
@@ -778,7 +778,7 @@ function cloneTokenMap(src: Map<string, PerModelTokens>): Map<string, PerModelTo
  * can't be loaded or the definition fails schema validation — better
  * to surface a low-confidence estimate than crash the dialog.
  */
-async function loadWorkflowShape(
+export async function loadWorkflowShape(
   workflowId: string,
   chatDefaultModelId: string
 ): Promise<WorkflowShape> {
