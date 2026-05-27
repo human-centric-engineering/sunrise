@@ -22,6 +22,7 @@
 import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 
 export type ErasureReason = 'self_service' | 'admin_action';
 
@@ -60,6 +61,22 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     await deleteByPrefix(`avatars/${userId}/`);
   }
 
+  // 1b. App-registered external cleanup (object storage, search indexes, …).
+  // Best-effort like the avatar cleanup above: a hook failure is logged and
+  // swallowed so app-side trouble can never block the user's erasure.
+  for (const hook of getErasureCleanupHooks()) {
+    if (!hook.cleanupExternal) continue;
+    try {
+      await hook.cleanupExternal({ userId });
+    } catch (error) {
+      logger.error('Erasure cleanup hook (external) failed', {
+        userId,
+        hook: hook.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // 2. Scrub residual PII, write the receipt, and delete — atomically.
   const receipt = await prisma.$transaction(async (tx) => {
     // Retained admin-audit rows keep their IP after `userId` is SetNull'd.
@@ -67,6 +84,14 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       where: { userId },
       data: { clientIp: null },
     });
+
+    // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
+    // hooks can still match retained rows on `userId`, and atomically with the
+    // delete — a throw here rolls the entire erasure back.
+    for (const hook of getErasureCleanupHooks()) {
+      if (!hook.scrubInTransaction) continue;
+      await hook.scrubInTransaction({ tx, userId });
+    }
 
     const created = await tx.dataErasureReceipt.create({
       data: {

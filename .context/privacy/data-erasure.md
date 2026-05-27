@@ -92,6 +92,82 @@ side effect first, since object storage can't enlist in a DB transaction):
 2. **Write an erasure receipt** — see below.
 3. **Remove avatar blobs** — `deleteByPrefix('avatars/{userId}/')`.
 
+Apps and forks extend these same two reach-limits (residual-PII scrub, external
+resource cleanup) via registered hooks — see
+[App / fork tables relating to `User`](#app--fork-tables-relating-to-user).
+
+## App / Fork Tables Relating to `User`
+
+An app built on Sunrise (or an external fork) keeps its own models in its own
+schema file and relates them to the Sunrise `User`. It **cannot** add a Prisma
+`@relation` to `User` — that needs a reverse field _on_ `User`, a core edit to
+the most central, most merge-prone model. So the canonical pattern is a **plain
+`String` FK with no `@relation`**, and the referential action is written by hand
+in the migration:
+
+```prisma
+// app-owned schema file — a satellite profile/extension table
+model AppHubUserProfile {
+  id     String @id @default(cuid())
+  userId String @unique // FK to User.id — no @relation
+  // …app fields…
+
+  @@index([userId])
+}
+```
+
+```sql
+-- hand-added to the generated migration
+ALTER TABLE "AppHubUserProfile"
+  ADD CONSTRAINT "AppHubUserProfile_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "User"("id")
+  ON DELETE CASCADE; -- personal data; SET NULL (nullable FK) for retained config/audit
+```
+
+**⚠️ The schema-level `onDelete` guard does NOT catch this.** The
+[Adding a new `User` relation](#adding-a-new-user-relation-required-step) rule
+above is enforced by reviewing `@relation onDelete` in `schema.prisma`. A
+plain-scalar FK has no `@relation`, so it **slips past that guard entirely**.
+Two failure modes if the migration FK is wrong:
+
+- **No DB FK at all** → `prisma.user.delete()` leaves the app rows **orphaned**
+  (a silent retention violation).
+- **FK left at the default `RESTRICT`** → `prisma.user.delete()` throws `P2003`
+  and **erasure breaks for every user** who has an app row.
+
+So the migration FK with an explicit `ON DELETE` is **mandatory**, not optional.
+
+### What the FK cascade can't do — register a cleanup hook
+
+A `CASCADE` FK is erased automatically by `prisma.user.delete()`. But, exactly as
+for Sunrise's own tables, the cascade **cannot** (1) scrub residual PII left in
+columns of `SET NULL` retained rows, or (2) delete external resources (object
+storage, search indexes) keyed to the user. For those, register a hook with
+`lib/privacy/erasure-hooks.ts` — it runs inside the same `eraseUser()` flow,
+with no edit to the service:
+
+```ts
+import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
+
+registerErasureCleanupHook({
+  name: 'app-hub',
+  // Best-effort, BEFORE the transaction (like avatar cleanup). A throw is
+  // logged and swallowed — it can never block the user's erasure.
+  async cleanupExternal({ userId }) {
+    await deleteAppBlobsFor(userId);
+  },
+  // INSIDE the transaction, BEFORE the user row is deleted, so it can still
+  // match on userId and commits atomically — a throw rolls the erasure back.
+  async scrubInTransaction({ tx, userId }) {
+    await tx.appHubAuditEntry.updateMany({ where: { userId }, data: { actorIp: null } });
+  },
+});
+```
+
+Register once at startup (alongside the app's capability registration), then add
+an assertion to `scripts/smoke/erasure.ts` proving the app table is erased or
+de-attributed against a real DB — the same proof the core tables get.
+
 ## Erasure Receipt (Accountability)
 
 `DataErasureReceipt` (`prisma/schema.prisma`, migration `add_data_erasure_receipt`)
@@ -131,3 +207,5 @@ on `/users/me` to prevent locking the system out of all admins.
 - [Privacy & Cookie Consent](./overview.md) — consent system
 - [Security Overview](../security/overview.md) — application security
 - [Auth Security](../auth/security.md) — sessions, password handling
+- `lib/privacy/erasure-hooks.ts` — the app erasure cleanup-hook registry
+- `.instructions/building-on-sunrise.md` — the satellite profile-table pattern for extending `User`

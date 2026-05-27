@@ -10,6 +10,10 @@
 
 import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  registerErasureCleanupHook,
+  __resetErasureCleanupHooksForTests,
+} from '@/lib/privacy/erasure-hooks';
 
 // ---------------------------------------------------------------------------
 // Mocks — use vi.hoisted() so variables exist before vi.mock() factories run
@@ -121,10 +125,15 @@ describe('eraseUser', () => {
     mockPrisma.$transaction.mockImplementation(
       (callback: (tx: typeof mockPrisma) => Promise<unknown>) => callback(mockPrisma)
     );
+    // Reset the hook registry so hook state never leaks between tests
+    // (the module-level Map persists across tests in the same file)
+    __resetErasureCleanupHooksForTests();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Belt-and-suspenders: also clear hooks after each test
+    __resetErasureCleanupHooksForTests();
   });
 
   // -------------------------------------------------------------------------
@@ -334,5 +343,226 @@ describe('eraseUser', () => {
     expect(mockReceiptCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ reason: 'admin_action' }),
     });
+  });
+
+  // =========================================================================
+  // Erasure cleanup hooks — new tests added for the hook seam
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Hook Case 1: cleanupExternal best-effort — a throwing hook does NOT abort erasure
+  // -------------------------------------------------------------------------
+
+  it('cleanupExternal best-effort — a hook that rejects is swallowed; erasure still completes and logger.error is called', async () => {
+    // Arrange — register a hook whose cleanupExternal rejects
+    const failingHook = {
+      name: 'failing-external',
+      cleanupExternal: vi.fn().mockRejectedValue(new Error('upstream storage down')),
+    };
+    registerErasureCleanupHook(failingHook);
+
+    // Act — erasure MUST NOT reject despite the hook failure
+    const result = await eraseUser(BASE_PARAMS);
+
+    // Assert: 1) eraseUser resolved (best-effort contract)
+    expect(result).toMatchObject({ receiptId: expect.any(String), erasedAt: expect.any(Date) });
+
+    // Assert: 2) the user was still deleted (erasure was NOT aborted)
+    expect(mockUserDelete).toHaveBeenCalledTimes(1);
+
+    // Assert: 3) the receipt was still created
+    expect(mockReceiptCreate).toHaveBeenCalledTimes(1);
+
+    // Assert: 4) the failure was logged with the hook's name — proving the
+    // code did something with the error (not silently swallowed without trace)
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Erasure cleanup hook (external) failed',
+      expect.objectContaining({ hook: 'failing-external' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook Case 1b: cleanupExternal best-effort with a NON-Error throw
+  // -------------------------------------------------------------------------
+
+  it('cleanupExternal best-effort — a hook that throws a non-Error value is coerced via String() and still does not abort erasure', async () => {
+    // Arrange — throw a bare string (not an Error) to exercise the
+    // `String(error)` arm of the catch's error-message ternary.
+    const failingHook = {
+      name: 'non-error-external',
+      cleanupExternal: vi.fn().mockRejectedValue('storage exploded'),
+    };
+    registerErasureCleanupHook(failingHook);
+
+    // Act — erasure still completes despite the non-Error throw
+    const result = await eraseUser(BASE_PARAMS);
+
+    // Assert — erasure was not aborted
+    expect(result).toMatchObject({ receiptId: expect.any(String), erasedAt: expect.any(Date) });
+    expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    expect(mockReceiptCreate).toHaveBeenCalledTimes(1);
+
+    // Assert — the non-Error was coerced to a string and logged verbatim. Had
+    // it gone through `error.message`, a string has no `.message` and the
+    // logged value would be undefined — so this pins the non-Error branch.
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Erasure cleanup hook (external) failed',
+      expect.objectContaining({ hook: 'non-error-external', error: 'storage exploded' })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook Case 2: cleanupExternal ordering — runs BEFORE the $transaction begins
+  // -------------------------------------------------------------------------
+
+  it('cleanupExternal ordering — the external hook runs before the $transaction begins', async () => {
+    // Arrange — record invocation order; cleanupExternal should precede $transaction
+    const callOrder: string[] = [];
+
+    const externalHook = {
+      name: 'ordering-hook',
+      cleanupExternal: vi.fn().mockImplementation(async () => {
+        callOrder.push('cleanupExternal');
+      }),
+    };
+    registerErasureCleanupHook(externalHook);
+
+    // Wrap $transaction to record when it starts
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+        callOrder.push('$transaction');
+        return callback(mockPrisma);
+      }
+    );
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — cleanupExternal was invoked and it came before $transaction
+    expect(callOrder).toContain('cleanupExternal');
+    expect(callOrder).toContain('$transaction');
+    expect(callOrder.indexOf('cleanupExternal')).toBeLessThan(callOrder.indexOf('$transaction'));
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook Case 3: scrubInTransaction — called with the tx client and userId, before user.delete
+  // -------------------------------------------------------------------------
+
+  it('scrubInTransaction — called with the same tx object and { userId }, before tx.user.delete', async () => {
+    // Arrange — capture what the hook receives and record call order
+    let capturedCtx: { tx: unknown; userId: string } | null = null;
+    const callOrder: string[] = [];
+
+    const txHook = {
+      name: 'scrub-hook',
+      scrubInTransaction: vi
+        .fn()
+        .mockImplementation(async (ctx: { tx: unknown; userId: string }) => {
+          capturedCtx = ctx;
+          callOrder.push('scrubInTransaction');
+        }),
+    };
+    registerErasureCleanupHook(txHook);
+
+    // Wrap user.delete to record its call order
+    mockUserDelete.mockImplementation(async () => {
+      callOrder.push('user.delete');
+      return { id: BASE_PARAMS.userId };
+    });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert: 1) the hook was called with { tx, userId }
+    expect(capturedCtx).not.toBeNull();
+    expect(capturedCtx!.userId).toBe(BASE_PARAMS.userId);
+
+    // Assert: 2) the tx object is the SAME object passed to the transaction callback
+    // (mockPrisma IS the tx in this test setup)
+    expect(capturedCtx!.tx).toBe(mockPrisma);
+
+    // Assert: 3) scrubInTransaction ran BEFORE tx.user.delete (ordering contract)
+    expect(callOrder.indexOf('scrubInTransaction')).toBeLessThan(callOrder.indexOf('user.delete'));
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook Case 4 (CRITICAL): scrubInTransaction throw ⇒ full rollback — user.delete
+  // and dataErasureReceipt.create are NEVER called
+  // -------------------------------------------------------------------------
+
+  it('scrubInTransaction throw — eraseUser rejects; tx.user.delete and receipt.create are never called (atomicity)', async () => {
+    // Arrange — register a hook whose scrubInTransaction rejects
+    const atomicityHook = {
+      name: 'atomicity-hook',
+      scrubInTransaction: vi.fn().mockRejectedValue(new Error('scrub failure — tx must roll back')),
+    };
+    registerErasureCleanupHook(atomicityHook);
+
+    // Act + Assert: 1) eraseUser REJECTS because the throw propagates
+    await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('scrub failure — tx must roll back');
+
+    // Assert: 2) tx.user.delete was NEVER called (the throw aborted the callback
+    // before reaching the delete — this is the atomicity contract)
+    expect(mockUserDelete).not.toHaveBeenCalled();
+
+    // Assert: 3) receipt.create was NEVER called (same reason — the callback
+    // threw before reaching the receipt create, proving the entire erasure
+    // rolls back atomically when a hook scrub fails)
+    expect(mockReceiptCreate).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook Case 5: no-op phases — a hook with neither phase skips silently
+  // -------------------------------------------------------------------------
+
+  it('no-op hook — a hook with neither cleanupExternal nor scrubInTransaction does not error; erasure completes normally', async () => {
+    // Arrange — a hook that defines no cleanup phases
+    registerErasureCleanupHook({ name: 'noop-hook' });
+
+    // Act
+    const result = await eraseUser(BASE_PARAMS);
+
+    // Assert — erasure completed normally (the no-op hook was skipped without error)
+    expect(result).toMatchObject({ receiptId: expect.any(String), erasedAt: expect.any(Date) });
+    expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    expect(mockReceiptCreate).toHaveBeenCalledTimes(1);
+    // No error was logged for the no-op hook
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Hook Case 6: multiple hooks — all of each phase run
+  // -------------------------------------------------------------------------
+
+  it('multiple hooks — all cleanupExternal and all scrubInTransaction phases are invoked', async () => {
+    // Arrange — register two hooks, each with both phases
+    const externalA = vi.fn().mockResolvedValue(undefined);
+    const externalB = vi.fn().mockResolvedValue(undefined);
+    const scrubA = vi.fn().mockResolvedValue(undefined);
+    const scrubB = vi.fn().mockResolvedValue(undefined);
+
+    registerErasureCleanupHook({
+      name: 'hook-a',
+      cleanupExternal: externalA,
+      scrubInTransaction: scrubA,
+    });
+    registerErasureCleanupHook({
+      name: 'hook-b',
+      cleanupExternal: externalB,
+      scrubInTransaction: scrubB,
+    });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — all four phase functions were called; none was skipped
+    expect(externalA).toHaveBeenCalledTimes(1);
+    expect(externalB).toHaveBeenCalledTimes(1);
+    expect(scrubA).toHaveBeenCalledTimes(1);
+    expect(scrubB).toHaveBeenCalledTimes(1);
+
+    // Each scrub received { tx, userId }
+    expect(scrubA).toHaveBeenCalledWith(expect.objectContaining({ userId: BASE_PARAMS.userId }));
+    expect(scrubB).toHaveBeenCalledWith(expect.objectContaining({ userId: BASE_PARAMS.userId }));
   });
 });
