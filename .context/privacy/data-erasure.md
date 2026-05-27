@@ -208,4 +208,4 @@ on `/users/me` to prevent locking the system out of all admins.
 - [Security Overview](../security/overview.md) — application security
 - [Auth Security](../auth/security.md) — sessions, password handling
 - `lib/privacy/erasure-hooks.ts` — the app erasure cleanup-hook registry
-- `.instructions/building-on-sunrise.md` — the satellite profile-table pattern for extending `User`
+- [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#4-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`
