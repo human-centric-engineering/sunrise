@@ -46,11 +46,11 @@ Migrations alone advance schema; seeds alone populate data; neither tries to do 
 
 Source: `prisma/runner.ts`
 
-1. Discovers files under `prisma/seeds/` matching `^\d{3}-[a-z0-9-]+\.ts$`, sorted lexicographically.
+1. Discovers seed files **recursively** under `prisma/seeds/**`, matching each file's basename against `^\d{3}-[a-z0-9-]+\.ts$`, sorted by the path relative to `prisma/seeds/` (so digit-prefixed top-level core seeds run before any letter-prefixed app subdirectory).
 2. For each file:
    - Dynamic-imports the file to read the exported `SeedUnit`.
    - Computes sha256 of the seed file's source, then appends the contents of any files declared in `hashInputs` (in declared order) before finalising the hash. This lets a unit that wraps external data (e.g. a JSON file) re-run when that data changes.
-   - Looks up `SeedHistory` by `name` (= filename sans `.ts`).
+   - Looks up `SeedHistory` by `name` (= the path **relative to `prisma/seeds/`** sans `.ts`). Top-level files keep their bare slug (`001-test-users`); a nested file keys as `app-foo/001-init`, so same-numbered seeds in different directories don't collide.
    - If stored `contentHash` matches → skip, log `⏭`.
    - Otherwise → invokes `SeedUnit.run({ prisma, logger })`, upserts `SeedHistory` with new hash and `durationMs`.
 3. Errors from a unit propagate and exit non-zero. Successful earlier units remain in `SeedHistory`, so a re-run resumes at the failing unit.
@@ -59,14 +59,14 @@ Source: `prisma/runner.ts`
 
 ### Filename
 
-`prisma/seeds/NNN-slug.ts` where `NNN` is a three-digit numeric prefix (fixes order) and `slug` is lowercase-kebab.
+`prisma/seeds/NNN-slug.ts` where `NNN` is a three-digit numeric prefix (fixes order within a directory) and `slug` is lowercase-kebab. Apps built on Sunrise can nest their own seeds in a subdirectory (e.g. `prisma/seeds/app-<name>/001-init.ts`); discovery is recursive and the `SeedHistory` key includes the subdirectory path.
 
 ### Shape
 
 Default-export a `SeedUnit` — shape defined in `prisma/runner.ts`:
 
 ```typescript
-import type { SeedUnit } from '../runner';
+import type { SeedUnit } from '@/prisma/runner';
 
 const unit: SeedUnit = {
   name: '008-example',
