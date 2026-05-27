@@ -152,8 +152,9 @@ const { getProviderWithFallbacks, getProvider, assertModelSupportsAttachments } 
   await import('@/lib/orchestration/llm/provider-manager');
 const { checkBudget, logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
-// Registry mocks are established via vi.mock above; no direct assertion needed here.
-await import('@/lib/orchestration/capabilities/registry');
+// Registry mocks are established via vi.mock above; capture getCapabilityDefinitions
+// so forced-retrieval tests can make search_knowledge_base appear in the tool set.
+const { getCapabilityDefinitions } = await import('@/lib/orchestration/capabilities/registry');
 const { buildContext, invalidateContext } =
   await import('@/lib/orchestration/chat/context-builder');
 const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler');
@@ -4572,5 +4573,106 @@ describe('attachment gate', () => {
       };
       expect(terminal.data.workflowExecutionId).toBeUndefined();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Forced knowledge retrieval (knowledgeRetrievalMode)
+// ---------------------------------------------------------------------------
+
+describe('forced knowledge retrieval (knowledgeRetrievalMode)', () => {
+  const searchDef = {
+    name: 'search_knowledge_base',
+    description: 'Search the knowledge base.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  };
+
+  // One-turn, text-only provider. The mock does NOT honour toolChoice — these
+  // tests assert only that the handler SET it on the first LLM call.
+  function singleTurnProvider() {
+    return mockProvider([
+      [
+        { type: 'text', content: 'ok' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+  }
+
+  async function runAndGetFirstCallOptions(opts: {
+    mode: string;
+    keywords?: string[];
+    message?: string;
+    capabilityEnabled?: boolean;
+    history?: unknown[];
+  }): Promise<{ toolChoice?: { name: string } }> {
+    const provider = singleTurnProvider();
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({
+        knowledgeRetrievalMode: opts.mode,
+        knowledgeTriggerKeywords: opts.keywords ?? [],
+      })
+    );
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(opts.history ?? []);
+    vi.mocked(getCapabilityDefinitions).mockResolvedValueOnce(
+      opts.capabilityEnabled === false ? [] : [searchDef]
+    );
+
+    await collect(streamChat({ ...baseRequest, message: opts.message ?? 'Hello there' }));
+
+    const calls = (provider.chatStream as ReturnType<typeof vi.fn>).mock.calls;
+    return (calls[0]?.[1] ?? {}) as { toolChoice?: { name: string } };
+  }
+
+  it('every_turn forces search_knowledge_base on the first LLM call', async () => {
+    const options = await runAndGetFirstCallOptions({ mode: 'every_turn' });
+    expect(options.toolChoice).toEqual({ name: 'search_knowledge_base' });
+  });
+
+  it('model (default) never forces a tool', async () => {
+    const options = await runAndGetFirstCallOptions({ mode: 'model' });
+    expect(options.toolChoice).toBeUndefined();
+  });
+
+  it('first_turn forces when there is no prior user turn', async () => {
+    const options = await runAndGetFirstCallOptions({ mode: 'first_turn', history: [] });
+    expect(options.toolChoice).toEqual({ name: 'search_knowledge_base' });
+  });
+
+  it('first_turn does NOT force when a prior user turn exists', async () => {
+    const options = await runAndGetFirstCallOptions({
+      mode: 'first_turn',
+      history: [makeMessage({ role: 'user', content: 'earlier' })],
+    });
+    expect(options.toolChoice).toBeUndefined();
+  });
+
+  it('keywords forces on a whole-word, case-insensitive match', async () => {
+    const options = await runAndGetFirstCallOptions({
+      mode: 'keywords',
+      keywords: ['refund'],
+      message: 'I want a REFUND please',
+    });
+    expect(options.toolChoice).toEqual({ name: 'search_knowledge_base' });
+  });
+
+  it('keywords does NOT force on a partial-word match (e.g. "art" in "start")', async () => {
+    const options = await runAndGetFirstCallOptions({
+      mode: 'keywords',
+      keywords: ['art'],
+      message: 'I want to start now',
+    });
+    expect(options.toolChoice).toBeUndefined();
+  });
+
+  it('is a no-op when search_knowledge_base is not an enabled capability', async () => {
+    const options = await runAndGetFirstCallOptions({
+      mode: 'every_turn',
+      capabilityEnabled: false,
+    });
+    expect(options.toolChoice).toBeUndefined();
   });
 });
