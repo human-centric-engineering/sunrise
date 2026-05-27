@@ -447,7 +447,7 @@ Be extremely careful about `NEXT_PUBLIC_*` variables:
 
 The complete validation schema is in `lib/env.ts`. All variables are validated using Zod schemas with custom error messages.
 
-To add a new environment variable:
+To add a new **platform** environment variable (contributing to Sunrise itself):
 
 1. Add it to the schema in `lib/env.ts`
 2. Add it to `.env.example` with a description
@@ -466,3 +466,26 @@ const envSchema = z.object({
   }),
 });
 ```
+
+### App-defined variables (forks)
+
+If you're building an app **on top of** Sunrise, do NOT add your variables to the closed core schema in `lib/env.ts` — that's a platform file and editing it makes every upstream merge a conflict. Instead, declare them in the app-owned extension point, `lib/app/env.ts`, which exports `appEnvSchema`:
+
+```typescript
+// lib/app/env.ts — yours to edit; the core validator merges this in
+import { z } from 'zod';
+
+export const appEnvSchema = z.object({
+  STRIPE_SECRET_KEY: z.string().min(1),
+  FEATURE_X_WEBHOOK_URL: z.string().url().optional(),
+});
+```
+
+`lib/env.ts` merges `appEnvSchema` into the **same fail-fast startup parse** as the core schema, so:
+
+- A missing or invalid app variable aborts boot exactly like a missing `DATABASE_URL` would — no half-configured runtime.
+- The validated values are available, typed, on the same `env` object: `import { env } from '@/lib/env'`.
+
+**Scope: server-side only.** `appEnvSchema` is merged into the server schema, not the client one — so app variables are never required (or exposed) in browser bundles. For client-readable values, use a `NEXT_PUBLIC_*` variable and read `process.env.NEXT_PUBLIC_*` directly in client code, exactly as for platform client vars.
+
+`lib/app/env.ts` is the first inhabitant of the `lib/app/**` extension surface, which is kept framework-agnostic (no runtime `next/*` imports) by an ESLint boundary — see [`.context/architecture/lint-toolchain.md`](../architecture/lint-toolchain.md).

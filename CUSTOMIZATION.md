@@ -24,9 +24,10 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
    designed extension points — add OAuth providers in `lib/auth/config.ts`, add
    models to the Prisma schema, drop new routes under `app/api/v1/` (they
    inherit rate limiting automatically), add pages to a route group, register
-   capabilities/agents/workflows in the orchestration layer, swap
-   email/storage/analytics providers via their adapters. The fewer existing
-   Sunrise files you modify, the smaller every future merge conflict.
+   capabilities/agents/workflows in the orchestration layer, declare your env
+   vars in `lib/app/env.ts`, register app-scoped rate-limit tiers/rules, swap
+   email/storage/analytics providers via their adapters ([§4](#4-configuration--environment)).
+   The fewer existing Sunrise files you modify, the smaller every future merge conflict.
 
 2. **Depend on the public surface, not internals.** Build against Sunrise's
    stable helpers rather than reaching into their implementations:
@@ -42,15 +43,17 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 
 **Where your code goes:**
 
-| Your code                  | Put it in                                                  |
-| -------------------------- | ---------------------------------------------------------- |
-| Pages                      | a route group under `app/` (`(public)`, `(protected)`)     |
-| API endpoints              | `app/api/v1/<resource>/`                                   |
-| React components           | `components/`                                              |
-| Business logic / utilities | `lib/`                                                     |
-| Database models            | the Prisma schema + a migration                            |
-| Agent tools                | a capability in the orchestration layer                    |
-| Dependencies & scripts     | `package.json` — see [§6](#6-adding-dependencies--scripts) |
+| Your code                  | Put it in                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------- |
+| Pages                      | a route group under `app/` (`(public)`, `(protected)`)                                          |
+| API endpoints              | `app/api/v1/<resource>/`                                                                        |
+| React components           | `components/`                                                                                   |
+| Business logic / utilities | `lib/`                                                                                          |
+| Database models            | the Prisma schema + a migration                                                                 |
+| Agent tools                | a capability in the orchestration layer                                                         |
+| Environment variables      | `lib/app/env.ts` (`appEnvSchema`) — see [§4](#4-configuration--environment)                     |
+| App rate-limit tier / rule | `registerRateLimitTier()` / `registerRateLimitRule()` — see [§4](#4-configuration--environment) |
+| Dependencies & scripts     | `package.json` — see [§7](#7-adding-dependencies--scripts)                                      |
 
 ---
 
@@ -133,7 +136,72 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 
 ---
 
-## 4. Database schema
+## 4. Configuration & environment
+
+Sunrise exposes three "configure the platform for your app without editing core
+files" seams. Each lives in an app-owned location so an upstream merge stays a
+clean merge.
+
+**Framework-agnostic platform code — the `lib/app/` surface.** This is the
+supported home for app-level code the platform wires in (the env seam below lives
+at `lib/app/env.ts`). An ESLint boundary keeps `lib/app/` portable: it forbids
+runtime `next/*` imports (type-only imports are fine) and applies the `@/`-alias
+rule. Glue that needs framework runtime APIs belongs in `app/` or a
+`lib/app/<name>/server/` module. See
+[`.context/architecture/lint-toolchain.md`](./.context/architecture/lint-toolchain.md#app-boundary--libapp).
+
+**Environment variables — `lib/app/env.ts`.** Declare your own server-side env
+vars in `appEnvSchema`; the core validator merges them into the **same fail-fast
+startup parse** as the platform vars, and exposes them typed on `env`:
+
+```typescript
+// lib/app/env.ts — yours to edit (don't touch the closed schema in lib/env.ts)
+import { z } from 'zod';
+
+export const appEnvSchema = z.object({
+  STRIPE_SECRET_KEY: z.string().min(1),
+});
+```
+
+A missing/invalid app var aborts boot like a missing `DATABASE_URL` would. Scope is
+server-side only — for client values use a `NEXT_PUBLIC_*` var read via `process.env`.
+Full guide: [`.context/environment/overview.md`](./.context/environment/overview.md#app-defined-variables-forks).
+
+**Rate-limit tiers & rules — `registerRateLimitTier()` / `registerRateLimitRule()`.**
+Give your own `/api/v1/**` paths a custom section cap without editing the policy
+table. Register at startup:
+
+```typescript
+import { createRateLimiter, registerRateLimitTier } from '@/lib/security/rate-limit';
+import { registerRateLimitRule } from '@/lib/security/rate-limit-policy';
+import { SECURITY_CONSTANTS } from '@/lib/security/constants';
+
+registerRateLimitTier(
+  'billing',
+  createRateLimiter({
+    interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+    maxRequests: 40,
+    uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+  })
+);
+registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+```
+
+App rules are spliced in after every built-in Sunrise rule and before the
+`/api/v1/` catch-all, so they govern your namespace only. Registration **throws**
+if a rule could match a Sunrise-protected surface (`/api/v1/admin/**`,
+`/api/auth/**`, `/api/v1/auth/**`, `/api/v1/mcp/**`) or if a tier name collides with
+a built-in — you can't accidentally loosen the auth/admin caps. The section tiers
+and per-flow caps are also env-tunable via `RATE_LIMIT_*` overrides. Full reference:
+[`.context/security/rate-limiting.md`](./.context/security/rate-limiting.md#app--fork-extension).
+
+> Most apps never need a custom tier — every new `/api/v1/**` route already inherits
+> the 100/min `api` cap automatically. Reach for this only when a route needs a
+> genuinely different cap or keying.
+
+---
+
+## 5. Database schema
 
 **Modifying the schema:**
 
@@ -194,7 +262,7 @@ and types — don't widen `User`'s public shape for app-only fields.
 
 ---
 
-## 5. Landing page & routes
+## 6. Landing page & routes
 
 **Customizing pages:**
 
@@ -218,7 +286,7 @@ and types — don't widen `User`'s public shape for app-only fields.
 
 ---
 
-## 6. Adding dependencies & scripts
+## 7. Adding dependencies & scripts
 
 `package.json` is shared between the platform and your app, and an upstream
 upgrade is a three-way merge. Keep your additions in regions Sunrise never
@@ -261,7 +329,7 @@ your dependencies and `app:*` scripts sit in regions upstream never edits.
 
 ---
 
-## 7. Staying in sync with upstream Sunrise
+## 8. Staying in sync with upstream Sunrise
 
 When you pull a new Sunrise release into your fork, the biggest moving part is
 the database migration history — your app's migrations and Sunrise's share one
@@ -292,7 +360,7 @@ extension requirement, and zero-downtime patterns — lives in
 
 ---
 
-## 8. Removing features
+## 9. Removing features
 
 **Testing framework:**
 
@@ -323,7 +391,7 @@ extension requirement, and zero-downtime patterns — lives in
 
 ---
 
-## 9. Reference documentation
+## 10. Reference documentation
 
 **Detailed guides:**
 
@@ -332,7 +400,9 @@ extension requirement, and zero-downtime patterns — lives in
 - [API Endpoints](./.context/api/endpoints.md) — REST API reference, request/response formats
 - [Database Schema](./.context/database/schema.md) — Prisma models, relationships
 - [Database Migrations](./.context/database/migrations.md) — Migration workflow, upstream sync
-- [Environment Variables](./.context/environment/reference.md) — Complete variable reference
+- [Environment Variables](./.context/environment/reference.md) — Complete variable reference, app env extension
+- [Rate Limiting](./.context/security/rate-limiting.md) — Tiers, policy table, app-scoped tiers/rules
+- [Lint Toolchain](./.context/architecture/lint-toolchain.md) — ESLint config, the `lib/app/**` boundary
 
 **Quick references:**
 

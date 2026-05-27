@@ -8,13 +8,14 @@ Rate-limit enforcement for every `/api/**` request in Sunrise. Section caps are 
 
 **Adding a per-flow sub-cap inside a handler** — import the relevant limiter (e.g. `chatLimiter`, `audioLimiter`) from `@/lib/security/rate-limit` and call it after auth.
 
-| Need                                | Where                                                                               |
-| ----------------------------------- | ----------------------------------------------------------------------------------- |
-| Change which paths get which tier   | `lib/security/rate-limit-policy.ts` (the policy table)                              |
-| Change a tier's cap                 | `lib/security/constants.ts` (`LIMITS.*`) or an env var                              |
-| Add a new tier                      | `RateLimitTier` union + `RATE_LIMIT_TIERS` registry in `lib/security/rate-limit.ts` |
-| Add a per-flow sub-cap to a handler | Import the limiter from `@/lib/security/rate-limit`, call it inline                 |
-| Disable rate-limiting in tests      | `RATE_LIMIT_BYPASS=true` (set in `tests/setup.ts` for all unit tests)               |
+| Need                                | Where                                                                                                    |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Change which paths get which tier   | `lib/security/rate-limit-policy.ts` (the policy table)                                                   |
+| Change a tier's cap                 | `lib/security/constants.ts` (`LIMITS.*`) or an env var                                                   |
+| Add a new built-in tier             | `RateLimitTier` union + `RATE_LIMIT_TIERS` registry in `lib/security/rate-limit.ts`                      |
+| Add an **app/fork** tier or rule    | `registerRateLimitTier()` / `registerRateLimitRule()` — see [App / Fork Extension](#app--fork-extension) |
+| Add a per-flow sub-cap to a handler | Import the limiter from `@/lib/security/rate-limit`, call it inline                                      |
+| Disable rate-limiting in tests      | `RATE_LIMIT_BYPASS=true` (set in `tests/setup.ts` for all unit tests)                                    |
 
 ## Architecture
 
@@ -25,9 +26,10 @@ Two layers, each owning a distinct responsibility:
 │                                                          │
 │  1. Origin validation (CSRF defense)                     │
 │  2. applyRateLimit(request)  ← SECTION CAP applied here  │
-│       └─ findRateLimitRule(pathname)  → policy table     │
+│       └─ getEffectiveRateLimitPolicy() → base + app rules│
+│       └─ findRateLimitRule(pathname, policy) → rule      │
 │       └─ resolveIdentifier(key, request) → token         │
-│       └─ RATE_LIMIT_TIERS[tier].check(token)             │
+│       └─ resolveRateLimitTier(tier).check(token)         │
 │  3. Auth / redirects / security headers                  │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
@@ -81,9 +83,9 @@ Five section tiers, each backed by a single limiter instance in [`RATE_LIMIT_TIE
 | `orchestration` | 120/min | `RATE_LIMIT_ORCH_ADMIN` | `orchestrationAdminLimiter` |
 | `api`           | 100/min | `RATE_LIMIT_API`        | `apiLimiter`                |
 | `mcp`           | 300/min | `RATE_LIMIT_MCP`        | `mcpLimiter`                |
-| `auth`          | 5/min   | (none — security floor) | `authLimiter`               |
+| `auth`          | 5/min   | `RATE_LIMIT_AUTH`       | `authLimiter`               |
 
-Caps are per-window (1 minute) using the sliding-window algorithm from `lib/security/rate-limit.ts`. Bumps via env vars are intended for development; production should run on the defaults.
+Caps are per-window (1 minute) using the sliding-window algorithm from `lib/security/rate-limit.ts`. Bumps via env vars are intended for development; production should run on the defaults. The `auth` cap is the OWASP brute-force floor — `RATE_LIMIT_AUTH` exists for parity (and the occasional shared-NAT dev loosen), but raise it in production only with a clear reason.
 
 **Why `mcp` is separate from `api`.** MCP is a distinct interface — server-to-server, always API-key-authenticated, much chattier per session than human-driven REST traffic (LLM agents iterate through tool calls inside a conversation). The 100/min `api` cap is too tight for legitimate agent workloads; the 300/min default leaves room for normal activity while still rate-limiting a runaway agent loop within ~5 seconds. Per-customer budgets are tunable separately via `McpRateLimiter` against the `apiKey.rateLimit` field; the section tier here is the coarse ceiling above that.
 
@@ -126,6 +128,8 @@ These are NOT tiers. They're tighter caps on specific expensive operations, appl
 | `apiKeyChatLimiter`        | per-key RPM (dynamic)   | Webhook triggers with `rateLimitRpm` override |
 
 Per-flow caps are token-prefixed (`audio:user:${userId}`, `embed:user:${token}:${ip}`, etc.) so they don't collide with the middleware's section tier buckets.
+
+Each per-flow cap is env-tunable through the same `envInt()` mechanism as the tiers, via `RATE_LIMIT_<NAME>` (e.g. `RATE_LIMIT_UPLOAD`, `RATE_LIMIT_CHAT`, `RATE_LIMIT_EXPORT`). A positive integer overrides the default; anything else (unset, non-numeric, ≤ 0) falls back. The time-window constants (`*_INTERVAL`) are intentionally NOT env-tunable — they encode OWASP-aligned abuse windows that shouldn't drift per deployment. See [Configuration](#configuration) for the full list.
 
 ## Anti-Patterns
 
@@ -202,15 +206,17 @@ See [`tests/unit/lib/security/rate-limit-middleware.test.ts`](../../tests/unit/l
 
 ## Configuration
 
-| Variable                | Purpose                                                        | Default  |
-| ----------------------- | -------------------------------------------------------------- | -------- |
-| `RATE_LIMIT_ADMIN`      | Override the `admin` tier cap (per-minute)                     | `30`     |
-| `RATE_LIMIT_ORCH_ADMIN` | Override the `orchestration` tier cap (per-minute)             | `120`    |
-| `RATE_LIMIT_API`        | Override the `api` tier cap (per-minute)                       | `100`    |
-| `RATE_LIMIT_MCP`        | Override the `mcp` tier cap (per-minute)                       | `300`    |
-| `RATE_LIMIT_STORE`      | Backing store for the **async** limiter variants only          | `memory` |
-| `REDIS_URL`             | Redis connection string (required if `RATE_LIMIT_STORE=redis`) | —        |
-| `RATE_LIMIT_BYPASS`     | Test/dev escape hatch — `true` short-circuits the dispatcher   | unset    |
+| Variable                                                                                                                                                                                                                                                               | Purpose                                                                             | Default                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `RATE_LIMIT_ADMIN`                                                                                                                                                                                                                                                     | Override the `admin` tier cap (per-minute)                                          | `30`                                                        |
+| `RATE_LIMIT_ORCH_ADMIN`                                                                                                                                                                                                                                                | Override the `orchestration` tier cap (per-minute)                                  | `120`                                                       |
+| `RATE_LIMIT_API`                                                                                                                                                                                                                                                       | Override the `api` tier cap (per-minute)                                            | `100`                                                       |
+| `RATE_LIMIT_MCP`                                                                                                                                                                                                                                                       | Override the `mcp` tier cap (per-minute)                                            | `300`                                                       |
+| `RATE_LIMIT_AUTH`                                                                                                                                                                                                                                                      | Override the `auth` tier cap (per-minute) — OWASP floor, raise with care            | `5`                                                         |
+| `RATE_LIMIT_PASSWORD_RESET` · `RATE_LIMIT_CONTACT` · `RATE_LIMIT_ACCEPT_INVITE` · `RATE_LIMIT_UPLOAD` · `RATE_LIMIT_INVITE` · `RATE_LIMIT_CSP_REPORT` · `RATE_LIMIT_CHAT` · `RATE_LIMIT_CONSUMER_CHAT` · `RATE_LIMIT_AUDIO` · `RATE_LIMIT_EXPORT` · `RATE_LIMIT_IMAGE` | Override the matching per-flow sub-cap (count only; `*_INTERVAL` windows are fixed) | see [Per-Flow Sub-Caps](#per-flow-sub-caps-handler-applied) |
+| `RATE_LIMIT_STORE`                                                                                                                                                                                                                                                     | Backing store for the **async** limiter variants only                               | `memory`                                                    |
+| `REDIS_URL`                                                                                                                                                                                                                                                            | Redis connection string (required if `RATE_LIMIT_STORE=redis`)                      | —                                                           |
+| `RATE_LIMIT_BYPASS`                                                                                                                                                                                                                                                    | Test/dev escape hatch — `true` short-circuits the dispatcher                        | unset                                                       |
 
 `RATE_LIMIT_BYPASS` is intended for the test suite and local development convenience. It MUST NOT be set in production.
 
@@ -266,6 +272,40 @@ Three edits, in order:
    ```
 
    Update the length and order assertions in `tests/unit/lib/security/rate-limit-policy.test.ts`.
+
+## App / Fork Extension
+
+The three edits above ("Adding a New Tier") are how **Sunrise itself** adds a built-in tier — they edit core files. Apps and forks should NOT edit `RATE_LIMIT_POLICY`, the `RateLimitTier` union, or the `RATE_LIMIT_TIERS` registry. Instead, register an app tier/rule at startup so an upstream merge stays clean:
+
+```typescript
+import { createRateLimiter, registerRateLimitTier } from '@/lib/security/rate-limit';
+import { registerRateLimitRule } from '@/lib/security/rate-limit-policy';
+import { SECURITY_CONSTANTS } from '@/lib/security/constants';
+
+// 1. (optional) register an app-specific section tier
+registerRateLimitTier(
+  'billing',
+  createRateLimiter({
+    interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+    maxRequests: 40,
+    uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+  })
+);
+
+// 2. point an app path at it (or at a built-in tier)
+registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+```
+
+Run registration once at startup, before the first request — e.g. from the same module that bootstraps your app's other extensions. `registerRateLimitTier` / `registerRateLimitRule` and `appEnvSchema` are the platform's three "configure without editing core" seams.
+
+**How app rules are merged.** `getEffectiveRateLimitPolicy()` (called by the dispatcher on every request) returns the base policy with app rules spliced in **after every built-in Sunrise rule and before the `/api/v1/` catch-all**. So an app rule governs the app's own namespace without restating — or being able to shadow — any Sunrise rule. `resolveRateLimitTier(name)` resolves built-in and app tiers from one registry.
+
+**Security constraints (enforced at registration — these throw):**
+
+- **`registerRateLimitTier` cannot override a built-in tier.** Registering `'admin'`, `'auth'`, `'mcp'`, etc. (or a duplicate app name) throws. A fork cannot silently swap the 30/min `admin` limiter for a looser one.
+- **`registerRateLimitRule` cannot match a Sunrise-protected surface.** A rule whose matcher could fire for `/api/v1/admin/**`, `/api/auth/**`, `/api/v1/auth/**`, or `/api/v1/mcp/**` is rejected — so an overly-broad matcher like `/^\/api\/v1\//` (which would match the admin probe) throws at registration. This is defense-in-depth on top of the ordering guarantee: because app rules are evaluated _after_ the built-in admin/auth/mcp rules, those rules win first-match regardless; the registration guard makes a foot-gun loud instead of silent.
+
+App tiers/rules are developer config applied at startup — not attacker-reachable input. The guard exists so a fork author can't _accidentally_ weaken an auth/admin cap, not as a defense against a malicious operator (who owns the process anyway).
 
 ## Decision History
 

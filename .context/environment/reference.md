@@ -123,12 +123,20 @@ const envSchema = z.object({
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 ```
 
+## Rate-limit overrides
+
+The section tiers and per-flow sub-caps each accept an optional `RATE_LIMIT_*` integer override (`RATE_LIMIT_API`, `RATE_LIMIT_ADMIN`, `RATE_LIMIT_ORCH_ADMIN`, `RATE_LIMIT_MCP`, `RATE_LIMIT_AUTH`, plus per-flow `RATE_LIMIT_PASSWORD_RESET`, `RATE_LIMIT_CONTACT`, `RATE_LIMIT_UPLOAD`, `RATE_LIMIT_CHAT`, `RATE_LIMIT_EXPORT`, etc.). These are optional dev knobs — defaults are the production values. The full list, defaults, and the `RATE_LIMIT_BYPASS` / `RATE_LIMIT_STORE` / `REDIS_URL` knobs live in [`../security/rate-limiting.md`](../security/rate-limiting.md#configuration).
+
 ## Adding New Variables
+
+**Platform variables** (contributing to Sunrise):
 
 1. **Update `lib/env.ts`** - Add to Zod schema
 2. **Update `.env.example`** - Add with description
 3. **Update documentation** - Add to relevant category file
 4. **Update overview** - If it affects setup
+
+**App variables** (building on Sunrise): declare them in `lib/app/env.ts`'s `appEnvSchema` instead of editing `lib/env.ts` — the core validator merges your schema into the same fail-fast parse. See [overview.md → App-defined variables](./overview.md#app-defined-variables-forks).
 
 ## Security Best Practices
 
