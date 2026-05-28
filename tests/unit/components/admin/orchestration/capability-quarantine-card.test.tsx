@@ -140,6 +140,33 @@ describe('CapabilityQuarantineCard — QuarantinedView', () => {
     expect(screen.getByRole('button', { name: /Lift quarantine/i })).toBeEnabled();
   });
 
+  it('opens a popover listing the affected agents when the count is clicked', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{
+          quarantineState: 'quarantined-soft',
+          quarantineReason: 'vendor outage',
+          quarantineUntil: null,
+        }}
+        affectedAgents={AFFECTED}
+      />
+    );
+
+    // Count is rendered as a clickable button, not a flat text line.
+    const trigger = screen.getByRole('button', { name: /2 agents affected/i });
+    await user.click(trigger);
+
+    // Popover lists each affected agent linked to its detail page.
+    const supportLink = await screen.findByRole('link', { name: /Support Bot/i });
+    expect(supportLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-1');
+    const salesLink = screen.getByRole('link', { name: /Sales Bot/i });
+    expect(salesLink).toHaveAttribute('href', '/admin/orchestration/agents/agent-2');
+  });
+
   it('POSTs to /unquarantine when Lift is clicked', async () => {
     const user = userEvent.setup();
 

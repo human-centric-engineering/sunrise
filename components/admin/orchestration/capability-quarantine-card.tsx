@@ -21,6 +21,7 @@
  */
 
 import * as React from 'react';
+import Link from 'next/link';
 import { AlertTriangle, ShieldOff, ShieldCheck } from 'lucide-react';
 
 import {
@@ -39,6 +40,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -404,9 +406,7 @@ function QuarantinedView({
           </div>
         )}
 
-        <p className="text-muted-foreground text-xs">
-          {affectedAgents.length} agent{affectedAgents.length === 1 ? '' : 's'} affected.
-        </p>
+        <AffectedAgentsPopover affectedAgents={affectedAgents} />
 
         <Button
           type="button"
@@ -420,5 +420,61 @@ function QuarantinedView({
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Shared: clickable count + popover listing affected agents ─────────────
+
+/**
+ * Renders "N agents affected" as a clickable button. Click opens a
+ * popover listing every affected agent with a link to its detail page.
+ * Mirrors the "agents using this capability" Popover pattern from
+ * capabilities-table.tsx so admins encounter one consistent affordance
+ * across the orchestration surfaces.
+ */
+function AffectedAgentsPopover({
+  affectedAgents,
+}: {
+  affectedAgents: QuarantineCapabilityCardProps['affectedAgents'];
+}): React.ReactElement {
+  const count = affectedAgents.length;
+  if (count === 0) {
+    return (
+      <p className="text-muted-foreground text-xs">No agents currently use this capability.</p>
+    );
+  }
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
+        >
+          {count} agent{count === 1 ? '' : 's'} affected →
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-0" align="start">
+        <div className="border-b px-3 py-2">
+          <p className="text-sm font-medium">
+            {count} agent{count === 1 ? '' : 's'} affected
+          </p>
+        </div>
+        <ul className="max-h-64 overflow-y-auto py-1">
+          {affectedAgents.map((agent) => (
+            <li key={agent.id}>
+              <Link
+                href={`/admin/orchestration/agents/${agent.id}`}
+                className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+              >
+                <span className="truncate">{agent.name}</span>
+                <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                  {agent.slug}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
