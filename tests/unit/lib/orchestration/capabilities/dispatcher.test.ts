@@ -252,11 +252,15 @@ describe('CapabilityDispatcher', () => {
       expect(result.success).toBe(false);
       expect(result.error?.code).toBe('capability_quarantined');
       expect(result.error?.message).toContain('disabled by admin');
-      // The reason is logged + in metadata but NOT in the hard-mode message
-      // (we surface a firm message to avoid encouraging the model to retry).
+      // Hard mode must not surface the reason anywhere the model can
+      // see — not in the message, not in metadata. The reason persists
+      // via the role:tool message JSON on the next user turn, and any
+      // metadata leak would let the model use operational details as
+      // retry ammunition.
       expect(result.error?.message).not.toContain('Tool sending wrong data');
       expect(result.skipFollowup).toBe(true);
       expect(result.metadata?.mode).toBe('quarantined-hard');
+      expect(result.metadata).not.toHaveProperty('reason');
     });
 
     it('treats past quarantineUntil as active without mutating the row', async () => {

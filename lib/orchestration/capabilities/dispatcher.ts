@@ -236,10 +236,17 @@ class CapabilityDispatcher {
                 }`,
         },
         skipFollowup: effectiveQuarantine === 'quarantined-hard',
-        metadata: {
-          mode: effectiveQuarantine,
-          reason: entry.quarantineReason,
-        },
+        // Hard mode deliberately omits the reason — the chat handler
+        // persists the role:tool message verbatim and rehydrates it on
+        // the next user turn, so a reason in metadata would survive past
+        // the in-turn `skipFollowup` short-circuit and give the model
+        // operational details to drive a retry. Soft mode keeps the
+        // reason so the agent can describe the unavailability to the
+        // user and route around it.
+        metadata:
+          effectiveQuarantine === 'quarantined-hard'
+            ? { mode: effectiveQuarantine }
+            : { mode: effectiveQuarantine, reason: entry.quarantineReason },
       };
     }
 
