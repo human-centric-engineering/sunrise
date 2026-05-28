@@ -1176,4 +1176,78 @@ describe('ManageTab', () => {
       expect(screen.getByText('70%')).toBeInTheDocument();
     });
   });
+
+  // ── Toolbar: search + status filter ────────────────────────────────────────
+  describe('search and status filter', () => {
+    function listFetchUrls(): string[] {
+      return mockFetch.mock.calls
+        .map((c) => (typeof c[0] === 'string' ? c[0] : ''))
+        .filter((u) => u.includes('/knowledge/documents'));
+    }
+
+    it('renders the search input and the status filter dropdown', () => {
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+      expect(screen.getByPlaceholderText(/search by name or filename/i)).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /filter by status/i })).toBeInTheDocument();
+    });
+
+    it('debounces the search input and fires a documents fetch with q=', async () => {
+      const user = userEvent.setup();
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+      mockFetch.mockClear();
+
+      await user.type(screen.getByPlaceholderText(/search by name or filename/i), 'hello');
+
+      // 300ms debounce — wait until the fetch fires.
+      await waitFor(
+        () => {
+          expect(listFetchUrls().some((u) => u.includes('q=hello'))).toBe(true);
+        },
+        { timeout: 1500 }
+      );
+    });
+
+    it('refetches when the scope prop changes from undefined to a value', async () => {
+      const { rerender } = render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+      mockFetch.mockClear();
+
+      rerender(<ManageTab documents={[]} onRefresh={vi.fn()} scope="system" />);
+
+      await waitFor(() => {
+        expect(listFetchUrls().some((u) => u.includes('scope=system'))).toBe(true);
+      });
+    });
+  });
+
+  // ── Pagination footer ──────────────────────────────────────────────────────
+  describe('pagination', () => {
+    it('does not render pagination when there is only one page of results', () => {
+      render(
+        <ManageTab documents={[makeDocument({ id: 'd1', name: 'Solo' })]} onRefresh={vi.fn()} />
+      );
+      expect(screen.queryByRole('button', { name: /next/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /previous/i })).not.toBeInTheDocument();
+    });
+
+    it('renders Previous/Next when the server reports more than one page', async () => {
+      // Seed with a single doc, then have the API reply with paginated meta
+      // claiming there are 50 docs across 2 pages.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: [makeDocument({ id: 'd1', name: 'Doc 1' })],
+            meta: { page: 1, limit: 25, total: 50, totalPages: 2 },
+          }),
+      });
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /previous/i })).toBeInTheDocument();
+        expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
+      });
+    });
+  });
 });

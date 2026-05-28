@@ -98,4 +98,24 @@ describe('touchAgentLastActive', () => {
       })
     );
   });
+
+  it('swallows synchronous throws from prisma access (defensive try/catch)', () => {
+    // Simulates a partially-mocked prisma where `prisma.aiAgent.update`
+    // throws synchronously (e.g. because `.aiAgent` is undefined or some
+    // wrapping proxy throws on access). The helper's contract is "never
+    // throws"; the outer try/catch keeps that true.
+    mockUpdate.mockImplementationOnce(() => {
+      throw new TypeError('Cannot read properties of undefined');
+    });
+
+    expect(() => touchAgentLastActive('cmjbv4i3x00003wsloputgwul')).not.toThrow();
+
+    expect(logger.debug).toHaveBeenCalledWith(
+      'touchAgentLastActive sync failure (non-fatal)',
+      expect.objectContaining({
+        agentId: 'cmjbv4i3x00003wsloputgwul',
+        error: 'Cannot read properties of undefined',
+      })
+    );
+  });
 });

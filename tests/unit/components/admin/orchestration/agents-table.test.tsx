@@ -1124,4 +1124,158 @@ describe('AgentsTable', () => {
       expect(push).toHaveBeenCalledWith('/admin/orchestration/agents/agent-1');
     });
   });
+
+  // ── Scope segmented control (All / App / System) ───────────────────────────
+  describe('scope segmented control', () => {
+    it('sends isSystem=false when the App tab is selected', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      mockFetch.mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'App' }));
+
+      await waitFor(() => {
+        const calledUrls = mockFetch.mock.calls.map((c) => toUrlString(c[0]));
+        expect(calledUrls.some((u) => u.includes('isSystem=false'))).toBe(true);
+      });
+    });
+
+    it('sends isSystem=true when the System tab is selected', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      mockFetch.mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'System' }));
+
+      await waitFor(() => {
+        const calledUrls = mockFetch.mock.calls.map((c) => toUrlString(c[0]));
+        expect(calledUrls.some((u) => u.includes('isSystem=true'))).toBe(true);
+      });
+    });
+
+    it('omits isSystem on All so both bespoke and system agents return', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+
+      // First narrow to System, then back to All
+      await user.click(screen.getByRole('button', { name: 'System' }));
+      mockFetch.mockClear();
+      await user.click(screen.getByRole('button', { name: 'All' }));
+
+      await waitFor(() => {
+        const agentUrls = mockFetch.mock.calls
+          .map((c) => toUrlString(c[0]))
+          .filter((u) => u.includes('/agents'));
+        expect(agentUrls.length).toBeGreaterThan(0);
+        expect(agentUrls.every((u) => !u.includes('isSystem='))).toBe(true);
+      });
+    });
+  });
+
+  // ── Last active column ─────────────────────────────────────────────────────
+  describe('last-active column', () => {
+    it('renders "Never" when the agent has no lastActiveAt', () => {
+      const agent = makeAgent({ id: 'a-never', name: 'Neverused', lastActiveAt: null });
+      render(<AgentsTable initialAgents={[agent]} initialMeta={{ ...MOCK_META, total: 1 }} />);
+      expect(screen.getByText('Never')).toBeInTheDocument();
+    });
+
+    it('renders a relative time when the agent has lastActiveAt set', () => {
+      // 2h ago — formatRelativeTime renders "2h ago".
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const agent = makeAgent({
+        id: 'a-active',
+        name: 'Active One',
+        lastActiveAt: twoHoursAgo,
+      });
+      render(<AgentsTable initialAgents={[agent]} initialMeta={{ ...MOCK_META, total: 1 }} />);
+      const row = screen.getByText('Active One').closest('tr');
+      expect(row).not.toBeNull();
+      expect(within(row!).getByText('2h ago')).toBeInTheDocument();
+    });
+  });
+
+  // ── Profile column + filter ────────────────────────────────────────────────
+  describe('profile column', () => {
+    it('renders the profile name as a badge when the agent has a profile', () => {
+      const agent = makeAgent({
+        id: 'a-with-profile',
+        name: 'Profiled',
+        profile: { id: 'prof-1', name: 'Support', slug: 'support', isSystem: false },
+      });
+      render(<AgentsTable initialAgents={[agent]} initialMeta={{ ...MOCK_META, total: 1 }} />);
+      const row = screen.getByText('Profiled').closest('tr');
+      expect(row).not.toBeNull();
+      expect(within(row!).getByText('Support')).toBeInTheDocument();
+    });
+  });
+
+  // ── Group-by-profile toggle ────────────────────────────────────────────────
+  describe('group-by-profile toggle', () => {
+    it('renders a "Group" button in the toolbar', () => {
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      // Aria label set on the button — "Toggle group by profile".
+      expect(screen.getByRole('button', { name: /toggle group by profile/i })).toBeInTheDocument();
+    });
+
+    it('groups rows under a profile bucket header when toggled on', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const agents = [
+        makeAgent({
+          id: 'a1',
+          name: 'Agent One',
+          profile: { id: 'prof-1', name: 'Support', slug: 'support', isSystem: false },
+        }),
+        makeAgent({ id: 'a2', name: 'Agent Two', profile: null }),
+      ];
+      render(<AgentsTable initialAgents={agents} initialMeta={{ ...MOCK_META, total: 2 }} />);
+
+      await user.click(screen.getByRole('button', { name: /toggle group by profile/i }));
+
+      // After toggling, the page shows a bucket header row labelled
+      // "Support" and an "Unassigned" bucket.
+      await waitFor(() => {
+        expect(screen.getByText('Unassigned')).toBeInTheDocument();
+      });
+    });
+  });
+
+  // ── Sortable column headers ────────────────────────────────────────────────
+  describe('click-sort on Chats / Spend MTD / Created', () => {
+    it('triggers a refetch when Chats header is clicked', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      mockFetch.mockClear();
+
+      await user.click(screen.getByRole('button', { name: /chats/i }));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+    });
+
+    it('triggers a refetch when Spend MTD header is clicked', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      mockFetch.mockClear();
+
+      await user.click(screen.getByRole('button', { name: /spend mtd/i }));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+    });
+
+    it('triggers a refetch when Created header is clicked', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<AgentsTable initialAgents={THREE_AGENTS} initialMeta={MOCK_META} />);
+      mockFetch.mockClear();
+
+      await user.click(screen.getByRole('button', { name: /^created/i }));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+    });
+  });
 });
