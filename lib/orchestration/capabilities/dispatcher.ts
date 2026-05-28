@@ -209,6 +209,40 @@ class CapabilityDispatcher {
       };
     }
 
+    // 3a. Quarantine gate. Distinct from isActive — see
+    //     `.context/orchestration/capabilities.md` (Quarantine section).
+    //     `quarantineUntil` is checked at read time: a past timestamp is
+    //     treated as `active` without mutating the row (the field is kept
+    //     for audit). Soft mode returns a structured error the agent can
+    //     route around via plan / orchestrator; hard mode sets
+    //     skipFollowup so the model's tool loop terminates.
+    const effectiveQuarantine = resolveQuarantineState(entry);
+    if (effectiveQuarantine !== 'active') {
+      logger.warn('Capability dispatch: quarantined', {
+        slug,
+        mode: effectiveQuarantine,
+        reason: entry.quarantineReason,
+        agentId: context.agentId,
+      });
+      return {
+        success: false,
+        error: {
+          code: 'capability_quarantined',
+          message:
+            effectiveQuarantine === 'quarantined-hard'
+              ? `Capability ${slug} is unavailable (disabled by admin)`
+              : `Capability ${slug} is temporarily unavailable${
+                  entry.quarantineReason ? `: ${entry.quarantineReason}` : ''
+                }`,
+        },
+        skipFollowup: effectiveQuarantine === 'quarantined-hard',
+        metadata: {
+          mode: effectiveQuarantine,
+          reason: entry.quarantineReason,
+        },
+      };
+    }
+
     // 4. Per-agent binding. Missing pivot rows fall through to the
     //    defaults from the base capability — the admin UI uses opt-out
     //    semantics.
@@ -499,6 +533,24 @@ function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry | null {
 function normaliseQuarantineState(value: string): QuarantineState {
   if (value === 'quarantined-soft' || value === 'quarantined-hard') return value;
   return 'active';
+}
+
+/**
+ * Resolve the *effective* quarantine state of a registry entry, accounting
+ * for read-time auto-expiry. A past `quarantineUntil` returns `'active'`
+ * without mutating the row — the column is preserved for audit. Callers
+ * that need to render the stored state in admin UI should read
+ * `entry.quarantineState` directly.
+ */
+export function resolveQuarantineState(entry: {
+  quarantineState: QuarantineState;
+  quarantineUntil: Date | null;
+}): QuarantineState {
+  if (entry.quarantineState === 'active') return 'active';
+  if (entry.quarantineUntil !== null && entry.quarantineUntil.getTime() <= Date.now()) {
+    return 'active';
+  }
+  return entry.quarantineState;
 }
 
 function formatValidationIssues(issues: unknown[]): string {
