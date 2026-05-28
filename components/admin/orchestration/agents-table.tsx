@@ -27,6 +27,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ArrowLeftRight,
@@ -35,6 +36,8 @@ import {
   Edit,
   Eye,
   FileUp,
+  FolderTree,
+  Layers,
   Link2,
   Loader2,
   MoreHorizontal,
@@ -68,6 +71,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import {
   Table,
@@ -83,6 +93,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
+import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import type { PaginationMeta } from '@/types/api';
 import type { AiAgent } from '@/types/orchestration';
 import { DuplicateAgentDialog } from '@/components/admin/orchestration/duplicate-agent-dialog';
@@ -99,15 +110,31 @@ export interface AgentsTableProps {
   initialMeta: PaginationMeta;
 }
 
-type SortField = 'createdAt' | 'name';
+type SortField = 'createdAt' | 'name' | 'lastActiveAt';
+type ProfileOption = { id: string; name: string; isSystem: boolean };
+const PROFILE_FILTER_ALL = '__all__';
+const PROFILE_FILTER_UNASSIGNED = 'none';
 
 export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const router = useRouter();
   const [agents, setAgents] = useState(initialAgents);
   const [meta, setMeta] = useState(initialMeta);
   const [search, setSearch] = useState('');
-  const [sortField, setSortField] = useState<SortField>('createdAt');
+  // 'default' = the server's natural-importance order (bespoke first, then
+  // lastActiveAt desc, then createdAt desc). Clicking a column header sets
+  // an explicit sort that overrides the default.
+  const [sortField, setSortField] = useState<SortField | 'default'>('default');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [profileFilter, setProfileFilter] = useState<string>(PROFILE_FILTER_ALL);
+  const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+  const [groupByProfile, setGroupByProfile] = useLocalStorage(
+    'agents-table-group-by-profile',
+    false
+  );
+  const [collapsedBuckets, setCollapsedBuckets] = useLocalStorage<Record<string, boolean>>(
+    'agents-table-collapsed-buckets',
+    {}
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -116,6 +143,30 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const [duplicateSource, setDuplicateSource] = useState<AiAgent | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Profile dropdown options — fetched once on mount. Failure is silent;
+  // the dropdown just stays at "All profiles".
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?limit=200`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return;
+        const body =
+          await parseApiResponse<Array<{ id: string; name: string; isSystem: boolean }>>(res);
+        if (!cancelled && body.success) {
+          setProfiles(body.data.map((p) => ({ id: p.id, name: p.name, isSystem: p.isSystem })));
+        }
+      } catch {
+        // Silent — dropdown falls back to "All profiles" only.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -130,17 +181,27 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
   const fetchAgents = useCallback(
     async (
       page = 1,
-      overrides?: { search?: string; sortField?: SortField; sortOrder?: 'asc' | 'desc' }
+      overrides?: {
+        search?: string;
+        sortField?: SortField | 'default';
+        sortOrder?: 'asc' | 'desc';
+        profileFilter?: string;
+      }
     ) => {
       setIsLoading(true);
       setListError(null);
       try {
         const searchValue = overrides?.search !== undefined ? overrides.search : search;
+        const profileValue =
+          overrides?.profileFilter !== undefined ? overrides.profileFilter : profileFilter;
         const params = new URLSearchParams({
           page: String(page),
           limit: String(meta.limit),
         });
         if (searchValue) params.set('q', searchValue);
+        if (profileValue && profileValue !== PROFILE_FILTER_ALL) {
+          params.set('profileId', profileValue);
+        }
 
         const res = await fetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?${params.toString()}`, {
           credentials: 'same-origin',
@@ -150,22 +211,35 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         const body = await parseApiResponse<AiAgentListItem[]>(res);
         if (!body.success) throw new Error('list failed');
 
-        const next = [...body.data];
-        // Bespoke agents always sort before system agents; the column
-        // sort (name / createdAt) is the secondary key. The user-facing
-        // rule is "all bespoke agents before system agents" — applying
-        // it as a primary sort keeps it true regardless of which header
-        // the user clicked.
+        // Server already returns the right order:
+        //   [isSystem asc, lastActiveAt desc nulls last, createdAt desc].
+        // If the user clicks a header, do a single-pass re-sort that
+        // PRESERVES the bespoke-first split — system agents stay below
+        // bespoke agents regardless of which column they clicked.
         const field = overrides?.sortField ?? sortField;
         const order = overrides?.sortOrder ?? sortOrder;
-        next.sort((a, b) => {
-          if (a.isSystem !== b.isSystem) return a.isSystem ? 1 : -1;
-          const av = field === 'name' ? a.name.toLowerCase() : new Date(a.createdAt).getTime();
-          const bv = field === 'name' ? b.name.toLowerCase() : new Date(b.createdAt).getTime();
-          if (av < bv) return order === 'asc' ? -1 : 1;
-          if (av > bv) return order === 'asc' ? 1 : -1;
-          return 0;
-        });
+        const next = [...body.data];
+        if (field !== 'default') {
+          next.sort((a, b) => {
+            if (a.isSystem !== b.isSystem) return a.isSystem ? 1 : -1;
+            let av: number | string;
+            let bv: number | string;
+            if (field === 'name') {
+              av = a.name.toLowerCase();
+              bv = b.name.toLowerCase();
+            } else if (field === 'lastActiveAt') {
+              // Nulls last regardless of sort direction.
+              av = a.lastActiveAt ? new Date(a.lastActiveAt).getTime() : -Infinity;
+              bv = b.lastActiveAt ? new Date(b.lastActiveAt).getTime() : -Infinity;
+            } else {
+              av = new Date(a.createdAt).getTime();
+              bv = new Date(b.createdAt).getTime();
+            }
+            if (av < bv) return order === 'asc' ? -1 : 1;
+            if (av > bv) return order === 'asc' ? 1 : -1;
+            return 0;
+          });
+        }
         setAgents(next);
 
         const parsedMeta = parsePaginationMeta(body.meta);
@@ -177,7 +251,7 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
         setIsLoading(false);
       }
     },
-    [meta.limit, search, sortField, sortOrder]
+    [meta.limit, search, sortField, sortOrder, profileFilter]
   );
 
   const handleSearch = useCallback(
@@ -200,6 +274,21 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
       void fetchAgents(1, { sortField: field, sortOrder: nextOrder });
     },
     [fetchAgents, sortField, sortOrder]
+  );
+
+  const handleProfileFilterChange = useCallback(
+    (value: string) => {
+      setProfileFilter(value);
+      void fetchAgents(1, { profileFilter: value });
+    },
+    [fetchAgents]
+  );
+
+  const toggleBucket = useCallback(
+    (bucketId: string) => {
+      setCollapsedBuckets((prev) => ({ ...prev, [bucketId]: !prev[bucketId] }));
+    },
+    [setCollapsedBuckets]
   );
 
   const handlePage = useCallback(
@@ -335,6 +424,43 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
 
   const allSelected = agents.length > 0 && selected.size === agents.length;
 
+  // Bucket the current page by profile when group-by-profile is on.
+  // Buckets render in the order they're produced by the server sort, so
+  // the bespoke-first / recently-active default still drives placement.
+  // Returns `null` when grouping is off — the renderer falls back to flat
+  // table mode.
+  type Bucket = {
+    id: string;
+    label: string;
+    isSystemProfile: boolean;
+    isUnassigned: boolean;
+    agents: AiAgentListItem[];
+  };
+  const buckets: Bucket[] | null = (() => {
+    if (!groupByProfile) return null;
+    const byId = new Map<string, Bucket>();
+    const order: string[] = [];
+    for (const a of agents) {
+      const key = a.profile?.id ?? '__unassigned__';
+      if (!byId.has(key)) {
+        byId.set(key, {
+          id: key,
+          label: a.profile?.name ?? 'Unassigned',
+          isSystemProfile: a.profile?.isSystem ?? false,
+          isUnassigned: a.profile === null,
+          agents: [],
+        });
+        order.push(key);
+      }
+      byId.get(key)!.agents.push(a);
+    }
+    // Reorder buckets so "Unassigned" sinks to the bottom — everything
+    // else keeps the natural ordering produced by the server sort.
+    const unassigned = order.filter((k) => k === '__unassigned__');
+    const assigned = order.filter((k) => k !== '__unassigned__');
+    return [...assigned, ...unassigned].map((k) => byId.get(k)!);
+  })();
+
   function formatRelativeTime(date: Date | string): string {
     const d = typeof date === 'string' ? new Date(date) : date;
     const now = new Date();
@@ -350,18 +476,249 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
     return `${diffMonths}mo ago`;
   }
 
+  function renderAgentRow(agent: AiAgentListItem) {
+    const visBadge = VISIBILITY_BADGE[agent.visibility] ?? null;
+    return (
+      <TableRow key={agent.id}>
+        <TableCell>
+          <Checkbox
+            checked={selected.has(agent.id)}
+            onCheckedChange={() => toggleRow(agent.id)}
+            aria-label={`Select ${agent.name}`}
+          />
+        </TableCell>
+        <TableCell className="max-w-[280px]">
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/admin/orchestration/agents/${agent.id}`}
+              className="font-medium hover:underline"
+            >
+              {agent.name}
+            </Link>
+            {agent.isSystem && (
+              <Tip label="System agent — used internally by the platform. Cannot be deleted or deactivated.">
+                <Badge variant="secondary" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+                  <Shield className="h-3 w-3" />
+                  System
+                </Badge>
+              </Tip>
+            )}
+            {agent.kind === 'judge' && (
+              <Tip label="Judge agent — driven by the evaluation worker (and the manual-session scorer) to score AI responses. Edit the system instructions to change its rubric.">
+                <Badge
+                  variant="outline"
+                  className="gap-1 border-amber-300 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:border-amber-700 dark:text-amber-300"
+                >
+                  <Scale className="h-3 w-3" />
+                  Judge
+                </Badge>
+              </Tip>
+            )}
+            {visBadge && (
+              <Tip label={`Visibility: ${agent.visibility.replace('_', ' ')}`}>
+                <Badge variant="outline" className="gap-1 px-1.5 py-0 text-[10px] font-medium">
+                  {visBadge.icon}
+                  {visBadge.label}
+                </Badge>
+              </Tip>
+            )}
+          </div>
+          {agent.description && (
+            <p className="text-muted-foreground mt-0.5 truncate text-xs">{agent.description}</p>
+          )}
+        </TableCell>
+        <TableCell className="text-xs">
+          {agent.profile ? (
+            <Tip
+              label={
+                agent.profile.isSystem
+                  ? `System profile "${agent.profile.name}" — open to view persona, voice, and guardrails`
+                  : `Profile "${agent.profile.name}" — open to edit persona, voice, and guardrails`
+              }
+            >
+              <Link
+                href={`/admin/orchestration/agent-profiles/${agent.profile.id}`}
+                className="inline-flex"
+              >
+                <Badge
+                  variant="outline"
+                  className="hover:bg-muted gap-1 px-1.5 py-0 text-[10px] font-medium"
+                >
+                  {agent.profile.isSystem && <Shield className="h-3 w-3" aria-hidden="true" />}
+                  {agent.profile.name}
+                </Badge>
+              </Link>
+            </Tip>
+          ) : (
+            <Tip label="No profile — agent's own persona/voice/guardrails apply directly">
+              <span className="text-muted-foreground">—</span>
+            </Tip>
+          )}
+        </TableCell>
+        <TableCell className="text-right tabular-nums">
+          {agent._count.capabilities === 0 ? (
+            <span className="text-muted-foreground">0</span>
+          ) : (
+            <Link
+              href={`/admin/orchestration/agents/${agent.id}`}
+              className="hover:underline"
+              title="View agent tools"
+            >
+              {agent._count.capabilities}
+            </Link>
+          )}
+        </TableCell>
+        <TableCell className="text-right tabular-nums">{agent._count.conversations}</TableCell>
+        <TableCell className="text-xs">
+          {agent.provider === '' && agent.model === '' ? (
+            <Tip label="At runtime this agent uses the first active provider plus the default chat model from Orchestration Settings. Set the default chat model on the Settings page (Default models card) or via the setup wizard's 'Default models' step.">
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium">
+                System default
+              </Badge>
+            </Tip>
+          ) : (
+            <>
+              <span className="text-muted-foreground">{agent.provider} /</span> {agent.model}
+            </>
+          )}
+        </TableCell>
+        <TableCell className="text-right tabular-nums">
+          {agent.monthlyBudgetUsd ? (
+            `$${agent.monthlyBudgetUsd.toFixed(2)}`
+          ) : (
+            <Tip label="No budget cap set">
+              <span className="text-muted-foreground">—</span>
+            </Tip>
+          )}
+        </TableCell>
+        <TableCell className="text-right tabular-nums">
+          {agent._budget ? (
+            `$${agent._budget.spent.toFixed(2)}`
+          ) : (
+            <Tip label="Spend data not available">
+              <span className="text-muted-foreground">—</span>
+            </Tip>
+          )}
+        </TableCell>
+        <TableCell className="text-xs">
+          {agent.lastActiveAt ? (
+            <Tip label={new Date(agent.lastActiveAt).toLocaleString()}>
+              <span className="text-muted-foreground">
+                {formatRelativeTime(agent.lastActiveAt)}
+              </span>
+            </Tip>
+          ) : (
+            <Tip label="No activity yet — never used in a conversation or LLM call">
+              <span className="text-muted-foreground">Never</span>
+            </Tip>
+          )}
+        </TableCell>
+        <TableCell className="text-xs">
+          <Tip label={agent.creator?.name ? `Created by ${agent.creator.name}` : 'Creator unknown'}>
+            <span className="text-muted-foreground">{formatRelativeTime(agent.createdAt)}</span>
+          </Tip>
+        </TableCell>
+        <TableCell className="text-center">
+          {agent.isSystem ? (
+            <Tip label="System agents cannot be deactivated">
+              <span className="inline-block">
+                <Switch
+                  checked={agent.isActive}
+                  disabled
+                  aria-label={`${agent.name} is a system agent and cannot be deactivated`}
+                />
+              </span>
+            </Tip>
+          ) : (
+            <Switch
+              checked={agent.isActive}
+              onCheckedChange={(v) => void handleToggleStatus(agent, v)}
+              aria-label={`Toggle ${agent.name} active`}
+            />
+          )}
+        </TableCell>
+        <TableCell className="text-right">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-8 w-8 p-0">
+                <span className="sr-only">Row actions</span>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => router.push(`/admin/orchestration/agents/${agent.id}`)}
+              >
+                <Edit className="mr-2 h-4 w-4" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setDuplicateSource(agent)}>
+                <Copy className="mr-2 h-4 w-4" />
+                Duplicate
+              </DropdownMenuItem>
+              {!agent.isSystem && (
+                <DropdownMenuItem className="text-red-600" onClick={() => setDeleteTarget(agent)}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {/* Header / toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative max-w-sm flex-1">
-          <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-          <Input
-            placeholder="Search agents..."
-            value={search}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="pl-9"
-          />
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative max-w-sm flex-1">
+            <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+            <Input
+              placeholder="Search agents..."
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Tip label="Filter by agent profile — the inheritable persona/voice/guardrails library each agent can link to">
+            <Select value={profileFilter} onValueChange={handleProfileFilterChange}>
+              <SelectTrigger className="h-9 w-[200px]" aria-label="Filter by profile">
+                <FolderTree className="text-muted-foreground mr-1 h-4 w-4" />
+                <SelectValue placeholder="All profiles" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={PROFILE_FILTER_ALL}>All profiles</SelectItem>
+                <SelectItem value={PROFILE_FILTER_UNASSIGNED}>Unassigned</SelectItem>
+                {profiles.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    <span className="flex items-center gap-1.5">
+                      {p.isSystem && (
+                        <Shield className="text-muted-foreground h-3 w-3" aria-hidden="true" />
+                      )}
+                      {p.name}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Tip>
+          <Tip label="Group rows by profile — collapsible sections, current page only">
+            <Button
+              variant={groupByProfile ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setGroupByProfile((v) => !v)}
+              aria-pressed={groupByProfile}
+              aria-label="Toggle group by profile"
+            >
+              <Layers className="mr-2 h-4 w-4" />
+              Group
+            </Button>
+          </Tip>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -475,6 +832,11 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                   </Button>
                 </Tip>
               </TableHead>
+              <TableHead>
+                <Tip label="Profile this agent inherits persona / voice / guardrails from">
+                  <span>Profile</span>
+                </Tip>
+              </TableHead>
               <TableHead className="text-right">
                 <Tip label="Number of tools (capabilities) attached to this agent">
                   <span>Tools</span>
@@ -501,6 +863,18 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                 </Tip>
               </TableHead>
               <TableHead>
+                <Tip label="Most recent activity — bumped on any new conversation, inbound message, or LLM call. Drives the default sort.">
+                  <Button
+                    variant="ghost"
+                    className="-ml-4 h-8"
+                    onClick={() => handleSort('lastActiveAt')}
+                  >
+                    Last active
+                    {renderSortIcon('lastActiveAt')}
+                  </Button>
+                </Tip>
+              </TableHead>
+              <TableHead>
                 <Tip label="When this agent was created">
                   <span>Created</span>
                 </Tip>
@@ -516,13 +890,13 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
           <TableBody>
             {isLoading && agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center">
+                <TableCell colSpan={12} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : agents.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="py-10">
+                <TableCell colSpan={12} className="py-10">
                   <div className="mx-auto flex max-w-md flex-col items-center gap-3 text-center">
                     <div className="bg-muted/50 rounded-full p-3">
                       <Plus className="text-muted-foreground h-6 w-6" aria-hidden="true" />
@@ -549,185 +923,48 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
                   </div>
                 </TableCell>
               </TableRow>
-            ) : (
-              agents.map((agent) => {
-                const visBadge = VISIBILITY_BADGE[agent.visibility] ?? null;
-                return (
-                  <TableRow key={agent.id}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selected.has(agent.id)}
-                        onCheckedChange={() => toggleRow(agent.id)}
-                        aria-label={`Select ${agent.name}`}
-                      />
-                    </TableCell>
-                    <TableCell className="max-w-[280px]">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/admin/orchestration/agents/${agent.id}`}
-                          className="font-medium hover:underline"
-                        >
-                          {agent.name}
-                        </Link>
-                        {agent.isSystem && (
-                          <Tip label="System agent — used internally by the platform. Cannot be deleted or deactivated.">
-                            <Badge
-                              variant="secondary"
-                              className="gap-1 px-1.5 py-0 text-[10px] font-medium"
-                            >
-                              <Shield className="h-3 w-3" />
-                              System
-                            </Badge>
-                          </Tip>
-                        )}
-                        {agent.kind === 'judge' && (
-                          <Tip label="Judge agent — driven by the evaluation worker (and the manual-session scorer) to score AI responses. Edit the system instructions to change its rubric.">
-                            <Badge
-                              variant="outline"
-                              className="gap-1 border-amber-300 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:border-amber-700 dark:text-amber-300"
-                            >
-                              <Scale className="h-3 w-3" />
-                              Judge
-                            </Badge>
-                          </Tip>
-                        )}
-                        {visBadge && (
-                          <Tip label={`Visibility: ${agent.visibility.replace('_', ' ')}`}>
-                            <Badge
-                              variant="outline"
-                              className="gap-1 px-1.5 py-0 text-[10px] font-medium"
-                            >
-                              {visBadge.icon}
-                              {visBadge.label}
-                            </Badge>
-                          </Tip>
-                        )}
-                      </div>
-                      {agent.description && (
-                        <p className="text-muted-foreground mt-0.5 truncate text-xs">
-                          {agent.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agent._count.capabilities === 0 ? (
-                        <span className="text-muted-foreground">0</span>
-                      ) : (
-                        <Link
-                          href={`/admin/orchestration/agents/${agent.id}`}
-                          className="hover:underline"
-                          title="View agent tools"
-                        >
-                          {agent._count.capabilities}
-                        </Link>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agent._count.conversations}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {agent.provider === '' && agent.model === '' ? (
-                        <Tip label="At runtime this agent uses the first active provider plus the default chat model from Orchestration Settings. Set the default chat model on the Settings page (Default models card) or via the setup wizard's 'Default models' step.">
-                          <Badge
-                            variant="secondary"
-                            className="px-1.5 py-0 text-[10px] font-medium"
-                          >
-                            System default
-                          </Badge>
-                        </Tip>
-                      ) : (
-                        <>
-                          <span className="text-muted-foreground">{agent.provider} /</span>{' '}
-                          {agent.model}
-                        </>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agent.monthlyBudgetUsd ? (
-                        `$${agent.monthlyBudgetUsd.toFixed(2)}`
-                      ) : (
-                        <Tip label="No budget cap set">
-                          <span className="text-muted-foreground">—</span>
-                        </Tip>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {agent._budget ? (
-                        `$${agent._budget.spent.toFixed(2)}`
-                      ) : (
-                        <Tip label="Spend data not available">
-                          <span className="text-muted-foreground">—</span>
-                        </Tip>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      <Tip
-                        label={
-                          agent.creator?.name
-                            ? `Created by ${agent.creator.name}`
-                            : 'Creator unknown'
-                        }
+            ) : buckets ? (
+              buckets.flatMap((bucket) => {
+                const isCollapsed = collapsedBuckets[bucket.id] === true;
+                const headerRow = (
+                  <TableRow key={`bucket-${bucket.id}`} className="bg-muted/40 hover:bg-muted/50">
+                    <TableCell colSpan={12} className="py-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleBucket(bucket.id)}
+                        className="flex w-full items-center gap-2 text-left text-sm font-medium"
+                        aria-expanded={!isCollapsed}
                       >
-                        <span className="text-muted-foreground">
-                          {formatRelativeTime(agent.createdAt)}
-                        </span>
-                      </Tip>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {agent.isSystem ? (
-                        <Tip label="System agents cannot be deactivated">
-                          <span className="inline-block">
-                            <Switch
-                              checked={agent.isActive}
-                              disabled
-                              aria-label={`${agent.name} is a system agent and cannot be deactivated`}
-                            />
+                        {isCollapsed ? (
+                          <ChevronRight className="text-muted-foreground h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="text-muted-foreground h-4 w-4" />
+                        )}
+                        {bucket.isUnassigned ? (
+                          <span className="text-muted-foreground">Unassigned</span>
+                        ) : (
+                          <span className="flex items-center gap-1.5">
+                            {bucket.isSystemProfile && (
+                              <Shield
+                                className="text-muted-foreground h-3 w-3"
+                                aria-hidden="true"
+                              />
+                            )}
+                            {bucket.label}
                           </span>
-                        </Tip>
-                      ) : (
-                        <Switch
-                          checked={agent.isActive}
-                          onCheckedChange={(v) => void handleToggleStatus(agent, v)}
-                          aria-label={`Toggle ${agent.name} active`}
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" className="h-8 w-8 p-0">
-                            <span className="sr-only">Row actions</span>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onClick={() => router.push(`/admin/orchestration/agents/${agent.id}`)}
-                          >
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setDuplicateSource(agent)}>
-                            <Copy className="mr-2 h-4 w-4" />
-                            Duplicate
-                          </DropdownMenuItem>
-                          {!agent.isSystem && (
-                            <DropdownMenuItem
-                              className="text-red-600"
-                              onClick={() => setDeleteTarget(agent)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                        )}
+                        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium">
+                          {bucket.agents.length}
+                        </Badge>
+                      </button>
                     </TableCell>
                   </TableRow>
                 );
+                if (isCollapsed) return [headerRow];
+                return [headerRow, ...bucket.agents.map((agent) => renderAgentRow(agent))];
               })
+            ) : (
+              agents.map((agent) => renderAgentRow(agent))
             )}
           </TableBody>
         </Table>
