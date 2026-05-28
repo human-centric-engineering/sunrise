@@ -139,6 +139,47 @@ Beyond the local checks above, CI runs supply-chain security scanning on every P
 
 If one fails, the Checks tab or PR comment explains why. See [Supply-Chain Security](.context/security/overview.md#supply-chain-security) for the full layer.
 
+## Cutting a release
+
+Sunrise releases are cut **deliberately** — release-on-demand, not on every
+merge. A release means _"this batch is worth depending on"_: a dated
+`CHANGELOG.md` entry plus a `vX.Y.Z` git tag. Either of the Sunrise
+maintainers may cut a release after the standard PR gates. The full
+public-surface contract behind the bump decision lives in
+[`VERSIONING.md`](./VERSIONING.md).
+
+> The process below is intentionally lightweight. Once the HCE Hub is built it
+> will become the system of record for releases + cross-fork tracking; until
+> then manual git-tag + CHANGELOG suffices.
+
+**Steps:**
+
+1. **Decide the bump.** MAJOR / MINOR / PATCH per
+   [`VERSIONING.md` → SemVer rules](./VERSIONING.md#semver-rules-at-10). During
+   `0.x`, MINOR for new public surface, PATCH for fixes — we don't bump MAJOR
+   in `0.x` (see the `0.x` semantics section).
+2. **Bump the platform version.** Edit
+   [`lib/sunrise-version.ts`](./lib/sunrise-version.ts) — change
+   `SUNRISE_VERSION` to the new value.
+3. **Match `package.json.version`.** Set it to the same value (lint-staged
+   formats the file on commit).
+4. **Update the changelog.** Move the entries under `## [Unreleased]` in
+   `CHANGELOG.md` to a new dated heading: `## [X.Y.Z] — YYYY-MM-DD`. During
+   `0.x`, mark the entry **alpha**. Leave `## [Unreleased]` in place (empty,
+   for the next release).
+5. **Run the gates locally.** `npm run validate`, full test suite, then
+   `/pre-pr` and `/security-review`.
+6. **Open the release PR.** Push the branch, run `/code-review` on the PR,
+   then merge.
+7. **Tag the merge commit.**
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The tag is what the eventual HCE Hub will discover; the CHANGELOG entry is
+what fork authors will read before merging the upgrade.
+
 ## Project Structure
 
 See `.context/substrate.md` for full documentation. Key areas:

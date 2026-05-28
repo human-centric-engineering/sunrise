@@ -361,7 +361,96 @@ your dependencies and `app:*` scripts sit in regions upstream never edits.
 
 ---
 
-## 8. Staying in sync with upstream Sunrise
+## 8. Tracking your Sunrise version
+
+Your fork has **two versions**, deliberately separate. Understanding the split
+costs five minutes and saves the recurring "which Sunrise is this app on?"
+question forever.
+
+### The two-version model
+
+| Version           | Where it lives                                       | Yours or Sunrise's?                                                     |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| `version`         | [`package.json`](./package.json)                     | **Yours** — your app's version. Bump on your own release cadence.       |
+| `SUNRISE_VERSION` | [`lib/sunrise-version.ts`](./lib/sunrise-version.ts) | **Sunrise's** — which release of the upstream platform you're built on. |
+
+You already set the first one in [§1 First steps](#1-first-steps). The second
+one is set for you by whichever Sunrise release you forked from, and updates
+automatically when you merge in a new upstream release.
+
+### Why not just use `package.json.version`?
+
+Because **you** edit `package.json.version` to track your own app. If
+Sunrise's version were derived from it, the upstream version number would
+silently follow your fork's — and nobody could ask a running deployment
+_"which Sunrise are you on?"_ without you also publishing a mapping table.
+
+`lib/sunrise-version.ts` is Sunrise-owned: maintainers bump the constant on
+each upstream release; you don't touch the file. The header comment in the
+file restates this so anyone scanning the source spots it immediately.
+
+> **Don't:** edit `lib/sunrise-version.ts` in your fork. The only way you'd
+> hit a merge conflict on this file is if you've edited it; resolving the
+> conflict in your favour permanently desyncs your reported version from
+> reality.
+>
+> **Do:** let upstream merges update it. Treat the file as read-only from
+> the fork's perspective.
+
+### Where Sunrise surfaces it
+
+Sunrise's `/api/health` endpoint already includes both versions in its
+response:
+
+```json
+{
+  "status": "ok",
+  "version": "1.2.3", // your app
+  "sunrise": "0.5.0", // the platform release you're on
+  "uptime": 1234,
+  "timestamp": "2026-…"
+}
+```
+
+If you keep the `/api/health` route in your fork (most do), you inherit this
+for free.
+
+### Where you might surface it in your fork
+
+Optional, not required — surface it wherever it's useful for your operators:
+
+- **Your own health endpoint**, if you replaced Sunrise's. Add
+  `sunrise: SUNRISE_VERSION` to the payload.
+- **An admin "About" panel or sidebar footer** — one line, useful when
+  triaging issues that might be release-specific.
+- **Your structured-logger base context** — include `sunrise` in every log
+  line so support tickets carry it implicitly.
+
+### What to do when you upgrade
+
+When you pull a new Sunrise release into your fork:
+
+1. **Read [`CHANGELOG.md`](./CHANGELOG.md)** for the range of versions you're
+   crossing — start at your previous `SUNRISE_VERSION` and read forward.
+2. **Pay particular attention to MAJOR bumps** — breaking changes to the
+   public surface (see [`VERSIONING.md` → SemVer rules](./VERSIONING.md#semver-rules-at-10)).
+   They're rare during `0.x` and don't force a MAJOR bump even when they
+   occur, but a real `1.x → 2.x` MAJOR is a deliberate signal that real merge
+   work is coming.
+3. **During `0.x`, expect real merge work between any two releases** — the
+   surface is still settling. See
+   [`VERSIONING.md` → `0.x` semantics](./VERSIONING.md#0x-alpha-semantics--loose-by-design).
+
+The mechanical merge steps (migrations, schema, `package.json`) are in the
+next section.
+
+For the full version contract and how Sunrise releases are produced, see
+[`VERSIONING.md`](./VERSIONING.md) and
+[`CONTRIBUTING.md` → "Cutting a release"](./CONTRIBUTING.md#cutting-a-release).
+
+---
+
+## 9. Staying in sync with upstream Sunrise
 
 When you pull a new Sunrise release into your fork, the biggest moving part is
 the database migration history — your app's migrations and Sunrise's share one
@@ -402,7 +491,7 @@ extension requirement, and zero-downtime patterns — lives in
 
 ---
 
-## 9. Removing features
+## 10. Removing features
 
 **Testing framework:**
 
@@ -433,7 +522,7 @@ extension requirement, and zero-downtime patterns — lives in
 
 ---
 
-## 10. Reference documentation
+## 11. Reference documentation
 
 **Detailed guides:**
 

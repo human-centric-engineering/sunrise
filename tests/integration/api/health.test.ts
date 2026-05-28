@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/health/route';
+import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 /**
  * Mock dependencies
@@ -76,6 +77,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 interface HealthResponse {
   status: 'ok' | 'error';
   version: string;
+  sunrise: string;
   uptime: number;
   timestamp: string;
   services: {
@@ -144,6 +146,24 @@ describe('GET /api/health', () => {
       // Assert
       expect(body).toHaveProperty('version');
       expect(typeof body.version).toBe('string');
+    });
+
+    it('should include sunrise platform version field equal to SUNRISE_VERSION', async () => {
+      // The `sunrise` field is part of the public health-response contract
+      // (see VERSIONING.md). It must always equal the SUNRISE_VERSION
+      // constant — that's how operators and the eventual Hub discover which
+      // Sunrise a deployment is on. Asserting equality with the imported
+      // constant catches both a missing field AND a hand-edited route that
+      // hard-codes the wrong literal.
+      vi.mocked(getDatabaseHealth).mockResolvedValue({
+        connected: true,
+        latency: 5,
+      });
+
+      const response = await GET(createMockRequest());
+      const body = await parseResponse<HealthResponse>(response);
+
+      expect(body.sunrise).toBe(SUNRISE_VERSION);
     });
 
     it('should include uptime field as number', async () => {
@@ -322,6 +342,10 @@ describe('GET /api/health', () => {
       expect(body.services.database.connected).toBe(false);
       expect(body.services.database.status).toBe('outage');
       expect(body.error).toBe('Database connection timeout');
+      // The sunrise field must survive the catch branch — diagnostics that
+      // need to know which Sunrise the failing deployment is on are exactly
+      // the case where the field matters most.
+      expect(body.sunrise).toBe(SUNRISE_VERSION);
       expect(mockLoggerWithContext.error).toHaveBeenCalledWith('Health check failed', dbError);
     });
 
@@ -372,6 +396,7 @@ describe('GET /api/health', () => {
       // Assert
       expect(body).toHaveProperty('status');
       expect(body).toHaveProperty('version');
+      expect(body).toHaveProperty('sunrise');
       expect(body).toHaveProperty('uptime');
       expect(body).toHaveProperty('timestamp');
       expect(body).toHaveProperty('services');

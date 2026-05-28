@@ -3,6 +3,7 @@ import { getDatabaseHealth } from '@/lib/db/utils';
 import { getRouteLogger } from '@/lib/api/context';
 import { getMemoryUsage } from '@/lib/monitoring';
 import type { HealthCheckResponse, ServiceStatus } from '@/lib/monitoring';
+import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 /**
  * Cache the version at module load time to avoid reading package.json on every request.
@@ -45,7 +46,8 @@ function determineServiceStatus(connected: boolean, latency?: number): ServiceSt
  * Response format:
  * {
  *   status: 'ok' | 'error',
- *   version: string,
+ *   version: string,        // fork's app version (package.json)
+ *   sunrise: string,        // Sunrise platform version (lib/sunrise-version.ts)
  *   uptime: number,
  *   timestamp: string,
  *   services: {
@@ -81,6 +83,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const response: HealthCheckResponse = {
       status: dbHealth.connected ? 'ok' : 'error',
       version: APP_VERSION,
+      sunrise: SUNRISE_VERSION,
       uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       services: {
@@ -110,6 +113,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     const errorResponse: HealthCheckResponse = {
       status: 'error',
       version: APP_VERSION,
+      sunrise: SUNRISE_VERSION,
       uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       services: {
