@@ -13,6 +13,10 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiAgent: {
       findUnique: vi.fn(),
+      // `touchAgentLastActive` is called from `logCost` after a successful
+      // cost-log create. Mocked here so the fire-and-forget bump does not
+      // trip on undefined inside these tests.
+      update: vi.fn().mockResolvedValue({}),
     },
     aiOrchestrationSettings: {
       findUnique: vi.fn(),

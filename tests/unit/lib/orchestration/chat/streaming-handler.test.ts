@@ -15,7 +15,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    aiAgent: { findFirst: vi.fn() },
+    // `touchAgentLastActive` (called from `createNewConversation`) does
+    // a fire-and-forget `aiAgent.update`. Stubbed so the bump is silent.
+    aiAgent: { findFirst: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     aiConversation: { findFirst: vi.fn(), create: vi.fn(), count: vi.fn(), update: vi.fn() },
     aiMessage: { findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
     aiUserMemory: { findMany: vi.fn() },

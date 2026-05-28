@@ -18,6 +18,13 @@ vi.mock('@/lib/db/client', () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    // `touchAgentLastActive` (called from the resolver) fires a
+    // fire-and-forget `aiAgent.update`. Mocked here so the helper
+    // doesn't trip on undefined when the test asserts resolver
+    // behaviour.
+    aiAgent: {
+      update: vi.fn().mockResolvedValue({}),
+    },
   },
 }));
 
