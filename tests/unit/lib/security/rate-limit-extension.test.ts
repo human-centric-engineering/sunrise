@@ -40,6 +40,7 @@ import {
   registerRateLimitRule,
   getEffectiveRateLimitPolicy,
   findRateLimitRule,
+  pathMatchesRule,
   RATE_LIMIT_POLICY,
   CATCH_ALL_RULE,
   __resetAppRateLimitRules,
@@ -151,9 +152,13 @@ describe('registerRateLimitTier / resolveRateLimitTier', () => {
 // ─── Rule registry — security guard ──────────────────────────────────────────
 
 describe('registerRateLimitRule — protected-namespace guard', () => {
+  // The guard uses namespace-prefix probes ('/api/v1/admin/...', '/api/auth/...',
+  // '/api/v1/auth/...', '/api/v1/mcp...'), so any matcher that fires for an
+  // arbitrary path under one of these namespaces is rejected. Specific
+  // endpoints inside a namespace need not be probed individually — the prefix
+  // covers them (and stays stable as Sunrise adds new sub-routes).
   const protectedMatchers: Array<[string, RegExp | string]> = [
-    ['core admin (regex)', /^\/api\/v1\/admin\//],
-    ['orchestration admin', /^\/api\/v1\/admin\/orchestration\//],
+    ['core admin namespace (regex)', /^\/api\/v1\/admin\//],
     ['better-auth credential surface', /^\/api\/auth\//],
     ['Sunrise app-layer auth', /^\/api\/v1\/auth\//],
     ['MCP transport', /^\/api\/v1\/mcp(\/|$)/],
@@ -179,6 +184,30 @@ describe('registerRateLimitRule — protected-namespace guard', () => {
     registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'api', key: 'session-user' });
     // It was added — effective policy is no longer the base array by identity.
     expect(getEffectiveRateLimitPolicy()).not.toBe(RATE_LIMIT_POLICY);
+  });
+
+  it('accepts a rule nested INSIDE a Sunrise sub-namespace — ordering, not the guard, protects', () => {
+    // Namespace-prefix probes intentionally do NOT catch matchers more
+    // specific than the probe (a regex like /^\/api\/v1\/admin\/orchestration\//
+    // doesn't fire for /api/v1/admin/-probe- because the probe lacks
+    // "orchestration"). The defence here is first-match-wins ordering: app
+    // rules splice in AFTER every Sunrise rule, so Sunrise's orchestration
+    // rule still wins for any orchestration path before the fork's rule is
+    // ever evaluated. This test pins the behaviour so a future tightening
+    // of the guard is a deliberate change, not an accident.
+    registerRateLimitRule({
+      match: /^\/api\/v1\/admin\/orchestration\//,
+      tier: 'api',
+      key: 'ip',
+    });
+    const eff = getEffectiveRateLimitPolicy();
+    // Rule is in the policy...
+    expect(eff).not.toBe(RATE_LIMIT_POLICY);
+    // ...but a request to /api/v1/admin/orchestration/agents still resolves
+    // to Sunrise's 'orchestration' tier (which comes first), not the fork's 'api'.
+    expect(findRateLimitRule('/api/v1/admin/orchestration/agents', eff)?.tier).toBe(
+      'orchestration'
+    );
   });
 });
 
@@ -260,6 +289,41 @@ describe('getEffectiveRateLimitPolicy — insertion position', () => {
     expect(getEffectiveRateLimitPolicy().length).toBe(lengthAfterFirst);
   });
 
+  it('memoises the effective policy across repeated calls once app rules are registered', () => {
+    // The middleware now defaults findRateLimitRule's policy arg to
+    // getEffectiveRateLimitPolicy(), so this fires on every request once any
+    // app rule is registered. The cache MUST return the same array instance
+    // until a register/reset invalidates it — otherwise every request pays
+    // the allocation cost the comment claims is avoided.
+    registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'api', key: 'session-user' });
+    const a = getEffectiveRateLimitPolicy();
+    const b = getEffectiveRateLimitPolicy();
+    const c = getEffectiveRateLimitPolicy();
+    expect(a).toBe(b); // identity, not just structural equality
+    expect(b).toBe(c);
+    // Sanity: the cached array still contains the registered rule.
+    expect(a).not.toBe(RATE_LIMIT_POLICY);
+  });
+
+  it('invalidates the cache when a new app rule is registered', () => {
+    registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'api', key: 'session-user' });
+    const before = getEffectiveRateLimitPolicy();
+    registerRateLimitRule({ match: /^\/api\/v1\/widgets\//, tier: 'api', key: 'session-user' });
+    const after = getEffectiveRateLimitPolicy();
+    // A second registration must produce a new array (the old cache is stale).
+    expect(after).not.toBe(before);
+    expect(after.length).toBe(before.length + 1);
+  });
+
+  it('invalidates the cache on __resetAppRateLimitRules', () => {
+    registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'api', key: 'session-user' });
+    const beforeReset = getEffectiveRateLimitPolicy();
+    expect(beforeReset).not.toBe(RATE_LIMIT_POLICY);
+    __resetAppRateLimitRules();
+    // After reset there are no app rules → identity return of the base policy.
+    expect(getEffectiveRateLimitPolicy()).toBe(RATE_LIMIT_POLICY);
+  });
+
   it('does NOT dedupe structurally — distinct rule objects with same shape both register', () => {
     // The dedup is intentionally by reference, not by content. A fork editing
     // `lib/app/rate-limit.ts` itself produces a fresh rule literal on
@@ -280,6 +344,41 @@ describe('getEffectiveRateLimitPolicy — insertion position', () => {
     const baselineLength = getEffectiveRateLimitPolicy().length;
     registerRateLimitRule(ruleB);
     expect(getEffectiveRateLimitPolicy().length).toBe(baselineLength + 1);
+  });
+});
+
+// ─── pathMatchesRule + findRateLimitRule default arg ────────────────────────
+
+describe('pathMatchesRule (exported helper)', () => {
+  it('returns true for a string matcher that is a prefix of the pathname', () => {
+    // The middleware skip-fallthrough loop now uses this helper instead of an
+    // inline copy. Lock the contract: string matchers are `startsWith`.
+    expect(pathMatchesRule('/api/v1/billing/', '/api/v1/billing/charge')).toBe(true);
+    expect(pathMatchesRule('/api/v1/billing/', '/api/v1/billing/')).toBe(true);
+    expect(pathMatchesRule('/api/v1/billing/', '/api/v1/widgets/list')).toBe(false);
+  });
+
+  it('returns true for a RegExp matcher whose .test() accepts the pathname', () => {
+    expect(pathMatchesRule(/^\/api\/v1\/admin\//, '/api/v1/admin/users')).toBe(true);
+    expect(pathMatchesRule(/^\/api\/v1\/admin\//, '/api/v1/billing/charge')).toBe(false);
+  });
+});
+
+describe('findRateLimitRule default arg (finding #14 — defaults to effective policy)', () => {
+  it('with no policy arg, picks up app-registered rules (not just the base policy)', () => {
+    // The previous default was `RATE_LIMIT_POLICY` (the bare base) — any
+    // future caller using the default would silently bypass app rules. The
+    // new default is `getEffectiveRateLimitPolicy()`, so callers that don't
+    // pass policy still see the app slice.
+    registerRateLimitRule({
+      match: /^\/api\/v1\/billing\//,
+      tier: 'api',
+      key: 'api-key',
+    });
+    // No explicit policy argument — the default kicks in.
+    const rule = findRateLimitRule('/api/v1/billing/charge');
+    // App rule wins (its `api-key` keying, not the catch-all's `session-user`).
+    expect(rule?.key).toBe('api-key');
   });
 });
 

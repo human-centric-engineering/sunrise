@@ -94,6 +94,67 @@ describe('rate-limit auto-wire (lib/app/rate-limit.ts → middleware realm)', ()
     expect(getEffectiveRateLimitPolicy()).toBe(RATE_LIMIT_POLICY);
   });
 
+  it('aborts boot when an app rule references an unregistered tier (finding #6 integrity check)', async () => {
+    // Without the integrity check, a typo in `tier` (rule names 'billling',
+    // limiter registered as 'billing') would type-check fine and then silently
+    // fail open at request time — `resolveRateLimitTier` returns undefined, the
+    // middleware logs a warning and applies NO rate limit. The check at the
+    // end of the auto-wire block converts that runtime hole into a fail-fast
+    // boot error naming the offending rule and tier.
+    vi.resetModules();
+    vi.doMock('@/lib/app/rate-limit', async () => {
+      const policy = await vi.importActual<typeof import('@/lib/security/rate-limit-policy')>(
+        '@/lib/security/rate-limit-policy'
+      );
+      return {
+        registerAppRateLimits: (): void => {
+          // Register a rule whose tier is NEVER registered as a limiter.
+          policy.registerRateLimitRule({
+            match: /^\/api\/v1\/billing\//,
+            tier: 'billling', // typo on purpose
+            key: 'ip',
+          });
+        },
+      };
+    });
+
+    // Act + Assert — boot throws, naming the unresolved tier
+    await expect(import('@/lib/security/rate-limit-middleware')).rejects.toThrow(
+      /unknown tier.*billling/i
+    );
+  });
+
+  it('accepts the boot when every app rule references a tier that resolves', async () => {
+    // Positive control for the integrity check: when the tier IS registered,
+    // boot succeeds. Pairs with the negative test above so a regression in
+    // the integrity check (always-throw / never-throw) shows up.
+    vi.resetModules();
+    vi.doMock('@/lib/app/rate-limit', async () => {
+      const rl = await vi.importActual<typeof import('@/lib/security/rate-limit')>(
+        '@/lib/security/rate-limit'
+      );
+      const policy = await vi.importActual<typeof import('@/lib/security/rate-limit-policy')>(
+        '@/lib/security/rate-limit-policy'
+      );
+      return {
+        registerAppRateLimits: (): void => {
+          rl.registerRateLimitTier(
+            'integrity-cap',
+            rl.createRateLimiter({ interval: 60_000, maxRequests: 5 })
+          );
+          policy.registerRateLimitRule({
+            match: /^\/api\/v1\/integrity\//,
+            tier: 'integrity-cap',
+            key: 'ip',
+          });
+        },
+      };
+    });
+
+    // Should NOT throw — the rule's tier resolves cleanly.
+    await expect(import('@/lib/security/rate-limit-middleware')).resolves.toBeDefined();
+  });
+
   it('annotates and re-throws when registerAppRateLimits throws at module load', async () => {
     // Without the try/catch, a misconfigured registration in lib/app/rate-limit.ts
     // (e.g. a matcher that shadows a protected path) propagates out of the

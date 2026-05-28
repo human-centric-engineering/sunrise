@@ -34,6 +34,7 @@ import {
 import {
   findRateLimitRule,
   getEffectiveRateLimitPolicy,
+  pathMatchesRule,
   type RateLimitKey,
   type RateLimitRule,
 } from '@/lib/security/rate-limit-policy';
@@ -58,6 +59,27 @@ import { registerAppRateLimits } from '@/lib/app/rate-limit';
 // and continuing would let the misconfiguration ship.
 try {
   registerAppRateLimits();
+  // Integrity check (fork-readiness finding #6): the rule shape widens `tier`
+  // to `RateLimitTier | (string & {})` so forks can name custom tiers as
+  // bare strings without TS module-augmentation gymnastics. The trade-off is
+  // that a typo (`tier: 'billling'`) type-checks cleanly — and would silently
+  // fail open at request time (no limiter resolves → no rate limit applied).
+  // Convert that runtime fail-open into a boot-time throw: every rule's tier
+  // MUST resolve once the auto-wire is done. If a fork's rule names a tier
+  // it never registered, refuse to boot rather than ship the request-time
+  // hole. Sunrise's built-in rules always resolve (covered by the type union),
+  // so this check is load-bearing only for the app-extended slice.
+  const unresolved = getEffectiveRateLimitPolicy().filter(
+    (rule) => resolveRateLimitTier(rule.tier) === undefined
+  );
+  if (unresolved.length > 0) {
+    const details = unresolved.map((r) => `${String(r.match)} → "${r.tier}"`).join(', ');
+    throw new Error(
+      `Rate-limit policy references ${unresolved.length} unknown tier(s): ${details}. ` +
+        'Either register the tier(s) via registerRateLimitTier(...) in lib/app/rate-limit.ts, ' +
+        'or fix the typo in the rule. Boot is aborted rather than shipping silent fail-open.'
+    );
+  }
 } catch (error) {
   logger.error('Failed to register app rate limits from lib/app/rate-limit.ts', {
     error: error instanceof Error ? error.message : String(error),
@@ -107,21 +129,17 @@ export async function applyRateLimit(request: NextRequest): Promise<Response | n
   // `skip` fires. `findRateLimitRule` returns the very first path match,
   // so we use it for the typical single-rule case and only iterate the
   // policy directly when that rule's `skip` is true.
-  let rule: RateLimitRule | null = findRateLimitRule(request.nextUrl.pathname, policy);
+  const pathname = request.nextUrl.pathname;
+  let rule: RateLimitRule | null = findRateLimitRule(pathname, policy);
   if (rule?.skip?.(request)) {
     rule = null;
-    const startIndex = policy.findIndex(
-      (r) =>
-        (typeof r.match === 'string' && request.nextUrl.pathname.startsWith(r.match)) ||
-        (r.match instanceof RegExp && r.match.test(request.nextUrl.pathname))
-    );
+    // Re-use the shared matcher so a third matcher shape (or a tweak to the
+    // existing string/RegExp semantics) can't silently diverge between
+    // `findRateLimitRule` and this fallthrough loop.
+    const startIndex = policy.findIndex((r) => pathMatchesRule(r.match, pathname));
     for (let i = startIndex + 1; i < policy.length; i++) {
       const candidate = policy[i];
-      const pathMatches =
-        typeof candidate.match === 'string'
-          ? request.nextUrl.pathname.startsWith(candidate.match)
-          : candidate.match.test(request.nextUrl.pathname);
-      if (!pathMatches) continue;
+      if (!pathMatchesRule(candidate.match, pathname)) continue;
       if (candidate.skip?.(request)) continue;
       rule = candidate;
       break;

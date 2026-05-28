@@ -169,12 +169,14 @@ export default tseslint.config(
   // ── App-extension boundary (fork-readiness seam 5) ───────────────────────
   // `lib/app/**` is the supported surface where downstream forks/apps add
   // their own code. It must stay framework-agnostic so it survives Next.js
-  // upgrades and can be reasoned about in isolation: no RUNTIME `next/*`
-  // imports. Type-only imports (`import type { NextRequest } from 'next/server'`)
-  // are allowed — they erase at compile time and don't couple runtime code to
-  // the framework. Framework glue that genuinely needs runtime APIs belongs in
-  // `app/` (route handlers, server actions) or a `lib/app/<name>/server/`
-  // module, not in the portable core of `lib/app/**`.
+  // upgrades and can be reasoned about in isolation: no RUNTIME framework
+  // imports, no Node-only runtime APIs, no Prisma client, no `react-dom`
+  // (which lands in the client bundle on hydration). Type-only imports
+  // (`import type { NextRequest } from 'next/server'`) are allowed — they
+  // erase at compile time and don't couple runtime code. Framework glue that
+  // genuinely needs runtime APIs belongs in `app/` (route handlers, server
+  // actions) or a `lib/app/<name>/server/` module, not in the portable core
+  // of `lib/app/**`.
   //
   // CRITICAL: flat-config `no-restricted-imports` REPLACES (does not merge)
   // the rule from the React block above. We therefore RESTATE the @/-alias ban
@@ -182,6 +184,20 @@ export default tseslint.config(
   // `lib/app/**` files. We switch to the `@typescript-eslint/` variant because
   // only it supports `allowTypeImports`; the base `no-restricted-imports` is
   // turned off for these files so the two don't double-report relative imports.
+  //
+  // Pattern notes:
+  //   - `next/*` does NOT cross path separators (eslint-plugin-import behaviour
+  //     inherited via minimatch defaults), so the `next/dist/**` deep-import
+  //     escape hatch is listed separately. Both fall under the same message.
+  //   - Bare `'react-dom'` and `'react-dom/*'` are banned: ReactDOMServer /
+  //     hydration entry points are framework glue belonging in app/.
+  //   - `'prisma'` (the CLI re-export) and `'@prisma/*'` block direct DB access
+  //     in the portable core; data work goes through app/ or lib/ — never the
+  //     supported lib/app surface.
+  //   - `'fs'`, `'path'` (the bare-spec Node built-ins) and `'node:*'` (the
+  //     explicit Node-only specifier introduced in Node 16) block Node-only
+  //     runtime APIs that would crash in the edge or client realms a fork's
+  //     lib/app file might be bundled into.
   {
     files: ['lib/app/**/*.{ts,tsx}'],
     rules: {
@@ -195,12 +211,34 @@ export default tseslint.config(
               message: 'Use the @/ path alias instead of relative imports (CLAUDE.md).',
             },
             {
-              group: ['next', 'next/*'],
+              group: ['next', 'next/*', 'next/dist/**'],
               allowTypeImports: true,
               message:
                 'lib/app/** must stay framework-agnostic — no runtime next/* imports ' +
                 '(type-only imports are allowed). Put framework glue in app/ or a ' +
                 'lib/app/<name>/server/ module.',
+            },
+            {
+              group: ['react-dom', 'react-dom/*'],
+              allowTypeImports: true,
+              message:
+                'lib/app/** must not import react-dom — hydration / server entry points ' +
+                'are framework glue that belongs in app/, not the portable extension surface.',
+            },
+            {
+              group: ['prisma', '@prisma/*'],
+              allowTypeImports: true,
+              message:
+                'lib/app/** must not import Prisma directly — DB access goes through ' +
+                'app/ route handlers or lib/ services; the extension surface stays ' +
+                'storage-agnostic.',
+            },
+            {
+              group: ['fs', 'fs/*', 'path', 'node:*'],
+              message:
+                'lib/app/** must not depend on Node-only built-ins — those crash in ' +
+                'the edge and client realms a fork may bundle this file into. Move IO ' +
+                'into a server-only module.',
             },
           ],
         },

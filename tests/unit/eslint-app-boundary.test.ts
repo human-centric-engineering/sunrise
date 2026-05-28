@@ -123,4 +123,79 @@ describe('lib/app/** import boundary (seam 5)', () => {
     const msgs = lint("import { z } from 'zod';\nexport const s = z.object({});");
     expect(msgs).toHaveLength(0);
   });
+
+  // ── Expanded patterns (finding #7) ──────────────────────────────────────
+  // The boundary covers more than `next/*`: react-dom, prisma, Node-only
+  // built-ins, and the `next/dist/**` deep-import escape hatch all need to
+  // be flagged. Otherwise a fork could land code in lib/app/ that crashes
+  // at runtime (Node built-ins in the edge/client realm) or pulls server-
+  // only modules into the client bundle (prisma, react-dom).
+
+  it('flags a deep next/dist/** import (does NOT slip past the next/* glob)', () => {
+    // `next/*` doesn't cross `/`, so `next/dist/server/...` would slip
+    // through without the explicit `next/dist/**` entry.
+    const msgs = lint(
+      "import { something } from 'next/dist/server/web/spec-extension/response';\nexport const x = something;"
+    );
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/framework-agnostic/i);
+  });
+
+  it('flags a bare react-dom import', () => {
+    const msgs = lint(
+      "import { hydrateRoot } from 'react-dom/client';\nexport const x = hydrateRoot;"
+    );
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/react-dom/);
+  });
+
+  it('flags react-dom/server (would land in client bundle on hydration)', () => {
+    const msgs = lint(
+      "import { renderToString } from 'react-dom/server';\nexport const x = renderToString;"
+    );
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/react-dom/);
+  });
+
+  it('allows a type-only react-dom import (allowTypeImports preserved)', () => {
+    const msgs = lint("import type { Root } from 'react-dom/client';\nexport type R = Root;");
+    expect(msgs).toHaveLength(0);
+  });
+
+  it('flags a bare prisma import', () => {
+    const msgs = lint("import { PrismaClient } from 'prisma';\nexport const x = PrismaClient;");
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/Prisma/);
+  });
+
+  it('flags an @prisma/client import', () => {
+    const msgs = lint(
+      "import { PrismaClient } from '@prisma/client';\nexport const x = PrismaClient;"
+    );
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/Prisma/);
+  });
+
+  it('allows a type-only Prisma import (allowTypeImports preserved)', () => {
+    const msgs = lint("import type { User } from '@prisma/client';\nexport type U = User;");
+    expect(msgs).toHaveLength(0);
+  });
+
+  it('flags a bare Node fs import', () => {
+    const msgs = lint("import { readFile } from 'fs';\nexport const x = readFile;");
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/Node-only/i);
+  });
+
+  it("flags a 'node:' specifier (Node 16+ explicit form)", () => {
+    const msgs = lint("import { readFile } from 'node:fs/promises';\nexport const x = readFile;");
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/Node-only/i);
+  });
+
+  it("flags the bare 'path' built-in", () => {
+    const msgs = lint("import { join } from 'path';\nexport const x = join;");
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/Node-only/i);
+  });
 });
