@@ -125,9 +125,7 @@ describe('useHealthCheck', () => {
       mockFetchOnce(validOkPayload);
       // No further mocks set up — any extra fetch would throw/fail the test
 
-      const { result } = renderHook(() =>
-        useHealthCheck({ autoStart: false, pollingInterval: INTERVAL })
-      );
+      renderHook(() => useHealthCheck({ autoStart: false, pollingInterval: INTERVAL }));
 
       await act(async () => {
         // Advance past two full polling cycles
@@ -136,7 +134,24 @@ describe('useHealthCheck', () => {
 
       // Only the single initial fetch ran
       expect(global.fetch).toHaveBeenCalledTimes(1);
-      expect(result.current.isPolling).toBe(false);
+      // Finding #6: removed the decorative isPolling === false assertion here;
+      // the hook initialises isPolling: autoStart, so it's trivially false from t=0
+      // regardless of polling behaviour. The fetch-count check above is load-bearing.
+    });
+
+    it('calls fetch with the custom endpoint URL when endpoint option is provided', async () => {
+      // Finding #3: without this test a regression that hardcodes '/api/health'
+      // would pass every other test while silently ignoring the endpoint option.
+      const customEndpoint = '/custom/health';
+      mockFetchOnce(validOkPayload);
+
+      renderHook(() => useHealthCheck({ autoStart: false, endpoint: customEndpoint }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(customEndpoint);
     });
   });
 
@@ -189,6 +204,12 @@ describe('useHealthCheck', () => {
       });
       expect(result.current.data?.status).toBe('ok');
 
+      // Finding #7: capture lastUpdated after the first successful fetch.
+      // After the error path, the hook must spread the previous state rather than
+      // constructing a fresh object — same Date instance proves the spread ran.
+      const firstLastUpdated = result.current.lastUpdated;
+      expect(firstLastUpdated).toBeInstanceOf(Date);
+
       // Manually trigger a second fetch using refresh()
       await act(async () => {
         await result.current.refresh();
@@ -197,6 +218,8 @@ describe('useHealthCheck', () => {
       // data must still be the good payload; the parse failure must not wipe it
       expect(result.current.data).toMatchObject({ status: 'ok', sunrise: '0.1.0' });
       expect(result.current.error?.message).toMatch(/^Invalid \/api\/health response shape:/);
+      // Same Date instance: proves the error-path spread preserved lastUpdated
+      expect(result.current.lastUpdated).toBe(firstLastUpdated);
     });
   });
 
@@ -322,6 +345,42 @@ describe('useHealthCheck', () => {
       // Still not called — ok → ok is not a transition
       expect(onStatusChange).not.toHaveBeenCalled();
     });
+
+    it('calls the LATEST onStatusChange when re-rendered with a new callback before the transition fires', async () => {
+      // Finding #5: verifies the ref-update useEffect (hook lines 97-102).
+      // Re-renders with a new callback must update onStatusChangeRef.current so the
+      // NEXT status change fires the new callback, not the original one.
+      mockFetchOnce(validOkPayload); // first fetch: seeds previousStatus = 'ok'
+      mockFetchOnce(validErrorPayload); // second fetch: ok → error transition
+
+      const firstCallback = vi.fn();
+      const secondCallback = vi.fn();
+
+      const { result, rerender } = renderHook(
+        ({ cb }: { cb: (status: 'ok' | 'error') => void }) =>
+          useHealthCheck({ autoStart: false, onStatusChange: cb }),
+        { initialProps: { cb: firstCallback } }
+      );
+
+      // First fetch: seeds previousStatus = 'ok', no callback fires (first-fetch guard)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(firstCallback).not.toHaveBeenCalled();
+
+      // Re-render with the new callback — onStatusChangeRef.current is updated
+      rerender({ cb: secondCallback });
+
+      // Trigger the ok → error transition
+      await act(async () => {
+        await result.current.refresh();
+      });
+
+      // The NEW callback must fire; the original one must NOT
+      expect(secondCallback).toHaveBeenCalledTimes(1);
+      expect(secondCallback).toHaveBeenCalledWith('error');
+      expect(firstCallback).not.toHaveBeenCalled();
+    });
   });
 
   // ── Polling lifecycle ──────────────────────────────────────────────────────
@@ -386,13 +445,24 @@ describe('useHealthCheck', () => {
         result.current.startPolling();
       });
 
-      // The old timer was cleared. Advance a full interval from the second startPolling —
-      // exactly one more tick should fire.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(INTERVAL);
-      });
+      // Finding #9: contract is "still polling after restart" — if a future bug flipped
+      // isPolling false mid-call, the fetch-count check below wouldn't catch it.
+      expect(result.current.isPolling).toBe(true);
 
-      // 1 initial + 1 tick from the new interval = 2 total
+      // Finding #10: tighten per-tick distribution.
+      // At INTERVAL/2 into the new interval — no premature tick should have fired.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INTERVAL / 2);
+      });
+      // Still only the 1 initial fetch — the old interval was cleared and the new one
+      // hasn't elapsed yet (only half elapsed so far).
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // Advance the remaining half — exactly one tick fires at INTERVAL after restart.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INTERVAL / 2);
+      });
+      // 1 initial + 1 tick from the new interval = 2 total; no double-fire
       expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
@@ -452,6 +522,52 @@ describe('useHealthCheck', () => {
       // Still only the single pre-unmount fetch
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
+
+    it('re-renders with a shorter pollingInterval reschedules ticks at the new cadence', async () => {
+      // Finding #4: the useEffect deps include [fetchHealth, autoStart, pollingInterval].
+      // Changing pollingInterval re-runs the effect: re-fetches AND reschedules the
+      // interval with the new value. A regression that ignored the dep change would
+      // continue ticking at INTERVAL_A even after the rerender.
+      const INTERVAL_A = 10000;
+      const INTERVAL_B = 5000;
+
+      // Effect re-runs on the rerender, triggering another initFetch + new interval.
+      // That means: 1 initial fetch + 1 re-render fetch + 1 tick at INTERVAL_B = 3 total.
+      mockFetchOnce(validOkPayload); // initial fetch (INTERVAL_A effect)
+      mockFetchOnce(validOkPayload); // re-render initFetch (INTERVAL_B effect)
+      mockFetchOnce(validOkPayload); // first tick at INTERVAL_B
+
+      const { rerender } = renderHook(
+        ({ interval }: { interval: number }) =>
+          useHealthCheck({ autoStart: true, pollingInterval: interval }),
+        { initialProps: { interval: INTERVAL_A } }
+      );
+
+      // Initial fetch from INTERVAL_A effect
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // Re-render with INTERVAL_B before INTERVAL_A elapses.
+      // The effect re-runs: re-fetches + starts a new interval at INTERVAL_B.
+      rerender({ interval: INTERVAL_B });
+
+      // Flush the re-render initFetch
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+
+      // Advance INTERVAL_B — one tick should fire at the new cadence.
+      // If the old INTERVAL_A interval were still active it would NOT fire yet
+      // (only INTERVAL_B of INTERVAL_A elapsed). Seeing a third fetch proves
+      // the scheduler switched to INTERVAL_B.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INTERVAL_B);
+      });
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
   });
 
   // ── Refresh + mounted guard ────────────────────────────────────────────────
@@ -475,6 +591,12 @@ describe('useHealthCheck', () => {
       });
       expect(result.current.isLoading).toBe(false);
 
+      // Finding #8: capture lastUpdated after the initial fetch.
+      // Fake timers freeze new Date() at the same value — the check is for a NEW
+      // Date OBJECT, not a later timestamp, proving the success-path setState ran.
+      const initialLastUpdated = result.current.lastUpdated;
+      expect(initialLastUpdated).toBeInstanceOf(Date);
+
       // Kick off refresh without awaiting — capture the intermediate state
       let refreshPromise!: Promise<void>;
       act(() => {
@@ -492,44 +614,105 @@ describe('useHealthCheck', () => {
 
       expect(result.current.isLoading).toBe(false);
       expect(result.current.data).toMatchObject({ status: 'ok' });
+      // A new Date instance was constructed — proves the success-path setState ran.
+      // Object identity differs even though fake timers return the same time value.
+      expect(result.current.lastUpdated).toBeInstanceOf(Date);
+      expect(result.current.lastUpdated).not.toBe(initialLastUpdated);
     });
 
-    it('does not update state after the component unmounts while a fetch is in flight', async () => {
-      // Hold the initial fetch promise so we can unmount while it's pending.
-      let resolveFetch!: (r: Response) => void;
+    it('does not fire onStatusChange via the success path after the component unmounts', async () => {
+      // Findings #1 + #2 (Test A — success-path guard replacement):
+      // The previous test only verified React 18+'s built-in silent setState drop on
+      // unmount — not the hook's own mountedRef guard. This test uses onStatusChange
+      // as the observable because it sits INSIDE the guarded code path (hook line 122):
+      //   if (!mountedRef.current) return;   ← guard
+      //   if (...) onStatusChangeRef.current(data.status);  ← only reachable with guard intact
+      // If the guard is removed, resolving the held promise fires onStatusChange.
+      // With the guard intact, the callback must NOT fire after unmount.
+
+      // Seed previousStatus = 'ok' via a first successful fetch
+      mockFetchOnce(validOkPayload);
+
+      // Hold a second fetch pending — it will be dispatched by refresh()
+      let resolveSecondFetch!: (r: Response) => void;
       vi.spyOn(global, 'fetch').mockReturnValueOnce(
         new Promise<Response>((resolve) => {
-          resolveFetch = resolve;
+          resolveSecondFetch = resolve;
         })
       );
 
-      const { result, unmount } = renderHook(() => useHealthCheck({ autoStart: false }));
+      const onStatusChange = vi.fn();
+      const { result, unmount } = renderHook(() =>
+        useHealthCheck({ autoStart: false, onStatusChange })
+      );
 
-      // Fetch is now in flight; mountedRef.current is still true
+      // First fetch: seeds previousStatus = 'ok', no callback (first-fetch guard)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onStatusChange).not.toHaveBeenCalled();
+
+      // Dispatch second fetch (ok → error transition pending)
+      act(() => {
+        void result.current.refresh();
+      });
+
+      // Unmount BEFORE resolving — sets mountedRef.current = false
+      unmount();
+
+      // Clear any calls from before unmount (there should be none, but be defensive)
+      onStatusChange.mockClear();
+
+      // Resolve with a payload that would trigger ok → error callback.
+      // Without the guard, this fires onStatusChange('error'). With the guard: silent.
+      await act(async () => {
+        resolveSecondFetch(new Response(JSON.stringify(validErrorPayload)));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(onStatusChange).not.toHaveBeenCalled();
+    });
+
+    it('does not fire onStatusChange via the catch path after the component unmounts', async () => {
+      // Findings #1 + #2 (Test B — catch-path guard replacement):
+      // onStatusChange is the observable because it also sits INSIDE the catch-path
+      // guard (hook line 142):
+      //   if (!mountedRef.current) return;   ← guard
+      //   if (...) onStatusChangeRef.current('error');  ← only reachable with guard intact
+      // On the first fetch previousStatus is null, so the error-path check
+      // (null !== 'error') would fire the callback if the guard were absent.
+      // With the guard intact, the callback must NOT fire after unmount.
+
+      // Hold the initial fetch promise so we can unmount before it rejects
+      let rejectFetch!: (reason: unknown) => void;
+      vi.spyOn(global, 'fetch').mockReturnValueOnce(
+        new Promise<Response>((_resolve, reject) => {
+          rejectFetch = reject;
+        })
+      );
+
+      const onStatusChange = vi.fn();
+      const { unmount } = renderHook(() => useHealthCheck({ autoStart: false, onStatusChange }));
+
+      // Kick off the initial fetch (in flight; not yet resolved)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
 
-      // Capture the state snapshot at unmount time
-      const snapshotBeforeUnmount = {
-        data: result.current.data,
-        isLoading: result.current.isLoading,
-        error: result.current.error,
-      };
+      // Unmount before the promise rejects — sets mountedRef.current = false
+      unmount();
 
-      unmount(); // sets mountedRef.current = false
-
-      // Resolve the fetch after unmount — the hook's guard must abort every setState
+      // Reject the fetch after unmount.
+      // Without the catch-path guard this fires onStatusChange('error') because
+      // previousStatus is null and null !== 'error'. With the guard: silent.
       await act(async () => {
-        resolveFetch(new Response(JSON.stringify(validOkPayload)));
+        rejectFetch(new Error('network failure'));
         await Promise.resolve();
         await Promise.resolve();
       });
 
-      // State must match the snapshot taken at unmount time; nothing was mutated
-      expect(result.current.data).toBe(snapshotBeforeUnmount.data);
-      expect(result.current.isLoading).toBe(snapshotBeforeUnmount.isLoading);
-      expect(result.current.error).toBe(snapshotBeforeUnmount.error);
+      expect(onStatusChange).not.toHaveBeenCalled();
     });
   });
 });
