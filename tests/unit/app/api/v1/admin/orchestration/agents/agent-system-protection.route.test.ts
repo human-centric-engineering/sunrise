@@ -100,6 +100,11 @@ function makeSystemAgent(overrides = {}) {
     provider: 'anthropic',
     isActive: true,
     isSystem: true,
+    // Soft-delete tombstone — the GET/PATCH/DELETE/clone routes filter
+    // `deletedAt: null` so mocks must include the field or findUnique
+    // returns null and the route 404s before reaching the protection
+    // logic these tests exercise.
+    deletedAt: null,
     createdBy: 'admin-id',
     ...overrides,
   };

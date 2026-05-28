@@ -88,7 +88,11 @@ async function getQuarantinedCapabilitiesForAgent(
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentQuarantinedCapabilities(agentId));
     if (!res.ok) return [];
     const body = await parseApiResponse<{ items: QuarantinedCapabilityForAgent[] }>(res);
-    return body.success ? body.data.items : [];
+    // Defensive: existing page-level mocks (e.g. the EditAgentPage tests)
+    // return a generic body shape that doesn't include `items`. The
+    // banner expects an array, so always normalise.
+    if (!body.success || !Array.isArray(body.data?.items)) return [];
+    return body.data.items;
   } catch (err) {
     logger.error('edit agent page: quarantined-capabilities fetch failed', err, { agentId });
     return [];

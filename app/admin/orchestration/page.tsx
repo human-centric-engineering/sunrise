@@ -122,7 +122,11 @@ async function getActiveQuarantines(): Promise<ActiveQuarantineRow[]> {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.OBSERVABILITY_ACTIVE_QUARANTINES);
     if (!res.ok) return [];
     const body = await parseApiResponse<{ items: ActiveQuarantineRow[] }>(res);
-    return body.success ? body.data.items : [];
+    // Defensive: ActiveQuarantinesPanel calls `rows.length`, so any
+    // mock or response shape that omits `items` must not bubble through
+    // as `undefined`.
+    if (!body.success || !Array.isArray(body.data?.items)) return [];
+    return body.data.items;
   } catch (err) {
     logger.error('orchestration dashboard: failed to load active quarantines', err);
     return [];
