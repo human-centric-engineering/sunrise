@@ -10,6 +10,7 @@ import { CapabilityQuarantineCard } from '@/components/admin/orchestration/capab
 import { CapabilityStatsPanel } from '@/components/admin/orchestration/capability-stats-panel';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { resolveQuarantineState } from '@/lib/orchestration/capabilities/dispatcher';
 import { logger } from '@/lib/logging';
 import type { AiCapability } from '@/types/prisma';
 
@@ -110,22 +111,29 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
   // we just fetch unconditionally.
   const quarantineAttribution = await getQuarantineAttribution(id);
 
-  const quarantineState = (capability.quarantineState ?? 'active') as
-    | 'active'
-    | 'quarantined-soft'
-    | 'quarantined-hard';
-  const isQuarantined = quarantineState !== 'active';
+  // Drive the page on the *effective* state — a past `quarantineUntil`
+  // is treated as active by the dispatcher and every other read path,
+  // so the page must agree or the UI lies about runtime behaviour.
+  // `resolveQuarantineState` accepts the raw `string` column and applies
+  // the same unknown-value-fail-open guard the dispatcher uses, so no
+  // `as` cast on the API response is needed.
+  const quarantineUntilDate = capability.quarantineUntil
+    ? new Date(capability.quarantineUntil)
+    : null;
+  const effectiveQuarantineState = resolveQuarantineState({
+    quarantineState: capability.quarantineState ?? 'active',
+    quarantineUntil: quarantineUntilDate,
+  });
+  const isQuarantined = effectiveQuarantineState !== 'active';
 
   const quarantineCard = (
     <CapabilityQuarantineCard
       capabilityId={id}
       capabilityName={capability.name}
       state={{
-        quarantineState,
+        quarantineState: effectiveQuarantineState,
         quarantineReason: capability.quarantineReason ?? null,
-        quarantineUntil: capability.quarantineUntil
-          ? new Date(capability.quarantineUntil).toISOString()
-          : null,
+        quarantineUntil: quarantineUntilDate ? quarantineUntilDate.toISOString() : null,
       }}
       attribution={quarantineAttribution}
       affectedAgents={usedBy.map((a) => ({ id: a.id, name: a.name, slug: a.slug }))}

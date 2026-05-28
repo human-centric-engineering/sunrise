@@ -46,9 +46,10 @@ export const GET = withAdminAuth(async (request) => {
 
   const items: ActiveQuarantineRow[] = [];
   for (const r of rows) {
+    // resolveQuarantineState accepts the raw `string` column directly —
+    // unknown values fall open to 'active' via the internal guard.
     const effective = resolveQuarantineState({
-      quarantineState:
-        (r.quarantineState as 'active' | 'quarantined-soft' | 'quarantined-hard') ?? 'active',
+      quarantineState: r.quarantineState,
       quarantineUntil: r.quarantineUntil,
     });
     if (effective === 'active') continue;

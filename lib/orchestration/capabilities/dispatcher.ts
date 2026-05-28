@@ -548,16 +548,24 @@ function normaliseQuarantineState(value: string): QuarantineState {
  * without mutating the row — the column is preserved for audit. Callers
  * that need to render the stored state in admin UI should read
  * `entry.quarantineState` directly.
+ *
+ * Accepts `string` for `quarantineState` so callers reading a raw Prisma
+ * row (where the column is typed `string`, not the union) can call this
+ * directly without an `as` cast — values that don't match the enum fall
+ * open to `'active'` via the same `normaliseQuarantineState` guard the
+ * registry loader uses. This keeps every read path consistent and
+ * removes a class of CLAUDE.md "no `as` on external data" violations.
  */
 export function resolveQuarantineState(entry: {
-  quarantineState: QuarantineState;
+  quarantineState: string;
   quarantineUntil: Date | null;
 }): QuarantineState {
-  if (entry.quarantineState === 'active') return 'active';
+  const stored = normaliseQuarantineState(entry.quarantineState);
+  if (stored === 'active') return 'active';
   if (entry.quarantineUntil !== null && entry.quarantineUntil.getTime() <= Date.now()) {
     return 'active';
   }
-  return entry.quarantineState;
+  return stored;
 }
 
 function formatValidationIssues(issues: unknown[]): string {

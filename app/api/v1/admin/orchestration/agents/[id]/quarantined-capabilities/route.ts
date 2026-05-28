@@ -68,10 +68,11 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
 
   const items: QuarantinedCapabilityForAgent[] = [];
   for (const b of bindings) {
+    // resolveQuarantineState accepts the raw `string` column directly —
+    // unknown values fall open to 'active' via the internal guard, no
+    // `as` cast needed.
     const effective = resolveQuarantineState({
-      quarantineState:
-        (b.capability.quarantineState as 'active' | 'quarantined-soft' | 'quarantined-hard') ??
-        'active',
+      quarantineState: b.capability.quarantineState,
       quarantineUntil: b.capability.quarantineUntil,
     });
     if (effective === 'active') continue;
