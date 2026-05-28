@@ -94,6 +94,30 @@ function ExecutionTypeBadge({ type }: { type: string }) {
   );
 }
 
+/**
+ * Effective-quarantine check. Mirrors `resolveQuarantineState` from the
+ * dispatcher — a past `quarantineUntil` is treated as `active` even if the
+ * stored state is still a quarantined-* value. Kept inline (not imported)
+ * so this list page doesn't drag in a dispatcher dep just for a date
+ * compare; the dispatcher remains the source of truth for runtime
+ * dispatch decisions.
+ */
+function isCurrentlyQuarantined(cap: {
+  quarantineState?: string | null;
+  quarantineUntil?: Date | string | null;
+}): false | 'quarantined-soft' | 'quarantined-hard' {
+  const state = cap.quarantineState;
+  if (state !== 'quarantined-soft' && state !== 'quarantined-hard') return false;
+  if (cap.quarantineUntil) {
+    const until =
+      typeof cap.quarantineUntil === 'string'
+        ? Date.parse(cap.quarantineUntil)
+        : cap.quarantineUntil.getTime();
+    if (!Number.isNaN(until) && until <= Date.now()) return false;
+  }
+  return state;
+}
+
 export function CapabilitiesTable({
   initialCapabilities,
   initialMeta,
@@ -109,7 +133,16 @@ export function CapabilitiesTable({
   const [isLoading, setIsLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AiCapabilityListItem | null>(null);
+  const [showOnlyQuarantined, setShowOnlyQuarantined] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Live count of effectively-quarantined capabilities on the current page.
+  // Client-side filter — quarantine is a single-digit-count operational
+  // signal; no need to round-trip to the server for it.
+  const quarantinedCount = capabilities.filter((c) => isCurrentlyQuarantined(c) !== false).length;
+  const visibleCapabilities = showOnlyQuarantined
+    ? capabilities.filter((c) => isCurrentlyQuarantined(c) !== false)
+    : capabilities;
 
   useEffect(() => {
     return () => {
@@ -286,6 +319,24 @@ export function CapabilitiesTable({
               ))}
             </SelectContent>
           </Select>
+          {quarantinedCount > 0 && (
+            <Button
+              type="button"
+              variant={showOnlyQuarantined ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setShowOnlyQuarantined((v) => !v)}
+              className={
+                showOnlyQuarantined
+                  ? 'gap-1.5 bg-amber-500 text-white hover:bg-amber-600'
+                  : 'gap-1.5 border-amber-500/50 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300'
+              }
+              aria-pressed={showOnlyQuarantined}
+            >
+              <Shield className="h-3 w-3" />
+              {quarantinedCount} quarantined
+              {showOnlyQuarantined && <span aria-hidden>×</span>}
+            </Button>
+          )}
         </div>
         <Button asChild size="sm">
           <Link href="/admin/orchestration/capabilities/new">
@@ -348,20 +399,22 @@ export function CapabilitiesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading && capabilities.length === 0 ? (
+            {isLoading && visibleCapabilities.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="h-24 text-center">
                   Loading…
                 </TableCell>
               </TableRow>
-            ) : capabilities.length === 0 ? (
+            ) : visibleCapabilities.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="h-24 text-center">
-                  No capabilities found.
+                  {showOnlyQuarantined
+                    ? 'No quarantined capabilities on this page.'
+                    : 'No capabilities found.'}
                 </TableCell>
               </TableRow>
             ) : (
-              capabilities.map((cap) => (
+              visibleCapabilities.map((cap) => (
                 <TableRow key={cap.id}>
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
@@ -382,6 +435,26 @@ export function CapabilitiesTable({
                           </Badge>
                         </Tip>
                       )}
+                      {(() => {
+                        const q = isCurrentlyQuarantined(cap);
+                        if (!q) return null;
+                        const label =
+                          q === 'quarantined-hard' ? 'Quarantined · hard' : 'Quarantined · soft';
+                        return (
+                          <Tip label={cap.quarantineReason ?? 'No reason recorded'}>
+                            <Badge
+                              variant={q === 'quarantined-hard' ? 'destructive' : 'secondary'}
+                              className={
+                                q === 'quarantined-soft'
+                                  ? 'border-amber-500/50 bg-amber-500/10 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:text-amber-300'
+                                  : 'px-1.5 py-0 text-[10px] font-medium'
+                              }
+                            >
+                              {label}
+                            </Badge>
+                          </Tip>
+                        );
+                      })()}
                     </div>
                     <div className="text-muted-foreground font-mono text-xs">{cap.slug}</div>
                   </TableCell>
