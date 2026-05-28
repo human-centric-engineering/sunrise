@@ -554,65 +554,63 @@ describe('KnowledgeView', () => {
       expect(screen.getByText('Pending Doc')).toBeInTheDocument();
     });
 
-    it('switching scope to System shows only system-scoped documents', async () => {
+    // The scope segmented control is now wired through the API — the
+    // table doesn't filter client-side. We assert that switching scope
+    // triggers a documents fetch with the correct `scope` query param.
+    function fetchUrls(): string[] {
+      return mockFetch.mock.calls
+        .map((args) => (typeof args[0] === 'string' ? args[0] : ''))
+        .filter(Boolean);
+    }
+
+    it('switching scope to System fetches documents with scope=system', async () => {
       const user = userEvent.setup();
       render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
-      // Act: click the System scope button
+      mockFetch.mockClear();
       await user.click(screen.getByRole('button', { name: 'System' }));
 
-      // Assert: only doc-1 (scope='system') is visible; doc-2 (scope='app') is hidden
       await waitFor(() => {
-        expect(screen.getByText('Agentic Patterns')).toBeInTheDocument();
-        expect(screen.queryByText('Pending Doc')).not.toBeInTheDocument();
+        expect(
+          fetchUrls().some((u) => u.includes('/knowledge/documents') && u.includes('scope=system'))
+        ).toBe(true);
       });
     });
 
-    it('switching scope to App shows only app-scoped documents', async () => {
+    it('switching scope to App fetches documents with scope=app', async () => {
       const user = userEvent.setup();
       render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
-      // Act: click the App scope button
+      mockFetch.mockClear();
       await user.click(screen.getByRole('button', { name: 'App' }));
 
-      // Assert: only doc-2 (scope='app') is visible; doc-1 (scope='system') is hidden
       await waitFor(() => {
-        expect(screen.getByText('Pending Doc')).toBeInTheDocument();
-        expect(screen.queryByText('Agentic Patterns')).not.toBeInTheDocument();
+        expect(
+          fetchUrls().some((u) => u.includes('/knowledge/documents') && u.includes('scope=app'))
+        ).toBe(true);
       });
     });
 
-    it('switching back to All scope shows all documents again', async () => {
+    it('switching back to All scope refetches without a scope param', async () => {
       const user = userEvent.setup();
       render(<KnowledgeView documents={MOCK_DOCUMENTS} />);
 
-      // First filter by system
+      // First narrow to System
       await user.click(screen.getByRole('button', { name: 'System' }));
       await waitFor(() => {
-        expect(screen.queryByText('Pending Doc')).not.toBeInTheDocument();
+        expect(
+          fetchUrls().some((u) => u.includes('/knowledge/documents') && u.includes('scope=system'))
+        ).toBe(true);
       });
 
-      // Then switch back to All
+      // Then back to All — the next documents fetch must NOT include scope
+      mockFetch.mockClear();
       await user.click(screen.getByRole('button', { name: 'All' }));
 
       await waitFor(() => {
-        expect(screen.getByText('Agentic Patterns')).toBeInTheDocument();
-        expect(screen.getByText('Pending Doc')).toBeInTheDocument();
-      });
-    });
-
-    it('System scope with no matching documents passes empty list to ManageTab', async () => {
-      const user = userEvent.setup();
-      // All documents are scope='app' — none match 'system'
-      const appOnlyDocs = MOCK_DOCUMENTS.map((d) => ({ ...d, scope: 'app' }));
-      render(<KnowledgeView documents={appOnlyDocs} />);
-
-      // Switch to System scope
-      await user.click(screen.getByRole('button', { name: 'System' }));
-
-      // ManageTab renders the empty-documents state
-      await waitFor(() => {
-        expect(screen.getByText(/no documents yet/i)).toBeInTheDocument();
+        const docFetches = fetchUrls().filter((u) => u.includes('/knowledge/documents'));
+        expect(docFetches.length).toBeGreaterThan(0);
+        expect(docFetches.every((u) => !u.includes('scope='))).toBe(true);
       });
     });
 

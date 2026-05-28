@@ -1,14 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Cpu,
   Eye,
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Search,
   Sparkles,
   Sprout,
   Tag as TagIcon,
@@ -18,6 +21,14 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +56,11 @@ import {
   MIN_CHUNK_TOKENS,
 } from '@/lib/orchestration/knowledge/chunker-config';
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { parsePaginationMeta } from '@/lib/validations/common';
+import type { PaginationMeta } from '@/types/api';
 import type { KnowledgeDocumentListItem } from '@/types/orchestration';
+import type { KnowledgeScope } from '@/components/admin/orchestration/knowledge/knowledge-view';
 
 const embeddingStatusResponseSchema = z.object({
   data: z
@@ -114,9 +129,114 @@ function readCoverage(metadata: unknown): { coveragePct: number } | null {
 interface ManageTabProps {
   documents: KnowledgeDocumentListItem[];
   onRefresh: () => void;
+  /**
+   * Scope filter from the parent KnowledgeView. `undefined` = all scopes;
+   * `'system'` / `'app'` narrow the API fetch via the `scope` query param.
+   * The `'all'` literal value at the parent maps to `undefined` here.
+   */
+  scope?: KnowledgeScope;
 }
 
-export function ManageTab({ documents, onRefresh }: ManageTabProps) {
+const STATUS_FILTER_ALL = '__all__';
+type StatusFilter =
+  | typeof STATUS_FILTER_ALL
+  | 'pending'
+  | 'processing'
+  | 'ready'
+  | 'failed'
+  | 'pending_review';
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: STATUS_FILTER_ALL, label: 'All statuses' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'processing', label: 'Processing' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'pending_review', label: 'Needs review' },
+  { value: 'failed', label: 'Failed' },
+];
+
+const DEFAULT_PAGE_LIMIT = 25;
+
+export function ManageTab({ documents: initialDocuments, onRefresh, scope }: ManageTabProps) {
+  // Internal data layer — the server-fetched `initialDocuments` is just
+  // the SSR seed. After mount, the tab does its own paginated fetches
+  // so search / status filter / page changes don't have to round-trip
+  // through the parent route.
+  const [documents, setDocuments] = useState<KnowledgeDocumentListItem[]>(initialDocuments);
+  const [listMeta, setListMeta] = useState<PaginationMeta>({
+    page: 1,
+    limit: DEFAULT_PAGE_LIMIT,
+    total: initialDocuments.length,
+    totalPages: Math.max(1, Math.ceil(initialDocuments.length / DEFAULT_PAGE_LIMIT)),
+  });
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(STATUS_FILTER_ALL);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchDocuments = useCallback(
+    async (page: number) => {
+      setListLoading(true);
+      setListError(null);
+      try {
+        const params = new URLSearchParams({
+          page: String(page),
+          limit: String(listMeta.limit),
+        });
+        if (searchQuery) params.set('q', searchQuery);
+        if (statusFilter !== STATUS_FILTER_ALL) params.set('status', statusFilter);
+        if (scope) params.set('scope', scope);
+
+        const res = await fetch(
+          `${API.ADMIN.ORCHESTRATION.KNOWLEDGE_DOCUMENTS}?${params.toString()}`,
+          { credentials: 'same-origin' }
+        );
+        if (!res.ok) throw new Error('list failed');
+        const body = await parseApiResponse<KnowledgeDocumentListItem[]>(res);
+        if (!body.success) throw new Error('list failed');
+        setDocuments(body.data);
+        const parsed = parsePaginationMeta(body.meta);
+        if (parsed) setListMeta(parsed);
+      } catch {
+        setListError('Could not load documents. Try refreshing.');
+      } finally {
+        setListLoading(false);
+      }
+    },
+    [listMeta.limit, searchQuery, statusFilter, scope]
+  );
+
+  // Re-fetch whenever a filter / scope changes. Page resets to 1.
+  useEffect(() => {
+    void fetchDocuments(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, statusFilter, scope]);
+
+  // Debounce the search input (300ms) before kicking off a fetch.
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchInput(value);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      setSearchQuery(value);
+    }, 300);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    },
+    []
+  );
+
+  // Wrap the parent's onRefresh so mutations (upload, delete, re-chunk)
+  // refresh both the route-level data (used for embedding-status banners
+  // etc.) and this tab's paginated list.
+  const refreshAll = useCallback(() => {
+    onRefresh();
+    void fetchDocuments(listMeta.page);
+  }, [onRefresh, fetchDocuments, listMeta.page]);
+
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [embedding, setEmbedding] = useState(false);
@@ -186,7 +306,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         );
         return;
       }
-      onRefresh();
+      refreshAll();
       void fetchEmbeddingStatus();
       void fetchLastSeededAt();
     } catch {
@@ -194,7 +314,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
     } finally {
       setSeeding(false);
     }
-  }, [onRefresh, fetchEmbeddingStatus, fetchLastSeededAt]);
+  }, [refreshAll, fetchEmbeddingStatus, fetchLastSeededAt]);
 
   const handleEmbed = useCallback(async () => {
     setEmbedding(true);
@@ -231,14 +351,14 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           setRechunkError(msg);
           return;
         }
-        onRefresh();
+        refreshAll();
       } catch {
         setRechunkError('Network error — could not reach the server.');
       } finally {
         setRechunkingId(null);
       }
     },
-    [onRefresh]
+    [refreshAll]
   );
 
   const handleDelete = useCallback(
@@ -256,7 +376,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           );
           return;
         }
-        onRefresh();
+        refreshAll();
         void fetchEmbeddingStatus();
       } catch {
         setDeleteError('Network error — could not reach the server.');
@@ -265,7 +385,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         setDeleteConfirmId(null);
       }
     },
-    [onRefresh, fetchEmbeddingStatus]
+    [refreshAll, fetchEmbeddingStatus]
   );
 
   const handlePdfPreview = useCallback((data: PdfPreviewData) => {
@@ -279,8 +399,8 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
 
   const handleUploadComplete = useCallback(() => {
     setUploadOpen(false);
-    onRefresh();
-  }, [onRefresh]);
+    refreshAll();
+  }, [refreshAll]);
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
@@ -541,26 +661,67 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
           zone here would push the table out of the first viewport. */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium">Documents ({documents.length})</h3>
+          <h3 className="text-sm font-medium">Documents ({listMeta.total})</h3>
           <Button onClick={() => setUploadOpen(true)} size="sm">
             <Upload className="mr-1.5 h-3.5 w-3.5" />
             Upload document
           </Button>
         </div>
 
+        {/* Toolbar — search + status filter. Scope comes from the parent
+            KnowledgeView segmented control (passed in via the `scope`
+            prop). The search input debounces at 300ms. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative max-w-sm flex-1">
+            <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+            <Input
+              placeholder="Search by name or filename…"
+              value={searchInput}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Tip label="Filter by processing status">
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+              <SelectTrigger className="h-9 w-[180px]" aria-label="Filter by status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUS_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Tip>
+        </div>
+
+        {listError && <p className="text-destructive text-sm">{listError}</p>}
+
         {documents.length === 0 ? (
           <div className="text-muted-foreground rounded-lg border border-dashed p-8 text-center">
-            <p className="text-sm">No documents yet.</p>
-            <p className="mt-1 text-xs">
-              Use the <strong>Upload document</strong> button above to add your own files, or load
-              the <strong>Built-in: Agentic Design Patterns</strong> reference from the panel below.
-            </p>
+            {searchQuery || statusFilter !== STATUS_FILTER_ALL || scope ? (
+              <>
+                <p className="text-sm">No documents match these filters.</p>
+                <p className="mt-1 text-xs">Try clearing the search or status filter.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm">No documents yet.</p>
+                <p className="mt-1 text-xs">
+                  Use the <strong>Upload document</strong> button above to add your own files, or
+                  load the <strong>Built-in: Agentic Design Patterns</strong> reference from the
+                  panel below.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <>
             {rechunkError && <p className="text-destructive text-sm">{rechunkError}</p>}
             {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
-            <div className="overflow-x-auto rounded-lg border">
+            <div className={`overflow-x-auto rounded-lg border ${listLoading ? 'opacity-60' : ''}`}>
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
                   <tr>
@@ -971,6 +1132,41 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination footer — only show when there's more than one
+                page worth of results. */}
+            {listMeta.totalPages > 1 && (
+              <div className="flex items-center justify-between pt-2">
+                <p className="text-muted-foreground text-sm">
+                  Showing {(listMeta.page - 1) * listMeta.limit + 1} to{' '}
+                  {Math.min(listMeta.page * listMeta.limit, listMeta.total)} of {listMeta.total}{' '}
+                  documents
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void fetchDocuments(listMeta.page - 1)}
+                    disabled={listMeta.page <= 1 || listLoading}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Previous
+                  </Button>
+                  <span className="text-sm">
+                    Page {listMeta.page} of {listMeta.totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void fetchDocuments(listMeta.page + 1)}
+                    disabled={listMeta.page >= listMeta.totalPages || listLoading}
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1006,7 +1202,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         open={pdfPreviewOpen}
         onOpenChange={setPdfPreviewOpen}
         onConfirmed={() => {
-          onRefresh();
+          refreshAll();
           void fetchEmbeddingStatus();
         }}
       />
@@ -1036,7 +1232,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
         documentId={renameId}
         documentName={renameName}
         open={renameId !== null}
-        onSaved={onRefresh}
+        onSaved={refreshAll}
         onOpenChange={(open) => {
           if (!open) {
             setRenameId(null);
@@ -1054,7 +1250,7 @@ export function ManageTab({ documents, onRefresh }: ManageTabProps) {
             setViewKeywordsName(null);
           }
         }}
-        onEnriched={onRefresh}
+        onEnriched={refreshAll}
       />
 
       {/* Built-in setup falls to the bottom once complete — out of the

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Database, Eye, Search, Tag } from 'lucide-react';
 
@@ -49,17 +49,10 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
   // The API scope param — undefined means "all"
   const apiScope = scope === 'all' ? undefined : scope;
 
-  // Filter documents client-side for the Manage tab (server-fetched on page load)
-  const filteredDocuments = useMemo(() => {
-    if (scope === 'all') return documents;
-    return documents.filter((d) => d.scope === scope);
-  }, [documents, scope]);
-
   // The Tags tab has no scope filter — its data set is the tag taxonomy,
   // not documents — so the selector is hidden there. Manage, Explore,
-  // Visualize, and Errors all read `scope` (Manage filters
-  // `filteredDocuments` client-side; the others pass `apiScope` to their
-  // server fetches), so the selector remains visible on those tabs.
+  // Visualize, and Errors all read `scope` and pass `apiScope` to their
+  // server fetches, so the selector remains visible on those tabs.
   const showScopeSelector = activeTab !== 'tags';
 
   return (
@@ -115,7 +108,7 @@ export function KnowledgeView({ documents }: KnowledgeViewProps) {
         ) : null}
 
         <TabsContent value="manage">
-          <ManageTab documents={filteredDocuments} onRefresh={refresh} />
+          <ManageTab documents={documents} onRefresh={refresh} scope={apiScope} />
         </TabsContent>
 
         <TabsContent value="tags">

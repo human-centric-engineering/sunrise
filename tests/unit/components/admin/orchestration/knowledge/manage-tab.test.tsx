@@ -537,10 +537,10 @@ describe('ManageTab', () => {
     });
   });
 
-  it('renders a tag-count chip in the Tags column when the document has tags', async () => {
-    // The column shows a count rather than every tag inline — a doc with many
-    // tags would otherwise overflow the row. Clicking the chip opens the
-    // chunks modal where the operator edits the actual tag list.
+  it('renders one chip per tag (up to 3) in the Tags column', async () => {
+    // Tag names render as individual chips so operators see the actual
+    // taxonomy at a glance — not just a count. Clicking any chip (or the
+    // cluster) opens the tags editor.
     const docWithTags = makeDocument({
       id: 'doc-tag',
       name: 'Sales Playbook',
@@ -553,12 +553,39 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[docWithTags]} onRefresh={vi.fn()} />);
 
-    expect(screen.getByText('3 tags')).toBeInTheDocument();
+    expect(screen.getByText('Sales')).toBeInTheDocument();
+    expect(screen.getByText('Pricing')).toBeInTheDocument();
+    expect(screen.getByText('Q4')).toBeInTheDocument();
     // Tooltip carries the full list so it stays discoverable from the row.
     expect(screen.getByLabelText(/Edit 3 tags on Sales Playbook/i)).toBeInTheDocument();
   });
 
-  it('uses singular "1 tag" when the document has exactly one tag', async () => {
+  it('renders a "+N more" overflow chip when a document has more than 3 tags', async () => {
+    const docMany = makeDocument({
+      id: 'doc-many',
+      name: 'Many Tags',
+      tags: [
+        { id: 't1', slug: 'a', name: 'Alpha' },
+        { id: 't2', slug: 'b', name: 'Bravo' },
+        { id: 't3', slug: 'c', name: 'Charlie' },
+        { id: 't4', slug: 'd', name: 'Delta' },
+        { id: 't5', slug: 'e', name: 'Echo' },
+      ],
+    });
+
+    render(<ManageTab documents={[docMany]} onRefresh={vi.fn()} />);
+
+    // First three chips render by name; the rest collapse into a +N more
+    // overflow chip so the row doesn't overflow horizontally.
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Bravo')).toBeInTheDocument();
+    expect(screen.getByText('Charlie')).toBeInTheDocument();
+    expect(screen.queryByText('Delta')).not.toBeInTheDocument();
+    expect(screen.queryByText('Echo')).not.toBeInTheDocument();
+    expect(screen.getByText('+2 more')).toBeInTheDocument();
+  });
+
+  it('renders the single tag name when a document has exactly one tag', async () => {
     const docOneTag = makeDocument({
       id: 'doc-one',
       name: 'Single',
@@ -567,7 +594,9 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[docOneTag]} onRefresh={vi.fn()} />);
 
-    expect(screen.getByText('1 tag')).toBeInTheDocument();
+    expect(screen.getByText('Sales')).toBeInTheDocument();
+    // No overflow chip for a single tag.
+    expect(screen.queryByText(/\+\d+ more/)).not.toBeInTheDocument();
   });
 
   it('renders a "+ Add" affordance in the Tags column when a document has no tags', async () => {
