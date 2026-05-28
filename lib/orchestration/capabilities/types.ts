@@ -76,7 +76,21 @@ export interface CapabilityRegistryEntry {
    */
   isIdempotent: boolean;
   isActive: boolean;
+  /**
+   * Emergency-disable state. Distinct from `isActive`: `quarantineState`
+   * is reserved for incident response (a vendor API misbehaving, a tool
+   * returning wrong data), while `isActive` is the routine on/off switch.
+   * The dispatcher returns `capability_quarantined` with `mode` + `reason`
+   * in metadata so agents can react. `quarantineUntil` is checked at read
+   * time — a past timestamp is treated as `active`.
+   */
+  quarantineState: QuarantineState;
+  quarantineReason: string | null;
+  quarantineUntil: Date | null;
 }
+
+/** Capability quarantine state. See `CapabilityRegistryEntry.quarantineState`. */
+export type QuarantineState = 'active' | 'quarantined-soft' | 'quarantined-hard';
 
 /**
  * Per-agent capability binding — merged view of `AiAgentCapability`

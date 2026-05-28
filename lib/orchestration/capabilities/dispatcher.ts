@@ -37,6 +37,7 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityRegistryEntry,
   CapabilityResult,
+  QuarantineState,
 } from '@/lib/orchestration/capabilities/types';
 import {
   GEN_AI_OPERATION_NAME,
@@ -464,6 +465,9 @@ interface AiCapabilityRow {
   rateLimit: number | null;
   isIdempotent: boolean;
   isActive: boolean;
+  quarantineState: string;
+  quarantineReason: string | null;
+  quarantineUntil: Date | null;
 }
 
 function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry | null {
@@ -480,7 +484,21 @@ function mapRowToEntry(row: AiCapabilityRow): CapabilityRegistryEntry | null {
     rateLimit: row.rateLimit,
     isIdempotent: row.isIdempotent,
     isActive: row.isActive,
+    quarantineState: normaliseQuarantineState(row.quarantineState),
+    quarantineReason: row.quarantineReason,
+    quarantineUntil: row.quarantineUntil,
   };
+}
+
+/**
+ * Guard against a stored quarantineState value that doesn't match the enum
+ * (e.g. a future state added by an out-of-band migration on an older deploy).
+ * Unknown values fail open to 'active' so a corrupt row can't disable a
+ * capability silently.
+ */
+function normaliseQuarantineState(value: string): QuarantineState {
+  if (value === 'quarantined-soft' || value === 'quarantined-hard') return value;
+  return 'active';
 }
 
 function formatValidationIssues(issues: unknown[]): string {

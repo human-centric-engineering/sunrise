@@ -665,6 +665,39 @@ export const listCapabilitiesQuerySchema = paginationQuerySchema.extend({
 });
 
 // ============================================================================
+// Capability Quarantine Schemas
+// ============================================================================
+//
+// Quarantine is incident-response: an admin disables a capability across all
+// agents because a vendor API is misbehaving or sending wrong data. Distinct
+// from `isActive` (routine on/off) — see `AiCapability.quarantineState` in
+// `prisma/schema.prisma`.
+//
+// Routes: POST .../capabilities/[id]/quarantine and .../[id]/unquarantine.
+
+export const quarantineStateSchema = z.enum(['active', 'quarantined-soft', 'quarantined-hard']);
+
+export type QuarantineState = z.infer<typeof quarantineStateSchema>;
+
+/**
+ * Body for POST `/api/v1/admin/orchestration/capabilities/[id]/quarantine`.
+ *
+ * `mode` distinguishes soft (agent sees structured error, can route around it
+ * via plan/orchestrator) from hard (dispatcher refuses dispatch entirely;
+ * skipFollowup so the model's tool loop stops). `reason` is required and
+ * surfaces in audit logs, hook payloads, the per-agent banner, and the
+ * dispatcher error message. `expiresAt` auto-clears at read time when null
+ * or absent the quarantine is indefinite.
+ */
+export const quarantineCapabilitySchema = z.object({
+  mode: z.enum(['quarantined-soft', 'quarantined-hard']),
+  reason: z.string().trim().min(1, 'Reason is required').max(500),
+  expiresAt: z.string().datetime().nullable().optional(),
+});
+
+export type QuarantineCapabilityInput = z.infer<typeof quarantineCapabilitySchema>;
+
+// ============================================================================
 // Knowledge Tag Schemas (knowledge-access-control)
 // ============================================================================
 

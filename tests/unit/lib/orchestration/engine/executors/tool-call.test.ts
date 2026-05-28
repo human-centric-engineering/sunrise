@@ -338,6 +338,9 @@ describe('executeToolCall', () => {
         rateLimit: null,
         isIdempotent: true,
         isActive: true,
+        quarantineState: 'active',
+        quarantineReason: null,
+        quarantineUntil: null,
       });
       vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
         success: true,

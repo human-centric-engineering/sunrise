@@ -214,6 +214,18 @@ model AiCapability {
   isIdempotent       Boolean @default(false)
   isActive           Boolean @default(true)
   isSystem           Boolean @default(false)
+  // Emergency-disable / quarantine state. Distinct from isActive: isActive
+  // toggles capability availability for routine reasons (deprecation,
+  // beta gating). quarantineState is reserved for incident response —
+  // "a vendor API is misbehaving, stop calling this tool now". The
+  // dispatcher returns a distinct capability_quarantined error code so
+  // agents can route around soft-quarantined tools, and the audit log
+  // captures the action under a distinct capability.quarantine action
+  // string so post-incident review can find the response window.
+  // See `.context/orchestration/capabilities.md` (Quarantine section).
+  quarantineState    String    @default("active") // "active" | "quarantined-soft" | "quarantined-hard"
+  quarantineReason   String?
+  quarantineUntil    DateTime? // null = indefinite; past timestamp = auto-cleared at read time
   metadata           Json?
 
   // Relations
@@ -223,6 +235,7 @@ model AiCapability {
   @@index([category])
   @@index([executionType])
   @@index([isActive])
+  @@index([quarantineState])
   @@map("ai_capability")
 }
 
