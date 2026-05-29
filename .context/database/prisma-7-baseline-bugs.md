@@ -27,30 +27,31 @@ The pattern across all five: **the original incremental migration emitted the co
 ```prisma
 model AiConversation {
   // …
-  channel       String?
-  inboundFromId String?
+  agentId     String
+  channel     String?
+  fromAddress String?
 
-  @@unique([channel, inboundFromId], name: "ai_conversation_inbound_key")
+  @@unique([agentId, channel, fromAddress], name: "ai_conversation_inbound_key")
 }
 ```
 
 **Prisma 7 baseline-generator emits:**
 
 ```sql
-CREATE UNIQUE INDEX "AiConversation_channel_inboundFromId_key"
-  ON "ai_conversation" ("channel", "inboundFromId");
+CREATE UNIQUE INDEX "AiConversation_agentId_channel_fromAddress_key"
+  ON "ai_conversation" ("agentId", "channel", "fromAddress");
 ```
 
-The `name:` argument is **ignored**. A new index is created with Prisma's default naming convention (`<Model>_<col1>_<col2>_key`), not the named unique constraint the model declared.
+The `name:` argument is **ignored**. A new index is created with Prisma's default naming convention (`<Model>_<col1>_<col2>_<col3>_key`), not the named unique constraint the model declared.
 
-**Why it matters:** the conversation lookup path keys on the named constraint via `prisma.aiConversation.findUnique({ where: { ai_conversation_inbound_key: { … } } })`. Without the named constraint (only a same-shape index), the typed lookup compiles fine but fails at runtime because Prisma's query engine can't find the constraint by name.
+**Why it matters:** the inbound-conversation lookup path keys on the named constraint via `prisma.aiConversation.findUnique({ where: { ai_conversation_inbound_key: { … } } })`. Without the named constraint (only a same-shape index), the typed lookup compiles fine but fails at runtime because Prisma's query engine can't find the constraint by name.
 
 **Workaround (in baseline):** replace the `CREATE UNIQUE INDEX` with the explicit `ALTER TABLE ADD CONSTRAINT` form:
 
 ```sql
 ALTER TABLE "ai_conversation"
   ADD CONSTRAINT "ai_conversation_inbound_key"
-  UNIQUE ("channel", "inboundFromId");
+  UNIQUE ("agentId", "channel", "fromAddress");
 ```
 
 The two are functionally equivalent in Postgres (the constraint creates a backing unique index with the constraint's name), but only the constraint form gives the Prisma query engine the name it expects.
