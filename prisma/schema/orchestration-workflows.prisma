@@ -128,20 +128,24 @@ model AiWorkflowTrigger {
 //
 // ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
 // A Postgres CHECK constraint `ai_workflow_execution_lease_pair_coherent`
-// enforces `(leaseToken IS NULL) = (leaseExpiresAt IS NULL)` — both columns
-// must be co-set or co-cleared. Prisma cannot model CHECK constraints, so
-// it does not appear in this schema.
+// enforces two invariants on the lease columns. Prisma cannot model CHECK
+// constraints, so it does not appear in this schema:
+//
+//   (leaseToken IS NULL) = (leaseExpiresAt IS NULL)   -- co-set or co-clear
+//   AND (leaseToken IS NULL OR length(leaseToken) > 0) -- non-empty when set
 //
 // `npx prisma migrate dev` may emit DROP CONSTRAINT statements on schema-
 // diff runs. Always inspect generated migration SQL and remove any line
 // touching `ai_workflow_execution_lease_pair_coherent` before applying —
 // dropping it would silently allow inconsistent lease state (rows with
-// `leaseToken` set but no `leaseExpiresAt`, or vice versa). The orphan
+// `leaseToken` set but no `leaseExpiresAt`, or vice versa) and empty-string
+// tokens that leak through `if (!leaseToken)` early returns. The orphan
 // sweep filters on `leaseExpiresAt < now()`, so a row with a token but no
 // expiry would be permanently stuck — never picked up for retry.
 //
 // Source of truth: prisma/migrations/00000000000000_baseline/migration.sql
-// (originally added by 20260508114325_add_lease_pair_check).
+// (originally added by 20260508114325_add_lease_pair_check; tightened to
+// reject empty-string tokens by the 2026-05-29 post-squash hardening pass).
 model AiWorkflowExecution {
   id                   String    @id @default(cuid())
   workflowId           String

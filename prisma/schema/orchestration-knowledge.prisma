@@ -1,6 +1,18 @@
 // Logical grouping for knowledge documents — a "corpus". Reserved for future
 // per-KB embedding-model selection (Layer 2); today every KB shares the
 // global active embedding model from AiOrchestrationSettings.
+//
+// ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
+// A partial unique index `idx_ai_knowledge_base_single_default` on
+// `(isDefault) WHERE isDefault = true` is managed via raw SQL — Prisma
+// cannot model partial indexes. At most one row may be flagged default;
+// `getOrCreateDefaultKnowledgeBase()` and every upload path depend on
+// this invariant. `npx prisma migrate dev` will emit a DROP statement
+// on schema-diff runs; always inspect generated SQL and strip any line
+// touching `idx_ai_knowledge_base_single_default` before applying.
+//
+// Source of truth: prisma/migrations/00000000000000_baseline/migration.sql
+// (folded by the 2026-05-29 post-squash hardening pass).
 model AiKnowledgeBase {
   id          String   @id @default(cuid())
   slug        String   @unique
@@ -18,19 +30,27 @@ model AiKnowledgeBase {
 // Source documents uploaded to the knowledge base
 //
 // ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
-// A partial unique index `idx_knowledge_doc_file_hash_ready` on `fileHash`
-// WHERE `status = 'ready'` is managed via raw SQL — Prisma cannot model
-// partial indexes. The plain `@@index([fileHash])` below is a separate
-// (non-unique, non-partial) index; both coexist in the deployed DB.
+// Two raw-SQL objects on this table that Prisma cannot model:
 //
-// `npx prisma migrate dev` will emit DROP statements for the partial unique
-// on schema-diff runs. Always inspect generated migration SQL and remove
-// any line touching `idx_knowledge_doc_file_hash_ready` before applying —
-// dropping it would silently allow duplicate `(fileHash, status='ready')`
-// rows, defeating the dedupe contract.
+// 1. Partial unique index `idx_knowledge_doc_file_hash_ready` on `fileHash`
+//    WHERE `status = 'ready'`. The plain `@@index([fileHash])` below is a
+//    separate (non-unique, non-partial) index; both coexist in the deployed
+//    DB. Dropping the partial unique would silently allow duplicate
+//    `(fileHash, status='ready')` rows, defeating the dedupe contract.
+//
+// 2. CHECK constraint `ai_knowledge_document_status_lowercase` pinning
+//    `status` to ('processing', 'ready', 'failed', 'pending_review'). The
+//    Prisma field is a free-form String; the CHECK catches casing drift /
+//    typos from raw-SQL or direct-DB writes before they corrupt the upload
+//    state machine.
+//
+// `npx prisma migrate dev` will emit DROP statements for both on schema-diff
+// runs. Always inspect generated migration SQL and remove any line touching
+// these objects before applying.
 //
 // Source of truth: prisma/migrations/00000000000000_baseline/migration.sql
-// (originally added by 20260410120000_dedupe_ready_knowledge_documents).
+// (partial unique originally added by 20260410120000_dedupe_ready_knowledge_documents;
+// status CHECK folded by the 2026-05-29 post-squash hardening pass).
 model AiKnowledgeDocument {
   id              String   @id @default(cuid())
   knowledgeBaseId String

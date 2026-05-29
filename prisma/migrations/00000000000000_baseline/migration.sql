@@ -1926,9 +1926,36 @@ CREATE UNIQUE INDEX "idx_knowledge_doc_file_hash_ready"
     WHERE status = 'ready';
 
 -- A6: CHECK constraint enforcing that lease token and expiry are co-set or
--- co-cleared. Half-set rows would be permanently invisible to the orphan
--- sweep (filters on leaseExpiresAt < now) — see schema warning block on
--- AiWorkflowExecution. Source: 20260508114325_add_lease_pair_check.
+-- co-cleared, AND that a non-null token is non-empty. Half-set rows would
+-- be permanently invisible to the orphan sweep (filters on leaseExpiresAt
+-- < now); an empty-string token would satisfy the original co-set check
+-- but still leak through code paths that early-return on `if (!leaseToken)`.
+-- See schema warning block on AiWorkflowExecution.
+-- Source: 20260508114325_add_lease_pair_check, tightened to also reject
+-- empty-string tokens by the 2026-05-29 post-squash hardening fold.
 ALTER TABLE "ai_workflow_execution"
     ADD CONSTRAINT "ai_workflow_execution_lease_pair_coherent"
-    CHECK (("leaseToken" IS NULL) = ("leaseExpiresAt" IS NULL));
+    CHECK (
+        (("leaseToken" IS NULL) = ("leaseExpiresAt" IS NULL))
+        AND ("leaseToken" IS NULL OR length("leaseToken") > 0)
+    );
+
+-- A7: partial unique index enforcing that at most one ai_knowledge_base row
+-- carries isDefault=true. The "default knowledge base" id is a runtime
+-- contract referenced by getOrCreateDefaultKnowledgeBase() and by every
+-- upload path; a second isDefault=true row would silently divert uploads.
+-- See schema warning block on AiKnowledgeBase.
+-- Source: 2026-05-29 post-squash hardening fold.
+CREATE UNIQUE INDEX "idx_ai_knowledge_base_single_default"
+    ON "ai_knowledge_base" ("isDefault")
+    WHERE "isDefault" = true;
+
+-- A8: CHECK constraint pinning ai_knowledge_document.status to the four
+-- documented values. Prisma models the field as a free-form String; this
+-- catches typos / casing drift (e.g. 'Ready' vs 'ready') from raw-SQL or
+-- direct-DB writes before they corrupt the upload state machine.
+-- See schema warning block on AiKnowledgeDocument.
+-- Source: 2026-05-29 post-squash hardening fold.
+ALTER TABLE "ai_knowledge_document"
+    ADD CONSTRAINT "ai_knowledge_document_status_lowercase"
+    CHECK ("status" IN ('processing', 'ready', 'failed', 'pending_review'));
