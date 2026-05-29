@@ -146,7 +146,9 @@ networks:
 #    any pending Prisma migrations via `prisma migrate deploy`. No manual
 #    migration step is required — `web` will not start if migrations fail.
 #
-# 3. (Optional) Seed the database with test data:
+# 3. Seed the database (REQUIRED on first install — creates the default
+#    knowledge base row that runtime code FK-references; also seeds
+#    built-in agents, capabilities, and templates):
 #    docker-compose -f docker-compose.prod.yml exec web npm run db:seed
 #
 # 4. Verify deployment:

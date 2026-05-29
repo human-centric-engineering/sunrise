@@ -71,17 +71,22 @@ model AiKnowledgeDocument {
 //   1. HNSW index `idx_knowledge_embedding` on `embedding`
 //      (vector_cosine_ops, m=16, ef_construction=64) — Prisma cannot
 //      model pgvector HNSW indexes.
-//      Source of truth: prisma/migrations/20260529120000_restore_knowledge_embedding_hnsw_index/
-//      (originally added by 20260409214649_add_hnsw_vector_index but
-//      accidentally dropped by 20260411133126_add_orchestration_settings
-//      — see the restore migration for the full incident write-up.)
+//      Source of truth: prisma/migrations/00000000000000_baseline/migration.sql
+//      (originally added by 20260409214649_add_hnsw_vector_index,
+//      accidentally dropped by 20260411133126_add_orchestration_settings,
+//      restored by 20260529120000_restore_knowledge_embedding_hnsw_index,
+//      then absorbed into the baseline by the 2026-05-29 squash. The
+//      restore migration's SQL file no longer exists on disk — its
+//      incident write-up was lifted into the squash baseline header.)
 //
 //   2. GIN index `idx_ai_knowledge_chunk_search_vector` on
 //      `searchVector`.
-//      Source of truth: prisma/migrations/20260501172919_add_knowledge_chunk_search_vector/
+//      Source of truth: prisma/migrations/00000000000000_baseline/migration.sql
+//      (originally added by 20260501172919_add_knowledge_chunk_search_vector;
+//      absorbed into the baseline by the 2026-05-29 squash.)
 //
 //   3. `GENERATED ALWAYS AS (...) STORED` expression on `searchVector`.
-//      Source of truth: same migration as #2.
+//      Source of truth: same as #2.
 //
 // `npx prisma migrate dev` WILL try to add DROP statements for ALL THREE
 // on every schema-diff run. Always inspect generated migration SQL and

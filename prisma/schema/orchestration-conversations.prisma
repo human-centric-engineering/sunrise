@@ -171,9 +171,11 @@ model AiMessage {
 // generated migration SQL and remove that line before applying — the
 // drop would silently break similarity search.
 //
-// Source of truth:
-//   prisma/migrations/20260420063847_add_message_embedding_hnsw_index/
-//   prisma/migrations/20260514151915_flexible_embedding_models_and_kb_grouping/ (re-creates)
+// Source of truth: prisma/migrations/00000000000000_baseline/migration.sql
+// (originally added by 20260420063847_add_message_embedding_hnsw_index;
+// dropped+recreated by 20260514151915_flexible_embedding_models_and_kb_grouping
+// after the embedding column was resized; absorbed into the baseline by the
+// 2026-05-29 squash.)
 model AiMessageEmbedding {
   id                 String                      @id @default(cuid())
   messageId          String                      @unique

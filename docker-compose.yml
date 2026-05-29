@@ -82,7 +82,9 @@ networks:
 #    - After pulling database schema changes
 #    - When you modify files in prisma/schema/
 #
-# 3. (Optional) Seed with test data:
+# 3. Seed the database (REQUIRED on first install — creates the default
+#    knowledge base row that runtime code FK-references; also seeds
+#    built-in agents, capabilities, and templates):
 #    docker-compose exec web npm run db:seed
 #
 # 4. Access the app:
