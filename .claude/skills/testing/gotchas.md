@@ -791,7 +791,10 @@ await act(async () => {
 });
 ```
 
-**Codebase exemplar**: `tests/unit/components/forms/profile-form.test.tsx` (the "should hide success message after 3 seconds" test) is the established pattern — fireEvent + act + advanceTimersByTime for fake-timer paths, userEvent only for real-timer paths.
+**Codebase exemplars** (two shapes worth referencing):
+
+- `tests/unit/components/forms/profile-form.test.tsx` — banner-hide via `setTimeout`. fireEvent click → advanceTimersByTime → assert hidden.
+- `tests/unit/components/admin/orchestration/knowledge/manage-tab.test.tsx` (the "debounces the search input" test) — input-change debounce. **Scoped** `vi.useFakeTimers()` inside a single `it()` wrapped in `try/finally` (rest of file keeps real timers for unrelated `userEvent` tests). Pattern: `fireEvent.change(input, { target: { value: 'hello' } })` → `await vi.advanceTimersByTimeAsync(350)` → `await vi.runAllTimersAsync()` to drain pending microtasks → synchronous assertion. Discovered when a prescription using `userEvent.setup({ advanceTimers: vi.advanceTimersByTime })` hung at the 10s budget; switching to `fireEvent.change` made the test deterministic at ~24ms.
 
 **Symptom decoder**: if a test times out at the `it(...)` line in the error stack rather than at a specific line of test code, the cause is almost always one of these three. Check `vi.useFakeTimers()` is paired with `fireEvent` (not `userEvent`) and that `afterEach` resets timers before mocks.
 
