@@ -22,6 +22,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 
 import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
+import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ function makeDocument(
 ) {
   return {
     id: overrides.id ?? 'doc-1',
-    knowledgeBaseId: 'kb_default',
+    knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     name: overrides.name ?? 'My Document',
     fileName: overrides.fileName ?? 'doc.pdf',
     fileHash: 'abc123',

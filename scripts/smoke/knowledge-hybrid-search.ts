@@ -30,6 +30,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 
 const DOCUMENT_NAME = 'smoke-test-hybrid-search-document';
 const CHUNK_KEYS = {
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
       status: 'ready',
       scope: 'app',
       uploadedBy: user.id,
-      knowledgeBaseId: 'kb_default',
+      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     },
     select: { id: true },
   });

@@ -86,6 +86,7 @@ import {
   deleteDocument,
   rechunkDocument,
   listDocuments,
+  DEFAULT_KNOWLEDGE_BASE_ID,
 } from '@/lib/orchestration/knowledge/document-manager';
 
 // --- Helpers ---
@@ -187,7 +188,7 @@ describe('uploadDocument', () => {
         status: 'processing',
         uploadedBy: userId,
         scope: 'app',
-        knowledgeBaseId: 'kb_default',
+        knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
       },
     });
   });

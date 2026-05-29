@@ -18,6 +18,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { seedChunkSchema } from '@/lib/orchestration/knowledge/seeder';
+import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 
 // Load env from .env.local
 config({ path: resolve(__dirname, '../.env.local') });
@@ -84,7 +85,7 @@ async function seedWithoutEmbeddings(): Promise<void> {
       fileHash,
       status: 'processing',
       uploadedBy: userId,
-      knowledgeBaseId: 'kb_default',
+      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     },
   });
 
