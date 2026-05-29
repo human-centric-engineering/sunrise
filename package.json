@@ -31,6 +31,7 @@
     "embeddings:reset": "tsx scripts/embeddings-reset.ts",
     "db:migrate:single-doc": "tsx --env-file=.env.local scripts/migrate-knowledge-to-single-doc.ts",
     "db:reset": "prisma migrate reset --force",
+    "db:drift-check": "tsx --env-file=.env.local scripts/db/check-drift.ts",
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
     "smoke:hybrid-search": "tsx --env-file=.env.local scripts/smoke/knowledge-hybrid-search.ts",
