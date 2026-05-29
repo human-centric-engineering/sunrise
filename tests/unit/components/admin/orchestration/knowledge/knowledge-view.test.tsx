@@ -134,6 +134,9 @@ describe('KnowledgeView', () => {
     // would be ambiguous. We accept the looser assertion that at least
     // one "0" appears as evidence the chunks column rendered.
     expect(screen.getByText('42')).toBeInTheDocument();
+    // test-review:accept assertion-quality — intentional render-smoke check, not a
+    // chunk-column contract; the chunks/Uses/pagination columns all show "0" for
+    // this fixture so a `within(row)` scope would still be ambiguous across columns.
     expect(screen.getAllByText('0').length).toBeGreaterThan(0);
   });
 

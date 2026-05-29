@@ -29,7 +29,12 @@ import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/documen
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-// DocumentUploadZone uses apiClient.get for tags — mock it to return empty list
+// test-review:accept mock-realism — apiClient mock is the smallest seam to keep the
+// test suite stable here. DocumentUploadZone uses apiClient.get for the /knowledge/tags
+// fetch; the real apiClient parses success envelopes via Zod, but the file-level
+// globalThis.fetch mock returns bare `{}` by default which would fail that parsing and
+// break every test that opens the upload dialog. Coverage of the real apiClient
+// Zod-parsing and envelope-unwrapping path lives in the apiClient unit tests.
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
     get: vi.fn().mockResolvedValue([]),
@@ -109,6 +114,23 @@ const PENDING_DOC = makeDocument({
 async function openDeleteConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByRole('button', { name: /document actions/i }));
   await user.click(await screen.findByRole('menuitem', { name: /^delete$/i }));
+}
+
+/**
+ * Return the Rechunk action button from the list (the ghost variant, not the
+ * FieldHelp popover trigger). Throws a descriptive error if not found so test
+ * failures are readable.
+ */
+function getRechunkActionButton(): HTMLElement {
+  const buttons = screen.getAllByRole('button', { name: /rechunk/i });
+  const actionButton = buttons.find((btn) => !btn.hasAttribute('aria-haspopup'));
+  if (!actionButton) {
+    throw new Error(
+      `getRechunkActionButton: no Rechunk button without aria-haspopup found. ` +
+        `Buttons found: ${buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent).join(', ')}`
+    );
+  }
+  return actionButton;
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -287,12 +309,7 @@ describe('ManageTab', () => {
     const onRefresh = vi.fn();
     render(<ManageTab documents={[USER_DOC]} onRefresh={onRefresh} />);
 
-    // Use getAllByRole and pick the first ghost button (the action button, not the FieldHelp ⓘ)
-    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
-    // The action button is a ghost variant button (not a FieldHelp popover trigger)
-    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
-    expect(actionButton).toBeDefined();
-    await user.click(actionButton!);
+    await user.click(getRechunkActionButton());
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
@@ -307,10 +324,7 @@ describe('ManageTab', () => {
     const onRefresh = vi.fn();
     render(<ManageTab documents={[USER_DOC]} onRefresh={onRefresh} />);
 
-    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
-    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
-    expect(actionButton).toBeDefined();
-    await user.click(actionButton!);
+    await user.click(getRechunkActionButton());
 
     await waitFor(() => {
       // test-review:accept no_arg_called — onRefresh is () => void by contract; zero-arg callback, no shape to verify
@@ -799,10 +813,7 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
-    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
-    expect(actionButton).toBeDefined();
-    await user.click(actionButton!);
+    await user.click(getRechunkActionButton());
 
     await waitFor(() => {
       expect(screen.getByText('Document is processing')).toBeInTheDocument();
@@ -820,10 +831,7 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
-    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
-    expect(actionButton).toBeDefined();
-    await user.click(actionButton!);
+    await user.click(getRechunkActionButton());
 
     await waitFor(() => {
       expect(screen.getByText(/network error — could not reach the server/i)).toBeInTheDocument();
@@ -920,6 +928,104 @@ describe('ManageTab', () => {
     // Assert: onRefresh was called (handleUploadComplete fired)
     await waitFor(() => {
       expect(onRefresh).toHaveBeenCalled();
+    });
+  });
+
+  it('confirms PDF preview: onConfirmed triggers refreshAll and fetchEmbeddingStatus', async () => {
+    // Covers handlePdfPreview (sets pdfPreviewOpen), and PdfPreviewModal's onConfirmed
+    // callback which calls refreshAll() + fetchEmbeddingStatus().
+    const user = userEvent.setup();
+    const onRefresh = vi.fn();
+    let embedStatusCallCount = 0;
+
+    mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
+      if (typeof url === 'string' && url.includes('/knowledge/tags')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: [] }),
+        });
+      }
+      if (
+        opts?.method === 'POST' &&
+        typeof url === 'string' &&
+        url.includes('/documents') &&
+        !url.includes('/confirm')
+      ) {
+        // Return a PDF preview response so DocumentUploadZone calls onPdfPreview
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: {
+                document: {
+                  id: 'doc-pdf-preview',
+                  name: 'Annual Report',
+                  fileName: 'report.pdf',
+                  status: 'pending_review',
+                },
+                preview: {
+                  extractedText: 'PDF content here.',
+                  title: 'Annual Report',
+                  author: null,
+                  sectionCount: 1,
+                  warnings: [],
+                  requiresConfirmation: true,
+                },
+              },
+            }),
+        });
+      }
+      if (typeof url === 'string' && url.includes('/confirm')) {
+        // Confirm endpoint succeeds
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: {} }) });
+      }
+      if (typeof url === 'string' && url.includes('embedding-status')) {
+        embedStatusCallCount++;
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 1, embedded: 1, pending: 0, hasActiveProvider: true },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    render(<ManageTab documents={[]} onRefresh={onRefresh} />);
+
+    // Open the upload dialog
+    await user.click(screen.getByRole('button', { name: /upload document/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Stage a PDF file
+    const input = screen.getByLabelText(/upload documents/i);
+    const pdfFile = new File(['%PDF-1.4'], 'report.pdf', { type: 'application/pdf' });
+    fireEvent.change(input, { target: { files: [pdfFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^upload$/i })).toBeInTheDocument();
+    });
+
+    // Submit the upload
+    await user.click(screen.getByRole('button', { name: /^upload$/i }));
+
+    // The upload dialog closes and the PDF preview modal opens
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /confirm & chunk/i })).toBeInTheDocument();
+    });
+
+    const beforeEmbedStatusCalls = embedStatusCallCount;
+
+    // Act: confirm the PDF preview
+    await user.click(screen.getByRole('button', { name: /confirm & chunk/i }));
+
+    // Assert: refreshAll (onRefresh) and fetchEmbeddingStatus were called
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalled();
+      expect(embedStatusCallCount).toBeGreaterThan(beforeEmbedStatusCalls);
     });
   });
 
@@ -1057,10 +1163,7 @@ describe('ManageTab', () => {
 
     render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
 
-    const rechunkButtons = screen.getAllByRole('button', { name: /rechunk/i });
-    const actionButton = rechunkButtons.find((btn) => !btn.hasAttribute('aria-haspopup'));
-    expect(actionButton).toBeDefined();
-    await user.click(actionButton!);
+    await user.click(getRechunkActionButton());
 
     await waitFor(() => {
       expect(screen.getByText(/Rechunk failed \(422\)/i)).toBeInTheDocument();
@@ -1145,6 +1248,37 @@ describe('ManageTab', () => {
     });
   });
 
+  // ── Agents column modal ─────────────────────────────────────────────────
+  // Covers the agents-count button onClick (anonymous_20) and the
+  // DocumentAgentsModal onOpenChange close handler (anonymous_54).
+
+  it('opens the DocumentAgentsModal when the agents column button is clicked and closes on Escape', async () => {
+    // Arrange: a document with a known name so we can find the agents button
+    const user = userEvent.setup();
+    const docForAgents = makeDocument({ id: 'doc-agents', name: 'Agent Test Doc' });
+    render(<ManageTab documents={[docForAgents]} onRefresh={vi.fn()} />);
+
+    // No dialog open initially
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Act: click the agents button — aria-label is "Show N agents with access to <name>"
+    await user.click(
+      screen.getByRole('button', { name: /show .* agent.* with access to agent test doc/i })
+    );
+
+    // Assert: a dialog (DocumentAgentsModal) opened
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Act: press Escape to close — triggers onOpenChange(false)
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+  });
+
   // ── Coverage column ───────────────────────────────────────────────────────
 
   describe('Coverage column', () => {
@@ -1154,6 +1288,19 @@ describe('ManageTab', () => {
       render(<ManageTab documents={[docNoCoverage]} onRefresh={vi.fn()} />);
 
       // readCoverage(null) returns null — no percentage text should appear
+      expect(document.body.textContent).not.toMatch(/\d+%/);
+    });
+
+    it('shows no percentage when metadata.coverage is a non-object (guard: !cov || typeof cov !== "object")', () => {
+      // Arrange: coverage is a malformed primitive (string), not an object.
+      // readCoverage's inner guard `if (!cov || typeof cov !== 'object') return null` should fire.
+      const docMalformed = {
+        ...makeDocument({ id: 'doc-bad-cov', name: 'Malformed Coverage Doc' }),
+        metadata: { coverage: 'malformed' },
+      };
+      render(<ManageTab documents={[docMalformed]} onRefresh={vi.fn()} />);
+
+      // Assert: no percentage rendered — the guard returned null
       expect(document.body.textContent).not.toMatch(/\d+%/);
     });
 
@@ -1193,19 +1340,27 @@ describe('ManageTab', () => {
     });
 
     it('debounces the search input and fires a documents fetch with q=', async () => {
-      const user = userEvent.setup();
-      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
-      mockFetch.mockClear();
+      // Use fake timers so the 300ms debounce fires deterministically without
+      // wall-clock waiting. We use fireEvent (not userEvent.type) to set the
+      // input value directly — avoids the issue where userEvent hangs under
+      // fake timers if microtask flushing is not fully synchronised.
+      vi.useFakeTimers();
+      try {
+        render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+        mockFetch.mockClear();
 
-      await user.type(screen.getByPlaceholderText(/search by name or filename/i), 'hello');
+        const searchInput = screen.getByPlaceholderText(/search by name or filename/i);
+        fireEvent.change(searchInput, { target: { value: 'hello' } });
 
-      // 300ms debounce — wait until the fetch fires.
-      await waitFor(
-        () => {
-          expect(listFetchUrls().some((u) => u.includes('q=hello'))).toBe(true);
-        },
-        { timeout: 1500 }
-      );
+        // Advance past the 300ms debounce then flush pending microtasks so the
+        // queued fetch call lands before we assert on it.
+        await vi.advanceTimersByTimeAsync(350);
+        await vi.runAllTimersAsync();
+
+        expect(listFetchUrls().some((u) => u.includes('q=hello'))).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('refetches when the scope prop changes from undefined to a value', async () => {
@@ -1248,6 +1403,72 @@ describe('ManageTab', () => {
         expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /previous/i })).toBeInTheDocument();
         expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
+      });
+    });
+
+    it('clicking Next fires a fetch for page 2', async () => {
+      // Arrange: initial fetch returns page 1 of 2
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: [makeDocument({ id: 'd1', name: 'Doc 1' })],
+            meta: { page: 1, limit: 25, total: 50, totalPages: 2 },
+          }),
+      });
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+
+      // Wait for pagination controls to appear (initial fetch settles)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
+      });
+
+      mockFetch.mockClear();
+
+      // Act: click Next
+      await user.click(screen.getByRole('button', { name: /next/i }));
+
+      // Assert: a fetch with page=2 was made
+      await waitFor(() => {
+        expect(
+          mockFetch.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('page=2'))
+        ).toBe(true);
+      });
+    });
+
+    it('clicking Previous from page 2 fires a fetch for page 1', async () => {
+      // Arrange: initial fetch returns page 2 of 2 so Previous is enabled
+      const user = userEvent.setup();
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            success: true,
+            data: [makeDocument({ id: 'd2', name: 'Doc 2' })],
+            meta: { page: 2, limit: 25, total: 50, totalPages: 2 },
+          }),
+      });
+      render(<ManageTab documents={[]} onRefresh={vi.fn()} />);
+
+      // Wait for Previous button to become enabled (page > 1)
+      await waitFor(() => {
+        const prevBtn = screen.getByRole('button', { name: /previous/i });
+        expect(prevBtn).toBeInTheDocument();
+        expect(prevBtn).not.toBeDisabled();
+      });
+
+      mockFetch.mockClear();
+
+      // Act: click Previous
+      await user.click(screen.getByRole('button', { name: /previous/i }));
+
+      // Assert: a fetch with page=1 was made
+      await waitFor(() => {
+        expect(
+          mockFetch.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('page=1'))
+        ).toBe(true);
       });
     });
   });
