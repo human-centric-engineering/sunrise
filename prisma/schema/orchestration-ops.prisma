@@ -17,11 +17,11 @@ model AiWebhookSubscription {
   // whose payload carries a workflow ID. A sub with `agentIds=['x']` still receives
   // workflow-typed events unconstrained. See lib/orchestration/webhooks/event-entity-keys.ts.
   //
-  // NOTE: Prisma 7 `migrate diff --from-empty` and `db push` both omit
-  // NOT NULL on array columns with @default — applies to the three array
-  // fields below (`agentIds`, `workflowIds`, `retryBackoffMs`). Deployed
-  // DBs are correct; any baseline regeneration must hand-fold NOT NULL
-  // back in. See squash baseline migration (B3–B5).
+  // NOTE: Prisma 7 generator bugs B3, B4, B5 — `migrate diff --from-empty`
+  // and `db push` both omit NOT NULL on the three array fields below
+  // (`agentIds`, `workflowIds`, `retryBackoffMs`). Deployed DBs are correct;
+  // any baseline regeneration must hand-fold NOT NULL back in.
+  // See `.context/database/prisma-7-baseline-bugs.md` for the full inventory.
   agentIds       String[] @default([])
   workflowIds    String[] @default([])
   isActive       Boolean  @default(true)

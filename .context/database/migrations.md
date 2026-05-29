@@ -4,6 +4,13 @@
 
 Sunrise uses **Prisma Migrate** for database schema evolution. Migrations are version-controlled SQL files that track all schema changes, ensuring consistent database state across environments.
 
+> **Two related docs you may want next:**
+>
+> - [`prisma-unmodelled-objects.md`](./prisma-unmodelled-objects.md) — the canonical inventory of raw-SQL objects (GIN/HNSW indexes, partial uniques, CHECK constraints, GENERATED columns) the baseline maintains and that `prisma migrate dev` will silently DROP unless inspected.
+> - [`prisma-7-baseline-bugs.md`](./prisma-7-baseline-bugs.md) — the five reproducible Prisma 7 generator bugs the baseline hand-folds, with workarounds and notes for filing upstream.
+>
+> The drift-check script `npm run db:drift-check` probes every unmodelled object — run it after any `migrate deploy` against production.
+
 ## Migration Workflow
 
 ### Development Workflow

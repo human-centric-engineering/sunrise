@@ -82,10 +82,11 @@ model AiProviderModel {
   // (the most common case — vendor-hosted via API). Models that run on the
   // operator's own infrastructure carry "sovereign". Reserved values for future
   // expansion: "edge" (browser/device), "air_gapped" (no outbound network).
-  // NOTE: Prisma 7 `migrate diff --from-empty` and `db push` both omit
-  // NOT NULL on array columns with @default. Deployed DBs are correct (NOT
-  // NULL applied by the original migration); any baseline regeneration must
-  // hand-fold NOT NULL back in. See squash baseline migration (B2).
+  // NOTE: Prisma 7 generator bug B2 — `migrate diff --from-empty` and
+  // `db push` both omit NOT NULL on array columns with @default. Deployed
+  // DBs are correct (NOT NULL applied by the original migration); any
+  // baseline regeneration must hand-fold NOT NULL back in.
+  // See `.context/database/prisma-7-baseline-bugs.md` for the full inventory.
   deploymentProfiles String[] @default(["hosted"])
 
   // Wire-level parameter convention. Maps to ParamProfile in
