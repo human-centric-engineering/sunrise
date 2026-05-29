@@ -411,8 +411,9 @@ either of the other two.
 
 A/B experiments now run against a shared dataset, with one
 `AiEvaluationRun` per variant instead of the legacy `AiEvaluationSession`
-manual chat. Schema additions on `AiExperiment` (migration
-`20260525173530_add_experiment_dataset_fields`):
+manual chat. Schema additions on `AiExperiment` (originally added 2026-05-25
+by `add_experiment_dataset_fields`, absorbed into the baseline by the
+2026-05-29 squash):
 
 - `datasetId: String?` — every variant's eval run fires against this
   dataset. Nullable on legacy rows that pre-date the change.
@@ -662,16 +663,16 @@ missing), giving CI a clean fail-the-build signal.
 
 ### Critical files
 
-| Concern             | Path                                                                               |
-| ------------------- | ---------------------------------------------------------------------------------- |
-| Auth fallback       | `lib/auth/guards.ts` (`withAuth`, `withAdminAuth`)                                 |
-| Rate-limit policy   | `lib/security/rate-limit-policy.ts` (split orchestration rule)                     |
-| Schema              | `prisma/schema/` (`AiEvaluationRun.gateConfig`)                                    |
-| Migration           | `prisma/migrations/20260527073409_add_evaluation_run_gate_config/`                 |
-| Zod                 | `lib/validations/orchestration-evaluations.ts` (`gateConfigSchema`)                |
-| Verdict computation | `lib/orchestration/evaluations/gate.ts` (`computeGateVerdict`)                     |
-| Run POST            | `app/api/v1/admin/orchestration/evaluations/runs/route.ts` (persists `gateConfig`) |
-| Run GET             | `app/api/v1/admin/orchestration/evaluations/runs/[id]/route.ts` (emits `gate`)     |
+| Concern             | Path                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth fallback       | `lib/auth/guards.ts` (`withAuth`, `withAdminAuth`)                                                                                                    |
+| Rate-limit policy   | `lib/security/rate-limit-policy.ts` (split orchestration rule)                                                                                        |
+| Schema              | `prisma/schema/` (`AiEvaluationRun.gateConfig`)                                                                                                       |
+| Migration           | `prisma/migrations/00000000000000_baseline/migration.sql` (originally 2026-05-27 `add_evaluation_run_gate_config`, absorbed by the 2026-05-29 squash) |
+| Zod                 | `lib/validations/orchestration-evaluations.ts` (`gateConfigSchema`)                                                                                   |
+| Verdict computation | `lib/orchestration/evaluations/gate.ts` (`computeGateVerdict`)                                                                                        |
+| Run POST            | `app/api/v1/admin/orchestration/evaluations/runs/route.ts` (persists `gateConfig`)                                                                    |
+| Run GET             | `app/api/v1/admin/orchestration/evaluations/runs/[id]/route.ts` (emits `gate`)                                                                        |
 
 ## Phase 3.5b — workflow-aware cost estimator
 
@@ -793,18 +794,18 @@ empty-state copy explains which condition tripped.
 
 ### Critical files
 
-| Concern                | Path                                                                        |
-| ---------------------- | --------------------------------------------------------------------------- |
-| Schema                 | `prisma/schema/` (`AiExperiment.pairwiseVerdict`)                           |
-| Migration              | `prisma/migrations/20260527071146_add_experiment_pairwise_verdict/`         |
-| Type                   | `types/orchestration.ts` (`PairwiseVerdictSummary`, `PairwiseVerdictCase`)  |
-| Endpoint               | `app/api/v1/admin/orchestration/experiments/[id]/verdicts/route.ts`         |
-| Compare GET (extended) | `app/api/v1/admin/orchestration/experiments/[id]/compare/route.ts`          |
-| Zod schema             | `lib/validations/orchestration-evaluations.ts` (`runPairwiseVerdictSchema`) |
-| Sub-limiter            | `lib/security/rate-limit.ts` (`pairwiseVerdictLimiter`)                     |
-| Grader (reuse)         | `lib/orchestration/evaluations/graders/pairwise/judge-agent.ts`             |
-| Compare page           | `app/admin/orchestration/experiments/[id]/compare/page.tsx`                 |
-| Verdict card           | `components/admin/orchestration/experiments/pairwise-verdict-card.tsx`      |
+| Concern                | Path                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Schema                 | `prisma/schema/` (`AiExperiment.pairwiseVerdict`)                                                                                                      |
+| Migration              | `prisma/migrations/00000000000000_baseline/migration.sql` (originally 2026-05-27 `add_experiment_pairwise_verdict`, absorbed by the 2026-05-29 squash) |
+| Type                   | `types/orchestration.ts` (`PairwiseVerdictSummary`, `PairwiseVerdictCase`)                                                                             |
+| Endpoint               | `app/api/v1/admin/orchestration/experiments/[id]/verdicts/route.ts`                                                                                    |
+| Compare GET (extended) | `app/api/v1/admin/orchestration/experiments/[id]/compare/route.ts`                                                                                     |
+| Zod schema             | `lib/validations/orchestration-evaluations.ts` (`runPairwiseVerdictSchema`)                                                                            |
+| Sub-limiter            | `lib/security/rate-limit.ts` (`pairwiseVerdictLimiter`)                                                                                                |
+| Grader (reuse)         | `lib/orchestration/evaluations/graders/pairwise/judge-agent.ts`                                                                                        |
+| Compare page           | `app/admin/orchestration/experiments/[id]/compare/page.tsx`                                                                                            |
+| Verdict card           | `components/admin/orchestration/experiments/pairwise-verdict-card.tsx`                                                                                 |
 
 ## Phase 3.6 — dataset creation UX
 
@@ -965,47 +966,47 @@ block typing a slug we can't enumerate.
 
 ## Critical files
 
-| Concern                 | Path                                                                                      |
-| ----------------------- | ----------------------------------------------------------------------------------------- |
-| Schema                  | `prisma/schema/` (AiDataset, AiDatasetCase, AiEvaluationRun, AiEvaluationCaseResult)      |
-| Worker                  | `lib/orchestration/evaluations/run-worker.ts`                                             |
-| Lease helpers           | `lib/orchestration/evaluations/run-claim.ts`                                              |
-| Agent case dispatch     | `lib/orchestration/evaluations/run-cases/agent-case.ts`                                   |
-| Workflow case dispatch  | `lib/orchestration/evaluations/run-cases/workflow-case.ts`                                |
-| Shared judge driver     | `lib/orchestration/evaluations/judge-driver.ts`                                           |
-| judge_call step         | `lib/orchestration/engine/executors/judge-call.ts`                                        |
-| workflow_as_judge       | `lib/orchestration/evaluations/graders/model/workflow-as-judge.ts`                        |
-| pairwise_judge_agent    | `lib/orchestration/evaluations/graders/pairwise/judge-agent.ts`                           |
-| RAG judges seed         | `prisma/seeds/018-rag-evaluation-judges.ts`                                               |
-| Dataset upload          | `lib/orchestration/evaluations/datasets/upload-handler.ts`                                |
-| CSV parser              | `lib/orchestration/evaluations/datasets/parsers/csv-parser.ts`                            |
-| JSONL parser            | `lib/orchestration/evaluations/datasets/parsers/jsonl-parser.ts`                          |
-| Hash function           | `lib/orchestration/evaluations/datasets/hash.ts`                                          |
-| Grader registry         | `lib/orchestration/evaluations/graders/registry.ts`                                       |
-| Grader types            | `lib/orchestration/evaluations/graders/types.ts`                                          |
-| judge_agent grader      | `lib/orchestration/evaluations/graders/model/judge-agent.ts`                              |
-| Judge agents seed       | `prisma/seeds/016-evaluation-judges.ts`                                                   |
-| drainStreamChat         | `lib/orchestration/evaluations/drain-stream-chat.ts`                                      |
-| Tick wiring             | `app/api/v1/admin/orchestration/maintenance/tick/route.ts`                                |
-| Cost estimator          | `lib/orchestration/cost-estimation/evaluation-cost.ts`                                    |
-| Estimate route          | `app/api/v1/admin/orchestration/evaluations/runs/estimate/route.ts`                       |
-| Append helper           | `lib/orchestration/evaluations/datasets/append-cases.ts`                                  |
-| Capture helpers         | `lib/orchestration/evaluations/datasets/capture.ts`                                       |
-| Capture route           | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/capture/route.ts`               |
-| Synthesis seed-loader   | `lib/orchestration/evaluations/synthesis/seed-loader.ts`                                  |
-| Case generator          | `lib/orchestration/evaluations/synthesis/case-generator.ts`                               |
-| Generator agent seed    | `prisma/seeds/017-case-generator-agent.ts`                                                |
-| Synthesis preview route | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/route.ts`        |
-| Synthesis commit route  | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/commit/route.ts` |
-| Experiment run route    | `app/api/v1/admin/orchestration/experiments/[id]/run/route.ts`                            |
-| Phase 2.4 migration     | `prisma/migrations/20260525173530_add_experiment_dataset_fields/`                         |
-| Welch t-test            | `lib/orchestration/evaluations/stats/welch.ts`                                            |
-| Cohen's d               | `lib/orchestration/evaluations/stats/cohens-d.ts`                                         |
-| Winner decision         | `lib/orchestration/evaluations/stats/winner.ts`                                           |
-| Compare page            | `app/admin/orchestration/experiments/[id]/compare/page.tsx`                               |
-| Compare table component | `components/admin/orchestration/experiments/variant-compare-table.tsx`                    |
-| API routes              | `app/api/v1/admin/orchestration/evaluations/{datasets,runs,graders}/`                     |
-| UI pages                | `app/admin/orchestration/evaluations/{datasets,runs}/`                                    |
-| UI components           | `components/admin/orchestration/evaluations-foundations/`                                 |
-| UI copy                 | `components/admin/orchestration/evaluations-foundations/help-text.ts`                     |
-| Validation schemas      | `lib/validations/orchestration-evaluations.ts`                                            |
+| Concern                 | Path                                                                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Schema                  | `prisma/schema/` (AiDataset, AiDatasetCase, AiEvaluationRun, AiEvaluationCaseResult)                                                                 |
+| Worker                  | `lib/orchestration/evaluations/run-worker.ts`                                                                                                        |
+| Lease helpers           | `lib/orchestration/evaluations/run-claim.ts`                                                                                                         |
+| Agent case dispatch     | `lib/orchestration/evaluations/run-cases/agent-case.ts`                                                                                              |
+| Workflow case dispatch  | `lib/orchestration/evaluations/run-cases/workflow-case.ts`                                                                                           |
+| Shared judge driver     | `lib/orchestration/evaluations/judge-driver.ts`                                                                                                      |
+| judge_call step         | `lib/orchestration/engine/executors/judge-call.ts`                                                                                                   |
+| workflow_as_judge       | `lib/orchestration/evaluations/graders/model/workflow-as-judge.ts`                                                                                   |
+| pairwise_judge_agent    | `lib/orchestration/evaluations/graders/pairwise/judge-agent.ts`                                                                                      |
+| RAG judges seed         | `prisma/seeds/018-rag-evaluation-judges.ts`                                                                                                          |
+| Dataset upload          | `lib/orchestration/evaluations/datasets/upload-handler.ts`                                                                                           |
+| CSV parser              | `lib/orchestration/evaluations/datasets/parsers/csv-parser.ts`                                                                                       |
+| JSONL parser            | `lib/orchestration/evaluations/datasets/parsers/jsonl-parser.ts`                                                                                     |
+| Hash function           | `lib/orchestration/evaluations/datasets/hash.ts`                                                                                                     |
+| Grader registry         | `lib/orchestration/evaluations/graders/registry.ts`                                                                                                  |
+| Grader types            | `lib/orchestration/evaluations/graders/types.ts`                                                                                                     |
+| judge_agent grader      | `lib/orchestration/evaluations/graders/model/judge-agent.ts`                                                                                         |
+| Judge agents seed       | `prisma/seeds/016-evaluation-judges.ts`                                                                                                              |
+| drainStreamChat         | `lib/orchestration/evaluations/drain-stream-chat.ts`                                                                                                 |
+| Tick wiring             | `app/api/v1/admin/orchestration/maintenance/tick/route.ts`                                                                                           |
+| Cost estimator          | `lib/orchestration/cost-estimation/evaluation-cost.ts`                                                                                               |
+| Estimate route          | `app/api/v1/admin/orchestration/evaluations/runs/estimate/route.ts`                                                                                  |
+| Append helper           | `lib/orchestration/evaluations/datasets/append-cases.ts`                                                                                             |
+| Capture helpers         | `lib/orchestration/evaluations/datasets/capture.ts`                                                                                                  |
+| Capture route           | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/capture/route.ts`                                                                          |
+| Synthesis seed-loader   | `lib/orchestration/evaluations/synthesis/seed-loader.ts`                                                                                             |
+| Case generator          | `lib/orchestration/evaluations/synthesis/case-generator.ts`                                                                                          |
+| Generator agent seed    | `prisma/seeds/017-case-generator-agent.ts`                                                                                                           |
+| Synthesis preview route | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/route.ts`                                                                   |
+| Synthesis commit route  | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/commit/route.ts`                                                            |
+| Experiment run route    | `app/api/v1/admin/orchestration/experiments/[id]/run/route.ts`                                                                                       |
+| Phase 2.4 migration     | `prisma/migrations/00000000000000_baseline/migration.sql` (originally 2026-05-25 `add_experiment_dataset_fields`, absorbed by the 2026-05-29 squash) |
+| Welch t-test            | `lib/orchestration/evaluations/stats/welch.ts`                                                                                                       |
+| Cohen's d               | `lib/orchestration/evaluations/stats/cohens-d.ts`                                                                                                    |
+| Winner decision         | `lib/orchestration/evaluations/stats/winner.ts`                                                                                                      |
+| Compare page            | `app/admin/orchestration/experiments/[id]/compare/page.tsx`                                                                                          |
+| Compare table component | `components/admin/orchestration/experiments/variant-compare-table.tsx`                                                                               |
+| API routes              | `app/api/v1/admin/orchestration/evaluations/{datasets,runs,graders}/`                                                                                |
+| UI pages                | `app/admin/orchestration/evaluations/{datasets,runs}/`                                                                                               |
+| UI components           | `components/admin/orchestration/evaluations-foundations/`                                                                                            |
+| UI copy                 | `components/admin/orchestration/evaluations-foundations/help-text.ts`                                                                                |
+| Validation schemas      | `lib/validations/orchestration-evaluations.ts`                                                                                                       |

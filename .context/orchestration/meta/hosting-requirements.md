@@ -80,7 +80,7 @@ The `Dockerfile` already handles `libc6-compat` and the standalone trace; non-Do
 
 In plain terms: Sunrise needs PostgreSQL with one extra extension installed (`pgvector`) so the knowledge base can search documents by meaning. Most managed Postgres providers either include it or let you turn it on with one command. A Postgres install you do yourself on a VPS will need an extra `apt install` step.
 
-- Migration `prisma/migrations/20260409153925_enable_pgvector/migration.sql` runs `CREATE EXTENSION vector`
+- The baseline migration (`prisma/migrations/00000000000000_baseline/migration.sql`) runs `CREATE EXTENSION vector` — originally added 2026-04-09 by `enable_pgvector`, absorbed into the baseline by the 2026-05-29 squash
 - `docker-compose.prod.yml` ships `pgvector/pgvector:pg15` for this reason
 - Plain managed Postgres (vanilla RDS, vanilla Cloud SQL, hand-installed Postgres on a VPS) **will not** have the extension — `migrate deploy` fails on first run
 

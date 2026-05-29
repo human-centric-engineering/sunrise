@@ -615,14 +615,14 @@ Some features require PostgreSQL extensions to be installed on the server before
 
 **Prisma declaration:** The schema enables the `postgresqlExtensions` preview feature and declares `extensions = [vector]` on the datasource, so Prisma is aware of the extension when diffing schemas.
 
-**Related migrations (applied in order):**
+**Schema additions** (originally landed as separate migrations between 2026-04-09 and 2026-04-10, all absorbed into `prisma/migrations/00000000000000_baseline/migration.sql` by the 2026-05-29 squash):
 
-| Migration                                         | Purpose                                                                                                                                                                                                                                           |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `20260409153925_enable_pgvector`                  | Runs `CREATE EXTENSION IF NOT EXISTS vector;`                                                                                                                                                                                                     |
-| `20260409204535_add_agent_orchestration_models`   | Creates the 13 `ai_*` tables. Includes the `embedding vector(1536)` column on `ai_knowledge_chunk`.                                                                                                                                               |
-| `20260409214649_add_hnsw_vector_index`            | Creates `idx_knowledge_embedding` — an HNSW index on `ai_knowledge_chunk.embedding` using `vector_cosine_ops` (m=16, ef_construction=64) for approximate nearest-neighbour cosine search.                                                         |
-| `20260410120000_dedupe_ready_knowledge_documents` | Creates `idx_knowledge_doc_file_hash_ready` — a partial unique index on `ai_knowledge_document("fileHash") WHERE status = 'ready'`, preventing concurrent duplicate uploads of the same content hash while still allowing retries after failures. |
+| Origin migration                                | What it added to the schema                                                                                                                                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enable_pgvector` (2026-04-09)                  | Runs `CREATE EXTENSION IF NOT EXISTS vector;`                                                                                                                                                                                                     |
+| `add_agent_orchestration_models` (2026-04-09)   | Creates the 13 `ai_*` tables. Includes the `embedding vector(1536)` column on `ai_knowledge_chunk`.                                                                                                                                               |
+| `add_hnsw_vector_index` (2026-04-09)            | Creates `idx_knowledge_embedding` — an HNSW index on `ai_knowledge_chunk.embedding` using `vector_cosine_ops` (m=16, ef_construction=64) for approximate nearest-neighbour cosine search.                                                         |
+| `dedupe_ready_knowledge_documents` (2026-04-10) | Creates `idx_knowledge_doc_file_hash_ready` — a partial unique index on `ai_knowledge_document("fileHash") WHERE status = 'ready'`, preventing concurrent duplicate uploads of the same content hash while still allowing retries after failures. |
 
 **Server requirement:** pgvector must be installed on your PostgreSQL instance. It is not bundled with PostgreSQL by default.
 

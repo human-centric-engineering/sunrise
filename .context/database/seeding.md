@@ -16,7 +16,7 @@ How the seed runner works and how to author new seed units.
 
 ```bash
 npm run db:migrate:deploy  # Migrations to head
-npm run db:seed        # All 7 units apply, SeedHistory records each
+npm run db:seed        # All units apply, SeedHistory records each (19 units as of 2026-05-29)
 ```
 
 ### 2. Dev reset + reseed
@@ -185,6 +185,7 @@ FROM seed_history ORDER BY name;
 
 - **Whole-file hashing.** Any edit to a seed file — including whitespace — triggers a re-run on next `db:seed`. Same for any file listed in `hashInputs`. Safe because units are idempotent `upsert`s, just slightly noisier.
 - **Unit 007 uses the module prisma client.** `007-knowledge-chunks.ts` delegates to `seedChunks()` in `lib/orchestration/knowledge/seeder.ts`, which imports `prisma` from `@/lib/db/client` rather than the context-supplied one. This is intentional — the helper is also used by admin HTTP endpoints — and works fine because both point at the same database. Unit 007 also declares `hashInputs: ['./data/chunks/chunks.json']` so edits to the parsed knowledge-base data trigger a re-run.
+- **Unit 007 depends on Unit 003.** `seedChunks()` creates an `AiKnowledgeDocument` row with `knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID` (FK to `ai_knowledge_base`). Unit 003 (`default-knowledge-base`) creates the parent `kb_default` row. The numeric prefix on each filename pins the order: 003 always applies before 007. Forks that skip `db:seed` entirely won't have either row — runtime upload paths self-heal via `getOrCreateDefaultKnowledgeBase()` in `lib/orchestration/knowledge/document-manager.ts`, but the pre-loaded pattern-advisor chunks won't be present.
 
 ## Key Files
 

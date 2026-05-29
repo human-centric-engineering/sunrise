@@ -133,7 +133,7 @@ Sunrise distinguishes **transport-level failure** (span status `error`) from **a
 
 ## Cost-log correlation
 
-`AiCostLog` rows carry optional `traceId` and `spanId` columns (added in migration `20260505141318_add_cost_log_trace_correlation`) so external trace backends can join cost data back to the originating span:
+`AiCostLog` rows carry optional `traceId` and `spanId` columns (originally added 2026-05-05 by `add_cost_log_trace_correlation`, absorbed into `prisma/migrations/00000000000000_baseline/migration.sql` by the 2026-05-29 squash) so external trace backends can join cost data back to the originating span:
 
 ```sql
 SELECT cost.totalCostUsd, span.duration_ms

@@ -58,10 +58,10 @@ Detection latency from host death to recovery is bounded by `LEASE_DURATION_MS +
 
 PR 1 (lease + orphan sweep) shipped the recovery mechanism — the engine survives crashes and re-drives orphaned rows. PR 2 (this recipe's subject) shipped the **per-step crash-safety** that makes the re-drive cheap and correct: the dispatch cache ensures side effects don't fire twice, and per-turn checkpointing means long-running multi-turn steps don't restart from turn 0.
 
-Migrations:
+Schema (originally added by separate migrations on 2026-05-08, absorbed into `prisma/migrations/00000000000000_baseline/migration.sql` by the 2026-05-29 squash):
 
-- `20260508162706_add_workflow_step_dispatch` — `AiWorkflowStepDispatch` table and `AiCapability.isIdempotent` flag.
-- `20260508165225_add_multi_turn_checkpoint` — `AiWorkflowExecution.currentStepTurns` column.
+- `add_workflow_step_dispatch` — `AiWorkflowStepDispatch` table and `AiCapability.isIdempotent` flag.
+- `add_multi_turn_checkpoint` — `AiWorkflowExecution.currentStepTurns` column.
 
 ## Anti-patterns
 

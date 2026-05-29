@@ -257,7 +257,7 @@ abuse.
 | Shared structured-completion + parse helper | `lib/orchestration/evaluations/parse-structured.ts`                                                                                        |
 | Completion + rescore handlers               | `lib/orchestration/evaluations/complete-session.ts`                                                                                        |
 | Eval log mirroring (citations snapshot)     | `lib/orchestration/chat/streaming-handler.ts` (`writeEvaluationLog`)                                                                       |
-| Schema migration                            | `prisma/migrations/20260503160012_evaluation_metrics/migration.sql`                                                                        |
+| Schema migration                            | `prisma/migrations/00000000000000_baseline/migration.sql` (originally 2026-05-03 `evaluation_metrics`, absorbed by the 2026-05-29 squash)  |
 | Type contracts                              | `lib/orchestration/evaluations/types.ts`                                                                                                   |
 | API routes                                  | `app/api/v1/admin/orchestration/evaluations/[id]/rescore/route.ts`, `app/api/v1/admin/orchestration/agents/[id]/evaluation-trend/route.ts` |
 | UI chips                                    | `components/admin/orchestration/evaluation-metric-chips.tsx`                                                                               |
