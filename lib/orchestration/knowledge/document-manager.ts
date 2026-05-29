@@ -30,11 +30,43 @@ import {
 import type { AiKnowledgeDocument } from '@/types/prisma';
 
 /**
- * Seed-managed default knowledge base. Every document belongs to exactly
- * one KB; until the admin UI picker lands (Phase 6), all uploads route
- * here. See migration `flexible_embedding_models_and_kb_grouping`.
+ * Default knowledge base id used as the FK target for every uploaded
+ * document until the admin UI picker lands (Phase 6). Originally seeded
+ * by `prisma/seeds/003-default-knowledge-base.ts`; runtime upload paths
+ * also self-heal via `getOrCreateDefaultKnowledgeBase()` so a fork that
+ * skips `db:seed` doesn't FK-violate on first upload.
  */
 export const DEFAULT_KNOWLEDGE_BASE_ID = 'kb_default';
+
+/**
+ * Default slug used in the `AiKnowledgeBase.slug @unique` field. Upserting
+ * by this slug (the natural key) lets the helper survive an existing row
+ * whose `id` happens not to be `kb_default` — e.g. a fork that pre-seeded
+ * a different id before the helper ran.
+ */
+const DEFAULT_KNOWLEDGE_BASE_SLUG = 'default';
+
+/**
+ * Ensure the default knowledge base row exists and return its id. Runtime
+ * upload paths call this before creating an `AiKnowledgeDocument` so the
+ * FK is guaranteed to resolve. Upserts by `slug` (the natural key) so a
+ * pre-existing row with a different id is reused rather than crashing on
+ * a duplicate-key error.
+ */
+export async function getOrCreateDefaultKnowledgeBase(): Promise<string> {
+  const kb = await prisma.aiKnowledgeBase.upsert({
+    where: { slug: DEFAULT_KNOWLEDGE_BASE_SLUG },
+    update: {},
+    create: {
+      id: DEFAULT_KNOWLEDGE_BASE_ID,
+      slug: DEFAULT_KNOWLEDGE_BASE_SLUG,
+      name: 'Default',
+      description: 'Default knowledge base for documents without an explicit corpus assignment',
+      isDefault: true,
+    },
+  });
+  return kb.id;
+}
 
 /** A single CSV row persisted on the document for lossless re-chunking. */
 const csvSectionSchema = z.object({
@@ -211,6 +243,7 @@ export async function uploadDocument(
   }
 
   // Create document record with processing status
+  const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
       name,
@@ -220,7 +253,7 @@ export async function uploadDocument(
       sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
-      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
+      knowledgeBaseId,
     },
   });
 
@@ -368,6 +401,7 @@ async function uploadCsvFromParsed(
     return existing;
   }
 
+  const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
       name,
@@ -377,7 +411,7 @@ async function uploadCsvFromParsed(
       sourceUrl: sourceUrl ?? null,
       status: 'processing',
       uploadedBy: userId,
-      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
+      knowledgeBaseId,
     },
   });
 
@@ -600,6 +634,7 @@ export async function previewDocument(
   }
 
   // Create document record in pending_review status
+  const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
       name,
@@ -608,7 +643,7 @@ export async function previewDocument(
       scope: 'app',
       status: 'pending_review',
       uploadedBy: userId,
-      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
+      knowledgeBaseId,
       metadata: {
         extractedText: parsed.fullText,
         parsedTitle: parsed.title,

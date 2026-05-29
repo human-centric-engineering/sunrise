@@ -26,6 +26,9 @@ vi.mock('@/lib/db/client', () => ({
       findUniqueOrThrow: vi.fn(),
       findMany: vi.fn(),
     },
+    aiKnowledgeBase: {
+      upsert: vi.fn(),
+    },
     aiKnowledgeChunk: { deleteMany: vi.fn() },
     $executeRawUnsafe: vi.fn(),
     $queryRaw: vi.fn(),
@@ -87,6 +90,7 @@ import {
   rechunkDocument,
   listDocuments,
   DEFAULT_KNOWLEDGE_BASE_ID,
+  getOrCreateDefaultKnowledgeBase,
 } from '@/lib/orchestration/knowledge/document-manager';
 
 // --- Helpers ---
@@ -145,10 +149,25 @@ function makeDocument(overrides = {}) {
   };
 }
 
+/**
+ * Stub `aiKnowledgeBase.upsert` so the runtime self-healing helper inside
+ * uploadDocument / uploadDocumentFromBuffer / confirmPreview resolves to a
+ * usable id. Tests that exercise the helper itself override this stub
+ * explicitly inside their own `it` block.
+ */
+function stubKnowledgeBaseUpsert(returnId: string = DEFAULT_KNOWLEDGE_BASE_ID) {
+  vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
+    id: returnId,
+  } as never);
+}
+
 // --- Tests ---
 
 describe('uploadDocument', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    stubKnowledgeBaseUpsert();
+  });
 
   it('creates document record with status processing, correct fileHash, and name without extension', async () => {
     const content = '# Hello World\n\nSome markdown content.';
@@ -727,7 +746,10 @@ describe('listDocuments', () => {
 // ─── uploadDocumentFromBuffer ─────────────────────────────────────────────────
 
 describe('uploadDocumentFromBuffer', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    stubKnowledgeBaseUpsert();
+  });
 
   it('throws when the format requires a preview step (PDF)', async () => {
     vi.mocked(requiresPreview).mockReturnValue(true);
@@ -845,7 +867,10 @@ describe('uploadDocumentFromBuffer', () => {
 // ─── uploadDocumentFromBuffer (CSV path) ──────────────────────────────────────
 
 describe('uploadDocumentFromBuffer — CSV row-level chunking', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    stubKnowledgeBaseUpsert();
+  });
 
   function csvParsed(rowCount = 3) {
     return {
@@ -1073,7 +1098,10 @@ describe('uploadDocumentFromBuffer — CSV row-level chunking', () => {
 // ─── previewDocument ──────────────────────────────────────────────────────────
 
 describe('previewDocument', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    stubKnowledgeBaseUpsert();
+  });
 
   it('creates a pending_review document record and returns extracted text + metadata', async () => {
     vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1360,5 +1388,69 @@ describe('confirmPreview', () => {
     };
     expect(md.format).toBe('pdf');
     expect(md.pages).toEqual(pages);
+  });
+});
+
+describe('getOrCreateDefaultKnowledgeBase', () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it('upserts the row keyed on slug (not id) so a fork with a pre-existing different id is reused', async () => {
+    vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
+      id: DEFAULT_KNOWLEDGE_BASE_ID,
+    } as never);
+
+    await getOrCreateDefaultKnowledgeBase();
+
+    expect(prisma.aiKnowledgeBase.upsert).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(prisma.aiKnowledgeBase.upsert).mock.calls[0][0];
+    expect(call.where).toEqual({ slug: 'default' });
+  });
+
+  it('passes the canonical id, slug, name, description, and isDefault on create', async () => {
+    vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
+      id: DEFAULT_KNOWLEDGE_BASE_ID,
+    } as never);
+
+    await getOrCreateDefaultKnowledgeBase();
+
+    const call = vi.mocked(prisma.aiKnowledgeBase.upsert).mock.calls[0][0];
+    expect(call.create).toEqual({
+      id: DEFAULT_KNOWLEDGE_BASE_ID,
+      slug: 'default',
+      name: 'Default',
+      description: 'Default knowledge base for documents without an explicit corpus assignment',
+      isDefault: true,
+    });
+  });
+
+  it('passes an empty update payload so a pre-existing row is reused as-is (no field overwrite)', async () => {
+    vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
+      id: DEFAULT_KNOWLEDGE_BASE_ID,
+    } as never);
+
+    await getOrCreateDefaultKnowledgeBase();
+
+    const call = vi.mocked(prisma.aiKnowledgeBase.upsert).mock.calls[0][0];
+    expect(call.update).toEqual({});
+  });
+
+  it('returns the upserted row id — the canonical id on a fresh DB', async () => {
+    vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
+      id: DEFAULT_KNOWLEDGE_BASE_ID,
+    } as never);
+
+    const id = await getOrCreateDefaultKnowledgeBase();
+
+    expect(id).toBe(DEFAULT_KNOWLEDGE_BASE_ID);
+  });
+
+  it('returns the upserted row id — a foreign id when an existing row with slug="default" pre-dates the helper', async () => {
+    vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
+      id: 'kb_legacy_fork_id',
+    } as never);
+
+    const id = await getOrCreateDefaultKnowledgeBase();
+
+    expect(id).toBe('kb_legacy_fork_id');
   });
 });
