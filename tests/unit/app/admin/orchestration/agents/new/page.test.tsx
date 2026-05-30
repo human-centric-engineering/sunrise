@@ -52,6 +52,15 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+// The page also calls an inline getAgentProfiles() that goes through
+// serverFetch -> parseApiResponse against the agent-profiles endpoint.
+// Stub both so the prefetch resolves to an empty profiles list instead
+// of escaping to a real fetch that happy-dom holds open until timeout.
+vi.mock('@/lib/api/server-fetch', () => ({
+  serverFetch: vi.fn(async () => new Response(null, { status: 200 })),
+  parseApiResponse: vi.fn(async () => ({ success: true, data: [] })),
+}));
+
 // ─── Imports (after mocks) ─────────────────────────────────────────────────
 
 import NewAgentPage, { metadata } from '@/app/admin/orchestration/agents/new/page';
