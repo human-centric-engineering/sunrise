@@ -23,9 +23,13 @@ work that makes Sunrise safe to fork and to merge upstream releases into.
 ### Added
 
 - **Versioning infrastructure** — `lib/sunrise-version.ts` (`SUNRISE_VERSION`
-  constant), `VERSIONING.md` (public-surface contract), this `CHANGELOG.md`,
-  and a `sunrise` field on the public `/api/health` response so any deployment
-  exposes which Sunrise it's running.
+  constant), `lib/app-version.ts` (`APP_VERSION` — the fork-owned counterpart
+  derived from `package.json.version` via a direct import, eliminating the
+  brittle `process.env.npm_package_version` detour), `VERSIONING.md`
+  (public-surface contract), this `CHANGELOG.md`, and a `sunrise` field on
+  the public `/api/health` response so any deployment exposes which Sunrise
+  it's running. Includes `lib/validations/monitoring.ts` (Zod schema for
+  runtime validation of the health-response shape at the client boundary).
 - **Fork-extension seams** (the registries batch) — auto-wired `lib/app/`
   surface for forks to register their own capabilities, admin nav sections,
   rate-limit tiers/rules, and environment variables without touching platform
@@ -46,6 +50,26 @@ work that makes Sunrise safe to fork and to merge upstream releases into.
 - **Schema-folder split** — Prisma schema split into domain files under
   `prisma/schema/`, with `prisma/schema/app.prisma` reserved for fork-owned
   models. Keeps platform vs app models visually separable on every diff.
+- **Migration baseline squash** — 106 dev-history migrations folded into a
+  single fork-ready `prisma/migrations/` baseline. Forks adopting this
+  release inherit a clean, reviewable migration history rather than the full
+  pre-fork churn. See `.context/database/migrations.md` for the reconciliation
+  recipe and `npm run db:drift-check` for the drift-detection tooling.
+- **Capability quarantine / emergency-disable** — admin orchestration API
+  surface for disabling a misbehaving capability without redeploying or
+  unbinding it from agents. Includes quarantine-attribution metadata, a
+  quarantined-capabilities banner on affected agent pages, and an active-
+  quarantines dashboard panel under `/admin/orchestration`. See the
+  orchestration admin API reference and `.context/admin/orchestration.md`.
+- **Orchestration admin list endpoints — pagination, search, sort** —
+  admin list endpoints under `/api/v1/admin/orchestration/**` (agents,
+  knowledge documents) now accept paged/search/sorted query parameters,
+  with corresponding admin tables wired to use them. Reduces the
+  rehydration cost for forks running large agent/knowledge inventories.
+- **Agent profiles** — shared persona / voice / guardrails library that
+  multiple agents can attach, with override / append composition modes
+  resolved at runtime. See `.context/admin/orchestration-agent-profiles.md`
+  (admin UI) and `.context/orchestration/agent-profiles.md` (resolver).
 
 ### Changed
 
@@ -54,12 +78,10 @@ work that makes Sunrise safe to fork and to merge upstream releases into.
   `lib/security/rate-limit-policy.ts` — new routes inherit the `api` cap
   automatically. Per-flow sub-caps (chat-stream, audio, upload, etc.) remain
   in the handlers. See [`.context/security/rate-limiting.md`](./.context/security/rate-limiting.md).
-
-### Fixed
-
-- See individual commits for the smaller fixes that landed alongside the
-  fork-readiness work; the items above describe the substantive new contract
-  shipping in the first tag.
+- **Knowledge-base default seeding is self-healing.** `npm run db:seed`
+  re-derives the `kb_default` row when missing rather than failing fast on a
+  pre-existing database that's lost the seed — relevant for forks pulling the
+  squashed baseline into an existing dev environment.
 
 ---
 
