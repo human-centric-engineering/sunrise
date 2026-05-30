@@ -117,6 +117,34 @@ If any `.context/` files were identified in Step 2, read them and flag:
 - Flag new public functions, API endpoints, configuration options, or significant behavioural changes that are not covered by any existing `.context/` documentation
 - Do NOT flag minor internal refactors, variable renames, or implementation details that don't change the external contract described in the docs
 
+**5d. CHANGELOG hygiene — public-surface changes without a CHANGELOG entry**
+
+The Sunrise CHANGELOG is intentionally curated to the public surface defined in [`VERSIONING.md`](../../VERSIONING.md#public-surface-contract-tight-definition). PRs that change the public surface should add a bullet to `CHANGELOG.md`'s `[Unreleased]` section as part of the same PR. PRs that don't touch the public surface (internal refactors, tests, docs, chores) deliberately do NOT belong in the CHANGELOG and should NOT be flagged here.
+
+For each changed file from Step 2, decide whether it touches the public surface using these path heuristics (the "Covered" list in `VERSIONING.md`):
+
+- **Named seam files** — flag if any of these change:
+  - `lib/app/capabilities.ts`, `lib/app/admin-nav.ts`, `lib/app/env.ts`, `lib/app/rate-limit.ts` (registry entry points)
+  - `lib/privacy/erasure-hooks.ts` (erasure-hook registry)
+  - `lib/tenancy/client.ts`, anything referencing the `TENANCY_MODE` env (tenancy seam)
+  - `eslint.config.mjs` blocks scoped to `lib/app/**` (app-boundary configuration)
+- **Documented public APIs** — flag if any of these change:
+  - `lib/auth/guards.ts` (withAuth / withAdminAuth signatures)
+  - `lib/api/responses.ts` (successResponse / errorResponse envelope)
+  - `lib/api/server-fetch.ts` (serverFetch contract)
+  - `lib/logging/index.ts` and `lib/logging/types.ts` (logger surface)
+  - Anything under `app/api/v1/admin/orchestration/**` (orchestration admin API surface — see `.context/api/orchestration-endpoints.md`)
+- **Published Prisma model interfaces** — flag if `prisma/schema/` files change models the orchestration admin API exposes (`User`, `Ai*` models — see `.context/orchestration/admin-api.md`). Do NOT flag if only an `app.prisma` (fork-owned) model changes.
+- **The CHANGELOG / VERSIONING contract itself** — flag if `VERSIONING.md` or `CHANGELOG.md` is removed or has its `[Unreleased]` section deleted without a release-rename.
+
+If ANY public-surface path above is in the diff AND `CHANGELOG.md` is NOT in the diff, flag it as: `Public-surface change without CHANGELOG entry — intentional? See VERSIONING.md "Covered" list.` Include the specific files that triggered the flag.
+
+If `CHANGELOG.md` IS in the diff, the check passes regardless of what was added (the agent has already made the call; trust it).
+
+If no public-surface paths are in the diff, the check is silent (correct — most PRs are internal and should not have a CHANGELOG entry).
+
+This check is a **reminder, not a gate**. The agent reads the flag and decides; mechanical checks can't tell whether a `lib/auth/guards.ts` edit changed behaviour the public depends on or was an internal type tweak.
+
 ### Step 6: Output summary
 
 Output a clear summary in this format:
@@ -155,6 +183,7 @@ Output a clear summary in this format:
 - [ ] Stale content in changed docs: {CLEAN or issues found}
 - [ ] Changed docs accuracy: {CLEAN or issues found}
 - [ ] Docs missing/outdated for code changes: {CLEAN or issues found}
+- [ ] CHANGELOG hygiene (public-surface changes): {CLEAN or N/A (no public-surface change) or "{N} file(s) touched the public surface without a CHANGELOG entry"}
 
 ### Issues to Address
 {List each issue with file path, line number, and brief description}

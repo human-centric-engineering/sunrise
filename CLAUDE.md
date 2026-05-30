@@ -42,6 +42,7 @@ Instructions for Claude Code when working in this repository.
 - **No N+1 client-side fetches** — list/table pages get all data from a single enriched list endpoint; never fire per-row API calls in `useEffect`
 - **Contextual help on form fields** — every non-trivial form field gets a `<FieldHelp>` ⓘ popover; see `.context/ui/contextual-help.md`
 - **New `User` relations need an `onDelete` policy** — any new model with a `userId`/`createdBy` FK must declare `onDelete: Cascade` (personal data) or `onDelete: SetNull` (retained config/audit, FK nullable). Omitting it defaults to `Restrict` and silently breaks GDPR erasure. Never call `prisma.user.delete()` directly — route account deletion through `eraseUser()`. See `.context/privacy/data-erasure.md`.
+- **`CHANGELOG.md` follows the public surface** — when a PR adds, removes, or changes a named seam, a documented public API, or a published Prisma model interface (see [`VERSIONING.md`](./VERSIONING.md#public-surface-contract-tight-definition)), append a bullet to `CHANGELOG.md`'s `## [Unreleased]` section as part of the same PR using [Keep-a-Changelog](https://keepachangelog.com/en/1.1.0/) categories (Added / Changed / Deprecated / Removed / Fixed / Security). PRs that don't touch the public surface (internal refactors, tests, docs, chores) deliberately do **not** belong in the CHANGELOG — adding noise dilutes the signal forks rely on. `/pre-pr` step 5d flags public-surface diffs that omit a CHANGELOG entry.
 
 ## MCP Integration
 
