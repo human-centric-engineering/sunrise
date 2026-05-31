@@ -16,7 +16,7 @@ How the seed runner works and how to author new seed units.
 
 ```bash
 npm run db:migrate:deploy  # Migrations to head
-npm run db:seed        # All units apply, SeedHistory records each (19 units as of 2026-05-29)
+npm run db:seed        # All units apply, SeedHistory records each (20 units as of 2026-05-31)
 ```
 
 ### 2. Dev reset + reseed
@@ -35,6 +35,23 @@ Never wipes data silently on a regular `db:seed`. The destructive path is explic
 git pull               # Teammate added prisma/seeds/008-new-thing.ts
 npm run db:seed        # Runs only 008; existing 001–007 skip as unchanged
 ```
+
+### 4. Upgrading hosted environments (Neon preview/prod)
+
+The Vercel **Build Command** (`npm run build && npm run db:migrate:deploy`) runs
+migrations automatically on deploy, but **not** `db:seed`. So a schema change
+(e.g. the `accountType` column) ships automatically, while seed-borne data
+changes — the SERVICE config-owner (`001-system-owner`) and the legacy-user
+reconciliation (`019-reconcile-legacy-seed-users`) — must be applied by running
+`npm run db:seed` against each environment when ready:
+
+```bash
+# Per environment, pointing DATABASE_URL at the target Neon database:
+npm run db:migrate:deploy   # (already run by the Vercel build on deploy)
+npm run db:seed             # apply 001 SERVICE owner, 004–018, 019 reconciliation
+```
+
+Run dev → preview → prod. The reconciliation is idempotent and safe to re-run.
 
 ## Guiding Principle
 
@@ -87,15 +104,16 @@ export default unit;
 
 **Idempotent.** Every write is an `upsert` (or equivalent). `update: {}` is the common idiom — re-seeding never overwrites admin edits. `createMany` is not safe unless you pair it with `skipDuplicates: true` and a unique constraint.
 
-**Self-contained.** Look up dependencies from the DB, don't pass them between units. For admin ownership — `001-system-owner` seeds a non-login `system@sunrise.local` user (role `ADMIN`, no credential) precisely so config-owning seeds always find an `ADMIN`:
+**Self-contained.** Look up dependencies from the DB, don't pass them between units. For config ownership — `001-system-owner` seeds a non-login `system@sunrise.local` user (`role: ADMIN`, `accountType: SERVICE`, no credential) precisely so config-owning seeds always have a deterministic owner. Resolve it via the SERVICE predicate (not "first ADMIN", which is non-deterministic once humans exist):
 
 ```typescript
-const admin = await prisma.user.findFirst({
-  where: { role: 'ADMIN' },
-  select: { id: true },
-});
-if (!admin) throw new Error('No admin user found — ensure 001-system-owner runs first.');
+import { serviceAccountWhere } from '@/lib/auth/account';
+
+const owner = await prisma.user.findFirst({ where: serviceAccountWhere, select: { id: true } });
+if (!owner) throw new Error('No SERVICE config-owner found — ensure 001-system-owner runs first.');
 ```
+
+`019-reconcile-legacy-seed-users` is a one-time idempotent upgrade unit: on databases seeded under v0.0.1 it erases the legacy credential-less `admin@example.com` / `test@example.com` artifacts (preserving real users), re-points orphaned config ownership to the SERVICE owner, and marks the bootstrap complete when a human admin exists.
 
 **Use the context.** The runner injects `prisma` and `logger`. Do **not** import `prisma` from `@/lib/db/client` or instantiate your own — use the ones passed to `run()`.
 

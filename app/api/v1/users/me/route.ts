@@ -15,7 +15,7 @@ import { UnauthorizedError, ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
 import { withAuth } from '@/lib/auth/guards';
-import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
+import { humanAdminWhere } from '@/lib/auth/account';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { getRouteLogger } from '@/lib/api/context';
 import { serverTrack } from '@/lib/analytics/server';
@@ -153,15 +153,13 @@ export const DELETE = withAuth(async (request, session) => {
     // requires demoting to USER first; self-delete has no such demotion gate,
     // so the last-admin check lives here.)
     //
-    // The seeded SYSTEM config-owner (SYSTEM_USER_EMAIL) is excluded: it has
-    // role ADMIN but no credential and cannot log in, so it is NOT a real
-    // operator. Counting it would let the last human admin self-delete, leaving
-    // zero humans — which would re-open the first-user-is-admin bootstrap and
-    // let the next signup silently become admin. See lib/auth/config.ts.
+    // Count only real human admins (`humanAdminWhere`) — the seeded SERVICE
+    // config-owner has role ADMIN but cannot log in and is NOT a real operator.
+    // Counting it would let the last human admin self-delete, leaving zero
+    // operators and re-opening the first-user-is-admin bootstrap. See
+    // lib/auth/account.ts and lib/auth/config.ts.
     if (session.user.role === 'ADMIN') {
-      const adminCount = await prisma.user.count({
-        where: { role: 'ADMIN', email: { not: SYSTEM_USER_EMAIL } },
-      });
+      const adminCount = await prisma.user.count({ where: humanAdminWhere });
       if (adminCount <= 1) {
         return errorResponse(
           'Cannot delete the last admin account. Transfer admin access to another user first.',

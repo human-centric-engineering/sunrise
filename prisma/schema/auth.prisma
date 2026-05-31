@@ -23,6 +23,13 @@ model User {
   // Custom fields for RBAC
   role String @default("USER")
 
+  // Account nature — orthogonal to `role` (the permission axis).
+  // HUMAN: a real login. SERVICE: a non-login machine/system principal (e.g.
+  // the seeded `system@sunrise.local` config-owner). "Real human admin" queries
+  // filter on { role: 'ADMIN', accountType: 'HUMAN' } via lib/auth/account.ts —
+  // never re-implement that predicate inline. See issue #278 / PR #279 review.
+  accountType AccountType @default(HUMAN)
+
   // Extended Profile Fields (Phase 3.2)
   bio         String? @db.Text // User biography (long text)
   phone       String? @db.VarChar(20) // Phone number
@@ -65,7 +72,17 @@ model User {
 
   @@unique([email])
   @@index([role])
+  @@index([role, accountType])
   @@map("user")
+}
+
+/// Nature of a user principal, orthogonal to `User.role`.
+/// HUMAN — a real, login-capable person. SERVICE — a non-login machine/system
+/// principal (e.g. the seeded config-owner). Distinguishes "who can do what"
+/// (role) from "what kind of account this is" (accountType).
+enum AccountType {
+  HUMAN
+  SERVICE
 }
 
 // Better Auth Session model

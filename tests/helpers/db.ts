@@ -80,6 +80,7 @@ export function createMockUser(overrides?: Partial<User>): User {
     emailVerified: false,
     image: null,
     role: 'USER',
+    accountType: 'HUMAN' as const,
     createdAt: new Date(),
     updatedAt: new Date(),
     // Extended profile fields (Phase 3.2)

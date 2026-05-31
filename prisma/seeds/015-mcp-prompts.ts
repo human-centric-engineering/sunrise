@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
  * Seed the two built-in MCP prompts as DB rows so admins can edit / disable
@@ -15,7 +16,7 @@ const unit: SeedUnit = {
     logger.info('💬 Seeding default MCP prompts...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {

@@ -2,6 +2,7 @@ import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import { Prisma } from '@prisma/client';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
  * Upsert the built-in workflow templates (`BUILTIN_WORKFLOW_TEMPLATES`)
@@ -30,7 +31,7 @@ const unit: SeedUnit = {
     logger.info('📚 Seeding built-in workflow templates...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {

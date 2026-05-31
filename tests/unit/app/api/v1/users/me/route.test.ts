@@ -112,7 +112,7 @@ vi.mock('@/lib/auth/config', () => ({
 // ---------------------------------------------------------------------------
 
 import { prisma } from '@/lib/db/client';
-import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
+import { humanAdminWhere } from '@/lib/auth/account';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
@@ -226,26 +226,25 @@ describe('DELETE /api/v1/users/me', () => {
     expect((body as ErrorBody).error.code).toBe('LAST_ADMIN');
 
     // The count gate was consulted — verifies the route performs the DB check.
-    // The seeded non-login SYSTEM config-owner is excluded from the count so it
-    // is not mistaken for a real operator (issue #278 / security review).
+    // It counts only real human admins (`humanAdminWhere`): the seeded SERVICE
+    // config-owner has role ADMIN but is excluded, so it cannot be mistaken for
+    // a real operator (issue #278 / security review).
     expect(prisma.user.count).toHaveBeenCalledTimes(1);
-    expect(prisma.user.count).toHaveBeenCalledWith({
-      where: { role: 'ADMIN', email: { not: SYSTEM_USER_EMAIL } },
-    });
+    expect(prisma.user.count).toHaveBeenCalledWith({ where: humanAdminWhere });
 
     // eraseUser must NOT have been called — confirms the guard short-circuits
     expect(eraseUser).not.toHaveBeenCalled();
   });
 
-  it('counts the lone human admin as the last admin even though a system ADMIN row exists (excludes system owner)', async () => {
-    // Arrange — a single human admin plus the seeded system owner. The guard's
-    // count query excludes the system email, so it returns 1 (the human only)
-    // and the human is correctly blocked from self-deleting. Without the
-    // exclusion the count would be 2 and the last human admin could delete
-    // themselves, reopening the first-user-is-admin bootstrap.
+  it('counts the lone human admin as the last admin even though a system ADMIN row exists (excludes SERVICE account)', async () => {
+    // Arrange — a single human admin plus the seeded SERVICE config-owner. The
+    // guard's count query filters on `accountType: 'HUMAN'`, so it returns 1
+    // (the human only) and the human is correctly blocked from self-deleting.
+    // Without the exclusion the count would be 2 and the last human admin could
+    // delete themselves, reopening the first-user-is-admin bootstrap.
     const session = mockAdminUser();
     // The mock returns whatever count() resolves; we assert the QUERY excludes
-    // the system owner, which is what makes a 2-row (system+human) DB report 1.
+    // the SERVICE account, which is what makes a 2-row (system+human) DB report 1.
     vi.mocked(prisma.user.count).mockResolvedValue(1);
 
     const request = createMockRequest({
@@ -259,9 +258,7 @@ describe('DELETE /api/v1/users/me', () => {
 
     expect(response.status).toBe(400);
     expect((body as ErrorBody).error.code).toBe('LAST_ADMIN');
-    expect(prisma.user.count).toHaveBeenCalledWith({
-      where: { role: 'ADMIN', email: { not: SYSTEM_USER_EMAIL } },
-    });
+    expect(prisma.user.count).toHaveBeenCalledWith({ where: humanAdminWhere });
     expect(eraseUser).not.toHaveBeenCalled();
   });
 
@@ -486,6 +483,7 @@ describe('GET /api/v1/users/me', () => {
       emailVerified: true,
       image: null,
       role: 'USER',
+      accountType: 'HUMAN' as const,
       bio: null,
       phone: null,
       timezone: 'UTC',
@@ -537,6 +535,7 @@ describe('PATCH /api/v1/users/me', () => {
       emailVerified: true,
       image: null,
       role: 'USER',
+      accountType: 'HUMAN' as const,
       bio: null,
       phone: null,
       timezone: 'UTC',

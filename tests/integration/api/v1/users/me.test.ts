@@ -115,6 +115,7 @@ const mockUserData = {
   emailVerified: true,
   image: null,
   role: 'USER',
+  accountType: 'HUMAN' as const,
   createdAt: new Date('2025-01-01'),
   updatedAt: new Date('2025-01-01'),
   bio: 'Software developer',

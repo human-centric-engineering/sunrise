@@ -45,35 +45,53 @@ a fresh database — via email/password **or** OAuth — is automatically promot
 is a regular `USER`. This is the Ghost/GitLab/Sentry bootstrap pattern.
 
 The seeded `system@sunrise.local` config-owner (`prisma/seeds/001-system-owner.ts`,
-role `ADMIN`, no credential `Account`, cannot log in) is **excluded** from the
-"is this the first user?" check, so seeding the orchestration config does not
-consume the first-admin slot:
+`role: ADMIN`, `accountType: SERVICE`, no credential `Account`, cannot log in) is
+a **SERVICE account**, not a real human, so it is excluded from the "is this the
+first user?" count. `accountType` (`HUMAN` | `SERVICE`) is a first-class axis
+orthogonal to `role`, and the predicate that means "real human user" lives in one
+place — [`lib/auth/account.ts`](../../lib/auth/account.ts) (`humanWhere`,
+`humanAdminWhere`). Every admin count/list/guard uses it; never re-implement the
+filter inline.
 
 ```typescript
 // lib/auth/config.ts — userCreateBeforeHook (simplified)
-if (user.email !== SYSTEM_USER_EMAIL) {
+import { humanWhere } from '@/lib/auth/account';
+
+// SYSTEM_USER_EMAIL is reserved — a public signup can never claim it.
+if (user.email === SYSTEM_USER_EMAIL) throw new APIError('BAD_REQUEST', { message: 'reserved' });
+
+try {
   const alreadyBootstrapped = await prisma.authBootstrap.findUnique({
     where: { id: AUTH_BOOTSTRAP_ID },
   });
   if (!alreadyBootstrapped) {
-    const existingHumanCount = await prisma.user.count({
-      where: { email: { not: SYSTEM_USER_EMAIL } },
+    const humans = await prisma.user.count({ where: humanWhere }); // SERVICE excluded
+    if (humans === 0) return { data: { ...user, role: 'ADMIN' } }; // first human → admin
+    // Humans exist but no marker (upgrade / missed write): backfill, don't promote.
+    await prisma.authBootstrap.upsert({
+      where: { id: AUTH_BOOTSTRAP_ID },
+      update: {},
+      create: { id: AUTH_BOOTSTRAP_ID },
     });
-    if (existingHumanCount === 0) {
-      return { data: { ...user, role: 'ADMIN' } }; // first human → admin
-    }
   }
+} catch (err) {
+  logger.error('bootstrap check failed; proceeding as USER', err); // fail-open: never block signup
 }
 ```
 
-**The promotion is one-time.** Once the first admin exists, `userCreateAfterHook`
-writes the singleton `AuthBootstrap` marker, and the promotion above never fires
-again — even if every human account is later deleted and the live count returns
-to zero. Without that marker a deleted-down-to-zero database would re-open the
-bootstrap and silently promote the next signup (a privilege-escalation window,
-issue #278). The last-admin self-delete guard in `app/api/v1/users/me/route.ts`
-likewise excludes `system@sunrise.local` so the final human admin cannot delete
-themselves down to zero operators.
+**The promotion is one-time and self-healing.** Once an admin exists,
+`userCreateAfterHook` writes the singleton `AuthBootstrap` marker; the promotion
+never fires again — even if every human is later deleted and the live count
+returns to zero. If that write is ever missed (or on an upgraded database), the
+next signup's before-hook backfills the marker without promoting. Without this,
+a deleted-down-to-zero database would re-open the bootstrap and silently promote
+the next signup (a privilege-escalation window, issue #278). The last-admin
+self-delete guard in `app/api/v1/users/me/route.ts` counts `humanAdminWhere`, so
+the final human admin cannot delete themselves down to zero operators.
+
+**Fail-open:** the bootstrap is a convenience, not a gate — any DB error in the
+check (e.g. the `auth_bootstrap` table not yet migrated) is logged and the signup
+proceeds as `USER`, never a 500.
 
 > **Concurrency:** two simultaneous first-signups could both read count 0 before
 > the marker is written and both be promoted. This window only exists on a

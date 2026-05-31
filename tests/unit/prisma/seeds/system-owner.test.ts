@@ -43,12 +43,14 @@ describe('001-system-owner seed', () => {
     expect(upsert).toHaveBeenCalledTimes(1);
     expect(upsert).toHaveBeenCalledWith({
       where: { email: SYSTEM_USER_EMAIL },
-      update: {},
+      // `update` heals an existing row to role ADMIN + SERVICE on re-seed.
+      update: { role: 'ADMIN', accountType: 'SERVICE' },
       create: {
         email: SYSTEM_USER_EMAIL,
         name: 'System (config owner)',
         emailVerified: true,
         role: 'ADMIN',
+        accountType: 'SERVICE',
       },
     });
   });
@@ -61,13 +63,14 @@ describe('001-system-owner seed', () => {
     expect(accountCreate).not.toHaveBeenCalled();
   });
 
-  it('uses an idempotent upsert with an empty update clause', async () => {
+  it('marks the owner as a SERVICE account on both create and update', async () => {
     const { ctx, upsert } = makeCtx();
 
     await systemOwnerSeed.run(ctx);
 
     const arg = upsert.mock.calls[0][0];
-    expect(arg.update).toEqual({});
+    expect(arg.create.accountType).toBe('SERVICE');
+    expect(arg.update.accountType).toBe('SERVICE');
   });
 
   it('declares the expected seed unit name', () => {

@@ -16,6 +16,7 @@
  */
 
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 const SYSTEM_INSTRUCTIONS = `You are a test-case generator for an agent evaluation framework. Your job is to propose new dataset cases that a downstream evaluation run will fire at a subject agent.
 
@@ -50,7 +51,7 @@ const unit: SeedUnit = {
     logger.info('🧬 Seeding case-generator agent...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {

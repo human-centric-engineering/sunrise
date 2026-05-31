@@ -90,6 +90,7 @@ describe('POST /api/auth/send-verification-email', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
     role: 'USER',
+    accountType: 'HUMAN' as const,
     bio: null,
     phone: null,
     timezone: null,

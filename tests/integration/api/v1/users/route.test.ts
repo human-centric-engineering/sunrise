@@ -140,6 +140,7 @@ describe('GET /api/v1/users', () => {
           name: 'John Doe',
           email: 'john@example.com',
           role: 'USER',
+          accountType: 'HUMAN' as const,
           emailVerified: false,
           image: null,
           createdAt: new Date('2025-01-01'),
@@ -155,6 +156,7 @@ describe('GET /api/v1/users', () => {
           name: 'Jane Smith',
           email: 'jane@example.com',
           role: 'ADMIN',
+          accountType: 'HUMAN' as const,
           emailVerified: true,
           image: null,
           createdAt: new Date('2025-01-02'),
@@ -210,6 +212,7 @@ describe('GET /api/v1/users', () => {
           name: 'User 3',
           email: 'user3@example.com',
           role: 'USER',
+          accountType: 'HUMAN' as const,
           emailVerified: false,
           image: null,
           createdAt: new Date(),
@@ -233,7 +236,7 @@ describe('GET /api/v1/users', () => {
       // Assert
       expect(response.status).toBe(200);
       expect(prisma.user.findMany).toHaveBeenCalledWith({
-        where: {},
+        where: { accountType: 'HUMAN' },
         skip: 10,
         take: 10,
         select: {
@@ -273,6 +276,7 @@ describe('GET /api/v1/users', () => {
       expect(response.status).toBe(200);
       expect(prisma.user.findMany).toHaveBeenCalledWith({
         where: {
+          accountType: 'HUMAN' as const,
           OR: [
             { name: { contains: 'john', mode: 'insensitive' } },
             { email: { contains: 'john', mode: 'insensitive' } },
@@ -307,7 +311,7 @@ describe('GET /api/v1/users', () => {
       // Assert
       expect(response.status).toBe(200);
       expect(prisma.user.findMany).toHaveBeenCalledWith({
-        where: {},
+        where: { accountType: 'HUMAN' },
         skip: 0,
         take: 20,
         select: {

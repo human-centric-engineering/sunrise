@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
  * Seed the 6 built-in evaluation-judge agents.
@@ -323,7 +324,7 @@ const unit: SeedUnit = {
     logger.info('⚖️  Seeding 6 built-in evaluation-judge agents...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {

@@ -18,24 +18,38 @@ release process.
 
 ### Added
 
+- **`AccountType` enum + `User.accountType` field** (`HUMAN` | `SERVICE`,
+  default `HUMAN`) — a first-class axis, orthogonal to `role`, distinguishing
+  real login users from non-login machine/system principals (the seeded
+  config-owner). Migration `20260531115829_add_account_type`. New shared
+  predicates `humanWhere` / `humanAdminWhere` / `serviceAccountWhere` in
+  `lib/auth/account.ts` — the single source of truth every admin
+  count/list/guard uses to exclude SERVICE principals.
 - **`AuthBootstrap` Prisma model** (`auth_bootstrap` table) — a singleton marker
   recording that the one-time first-user-is-admin bootstrap has completed.
   Migration `20260531100706_add_auth_bootstrap`. New export: `AUTH_BOOTSTRAP_ID`
   from `lib/auth/constants.ts`.
+- **`prisma/seeds/019-reconcile-legacy-seed-users.ts`** — one-time, idempotent
+  upgrade reconciliation for databases seeded under v0.0.1: erases the legacy
+  credential-less `admin@example.com` / `test@example.com` artifacts (preserving
+  real users), re-points orphaned config ownership to the SERVICE owner, and
+  marks the bootstrap complete on established instances.
 
 ### Changed
 
 - **Auth bootstrap — first account on a fresh database becomes `ADMIN`.**
-  `userCreateBeforeHook` (`lib/auth/config.ts`) now promotes the first real
-  account created on an empty database (email/password **or** OAuth) to the
-  `ADMIN` role; every subsequent account is a regular `USER`. The promotion is
-  one-time: once the first admin exists, `userCreateAfterHook` writes the
-  `AuthBootstrap` marker and the promotion never fires again. The seed unit
-  formerly at `prisma/seeds/001-test-users.ts` is renamed to
-  `prisma/seeds/001-system-owner.ts` and now provisions a single non-login
-  `system@sunrise.local` config-owner (role `ADMIN`, no credential) instead of
-  the login-able `admin@example.com` / `test@example.com` users. New export:
-  `SYSTEM_USER_EMAIL` from `lib/auth/constants.ts`.
+  `userCreateBeforeHook` (`lib/auth/config.ts`) promotes the first real account
+  created on an empty database (email/password **or** OAuth) to `ADMIN`; every
+  subsequent account is a regular `USER`. The promotion is one-time (gated on the
+  `AuthBootstrap` marker, self-healing if a write is missed) and fails open — a
+  DB error in the check never blocks signup. The seed unit formerly at
+  `prisma/seeds/001-test-users.ts` is renamed to
+  `prisma/seeds/001-system-owner.ts` and provisions a single non-login
+  `system@sunrise.local` config-owner (`role: ADMIN`, `accountType: SERVICE`, no
+  credential) instead of the login-able `admin@example.com` / `test@example.com`
+  users. New export: `SYSTEM_USER_EMAIL` from `lib/auth/constants.ts`.
+- **Orchestration seeds resolve the config owner deterministically** via
+  `serviceAccountWhere` (the SERVICE account) rather than the first `ADMIN` row.
 
 ### Security
 
@@ -44,13 +58,16 @@ release process.
   `password123`, but the seed never created the better-auth credential records,
   so those logins never worked. Sunrise now ships **zero default login
   credentials**; admin access is bootstrapped by the first-signup rule above.
-- **Closed an admin re-bootstrap privilege-escalation window.** The first-user
-  promotion is now gated on the persisted `AuthBootstrap` marker (not a live
-  user count), and the last-admin self-delete guard in
-  `app/api/v1/users/me/route.ts` excludes the non-login `system@sunrise.local`
-  owner from its admin count. Together these prevent a scenario where deleting
-  the last human admin would return the human count to zero and silently
-  promote the next signup to `ADMIN`.
+- **Closed an admin re-bootstrap privilege-escalation window and related
+  miscounts.** "Real human admin" is now a single predicate (`accountType:
+  'HUMAN'`) routed through every admin count/list/guard — the last-admin
+  self-delete guard, the bootstrap human-count, the admin dashboard stats, and
+  the admin user list — so the non-login SERVICE config-owner can never be
+  miscounted as an operator (which previously let the last human admin
+  self-delete to zero and re-open the bootstrap). The SERVICE account is also
+  immutable via the user-management API (`CANNOT_MODIFY_SYSTEM_ACCOUNT` /
+  `CANNOT_DELETE_SYSTEM_ACCOUNT`), the bootstrap is gated on the persisted
+  `AuthBootstrap` marker, and `SYSTEM_USER_EMAIL` is reserved at signup.
 
 ---
 

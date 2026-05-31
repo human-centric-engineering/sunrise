@@ -13,6 +13,7 @@
 import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
+import { serviceAccountWhere } from '@/lib/auth/account';
 import { logger } from '@/lib/logging';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
@@ -96,14 +97,16 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
 
   logger.info('Loaded chunks from file', { count: chunks.length });
 
-  const firstAdmin = await prisma.user.findFirst({
-    where: { role: 'ADMIN' },
+  // Prefer the SERVICE config-owner so seeded KB docs are owned by the stable
+  // system principal; fall back to any user if it isn't present yet.
+  const systemOwner = await prisma.user.findFirst({
+    where: serviceAccountWhere,
     select: { id: true },
   });
   const firstUser = await prisma.user.findFirst({
     select: { id: true },
   });
-  const uploaderId = firstAdmin?.id ?? firstUser?.id;
+  const uploaderId = systemOwner?.id ?? firstUser?.id;
 
   if (!uploaderId) {
     throw new Error('No users found in database. Create a user first, then re-run the seeder.');

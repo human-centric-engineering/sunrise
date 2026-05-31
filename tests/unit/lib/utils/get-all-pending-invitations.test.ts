@@ -81,6 +81,7 @@ const createMockUser = (id: string, name: string) => ({
   name,
   email: `${name.toLowerCase().replace(' ', '.')}@example.com`,
   role: 'ADMIN',
+  accountType: 'HUMAN' as const,
   emailVerified: true,
   createdAt: new Date(),
   updatedAt: new Date(),

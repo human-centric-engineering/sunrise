@@ -145,6 +145,7 @@ function makeUserFixture(overrides: Record<string, unknown> = {}) {
     name: 'Target User',
     email: 'target@example.com',
     role: 'USER',
+    accountType: 'HUMAN' as const,
     emailVerified: true,
     image: null,
     bio: null,
@@ -497,6 +498,24 @@ describe('PATCH /api/v1/users/:id', () => {
     });
   });
 
+  describe('Business rule: SERVICE account is immutable', () => {
+    it('should return 400 CANNOT_MODIFY_SYSTEM_ACCOUNT when PATCHing the SERVICE config-owner, and not call update', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(
+        makeUserFixture({ role: 'ADMIN', accountType: 'SERVICE' })
+      );
+
+      const request = makePatchRequest(TARGET_USER_ID, { role: 'USER' });
+      const response = await PATCH(request, makeContext(TARGET_USER_ID));
+
+      expect(response.status).toBe(400);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('CANNOT_MODIFY_SYSTEM_ACCOUNT');
+      expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
+    });
+  });
+
   describe('Validation', () => {
     it('should return 400 with VALIDATION_ERROR envelope for empty body, and not call DB', async () => {
       // Arrange — real validation path runs (not mocked) per integration-test rules.
@@ -775,6 +794,22 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(body.error.message).toBe('Cannot delete an admin account. Demote the user first.');
       // Admin-target guard fired; erase must not have run
       expect(prisma.$transaction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    });
+
+    it('should return 400 CANNOT_DELETE_SYSTEM_ACCOUNT when target is the SERVICE config-owner, and not run erase', async () => {
+      // Arrange — target is the non-login SERVICE config-owner.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(
+        makeUserFixture({ role: 'ADMIN', accountType: 'SERVICE' })
+      );
+
+      const response = await DELETE(makeDeleteRequest(TARGET_USER_ID), makeContext(TARGET_USER_ID));
+
+      expect(response.status).toBe(400);
+      const body = await parseResponse<{ success: boolean; error: { code: string } }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('CANNOT_DELETE_SYSTEM_ACCOUNT');
+      expect(prisma.$transaction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
     });
 
     it('should return 404 with NOT_FOUND envelope when DELETE targets a non-existent user', async () => {

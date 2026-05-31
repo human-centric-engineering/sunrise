@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
  * Seed the provider model matrix with per-model entries.
@@ -18,7 +19,7 @@ const unit: SeedUnit = {
     logger.info('📊 Seeding provider model matrix...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {

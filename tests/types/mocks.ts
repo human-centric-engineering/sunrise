@@ -112,6 +112,7 @@ export type MockUser = {
   email: string;
   name: string | null;
   role: string;
+  accountType: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -127,6 +128,7 @@ export function createMockUser(overrides?: Partial<MockUser>): MockUser {
     email: 'test@example.com',
     name: 'Test User',
     role: 'USER',
+    accountType: 'HUMAN',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
     ...overrides,

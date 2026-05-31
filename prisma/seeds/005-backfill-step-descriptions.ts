@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 import type { WorkflowDefinition, WorkflowStep } from '@/types/orchestration';
 
 /**
@@ -30,7 +31,7 @@ import type { WorkflowDefinition, WorkflowStep } from '@/types/orchestration';
  * when the unit + its hashInputs are unchanged.
  */
 
-const SEED_USER_QUERY = { where: { role: 'ADMIN' as const }, select: { id: true } };
+const SEED_USER_QUERY = { where: serviceAccountWhere, select: { id: true } };
 
 interface SnapshotLike {
   steps: WorkflowStep[];

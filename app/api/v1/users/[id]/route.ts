@@ -122,6 +122,15 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     throw new NotFoundError('User not found');
   }
 
+  // The seeded SERVICE config-owner is not a manageable account — it owns
+  // orchestration config and must stay role ADMIN / accountType SERVICE.
+  if (existingUser.accountType === 'SERVICE') {
+    return errorResponse('Cannot modify the system service account', {
+      status: 400,
+      code: 'CANNOT_MODIFY_SYSTEM_ACCOUNT',
+    });
+  }
+
   // Prevent admin from demoting themselves
   if (session.user.id === id && body.role && body.role !== 'ADMIN') {
     return errorResponse('Cannot change your own role', {
@@ -204,6 +213,17 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   if (!user) {
     throw new NotFoundError('User not found');
+  }
+
+  // The seeded SERVICE config-owner must never be deleted — it owns
+  // orchestration config and is not a real user account. (It is also role
+  // ADMIN, so the check below would catch it, but this gives the precise
+  // reason and survives any future change to that guard.)
+  if (user.accountType === 'SERVICE') {
+    return errorResponse('Cannot delete the system service account', {
+      status: 400,
+      code: 'CANNOT_DELETE_SYSTEM_ACCOUNT',
+    });
   }
 
   // Prevent deleting other admin accounts

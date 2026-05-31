@@ -23,12 +23,15 @@ const unit: SeedUnit = {
 
     const systemUser = await prisma.user.upsert({
       where: { email: SYSTEM_USER_EMAIL },
-      update: {},
+      // `update` heals an existing row (e.g. an instance seeded before the
+      // accountType field existed) so it is always marked SERVICE.
+      update: { role: 'ADMIN', accountType: 'SERVICE' },
       create: {
         email: SYSTEM_USER_EMAIL,
         name: 'System (config owner)',
         emailVerified: true,
         role: 'ADMIN',
+        accountType: 'SERVICE',
       },
     });
 
