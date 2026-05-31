@@ -14,6 +14,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { humanWhere } from '@/lib/auth/account';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse } from '@/lib/api/responses';
 import { validateQueryParams, parsePaginationParams } from '@/lib/api/validation';
@@ -44,15 +45,17 @@ export const GET = withAdminAuth(async (request, _session) => {
   const query = validateQueryParams(searchParams, listUsersQuerySchema);
   const { page, limit, skip } = parsePaginationParams(searchParams);
 
-  // Build Prisma where clause for search
+  // Build Prisma where clause for search. Always exclude non-login SERVICE
+  // principals (the seeded config-owner) — they are not manageable user accounts.
   const where = query.search
     ? {
+        ...humanWhere,
         OR: [
           { name: { contains: query.search, mode: 'insensitive' as const } },
           { email: { contains: query.search, mode: 'insensitive' as const } },
         ],
       }
-    : {};
+    : { ...humanWhere };
 
   // Execute queries in parallel for performance
   const [users, total] = await Promise.all([

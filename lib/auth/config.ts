@@ -3,6 +3,8 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { getOAuthState, APIError } from 'better-auth/api';
 import { prisma } from '@/lib/db/client';
+import { SYSTEM_USER_EMAIL, AUTH_BOOTSTRAP_ID } from '@/lib/auth/constants';
+import { humanWhere } from '@/lib/auth/account';
 import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email/send';
 import { validateEmailConfig } from '@/lib/email/client';
@@ -64,6 +66,14 @@ export async function userCreateBeforeHook(
   user: UserCreateData,
   ctx: DatabaseHookContext
 ): Promise<{ data: UserCreateData }> {
+  // Reserve the system service-account email — it must only ever be created by
+  // the seed (as a SERVICE principal), never via public signup.
+  if (user.email === SYSTEM_USER_EMAIL) {
+    throw new APIError('BAD_REQUEST', {
+      message: 'This email address is reserved.',
+    });
+  }
+
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
 
   if (isOAuthSignup) {
@@ -99,13 +109,20 @@ export async function userCreateBeforeHook(
           await deleteInvitationToken(invitationEmail);
           logger.info('OAuth invitation token consumed', { email: invitationEmail });
 
-          if (invitation?.metadata?.role && invitation.metadata.role !== 'USER') {
+          // When a valid invitation record exists, honour its explicit role
+          // (defaulting to USER) and return immediately. This is an invited
+          // account, so it must NOT fall through to the first-admin bootstrap
+          // below — otherwise a USER invitation that happened to be the first
+          // signup would be silently promoted to ADMIN, overriding the inviter's
+          // intent. (No record → fall through, so the bootstrap can still apply.)
+          if (invitation) {
+            const invitedRole = invitation.metadata?.role ?? 'USER';
             logger.info('Applying invitation role to OAuth user before creation', {
               email: user.email,
-              role: invitation.metadata.role,
+              role: invitedRole,
             });
 
-            return { data: { ...user, role: invitation.metadata.role } };
+            return { data: { ...user, role: invitedRole } };
           }
         }
       }
@@ -117,6 +134,64 @@ export async function userCreateBeforeHook(
       // Log but don't block for other errors (e.g., getOAuthState fails)
       logger.error('Error checking OAuth invitation in before hook', error);
     }
+  }
+
+  // First-human-is-admin bootstrap.
+  //
+  // On a fresh database the first real person to sign up — by email/password OR
+  // OAuth — is promoted to ADMIN. This gives self-hosters a working admin
+  // bootstrap with zero default credentials (the Ghost/GitLab/Sentry pattern).
+  //
+  // Fires at most ONCE per instance: gated on the absence of the `AuthBootstrap`
+  // singleton, which is written the first time an admin exists. Without that
+  // marker, a pure "0 humans → admin" check would re-open after every human is
+  // deleted, letting the next signup silently become admin (issue #278).
+  //
+  // Only real human users are counted (`humanWhere`) — the seeded SERVICE
+  // config-owner is excluded (it has role ADMIN but cannot log in and is created
+  // via a direct upsert, so this hook never fires for it).
+  //
+  // Fail-open: any error here (e.g. the auth_bootstrap table not yet migrated,
+  // or a transient DB fault) must NEVER block signup — we log and fall through
+  // to the default role. The bootstrap is a convenience, not a gate.
+  //
+  // Concurrency: two simultaneous first-signups could both read a count of 0
+  // before the marker is written and both be promoted. This window only exists
+  // on a brand-new, operator-controlled database and is benign.
+  try {
+    const alreadyBootstrapped = await prisma.authBootstrap.findUnique({
+      where: { id: AUTH_BOOTSTRAP_ID },
+      select: { id: true },
+    });
+
+    if (!alreadyBootstrapped) {
+      const existingHumanCount = await prisma.user.count({ where: humanWhere });
+
+      if (existingHumanCount === 0) {
+        // First real human → promote. The marker is written by the after hook
+        // once the user row exists (avoids marking a signup that then fails to
+        // insert).
+        logger.info('First user on a fresh database — assigning ADMIN role', {
+          email: user.email,
+        });
+        return { data: { ...user, role: 'ADMIN' } };
+      }
+
+      // Humans already exist but the marker is missing — an upgraded database,
+      // or a prior after-hook marker write that failed. Backfill the marker so
+      // the bootstrap can never re-open, and do NOT promote (an operator already
+      // exists). Self-heals the marker on the next signup.
+      await prisma.authBootstrap.upsert({
+        where: { id: AUTH_BOOTSTRAP_ID },
+        update: {},
+        create: { id: AUTH_BOOTSTRAP_ID },
+      });
+    }
+  } catch (bootstrapError) {
+    // Never block signup on the bootstrap check.
+    logger.error('First-admin bootstrap check failed; proceeding as USER', bootstrapError, {
+      email: user.email,
+    });
   }
 
   return { data: user };
@@ -155,6 +230,28 @@ export async function userCreateAfterHook(
   // Detect signup method for logging purposes
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
   const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+  // Record that the first-user-is-admin bootstrap has completed, the first time
+  // a real (non-system) admin exists. Once this singleton row is written, the
+  // before hook never auto-promotes again — even if every human is later
+  // deleted and the live user count returns to zero (see issue #278). Covers
+  // both bootstrap-promoted and invitation-created admins; idempotent upsert.
+  // Non-blocking, like the rest of this hook.
+  if (user.role === 'ADMIN' && user.accountType !== 'SERVICE') {
+    try {
+      await prisma.authBootstrap.upsert({
+        where: { id: AUTH_BOOTSTRAP_ID },
+        update: {},
+        create: { id: AUTH_BOOTSTRAP_ID },
+      });
+    } catch (bootstrapError) {
+      // Non-blocking: the before hook self-heals a missed marker on the next
+      // signup (it backfills when humans exist but no marker is present).
+      logger.error('Failed to record auth bootstrap completion', bootstrapError, {
+        userId: user.id,
+      });
+    }
+  }
 
   // Set default preferences for all new users
   try {

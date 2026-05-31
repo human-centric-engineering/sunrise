@@ -290,10 +290,15 @@ describe('GET /api/v1/admin/stats', () => {
       // Act
       await GET(dummyRequest);
 
-      // Assert
+      // Assert — recent-signups count filters to real humans (excludes the
+      // SERVICE config-owner) and within the 24h window.
       expect(prisma.user.count).toHaveBeenNthCalledWith(3, {
-        where: { createdAt: { gte: expect.any(Date) } },
+        where: { accountType: 'HUMAN', createdAt: { gte: expect.any(Date) } },
       });
+      // The role breakdown also excludes SERVICE accounts.
+      expect(prisma.user.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({ by: ['role'], where: { accountType: 'HUMAN' } })
+      );
 
       // Verify the date is approximately 24 hours ago (allow 1 second tolerance)
       const callArgs = vi.mocked(prisma.user.count).mock.calls[2][0];

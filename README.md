@@ -93,10 +93,17 @@ docker-compose up                                    # Start app + database
 docker-compose exec web npx prisma migrate dev       # Run migrations (first time)
 ```
 
-### Test Accounts (after `npm run db:seed`)
+### First admin account
 
-- **User**: test@example.com / password123
-- **Admin**: admin@example.com / password123
+Sunrise ships **no default login credentials**. On a fresh database, the first
+account you create — sign up at [`/signup`](http://localhost:3000/signup) — is
+automatically promoted to `ADMIN`. Every account created after that is a regular
+`USER`.
+
+> `npm run db:seed` provisions a non-login `system@sunrise.local` user that owns
+> the seeded orchestration configuration. It has no password and cannot sign in;
+> it does not count as the "first account", so your first real signup still
+> becomes the admin.
 
 ## Essential Commands
 

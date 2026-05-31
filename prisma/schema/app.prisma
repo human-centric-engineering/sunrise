@@ -28,3 +28,18 @@ model FeatureFlag {
   @@index([name])
   @@map("feature_flag")
 }
+
+// Auth bootstrap marker (issue #278)
+// Singleton row recording that the one-time first-user-is-admin bootstrap has
+// completed. `userCreateBeforeHook` promotes the first human signup on a fresh
+// database to ADMIN; this row makes that promotion fire at most once over the
+// instance's lifetime. Once present, the bootstrap never fires again — even if
+// every human account is later deleted and the live user count returns to zero
+// — closing a re-bootstrap privilege-escalation window. Keyed by a fixed id
+// (AUTH_BOOTSTRAP_ID = "singleton") so at most one row can exist.
+model AuthBootstrap {
+  id          String   @id // always AUTH_BOOTSTRAP_ID ("singleton")
+  completedAt DateTime @default(now())
+
+  @@map("auth_bootstrap")
+}

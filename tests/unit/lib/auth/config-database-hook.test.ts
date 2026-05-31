@@ -39,6 +39,8 @@ import * as React from 'react';
 import { createMockUser } from '@/tests/types/mocks';
 import type { InvitationRecord } from '@/lib/utils/invitation-token';
 import type { UserCreateData, DatabaseHookContext } from '@/lib/auth/config';
+import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
+import { humanWhere } from '@/lib/auth/account';
 
 // ---------------------------------------------------------------------------
 // Mutable env object — individual tests mutate fields to exercise branches.
@@ -109,6 +111,11 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     user: {
       update: vi.fn(),
+      count: vi.fn(),
+    },
+    authBootstrap: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
     },
     account: {
       findFirst: vi.fn(),
@@ -159,7 +166,8 @@ interface SharedMocks {
     status: string;
   };
   prisma: {
-    user: { update: MockedFn };
+    user: { update: MockedFn; count: MockedFn };
+    authBootstrap: { findUnique: MockedFn; upsert: MockedFn };
     verification: { findFirst: MockedFn };
   };
   logger: {
@@ -228,6 +236,11 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       prisma: {
         user: {
           update: vi.mocked(db.prisma.user.update),
+          count: vi.mocked(db.prisma.user.count),
+        },
+        authBootstrap: {
+          findUnique: vi.mocked(db.prisma.authBootstrap.findUnique),
+          upsert: vi.mocked(db.prisma.authBootstrap.upsert),
         },
         verification: {
           findFirst: vi.mocked(db.prisma.verification.findFirst),
@@ -249,6 +262,17 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
     // Default mock behavior: no valid invitation
     mocks.getValidInvitation.mockResolvedValue(null);
+
+    // Default mock behavior: database already has human users, so the
+    // first-human-is-admin bootstrap does NOT fire for the typical test.
+    // Tests exercising the bootstrap override this to 0.
+    mocks.prisma.user.count.mockResolvedValue(1);
+
+    // Default mock behavior: the one-time bootstrap marker has NOT been written
+    // yet (fresh instance). Tests exercising re-bootstrap protection override
+    // this to return a row. The marker upsert resolves successfully.
+    mocks.prisma.authBootstrap.findUnique.mockResolvedValue(null);
+    mocks.prisma.authBootstrap.upsert.mockResolvedValue({ id: 'singleton' });
   });
 
   afterEach(() => {
@@ -313,7 +337,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       );
     });
 
-    it('should NOT apply role when invitation role is USER (default role)', async () => {
+    it('honours a USER-role invitation explicitly and returns early (no bootstrap fall-through)', async () => {
       // Arrange
       const mockUser = makeUserCreateData({
         id: 'oauth-before-user',
@@ -346,18 +370,20 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // Act
       const result = await userCreateBeforeHook(mockUser, ctx);
 
-      // Assert: user returned unchanged (USER is default, no role override needed)
-      expect(result.data).toEqual(expect.objectContaining(mockUser));
+      // Assert: role stays USER (the invited role), applied explicitly so the
+      // signup does NOT fall through to the first-admin bootstrap.
       expect(result.data.role).toBe('USER');
 
       // Token is still consumed even for USER-role invitations (prevent reuse)
       expect(mocks.deleteInvitationToken).toHaveBeenCalledWith('user@example.com');
 
-      // Role-apply log should NOT have been called
-      expect(mocks.logger.info).not.toHaveBeenCalledWith(
+      // The invitation role IS applied explicitly now (with role USER) and the
+      // bootstrap count is never consulted — the early return prevents it.
+      expect(mocks.logger.info).toHaveBeenCalledWith(
         'Applying invitation role to OAuth user before creation',
-        expect.any(Object)
+        { email: 'user@example.com', role: 'USER' }
       );
+      expect(mocks.prisma.user.count).not.toHaveBeenCalled();
     });
 
     it('should throw APIError when invitation email does not match OAuth email', async () => {
@@ -631,6 +657,230 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // getOAuthState must not be called because the OAuth branch was not entered
       expect(mocks.getOAuthState).not.toHaveBeenCalled();
     });
+
+    // -----------------------------------------------------------------------
+    // First-human-is-admin bootstrap (issue #278)
+    // -----------------------------------------------------------------------
+
+    describe('first-human-is-admin bootstrap', () => {
+      it('promotes the first human (no existing non-system users) to ADMIN on email/password signup', async () => {
+        // Arrange: empty database (only the seeded system owner, which is excluded)
+        const mockUser = makeUserCreateData({
+          id: 'first-human',
+          email: 'founder@example.com',
+          role: 'USER',
+        });
+        mocks.prisma.user.count.mockResolvedValue(0);
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        // Assert: promoted to ADMIN; only real humans are counted (SERVICE
+        // accounts excluded via humanWhere).
+        expect(result.data.role).toBe('ADMIN');
+        expect(mocks.prisma.user.count).toHaveBeenCalledWith({ where: humanWhere });
+        expect(mocks.logger.info).toHaveBeenCalledWith(
+          'First user on a fresh database — assigning ADMIN role',
+          { email: 'founder@example.com' }
+        );
+      });
+
+      it('promotes the first human to ADMIN on OAuth signup with no invitation', async () => {
+        // Arrange: OAuth first signup, no invitation state, empty database
+        const mockUser = makeUserCreateData({
+          id: 'first-human-oauth',
+          email: 'oauthfounder@example.com',
+          role: 'USER',
+        });
+        mocks.getOAuthState.mockResolvedValue(null);
+        mocks.prisma.user.count.mockResolvedValue(0);
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
+
+        // Act
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        // Assert
+        expect(result.data.role).toBe('ADMIN');
+      });
+
+      it('does NOT re-promote when the bootstrap marker exists even if zero humans remain', async () => {
+        // Arrange: the one-time bootstrap already completed (marker present),
+        // and every human account has since been deleted (count would be 0).
+        // The next signup must NOT be auto-promoted — this is the re-bootstrap
+        // privilege-escalation guard (issue #278).
+        const mockUser = makeUserCreateData({
+          id: 'post-erasure-signup',
+          email: 'attacker@example.com',
+          role: 'USER',
+        });
+        mocks.prisma.authBootstrap.findUnique.mockResolvedValue({ id: 'singleton' });
+        mocks.prisma.user.count.mockResolvedValue(0);
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        // Assert: stays USER, and the count is never even queried (marker short-circuits)
+        expect(result.data.role).toBe('USER');
+        expect(mocks.prisma.user.count).not.toHaveBeenCalled();
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'First user on a fresh database — assigning ADMIN role',
+          expect.any(Object)
+        );
+      });
+
+      it('self-heals: backfills the marker (without promoting) when humans exist but no marker', async () => {
+        // Arrange: an upgraded/established DB — humans exist but the marker was
+        // never written (e.g. seeded before this feature, or a prior write
+        // failed). The next signup must backfill the marker and NOT be promoted.
+        const mockUser = makeUserCreateData({
+          id: 'upgrade-signup',
+          email: 'newcomer@example.com',
+          role: 'USER',
+        });
+        mocks.prisma.authBootstrap.findUnique.mockResolvedValue(null);
+        mocks.prisma.user.count.mockResolvedValue(3); // humans already exist
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        expect(result.data.role).toBe('USER');
+        expect(mocks.prisma.authBootstrap.upsert).toHaveBeenCalledWith({
+          where: { id: 'singleton' },
+          update: {},
+          create: { id: 'singleton' },
+        });
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'First user on a fresh database — assigning ADMIN role',
+          expect.any(Object)
+        );
+      });
+
+      it('fails open: a DB error in the bootstrap check never blocks signup', async () => {
+        // Arrange: the auth_bootstrap table is missing (e.g. code deployed before
+        // the migration) or the DB is faulting — findUnique rejects.
+        const mockUser = makeUserCreateData({
+          id: 'signup-during-db-fault',
+          email: 'resilient@example.com',
+          role: 'USER',
+        });
+        mocks.prisma.authBootstrap.findUnique.mockRejectedValue(
+          new Error('relation "auth_bootstrap" does not exist')
+        );
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act + Assert: must NOT throw; user proceeds as USER.
+        const result = await userCreateBeforeHook(mockUser, ctx);
+        expect(result.data.role).toBe('USER');
+        expect(result.data).toEqual(expect.objectContaining(mockUser));
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'First-admin bootstrap check failed; proceeding as USER',
+          expect.any(Error),
+          { email: 'resilient@example.com' }
+        );
+      });
+
+      it('leaves a subsequent user as USER when human users already exist', async () => {
+        // Arrange: a human already exists (default count = 1)
+        const mockUser = makeUserCreateData({
+          id: 'second-human',
+          email: 'second@example.com',
+          role: 'USER',
+        });
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        // Assert: role unchanged, no bootstrap log
+        expect(result.data.role).toBe('USER');
+        expect(result.data).toEqual(expect.objectContaining(mockUser));
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'First user on a fresh database — assigning ADMIN role',
+          expect.any(Object)
+        );
+      });
+
+      it('rejects a signup that tries to use the reserved system email', async () => {
+        // The system service-account email is reserved — it may only be created
+        // by the seed, never via public signup. The before hook throws before
+        // doing any bootstrap work.
+        const mockUser = makeUserCreateData({
+          id: 'squatter',
+          email: SYSTEM_USER_EMAIL,
+          role: 'USER',
+        });
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        await expect(userCreateBeforeHook(mockUser, ctx)).rejects.toThrow(/reserved/i);
+        expect(mocks.prisma.user.count).not.toHaveBeenCalled();
+        expect(mocks.prisma.authBootstrap.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('does not override an invitation-assigned ADMIN role (early return wins)', async () => {
+        // Arrange: a valid admin invitation on a fresh database. The invitation
+        // branch returns early, so the bootstrap count is never consulted.
+        const mockUser = makeUserCreateData({
+          id: 'invited-admin-fresh-db',
+          email: 'invited@example.com',
+          role: 'USER',
+        });
+        const mockInvitation: InvitationRecord = {
+          email: 'invited@example.com',
+          metadata: {
+            name: 'Invited Admin',
+            role: 'ADMIN',
+            invitedBy: 'someone',
+            invitedAt: new Date().toISOString(),
+          },
+          expiresAt: new Date(Date.now() + 86400000),
+          createdAt: new Date(),
+        };
+        // Reset the invitation mocks' implementations (the suite's beforeEach
+        // uses clearAllMocks, which does not drain implementations/once-queues
+        // from earlier tests) so this test is hermetic.
+        mocks.getOAuthState.mockReset();
+        mocks.validateInvitationToken.mockReset();
+        mocks.getValidInvitation.mockReset();
+        mocks.deleteInvitationToken.mockReset();
+        mocks.getOAuthState.mockResolvedValue({
+          invitationEmail: 'invited@example.com',
+          invitationToken: 'valid-token',
+        });
+        mocks.validateInvitationToken.mockResolvedValue(true);
+        mocks.getValidInvitation.mockResolvedValue(mockInvitation);
+        mocks.deleteInvitationToken.mockResolvedValue(undefined);
+        mocks.prisma.user.count.mockResolvedValue(0);
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
+
+        // Act
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        // Assert: role comes from the invitation branch, and the bootstrap did
+        // NOT drive it — the invitation early-return wins over first-human logic.
+        expect(result.data.role).toBe('ADMIN');
+        expect(mocks.logger.info).toHaveBeenCalledWith(
+          'Applying invitation role to OAuth user before creation',
+          { email: 'invited@example.com', role: 'ADMIN' }
+        );
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'First user on a fresh database — assigning ADMIN role',
+          expect.any(Object)
+        );
+        // And because the invitation branch returns early, the bootstrap count
+        // query is never reached.
+        expect(mocks.prisma.user.count).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // =========================================================================
@@ -638,6 +888,72 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
   // =========================================================================
 
   describe('databaseHooks.user.create.after', () => {
+    // -----------------------------------------------------------------------
+    // Bootstrap-complete marker (issue #278): record that an admin now exists
+    // so the before-hook promotion can never re-fire.
+    // -----------------------------------------------------------------------
+    describe('auth bootstrap marker', () => {
+      it('records the bootstrap marker when an ADMIN user is created', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'first-admin',
+          email: 'founder@example.com',
+          role: 'ADMIN',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/signup' });
+
+        expect(mocks.prisma.authBootstrap.upsert).toHaveBeenCalledWith({
+          where: { id: 'singleton' },
+          update: {},
+          create: { id: 'singleton' },
+        });
+      });
+
+      it('does NOT record the marker for a regular USER signup', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'regular-user',
+          email: 'member@example.com',
+          role: 'USER',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/signup' });
+
+        expect(mocks.prisma.authBootstrap.upsert).not.toHaveBeenCalled();
+      });
+
+      it('does NOT record the marker for a SERVICE account', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'system-owner',
+          email: SYSTEM_USER_EMAIL,
+          role: 'ADMIN',
+          accountType: 'SERVICE',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/signup' });
+
+        expect(mocks.prisma.authBootstrap.upsert).not.toHaveBeenCalled();
+      });
+
+      it('does not throw if recording the marker fails (non-blocking)', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'admin-marker-fails',
+          email: 'founder2@example.com',
+          role: 'ADMIN',
+        });
+        mocks.prisma.authBootstrap.upsert.mockRejectedValueOnce(new Error('db down'));
+
+        // Act + Assert: must not reject
+        await expect(
+          userCreateAfterHook(mockUser, { path: '/api/auth/signup' })
+        ).resolves.toBeUndefined();
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to record auth bootstrap completion',
+          expect.any(Error),
+          { userId: 'admin-marker-fails' }
+        );
+      });
+    });
+
     describe('OAuth invitation flow', () => {
       it('should set preferences and send welcome email for OAuth invitation user (token already deleted in before hook)', async () => {
         // Arrange: Create OAuth user — role and token deletion were handled in the before hook

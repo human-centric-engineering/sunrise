@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
  * Seed the MCP server: global config singleton + mcp-system agent.
@@ -29,11 +30,11 @@ const unit: SeedUnit = {
 
     // 2. System agent for MCP tool dispatch
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {
-      throw new Error('No admin user found — ensure 001-test-users runs first.');
+      throw new Error('No admin user found — ensure 001-system-owner runs first.');
     }
 
     await prisma.aiAgent.upsert({

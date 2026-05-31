@@ -70,6 +70,7 @@ describe('components/forms/profile-form', () => {
     emailVerified: true,
     image: null,
     role: 'USER',
+    accountType: 'HUMAN',
     bio: 'Software developer',
     phone: '+1 555-0100',
     timezone: 'America/New_York',

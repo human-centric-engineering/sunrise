@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 
 const PATTERN_ADVISOR_INSTRUCTIONS = `You are the Pattern Advisor for the Sunrise AI orchestration platform. Your role is to help administrators understand and apply agentic design patterns when building workflows.
 
@@ -158,11 +159,11 @@ const unit: SeedUnit = {
     logger.info('🤖 Seeding pattern-advisor agent...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {
-      throw new Error('No admin user found — ensure 001-test-users runs first.');
+      throw new Error('No admin user found — ensure 001-system-owner runs first.');
     }
     const createdBy = admin.id;
 

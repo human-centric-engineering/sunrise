@@ -2,6 +2,7 @@ import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/pro
 import { Prisma } from '@prisma/client';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 import { MODEL_CAPABILITIES } from '@/types/orchestration';
 
 const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the Sunrise AI orchestration platform. Your role is to evaluate provider model entries for accuracy and freshness, proposing corrections where data is stale or incorrect.
@@ -313,11 +314,11 @@ const unit: SeedUnit = {
     logger.info('🔍 Seeding provider-model-auditor agent...');
 
     const admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN' },
+      where: serviceAccountWhere,
       select: { id: true },
     });
     if (!admin) {
-      throw new Error('No admin user found — ensure 001-test-users runs first.');
+      throw new Error('No admin user found — ensure 001-system-owner runs first.');
     }
     const createdBy = admin.id;
 

@@ -32,13 +32,13 @@ const SEED_FILE_PATTERN = /^\d{3}-[a-z0-9-]+\.ts$/;
  * relative-path order. Each successful run upserts a `SeedHistory` row.
  *
  * Seed files must default-export a `SeedUnit { name, run(ctx) }`. Each file's
- * BASENAME must match `NNN-slug.ts` (e.g. `001-test-users.ts`) — the numeric
+ * BASENAME must match `NNN-slug.ts` (e.g. `001-system-owner.ts`) — the numeric
  * prefix fixes execution order within a directory.
  *
  * Discovery is recursive, so an app built on Sunrise can drop its own seeds in
  * a subdirectory (e.g. `prisma/seeds/app-foo/001-init.ts`). The `SeedHistory`
  * key is the file's path RELATIVE to `seedsDir` (minus `.ts`), so:
- *   - top-level files keep their bare-slug key (`001-test-users`) — existing
+ *   - top-level files keep their bare-slug key (`001-system-owner`) — existing
  *     history rows are unaffected and never re-run;
  *   - same-numbered files in different directories don't collide
  *     (`001-init` vs `app-foo/001-init`).

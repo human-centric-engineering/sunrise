@@ -11,6 +11,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { humanWhere } from '@/lib/auth/account';
 import { prisma } from '@/lib/db/client';
 import { getDatabaseHealth } from '@/lib/db/utils';
 import { successResponse } from '@/lib/api/responses';
@@ -44,13 +45,16 @@ export const GET = withAdminAuth(async (request, session) => {
   // Get 24 hours ago timestamp
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  // Execute all queries in parallel for performance
+  // Execute all queries in parallel for performance.
+  // All user counts exclude non-login SERVICE principals (the seeded
+  // config-owner) via `humanWhere` so the dashboard reflects real people only.
   const [totalUsers, verifiedUsers, recentSignups, usersByRole, dbHealth] = await Promise.all([
-    prisma.user.count(),
-    prisma.user.count({ where: { emailVerified: true } }),
-    prisma.user.count({ where: { createdAt: { gte: twentyFourHoursAgo } } }),
+    prisma.user.count({ where: humanWhere }),
+    prisma.user.count({ where: { ...humanWhere, emailVerified: true } }),
+    prisma.user.count({ where: { ...humanWhere, createdAt: { gte: twentyFourHoursAgo } } }),
     prisma.user.groupBy({
       by: ['role'],
+      where: humanWhere,
       _count: { role: true },
     }),
     getDatabaseHealth(),

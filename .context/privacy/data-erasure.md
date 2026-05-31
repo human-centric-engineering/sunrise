@@ -183,15 +183,25 @@ the subject's PII:
 
 ## Deletion Guards
 
-| Guard                            | Where                       | Rule                                                             |
-| -------------------------------- | --------------------------- | ---------------------------------------------------------------- |
-| **Last admin** (`LAST_ADMIN`)    | `DELETE /api/v1/users/me`   | An admin may self-delete only if another admin remains.          |
-| **No admin-deletes-admin**       | `DELETE /api/v1/users/[id]` | Must demote the target to `USER` first.                          |
-| **No self-delete (admin route)** | `DELETE /api/v1/users/[id]` | Admins delete their own account via `/users/me`, not this route. |
+| Guard                            | Where                       | Rule                                                              |
+| -------------------------------- | --------------------------- | ----------------------------------------------------------------- |
+| **Last admin** (`LAST_ADMIN`)    | `DELETE /api/v1/users/me`   | An admin may self-delete only if another **human** admin remains. |
+| **No admin-deletes-admin**       | `DELETE /api/v1/users/[id]` | Must demote the target to `USER` first.                           |
+| **No self-delete (admin route)** | `DELETE /api/v1/users/[id]` | Admins delete their own account via `/users/me`, not this route.  |
 
 The asymmetry is deliberate: the admin route blocks deleting any admin (demote
 first), but self-delete has no demotion gate — so the **last-admin** check lives
 on `/users/me` to prevent locking the system out of all admins.
+
+The last-admin count uses `humanAdminWhere` (`{ role: 'ADMIN', accountType:
+'HUMAN' }` from [`lib/auth/account.ts`](../../lib/auth/account.ts)), so it
+**excludes** the seeded `system@sunrise.local` config-owner (a `SERVICE`
+account: role `ADMIN`, no credential, cannot log in). Counting it would let the
+last human admin self-delete down to zero real operators, which would re-open
+the first-user-is-admin bootstrap and silently promote the next signup (issue
+#278). The SERVICE account is itself immutable via `users/[id]` (cannot be
+demoted or deleted). See
+[`../auth/user-creation.md`](../auth/user-creation.md#first-admin-bootstrap).
 
 ## GDPR Mapping
 

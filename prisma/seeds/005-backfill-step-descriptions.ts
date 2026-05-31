@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import type { SeedUnit } from '@/prisma/runner';
+import { serviceAccountWhere } from '@/lib/auth/account';
 import type { WorkflowDefinition, WorkflowStep } from '@/types/orchestration';
 
 /**
@@ -30,7 +31,7 @@ import type { WorkflowDefinition, WorkflowStep } from '@/types/orchestration';
  * when the unit + its hashInputs are unchanged.
  */
 
-const SEED_USER_QUERY = { where: { role: 'ADMIN' as const }, select: { id: true } };
+const SEED_USER_QUERY = { where: serviceAccountWhere, select: { id: true } };
 
 interface SnapshotLike {
   steps: WorkflowStep[];
@@ -105,7 +106,7 @@ const unit: SeedUnit = {
       // 004-builtin-templates would have failed first if there were no admin,
       // so the only way to land here is a hand-deleted user row. Bail loudly
       // rather than silently no-op.
-      throw new Error('No admin user found — ensure 001-test-users runs first.');
+      throw new Error('No admin user found — ensure 001-system-owner runs first.');
     }
     const createdBy = admin.id;
 
