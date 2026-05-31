@@ -112,6 +112,10 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn(),
       count: vi.fn(),
     },
+    authBootstrap: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+    },
     account: {
       findFirst: vi.fn(),
     },
@@ -162,6 +166,7 @@ interface SharedMocks {
   };
   prisma: {
     user: { update: MockedFn; count: MockedFn };
+    authBootstrap: { findUnique: MockedFn; upsert: MockedFn };
     verification: { findFirst: MockedFn };
   };
   logger: {
@@ -232,6 +237,10 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           update: vi.mocked(db.prisma.user.update),
           count: vi.mocked(db.prisma.user.count),
         },
+        authBootstrap: {
+          findUnique: vi.mocked(db.prisma.authBootstrap.findUnique),
+          upsert: vi.mocked(db.prisma.authBootstrap.upsert),
+        },
         verification: {
           findFirst: vi.mocked(db.prisma.verification.findFirst),
         },
@@ -257,6 +266,12 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
     // first-human-is-admin bootstrap does NOT fire for the typical test.
     // Tests exercising the bootstrap override this to 0.
     mocks.prisma.user.count.mockResolvedValue(1);
+
+    // Default mock behavior: the one-time bootstrap marker has NOT been written
+    // yet (fresh instance). Tests exercising re-bootstrap protection override
+    // this to return a row. The marker upsert resolves successfully.
+    mocks.prisma.authBootstrap.findUnique.mockResolvedValue(null);
+    mocks.prisma.authBootstrap.upsert.mockResolvedValue({ id: 'singleton' });
   });
 
   afterEach(() => {
@@ -689,6 +704,33 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(result.data.role).toBe('ADMIN');
       });
 
+      it('does NOT re-promote when the bootstrap marker exists even if zero humans remain', async () => {
+        // Arrange: the one-time bootstrap already completed (marker present),
+        // and every human account has since been deleted (count would be 0).
+        // The next signup must NOT be auto-promoted — this is the re-bootstrap
+        // privilege-escalation guard (issue #278).
+        const mockUser = makeUserCreateData({
+          id: 'post-erasure-signup',
+          email: 'attacker@example.com',
+          role: 'USER',
+        });
+        mocks.prisma.authBootstrap.findUnique.mockResolvedValue({ id: 'singleton' });
+        mocks.prisma.user.count.mockResolvedValue(0);
+
+        const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
+
+        // Act
+        const result = await userCreateBeforeHook(mockUser, ctx);
+
+        // Assert: stays USER, and the count is never even queried (marker short-circuits)
+        expect(result.data.role).toBe('USER');
+        expect(mocks.prisma.user.count).not.toHaveBeenCalled();
+        expect(mocks.logger.info).not.toHaveBeenCalledWith(
+          'First user on a fresh database — assigning ADMIN role',
+          expect.any(Object)
+        );
+      });
+
       it('leaves a subsequent user as USER when human users already exist', async () => {
         // Arrange: a human already exists (default count = 1)
         const mockUser = makeUserCreateData({
@@ -794,6 +836,71 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
   // =========================================================================
 
   describe('databaseHooks.user.create.after', () => {
+    // -----------------------------------------------------------------------
+    // Bootstrap-complete marker (issue #278): record that an admin now exists
+    // so the before-hook promotion can never re-fire.
+    // -----------------------------------------------------------------------
+    describe('auth bootstrap marker', () => {
+      it('records the bootstrap marker when an ADMIN user is created', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'first-admin',
+          email: 'founder@example.com',
+          role: 'ADMIN',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/signup' });
+
+        expect(mocks.prisma.authBootstrap.upsert).toHaveBeenCalledWith({
+          where: { id: 'singleton' },
+          update: {},
+          create: { id: 'singleton' },
+        });
+      });
+
+      it('does NOT record the marker for a regular USER signup', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'regular-user',
+          email: 'member@example.com',
+          role: 'USER',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/signup' });
+
+        expect(mocks.prisma.authBootstrap.upsert).not.toHaveBeenCalled();
+      });
+
+      it('does NOT record the marker for the seeded system config-owner', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'system-owner',
+          email: SYSTEM_USER_EMAIL,
+          role: 'ADMIN',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/signup' });
+
+        expect(mocks.prisma.authBootstrap.upsert).not.toHaveBeenCalled();
+      });
+
+      it('does not throw if recording the marker fails (non-blocking)', async () => {
+        const mockUser = makeUserCreateData({
+          id: 'admin-marker-fails',
+          email: 'founder2@example.com',
+          role: 'ADMIN',
+        });
+        mocks.prisma.authBootstrap.upsert.mockRejectedValueOnce(new Error('db down'));
+
+        // Act + Assert: must not reject
+        await expect(
+          userCreateAfterHook(mockUser, { path: '/api/auth/signup' })
+        ).resolves.toBeUndefined();
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to record auth bootstrap completion',
+          expect.any(Error),
+          { userId: 'admin-marker-fails' }
+        );
+      });
+    });
+
     describe('OAuth invitation flow', () => {
       it('should set preferences and send welcome email for OAuth invitation user (token already deleted in before hook)', async () => {
         // Arrange: Create OAuth user — role and token deletion were handled in the before hook

@@ -3,7 +3,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { getOAuthState, APIError } from 'better-auth/api';
 import { prisma } from '@/lib/db/client';
-import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
+import { SYSTEM_USER_EMAIL, AUTH_BOOTSTRAP_ID } from '@/lib/auth/constants';
 import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email/send';
 import { validateEmailConfig } from '@/lib/email/client';
@@ -126,28 +126,39 @@ export async function userCreateBeforeHook(
   // OAuth — is promoted to ADMIN. This gives self-hosters a working admin
   // bootstrap with zero default credentials (the Ghost/GitLab/Sentry pattern).
   //
+  // The promotion fires at most ONCE per instance: it is gated on the absence
+  // of the `AuthBootstrap` singleton, which `userCreateAfterHook` writes the
+  // first time an admin exists. Without that marker, a pure "0 humans → admin"
+  // check would re-open after every human account is deleted, letting the next
+  // signup silently become admin (privilege escalation). See issue #278.
+  //
   // The seeded SYSTEM config-owner (SYSTEM_USER_EMAIL, role ADMIN, no login) is
-  // excluded from the count so it does not count as a "real" user — otherwise
-  // the first human would never be promoted on a seeded database.
+  // excluded from the human count so it does not count as a "real" user —
+  // otherwise the first human would never be promoted on a seeded database. It
+  // is inserted via a direct Prisma upsert, not through better-auth, so this
+  // hook never fires for it.
   //
-  // The seeded system user is inserted via a direct Prisma upsert, not through
-  // better-auth, so this hook never fires for it.
-  //
-  // Concurrency: two simultaneous first-signups could both read a count of 0 and
-  // both be promoted. This window only exists on a brand-new, operator-controlled
-  // database and yielding two admins there is benign — matching how the same
-  // pattern behaves in Ghost/GitLab/Sentry. We accept it rather than add a
-  // bootstrap-lock table.
+  // Concurrency: two simultaneous first-signups could both read a count of 0
+  // before the marker is written and both be promoted. This window only exists
+  // on a brand-new, operator-controlled database and yielding two admins there
+  // is benign — matching how the same pattern behaves in Ghost/GitLab/Sentry.
   if (user.email !== SYSTEM_USER_EMAIL) {
-    const existingHumanCount = await prisma.user.count({
-      where: { email: { not: SYSTEM_USER_EMAIL } },
+    const alreadyBootstrapped = await prisma.authBootstrap.findUnique({
+      where: { id: AUTH_BOOTSTRAP_ID },
+      select: { id: true },
     });
 
-    if (existingHumanCount === 0) {
-      logger.info('First user on a fresh database — assigning ADMIN role', {
-        email: user.email,
+    if (!alreadyBootstrapped) {
+      const existingHumanCount = await prisma.user.count({
+        where: { email: { not: SYSTEM_USER_EMAIL } },
       });
-      return { data: { ...user, role: 'ADMIN' } };
+
+      if (existingHumanCount === 0) {
+        logger.info('First user on a fresh database — assigning ADMIN role', {
+          email: user.email,
+        });
+        return { data: { ...user, role: 'ADMIN' } };
+      }
     }
   }
 
@@ -187,6 +198,26 @@ export async function userCreateAfterHook(
   // Detect signup method for logging purposes
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
   const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+  // Record that the first-user-is-admin bootstrap has completed, the first time
+  // a real (non-system) admin exists. Once this singleton row is written, the
+  // before hook never auto-promotes again — even if every human is later
+  // deleted and the live user count returns to zero (see issue #278). Covers
+  // both bootstrap-promoted and invitation-created admins; idempotent upsert.
+  // Non-blocking, like the rest of this hook.
+  if (user.role === 'ADMIN' && user.email !== SYSTEM_USER_EMAIL) {
+    try {
+      await prisma.authBootstrap.upsert({
+        where: { id: AUTH_BOOTSTRAP_ID },
+        update: {},
+        create: { id: AUTH_BOOTSTRAP_ID },
+      });
+    } catch (bootstrapError) {
+      logger.error('Failed to record auth bootstrap completion', bootstrapError, {
+        userId: user.id,
+      });
+    }
+  }
 
   // Set default preferences for all new users
   try {

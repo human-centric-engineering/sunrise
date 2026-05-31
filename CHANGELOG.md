@@ -16,12 +16,21 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`AuthBootstrap` Prisma model** (`auth_bootstrap` table) — a singleton marker
+  recording that the one-time first-user-is-admin bootstrap has completed.
+  Migration `20260531100706_add_auth_bootstrap`. New export: `AUTH_BOOTSTRAP_ID`
+  from `lib/auth/constants.ts`.
+
 ### Changed
 
 - **Auth bootstrap — first account on a fresh database becomes `ADMIN`.**
   `userCreateBeforeHook` (`lib/auth/config.ts`) now promotes the first real
   account created on an empty database (email/password **or** OAuth) to the
-  `ADMIN` role; every subsequent account is a regular `USER`. The seed unit
+  `ADMIN` role; every subsequent account is a regular `USER`. The promotion is
+  one-time: once the first admin exists, `userCreateAfterHook` writes the
+  `AuthBootstrap` marker and the promotion never fires again. The seed unit
   formerly at `prisma/seeds/001-test-users.ts` is renamed to
   `prisma/seeds/001-system-owner.ts` and now provisions a single non-login
   `system@sunrise.local` config-owner (role `ADMIN`, no credential) instead of
@@ -35,6 +44,13 @@ release process.
   `password123`, but the seed never created the better-auth credential records,
   so those logins never worked. Sunrise now ships **zero default login
   credentials**; admin access is bootstrapped by the first-signup rule above.
+- **Closed an admin re-bootstrap privilege-escalation window.** The first-user
+  promotion is now gated on the persisted `AuthBootstrap` marker (not a live
+  user count), and the last-admin self-delete guard in
+  `app/api/v1/users/me/route.ts` excludes the non-login `system@sunrise.local`
+  owner from its admin count. Together these prevent a scenario where deleting
+  the last human admin would return the human count to zero and silently
+  promote the next signup to `ADMIN`.
 
 ---
 

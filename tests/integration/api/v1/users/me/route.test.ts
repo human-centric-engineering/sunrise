@@ -104,6 +104,7 @@ vi.mock('@/lib/analytics/server', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 
 // ---------------------------------------------------------------------------
 // Constants & fixture helpers
@@ -238,8 +239,12 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // Message should reference transferring admin access
       expect((body as ErrorBody).error.message).toMatch(/admin/i);
 
-      // Count gate was consulted (handler performed the DB check)
-      expect(prisma.user.count).toHaveBeenCalledWith({ where: { role: 'ADMIN' } });
+      // Count gate was consulted (handler performed the DB check). The seeded
+      // non-login SYSTEM config-owner is excluded so it is not counted as a
+      // real operator (issue #278 / security review).
+      expect(prisma.user.count).toHaveBeenCalledWith({
+        where: { role: 'ADMIN', email: { not: SYSTEM_USER_EMAIL } },
+      });
 
       // erase must NOT have run — $transaction not called
       expect(prisma.$transaction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called

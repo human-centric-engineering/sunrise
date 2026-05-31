@@ -52,18 +52,33 @@ consume the first-admin slot:
 ```typescript
 // lib/auth/config.ts — userCreateBeforeHook (simplified)
 if (user.email !== SYSTEM_USER_EMAIL) {
-  const existingHumanCount = await prisma.user.count({
-    where: { email: { not: SYSTEM_USER_EMAIL } },
+  const alreadyBootstrapped = await prisma.authBootstrap.findUnique({
+    where: { id: AUTH_BOOTSTRAP_ID },
   });
-  if (existingHumanCount === 0) {
-    return { data: { ...user, role: 'ADMIN' } }; // first human → admin
+  if (!alreadyBootstrapped) {
+    const existingHumanCount = await prisma.user.count({
+      where: { email: { not: SYSTEM_USER_EMAIL } },
+    });
+    if (existingHumanCount === 0) {
+      return { data: { ...user, role: 'ADMIN' } }; // first human → admin
+    }
   }
 }
 ```
 
-> **Concurrency:** two simultaneous first-signups could both read a count of 0 and
-> both be promoted. This window only exists on a brand-new, operator-controlled
-> database, so two admins there is benign and accepted (no bootstrap-lock table).
+**The promotion is one-time.** Once the first admin exists, `userCreateAfterHook`
+writes the singleton `AuthBootstrap` marker, and the promotion above never fires
+again — even if every human account is later deleted and the live count returns
+to zero. Without that marker a deleted-down-to-zero database would re-open the
+bootstrap and silently promote the next signup (a privilege-escalation window,
+issue #278). The last-admin self-delete guard in `app/api/v1/users/me/route.ts`
+likewise excludes `system@sunrise.local` so the final human admin cannot delete
+themselves down to zero operators.
+
+> **Concurrency:** two simultaneous first-signups could both read count 0 before
+> the marker is written and both be promoted. This window only exists on a
+> brand-new, operator-controlled database, so two admins there is benign and
+> accepted (no bootstrap-lock).
 
 ### Implementation
 
