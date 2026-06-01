@@ -102,6 +102,34 @@ When a future change requires a Postgres feature Prisma can't model:
 
 The drift-warning block on the model + the row in this table + the probe in the script are the three places that must agree. Missing any one is how an object goes silently un-tracked and gets dropped on the next schema-folded `migrate dev`.
 
+The six steps above are the **platform** path (the A-series, which Sunrise owns). A **fork** must never add its objects to `DRIFT_OBJECTS` or otherwise edit `scripts/db/check-drift.ts` — that file is platform-owned and an upstream merge would clobber the edit. Forks use the seam below instead.
+
+## Forks: registering your own unmodelled objects
+
+Any fork that follows Sunrise's own recipes inherits unmodelled objects of its own — most commonly the **hand-written FK constraint behind a satellite `User` table** (`CUSTOMIZATION.md` §5), which has no Prisma `@relation` and so is invisible to both the schema and the `onDelete` review rule. Without a probe, a future `migrate dev` can silently drop it (orphaning rows or breaking `eraseUser()`), and CI won't notice.
+
+Register it in the fork-owned scaffold **`lib/app/db-drift.ts`** — one of the auto-wired `lib/app/*` seams (see `CUSTOMIZATION.md` §4). `scripts/db/check-drift.ts` calls `registerAppDriftProbes()` and probes your objects alongside the A-series; you never touch the platform script.
+
+```typescript
+// lib/app/db-drift.ts — yours to edit; Sunrise ships it empty
+import { registerAppDriftProbe, constraintExists } from '@/lib/db/drift-probes';
+
+export function registerAppDriftProbes(): void {
+  registerAppDriftProbe({
+    name: 'AppUserProfile_userId_fkey (hand-written FK → User)',
+    kind: 'FK constraint',
+    table: 'AppUserProfile',
+    // The 2nd arg asserts the constraint definition text — pin the ON DELETE
+    // action so a fork can't quietly drop the GDPR cascade and pass the probe.
+    probe: constraintExists('AppUserProfile_userId_fkey', 'ON DELETE CASCADE'),
+  });
+}
+```
+
+- **Probe factories** (`@/lib/db/drift-probes`): `indexExists(name)`, `constraintExists(name, definitionSubstring?)`, `columnExists(table, column)`. Each returns a `Probe` that resolves `{ ok, note? }`. The optional `constraintExists` substring is the documented home for the manual-FK `onDelete` action — assert `'ON DELETE CASCADE'` / `'ON DELETE SET NULL'` so the policy that lives only in hand-written SQL is finally verified by something.
+- **Guards:** registering a duplicate `name` within your set throws; an app probe whose `name` collides with an A-series name throws at merge time — a fork can't shadow (and thereby silently disable) a Sunrise probe.
+- The seam runs everywhere `db:drift-check` does (`/pre-pr`, CI smoke, post-deploy).
+
 ## Related
 
 - `prisma/migrations/00000000000000_baseline/migration.sql` — definitions

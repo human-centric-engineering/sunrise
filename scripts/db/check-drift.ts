@@ -11,6 +11,11 @@
  * project's `lib/db/client` singleton). Exits 0 if every probe succeeds,
  * non-zero on the first failure.
  *
+ * Two probe sets run together: Sunrise's own A-series (`DRIFT_OBJECTS` below)
+ * and any fork-registered probes (`lib/app/db-drift.ts`). Forks register their
+ * own unmodelled objects there — they never edit this platform script. The
+ * probe primitives and registry live in `@/lib/db/drift-probes`.
+ *
  * Usage:
  *   npm run db:drift-check
  *
@@ -22,76 +27,18 @@
  * See `.context/database/prisma-unmodelled-objects.md` for the inventory.
  */
 
+import { registerAppDriftProbes } from '@/lib/app/db-drift';
 import { prisma } from '@/lib/db/client';
+import {
+  columnExists,
+  constraintExists,
+  getAppDriftProbes,
+  indexExists,
+  mergeDriftProbes,
+  type DriftObject,
+  type Probe,
+} from '@/lib/db/drift-probes';
 import { logger } from '@/lib/logging';
-
-interface ProbeResult {
-  ok: boolean;
-  note?: string;
-}
-
-type Probe = () => Promise<ProbeResult>;
-
-interface DriftObject {
-  name: string;
-  kind: string;
-  table: string;
-  probe: Probe;
-}
-
-/**
- * Existence probe by index name in pg_indexes.
- */
-function indexExists(indexName: string): Probe {
-  return async () => {
-    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT count(*)::bigint AS count
-      FROM pg_indexes
-      WHERE indexname = ${indexName}
-    `;
-    return { ok: Number(rows[0]?.count ?? 0n) === 1 };
-  };
-}
-
-/**
- * Existence probe by constraint name in pg_constraint.
- * Optional `predicateContains` substring asserts the CHECK predicate text
- * — used by A6 to confirm the tightened version landed.
- */
-function constraintExists(constraintName: string, predicateContains?: string): Probe {
-  return async () => {
-    const rows = await prisma.$queryRaw<Array<{ def: string | null }>>`
-      SELECT pg_get_constraintdef(oid) AS def
-      FROM pg_constraint
-      WHERE conname = ${constraintName}
-    `;
-    const def = rows[0]?.def;
-    if (!def) return { ok: false };
-    if (predicateContains && !def.includes(predicateContains)) {
-      return {
-        ok: false,
-        note: `predicate missing "${predicateContains}" — saw: ${def}`,
-      };
-    }
-    return { ok: true };
-  };
-}
-
-/**
- * Existence probe by column name in information_schema.columns. Used for
- * A1 (the GENERATED tsvector column on ai_knowledge_chunk).
- */
-function columnExists(tableName: string, columnName: string): Probe {
-  return async () => {
-    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT count(*)::bigint AS count
-      FROM information_schema.columns
-      WHERE table_name = ${tableName}
-        AND column_name = ${columnName}
-    `;
-    return { ok: Number(rows[0]?.count ?? 0n) === 1 };
-  };
-}
 
 /**
  * Probe that the 'english' tsearch configuration exists. A custom or
@@ -108,6 +55,10 @@ const englishTsConfigExists: Probe = async () => {
   return { ok: Number(rows[0]?.count ?? 0n) === 1 };
 };
 
+/**
+ * Sunrise's own (platform-owned) unmodelled objects — the A-series. Forks add
+ * their own via `lib/app/db-drift.ts`, never by editing this array.
+ */
 const DRIFT_OBJECTS: DriftObject[] = [
   {
     name: 'A1 searchVector (GENERATED tsvector column)',
@@ -166,11 +117,20 @@ const DRIFT_OBJECTS: DriftObject[] = [
 ];
 
 async function main(): Promise<void> {
-  logger.info(`Running ${DRIFT_OBJECTS.length} drift probes against the deployed DB...`);
+  // Pull in any fork-registered probes (lib/app/db-drift.ts), then run the
+  // A-series and app probes together. mergeDriftProbes throws if a fork reused
+  // an A-series name.
+  registerAppDriftProbes();
+  const appProbes = getAppDriftProbes();
+  const probes = mergeDriftProbes(DRIFT_OBJECTS, appProbes);
+
+  const appSuffix =
+    appProbes.length > 0 ? ` (${DRIFT_OBJECTS.length} platform + ${appProbes.length} app)` : '';
+  logger.info(`Running ${probes.length} drift probes against the deployed DB${appSuffix}...`);
 
   let failed = 0;
 
-  for (const obj of DRIFT_OBJECTS) {
+  for (const obj of probes) {
     const result = await obj.probe();
     if (result.ok) {
       logger.info(`  OK    ${obj.name}`);
@@ -182,7 +142,7 @@ async function main(): Promise<void> {
   }
 
   if (failed === 0) {
-    logger.info(`All ${DRIFT_OBJECTS.length} drift probes passed.`);
+    logger.info(`All ${probes.length} drift probes passed.`);
     if (process.env.REFERENCE_DATABASE_URL) {
       logger.info(
         'Hint: run atlas schema diff against REFERENCE_DATABASE_URL for a full structural check.'
@@ -191,7 +151,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  logger.error(`${failed} of ${DRIFT_OBJECTS.length} drift probes failed.`);
+  logger.error(`${failed} of ${probes.length} drift probes failed.`);
   logger.error(
     'Re-run `prisma migrate deploy` against a freshly-baselined scratch DB and atlas-diff against this one to see what shifted.'
   );

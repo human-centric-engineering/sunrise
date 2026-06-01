@@ -147,8 +147,9 @@ startup hook to call it from.
 ship as empty no-ops, and Sunrise does **not** change them after shipping them,
 so the edits you make merge cleanly when you pull an upstream release. The stable
 contract the platform depends on is each file's _export_ (`appEnvSchema`,
-`registerAppRateLimits`, `initAppCapabilities`, `initAppNav`) — which the core
-imports — **not** the body, which is yours. Keep the export name and signature;
+`registerAppRateLimits`, `initAppCapabilities`, `initAppNav`,
+`registerAppDriftProbes`) — which the core imports — **not** the body, which is
+yours. Keep the export name and signature;
 everything inside is free to change. (Detailed examples live here in this guide,
 not in the files, precisely so the files stay small and conflict-free.)
 
@@ -158,6 +159,7 @@ not in the files, precisely so the files stay small and conflict-free.)
 | `lib/app/rate-limit.ts`   | rate-limit tiers / rules         | rate-limit middleware (middleware runtime)     |
 | `lib/app/capabilities.ts` | agent capabilities (tools)       | the capability registry (server route-handler) |
 | `lib/app/admin-nav.ts`    | admin sidebar sections           | `admin-sidebar.tsx` (client)                   |
+| `lib/app/db-drift.ts`     | Prisma-unmodelled DB objects     | `scripts/db/check-drift.ts` (CI / `/pre-pr`)   |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a
@@ -231,6 +233,17 @@ first agent dispatch. See
 your sections after the core ones. Keep this file client-safe (registrar + icon
 imports only — no server code). Use a `title` distinct from the core sections.
 
+**Database drift probes — `lib/app/db-drift.ts`.** Register the Prisma-_unmodelled_
+DB objects your app adds — hand-written FK constraints, custom indexes (GIN/HNSW),
+CHECK constraints — so `npm run db:drift-check` (run in CI and by `/pre-pr`) probes
+them alongside Sunrise's own. Prisma can't see these objects, so without a probe a
+future `migrate dev` can silently `DROP` one and nothing notices. Fill in the
+auto-wired `registerAppDriftProbes()` with `registerAppDriftProbe({ … })` calls
+using the probe factories from `@/lib/db/drift-probes` (`indexExists`,
+`constraintExists`, `columnExists`). The single most common case is the satellite
+`User`-table FK below in §5. Full reference:
+[`.context/database/prisma-unmodelled-objects.md`](./.context/database/prisma-unmodelled-objects.md#forks-registering-your-own-unmodelled-objects).
+
 ---
 
 ## 5. Database schema
@@ -288,6 +301,30 @@ ALTER TABLE "AppUserProfile"
 > scrub or external cleanup the cascade can't reach, register a hook with
 > `lib/privacy/erasure-hooks.ts`. Full pattern:
 > [`.context/privacy/data-erasure.md`](./.context/privacy/data-erasure.md#app--fork-tables-relating-to-user).
+
+That hand-written FK is a **Prisma-unmodelled object**: Prisma computes desired
+state from the schema (which has no `@relation` for it), so a future `migrate dev`
+will emit a `DROP` for it. **Register a drift probe so CI catches that** — and so
+the FK's `ON DELETE` policy, which otherwise lives only in un-reviewed SQL, gets
+asserted on every run:
+
+```typescript
+// lib/app/db-drift.ts — the auto-wired §4 seam
+import { registerAppDriftProbe, constraintExists } from '@/lib/db/drift-probes';
+
+export function registerAppDriftProbes(): void {
+  registerAppDriftProbe({
+    name: 'AppUserProfile_userId_fkey (hand-written FK → User)',
+    kind: 'FK constraint',
+    table: 'AppUserProfile',
+    probe: constraintExists('AppUserProfile_userId_fkey', 'ON DELETE CASCADE'),
+  });
+}
+```
+
+`npm run db:drift-check` (CI + `/pre-pr`) now fails if the FK is dropped **or** if
+its `ON DELETE` action drifts from `CASCADE`. See
+[`.context/database/prisma-unmodelled-objects.md`](./.context/database/prisma-unmodelled-objects.md#forks-registering-your-own-unmodelled-objects).
 
 Then surface the table through its own API endpoint (`app/api/v1/<resource>/`)
 and types — don't widen `User`'s public shape for app-only fields.

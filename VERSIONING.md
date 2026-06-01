@@ -70,6 +70,7 @@ covered by the version contract.
   - ESLint app-boundary configuration for `lib/app/**`
   - app env registry (`lib/app/env.ts` → `appEnvSchema`)
   - rate-limit registry (`lib/app/rate-limit.ts` → `registerRateLimitTier()` / `registerRateLimitRule()`)
+  - drift-probe registry (`lib/app/db-drift.ts` → `registerAppDriftProbe()`, primitives in `lib/db/drift-probes.ts`)
   - tenancy seam (`TENANCY_MODE` + `lib/tenancy/client.ts`)
 - **Documented public APIs** —
   - `withAuth()`, `withAdminAuth()` from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
