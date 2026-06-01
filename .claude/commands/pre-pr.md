@@ -137,7 +137,8 @@ The Sunrise CHANGELOG is intentionally curated to the public surface defined in 
 For each changed file from Step 2, decide whether it touches the public surface using these path heuristics (the "Covered" list in `VERSIONING.md`):
 
 - **Named seam files** — flag if any of these change:
-  - `lib/app/capabilities.ts`, `lib/app/admin-nav.ts`, `lib/app/env.ts`, `lib/app/rate-limit.ts` (registry entry points)
+  - `lib/app/capabilities.ts`, `lib/app/admin-nav.ts`, `lib/app/env.ts`, `lib/app/rate-limit.ts`, `lib/app/db-drift.ts` (registry entry points)
+  - `lib/db/drift-probes.ts` (drift-probe primitives + registry consumed by `lib/app/db-drift.ts`)
   - `lib/privacy/erasure-hooks.ts` (erasure-hook registry)
   - `lib/tenancy/client.ts`, anything referencing the `TENANCY_MODE` env (tenancy seam)
   - `eslint.config.mjs` blocks scoped to `lib/app/**` (app-boundary configuration)
