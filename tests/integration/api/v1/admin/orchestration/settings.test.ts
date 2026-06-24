@@ -42,6 +42,10 @@ vi.mock('@/lib/db/client', () => ({
       upsert: vi.fn(),
     },
     aiProviderModel: {
+      // Registry hydration: PATCH calls hydrateFromDb() before validating.
+      // These fixtures carry no DB-managed rows, so return an empty matrix —
+      // model-id validation then falls back to the static/mocked registry.
+      findMany: vi.fn(async () => []),
       // Audio default validation: PATCH checks the chosen modelId
       // exists in the matrix with capabilities including 'audio'.
       // Default: every audio-shaped id matches; specific tests
