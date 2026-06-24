@@ -173,12 +173,22 @@ public-surface contract behind the bump decision lives in
    then merge.
 7. **Tag the merge commit.**
    ```bash
+   git checkout main && git pull origin main   # tag the squashed commit on main, not the branch head
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
+8. **Publish the GitHub Release.** A pushed tag does **not** create a Release —
+   do it explicitly so the version shows on the Releases page, carries the notes,
+   and notifies watchers. Mirror the existing releases: title `vX.Y.Z — alpha`
+   (during `0.x`), mark it a **pre-release**, and use that version's CHANGELOG
+   section as the notes.
+   ```bash
+   gh release create vX.Y.Z --title "vX.Y.Z — alpha" --prerelease --verify-tag \
+     --notes-file <the `## [X.Y.Z]` section of CHANGELOG.md>
+   ```
 
-The tag is what the eventual HCE Hub will discover; the CHANGELOG entry is
-what fork authors will read before merging the upgrade.
+The tag is what the eventual HCE Hub will discover; the CHANGELOG entry (and the
+mirrored Release notes) is what fork authors will read before merging the upgrade.
 
 ## Project Structure
 
