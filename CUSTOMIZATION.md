@@ -92,7 +92,8 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
   place, no file edits. Defaults to `"Sunrise"` when unset. Consumed via
   `lib/brand.ts` (`BRAND.name`); import that constant if you add new
   brand-bearing surfaces. Marketing-page **body copy** (`app/(public)/*`) is not
-  driven by this seam — edit that content directly (see below).
+  driven by this seam — re-skin it with the thin-shim pattern in
+  [§6](#6-landing-page--routes) so your content stays sync-safe.
 
 **Other project metadata:**
 
@@ -111,7 +112,8 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 - Replace `public/favicon.ico`
 - Add logo images to `public/`
 - Update `app/layout.tsx` → `metadata.icons`
-- Update landing page hero: `app/(public)/page.tsx`
+- Update the landing page hero via the thin-shim ([§6](#6-landing-page--routes)),
+  not by editing `app/(public)/page.tsx` in place
 
 **Fonts:**
 
@@ -152,9 +154,11 @@ Sunrise core consumer that lives in the right runtime, so your registrations
 take effect with **zero wiring** — you fill in the file, you never hunt for a
 startup hook to call it from.
 
-**These files are fork-owned scaffold — treat them like the landing page.** They
-ship as empty no-ops, and Sunrise does **not** change them after shipping them,
-so the edits you make merge cleanly when you pull an upstream release. The stable
+**These files are fork-owned scaffold.** They ship as empty no-ops, and Sunrise
+does **not** change them after shipping them, so the edits you make merge cleanly
+when you pull an upstream release. (Contrast the marketing pages, which Sunrise
+_does_ keep improving — those stay sync-safe via the thin-shim in
+[§6](#6-landing-page--routes), not by editing the platform file in place.) The stable
 contract the platform depends on is each file's _export_ (`appEnvSchema`,
 `registerAppRateLimits`, `initAppCapabilities`, `initAppNav`,
 `registerAppDriftProbes`) — which the core imports — **not** the body, which is
@@ -342,11 +346,64 @@ and types — don't widen `User`'s public shape for app-only fields.
 
 ## 6. Landing page & routes
 
-**Customizing pages:**
+### Marketing pages — the thin-shim pattern
+
+The marketing pages ship with Sunrise's own copy:
 
 - **Landing page:** `app/(public)/page.tsx`
 - **About page:** `app/(public)/about/page.tsx`
 - **Contact page:** `app/(public)/contact/page.tsx`
+
+Editing these files in place is the worst case for upstream sync: they're large,
+Sunrise keeps improving them, and your rewrite collides with every upstream
+change — a full-file, line-by-line conflict each release.
+
+**The fix is the thin-shim: reduce each platform route file to a one-line
+re-export, and keep all your real content in new, app-owned files.** New files
+never conflict on sync, and the route file shrinks to a single line that
+conflicts trivially ("keep mine").
+
+```tsx
+// app/(public)/page.tsx — Sunrise-tracked; reduce to a re-export of YOUR content
+// app:shim — replaced by app-owned content; keep this line on upstream merges
+export { default, metadata } from '@/components/app/marketing/home-page';
+```
+
+```
+components/app/marketing/   ← all NEW files; upstream never touches them
+├── home-page.tsx           ← your landing page (default export + `metadata`)
+├── about-page.tsx
+└── contact-page.tsx        ← renders Sunrise's <ContactForm>; behavior unchanged
+```
+
+Each content module just exports what the route needs — a `default` component
+and a `const metadata` (the exact names the route file re-exports). Move the
+body of the original page into it and rewrite the copy freely.
+
+**The honest constraint:** the App Router resolves a URL from the file at its
+canonical path, and won't let a second file own `/` — so the route file at
+`app/(public)/page.tsx` (etc.) **must** be touched either way. The shim doesn't
+make the conflict disappear; it shrinks it from a whole-file merge to a
+one-line, deterministic "keep mine". Label the shim with an `app:shim` region
+comment (as above) so the intent is obvious at merge time.
+
+**Contact page — behavior is untouched.** Only the displayed copy moves. Your
+`contact-page.tsx` keeps rendering Sunrise's `<ContactForm>`
+(`@/components/forms/contact-form.tsx`), which posts to `/api/v1/contact` — Zod
+validation, honeypot, rate limit, DB write, and the admin email notification all
+stay exactly as the platform ships them. You're re-skinning the page, not
+re-implementing the form.
+
+> **Deferred:** a full upstream _content seam_ (a `lib/app/marketing.ts` override
+> resolving against a typed default-content module) is intentionally **not**
+> shipped — it's only worth maintaining once multiple forks sync these pages
+> often. The thin-shim needs no platform abstraction and composes forward into
+> that seam later if it's ever justified.
+
+### Other pages
+
+Functional app pages have no platform copy to conflict with — edit them directly:
+
 - **Dashboard:** `app/(protected)/dashboard/page.tsx`
 - **Settings:** `app/(protected)/settings/page.tsx`
 - **Profile:** `app/(protected)/profile/page.tsx`
@@ -530,9 +587,10 @@ conflict. The `lib/app/` bootstrap files ([§4](#4-configuration--environment--t
 are **fork-owned scaffold**: Sunrise ships them empty and doesn't re-edit them,
 so the registrations you add there merge cleanly too — no special handling. The
 files that _can_ conflict are the ones both you and upstream edit (the migration
-directory above, and template files you've customised like the landing page,
-branding, or `package.json` — see [§7](#7-adding-dependencies--scripts)); resolve
-those keeping your version, and add a follow-up rather than rewriting Sunrise's.
+directory above, the marketing-page route shims ([§6](#6-landing-page--routes)) —
+a one-line "keep mine" when your content lives in app-owned files — branding, and
+`package.json` — see [§7](#7-adding-dependencies--scripts)); resolve those keeping
+your version, and add a follow-up rather than rewriting Sunrise's.
 
 - **One shared history.** App and Sunrise migrations both live in
   `prisma/migrations/` and are applied in timestamp order. On an upstream
