@@ -12,12 +12,55 @@
  * extracted text before it proceeds to chunking + embedding.
  */
 
-import { PDFParse } from 'pdf-parse';
 import type {
   PageInfo,
   ParsedDocument,
   ParsedSection,
 } from '@/lib/orchestration/knowledge/parsers/types';
+
+/**
+ * Lazily load `pdf-parse` with the canvas globals pdfjs-dist expects.
+ *
+ * pdfjs-dist (wrapped by pdf-parse) references the browser globals `DOMMatrix`,
+ * `Path2D`, and `ImageData` at module-evaluation time. They exist in browsers
+ * and in the happy-dom/jsdom test envs, but NOT in the Node serverless runtime
+ * Vercel runs functions on — so a static `import { PDFParse } from 'pdf-parse'`
+ * throws `ReferenceError: DOMMatrix is not defined` the instant the module is
+ * evaluated. Because Next externalizes pdf-parse, that surfaces in production as
+ * "Failed to load external module pdf-parse…".
+ *
+ * Two things matter here:
+ *   1. We polyfill the globals from `@napi-rs/canvas` (pdf-parse's own canvas
+ *      backend, a direct dependency) BEFORE importing pdf-parse.
+ *   2. We do it lazily. The parsers barrel (`./index`) statically imports this
+ *      module, and routes that only need `requiresPreview` / the extension sets
+ *      (e.g. the documents-list endpoint) import that barrel. A static
+ *      `pdf-parse` import would drag pdfjs — and this crash — into every such
+ *      route. Loading on first parse keeps merely importing this module cheap
+ *      and side-effect-free.
+ */
+let pdfParseModulePromise: Promise<typeof import('pdf-parse')> | null = null;
+
+function loadPdfParse(): Promise<typeof import('pdf-parse')> {
+  if (!pdfParseModulePromise) {
+    pdfParseModulePromise = (async () => {
+      const globalScope = globalThis as Record<string, unknown>;
+      if (typeof globalScope.DOMMatrix === 'undefined') {
+        const canvas = await import('@napi-rs/canvas');
+        globalScope.DOMMatrix = canvas.DOMMatrix;
+        globalScope.Path2D = canvas.Path2D;
+        globalScope.ImageData = canvas.ImageData;
+      }
+      return import('pdf-parse');
+    })().catch((err: unknown) => {
+      // Don't cache a failed load — a transient import failure shouldn't
+      // poison every subsequent PDF parse for the process lifetime.
+      pdfParseModulePromise = null;
+      throw err;
+    });
+  }
+  return pdfParseModulePromise;
+}
 
 /** Minimum text length to consider the whole document as having extractable content. */
 const MIN_VIABLE_TEXT_LENGTH = 50;
@@ -328,6 +371,7 @@ export async function parsePdf(
 ): Promise<ParsedDocument> {
   const warnings: string[] = [];
 
+  const { PDFParse } = await loadPdfParse();
   const parser = new PDFParse({ data: buffer });
   // Must NOT run getText and getInfo via Promise.all: both call
   // PDFParse#load() which races on `if (this.doc === undefined)`.

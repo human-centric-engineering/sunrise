@@ -27,6 +27,10 @@ const nextConfig = {
     '@opentelemetry/api',
     'pdf-parse',
     'pdfjs-dist',
+    // Native canvas backend. `pdf-parser.ts` imports it to polyfill the
+    // `DOMMatrix`/`Path2D`/`ImageData` globals pdfjs-dist needs in Node.
+    // It ships platform-specific `.node` binaries that must not be bundled.
+    '@napi-rs/canvas',
   ],
 
   // Security headers
