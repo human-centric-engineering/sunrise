@@ -33,6 +33,16 @@ config ──┬─ typecheck
 job that actually ran failed. Skipped jobs (docs-only changes, the inactive test
 mode, non-Docker PRs) are **not** failures, so they don't wedge the gate.
 
+**Exception — `lint & format` runs on every PR, including docs-only.** Most jobs
+are gated `if: needs.config.outputs.code == 'true'` and skip on docs-only changes
+(`*.md`, `.context/**`). `lint & format` is deliberately **not** gated at the job
+level, because `npm run format:check` is repo-wide (Prettier checks Markdown too).
+If it skipped on docs-only PRs, an unformatted `.md` could land on `main`
+unchecked and then fail the _next_ code PR's whole-repo `format:check`, misattributed
+to an unrelated author (issue #314). ESLint has nothing to check in docs, so it
+stays gated at the **step** level (`ESLint (code changes only)`) — docs-only PRs
+run only the Prettier check and stay cheap (~1m35s vs ~8m for a cold code PR).
+
 ### Universal speedups (on for everyone)
 
 These help both repo types and cost nothing, so they're always on:
