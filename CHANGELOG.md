@@ -16,6 +16,16 @@ release process.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-24
+
+> **Alpha release.** Second tagged Sunrise release. **MINOR bump** — adds new
+> public surface (the `registerAppDriftProbe` drift-probe seam, the
+> `User.accountType` field, and the `NEXT_PUBLIC_APP_NAME` brand seam) on top of
+> the auth-bootstrap hardening and the orchestration fixes below. Ships in `0.x`
+> per [`VERSIONING.md`](./VERSIONING.md#0x-alpha-semantics--loose-by-design) —
+> forks adopting this release should expect real merge work between any two `0.x`
+> releases; the strict SemVer contract activates at `1.0.0`.
+
 ### Added
 
 - **App-extensible database drift-probe seam — `lib/app/db-drift.ts`** (issue
@@ -101,6 +111,16 @@ release process.
   `thinking` tier (→ `frontier` display) instead of falling through to
   `infrastructure` (→ `budget`). New export `stripModelDateStamp` from the same
   module. Operator review/override of a suggested tier is unchanged.
+- **Knowledge document parsers no longer crash in a production build** (issues
+  #315, #320). HTML and PDF ingestion threw only in the bundled production server
+  (`next build && next start`) — invisible under `npm run dev` — so **any**
+  production deployment (not just Vercel, where it first surfaced) returned a 500
+  when ingesting those formats. Two independent bundling causes: jsdom ≥27's ESM
+  `@exodus/bytes` fails to load under Next's production `require` path (pinned to
+  `jsdom@^26`, with a Dependabot ignore for ≥27), and `pdf-parse` expects canvas
+  globals (`DOMMatrix` et al.) that aren't present in the server bundle (now
+  polyfilled). Parsers are also lazy-imported so a fork that doesn't ingest those
+  formats never loads the browser-coupled deps.
 
 ### Security
 
