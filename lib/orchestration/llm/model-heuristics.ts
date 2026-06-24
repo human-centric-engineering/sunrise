@@ -30,6 +30,23 @@ import type { Capability } from '@/lib/orchestration/llm/capability-inference';
 import type { ParamProfile, ReasoningEffort } from '@/lib/orchestration/llm/types';
 
 /**
+ * Strip a trailing date stamp from a model id so the name-based tiering
+ * heuristics classify the model *family*, not its release snapshot. Vendors
+ * version dated snapshots in two shapes:
+ *   - hyphenated ISO — `gpt-4o-2024-08-06`, `gpt-5.5-pro-2026-04-23`
+ *   - compact        — `claude-3-5-sonnet-20241022`
+ * Both trailing forms are removed (with any leading `-`/`_` separator). Only a
+ * **trailing** stamp is stripped, and the compact form must start with a
+ * plausible year (`19`/`20`), so embedded version numbers (`gpt-4o`,
+ * `llama-3.3`) are never touched. Without this, a date suffix can defeat
+ * end-anchored name patterns and bury a frontier model in the wrong tier
+ * (issue #302, Bug B).
+ */
+export function stripModelDateStamp(modelId: string): string {
+  return modelId.replace(/[-_]?\d{4}-\d{2}-\d{2}$/, '').replace(/[-_]?(?:19|20)\d{6}$/, '');
+}
+
+/**
  * Map input cost ($/M tokens) to the cost-efficiency rating used in
  * the matrix. Lower input cost is more efficient.
  *
@@ -77,7 +94,7 @@ export function deriveContextLength(maxContext: number | null): ContextLengthLev
  * step.
  */
 export function deriveLatency(modelId: string): LatencyLevel {
-  const id = modelId.toLowerCase();
+  const id = stripModelDateStamp(modelId.toLowerCase());
   // Smallest / fastest variants → very_fast
   if (/\bnano\b/.test(id) || /flash-lite\b/.test(id)) return 'very_fast';
   // Common "fast" suffixes
@@ -89,10 +106,10 @@ export function deriveLatency(modelId: string): LatencyLevel {
  * Reasoning depth inferred from model family. Non-chat capabilities
  * get `none` since reasoning depth is a chat-only signal.
  *
- * Family rules (case-insensitive substring on the id):
- *   - `opus`, `o1`, `o3`, `o4` → very_high (frontier reasoning)
- *   - `sonnet`, `gpt-4`, `gpt-5`, `gemini-pro`, `gemini-1.5-pro`,
- *     `mistral-large` → high
+ * Family rules (case-insensitive, on the date-stamp-stripped id):
+ *   - `opus`, `o1`, `o3`, `o4`, and the flagship suffixes `pro` / `ultra` /
+ *     `max` → very_high (frontier reasoning)
+ *   - `sonnet`, `gpt-4`, `gpt-5`, `mistral-large` → high
  *   - `haiku`, `mini`, `flash`, `nano` → medium
  *   - else → medium (neutral default)
  */
@@ -105,11 +122,23 @@ export function deriveReasoningDepth(modelId: string, capability: Capability): R
   ) {
     return 'none';
   }
-  const id = modelId.toLowerCase();
-  // Frontier reasoning families take precedence — `o1-mini` is still
-  // a reasoning model even though `mini` would otherwise downgrade
-  // it to medium below.
-  if (/\bopus\b/.test(id) || /\bo[134](?:-|$|\b)/.test(id)) return 'very_high';
+  const id = stripModelDateStamp(modelId.toLowerCase());
+  // Frontier reasoning families take precedence — `o1-mini` is still a
+  // reasoning model even though `mini` would otherwise downgrade it to
+  // medium below. `pro` / `ultra` / `max` are vendors' flagship suffixes
+  // (Gemini Pro/Ultra, Qwen-Max, GPT `*-pro`); before this they fell
+  // through to `infrastructure` and were mislabelled as a budget tier
+  // (issue #302, Bug B). Date stamps are already stripped, so
+  // `gpt-5.5-pro-2026-04-23` matches `\bpro\b` here.
+  if (
+    /\bopus\b/.test(id) ||
+    /\bultra\b/.test(id) ||
+    /\bmax\b/.test(id) ||
+    /\bpro\b/.test(id) ||
+    /\bo[134](?:-|$|\b)/.test(id)
+  ) {
+    return 'very_high';
+  }
   // Cheap / fast variants downgrade to medium even within the gpt-4
   // family — `gpt-4o-mini` shouldn't claim the same reasoning depth
   // as `gpt-4o` proper. Word boundaries on both sides so `gemini`
@@ -120,8 +149,6 @@ export function deriveReasoningDepth(modelId: string, capability: Capability): R
     /\bsonnet\b/.test(id) ||
     /gpt-4/.test(id) ||
     /gpt-5/.test(id) ||
-    /\bgemini-pro\b/.test(id) ||
-    /\bgemini-1\.5-pro\b/.test(id) ||
     /\bmistral-large\b/.test(id)
   ) {
     return 'high';

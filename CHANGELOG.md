@@ -75,6 +75,15 @@ release process.
   a spurious rename into every fork's generated migration. The Client-API
   compound key (`name:`) is unchanged, and existing deployed databases diff
   clean (no migration required).
+- **Model discovery no longer mis-tiers date-stamped frontier models** (issue
+  #302, Bug B). The name heuristics in `lib/orchestration/llm/model-heuristics.ts`
+  now strip a trailing date stamp (`gpt-5.5-pro-2026-04-23`,
+  `claude-3-5-sonnet-20241022`) before classifying, and recognise the flagship
+  suffixes `pro` / `ultra` / `max` as frontier signals alongside `opus` and the
+  o-series. A frontier "pro" model surfaced by discovery is now suggested as the
+  `thinking` tier (→ `frontier` display) instead of falling through to
+  `infrastructure` (→ `budget`). New export `stripModelDateStamp` from the same
+  module. Operator review/override of a suggested tier is unchanged.
 
 ### Security
 

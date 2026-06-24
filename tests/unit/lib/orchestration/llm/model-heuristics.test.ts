@@ -24,9 +24,11 @@ import {
   deriveTierRole,
   deriveToolUse,
   narrowReasoningEffort,
+  stripModelDateStamp,
   supportedReasoningEfforts,
   supportsReasoningEffort,
 } from '@/lib/orchestration/llm/model-heuristics';
+import type { Capability } from '@/lib/orchestration/llm/capability-inference';
 
 describe('deriveCostEfficiency', () => {
   const cases: Array<[number | null, string]> = [
@@ -79,6 +81,8 @@ describe('deriveLatency', () => {
     ['gpt-4-nano', 'very_fast'],
     ['gpt-3.5-turbo', 'fast'],
     ['o3-pro-2025-06-10', 'medium'],
+    // Date stamp stripped before matching; the `-mini` fast signal survives.
+    ['gpt-4o-mini-2024-07-18', 'fast'],
   ];
   for (const [input, expected] of cases) {
     it(`${input} → ${expected}`, () => {
@@ -93,10 +97,24 @@ describe('deriveReasoningDepth', () => {
     ['o3-pro-2025-06-10', 'chat', 'very_high'],
     ['o1-mini', 'chat', 'very_high'],
     ['o4-mini', 'chat', 'very_high'],
+    // Flagship suffixes pro / ultra / max are frontier signals (issue #302).
+    // `gemini-pro` was previously classified `high`; the Pro line is the
+    // flagship tier, so it is now `very_high`.
+    ['gemini-pro', 'chat', 'very_high'],
+    ['gemini-2.5-pro', 'chat', 'very_high'],
+    ['gemini-ultra', 'chat', 'very_high'],
+    ['qwen-max', 'chat', 'very_high'],
+    // The headline case: date-stamped frontier "pro" model. The date stamp is
+    // stripped, then `\bpro\b` matches → very_high (was infrastructure→budget).
+    ['gpt-5.5-pro-2026-04-23', 'chat', 'very_high'],
     ['claude-sonnet-4-6', 'chat', 'high'],
     ['gpt-4o', 'chat', 'high'],
     ['gpt-5', 'chat', 'high'],
-    ['gemini-pro', 'chat', 'high'],
+    // Base gpt-5 family stays `high` — NOT promoted to frontier — and the
+    // cheap-variant downgrade still wins over the gpt-5 `high` bucket.
+    ['gpt-5-mini', 'chat', 'medium'],
+    // Compact date stamp (`YYYYMMDD`) stripped; sonnet still → high.
+    ['claude-3-5-sonnet-20241022', 'chat', 'high'],
     ['claude-haiku-4-5', 'chat', 'medium'],
     ['gpt-4o-mini', 'chat', 'medium'],
     ['gemini-flash', 'chat', 'medium'],
@@ -161,6 +179,53 @@ describe('deriveTierRole', () => {
         latency: 'medium',
       })
     ).toBe('infrastructure');
+  });
+});
+
+describe('stripModelDateStamp', () => {
+  const cases: Array<[string, string]> = [
+    // Hyphenated ISO date suffix removed.
+    ['gpt-4o-2024-08-06', 'gpt-4o'],
+    ['gpt-5.5-pro-2026-04-23', 'gpt-5.5-pro'],
+    ['o3-pro-2025-06-10', 'o3-pro'],
+    // Compact YYYYMMDD suffix removed.
+    ['claude-3-5-sonnet-20241022', 'claude-3-5-sonnet'],
+    // No date stamp — embedded version numbers are NOT touched.
+    ['gpt-4o', 'gpt-4o'],
+    ['llama-3.3-70b-versatile', 'llama-3.3-70b-versatile'],
+    ['gemini-2.5-pro', 'gemini-2.5-pro'],
+    // An 8-digit run that isn't a plausible year is left alone.
+    ['weird-12345678', 'weird-12345678'],
+  ];
+  for (const [input, expected] of cases) {
+    it(`${input} → ${expected}`, () => {
+      expect(stripModelDateStamp(input)).toBe(expected);
+    });
+  }
+});
+
+describe('tier classification end-to-end (issue #302, Bug B)', () => {
+  // Compose the same derivations the discovery route runs, to prove a
+  // date-stamped frontier "pro" model lands in the `thinking` tier (→ frontier
+  // display) rather than falling through to `infrastructure` (→ budget).
+  function tierFor(modelId: string, capability: Capability, inputCostPerMillion: number | null) {
+    const reasoningDepth = deriveReasoningDepth(modelId, capability);
+    return deriveTierRole({
+      capability,
+      reasoningDepth,
+      costEfficiency: deriveCostEfficiency(inputCostPerMillion),
+      latency: deriveLatency(modelId),
+    });
+  }
+
+  it('date-stamped frontier "pro" model with unknown pricing → thinking', () => {
+    // Unknown pricing is the realistic case for a brand-new discovery-added
+    // model; the frontier name signal must carry the classification alone.
+    expect(tierFor('gpt-5.5-pro-2026-04-23', 'chat', null)).toBe('thinking');
+  });
+
+  it('gemini-2.5-pro → thinking', () => {
+    expect(tierFor('gemini-2.5-pro', 'chat', null)).toBe('thinking');
   });
 });
 
