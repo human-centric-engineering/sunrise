@@ -50,6 +50,7 @@ import {
   type RunningStep,
   type ExecutionLivePayload,
 } from '@/lib/hooks/use-execution-live-poll';
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/lib/utils/format-duration';
 import { formatStatus } from '@/lib/utils/format-status';
@@ -457,7 +458,7 @@ function CollapsibleJsonCard({
   helpTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
 
   if (data === null || data === undefined) return null;
 
@@ -466,15 +467,7 @@ function CollapsibleJsonCard({
 
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard may be unavailable in non-secure contexts; silently ignore.
-      }
-    })();
+    void copy(text);
   };
 
   return (
