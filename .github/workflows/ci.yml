@@ -109,7 +109,7 @@ jobs:
       # Per-job cache scoped to the artifact this job produces. (Sharing one key
       # across fan-out jobs would let the first finisher overwrite the rest.)
       - name: Cache tsc incremental info
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: tsconfig.tsbuildinfo
           key: tsc-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
@@ -136,7 +136,7 @@ jobs:
       # so a fresh checkout's reset mtimes don't invalidate them — but the cache
       # files still have to survive between runs, which is what this does.
       - name: Cache eslint / prettier results
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             .next/cache/eslint
@@ -166,7 +166,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - name: Cache Next.js build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .next/cache
           key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
