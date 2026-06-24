@@ -3,10 +3,11 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { LoginForm } from '@/components/forms/login-form';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: 'Sign In',
-  description: 'Sign in to your Sunrise account',
+  description: `Sign in to your ${BRAND.name} account`,
 };
 
 /**

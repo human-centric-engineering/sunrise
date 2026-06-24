@@ -112,6 +112,14 @@ const clientEnvSchema = z.object({
       'NEXT_PUBLIC_APP_URL must be a valid URL (embedded at build time, must match BETTER_AUTH_URL for consistency)',
   }),
 
+  // Brand display name (optional - defaults to "Sunrise"). Consumed via
+  // `lib/brand.ts` (`BRAND.name`), which reads process.env directly so it is
+  // client-safe; registered here for validation/documentation.
+  NEXT_PUBLIC_APP_NAME: z
+    .string()
+    .optional()
+    .describe('Display name for the app brand (layout titles, emails). Defaults to "Sunrise".'),
+
   // Analytics (optional - auto-detected based on available credentials)
   NEXT_PUBLIC_ANALYTICS_PROVIDER: z
     .enum(['ga4', 'posthog', 'plausible', 'console'])
@@ -196,6 +204,7 @@ const isBrowser = typeof window !== 'undefined';
 const parsed = isBrowser
   ? clientEnvSchema.safeParse({
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+      NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
       // Analytics (optional)
       NEXT_PUBLIC_ANALYTICS_PROVIDER: process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER,
       NEXT_PUBLIC_GA4_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,

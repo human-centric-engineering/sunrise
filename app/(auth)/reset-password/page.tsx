@@ -2,10 +2,11 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ResetPasswordForm } from '@/components/forms/reset-password-form';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: 'Reset Password',
-  description: 'Reset your Sunrise account password',
+  description: `Reset your ${BRAND.name} account password`,
 };
 
 /**

@@ -3,11 +3,12 @@ import { AppHeader } from '@/components/layouts/app-header';
 import { ProtectedNav } from '@/components/layouts/protected-nav';
 import { ProtectedFooter } from '@/components/layouts/protected-footer';
 import { MaintenanceWrapperWithAdminNotice } from '@/components/maintenance-wrapper';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: {
-    template: '%s - Sunrise',
-    default: 'Dashboard - Sunrise',
+    template: `%s - ${BRAND.name}`,
+    default: `Dashboard - ${BRAND.name}`,
   },
   description: 'Your dashboard',
 };

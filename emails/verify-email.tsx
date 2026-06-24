@@ -9,6 +9,7 @@ import {
   Text,
   Button,
 } from '@react-email/components';
+import { BRAND } from '@/lib/brand';
 
 interface VerifyEmailProps {
   userName: string;
@@ -41,8 +42,8 @@ export default function VerifyEmail({
             <Text style={heading}>Verify Your Email Address</Text>
             <Text style={text}>Hi {userName},</Text>
             <Text style={text}>
-              Thanks for signing up! To complete your registration and start using Sunrise, please
-              verify your email address by clicking the button below.
+              Thanks for signing up! To complete your registration and start using {BRAND.name},
+              please verify your email address by clicking the button below.
             </Text>
             <Button href={verificationUrl} style={button}>
               Verify Email

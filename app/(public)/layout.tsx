@@ -3,11 +3,12 @@ import { AppHeader } from '@/components/layouts/app-header';
 import { PublicNav } from '@/components/layouts/public-nav';
 import { PublicFooter } from '@/components/layouts/public-footer';
 import { MaintenanceWrapper } from '@/components/maintenance-wrapper';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: {
-    template: '%s - Sunrise',
-    default: 'Sunrise',
+    template: `%s - ${BRAND.name}`,
+    default: BRAND.name,
   },
   description:
     'A production-ready Next.js starter template designed for rapid application development',

@@ -11,6 +11,7 @@ import {
   Button,
   Link,
 } from '@react-email/components';
+import { BRAND } from '@/lib/brand';
 
 /**
  * Generic event-notification email template.
@@ -170,7 +171,9 @@ export function EventNotification({
         <Container style={container}>
           <Section style={section}>
             <Text style={heading}>{title}</Text>
-            <Text style={timestampLine}>Sunrise · {formattedWhen}</Text>
+            <Text style={timestampLine}>
+              {BRAND.name} · {formattedWhen}
+            </Text>
 
             <Text style={summaryText}>{summary}</Text>
 
@@ -235,7 +238,7 @@ export function EventNotification({
           <Text style={footer}>
             You&apos;re receiving this because you subscribed to <code>{event}</code> via{' '}
             <Link href="" style={footerLink}>
-              Sunrise event subscriptions
+              {BRAND.name} event subscriptions
             </Link>
             .
           </Text>

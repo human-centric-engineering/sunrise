@@ -2,10 +2,11 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { AcceptInviteForm } from '@/components/forms/accept-invite-form';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: 'Accept Invitation',
-  description: 'Accept your invitation to join Sunrise',
+  description: `Accept your invitation to join ${BRAND.name}`,
 };
 
 /**

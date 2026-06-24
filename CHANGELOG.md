@@ -48,6 +48,15 @@ release process.
   credential-less `admin@example.com` / `test@example.com` artifacts (preserving
   real users), re-points orphaned config ownership to the SERVICE owner, and
   marks the bootstrap complete on established instances.
+- **`NEXT_PUBLIC_APP_NAME` brand seam** (issue #305) — a single optional env var
+  renames the app's display name across page-title metadata (root + route-group
+  layouts and the auth pages) and the email templates, with no file edits.
+  Consumed via the new `lib/brand.ts` (`BRAND.name`), which reads
+  `process.env.NEXT_PUBLIC_APP_NAME` directly so it is safe on both server and
+  client; registered in `lib/env.ts` and `.env.example`. Defaults to `"Sunrise"`
+  — unset leaves every surface byte-for-byte unchanged. Marketing-page body copy
+  is intentionally out of scope (a separate content concern); `SUNRISE_VERSION`
+  and internal platform identifiers deliberately do not use this seam.
 
 ### Changed
 

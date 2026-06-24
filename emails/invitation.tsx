@@ -11,6 +11,7 @@ import {
   Hr,
   Heading,
 } from '@react-email/components';
+import { BRAND } from '@/lib/brand';
 
 interface InvitationEmailProps {
   inviterName: string;
@@ -27,8 +28,8 @@ export default function InvitationEmail({
   invitationUrl,
   expiresAt,
 }: InvitationEmailProps): React.ReactElement {
-  const previewText = "You've been invited to join Sunrise";
-  const appName = 'Sunrise';
+  const previewText = `You've been invited to join ${BRAND.name}`;
+  const appName = BRAND.name;
 
   // Format expiration time
   const expirationTime = new Date(expiresAt).toLocaleString('en-US', {

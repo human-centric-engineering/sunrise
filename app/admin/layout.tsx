@@ -4,13 +4,14 @@ import { getServerSession } from '@/lib/auth/utils';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-flight-execution-banner';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: {
-    template: '%s - Admin - Sunrise',
-    default: 'Admin - Sunrise',
+    template: `%s - Admin - ${BRAND.name}`,
+    default: `Admin - ${BRAND.name}`,
   },
-  description: 'Admin dashboard for Sunrise',
+  description: `Admin dashboard for ${BRAND.name}`,
 };
 
 /**

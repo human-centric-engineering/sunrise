@@ -8,9 +8,10 @@ import { ConsentProvider } from '@/lib/consent';
 import { CookieBanner } from '@/components/cookie-consent';
 import { AnalyticsProvider } from '@/lib/analytics';
 import { AnalyticsScripts, UserIdentifier, PageTracker } from '@/components/analytics';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
-  title: 'Sunrise - Next.js Starter',
+  title: `${BRAND.name} - Next.js Starter`,
   description:
     'A production-ready Next.js starter template designed for rapid application development',
 };

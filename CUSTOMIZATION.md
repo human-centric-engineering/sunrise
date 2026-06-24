@@ -85,10 +85,19 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 
 ## 2. Branding & theming
 
-**Project name & metadata:**
+**App name (the brand seam):**
+
+- Set **`NEXT_PUBLIC_APP_NAME`** in your `.env` — this renames the app across
+  page-title metadata (all layouts + auth pages) and the email templates in one
+  place, no file edits. Defaults to `"Sunrise"` when unset. Consumed via
+  `lib/brand.ts` (`BRAND.name`); import that constant if you add new
+  brand-bearing surfaces. Marketing-page **body copy** (`app/(public)/*`) is not
+  driven by this seam — edit that content directly (see below).
+
+**Other project metadata:**
 
 - `package.json` → `name`, `description`
-- `app/layout.tsx` → `metadata.title`, `metadata.description`
+- `app/layout.tsx` → `metadata.description` (the title brand comes from the seam above)
 - `README.md` → main heading, description
 
 **Colors & styling:**

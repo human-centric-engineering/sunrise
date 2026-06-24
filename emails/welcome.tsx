@@ -9,6 +9,7 @@ import {
   Text,
   Button,
 } from '@react-email/components';
+import { BRAND } from '@/lib/brand';
 
 interface WelcomeEmailProps {
   userName: string;
@@ -27,14 +28,14 @@ export default function WelcomeEmail({
   return (
     <Html lang="en">
       <Head />
-      <Preview>Welcome to Sunrise - Let&apos;s get started</Preview>
+      <Preview>Welcome to {BRAND.name} - Let&apos;s get started</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Welcome to Sunrise!</Text>
+            <Text style={heading}>{`Welcome to ${BRAND.name}!`}</Text>
             <Text style={text}>Hi {userName},</Text>
             <Text style={text}>
-              We&apos;re excited to have you on board! Sunrise is your production-ready Next.js
+              We&apos;re excited to have you on board! {BRAND.name} is your production-ready Next.js
               starter template designed for rapid application development.
             </Text>
             <Text style={text}>

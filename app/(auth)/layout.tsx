@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: {
-    template: '%s - Sunrise',
-    default: 'Authentication - Sunrise',
+    template: `%s - ${BRAND.name}`,
+    default: `Authentication - ${BRAND.name}`,
   },
   description: 'Sign in or create an account',
 };
