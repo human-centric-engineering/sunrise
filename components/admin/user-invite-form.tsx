@@ -12,6 +12,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -64,7 +65,7 @@ export function UserInviteForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invitation, setInvitation] = useState<InvitationResponse | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
 
   const {
     register,
@@ -108,9 +109,7 @@ export function UserInviteForm() {
 
   const handleCopyLink = async () => {
     if (invitation?.invitation.link) {
-      await navigator.clipboard.writeText(invitation.invitation.link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await copy(invitation.invitation.link);
     }
   };
 

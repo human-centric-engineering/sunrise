@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -118,20 +119,12 @@ function CopyLogButton({
   entry: LogEntry;
   className?: string;
 }): React.ReactElement {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
 
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
     e.preventDefault();
-    void (async (): Promise<void> => {
-      try {
-        await navigator.clipboard.writeText(formatLogForCopy(entry));
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard API unavailable (insecure context, denied permission) — silent failure.
-      }
-    })();
+    void copy(formatLogForCopy(entry));
   };
 
   return (

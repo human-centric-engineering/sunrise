@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { getStepMetadata, type StepCategory } from '@/lib/orchestration/engine/step-registry';
 import { cn } from '@/lib/utils';
 import { isMarkdown } from '@/lib/utils/is-markdown';
@@ -740,7 +741,7 @@ function JsonPane({
 }) {
   const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
   const showMarkdown = isMarkdown(data);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
   // Inline wrap is off by default — the original horizontal-scroll layout
   // is still useful for skimming JSON shape. The operator opts in when a
   // single value is too long to read sideways.
@@ -754,15 +755,7 @@ function JsonPane({
 
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard may be unavailable in non-secure contexts; silently ignore.
-      }
-    })();
+    void copy(text);
   };
 
   const copyButton = (
@@ -922,19 +915,11 @@ function ErrorPane({
   stepId: string;
   expected?: boolean;
 }): React.ReactElement {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
 
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(error);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard may be unavailable in non-secure contexts; silently ignore.
-      }
-    })();
+    void copy(error);
   };
 
   // Two visual modes. "Error" (red) is the default; "Skip reason" (slate)

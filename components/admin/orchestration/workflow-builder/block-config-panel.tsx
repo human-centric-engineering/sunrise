@@ -17,7 +17,6 @@
  * state — the canvas remains the single source of truth.
  */
 
-import { useState } from 'react';
 import { Check, Copy, Trash2 } from 'lucide-react';
 
 import {
@@ -32,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { FieldHelp } from '@/components/ui/field-help';
 import {
   STEP_CATEGORY_COLOURS,
@@ -86,19 +86,13 @@ export function BlockConfigPanel({
   capabilities,
   agents,
 }: BlockConfigPanelProps) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard(1500);
   const meta = getStepMetadata(node.data.type);
   const colours = STEP_CATEGORY_COLOURS[meta?.category ?? 'input'];
   const Icon = meta?.icon;
 
   const copyId = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(node.id);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API unavailable — silently ignore.
-    }
+    await copy(node.id);
   };
 
   // One shared callback that just forwards into the builder shell's

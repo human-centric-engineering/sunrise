@@ -44,6 +44,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import {
   analyzeExecution,
@@ -363,18 +364,10 @@ function ToggleButton({
 }
 
 function ReasonBlock({ reason, tone = 'failure' }: { reason: string; tone?: 'failure' | 'muted' }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard();
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(reason);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {
-        // Clipboard may be unavailable in non-secure contexts; ignore.
-      }
-    })();
+    void copy(reason);
   };
 
   return (
