@@ -67,6 +67,14 @@ release process.
 
 ### Fixed
 
+- **`PATCH /api/v1/admin/orchestration/settings` now accepts DB-managed model
+  ids in `defaultModels`** (issue #302, Bug A). The handler hydrates the
+  in-memory model registry from the `AiProviderModel` matrix before validating,
+  so a discovery-added model (e.g. a date-stamped `gpt-5.5-pro-2026-04-23` that
+  exists only in the DB, not the static registry) that the settings form offers
+  in its dropdown is no longer rejected on save with `VALIDATION_ERROR` (400).
+  Mirrors the other model-id paths (workflow execute, cost estimation) that
+  already hydrate first.
 - **`AiConversation` inbound unique key no longer triggers a phantom
   `ALTER INDEX ... RENAME` on every `prisma migrate dev`** (issue #283). The
   `@@unique([agentId, channel, fromAddress])` now pins its DB name with

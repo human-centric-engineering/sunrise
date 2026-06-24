@@ -24,6 +24,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { computeETag, checkConditional } from '@/lib/api/etag';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
@@ -54,6 +55,21 @@ export const PATCH = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
 
   const log = await getRouteLogger(request);
+
+  // Hydrate the in-memory model registry from the DB-managed
+  // `AiProviderModel` matrix BEFORE validating the body. The schema's
+  // `defaultModels` refinement runs `validateTaskDefaults()` →
+  // synchronous `getModel()`, which otherwise only sees the static +
+  // OpenRouter-cached models. Operator-added rows (e.g. a date-stamped
+  // `gpt-5.5-pro-2026-04-23` surfaced via model discovery) live only in
+  // the DB, so without this hydration a model that the settings form
+  // offers in its dropdown is rejected on save with `VALIDATION_ERROR`
+  // (issue #302). Soft-fails internally, so a DB hiccup just leaves a
+  // genuinely-unknown id to be rejected as before. Mirrors the other
+  // model-id paths (workflow execute, cost estimation) that already
+  // hydrate first.
+  await hydrateModelRegistryFromDb();
+
   const body = await validateRequestBody(request, updateOrchestrationSettingsSchema);
 
   // Validate the active-embedding-model FK against the model matrix. The
