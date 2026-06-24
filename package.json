@@ -136,7 +136,7 @@
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/context-async-hooks": "^2.8.0",
     "@opentelemetry/sdk-trace-base": "^2.8.0",
-    "@react-email/ui": "^6.6.3",
+    "@react-email/ui": "^6.6.4",
     "@tailwindcss/postcss": "^4.3.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
@@ -152,7 +152,7 @@
     "@vitejs/plugin-react": "^5.2.0",
     "@vitest/coverage-v8": "^4.1.9",
     "@vitest/ui": "^4.1.9",
-    "autoprefixer": "^10.5.0",
+    "autoprefixer": "^10.5.1",
     "dotenv": "^17.2.4",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.9",
@@ -168,7 +168,7 @@
     "tailwindcss": "^4.1.18",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.61.1",
+    "typescript-eslint": "^8.62.0",
     "vitest": "^4.1.9"
   }
 }
