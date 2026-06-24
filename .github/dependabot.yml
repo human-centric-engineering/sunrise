@@ -52,6 +52,16 @@ updates:
       # we don't have. Remove when we do the coordinated Vite/Vitest bump.
       - dependency-name: '@vitejs/plugin-react'
         versions: ['>=6']
+      # jsdom >=27 pulls an ESM-only @exodus/bytes (via html-encoding-sniffer@6
+      # and whatwg-url@16) that html-encoding-sniffer require()s. jsdom can't be
+      # bundled, so Next externalizes it, and Next's externalRequire shim does
+      # not honor Node's require(ESM) interop — so the knowledge HTML parser
+      # 500s in the Vercel production bundle (works in local dev, which is
+      # unbundled). jsdom 26 uses the pure-CJS iconv-lite encoding chain. Remove
+      # once that transitive @exodus/bytes is require()-able under the Next
+      # bundle (dual-package publish or a Next externalRequire fix).
+      - dependency-name: 'jsdom'
+        versions: ['>=27']
 
   # GitHub Actions pinned in .github/workflows/**
   - package-ecosystem: 'github-actions'
