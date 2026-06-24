@@ -91,6 +91,8 @@ Default models per TaskType (`routing` / `chat` / `reasoning` / `embeddings` / `
 
 One agent per distinct role. Pick the model **by TaskType**, not by hardcoded name — that way solutions stay portable across the providers the operator has configured.
 
+> **Reserved flag — never set `isSystem: true` on app/fork rows.** `isSystem` marks a row as **Sunrise core machinery**: it becomes undeletable, undeactivatable, slug- and instruction-locked, and is excluded from config backup/export (the protections live on `AiAgent`, `AiCapability`, and `AiWorkflow`; `AiAgentProfile` carries the column too). It is **not** a "built-in look" badge. The agent **API** path is already safe — `createAgentSchema` has no `isSystem` field, so a `POST` can never set it. The **seed** path is the footgun: a core seed copied as a template silently elevates your agent. See [Persisting app agents](#persisting-app-agents-the-seed-path) before seeding.
+
 | Role              | TaskType    | Temperature | Why                             |
 | ----------------- | ----------- | ----------- | ------------------------------- |
 | Router/Classifier | `routing`   | 0.0         | Fast, cheap, deterministic      |
@@ -129,6 +131,21 @@ Agent updates are **versioned** — `PATCH /agents/:id` creates an `AiAgentVersi
 **If the solution needs more than one agent that should sound the same**, hoist the shared persona / voice / guardrails into an `AiAgentProfile` row and link each agent via `profileId`. Per-field `personaMode` / `voiceMode` / `guardrailsMode` (`inherit` / `override` / `append`) controls how each agent combines the profile fragments with its own. The runtime resolves the composed system prompt for both chat and workflow `agent_call` — one source of truth for brand voice. Profiles have a dedicated admin section (`/admin/orchestration/agent-profiles`); create the profile first, then point the agents at it.
 
 **Reasoning effort** is set via the `reasoningEffort` field (`minimal` / `low` / `medium` / `high` / null). Only honoured on reasoning-capable models (o-series / gpt-5 / Claude 4 thinking) — silently dropped elsewhere. Leave null unless the role genuinely benefits from deeper reasoning (typically planners, supervisors, complex evaluators).
+
+#### Persisting app agents (the seed path)
+
+API-created agents are admin-editable rows, but they **don't exist on a fresh install** or survive a `db:reset`. An app/fork agent that must always be present (e.g. a questionnaire extractor your app dispatches in code) has to be **seeded**.
+
+**Do not copy a Sunrise core seed as your template.** The obvious examples — `prisma/seeds/010-model-auditor.ts`, `016-evaluation-judges.ts` — all set `isSystem: true` because they ARE core machinery; copying one verbatim silently elevates your app agent into the reserved class (see the callout above) while it masquerades as platform machinery. Start from the app-agent scaffold instead: [`templates/app-agent-seed.md`](templates/app-agent-seed.md).
+
+The rules:
+
+- **`isSystem: false`** — always, with a comment so the next reader doesn't "fix" it.
+- **Idempotent `upsert`** keyed on `slug`, so re-seeds converge instead of duplicating.
+- **App namespace** — put the file in a subdirectory (`prisma/seeds/app-<name>/NNN-*.ts`), not at the top level. The runner discovers seeds recursively; the subdirectory keeps app seeds clear of core seed numbers and signals "app, not platform". (Basename must still match `NNN-slug.ts`.)
+- **Empty `provider` / `model`** (`''`) to inherit the matrix-resolved default for the TaskType, exactly as the API path above recommends.
+
+The same reservation applies to `AiCapability` and `AiAgentProfile` if you seed those.
 
 ### Step 3: Create custom capabilities
 

@@ -48,6 +48,8 @@ This means: a capability can work when dispatched manually but be invisible to a
 
 The built-in capabilities (`search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `read_user_memory`, `write_user_memory`, `escalate_to_human`, `call_external_api`, `run_workflow`, `upload_to_storage`, `apply_audit_changes`, `add_provider_models`, `deactivate_provider_models`) are seeded with `isSystem: true` and **cannot be deleted** via the API. To give an agent access, bind the existing capability — don't create a new one with the same slug.
 
+**`isSystem` is reserved for Sunrise core — keep it `false` on app/fork rows.** It confers a protected lifecycle (undeletable, undeactivatable, excluded from backup/export), not a "built-in look" badge. The `POST /capabilities` API can't set it (`createCapabilitySchema` has no `isSystem` field), so the **seed path is the only way to reach it** — and a core seed copied as a template will silently elevate your app capability. The same applies to `AiAgent` and `AiAgentProfile`. See the app-agent seed scaffold and rationale in `/orchestration-solution-builder` (`templates/app-agent-seed.md`).
+
 ## No next/\* Imports
 
 `lib/orchestration/` is platform-agnostic. Never import from `next/headers`, `next/server`, etc. in capability files. If you need request context, it should come through `CapabilityContext.entityContext`.
