@@ -665,7 +665,7 @@ describe('AgentForm — Instructions tab', () => {
       });
     });
 
-    it('emptying the note normalises it to null, and unchecking hides the callout', async () => {
+    it('clears a populated note (and hides the callout) when the flag is unticked', async () => {
       const { apiClient } = await import('@/lib/api/client');
       const agent = makeAgent({
         runtimePromptManaged: true,
@@ -678,8 +678,48 @@ describe('AgentForm — Instructions tab', () => {
       );
       const user = await gotoInstructions();
 
-      // Clear the pre-filled note — the empty string must normalise to null
-      // (the `e.target.value === '' ? null : …` branch), not persist as "".
+      // Untick while the note still has content. The checkbox handler must null
+      // the note so a stale value isn't persisted against an agent that no
+      // longer claims a runtime-built prompt — and the callout / note field
+      // disappear and the preview label reverts.
+      await user.click(screen.getByRole('checkbox', { name: /prompt is built at runtime/i }));
+
+      expect(screen.queryByText(/prompt is built in application code/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByPlaceholderText(/where is the real prompt built/i)
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/what the LLM actually sees/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/agents/agent-edit-id'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              runtimePromptManaged: false,
+              runtimePromptNote: null,
+            }),
+          })
+        );
+      });
+    });
+
+    it('normalises an emptied note to null on save (setValueAs)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const agent = makeAgent({
+        runtimePromptManaged: true,
+        runtimePromptNote: 'Built in extractor-capability.ts',
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue(agent);
+
+      render(
+        <AgentForm mode="edit" agent={agent} providers={MOCK_PROVIDERS} models={MOCK_MODELS} />
+      );
+      const user = await gotoInstructions();
+
+      // Emptying the textarea must persist as null, not "" (the register
+      // setValueAs `v === '' ? null : v` branch), matching sibling fields.
       await user.clear(screen.getByPlaceholderText(/where is the real prompt built/i));
       await user.click(screen.getByRole('button', { name: /save changes/i }));
 
@@ -691,16 +731,6 @@ describe('AgentForm — Instructions tab', () => {
           })
         );
       });
-
-      // Unchecking removes the callout + note field and reverts the preview
-      // label (the checkbox `v === true` false branch + the hidden-section path).
-      await user.click(screen.getByRole('checkbox', { name: /prompt is built at runtime/i }));
-
-      expect(screen.queryByText(/prompt is built in application code/i)).not.toBeInTheDocument();
-      expect(
-        screen.queryByPlaceholderText(/where is the real prompt built/i)
-      ).not.toBeInTheDocument();
-      expect(screen.getByText(/what the LLM actually sees/i)).toBeInTheDocument();
     });
 
     it('shows a validation error and blocks submit when the note exceeds 2,000 chars', async () => {

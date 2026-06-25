@@ -307,7 +307,6 @@ export function AgentForm({
   const currentVoiceMode = watch('voiceMode');
   const currentGuardrailsMode = watch('guardrailsMode');
   const currentRuntimePromptManaged = watch('runtimePromptManaged');
-  const currentRuntimePromptNote = watch('runtimePromptNote');
 
   // Resolve the live effective prompt for the preview card on the
   // Instructions tab. Uses the same pure helper that the chat handler
@@ -1449,9 +1448,14 @@ export function AgentForm({
               <Checkbox
                 id="runtimePromptManaged"
                 checked={currentRuntimePromptManaged}
-                onCheckedChange={(v) =>
-                  setValue('runtimePromptManaged', v === true, { shouldDirty: true })
-                }
+                onCheckedChange={(v) => {
+                  const next = v === true;
+                  setValue('runtimePromptManaged', next, { shouldDirty: true });
+                  // Clear the note when turning the flag off so a stale note
+                  // isn't persisted (and silently resurrected) against an agent
+                  // that no longer claims a runtime-built prompt.
+                  if (!next) setValue('runtimePromptNote', null, { shouldDirty: true });
+                }}
               />
               <Label htmlFor="runtimePromptManaged" className="font-normal">
                 Prompt is built at runtime (stored instructions not sent to the model){' '}
@@ -1482,12 +1486,9 @@ export function AgentForm({
                   id="runtimePromptNote"
                   rows={2}
                   placeholder="Optional: where is the real prompt built? e.g. lib/questionnaire/extractor-capability.ts"
-                  value={currentRuntimePromptNote ?? ''}
-                  onChange={(e) =>
-                    setValue('runtimePromptNote', e.target.value === '' ? null : e.target.value, {
-                      shouldDirty: true,
-                    })
-                  }
+                  {...register('runtimePromptNote', {
+                    setValueAs: (v: string) => (v === '' ? null : v),
+                  })}
                 />
                 {errors.runtimePromptNote && (
                   <p className="text-destructive text-xs">{errors.runtimePromptNote.message}</p>
