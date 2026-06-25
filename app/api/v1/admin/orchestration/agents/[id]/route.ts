@@ -185,6 +185,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.enableVoiceInput !== undefined) data.enableVoiceInput = body.enableVoiceInput;
   if (body.enableImageInput !== undefined) data.enableImageInput = body.enableImageInput;
   if (body.enableDocumentInput !== undefined) data.enableDocumentInput = body.enableDocumentInput;
+  if (body.runtimePromptManaged !== undefined)
+    data.runtimePromptManaged = body.runtimePromptManaged;
+  if (body.runtimePromptNote !== undefined) data.runtimePromptNote = body.runtimePromptNote;
   // Agent-profile inheritance fields.
   if (body.persona !== undefined) data.persona = body.persona;
   if (body.guardrails !== undefined) data.guardrails = body.guardrails;
@@ -261,6 +264,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     'enableVoiceInput',
     'enableImageInput',
     'enableDocumentInput',
+    'runtimePromptManaged',
+    'runtimePromptNote',
     'persona',
     'guardrails',
     'personaMode',
@@ -383,6 +388,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           enableVoiceInput: current.enableVoiceInput,
           enableImageInput: current.enableImageInput,
           enableDocumentInput: current.enableDocumentInput,
+          runtimePromptManaged: current.runtimePromptManaged,
+          runtimePromptNote: current.runtimePromptNote,
         };
 
         const summaryFields = [

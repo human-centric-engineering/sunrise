@@ -25,16 +25,16 @@ The agents list page filters to `kind='chat'` by default but renders a **Judge**
 
 ## Tab structure
 
-| #   | Tab           | Create | Edit | Notes                                                                                                                                                                                                                  |
-| --- | ------------- | ------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | General       | ✅     | ✅   | Name, slug, description, **inherit from profile**, active, **visibility**, retention days                                                                                                                              |
-| 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn                                                                                                                |
-| 3   | Instructions  | ✅     | ✅   | **Persona**, system instructions, **guardrails**, **brand voice** (all three inheritable from profile with override/append mode), **effective prompt preview**, knowledge, topic boundaries, history panel (edit only) |
-| 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                                                                                                                 |
-| 5   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                                                                                                                       |
-| 6   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                                                                                                                               |
-| 7   | Test          | 🚫     | ✅   | Embeds the shared admin `<ChatInterface>` against this agent                                                                                                                                                           |
-| 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` stacks two cards: **Appearance & copy** (per-agent widget colours / fonts / copy / starters) + **Tokens** (create, copy `<script>` snippet, toggle active, manage origins)                        |
+| #   | Tab           | Create | Edit | Notes                                                                                                                                                                                                                                                 |
+| --- | ------------- | ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | General       | ✅     | ✅   | Name, slug, description, **inherit from profile**, active, **visibility**, retention days                                                                                                                                                             |
+| 2   | Model         | ✅     | ✅   | Provider, **fallback providers**, model, temperature, max tokens, budget, **rate limit RPM**, test conn                                                                                                                                               |
+| 3   | Instructions  | ✅     | ✅   | **Runtime-built prompt flag**, **persona**, system instructions, **guardrails**, **brand voice** (all three inheritable from profile with override/append mode), **effective prompt preview**, knowledge, topic boundaries, history panel (edit only) |
+| 4   | Capabilities  | 🚫     | ✅   | Attach/detach, isEnabled, customConfig                                                                                                                                                                                                                |
+| 5   | Invite tokens | 🚫     | ✅\* | Token CRUD table; only enabled when `visibility = 'invite_only'`                                                                                                                                                                                      |
+| 6   | Versions      | 🚫     | ✅   | Full config version history with restore                                                                                                                                                                                                              |
+| 7   | Test          | 🚫     | ✅   | Embeds the shared admin `<ChatInterface>` against this agent                                                                                                                                                                                          |
+| 8   | Embed         | 🚫     | ✅   | `<EmbedConfigPanel>` stacks two cards: **Appearance & copy** (per-agent widget colours / fonts / copy / starters) + **Tokens** (create, copy `<script>` snippet, toggle active, manage origins)                                                       |
 
 Tabs 4–8 are `disabled` in create mode — they require a persisted `agent.id`. Tab 5 additionally requires `visibility = 'invite_only'` — it is disabled for other visibility modes.
 
@@ -204,6 +204,18 @@ Each renders a `<Textarea>` plus an "Append to profile" checkbox that appears on
 
 When no profile is selected, the checkbox is hidden and the field behaves exactly as today (agent-only).
 
+### Runtime-built prompt (honesty flag)
+
+At the top of the tab, a checkbox bound to `runtimePromptManaged` (DB-backed, `@default(false)`) marks agents dispatched for their **provider/model binding only**, whose system prompt is assembled in application code per call — the capability pattern, where a capability `extends BaseCapability` and builds its prompt from live runtime data rather than reading the stored instruction fields.
+
+When ticked:
+
+- A non-dismissible amber callout warns that the persona / system instructions / guardrails / brand voice on this tab are **not sent to the model** — editing them changes nothing at runtime.
+- An optional `runtimePromptNote` `<Textarea>` (≤2,000 chars, nullable) lets the operator record where the real prompt is built (e.g. a file path).
+- The **Effective prompt preview** summary re-labels from "— what the LLM actually sees" to "— NOT what the LLM sees (prompt built at runtime)".
+
+The flag is **advisory and behaviour-neutral**: the chat handler and workflow `agent_call` executor never read it. It exists purely so the admin surface doesn't mislead an operator into tuning inert fields. It round-trips through the agent create/GET/PATCH API and is captured in version snapshots (Instructions tab in the change summary). See GitHub issue #304.
+
 ### System instructions
 
 `<Textarea rows={16}>` bound to `systemInstructions`, with a character count in the footer. Never inheritable.
@@ -232,7 +244,7 @@ A collapsible card at the bottom of the tab shows the **merged system message** 
 - `unset` — neither side contributed
 - `agent-only` — system instructions (always agent-only)
 
-The preview re-renders live as the operator types or flips a mode checkbox. What you see is what the model gets.
+The preview re-renders live as the operator types or flips a mode checkbox. What you see is what the model gets — **unless** the [runtime-built prompt flag](#runtime-built-prompt-honesty-flag) is set, in which case the summary is re-labelled to make clear the composed text is the stored fields, not what the LLM receives.
 
 ### History panel
 

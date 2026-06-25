@@ -214,6 +214,16 @@ export const createAgentSchema = z
 
     enableDocumentInput: z.boolean().default(false),
 
+    // Advisory honesty flag — when true the agent's stored instruction fields
+    // are not sent to the model (the prompt is built in app code per call).
+    // App-populated, behaviour-neutral. See AiAgent.runtimePromptManaged.
+    runtimePromptManaged: z.boolean().default(false),
+    runtimePromptNote: z
+      .string()
+      .max(2000, 'Runtime prompt note must be less than 2,000 characters')
+      .nullable()
+      .optional(),
+
     isActive: z.boolean().default(true),
   })
   .superRefine((data, ctx) => {
@@ -402,6 +412,13 @@ export const updateAgentSchema = z
     enableImageInput: z.boolean().optional(),
 
     enableDocumentInput: z.boolean().optional(),
+
+    runtimePromptManaged: z.boolean().optional(),
+    runtimePromptNote: z
+      .string()
+      .max(2000, 'Runtime prompt note must be less than 2,000 characters')
+      .nullable()
+      .optional(),
 
     isActive: z.boolean().optional(),
   })

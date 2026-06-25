@@ -45,6 +45,8 @@ const FIELD_LABELS: Record<string, string> = {
   enableVoiceInput: 'Voice input',
   enableImageInput: 'Image input',
   enableDocumentInput: 'Document input',
+  runtimePromptManaged: 'Runtime-built prompt',
+  runtimePromptNote: 'Runtime prompt note',
 };
 
 /**
@@ -88,6 +90,8 @@ const FIELD_TO_TAB: Record<string, string> = {
   grantedTagIds: 'Instructions',
   grantedDocumentIds: 'Instructions',
   topicBoundaries: 'Instructions',
+  runtimePromptManaged: 'Instructions',
+  runtimePromptNote: 'Instructions',
 };
 
 const TAB_ORDER: string[] = ['General', 'Model', 'Instructions'];
@@ -132,6 +136,8 @@ export const SNAPSHOT_FIELDS = [
   'enableVoiceInput',
   'enableImageInput',
   'enableDocumentInput',
+  'runtimePromptManaged',
+  'runtimePromptNote',
 ] as const;
 
 export function extractSnapshotFromAgent(agent: Record<string, unknown>): Record<string, unknown> {
@@ -153,6 +159,8 @@ const FIELD_ORDER: string[] = [
   'provider',
   'fallbackProviders',
   'systemInstructions',
+  'runtimePromptManaged',
+  'runtimePromptNote',
   'temperature',
   'maxTokens',
   'maxHistoryTokens',

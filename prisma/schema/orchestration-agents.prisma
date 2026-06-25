@@ -50,6 +50,18 @@ model AiAgent {
   // Null/empty agent text => inherit from the linked AiAgentProfile (if any).
   // When populated, the `<field>Mode` column decides whether the agent text
   // replaces or is appended after the profile value.
+  // Advisory honesty flag for agents dispatched for their provider/model
+  // binding only, whose system prompt is assembled in application code per
+  // call (the capability pattern — see BaseCapability) rather than read from
+  // the stored persona / systemInstructions / guardrails / brandVoiceInstructions
+  // fields. App-populated and behaviour-neutral — the runtime never reads it;
+  // it only drives the admin Instructions-tab callout and re-labels the
+  // "Effective prompt preview" so an operator isn't misled into tuning
+  // instruction fields the live model never receives. Default false = stored
+  // instructions are load-bearing (the streamChat / workflow agent_call path).
+  // See components/admin/orchestration/agent-form.tsx and GitHub issue #304.
+  runtimePromptManaged      Boolean  @default(false)
+  runtimePromptNote         String?  @db.Text // optional operator note shown in the callout (e.g. where the real prompt is built)
   persona                   String?  @db.Text // who the agent is (identity/role); inheritable from AiAgentProfile
   brandVoiceInstructions    String?  @db.Text // tone/style; inheritable from AiAgentProfile
   guardrails                String?  @db.Text // refusals/don'ts; inheritable from AiAgentProfile

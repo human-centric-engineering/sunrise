@@ -196,6 +196,8 @@ export const POST = withAdminAuth(async (request, session) => {
         enableVoiceInput: body.enableVoiceInput ?? false,
         enableImageInput: body.enableImageInput ?? false,
         enableDocumentInput: body.enableDocumentInput ?? false,
+        runtimePromptManaged: body.runtimePromptManaged ?? false,
+        runtimePromptNote: body.runtimePromptNote ?? null,
         createdBy: session.user.id,
       },
     });
