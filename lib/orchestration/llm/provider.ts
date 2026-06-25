@@ -18,6 +18,8 @@ import type {
   LlmResponse,
   ModelInfo,
   StreamChunk,
+  TranscribeAudio,
+  TranscribeChunk,
   TranscribeOptions,
   TranscribeResponse,
 } from '@/lib/orchestration/llm/types';
@@ -123,10 +125,25 @@ export interface LlmProvider {
    * `'audio'`, so callers can rely on this method being defined when
    * a model with that capability is selected.
    */
-  transcribe?(
-    audio: Blob | Buffer | ArrayBuffer | Uint8Array,
+  transcribe?(audio: TranscribeAudio, options: TranscribeOptions): Promise<TranscribeResponse>;
+
+  /**
+   * Stream a transcription as `TranscribeChunk`s — the streaming analogue
+   * of {@link transcribe}, mirroring the `chat` → `chatStream` split.
+   *
+   * Optional and rarely implemented natively: the only batch STT provider
+   * today (OpenAI-compatible Whisper) has no streaming transcription API, so
+   * most providers omit this. Callers should go through `streamTranscription`
+   * (`@/lib/orchestration/llm/transcribe-stream`), which adapts the batch
+   * `transcribe` result into a single `final` + `done` stream when this is
+   * absent. A provider that genuinely supports low-latency interim
+   * transcripts (e.g. Deepgram, AssemblyAI) implements this directly to emit
+   * `partial` chunks as audio arrives.
+   */
+  transcribeStream?(
+    audio: TranscribeAudio,
     options: TranscribeOptions
-  ): Promise<TranscribeResponse>;
+  ): AsyncIterable<TranscribeChunk>;
 }
 
 /**
