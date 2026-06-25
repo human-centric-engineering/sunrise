@@ -299,8 +299,13 @@ describe('Agent Export → Import Round-Trip', () => {
     expect(txMock.aiAgentKnowledgeTag.createMany).toHaveBeenCalledOnce();
     const tagCall = txMock.aiAgentKnowledgeTag.createMany.mock.calls[0][0] as {
       data: Array<{ agentId: string; tagId: string }>;
+      skipDuplicates?: boolean;
     };
     expect(tagCall.data).toEqual([{ agentId: 'new-agent-id', tagId: TAG_ID }]);
+    // skipDuplicates guards against a hand-edited bundle repeating a tag slug
+    // (which would otherwise P2002 on the (agentId, tagId) PK) — matches the
+    // clone/PATCH convention.
+    expect(tagCall.skipDuplicates).toBe(true);
   });
 
   it('fails the import when a referenced profile slug does not exist in the target environment', async () => {

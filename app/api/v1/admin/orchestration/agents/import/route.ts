@@ -228,6 +228,7 @@ export const POST = withAdminAuth(async (request, session) => {
         if (tagIds.length > 0) {
           await tx.aiAgentKnowledgeTag.createMany({
             data: tagIds.map((tagId) => ({ agentId: existing.id, tagId })),
+            skipDuplicates: true,
           });
         }
         results.overwritten += 1;
@@ -247,6 +248,7 @@ export const POST = withAdminAuth(async (request, session) => {
         if (tagIds.length > 0) {
           await tx.aiAgentKnowledgeTag.createMany({
             data: tagIds.map((tagId) => ({ agentId: created.id, tagId })),
+            skipDuplicates: true,
           });
         }
         results.imported += 1;
