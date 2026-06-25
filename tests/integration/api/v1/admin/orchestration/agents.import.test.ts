@@ -46,11 +46,17 @@ vi.mock('@/lib/db/client', () => {
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    aiAgentKnowledgeTag: {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
   };
 
   return {
     prisma: {
       aiCapability: { findMany: vi.fn() },
+      aiAgentProfile: { findMany: vi.fn(async () => []) },
+      knowledgeTag: { findMany: vi.fn(async () => []) },
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock)),
       _txMock: txMock, // expose for test assertions
     },

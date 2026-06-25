@@ -65,6 +65,19 @@ release process.
   incoherent `input_schema`. Behaviour change: callers passing a non-object
   root schema to Anthropic now get a local error (previously a provider-side
   failure). (#335)
+- Agent export/import bundle now round-trips the full agent configuration.
+  Previously the bundle silently dropped many `AiAgent` fields on export/import
+  (`kind`, `persona`, `guardrails`, `personaMode`/`voiceMode`/`guardrailsMode`,
+  `knowledgeAccessMode`/`knowledgeRetrievalMode`/`knowledgeTriggerKeywords`,
+  `enableVoiceInput`/`enableImageInput`/`enableDocumentInput`,
+  `runtimePromptManaged`/`runtimePromptNote`) and never wrote `maxCostPerTurnUsd`
+  on import. The bundle now also carries the linked **profile** and granted
+  **knowledge tags** by slug and re-links them on import; a referenced profile
+  or tag missing in the target environment fails the import with an actionable
+  message (rather than silently dropping the agent's identity / knowledge
+  scoping). Agent→document grants are intentionally still not carried —
+  documents lack a stable cross-environment key (tracked in #338). Older bundles
+  remain importable (all new fields are optional/defaulted). (#332)
 
 ## [0.1.0] — 2026-06-24
 

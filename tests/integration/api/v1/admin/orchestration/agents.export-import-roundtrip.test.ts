@@ -40,12 +40,18 @@ vi.mock('@/lib/db/client', () => {
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    aiAgentKnowledgeTag: {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
   };
 
   return {
     prisma: {
       aiAgent: { findMany: vi.fn() },
       aiCapability: { findMany: vi.fn() },
+      aiAgentProfile: { findMany: vi.fn() },
+      knowledgeTag: { findMany: vi.fn() },
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock)),
       _txMock: txMock,
     },
@@ -75,6 +81,10 @@ import { prisma } from '@/lib/db/client';
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwul';
 const CAPABILITY_SLUG = 'search_knowledge_base';
 const CAPABILITY_ID = 'cap-search-1';
+const PROFILE_SLUG = 'support-persona';
+const PROFILE_ID = 'profile-1';
+const TAG_SLUG = 'hr-policies';
+const TAG_ID = 'tag-1';
 
 function makeDbAgent() {
   return {
@@ -90,6 +100,7 @@ function makeDbAgent() {
     temperature: 0.7,
     maxTokens: 4096,
     monthlyBudgetUsd: 50,
+    maxCostPerTurnUsd: 0.25,
     metadata: null,
     isActive: true,
     fallbackProviders: ['openai'],
@@ -98,13 +109,32 @@ function makeDbAgent() {
     outputGuardMode: 'warn_and_continue',
     citationGuardMode: 'log_only',
     maxHistoryTokens: 8000,
+    maxHistoryMessages: 40,
     retentionDays: 60,
     visibility: 'invite_only',
     topicBoundaries: ['politics'],
     brandVoiceInstructions: 'Be formal and concise.',
+    // Fields previously dropped by the bundle (#332).
+    kind: 'judge',
+    knowledgeAccessMode: 'restricted',
+    knowledgeRetrievalMode: 'keywords',
+    knowledgeTriggerKeywords: ['refund', 'policy'],
+    persona: 'A meticulous research librarian.',
+    guardrails: 'Never speculate beyond cited sources.',
+    personaMode: 'append',
+    voiceMode: 'append',
+    guardrailsMode: 'append',
+    enableVoiceInput: true,
+    enableImageInput: true,
+    enableDocumentInput: true,
+    runtimePromptManaged: true,
+    runtimePromptNote: 'Prompt assembled by the questionnaire capability.',
+    widgetConfig: null,
     createdBy: 'admin-1',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
+    profile: { slug: PROFILE_SLUG },
+    grantedTags: [{ tag: { slug: TAG_SLUG } }],
     capabilities: [
       {
         id: 'link-1',
@@ -153,6 +183,14 @@ describe('Agent Export → Import Round-Trip', () => {
     txMock.aiAgent.findUnique.mockResolvedValue(null);
     txMock.aiAgent.create.mockResolvedValue({ id: 'new-agent-id', slug: 'research-assistant' });
     txMock.aiAgentCapability.createMany.mockResolvedValue({ count: 1 });
+    txMock.aiAgentKnowledgeTag.createMany.mockResolvedValue({ count: 1 });
+    // By default the referenced profile + tag exist in the target environment.
+    vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([
+      { id: PROFILE_ID, slug: PROFILE_SLUG },
+    ] as never);
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([
+      { id: TAG_ID, slug: TAG_SLUG },
+    ] as never);
   });
 
   it('re-imported agent matches the original (name, slug, instructions, model, capabilities)', async () => {
@@ -225,6 +263,27 @@ describe('Agent Export → Import Round-Trip', () => {
     expect(created.topicBoundaries).toEqual(['politics']);
     expect(created.brandVoiceInstructions).toBe('Be formal and concise.');
 
+    // Step 3c: Verify the fields the bundle previously DROPPED now round-trip (#332).
+    expect(created.maxCostPerTurnUsd).toBe(0.25); // was in schema+export but never written on import
+    expect(created.maxHistoryMessages).toBe(40);
+    expect(created.kind).toBe('judge');
+    expect(created.knowledgeAccessMode).toBe('restricted');
+    expect(created.knowledgeRetrievalMode).toBe('keywords');
+    expect(created.knowledgeTriggerKeywords).toEqual(['refund', 'policy']);
+    expect(created.persona).toBe('A meticulous research librarian.');
+    expect(created.guardrails).toBe('Never speculate beyond cited sources.');
+    expect(created.personaMode).toBe('append');
+    expect(created.voiceMode).toBe('append');
+    expect(created.guardrailsMode).toBe('append');
+    expect(created.enableVoiceInput).toBe(true);
+    expect(created.enableImageInput).toBe(true);
+    expect(created.enableDocumentInput).toBe(true);
+    expect(created.runtimePromptManaged).toBe(true);
+    expect(created.runtimePromptNote).toBe('Prompt assembled by the questionnaire capability.');
+
+    // Step 3d: Profile linked by slug → resolved to the target env's profile id.
+    expect(created.profileId).toBe(PROFILE_ID);
+
     // Step 4: Verify capabilities were re-attached
     expect(txMock.aiAgentCapability.createMany).toHaveBeenCalledOnce();
     const pivotCall = txMock.aiAgentCapability.createMany.mock.calls[0][0] as {
@@ -235,5 +294,49 @@ describe('Agent Export → Import Round-Trip', () => {
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(pivotCall.data[0].isEnabled).toBe(true);
     expect(pivotCall.data[0].customRateLimit).toBe(10);
+
+    // Step 5: Knowledge-tag grant re-linked by slug → target env's tag id.
+    expect(txMock.aiAgentKnowledgeTag.createMany).toHaveBeenCalledOnce();
+    const tagCall = txMock.aiAgentKnowledgeTag.createMany.mock.calls[0][0] as {
+      data: Array<{ agentId: string; tagId: string }>;
+    };
+    expect(tagCall.data).toEqual([{ agentId: 'new-agent-id', tagId: TAG_ID }]);
+  });
+
+  it('fails the import when a referenced profile slug does not exist in the target environment', async () => {
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeDbAgent()] as never);
+    const exportResponse = await ExportPOST(makeExportRequest([AGENT_ID]));
+    const bundle = (JSON.parse(await exportResponse.text()) as { data: unknown }).data;
+
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+      { id: CAPABILITY_ID, slug: CAPABILITY_SLUG },
+    ] as never);
+    // Target env has the tag but NOT the profile.
+    vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([] as never);
+
+    const res = await ImportPOST(makeImportRequest({ bundle }));
+    expect(res.status).toBe(400);
+    const body = JSON.parse(await res.text()) as { error: { message: string } };
+    expect(body.error.message).toContain(PROFILE_SLUG);
+    // Nothing was written — the transaction rolled back.
+    expect(txMock.aiAgent.create).not.toHaveBeenCalled();
+  });
+
+  it('fails the import when a granted knowledge-tag slug does not exist in the target environment', async () => {
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeDbAgent()] as never);
+    const exportResponse = await ExportPOST(makeExportRequest([AGENT_ID]));
+    const bundle = (JSON.parse(await exportResponse.text()) as { data: unknown }).data;
+
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+      { id: CAPABILITY_ID, slug: CAPABILITY_SLUG },
+    ] as never);
+    // Target env has the profile but NOT the tag.
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([] as never);
+
+    const res = await ImportPOST(makeImportRequest({ bundle }));
+    expect(res.status).toBe(400);
+    const body = JSON.parse(await res.text()) as { error: { message: string } };
+    expect(body.error.message).toContain(TAG_SLUG);
+    expect(txMock.aiAgent.create).not.toHaveBeenCalled();
   });
 });

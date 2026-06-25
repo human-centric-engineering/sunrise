@@ -1351,6 +1351,50 @@ describe('agentBundleSchema', () => {
     // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
   });
+
+  it('defaults the post-hoc agent fields when an older bundle omits them (#332 backward-compat)', () => {
+    const result = agentBundleSchema.safeParse(VALID_BUNDLE);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const agent = result.data.agents[0];
+    expect(agent.kind).toBe('chat');
+    expect(agent.knowledgeAccessMode).toBe('full');
+    expect(agent.knowledgeRetrievalMode).toBe('model');
+    expect(agent.knowledgeTriggerKeywords).toEqual([]);
+    expect(agent.personaMode).toBe('override');
+    expect(agent.voiceMode).toBe('override');
+    expect(agent.guardrailsMode).toBe('override');
+    expect(agent.enableVoiceInput).toBe(false);
+    expect(agent.enableImageInput).toBe(false);
+    expect(agent.enableDocumentInput).toBe(false);
+    expect(agent.runtimePromptManaged).toBe(false);
+    expect(agent.knowledgeTagSlugs).toEqual([]);
+  });
+
+  it('accepts the profile + knowledge-tag references carried by slug (#332)', () => {
+    const result = agentBundleSchema.safeParse({
+      ...VALID_BUNDLE,
+      agents: [
+        {
+          ...VALID_BUNDLE.agents[0],
+          kind: 'judge',
+          persona: 'A careful reviewer.',
+          guardrails: 'Never invent facts.',
+          enableVoiceInput: true,
+          runtimePromptManaged: true,
+          runtimePromptNote: 'Built at runtime.',
+          profileSlug: 'reviewer-persona',
+          knowledgeTagSlugs: ['policies', 'faqs'],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const agent = result.data.agents[0];
+    expect(agent.kind).toBe('judge');
+    expect(agent.profileSlug).toBe('reviewer-persona');
+    expect(agent.knowledgeTagSlugs).toEqual(['policies', 'faqs']);
+  });
 });
 
 describe('importAgentsSchema', () => {

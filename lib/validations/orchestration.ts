@@ -1185,6 +1185,33 @@ const bundledAgentSchema = z.object({
   // re-validates it through resolveWidgetConfig before reading. Older
   // bundles that pre-date item 7 omit it; null = use defaults.
   widgetConfig: z.unknown().nullable().optional(),
+  // Fields below were added to AiAgent after the bundle was first authored.
+  // All optional/defaulted so older bundles still import unchanged; mirror the
+  // constraints in createAgentSchema. See #332.
+  kind: z.enum(['chat', 'judge']).default('chat'),
+  knowledgeAccessMode: z.enum(['full', 'restricted']).default('full'),
+  knowledgeRetrievalMode: z
+    .enum(['model', 'first_turn', 'every_turn', 'keywords'])
+    .default('model'),
+  knowledgeTriggerKeywords: z.array(z.string().min(1).max(100)).max(50).default([]),
+  persona: z.string().max(50000).nullable().optional(),
+  guardrails: z.string().max(10000).nullable().optional(),
+  personaMode: z.enum(['override', 'append']).default('override'),
+  voiceMode: z.enum(['override', 'append']).default('override'),
+  guardrailsMode: z.enum(['override', 'append']).default('override'),
+  enableVoiceInput: z.boolean().default(false),
+  enableImageInput: z.boolean().default(false),
+  enableDocumentInput: z.boolean().default(false),
+  runtimePromptManaged: z.boolean().default(false),
+  runtimePromptNote: z.string().max(2000).nullable().optional(),
+  // Cross-environment relations carried by stable reference (slug), re-linked
+  // on import. A referenced profile/tag missing in the target env FAILS the
+  // import with an actionable message (unlike capabilities, which warn-and-skip)
+  // — a dropped profile or knowledge scope silently changes agent behaviour.
+  // Document grants are intentionally NOT carried here — documents lack a stable
+  // cross-environment key; tracked separately in #338.
+  profileSlug: z.string().min(1).max(100).nullable().optional(),
+  knowledgeTagSlugs: z.array(z.string().min(1).max(100)).max(200).default([]),
   capabilities: z
     .array(
       z.object({

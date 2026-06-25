@@ -15,6 +15,12 @@
  *   into `results.warnings` rather than failing the whole import — it's
  *   common for bundles to come from a superset environment.
  *
+ *   Profile and knowledge-tag references (carried by slug) are re-linked
+ *   on import; a slug missing in this environment FAILS the whole import
+ *   with an actionable message (the agent's identity / knowledge scoping
+ *   would otherwise be silently dropped). Agent→document grants are not
+ *   carried by the bundle (documents lack a stable cross-env key — #338).
+ *
  *   Everything runs inside a single `prisma.$transaction`, so a partial
  *   failure rolls back the whole import. `capabilityDispatcher.clearCache()`
  *   is called once at the very end.
@@ -69,6 +75,28 @@ export const POST = withAdminAuth(async (request, session) => {
   });
   const capabilityIdBySlug = new Map(capabilities.map((c) => [c.slug, c.id]));
 
+  // Resolve profile + knowledge-tag slugs → ids up front too. Unlike
+  // capabilities (which warn-and-skip for superset-env tolerance), a missing
+  // profile or knowledge tag is a HARD failure inside the transaction below:
+  // silently dropping an agent's profile inheritance or knowledge scoping would
+  // change its behaviour, so we fail the whole import with an actionable
+  // message naming the missing reference.
+  const allProfileSlugs = Array.from(
+    new Set(bundle.agents.map((a) => a.profileSlug).filter((s): s is string => Boolean(s)))
+  );
+  const profiles = await prisma.aiAgentProfile.findMany({
+    where: { slug: { in: allProfileSlugs } },
+    select: { id: true, slug: true },
+  });
+  const profileIdBySlug = new Map(profiles.map((p) => [p.slug, p.id]));
+
+  const allTagSlugs = Array.from(new Set(bundle.agents.flatMap((a) => a.knowledgeTagSlugs)));
+  const tags = await prisma.knowledgeTag.findMany({
+    where: { slug: { in: allTagSlugs } },
+    select: { id: true, slug: true },
+  });
+  const tagIdBySlug = new Map(tags.map((t) => [t.slug, t.id]));
+
   const results: ImportResults = {
     imported: 0,
     overwritten: 0,
@@ -109,6 +137,32 @@ export const POST = withAdminAuth(async (request, session) => {
         });
       }
 
+      // Resolve the agent's profile + knowledge-tag references; a miss fails
+      // the whole import (the transaction rolls back) with an actionable error.
+      let profileId: string | null = null;
+      if (bundled.profileSlug) {
+        const resolved = profileIdBySlug.get(bundled.profileSlug);
+        if (!resolved) {
+          throw new ValidationError(
+            `Agent '${bundled.slug}': profile '${bundled.profileSlug}' not found in this environment — create it before importing.`,
+            { bundle: [`Missing profile: ${bundled.profileSlug}`] }
+          );
+        }
+        profileId = resolved;
+      }
+
+      const tagIds: string[] = [];
+      for (const tagSlug of bundled.knowledgeTagSlugs) {
+        const resolved = tagIdBySlug.get(tagSlug);
+        if (!resolved) {
+          throw new ValidationError(
+            `Agent '${bundled.slug}': knowledge tag '${tagSlug}' not found in this environment — create it before importing.`,
+            { bundle: [`Missing knowledge tag: ${tagSlug}`] }
+          );
+        }
+        tagIds.push(resolved);
+      }
+
       const agentData = {
         name: bundled.name,
         description: bundled.description,
@@ -122,6 +176,7 @@ export const POST = withAdminAuth(async (request, session) => {
         maxTokens: bundled.maxTokens,
         reasoningEffort: bundled.reasoningEffort ?? null,
         monthlyBudgetUsd: bundled.monthlyBudgetUsd ?? null,
+        maxCostPerTurnUsd: bundled.maxCostPerTurnUsd ?? null,
         metadata: (bundled.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         isActive: bundled.isActive,
         fallbackProviders: bundled.fallbackProviders ?? [],
@@ -139,6 +194,21 @@ export const POST = withAdminAuth(async (request, session) => {
         topicBoundaries: bundled.topicBoundaries ?? [],
         brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
         widgetConfig: (bundled.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        kind: bundled.kind,
+        knowledgeAccessMode: bundled.knowledgeAccessMode,
+        knowledgeRetrievalMode: bundled.knowledgeRetrievalMode,
+        knowledgeTriggerKeywords: bundled.knowledgeTriggerKeywords,
+        persona: bundled.persona ?? null,
+        guardrails: bundled.guardrails ?? null,
+        personaMode: bundled.personaMode,
+        voiceMode: bundled.voiceMode,
+        guardrailsMode: bundled.guardrailsMode,
+        enableVoiceInput: bundled.enableVoiceInput,
+        enableImageInput: bundled.enableImageInput,
+        enableDocumentInput: bundled.enableDocumentInput,
+        runtimePromptManaged: bundled.runtimePromptManaged,
+        runtimePromptNote: bundled.runtimePromptNote ?? null,
+        profileId,
       };
 
       if (existing) {
@@ -153,6 +223,13 @@ export const POST = withAdminAuth(async (request, session) => {
             data: pivotCreates.map((p) => ({ ...p, agentId: existing.id })),
           });
         }
+        // Rebuild knowledge-tag grants the same way as capability pivots.
+        await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: existing.id } });
+        if (tagIds.length > 0) {
+          await tx.aiAgentKnowledgeTag.createMany({
+            data: tagIds.map((tagId) => ({ agentId: existing.id, tagId })),
+          });
+        }
         results.overwritten += 1;
       } else {
         const created = await tx.aiAgent.create({
@@ -165,6 +242,11 @@ export const POST = withAdminAuth(async (request, session) => {
         if (pivotCreates.length > 0) {
           await tx.aiAgentCapability.createMany({
             data: pivotCreates.map((p) => ({ ...p, agentId: created.id })),
+          });
+        }
+        if (tagIds.length > 0) {
+          await tx.aiAgentKnowledgeTag.createMany({
+            data: tagIds.map((tagId) => ({ agentId: created.id, tagId })),
           });
         }
         results.imported += 1;

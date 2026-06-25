@@ -75,9 +75,13 @@ Judges are created via the agent form with `?kind=judge` in the URL (the "Create
 
 Header has an **Export selected** button enabled iff `selected.size > 0`. Clicking POSTs `/agents/export` with `{ agentIds: [...selected] }` and turns the response blob into a file download using the server's `Content-Disposition` filename (falls back to `agents-YYYY-MM-DD.json` if absent).
 
+The bundle carries the full agent configuration plus, **by slug**, the attached capabilities, the linked **profile** (`profileSlug`), and granted **knowledge tags** (`knowledgeTagSlugs`). Server-owned fields (`id`, `createdBy`, timestamps) are stripped for portability. Agent→**document** grants are intentionally not carried — documents have no stable cross-environment key (tracked in #338).
+
 ### Import
 
 The **Import** button opens `<ImportAgentsDialog>`, which takes a `.json` bundle, parses it client-side, and POSTs `/agents/import` with `{ bundle, conflictMode }` where `conflictMode` is `"skip"` (default) or `"overwrite"`. The server rejects bundles containing duplicate slugs with a 400 before starting any DB work. On success the dialog shows `{ imported, overwritten, skipped, warnings }` and the parent list refetches.
+
+Reference re-linking on import differs by relation: unknown **capability** slugs are collected into `warnings` and skipped (superset-environment tolerance), but a **profile** or **knowledge-tag** slug that doesn't exist in the target environment **fails the whole import** (single transaction → full rollback) with an actionable 400 naming the missing reference — silently dropping an agent's profile inheritance or knowledge scoping would change its behaviour. Older bundles (pre-dating these fields) still import: every added field is optional/defaulted.
 
 ### Duplicate (Clone)
 

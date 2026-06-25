@@ -3,10 +3,12 @@
  *
  * POST /api/v1/admin/orchestration/agents/export
  *   Body: { agentIds: string[] }
- *   Returns a versioned `AgentBundle` containing the selected agents and
- *   their attached capabilities (by slug). Server-owned fields (`id`,
+ *   Returns a versioned `AgentBundle` containing the selected agents, their
+ *   attached capabilities, the linked profile, and granted knowledge tags —
+ *   all carried by slug so they re-link on import. Server-owned fields (`id`,
  *   `createdAt`, `updatedAt`, `createdBy`) are stripped so the bundle is
- *   portable across environments.
+ *   portable across environments. Agent→document grants are not carried —
+ *   documents lack a stable cross-environment key (tracked in #338).
  *
  *   The response sets `Content-Disposition: attachment` so hitting the
  *   route directly from a browser triggers a "Save As" dialog.
@@ -33,6 +35,14 @@ const jsonRecord = z.record(z.string(), z.unknown()).nullable().catch(null);
 const guardModeSchema = z.enum(['log_only', 'warn_and_continue', 'block']).nullable();
 const visibilitySchema = z.enum(['internal', 'public', 'invite_only']);
 const reasoningEffortSchema = z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional();
+// Non-null enum columns — `.catch(default)` so a single legacy/malformed row
+// degrades to the default instead of failing the whole export.
+const kindSchema = z.enum(['chat', 'judge']).catch('chat');
+const knowledgeAccessModeSchema = z.enum(['full', 'restricted']).catch('full');
+const knowledgeRetrievalModeSchema = z
+  .enum(['model', 'first_turn', 'every_turn', 'keywords'])
+  .catch('model');
+const inheritanceModeSchema = z.enum(['override', 'append']).catch('override');
 
 export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
@@ -47,6 +57,8 @@ export const POST = withAdminAuth(async (request, session) => {
           capability: { select: { slug: true } },
         },
       },
+      profile: { select: { slug: true } },
+      grantedTags: { select: { tag: { select: { slug: true } } } },
     },
   });
 
@@ -102,6 +114,23 @@ export const POST = withAdminAuth(async (request, session) => {
         topicBoundaries: agent.topicBoundaries,
         brandVoiceInstructions: agent.brandVoiceInstructions,
         widgetConfig: jsonRecord.parse(agent.widgetConfig),
+        kind: kindSchema.parse(agent.kind),
+        knowledgeAccessMode: knowledgeAccessModeSchema.parse(agent.knowledgeAccessMode),
+        knowledgeRetrievalMode: knowledgeRetrievalModeSchema.parse(agent.knowledgeRetrievalMode),
+        knowledgeTriggerKeywords: agent.knowledgeTriggerKeywords,
+        persona: agent.persona,
+        guardrails: agent.guardrails,
+        personaMode: inheritanceModeSchema.parse(agent.personaMode),
+        voiceMode: inheritanceModeSchema.parse(agent.voiceMode),
+        guardrailsMode: inheritanceModeSchema.parse(agent.guardrailsMode),
+        enableVoiceInput: agent.enableVoiceInput,
+        enableImageInput: agent.enableImageInput,
+        enableDocumentInput: agent.enableDocumentInput,
+        runtimePromptManaged: agent.runtimePromptManaged,
+        runtimePromptNote: agent.runtimePromptNote,
+        // Cross-environment relations by stable reference (slug); re-linked on import.
+        profileSlug: agent.profile?.slug ?? null,
+        knowledgeTagSlugs: agent.grantedTags.map((g) => g.tag.slug),
         capabilities: agent.capabilities.map((link) => ({
           slug: link.capability.slug,
           isEnabled: link.isEnabled,
