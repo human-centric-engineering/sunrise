@@ -21,4 +21,4 @@
  *   it as the `sunrise` field), not by importing this constant in a
  *   `'use client'` component.
  */
-export const SUNRISE_VERSION = '0.1.0';
+export const SUNRISE_VERSION = '0.2.0';

@@ -16,6 +16,19 @@ release process.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-25
+
+> **Alpha release.** Third tagged Sunrise release. **MINOR bump** — adds new
+> public surface (the `transcribeStream` streaming speech-to-text provider seam
+> with the `TranscribeChunk` / `TranscribeAudio` types, optional
+> provider-enforced structured output on `runStructuredCompletion`, and the
+> `AiAgent.runtimePromptManaged` / `runtimePromptNote` honesty flag) on top of
+> the Anthropic structured-output hardening and the agent export/import bundle
+> fidelity fix below. Ships in `0.x` per
+> [`VERSIONING.md`](./VERSIONING.md#0x-alpha-semantics--loose-by-design) — forks
+> adopting this release should expect real merge work between any two `0.x`
+> releases.
+
 ### Added
 
 - `AiAgent.runtimePromptManaged` (Boolean, default `false`) and

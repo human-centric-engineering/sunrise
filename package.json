@@ -1,6 +1,6 @@
 {
   "name": "sunrise",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A production-ready Next.js starter template designed for rapid application development with AI assistance.",
   "private": true,
   "scripts": {
