@@ -1832,4 +1832,46 @@ describe('AnthropicProvider.chatStream — structured output extraction (json_sc
     expect(done.type).toBe('done');
     expect(done.finishReason).toBe('stop');
   });
+
+  it('throws truncated_no_output when a streaming extraction hits max_tokens (mirrors the non-streaming guard)', async () => {
+    const events = [
+      { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', id: 'struct_s1', name: '__structured_answer' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        // Truncated mid-input — the partial JSON won't parse cleanly.
+        delta: { type: 'input_json_delta', partial_json: '{"answer":' },
+      },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens' },
+        usage: { output_tokens: 6 },
+      },
+    ];
+    createMock.mockResolvedValue(makeStream(events));
+
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'answer?' }], {
+        model: 'claude-haiku-4-5',
+        responseFormat: {
+          type: 'json_schema',
+          name: 'answer',
+          schema: { type: 'object', properties: { answer: { type: 'string' } } },
+        },
+      })) {
+        // drain
+      }
+    } catch (err) {
+      caught = err;
+    }
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+  });
 });

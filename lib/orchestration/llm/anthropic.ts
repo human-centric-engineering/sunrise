@@ -158,7 +158,7 @@ export class AnthropicProvider implements LlmProvider {
       if (block.type === 'text') {
         content.push(block.text);
       } else if (block.type === 'tool_use') {
-        if (isStructuredExtraction && block.name.startsWith('__structured_')) {
+        if (isStructuredExtraction && block.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
           // Structured output extraction — convert tool arguments to JSON text
           content.push(JSON.stringify(block.input));
         } else {
@@ -268,7 +268,7 @@ export class AnthropicProvider implements LlmProvider {
           case 'content_block_stop': {
             const buf = toolBuffers.get(event.index);
             if (buf) {
-              if (isStructuredExtraction && buf.name.startsWith('__structured_')) {
+              if (isStructuredExtraction && buf.name.startsWith(EXTRACTION_TOOL_PREFIX)) {
                 // Structured output — emit the JSON as text content
                 const parsed = safeParseJson(buf.partial);
                 yield { type: 'text', content: JSON.stringify(parsed) };
@@ -301,6 +301,20 @@ export class AnthropicProvider implements LlmProvider {
       }
     } catch (err) {
       throw toProviderError(err, 'Anthropic stream iteration failed');
+    }
+
+    // Mirror the non-streaming truncation guard: a max_tokens stop during
+    // structured extraction means the forced-tool input was cut off, so the
+    // JSON already emitted as a `text` chunk is incomplete. Surface the
+    // actionable error before the `done` chunk instead of letting the
+    // consumer treat a silently-empty/garbage structured result as success.
+    // (`mapStopReason('max_tokens')` is `'length'`.)
+    if (isStructuredExtraction && finishReason === 'length') {
+      const cap = (params as { max_tokens?: number }).max_tokens;
+      throw new ProviderError(
+        `Model "${options.model}" hit max_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        { code: 'truncated_no_output', retriable: false }
+      );
     }
 
     yield {
