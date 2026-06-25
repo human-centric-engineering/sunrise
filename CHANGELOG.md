@@ -38,6 +38,17 @@ release process.
   instead of relying on the prompt's prose alone. Purely additive — callers
   that don't opt in are unchanged, and providers without support ignore the
   field (the `parse` + retry path remains the cross-provider safety net). (#307)
+- Streaming speech-to-text provider seam: optional `transcribeStream?()` on the
+  `LlmProvider` interface (the streaming analogue of `transcribe()`), a new
+  `TranscribeChunk` union (`partial` / `final` / `done` with `audioSeconds`) and
+  `TranscribeAudio` type, and a `streamTranscription()` / `batchTranscribeAsStream()`
+  helper (`lib/orchestration/llm/transcribe-stream.ts`) that prefers native
+  streaming, falls back to adapting a batch `transcribe()` into a single
+  `final` + `done` stream, and raises `ProviderError` `not_supported` when the
+  provider can transcribe by neither path. Billed by `audioSeconds`, identical
+  to the batch path. Platform seam only — the client transport and live
+  `MicButton` mic layer remain a follow-up (the transport spike); the batch
+  `transcribe()` path is unchanged and stays the default. (#308)
 
 ## [0.1.0] — 2026-06-24
 

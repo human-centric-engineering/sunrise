@@ -63,10 +63,15 @@ interface LlmProvider {
   // Optional — providers that don't expose a transcription API simply omit this.
   // Routing (`getAudioProvider`) filters by `AiProviderModel.capabilities` so the
   // method is only ever called on providers that implement it.
-  transcribe?(
-    audio: Blob | Buffer | ArrayBuffer | Uint8Array,
+  transcribe?(audio: TranscribeAudio, options: TranscribeOptions): Promise<TranscribeResponse>;
+
+  // Optional streaming analogue of `transcribe` (mirrors chat → chatStream).
+  // Rarely implemented natively — callers go through `streamTranscription`,
+  // which falls back to the batch path. See "Streaming transcription" below.
+  transcribeStream?(
+    audio: TranscribeAudio,
     options: TranscribeOptions
-  ): Promise<TranscribeResponse>;
+  ): AsyncIterable<TranscribeChunk>;
 }
 ```
 
@@ -133,6 +138,18 @@ Local servers get a `'not-needed'` sentinel API key (the OpenAI SDK rejects empt
 `OpenAiCompatibleProvider` implements `transcribe()` via the OpenAI SDK's `audio.transcriptions.create({ file, model, response_format: 'verbose_json' })`. The verbose response carries duration (seconds, converted to `durationMs`) and the auto-detected language. Works for OpenAI proper and any compatible host that exposes `/v1/audio/transcriptions` (Groq Whisper). Hosts that don't expose this endpoint (Ollama, vLLM, LM Studio in their default configs) won't be picked by `getAudioProvider()` because no `'audio'`-capability `AiProviderModel` row will exist for them — but if one is configured anyway the SDK call returns 404 and the route surfaces `TRANSCRIPTION_FAILED`.
 
 `AnthropicProvider` does not implement `transcribe()` — Anthropic has no first-party audio API.
+
+#### Streaming transcription (`transcribeStream` + `streamTranscription`)
+
+`transcribeStream?()` is the optional streaming analogue of `transcribe()`, mirroring the `chat()` → `chatStream()` split. It yields a `TranscribeChunk` discriminated union: `{ type: 'partial' }` (interim, never billed), `{ type: 'final' }` (a stable transcript segment, optional `language`), and `{ type: 'done', audioSeconds, model }` (terminal, billed by `audioSeconds` exactly like the batch path; `0` means "duration unknown").
+
+Callers should **not** call `provider.transcribeStream` directly — go through **`streamTranscription(provider, audio, options)`** in `lib/orchestration/llm/transcribe-stream.ts`, which resolves the best available path:
+
+1. native `transcribeStream` when the provider implements it (true word-level interim text);
+2. otherwise **`batchTranscribeAsStream`** — adapts a single `transcribe()` call into one `final` chunk plus a `done`, so every batch-capable provider satisfies the streaming contract (no interim text, but a uniform consumer shape);
+3. a `ProviderError` with `code: 'not_supported'` when the provider has neither method — surfaced on first iteration of the returned `AsyncIterable`, not synchronously at call time.
+
+Today this always resolves to the batch fallback: the only STT provider (`OpenAiCompatibleProvider`/Whisper) has no streaming transcription API. A genuinely streaming provider (Deepgram, AssemblyAI, …) would implement `transcribeStream` directly to emit `partial` chunks as audio arrives. This is the platform-side seam only — the client→server audio transport and the live `MicButton` / `useStreamingTranscription` mic layer are a separate follow-up (the transport spike in issue #308); the batch `transcribe()` path is unchanged and remains the default for every current consumer.
 
 **`getAudioProvider()` (in `provider-manager.ts`)** is the entry point used by both the admin and embed transcribe routes. Selection runs in two stages:
 

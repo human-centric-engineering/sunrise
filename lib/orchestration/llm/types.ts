@@ -201,6 +201,9 @@ export interface EmbedOptions {
   inputType?: 'document' | 'query';
 }
 
+/** Audio input accepted by the transcription methods. */
+export type TranscribeAudio = Blob | Buffer | ArrayBuffer | Uint8Array;
+
 /**
  * Options for `LlmProvider.transcribe()` — speech-to-text.
  *
@@ -249,6 +252,25 @@ export interface TranscribeResponse {
   /** Echo of the model id the provider actually used. */
   model: string;
 }
+
+/**
+ * A single chunk yielded by `LlmProvider.transcribeStream` — the streaming
+ * analogue of {@link TranscribeResponse}, modelled on {@link StreamChunk}.
+ *
+ * - `partial` — interim transcript text that may still change as more audio
+ *   arrives (the live "words appearing as you speak" UX). Not authoritative
+ *   and never billed.
+ * - `final` — a finalized, stable transcript segment. Concatenate every
+ *   `final` chunk in order for the complete transcript.
+ * - `done` — terminal chunk carrying `audioSeconds` for cost accounting
+ *   (billed identically to batch `transcribe` — see `calculateTranscriptionCost`)
+ *   and an echo of the resolved model id. `audioSeconds` is `0` when the
+ *   provider doesn't report duration (treat as "unknown", not "free").
+ */
+export type TranscribeChunk =
+  | { type: 'partial'; text: string }
+  | { type: 'final'; text: string; language?: string }
+  | { type: 'done'; audioSeconds: number; model: string };
 
 /** Extract the text content from a message's content field. */
 export function getTextContent(content: string | ContentPart[]): string {
