@@ -173,6 +173,16 @@ Both attempts going through `runStructuredCompletion`
 machinery the summary call uses. The retry never includes the
 malformed prior response in the prompt.
 
+`runStructuredCompletion` also accepts an optional `responseSchema`
+(plus `responseSchemaName` / `responseSchemaStrict`). When supplied it is
+forwarded as a `json_schema` `responseFormat` on both attempts, so
+supporting providers enforce the output shape natively (OpenAI-compatible
+`response_format`; Anthropic forced-tool extraction) rather than relying on
+the prompt's prose. It is purely additive — the judge and summary callers
+don't opt in, providers without support ignore it, and the `parse` + retry
+path stays the cross-provider safety net. The prompt's prose output
+contract above remains the belt-and-suspenders fallback.
+
 ## Cost accounting
 
 Two `AiCostLog` rows per completion (one per phase):

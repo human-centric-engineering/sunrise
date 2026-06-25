@@ -29,6 +29,15 @@ release process.
   isn't misled into tuning inert instruction fields. App-populated; round-trips
   through the agent create/GET/PATCH API and is captured in version snapshots.
   The runtime never reads it — no execution-path change. (#304)
+- `runStructuredCompletion` (`lib/orchestration/evaluations/parse-structured.ts`)
+  accepts optional `responseSchema` / `responseSchemaName` / `responseSchemaStrict`
+  on `StructuredCompletionOptions`. When `responseSchema` is supplied it is
+  forwarded as a `json_schema` `responseFormat` on both the first attempt and
+  the temp-0 retry, so supporting providers enforce the output shape
+  (OpenAI-compatible `response_format`; Anthropic forced-tool extraction)
+  instead of relying on the prompt's prose alone. Purely additive — callers
+  that don't opt in are unchanged, and providers without support ignore the
+  field (the `parse` + retry path remains the cross-provider safety net). (#307)
 
 ## [0.1.0] — 2026-06-24
 

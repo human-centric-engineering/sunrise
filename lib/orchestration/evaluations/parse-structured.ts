@@ -14,7 +14,7 @@
  */
 
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
-import type { LlmMessage } from '@/lib/orchestration/llm/types';
+import type { LlmMessage, LlmResponseFormat } from '@/lib/orchestration/llm/types';
 import type { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import {
   GEN_AI_OPERATION_NAME,
@@ -40,6 +40,35 @@ export interface StructuredCompletionOptions<T> {
   parse: (raw: string) => T | null;
   /** Sent as a `user` message on retry. Should describe the expected shape. */
   retryUserMessage: string;
+  /**
+   * Optional JSON Schema to enforce as provider-native structured output.
+   * When present, it is forwarded as `responseFormat` on BOTH the first
+   * attempt and the temp-0 retry, so the model is constrained to the shape
+   * rather than relying on the prompt's prose alone.
+   *
+   * Providers that support it constrain the response (OpenAI-compatible via
+   * `response_format: { type: 'json_schema', ... }`; Anthropic via a forced
+   * single-tool extraction whose input is serialized back into the response
+   * string). Providers without support ignore it — so `parse` plus the
+   * existing temp-0 retry remain the cross-provider safety net, and the
+   * prompt's prose contract should still describe the shape as a
+   * belt-and-suspenders fallback.
+   */
+  responseSchema?: Record<string, unknown>;
+  /**
+   * Name for the enforced schema — required by OpenAI's `json_schema`
+   * format and surfaced as the Anthropic extraction tool name. Defaults to
+   * `'structured_output'` when a `responseSchema` is supplied without one.
+   */
+  responseSchemaName?: string;
+  /**
+   * Opt into OpenAI strict mode. Strict requires the schema to set
+   * `additionalProperties: false` and list every property in `required`; an
+   * un-normalized `z.toJSONSchema` output will be rejected by the provider.
+   * Left undefined (non-strict) by default — the lower-risk choice that
+   * still forwards the shape. Ignored by providers without strict support.
+   */
+  responseSchemaStrict?: boolean;
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
@@ -70,6 +99,17 @@ export async function runStructuredCompletion<T>(
   const maxTokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  // Build the provider-native structured-output directive once and forward it
+  // on both attempts. Providers that don't support it ignore the field.
+  const responseFormat: LlmResponseFormat | undefined = opts.responseSchema
+    ? {
+        type: 'json_schema',
+        name: opts.responseSchemaName ?? 'structured_output',
+        schema: opts.responseSchema,
+        ...(opts.responseSchemaStrict !== undefined ? { strict: opts.responseSchemaStrict } : {}),
+      }
+    : undefined;
+
   const phaseAttrs = {
     [GEN_AI_OPERATION_NAME]: opts.phase ?? 'evaluation',
     [GEN_AI_REQUEST_MODEL]: opts.model,
@@ -90,6 +130,7 @@ export async function runStructuredCompletion<T>(
         temperature,
         maxTokens,
         signal: firstSignal,
+        ...(responseFormat ? { responseFormat } : {}),
       });
       setSpanAttributes(span, {
         [GEN_AI_RESPONSE_MODEL]: opts.model,
@@ -131,6 +172,7 @@ export async function runStructuredCompletion<T>(
           temperature: 0,
           maxTokens,
           signal: retrySignal,
+          ...(responseFormat ? { responseFormat } : {}),
         }
       );
       setSpanAttributes(span, {

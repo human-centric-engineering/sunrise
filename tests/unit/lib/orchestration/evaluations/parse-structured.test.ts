@@ -104,6 +104,97 @@ describe('runStructuredCompletion', () => {
     expect(retryMessages.every((m) => m.content !== 'not-json')).toBe(true);
   });
 
+  it('does not send a responseFormat when no responseSchema is supplied', async () => {
+    const provider = makeProvider([
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'try again',
+    });
+    const opts = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts).not.toHaveProperty('responseFormat');
+  });
+
+  it('forwards responseSchema as a json_schema responseFormat on both attempts', async () => {
+    // First attempt malformed → forces the retry so we can assert both calls.
+    const provider = makeProvider([
+      { content: 'nope', usage: { inputTokens: 1, outputTokens: 1 } },
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    const schema = { type: 'object', properties: { ok: { type: 'boolean' } } };
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'STRICT',
+      responseSchema: schema,
+    });
+    const calls = (provider.chat as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(2);
+    const expected = { type: 'json_schema', name: 'structured_output', schema };
+    expect((calls[0] as unknown[])[1]).toMatchObject({ responseFormat: expected });
+    expect((calls[1] as unknown[])[1]).toMatchObject({ responseFormat: expected });
+    // strict is omitted when the caller doesn't opt in.
+    const firstFormat = ((calls[0] as unknown[])[1] as { responseFormat: Record<string, unknown> })
+      .responseFormat;
+    expect(firstFormat).not.toHaveProperty('strict');
+  });
+
+  it('uses responseSchemaName when provided and forwards strict when set', async () => {
+    const provider = makeProvider([
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    const schema = { type: 'object', properties: { ok: { type: 'boolean' } } };
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'STRICT',
+      responseSchema: schema,
+      responseSchemaName: 'questionnaire_extract',
+      responseSchemaStrict: true,
+    });
+    const opts = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.responseFormat).toEqual({
+      type: 'json_schema',
+      name: 'questionnaire_extract',
+      schema,
+      strict: true,
+    });
+  });
+
+  it('forwards strict:false explicitly when the caller opts out', async () => {
+    const provider = makeProvider([
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    const schema = { type: 'object', properties: { ok: { type: 'boolean' } } };
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'STRICT',
+      responseSchema: schema,
+      responseSchemaStrict: false,
+    });
+    const opts = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as {
+      responseFormat: Record<string, unknown>;
+    };
+    expect(opts.responseFormat).toMatchObject({ strict: false });
+  });
+
   it('throws via onFinalFailure when both attempts fail', async () => {
     const provider = makeProvider([
       { content: 'no', usage: { inputTokens: 1, outputTokens: 1 } },
