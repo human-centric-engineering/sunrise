@@ -53,12 +53,23 @@ export interface StructuredCompletionOptions<T> {
    * existing temp-0 retry remain the cross-provider safety net, and the
    * prompt's prose contract should still describe the shape as a
    * belt-and-suspenders fallback.
+   *
+   * Contract: supply a **non-empty, object-rooted** JSON Schema. An empty
+   * (`{}`) or undefined schema is treated as "no enforcement" and forwarded
+   * as nothing. A non-object root (top-level array / `oneOf` / `$ref`) is
+   * not portable — the Anthropic tool-extraction path coerces the root to
+   * `object`, so wrap such shapes in an object property.
    */
   responseSchema?: Record<string, unknown>;
   /**
    * Name for the enforced schema — required by OpenAI's `json_schema`
    * format and surfaced as the Anthropic extraction tool name. Defaults to
    * `'structured_output'` when a `responseSchema` is supplied without one.
+   *
+   * On Anthropic the name is prefixed into a tool name (`__structured_<name>`)
+   * that must satisfy the provider's tool-name charset (`^[a-zA-Z0-9_-]{1,64}$`
+   * after the prefix), so prefer a short snake/kebab identifier — avoid spaces
+   * and punctuation, or keep the default.
    */
   responseSchemaName?: string;
   /**
@@ -100,15 +111,19 @@ export async function runStructuredCompletion<T>(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   // Build the provider-native structured-output directive once and forward it
-  // on both attempts. Providers that don't support it ignore the field.
-  const responseFormat: LlmResponseFormat | undefined = opts.responseSchema
-    ? {
-        type: 'json_schema',
-        name: opts.responseSchemaName ?? 'structured_output',
-        schema: opts.responseSchema,
-        ...(opts.responseSchemaStrict !== undefined ? { strict: opts.responseSchemaStrict } : {}),
-      }
-    : undefined;
+  // on both attempts. Providers that don't support it ignore the field. An
+  // empty `{}` schema carries no constraint, so it is treated as "no
+  // enforcement" rather than forwarded as a degenerate (and strict-rejecting)
+  // shape.
+  const responseFormat: LlmResponseFormat | undefined =
+    opts.responseSchema && Object.keys(opts.responseSchema).length > 0
+      ? {
+          type: 'json_schema',
+          name: opts.responseSchemaName ?? 'structured_output',
+          schema: opts.responseSchema,
+          ...(opts.responseSchemaStrict !== undefined ? { strict: opts.responseSchemaStrict } : {}),
+        }
+      : undefined;
 
   const phaseAttrs = {
     [GEN_AI_OPERATION_NAME]: opts.phase ?? 'evaluation',

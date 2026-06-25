@@ -122,6 +122,25 @@ describe('runStructuredCompletion', () => {
     expect(opts).not.toHaveProperty('responseFormat');
   });
 
+  it('treats an empty {} responseSchema as no enforcement (forwards no responseFormat)', async () => {
+    const provider = makeProvider([
+      { content: '{"ok":true}', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'try again',
+      responseSchema: {},
+    });
+    const opts = (provider.chat as ReturnType<typeof vi.fn>).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts).not.toHaveProperty('responseFormat');
+  });
+
   it('forwards responseSchema as a json_schema responseFormat on both attempts', async () => {
     // First attempt malformed → forces the retry so we can assert both calls.
     const provider = makeProvider([
