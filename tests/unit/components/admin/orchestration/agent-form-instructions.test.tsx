@@ -567,4 +567,194 @@ describe('AgentForm — Instructions tab', () => {
       expect(document.getElementById('profileId')).not.toBeInTheDocument();
     });
   });
+
+  // ── Runtime-built prompt honesty flag (issue #304) ───────────────────────────
+
+  describe('runtime-built prompt flag', () => {
+    async function gotoInstructions() {
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('tab', { name: /instructions/i }));
+      return user;
+    }
+
+    it('defaults off: no callout, and the preview reads "what the LLM actually sees"', async () => {
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({ runtimePromptManaged: false })}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+        />
+      );
+      await gotoInstructions();
+
+      expect(screen.getByText(/what the LLM actually sees/i)).toBeInTheDocument();
+      expect(screen.queryByText(/NOT what the LLM sees/i)).not.toBeInTheDocument();
+      // The warning callout copy is absent when the flag is off.
+      expect(screen.queryByText(/prompt is built in application code/i)).not.toBeInTheDocument();
+    });
+
+    it('checking the box reveals the callout and re-labels the preview', async () => {
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({ runtimePromptManaged: false })}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+        />
+      );
+      const user = await gotoInstructions();
+
+      await user.click(screen.getByRole('checkbox', { name: /prompt is built at runtime/i }));
+
+      expect(screen.getByText(/prompt is built in application code/i)).toBeInTheDocument();
+      expect(screen.getByText(/NOT what the LLM sees/i)).toBeInTheDocument();
+      // The plain "what the LLM actually sees" label is gone once re-labelled.
+      expect(screen.queryByText(/^— what the LLM actually sees$/i)).not.toBeInTheDocument();
+    });
+
+    it('pre-fills the checkbox and note from the agent in edit mode', async () => {
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent({
+            runtimePromptManaged: true,
+            runtimePromptNote: 'Built in extractor-capability.ts',
+          })}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+        />
+      );
+      await gotoInstructions();
+
+      expect(screen.getByRole('checkbox', { name: /prompt is built at runtime/i })).toBeChecked();
+      expect(screen.getByPlaceholderText(/where is the real prompt built/i)).toHaveValue(
+        'Built in extractor-capability.ts'
+      );
+      // The callout shows immediately since the agent arrives with the flag set.
+      expect(screen.getByText(/prompt is built in application code/i)).toBeInTheDocument();
+    });
+
+    it('PATCH payload carries runtimePromptManaged + runtimePromptNote after toggling', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const agent = makeAgent({ runtimePromptManaged: false, runtimePromptNote: null });
+      vi.mocked(apiClient.patch).mockResolvedValue(agent);
+
+      render(
+        <AgentForm mode="edit" agent={agent} providers={MOCK_PROVIDERS} models={MOCK_MODELS} />
+      );
+      const user = await gotoInstructions();
+
+      await user.click(screen.getByRole('checkbox', { name: /prompt is built at runtime/i }));
+      await user.type(
+        screen.getByPlaceholderText(/where is the real prompt built/i),
+        'see refiner.ts'
+      );
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/agents/agent-edit-id'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              runtimePromptManaged: true,
+              runtimePromptNote: 'see refiner.ts',
+            }),
+          })
+        );
+      });
+    });
+
+    it('clears a populated note (and hides the callout) when the flag is unticked', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const agent = makeAgent({
+        runtimePromptManaged: true,
+        runtimePromptNote: 'Built in extractor-capability.ts',
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue(agent);
+
+      render(
+        <AgentForm mode="edit" agent={agent} providers={MOCK_PROVIDERS} models={MOCK_MODELS} />
+      );
+      const user = await gotoInstructions();
+
+      // Untick while the note still has content. The checkbox handler must null
+      // the note so a stale value isn't persisted against an agent that no
+      // longer claims a runtime-built prompt — and the callout / note field
+      // disappear and the preview label reverts.
+      await user.click(screen.getByRole('checkbox', { name: /prompt is built at runtime/i }));
+
+      expect(screen.queryByText(/prompt is built in application code/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByPlaceholderText(/where is the real prompt built/i)
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/what the LLM actually sees/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/agents/agent-edit-id'),
+          expect.objectContaining({
+            body: expect.objectContaining({
+              runtimePromptManaged: false,
+              runtimePromptNote: null,
+            }),
+          })
+        );
+      });
+    });
+
+    it('normalises an emptied note to null on save (setValueAs)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const agent = makeAgent({
+        runtimePromptManaged: true,
+        runtimePromptNote: 'Built in extractor-capability.ts',
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue(agent);
+
+      render(
+        <AgentForm mode="edit" agent={agent} providers={MOCK_PROVIDERS} models={MOCK_MODELS} />
+      );
+      const user = await gotoInstructions();
+
+      // Emptying the textarea must persist as null, not "" (the register
+      // setValueAs `v === '' ? null : v` branch), matching sibling fields.
+      await user.clear(screen.getByPlaceholderText(/where is the real prompt built/i));
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/agents/agent-edit-id'),
+          expect.objectContaining({
+            body: expect.objectContaining({ runtimePromptNote: null }),
+          })
+        );
+      });
+    });
+
+    it('shows a validation error and blocks submit when the note exceeds 2,000 chars', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const agent = makeAgent({ runtimePromptManaged: true, runtimePromptNote: null });
+      vi.mocked(apiClient.patch).mockResolvedValue(agent);
+
+      render(
+        <AgentForm mode="edit" agent={agent} providers={MOCK_PROVIDERS} models={MOCK_MODELS} />
+      );
+      const user = await gotoInstructions();
+
+      // paste (not type) the over-long value so the test stays fast.
+      const note = screen.getByPlaceholderText(/where is the real prompt built/i);
+      await user.click(note);
+      await user.paste('x'.repeat(2001));
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      // The note's error paragraph renders (the errors.runtimePromptNote branch)
+      // and the invalid submit never reaches the API.
+      await waitFor(() => {
+        expect(screen.getByText(/2000/)).toBeInTheDocument();
+      });
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+  });
 });

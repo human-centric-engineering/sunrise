@@ -149,6 +149,8 @@ function makeSystemSeededAgent(): AiAgent {
     enableVoiceInput: false,
     enableImageInput: false,
     enableDocumentInput: false,
+    runtimePromptManaged: false,
+    runtimePromptNote: null,
     widgetConfig: null,
   } as AiAgent;
 }

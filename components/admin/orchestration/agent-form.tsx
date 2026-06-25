@@ -112,6 +112,8 @@ const agentFormSchema = z
     enableVoiceInput: z.boolean(),
     enableImageInput: z.boolean(),
     enableDocumentInput: z.boolean(),
+    runtimePromptManaged: z.boolean(),
+    runtimePromptNote: z.string().max(2000).nullable().optional(),
     fallbackProviders: z.array(z.string()),
     knowledgeAccessMode: z.enum(['full', 'restricted']),
     knowledgeRetrievalMode: z.enum(['model', 'first_turn', 'every_turn', 'keywords']),
@@ -262,6 +264,8 @@ export function AgentForm({
       enableVoiceInput: agent?.enableVoiceInput ?? false,
       enableImageInput: agent?.enableImageInput ?? false,
       enableDocumentInput: agent?.enableDocumentInput ?? false,
+      runtimePromptManaged: agent?.runtimePromptManaged ?? false,
+      runtimePromptNote: agent?.runtimePromptNote ?? null,
       fallbackProviders: agent?.fallbackProviders ?? [],
       knowledgeAccessMode:
         (agent?.knowledgeAccessMode as 'full' | 'restricted' | undefined) ?? 'full',
@@ -302,6 +306,7 @@ export function AgentForm({
   const currentPersonaMode = watch('personaMode');
   const currentVoiceMode = watch('voiceMode');
   const currentGuardrailsMode = watch('guardrailsMode');
+  const currentRuntimePromptManaged = watch('runtimePromptManaged');
 
   // Resolve the live effective prompt for the preview card on the
   // Instructions tab. Uses the same pure helper that the chat handler
@@ -1433,6 +1438,65 @@ export function AgentForm({
 
         {/* ================= TAB 3 — INSTRUCTIONS ================= */}
         <TabsContent value="instructions" className="space-y-6 pt-4">
+          {/* Runtime-built prompt — advisory honesty flag (issue #304). When
+              set, the instruction fields below and the effective-prompt
+              preview do not reflect what the live model receives, because the
+              prompt is assembled in application code per call (the capability
+              pattern). Behaviour-neutral: the runtime never reads this flag. */}
+          <div className="grid gap-2">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="runtimePromptManaged"
+                checked={currentRuntimePromptManaged}
+                onCheckedChange={(v) => {
+                  const next = v === true;
+                  setValue('runtimePromptManaged', next, { shouldDirty: true });
+                  // Clear the note when turning the flag off so a stale note
+                  // isn't persisted (and silently resurrected) against an agent
+                  // that no longer claims a runtime-built prompt.
+                  if (!next) setValue('runtimePromptNote', null, { shouldDirty: true });
+                }}
+              />
+              <Label htmlFor="runtimePromptManaged" className="font-normal">
+                Prompt is built at runtime (stored instructions not sent to the model){' '}
+                <FieldHelp title="For agents dispatched by code, not by their stored prompt">
+                  Tick this when the agent is dispatched for its provider/model binding only and its
+                  system prompt is assembled in application code per call — the capability pattern,
+                  where a capability <code>extends BaseCapability</code> and builds its prompt from
+                  live runtime data. When set, the persona, system instructions, guardrails, and
+                  brand voice below are <strong>not</strong> sent to the model, and the effective
+                  prompt preview is re-labelled to say so. This is an advisory marker only — it does
+                  not change what the runtime does.
+                </FieldHelp>
+              </Label>
+            </div>
+            {currentRuntimePromptManaged && (
+              <>
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    This agent&apos;s prompt is built in application code. The persona, system
+                    instructions, guardrails, and brand voice on this tab are{' '}
+                    <strong>not sent to the model</strong> — editing them changes nothing at
+                    runtime. The &ldquo;Effective prompt preview&rdquo; below shows the stored
+                    fields, not what the LLM actually receives.
+                  </span>
+                </div>
+                <Textarea
+                  id="runtimePromptNote"
+                  rows={2}
+                  placeholder="Optional: where is the real prompt built? e.g. lib/questionnaire/extractor-capability.ts"
+                  {...register('runtimePromptNote', {
+                    setValueAs: (v: string) => (v === '' ? null : v),
+                  })}
+                />
+                {errors.runtimePromptNote && (
+                  <p className="text-destructive text-xs">{errors.runtimePromptNote.message}</p>
+                )}
+              </>
+            )}
+          </div>
+
           {/* Persona — inheritable */}
           <div className="grid gap-2">
             <Label htmlFor="persona">
@@ -1602,7 +1666,11 @@ export function AgentForm({
           </div>
 
           {/* Effective prompt preview — live merge of agent + profile */}
-          <EffectivePromptPreview resolved={effectivePrompt} profile={selectedProfile} />
+          <EffectivePromptPreview
+            resolved={effectivePrompt}
+            profile={selectedProfile}
+            runtimePromptManaged={currentRuntimePromptManaged}
+          />
 
           <KnowledgeAccessSection
             mode={watch('knowledgeAccessMode')}
@@ -1808,6 +1876,8 @@ export function AgentForm({
                       knowledgeDocumentIds: fresh.grantedDocumentIds ?? [],
                       topicBoundaries: fresh.topicBoundaries?.join(', ') ?? '',
                       brandVoiceInstructions: fresh.brandVoiceInstructions ?? null,
+                      runtimePromptManaged: fresh.runtimePromptManaged ?? false,
+                      runtimePromptNote: fresh.runtimePromptNote ?? null,
                     });
                   } catch {
                     // Silent — the version tab already shows its own error state.
@@ -1878,9 +1948,13 @@ export function AgentForm({
 function EffectivePromptPreview({
   resolved,
   profile,
+  runtimePromptManaged,
 }: {
   resolved: ReturnType<typeof resolveEffectivePrompt>;
   profile: AgentProfileSummary | null;
+  // When true the agent's prompt is built in app code, so these stored fields
+  // are NOT what the LLM receives — re-label the panel so it doesn't mislead.
+  runtimePromptManaged: boolean;
 }) {
   const composed = composeSystemPromptString(resolved);
   const sources = resolved.sources;
@@ -1906,7 +1980,13 @@ function EffectivePromptPreview({
     <details className="bg-muted/20 rounded-md border">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
         Effective prompt preview{' '}
-        <span className="text-muted-foreground font-normal">— what the LLM actually sees</span>
+        {runtimePromptManaged ? (
+          <span className="font-normal text-amber-700 dark:text-amber-400">
+            — NOT what the LLM sees (prompt built at runtime)
+          </span>
+        ) : (
+          <span className="text-muted-foreground font-normal">— what the LLM actually sees</span>
+        )}
       </summary>
       <div className="space-y-3 border-t px-4 py-3 text-sm">
         {/* Per-section source labels */}

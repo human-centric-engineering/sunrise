@@ -16,6 +16,20 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- `AiAgent.runtimePromptManaged` (Boolean, default `false`) and
+  `AiAgent.runtimePromptNote` (nullable String) — an advisory, behaviour-neutral
+  honesty flag for agents dispatched for their provider/model binding only,
+  whose system prompt is assembled in application code per call (the capability
+  pattern) rather than read from the stored `persona` / `systemInstructions` /
+  `guardrails` / `brandVoiceInstructions` fields. When set, the admin agent
+  form's Instructions tab shows a non-dismissible callout and re-labels the
+  "Effective prompt preview" as **not** what the LLM receives, so an operator
+  isn't misled into tuning inert instruction fields. App-populated; round-trips
+  through the agent create/GET/PATCH API and is captured in version snapshots.
+  The runtime never reads it — no execution-path change. (#304)
+
 ## [0.1.0] — 2026-06-24
 
 > **Alpha release.** Second tagged Sunrise release. **MINOR bump** — adds new

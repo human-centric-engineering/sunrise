@@ -172,6 +172,8 @@ function makeAgent(model: string, provider: string = 'openai') {
     enableVoiceInput: false,
     enableImageInput: false,
     enableDocumentInput: false,
+    runtimePromptManaged: false,
+    runtimePromptNote: null,
     deletedAt: null,
     lastActiveAt: null,
     isSystem: false,

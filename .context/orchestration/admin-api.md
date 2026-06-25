@@ -129,7 +129,7 @@ curl -X POST /api/v1/admin/orchestration/agents \
   }'
 ```
 
-Validated by `createAgentSchema`. Optional fields include `rateLimitRpm` (Int, per-agent rate limit in requests/minute — null uses global default). New agents start with `systemInstructionsHistory: []` and `createdBy = session.user.id`. Slug collision → 409 `ConflictError`.
+Validated by `createAgentSchema`. Optional fields include `rateLimitRpm` (Int, per-agent rate limit in requests/minute — null uses global default) and `runtimePromptManaged` (Boolean, default `false`) + `runtimePromptNote` (nullable String ≤ 2,000 chars) — an advisory, behaviour-neutral marker for agents whose system prompt is built in application code per call rather than read from the stored instruction fields; the runtime never reads it (see [`.context/admin/agent-form.md`](../admin/agent-form.md#runtime-built-prompt-honesty-flag)). New agents start with `systemInstructionsHistory: []` and `createdBy = session.user.id`. Slug collision → 409 `ConflictError`.
 
 ### Update agent — `systemInstructions` audit push
 
@@ -153,7 +153,9 @@ Agents seeded by the platform (e.g. `pattern-advisor`, `quiz-master`) have `isSy
 
 - **Cannot be deleted** — `DELETE` returns 403 `ForbiddenError('System agents cannot be deleted')`.
 - **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System agents cannot be deactivated')`.
-- **Can be edited** — `PATCH` with other fields succeeds, but when `systemInstructions` changes the response includes an `X-System-Warning` header so the UI can surface a confirmation. The previous instructions are still versioned in `systemInstructionsHistory` and revertible via `/instructions-revert`.
+- **Cannot have their `systemInstructions`, `slug`, or `isActive` changed** — `PATCH` rejects each with a 403 `ForbiddenError` (`'System agent instructions cannot be modified'` / `'System agent slugs cannot be changed'` / `'System agents cannot be deactivated'`), preserving rollback consistency and the internal slug contract.
+- **Can otherwise be edited** — `PATCH` with any other field (model, temperature, guard modes, `runtimePromptManaged`, etc.) succeeds and versions normally.
+- **Cannot be version-restored** — `POST /versions/:versionId/restore` returns 403 (see [Agent version restore](#agent-version-restore)). Whether this is the right policy given system agents _can_ accumulate versions is under discussion in issue #330.
 
 The `isSystem` flag is set during seeding and is not exposed as a writable field on create/update schemas.
 
@@ -276,7 +278,9 @@ POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restore
 
 Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies all snapshotted fields to the agent, and creates a new version entry recording the restore action. System agents (`isSystem: true`) cannot be restored — returns **403**.
 
-**Snapshotted fields:** `systemInstructions`, `model`, `provider`, `fallbackProviders`, `temperature`, `maxTokens`, `topicBoundaries`, `brandVoiceInstructions`, `knowledgeCategories`, `rateLimitRpm`, `visibility`, `metadata`, `inputGuardMode`, `outputGuardMode`, `maxHistoryTokens`, `retentionDays`, `providerConfig`, `monthlyBudgetUsd`.
+**Fields re-applied on restore** (the config subset `versionSnapshotSchema` in the restore route accepts, plus `name` / `slug` / `description` / `isActive`): `systemInstructions`, `model`, `provider`, `fallbackProviders`, `temperature`, `maxTokens`, `reasoningEffort`, `topicBoundaries`, `brandVoiceInstructions`, `knowledgeCategories` (accepted-but-ignored — column dropped in Phase 6), `rateLimitRpm`, `visibility`, `metadata`, `inputGuardMode`, `outputGuardMode`, `citationGuardMode`, `maxHistoryTokens`, `maxHistoryMessages`, `retentionDays`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `enableVoiceInput`, `enableImageInput`, `enableDocumentInput`.
+
+> **Capture-vs-restore gap:** the PATCH version-snapshot _writer_ stores several fields the restore route's schema then strips, so restoring a version silently leaves them unchanged — the knowledge-scoping fields (`knowledgeAccessMode`, `knowledgeRetrievalMode`, `knowledgeTriggerKeywords`, `grantedTagIds`, `grantedDocumentIds`) and `runtimePromptManaged` / `runtimePromptNote`. Separately, `persona` / `guardrails` / the `*Mode` inheritance columns are in `VERSIONED_FIELDS` (so editing them bumps the version) but are captured by neither the snapshot writer nor the restore schema. Both gaps are tracked in issue #330.
 
 **Response (200):**
 

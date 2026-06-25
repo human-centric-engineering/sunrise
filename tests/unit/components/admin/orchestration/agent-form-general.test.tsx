@@ -196,6 +196,8 @@ describe('AgentForm — General tab', () => {
         enableVoiceInput: false,
         enableImageInput: false,
         enableDocumentInput: false,
+        runtimePromptManaged: false,
+        runtimePromptNote: null,
       };
 
       // Act

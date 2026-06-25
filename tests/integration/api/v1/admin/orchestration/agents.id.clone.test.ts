@@ -522,6 +522,8 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
         knowledgeRetrievalMode: 'every_turn',
         knowledgeTriggerKeywords: ['refund', 'cancel'],
         maxCostPerTurnUsd: 0.5,
+        runtimePromptManaged: true,
+        runtimePromptNote: 'Built in extractor-capability.ts',
         grantedTags: [],
         grantedDocuments: [],
       };
@@ -560,6 +562,10 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(data.knowledgeRetrievalMode).toBe('every_turn');
       expect(data.knowledgeTriggerKeywords).toEqual(['refund', 'cancel']);
       expect(data.maxCostPerTurnUsd).toBe(0.5);
+      // Runtime-built-prompt honesty flag must survive cloning — otherwise the
+      // clone silently reverts to the misleading "what the LLM sees" state.
+      expect(data.runtimePromptManaged).toBe(true);
+      expect(data.runtimePromptNote).toBe('Built in extractor-capability.ts');
     });
 
     it('copies per-binding capability config (isEnabled, customConfig, customRateLimit)', async () => {

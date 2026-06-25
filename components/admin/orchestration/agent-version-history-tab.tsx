@@ -468,10 +468,23 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
               created to record this action. Conversations and cost history are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {restoreError && <p className="text-destructive text-sm">{restoreError}</p>}
+          {restoreError && (
+            <p className="border-destructive/50 bg-destructive/5 text-destructive rounded border px-2 py-1.5 text-sm">
+              {restoreError}
+            </p>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleRestore()} disabled={restoring}>
+            <AlertDialogAction
+              // Prevent Radix's default close-on-click: a failed restore must
+              // keep the dialog open so `restoreError` (rendered above) is
+              // visible. handleRestore closes the dialog itself on success.
+              onClick={(e) => {
+                e.preventDefault();
+                void handleRestore();
+              }}
+              disabled={restoring}
+            >
               {restoring ? 'Restoring…' : 'Restore'}
             </AlertDialogAction>
           </AlertDialogFooter>

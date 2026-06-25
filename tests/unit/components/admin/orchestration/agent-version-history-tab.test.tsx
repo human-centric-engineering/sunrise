@@ -241,20 +241,18 @@ describe('AgentVersionHistoryTab', () => {
     expect(onRestored).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
   });
 
-  it('does not invoke onRestored when restore fails with APIClientError', async () => {
-    // BUG: The restoreError state (set in the catch block of handleRestore) can never be
-    // displayed in the UI. AlertDialogAction triggers Radix's onOpenChange(false) synchronously
-    // on click, which calls setRestoreTarget(null) and setRestoreError(null), closing the dialog
-    // before the async POST rejects. The {restoreError && <p>} inside AlertDialogContent is
-    // therefore unreachable in practice.
-    //
-    // This test verifies the correct API call was made and that onRestored was not invoked on
-    // APIClientError. The error message display path is not testable without fixing the source.
+  it('shows the error and keeps the dialog open when restore fails with APIClientError', async () => {
+    // Regression guard for the silent-failure bug: the confirm button is a Radix
+    // AlertDialogAction, which closes the dialog on click — so `restoreError` (set in
+    // handleRestore's catch and rendered only inside the dialog) was never visible. The
+    // fix calls e.preventDefault() in the action's onClick so the dialog stays open on
+    // failure; handleRestore closes it itself only on success. This covers e.g. the 403
+    // returned for system agents, plus any 404/500/network failure on a normal agent.
     const { APIClientError: MockAPIClientError } = await import('@/lib/api/client');
     const user = userEvent.setup();
     const onRestored = vi.fn();
     mockPost.mockRejectedValue(
-      new MockAPIClientError('Version snapshot not found', 'NOT_FOUND', 404)
+      new MockAPIClientError('Cannot restore versions on system agents', 'FORBIDDEN', 403)
     );
 
     render(<AgentVersionHistoryTab agentId={AGENT_ID} onRestored={onRestored} />);
@@ -280,6 +278,13 @@ describe('AgentVersionHistoryTab', () => {
         {}
       );
     });
+
+    // The server's error message is now surfaced to the user...
+    await waitFor(() => {
+      expect(screen.getByText('Cannot restore versions on system agents')).toBeInTheDocument();
+    });
+    // ...and the dialog stays open so they can read it / retry / cancel.
+    expect(screen.getByText('Restore to version 2?')).toBeInTheDocument();
 
     // onRestored must NOT fire when the POST failed
     expect(onRestored).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;

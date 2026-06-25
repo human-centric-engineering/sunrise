@@ -119,6 +119,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             enableVoiceInput: source.enableVoiceInput,
             enableImageInput: source.enableImageInput,
             enableDocumentInput: source.enableDocumentInput,
+            runtimePromptManaged: source.runtimePromptManaged,
+            runtimePromptNote: source.runtimePromptNote,
             widgetConfig: (source.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
             createdBy: session.user.id,
           },
