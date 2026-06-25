@@ -103,7 +103,7 @@ type LlmResponseFormat =
 **Provider implementations:**
 
 - **OpenAI-compatible**: passes `response_format` directly to the API (native support)
-- **Anthropic**: uses a tool-based extraction pattern — defines a single tool with the schema, forces tool use, and extracts the result from the tool call arguments
+- **Anthropic**: uses a tool-based extraction pattern — defines a single tool with the schema, forces tool use, and extracts the result from the tool call arguments. Anthropic-specific constraints handled by the adapter: the tool name derived from `responseFormat.name` is slugified + length-capped to fit `^[a-zA-Z0-9_-]{1,64}$`; the schema must be **object-rooted** (a non-object root is rejected with `invalid_schema` rather than silently coerced); and a `max_tokens` truncation during extraction surfaces `truncated_no_output` (the partial tool input would otherwise look like non-empty content and degrade into a parse failure).
 
 **Usage in agents:** Set `responseFormat` on `AiAgent` config for agents that always return structured data. In workflows, the `llm_call` step config supports `responseFormat` for structured extraction steps.
 

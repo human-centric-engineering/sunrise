@@ -50,6 +50,22 @@ release process.
   `MicButton` mic layer remain a follow-up (the transport spike); the batch
   `transcribe()` path is unchanged and stays the default. (#308)
 
+### Fixed
+
+- Anthropic structured-output (forced-tool extraction) robustness on the
+  `json_schema` `responseFormat` path: (1) the extraction tool name derived
+  from `responseFormat.name` is now slugified + length-capped to satisfy
+  Anthropic's `^[a-zA-Z0-9_-]{1,64}$` tool-name rule (a name with spaces or
+  over the cap previously 400'd on Anthropic only); (2) a `max_tokens`
+  truncation during extraction now raises the actionable `truncated_no_output`
+  error instead of degrading into a malformed-JSON parse failure (the partial
+  tool input was non-empty content, so the prior empty-output guard missed it);
+  (3) a non-object-rooted schema is now rejected with a clear `invalid_schema`
+  error rather than being silently coerced to `object` and sent as an
+  incoherent `input_schema`. Behaviour change: callers passing a non-object
+  root schema to Anthropic now get a local error (previously a provider-side
+  failure). (#335)
+
 ## [0.1.0] — 2026-06-24
 
 > **Alpha release.** Second tagged Sunrise release. **MINOR bump** — adds new

@@ -176,14 +176,22 @@ export class AnthropicProvider implements LlmProvider {
     // shape as the OpenAI-compatible guard — surface as a clear
     // provider error so the operator sees a "raise maxTokens" message
     // instead of a silent empty-output step that confuses downstream.
+    //
+    // The structured-extraction path needs special handling: a truncated
+    // forced-tool input is still routed into `content` as a partial JSON
+    // string (so `joinedContent.length === 0` is false), but that partial
+    // JSON won't parse. Treat ANY max_tokens stop on the extraction path as
+    // a truncation rather than letting it degrade into a confusing
+    // malformed-JSON failure (and a wasted retry) downstream.
     if (
       message.stop_reason === 'max_tokens' &&
-      joinedContent.length === 0 &&
-      toolCalls.length === 0
+      (isStructuredExtraction || (joinedContent.length === 0 && toolCalls.length === 0))
     ) {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
-        `Model "${options.model}" hit max_tokens before producing visible output. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        `Model "${options.model}" hit max_tokens before producing ${
+          isStructuredExtraction ? 'a complete structured response' : 'visible output'
+        }. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
         { code: 'truncated_no_output', retriable: false }
       );
     }
@@ -424,7 +432,7 @@ export class AnthropicProvider implements LlmProvider {
     // (structured output and regular tool use are mutually exclusive per turn).
     if (options.responseFormat && !options.tools?.length) {
       if (options.responseFormat.type === 'json_schema') {
-        const extractionToolName = `__structured_${options.responseFormat.name}`;
+        const extractionToolName = buildExtractionToolName(options.responseFormat.name);
         params.tools = [
           {
             name: extractionToolName,
@@ -575,9 +583,45 @@ function mapToolChoice(choice: LlmToolChoice | undefined): ToolChoice | undefine
   return { type: 'tool', name: choice.name };
 }
 
+/** Anthropic tool names must match `^[a-zA-Z0-9_-]{1,64}$`. */
+const ANTHROPIC_TOOL_NAME_MAX = 64;
+const EXTRACTION_TOOL_PREFIX = '__structured_';
+
+/**
+ * Build the forced-extraction tool name from a caller-supplied schema name.
+ *
+ * Anthropic rejects tool names outside `^[a-zA-Z0-9_-]{1,64}$` (OpenAI accepts
+ * the raw `json_schema.name`, so this is an Anthropic-only divergence). Slugify
+ * any disallowed character to `_` and truncate the suffix so the prefixed name
+ * stays within the cap; the `__structured_` prefix is preserved because the
+ * response handler keys on it to route the tool input back into `content`.
+ */
+function buildExtractionToolName(schemaName: string): string {
+  const budget = ANTHROPIC_TOOL_NAME_MAX - EXTRACTION_TOOL_PREFIX.length;
+  const slug = schemaName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, budget);
+  // Fall back to a fixed suffix if the name slugified to nothing (e.g. all
+  // disallowed characters), so the result is always a valid, prefixed name.
+  return `${EXTRACTION_TOOL_PREFIX}${slug || 'output'}`;
+}
+
 function buildToolInputSchema(parameters: Record<string, unknown>): Tool.InputSchema {
-  const { type: _type, ...rest } = parameters;
-  // Anthropic requires `type: 'object'` at the top level; preserve any other JSON Schema keys.
+  const { type, ...rest } = parameters;
+  // Anthropic requires `type: 'object'` at the top level of a tool input
+  // schema. A non-object root (top-level `array`, `oneOf`/`anyOf`, a `$ref`
+  // wrapper) can't be represented here — silently coercing it to `object`
+  // (the previous behaviour) produced an incoherent schema the model can't
+  // satisfy. Reject it with a clear local error instead; callers should wrap
+  // such shapes in an object property (see the object-rooted contract in
+  // `parse-structured.ts`). A missing root `type` is still defaulted to
+  // `object` — the common case for tool params and property-only schemas.
+  if (type !== undefined && type !== 'object') {
+    throw new ProviderError(
+      `Anthropic tool / structured-output schemas must be object-rooted (got type: ${JSON.stringify(
+        type
+      )}). Wrap the value in an object property.`,
+      { code: 'invalid_schema', retriable: false }
+    );
+  }
   const schema: Tool.InputSchema = { type: 'object', ...rest };
   return schema;
 }
