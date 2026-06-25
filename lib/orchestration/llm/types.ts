@@ -262,10 +262,12 @@ export interface TranscribeResponse {
  *   and never billed.
  * - `final` — a finalized, stable transcript segment. Concatenate every
  *   `final` chunk in order for the complete transcript.
- * - `done` — terminal chunk carrying `audioSeconds` for cost accounting
- *   (billed identically to batch `transcribe` — see `calculateTranscriptionCost`)
- *   and an echo of the resolved model id. `audioSeconds` is `0` when the
- *   provider doesn't report duration (treat as "unknown", not "free").
+ * - `done` — terminal chunk carrying `audioSeconds` (audio duration in
+ *   **seconds**, billed identically to batch `transcribe`) and an echo of the
+ *   resolved model id. `audioSeconds` is `0` when the provider doesn't report
+ *   duration (treat as "unknown", not "free"). Note the unit: the shared
+ *   `calculateTranscriptionCost` takes **milliseconds**, so multiply by 1000
+ *   (`audioSeconds * 1000`) before passing it through.
  */
 export type TranscribeChunk =
   | { type: 'partial'; text: string }

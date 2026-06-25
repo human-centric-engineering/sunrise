@@ -49,9 +49,13 @@ export async function* batchTranscribeAsStream(
     text: result.text,
     ...(result.language !== undefined ? { language: result.language } : {}),
   };
-  // durationMs is 0 when the provider doesn't report duration; that flows
-  // through as audioSeconds 0, which cost tracking treats as "unknown".
-  yield { type: 'done', audioSeconds: result.durationMs / 1000, model: result.model };
+  // durationMs is 0 when the provider doesn't report duration. Clamp any
+  // non-finite/negative value to 0 here so the `done` chunk always honours
+  // the "audioSeconds 0 = unknown" contract, rather than leaking NaN to
+  // consumers if a provider's transcribe() violates the typed `number`.
+  const audioSeconds =
+    Number.isFinite(result.durationMs) && result.durationMs > 0 ? result.durationMs / 1000 : 0;
+  yield { type: 'done', audioSeconds, model: result.model };
 }
 
 /**

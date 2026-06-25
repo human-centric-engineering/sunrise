@@ -71,6 +71,27 @@ describe('batchTranscribeAsStream', () => {
     expect(chunks[1]).toEqual({ type: 'done', audioSeconds: 0, model: 'whisper-1' });
   });
 
+  it('clamps a non-finite duration to audioSeconds 0 (honours the "unknown" contract)', async () => {
+    // A provider whose transcribe() violates the typed `number` (returns NaN).
+    const provider = transcribeOnly({
+      text: 'hi',
+      durationMs: Number.NaN,
+      model: 'whisper-1',
+    });
+
+    const chunks = await collect(batchTranscribeAsStream(provider, AUDIO, OPTS));
+
+    expect(chunks[1]).toEqual({ type: 'done', audioSeconds: 0, model: 'whisper-1' });
+  });
+
+  it('clamps a negative duration to audioSeconds 0', async () => {
+    const provider = transcribeOnly({ text: 'hi', durationMs: -5, model: 'whisper-1' });
+
+    const chunks = await collect(batchTranscribeAsStream(provider, AUDIO, OPTS));
+
+    expect(chunks[1]).toEqual({ type: 'done', audioSeconds: 0, model: 'whisper-1' });
+  });
+
   it('throws not_supported when the provider has no transcribe method', async () => {
     await expect(collect(batchTranscribeAsStream({}, AUDIO, OPTS))).rejects.toMatchObject({
       name: 'ProviderError',
