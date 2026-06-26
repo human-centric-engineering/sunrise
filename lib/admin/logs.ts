@@ -27,12 +27,10 @@ const globalForLogs = globalThis as unknown as {
 };
 
 const logBuffer: LogEntry[] = globalForLogs.logBuffer ?? [];
-let logIdCounter = globalForLogs.logIdCounter ?? 0;
 
-// Persist in development
+// Persist the buffer in development so it survives hot reloads.
 if (process.env.NODE_ENV !== 'production') {
   globalForLogs.logBuffer = logBuffer;
-  globalForLogs.logIdCounter = logIdCounter;
 }
 
 /**
@@ -43,12 +41,14 @@ if (process.env.NODE_ENV !== 'production') {
  * @param entry - Log entry (without id)
  */
 export function addLogEntry(entry: Omit<LogEntry, 'id'> & { id?: string }): void {
-  const id = entry.id ?? `log_${++logIdCounter}`;
-
-  // Update the counter in globals for dev persistence
-  if (process.env.NODE_ENV !== 'production') {
-    globalForLogs.logIdCounter = logIdCounter;
-  }
+  // Keep the counter on the global (by reference) rather than a module-local
+  // copy. The buffer is shared across module instances via globalThis, and
+  // Next.js evaluates this module more than once per process (e.g. the page RSC
+  // bundle and the route-handler bundle). A module-local counter would diverge
+  // between instances and emit colliding ids into the one shared buffer.
+  const nextId = (globalForLogs.logIdCounter ?? 0) + 1;
+  globalForLogs.logIdCounter = nextId;
+  const id = entry.id ?? `log_${nextId}`;
 
   const logEntry: LogEntry = {
     ...entry,
@@ -117,11 +117,7 @@ export function getLogEntries(options: {
  */
 export function clearLogBuffer(): void {
   logBuffer.length = 0;
-  logIdCounter = 0;
-
-  if (process.env.NODE_ENV !== 'production') {
-    globalForLogs.logIdCounter = 0;
-  }
+  globalForLogs.logIdCounter = 0;
 }
 
 /**

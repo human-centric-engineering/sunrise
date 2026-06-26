@@ -150,6 +150,51 @@ describe('lib/admin/logs', () => {
   });
 
   // -------------------------------------------------------------------------
+  // addLogEntry — id uniqueness across module instances (regression)
+  // -------------------------------------------------------------------------
+
+  describe('addLogEntry — id uniqueness across module instances (regression)', () => {
+    // Bug: the buffer was shared across module instances via globalThis, but the
+    // id counter was a module-local copy taken at init. Next.js evaluates this
+    // module more than once per process (the page RSC bundle + the route-handler
+    // bundle), so the two counters diverged while pushing into the one shared
+    // buffer — emitting colliding ids (e.g. two `log_5`) and producing duplicate
+    // React keys in the admin logs viewer. The counter must live on the global so
+    // every instance advances it in lockstep.
+    type LogGlobals = { logIdCounter?: number };
+    const logGlobals = globalThis as unknown as LogGlobals;
+
+    it('should source the id counter from globalThis, not a stale module-local copy', () => {
+      // Arrange — emit one entry, then simulate a second module instance
+      // advancing the shared counter on the global.
+      addLogEntry(makeEntry());
+      const afterFirst = logGlobals.logIdCounter ?? 0;
+      logGlobals.logIdCounter = afterFirst + 100;
+
+      // Act — the next entry must continue from the externally-updated global.
+      addLogEntry(makeEntry({ message: 'after external bump' }));
+      const { entries } = getLogEntries({});
+      const bumped = entries.find((e) => e.message === 'after external bump');
+
+      // Assert — proves the id is derived from the global each call rather than
+      // from a counter captured once at module init.
+      expect(bumped?.id).toBe(`log_${afterFirst + 101}`);
+    });
+
+    it('should never emit duplicate auto-generated ids across many entries', () => {
+      // Arrange / Act
+      const count = 50;
+      for (let i = 0; i < count; i++) {
+        addLogEntry(makeEntry({ message: `m-${i}` }));
+      }
+
+      // Assert — every id is unique (no collisions land in the shared buffer)
+      const ids = getLogEntries({ limit: count }).entries.map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // getLogEntries — paginated shape
   // -------------------------------------------------------------------------
 
