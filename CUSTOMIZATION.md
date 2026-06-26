@@ -115,8 +115,9 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
   scaffold): set `publicNavItems` (header nav), `footerNavItems` (footer links),
   and/or `footerLegalItems` (footer legal links) to a `PublicNavItem[]`. Each
   defaults to `null` = use the platform default; a non-null array **replaces**
-  that default wholesale. Items are `{ href, label, icon? }` (string +
-  `lucide-react`); the `next/link` / active-state glue stays in the platform
+  that default wholesale. Items are `{ href, label, icon?, exact? }` (string +
+  `lucide-react`; set `exact` so a parent link like `/docs` doesn't highlight on
+  `/docs/intro`); the `next/link` / active-state glue stays in the platform
   components (`components/layouts/public-nav.tsx`, `public-footer.tsx`).
 - **Replaceable content vs. non-negotiable platform control:** the footer's
   **Cookie Preferences** button is **always rendered** by the platform in the

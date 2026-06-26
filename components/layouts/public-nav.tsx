@@ -24,12 +24,13 @@ export function PublicNav() {
   return (
     <nav className="flex items-center gap-1">
       {navItems.map((item) => {
-        // Home (`/`) matches exactly; every other path is a prefix match (so
-        // `/about/team` highlights "About"). Every path starts with `/`, which
-        // is why Home needs the exact case.
+        // Exact items (and the root `/`, which every path is a prefix of) match
+        // only on equality; everything else prefix-matches so `/about/team`
+        // highlights "About". A fork sets `exact` to keep a parent link like
+        // `/docs` from highlighting on `/docs/intro`.
         const isActive =
-          item.href === '/'
-            ? pathname === '/'
+          item.exact || item.href === '/'
+            ? pathname === item.href
             : pathname === item.href || pathname.startsWith(`${item.href}/`);
         const Icon = item.icon;
 

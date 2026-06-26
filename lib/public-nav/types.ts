@@ -24,6 +24,12 @@ export interface PublicNavItem {
   href: string;
   label: string;
   icon?: LucideIcon;
+  /**
+   * When true, the item is active only on an exact pathname match (not on child
+   * routes). Defaults to prefix-matching; the root `/` is always exact. Lets a
+   * fork add a parent link like `/docs` without it highlighting on `/docs/intro`.
+   */
+  exact?: boolean;
 }
 
 /** Default header nav. */
