@@ -16,6 +16,21 @@ release process.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-26
+
+> **Alpha release.** Fourth tagged Sunrise release. **MINOR bump** — adds new
+> public surface (the `<BrandMark>` header/footer brand slot, the public-nav /
+> footer override seam — `publicNavItems` / `footerNavItems` / `footerLegalItems`
+> with the `PublicNavItem` type and `DEFAULT_*` lists — and the email-template
+> resolver `resolveEmailTemplate` with the `EmailKind` / `EmailPropsMap` /
+> `EmailOverrides` contract) on top of the anonymous-visitor observability seam
+> (`visitorId` log context, `getVisitorId()`, the `LogContext.visitorId` /
+> `ChatRequest.visitorId` fields, and the `LOG_VISITOR_ID` / `LOG_HTTP_ACCESS`
+> env flags). Ships in `0.x` per
+> [`VERSIONING.md`](./VERSIONING.md#0x-alpha-semantics--loose-by-design) — forks
+> adopting this release should expect real merge work between any two `0.x`
+> releases.
+
 ### Added
 
 - **Fork-readiness seams — header/footer brand, public nav, and auth emails.**
