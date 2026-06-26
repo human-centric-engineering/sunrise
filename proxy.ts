@@ -118,11 +118,23 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   let visitorId: string | null = null;
   let visitorCookieValue: string | null = null;
   if (isVisitorTrackingEnabled()) {
-    visitorId = await verifyVisitorId(request.cookies.get(VISITOR_COOKIE_NAME)?.value);
-    if (!visitorId) {
-      const issued = await issueVisitorId();
-      visitorId = issued.id;
-      visitorCookieValue = issued.cookieValue;
+    try {
+      visitorId = await verifyVisitorId(request.cookies.get(VISITOR_COOKIE_NAME)?.value);
+      if (!visitorId) {
+        const issued = await issueVisitorId();
+        visitorId = issued.id;
+        visitorCookieValue = issued.cookieValue;
+      }
+    } catch (err) {
+      // visitorId is observability-only and must never take the site down.
+      // A signing failure (e.g. BETTER_AUTH_SECRET unavailable to the proxy
+      // runtime) fails open to no tracking rather than 500-ing every request.
+      visitorId = null;
+      visitorCookieValue = null;
+      logger.error('visitor-id resolution failed; continuing without it', {
+        requestId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

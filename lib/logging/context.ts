@@ -24,6 +24,7 @@
 import { nanoid } from 'nanoid';
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
+import { VISITOR_HEADER_NAME } from '@/lib/logging/visitor-id';
 
 /**
  * Generate a unique request ID
@@ -74,7 +75,7 @@ export async function getRequestId(): Promise<string> {
  */
 export async function getVisitorId(): Promise<string | undefined> {
   const headersList = await headers();
-  return headersList.get('x-visitor-id') || undefined;
+  return headersList.get(VISITOR_HEADER_NAME) || undefined;
 }
 
 /**
@@ -108,7 +109,7 @@ export async function getRequestContext(request?: Request): Promise<{
     // Durable anonymous visitor id, set by the proxy from the verified
     // signed cookie (see lib/logging/visitor-id.ts). Present for anonymous
     // and authenticated callers alike; absent when tracking is disabled.
-    visitorId: headersList.get('x-visitor-id') || undefined,
+    visitorId: headersList.get(VISITOR_HEADER_NAME) || undefined,
     method: request?.method,
     url: request?.url,
     userAgent: headersList.get('user-agent') || undefined,

@@ -44,6 +44,7 @@ vi.mock('@/lib/security/rate-limit-middleware', () => ({
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 import { logger } from '@/lib/logging';
 import { signVisitorId, verifyVisitorId, VISITOR_COOKIE_NAME } from '@/lib/logging/visitor-id';
+import * as visitorIdModule from '@/lib/logging/visitor-id';
 
 function createMockRequest(
   pathname: string,
@@ -625,5 +626,26 @@ describe('proxy — anonymous visitor id', () => {
 
     expect(infoSpy).not.toHaveBeenCalledWith('http_access', expect.anything());
     infoSpy.mockRestore();
+  });
+
+  it('fails open (200, no cookie) when visitor-id signing throws — never 500s the site', async () => {
+    // A signing failure (e.g. BETTER_AUTH_SECRET unavailable to the proxy
+    // runtime) must not take the whole site down for an observability feature.
+    const issueSpy = vi
+      .spyOn(visitorIdModule, 'issueVisitorId')
+      .mockRejectedValue(new Error('secret unavailable'));
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const request = createMockRequest('/', { cookies: {} });
+
+    const response = await proxy(request);
+
+    expect(response.status).toBe(200);
+    expect((response as NextResponse).cookies.get(VISITOR_COOKIE_NAME)).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith(
+      'visitor-id resolution failed; continuing without it',
+      expect.objectContaining({ error: 'secret unavailable' })
+    );
+    issueSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 });
