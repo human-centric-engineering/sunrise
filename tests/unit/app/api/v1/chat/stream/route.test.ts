@@ -87,6 +87,7 @@ vi.mock('@/lib/api/sse', () => ({
 // Mock logging context
 vi.mock('@/lib/logging/context', () => ({
   getRequestId: vi.fn(() => Promise.resolve('req-test-001')),
+  getVisitorId: vi.fn(() => Promise.resolve('vid-test-001')),
 }));
 
 // Import mocked modules
@@ -245,6 +246,8 @@ describe('POST /api/v1/chat/stream', () => {
           message: validPayload.message,
           agentSlug: validPayload.agentSlug,
           userId: 'user_test123',
+          requestId: 'req-test-001',
+          visitorId: 'vid-test-001',
         })
       );
     });

@@ -28,7 +28,7 @@ import {
 } from '@/lib/security/rate-limit';
 import { streamChat } from '@/lib/orchestration/chat';
 import { consumerChatRequestSchema } from '@/lib/validations/orchestration';
-import { getRequestId } from '@/lib/logging/context';
+import { getRequestId, getVisitorId } from '@/lib/logging/context';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError, ForbiddenError } from '@/lib/api/errors';
 import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
@@ -40,6 +40,7 @@ export const POST = withAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, consumerChatRequestSchema);
   const requestId = await getRequestId();
+  const visitorId = await getVisitorId();
 
   // Verify the agent exists and is active
   const agent = await prisma.aiAgent.findFirst({
@@ -160,6 +161,7 @@ export const POST = withAuth(async (request, session) => {
     conversationId: body.conversationId,
     attachments: body.attachments,
     requestId,
+    visitorId,
     signal: request.signal,
   });
 

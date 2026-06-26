@@ -16,6 +16,27 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Anonymous visitor observability — durable signed `visitorId` in server logs.**
+  The proxy now issues a durable, HMAC-signed `sunrise_vid` cookie (HttpOnly,
+  SameSite=Lax, Secure in production, 180-day TTL) and folds a `visitorId` into
+  the log context alongside `requestId`, so an anonymous visitor's journey
+  (page load → contact form → chat) can be correlated across requests for error
+  reproduction — where the per-request `requestId` cannot. New public surface:
+  the `LogContext.visitorId` field; `getVisitorId()` and the `visitorId` field
+  on `getRequestContext()` / `getFullContext()` in `lib/logging/context.ts`; the
+  `ChatRequest.visitorId` field threaded through `streamChat()`; the
+  `lib/logging/visitor-id.ts` signing module; and two env flags — `LOG_VISITOR_ID`
+  (default **on**, set `false` to disable) and `LOG_HTTP_ACCESS` (default **off**,
+  opt-in per-request proxy access log). The signing key is derived from
+  `BETTER_AUTH_SECRET` via HKDF with domain separation; the cookie is
+  tamper-verified and the proxy strips any spoofed inbound `x-visitor-id`
+  header. The `visitorId` is pseudonymous and covered by log-retention windows,
+  not the `eraseUser()` cascade. See
+  [`.context/logging/visitor-tracing.md`](./.context/logging/visitor-tracing.md)
+  and [`.context/privacy/visitor-id.md`](./.context/privacy/visitor-id.md). [#341]
+
 ## [0.2.0] — 2026-06-25
 
 > **Alpha release.** Third tagged Sunrise release. **MINOR bump** — adds new

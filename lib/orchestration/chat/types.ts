@@ -40,6 +40,14 @@ export interface ChatRequest {
   entityContext?: Record<string, unknown>;
   /** Request-scoped correlation ID for structured log tracing. */
   requestId?: string;
+  /**
+   * Durable anonymous visitor ID, propagated from the proxy so the
+   * handler's internal log lines correlate to a visitor's journey across
+   * requests (not just within this one). Absent for third-party embeds
+   * (the SameSite=Lax cookie isn't sent cross-site) and when tracking is
+   * disabled. See lib/logging/visitor-id.ts.
+   */
+  visitorId?: string;
   /** Abort mid-stream. Forwarded into LlmOptions.signal. */
   signal?: AbortSignal;
   /**

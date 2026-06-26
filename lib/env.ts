@@ -90,6 +90,25 @@ const serverEnvSchema = z.object({
     .optional()
     .describe('Logging verbosity level. Defaults to "debug" in development, "info" in production'),
 
+  // Anonymous visitor observability (see .context/logging/visitor-tracing.md).
+  // These are read directly from process.env in lib/logging/visitor-id.ts
+  // (so they work in the proxy runtime); registered here for documentation
+  // and fail-fast validation only.
+  LOG_VISITOR_ID: z
+    .enum(['true', 'false'])
+    .optional()
+    .describe(
+      'Durable signed anonymous visitor-id cookie + log field for cross-request tracing. ' +
+        'Default ON (security/observability feature). Set "false" to disable entirely.'
+    ),
+  LOG_HTTP_ACCESS: z
+    .enum(['true', 'false'])
+    .optional()
+    .describe(
+      'Emit one structured access-log line per request from the proxy (requestId, visitorId, ' +
+        'method, path). Default OFF — opt in with "true" to make navigation visible server-side.'
+    ),
+
   // Security Configuration (optional)
   ALLOWED_ORIGINS: z
     .string()

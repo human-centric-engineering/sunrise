@@ -373,7 +373,10 @@ export class StreamingChatHandler {
     chatSpan: Span,
     request: ChatRequest
   ): AsyncGenerator<ChatEvent, void, unknown> {
-    const log = request.requestId ? logger.withContext({ requestId: request.requestId }) : logger;
+    const log =
+      request.requestId || request.visitorId
+        ? logger.withContext({ requestId: request.requestId, visitorId: request.visitorId })
+        : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
     let chatSpanError: unknown = undefined;

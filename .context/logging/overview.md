@@ -452,6 +452,7 @@ for (const item of items) {
 ## Related Documentation
 
 - [Request Context](./request-context.md) - Request ID propagation and user context
+- [Anonymous Visitor Tracing](./visitor-tracing.md) - durable `visitorId` cross-request correlation
 - [Best Practices](./best-practices.md) - Patterns and performance
 - [Error Handling Overview](../errors/overview.md) - Complete error handling architecture
 

@@ -66,6 +66,7 @@ vi.mock('@/lib/logging/context', () => ({
   getRequestContext: vi.fn(() =>
     Promise.resolve({
       requestId: 'req-test-123',
+      visitorId: 'vid-test-123',
       method: 'POST',
       url: 'https://mysite.com/api/v1/embed/chat/stream',
       userAgent: 'test-agent/1.0',
@@ -264,7 +265,7 @@ describe('POST /api/v1/embed/chat/stream', () => {
       );
 
       expect(vi.mocked(streamChat)).toHaveBeenCalledWith(
-        expect.objectContaining({ requestId: 'req-test-123' })
+        expect.objectContaining({ requestId: 'req-test-123', visitorId: 'vid-test-123' })
       );
     });
 

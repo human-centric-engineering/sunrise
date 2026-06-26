@@ -202,6 +202,12 @@ export async function POST(request: NextRequest): Promise<Response> {
     conversationId: body.conversationId,
     attachments: body.attachments,
     requestId,
+    // Reliable only for same-origin embeds, where the first-party
+    // SameSite=Lax `sunrise_vid` cookie accompanies the request. On a
+    // cross-site embed the cookie isn't sent, so this is either empty or a
+    // fresh per-request id that does not correlate across requests — the
+    // durable cross-request key there is the `embed_<hash>` userId above.
+    visitorId: requestContext.visitorId,
     signal: request.signal,
   });
 

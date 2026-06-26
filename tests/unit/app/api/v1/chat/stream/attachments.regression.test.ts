@@ -56,6 +56,7 @@ vi.mock('@/lib/api/sse', () => ({
 
 vi.mock('@/lib/logging/context', () => ({
   getRequestId: vi.fn(() => Promise.resolve('req-attach-001')),
+  getVisitorId: vi.fn(() => Promise.resolve('vid-attach-001')),
 }));
 
 import { POST } from '@/app/api/v1/chat/stream/route';

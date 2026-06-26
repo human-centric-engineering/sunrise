@@ -1,6 +1,16 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { generateRequestId } from '@/lib/logging/context';
+import { logger } from '@/lib/logging';
+import {
+  VISITOR_COOKIE_NAME,
+  VISITOR_HEADER_NAME,
+  isVisitorTrackingEnabled,
+  isHttpAccessLogEnabled,
+  issueVisitorId,
+  verifyVisitorId,
+  visitorCookieOptions,
+} from '@/lib/logging/visitor-id';
 import { setSecurityHeaders } from '@/lib/security/headers';
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 
@@ -97,24 +107,81 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
 
   // ==========================================================================
+  // Observability: durable anonymous visitor id
+  // ==========================================================================
+  // Resolve (or mint) a signed visitor id so server logs can correlate an
+  // anonymous visitor's journey across requests, where `requestId` cannot.
+  // The id is forwarded to server components via the `x-visitor-id` request
+  // header (below) and folded into the log context by `getRequestContext`.
+  // `visitorCookieValue` is non-null only when we minted a fresh id, so a
+  // returning visitor with a valid cookie incurs no `Set-Cookie`.
+  let visitorId: string | null = null;
+  let visitorCookieValue: string | null = null;
+  if (isVisitorTrackingEnabled()) {
+    try {
+      visitorId = await verifyVisitorId(request.cookies.get(VISITOR_COOKIE_NAME)?.value);
+      if (!visitorId) {
+        const issued = await issueVisitorId();
+        visitorId = issued.id;
+        visitorCookieValue = issued.cookieValue;
+      }
+    } catch (err) {
+      // visitorId is observability-only and must never take the site down.
+      // A signing failure (e.g. BETTER_AUTH_SECRET unavailable to the proxy
+      // runtime) fails open to no tracking rather than 500-ing every request.
+      visitorId = null;
+      visitorCookieValue = null;
+      logger.error('visitor-id resolution failed; continuing without it', {
+        requestId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Set the freshly minted visitor cookie on whichever response we return
+  // (passthrough, redirect, or block) so the journey starts on the first
+  // request regardless of outcome. No-op for returning visitors.
+  const setVisitorCookie = (response: NextResponse): NextResponse => {
+    if (visitorCookieValue) {
+      response.cookies.set(VISITOR_COOKIE_NAME, visitorCookieValue, visitorCookieOptions());
+    }
+    return response;
+  };
+
+  // Optional per-request access log (default off, behind LOG_HTTP_ACCESS).
+  // Makes anonymous navigation visible server-side. The final response
+  // status is not available to the proxy for passthrough requests, so the
+  // line carries the request shape + correlation keys only.
+  if (isHttpAccessLogEnabled()) {
+    logger.info('http_access', {
+      requestId,
+      visitorId: visitorId ?? undefined,
+      method: request.method,
+      path: pathname,
+    });
+  }
+
+  // ==========================================================================
   // Security: Origin validation (CSRF protection for state-changing requests)
   // ==========================================================================
   if (!validateOrigin(request)) {
-    return new NextResponse(
-      JSON.stringify({
-        success: false,
-        error: {
-          code: 'FORBIDDEN',
-          message: 'Invalid request origin',
-        },
-      }),
-      {
-        status: 403,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-request-id': requestId,
-        },
-      }
+    return setVisitorCookie(
+      new NextResponse(
+        JSON.stringify({
+          success: false,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Invalid request origin',
+          },
+        }),
+        {
+          status: 403,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-request-id': requestId,
+          },
+        }
+      )
     );
   }
 
@@ -130,13 +197,15 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   if (rateLimitResponse) {
     // Re-wrap so the request ID propagates to the client alongside the
     // standard rate-limit envelope and headers from `createRateLimitResponse`.
-    return new NextResponse(rateLimitResponse.body, {
-      status: rateLimitResponse.status,
-      headers: {
-        ...Object.fromEntries(rateLimitResponse.headers),
-        'x-request-id': requestId,
-      },
-    });
+    return setVisitorCookie(
+      new NextResponse(rateLimitResponse.body, {
+        status: rateLimitResponse.status,
+        headers: {
+          ...Object.fromEntries(rateLimitResponse.headers),
+          'x-request-id': requestId,
+        },
+      })
+    );
   }
 
   // ==========================================================================
@@ -156,14 +225,14 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
     loginUrl.searchParams.set('callbackUrl', pathname);
     const redirectResponse = NextResponse.redirect(loginUrl);
     redirectResponse.headers.set('x-request-id', requestId);
-    return redirectResponse;
+    return setVisitorCookie(redirectResponse);
   }
 
   // Redirect authenticated users away from auth pages
   if (isAuthRoute && authenticated) {
     const redirectResponse = NextResponse.redirect(new URL('/dashboard', request.url));
     redirectResponse.headers.set('x-request-id', requestId);
-    return redirectResponse;
+    return setVisitorCookie(redirectResponse);
   }
 
   // ==========================================================================
@@ -174,6 +243,15 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // add it to inline <script> tags (e.g. theme detection script in root layout).
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
+
+  // Forward the verified visitor id to server components. The proxy is the
+  // sole writer of this header: set it from the verified/minted id, or
+  // strip any client-supplied value so a visitor can't spoof another's id.
+  if (visitorId) {
+    requestHeaders.set(VISITOR_HEADER_NAME, visitorId);
+  } else {
+    requestHeaders.delete(VISITOR_HEADER_NAME);
+  }
 
   const response = NextResponse.next({
     request: { headers: requestHeaders },
@@ -191,7 +269,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // NOTE: X-XSS-Protection is intentionally NOT set (deprecated, can cause issues)
   setSecurityHeaders(response, nonce);
 
-  return response;
+  return setVisitorCookie(response);
 }
 
 /**

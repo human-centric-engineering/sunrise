@@ -66,8 +66,10 @@ const LogLevelValue: Record<LogLevel, number> = {
  * Includes request tracing and user information
  */
 export interface LogContext {
-  /** Request ID for distributed tracing */
+  /** Request ID for distributed tracing (correlates lines within one request) */
   requestId?: string;
+  /** Durable anonymous visitor ID (correlates a visitor's journey across requests) */
+  visitorId?: string;
   /** User ID who triggered this log */
   userId?: string;
   /** Session ID for request correlation */
