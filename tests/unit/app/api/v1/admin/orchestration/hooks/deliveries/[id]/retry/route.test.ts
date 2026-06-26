@@ -21,6 +21,14 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
   retryHookDelivery: vi.fn(),
 }));
 
+// The route fire-and-forgets logAdminAction (un-awaited). Without this mock the
+// real implementation hits Prisma against a non-existent test DB and its
+// `.catch` logger.error() resolves during worker teardown, surfacing as
+// "Closing rpc while onUserConsoleLog was pending".
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
