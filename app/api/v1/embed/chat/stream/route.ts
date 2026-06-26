@@ -18,7 +18,7 @@ import { embedChatLimiter, createRateLimitResponse, imageLimiter } from '@/lib/s
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { streamChat } from '@/lib/orchestration/chat';
 import { logger } from '@/lib/logging';
-import { getRequestId } from '@/lib/logging/context';
+import { getRequestContext } from '@/lib/logging/context';
 import { cuidSchema } from '@/lib/validations/common';
 import { chatAttachmentsArraySchema } from '@/lib/validations/orchestration';
 import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
@@ -77,12 +77,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const clientIp = getClientIP(request);
 
   // Request-scoped logger so every embed log line — including the
-  // mid-stream errors inside `streamChat` — shares a correlation key.
-  // The embed path has no session, so we thread `requestId` explicitly
-  // rather than going through `getRouteLogger` (which would do a wasted
-  // auth-session lookup).
-  const requestId = await getRequestId();
-  const log = logger.withContext({ requestId });
+  // mid-stream errors inside `streamChat` — shares a correlation key
+  // plus the user-agent that characterises the anonymous caller.
+  // The embed path has no session, so we use `getRequestContext` (which
+  // reads request/header metadata only) rather than `getRouteLogger`,
+  // which would do a wasted auth-session lookup.
+  const requestContext = await getRequestContext(request);
+  const { requestId } = requestContext;
+  const log = logger.withContext(requestContext);
 
   // Rate limit per token + IP
   const rateKey = `${token}:${clientIp}`;

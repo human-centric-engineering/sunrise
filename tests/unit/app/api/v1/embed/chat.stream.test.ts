@@ -63,7 +63,14 @@ vi.mock('@/lib/logging', () => {
 });
 
 vi.mock('@/lib/logging/context', () => ({
-  getRequestId: vi.fn(() => Promise.resolve('req-test-123')),
+  getRequestContext: vi.fn(() =>
+    Promise.resolve({
+      requestId: 'req-test-123',
+      method: 'POST',
+      url: 'https://mysite.com/api/v1/embed/chat/stream',
+      userAgent: 'test-agent/1.0',
+    })
+  ),
 }));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
@@ -71,6 +78,7 @@ vi.mock('@/lib/logging/context', () => ({
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { streamChat } from '@/lib/orchestration/chat';
 import { embedChatLimiter, imageLimiter } from '@/lib/security/rate-limit';
+import { logger } from '@/lib/logging';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -257,6 +265,19 @@ describe('POST /api/v1/embed/chat/stream', () => {
 
       expect(vi.mocked(streamChat)).toHaveBeenCalledWith(
         expect.objectContaining({ requestId: 'req-test-123' })
+      );
+    });
+
+    it('scopes the embed logger with requestId + userAgent for anonymous traceability', async () => {
+      await POST(
+        makePostRequest(
+          { message: 'Hello bot' },
+          { 'x-embed-token': VALID_TOKEN, origin: 'https://mysite.com' }
+        )
+      );
+
+      expect(vi.mocked(logger.withContext)).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'req-test-123', userAgent: 'test-agent/1.0' })
       );
     });
 
