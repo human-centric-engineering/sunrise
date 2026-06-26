@@ -8,9 +8,7 @@ import { humanWhere } from '@/lib/auth/account';
 import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email/send';
 import { validateEmailConfig } from '@/lib/email/client';
-import VerifyEmailEmail from '@/emails/verify-email';
-import ResetPasswordEmail from '@/emails/reset-password';
-import WelcomeEmail from '@/emails/welcome';
+import { resolveEmailTemplate } from '@/lib/email/registry';
 import { logger } from '@/lib/logging';
 import {
   validateInvitationToken,
@@ -310,7 +308,7 @@ export async function userCreateAfterHook(
     await sendEmail({
       to: user.email,
       subject: 'Welcome to Sunrise',
-      react: WelcomeEmail({
+      react: resolveEmailTemplate('welcome', {
         userName: user.name || 'User',
         userEmail: user.email,
         baseUrl: env.BETTER_AUTH_URL,
@@ -367,7 +365,7 @@ export async function sendResetPasswordHook(params: {
   await sendEmail({
     to: user.email,
     subject: 'Reset your password',
-    react: ResetPasswordEmail({
+    react: resolveEmailTemplate('resetPassword', {
       userName: user.name || 'User',
       resetUrl: url,
       expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000),
@@ -408,7 +406,7 @@ export async function afterEmailVerificationHook(user: {
   await sendEmail({
     to: user.email,
     subject: 'Welcome to Sunrise',
-    react: WelcomeEmail({
+    react: resolveEmailTemplate('welcome', {
       userName: user.name || 'User',
       userEmail: user.email,
       baseUrl: env.BETTER_AUTH_URL,
@@ -458,7 +456,7 @@ export async function sendVerificationEmailHook({
   await sendEmail({
     to: user.email,
     subject: 'Verify your email address',
-    react: VerifyEmailEmail({
+    react: resolveEmailTemplate('verifyEmail', {
       userName: user.name || 'User',
       verificationUrl,
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours

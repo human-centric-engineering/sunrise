@@ -15,23 +15,24 @@
 
 import Link from 'next/link';
 import { HeaderActions } from '@/components/layouts/header-actions';
+import { BrandMark } from '@/components/brand/brand-mark';
 
 interface AppHeaderProps {
   /** URL for logo click (default: "/") */
   logoHref?: string;
-  /** Logo text (default: "Sunrise") */
+  /** Optional caller override for the brand slot; defaults to `<BrandMark/>`. */
   logoText?: string;
   /** Optional navigation component to display after logo */
   navigation?: React.ReactNode;
 }
 
-export function AppHeader({ logoHref = '/', logoText = 'Sunrise', navigation }: AppHeaderProps) {
+export function AppHeader({ logoHref = '/', logoText, navigation }: AppHeaderProps) {
   return (
     <header className="border-b">
       <div className="container mx-auto flex items-center justify-between px-4 py-4">
         <div className="flex items-center gap-8">
           <Link href={logoHref} className="text-xl font-bold hover:opacity-80">
-            {logoText}
+            {logoText ?? <BrandMark />}
           </Link>
           {navigation}
         </div>

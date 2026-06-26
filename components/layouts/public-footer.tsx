@@ -2,6 +2,9 @@
 
 import Link from 'next/link';
 import { useConsent } from '@/lib/consent';
+import { BRAND } from '@/lib/brand';
+import { footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
+import { DEFAULT_FOOTER_NAV, DEFAULT_FOOTER_LEGAL } from '@/lib/public-nav/types';
 
 /**
  * Public Footer Component
@@ -12,16 +15,9 @@ import { useConsent } from '@/lib/consent';
  * Phase 3.5: Landing Page & Marketing
  */
 
-const navigationLinks = [
-  { href: '/', label: 'Home' },
-  { href: '/about', label: 'About' },
-  { href: '/contact', label: 'Contact' },
-];
-
-const legalLinks = [
-  { href: '/privacy', label: 'Privacy Policy' },
-  { href: '/terms', label: 'Terms of Service' },
-];
+// Fork overrides (non-null arrays) replace the platform defaults wholesale.
+const navigationLinks = footerNavItems ?? DEFAULT_FOOTER_NAV;
+const legalLinks = footerLegalItems ?? DEFAULT_FOOTER_LEGAL;
 
 export function PublicFooter() {
   const currentYear = new Date().getFullYear();
@@ -44,7 +40,9 @@ export function PublicFooter() {
             ))}
           </nav>
 
-          {/* Legal Links */}
+          {/* Legal Links — the override governs links; the Cookie Preferences
+              control below is always rendered by the platform (consent is a
+              legal requirement in many jurisdictions, not fork-overridable). */}
           <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2">
             {legalLinks.map((link) => (
               <Link
@@ -66,7 +64,7 @@ export function PublicFooter() {
 
         {/* Copyright */}
         <div className="text-muted-foreground mt-6 text-center text-sm">
-          &copy; {currentYear} Sunrise. All rights reserved.
+          &copy; {currentYear} {BRAND.name}. All rights reserved.
         </div>
       </div>
     </footer>

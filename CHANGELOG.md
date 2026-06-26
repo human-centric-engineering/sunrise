@@ -18,6 +18,29 @@ release process.
 
 ### Added
 
+- **Fork-readiness seams — header/footer brand, public nav, and auth emails.**
+  Three near-universal fork customizations no longer require editing
+  Sunrise-core files in place (which conflicts on every upstream sync); each is
+  now a **fork-owned scaffold** the platform auto-resolves against, with a
+  platform default. New public surface: the `<BrandMark>` slot
+  (`components/brand/brand-mark.tsx`) — the header/footer brand is a render
+  concern (image/wordmark/text), so the seam is a component; `AppHeader` renders
+  it where it previously hardcoded `'Sunrise'`, and `logoText` becomes an
+  optional caller override with no default. The public-nav override
+  (`lib/app/public-nav.ts`) exports `publicNavItems` / `footerNavItems` /
+  `footerLegalItems` (`PublicNavItem[] | null`, default `null` = platform
+  default; a non-null array **replaces** it wholesale), with the shared
+  `PublicNavItem` type and `DEFAULT_PUBLIC_NAV` / `DEFAULT_FOOTER_NAV` /
+  `DEFAULT_FOOTER_LEGAL` in `lib/public-nav/types.ts`; the footer's **Cookie
+  Preferences** consent control is always rendered regardless of the legal
+  override. The email resolver (`lib/email/registry.ts`) adds
+  `resolveEmailTemplate(kind, props)`, the `EmailKind` union, the typed
+  per-kind `EmailPropsMap` props contract, and `EmailOverrides`; forks register
+  per-kind overrides in `lib/app/emails.ts` and platform call sites
+  (`lib/auth/config.ts`, `app/api/v1/users/invite/route.ts`) resolve through it.
+  Changing an email kind's props is a versioned public-surface change. Vanilla
+  Sunrise output is unchanged when no override is set. See
+  [`CUSTOMIZATION.md`](./CUSTOMIZATION.md) §2 and §4. [#347]
 - **Anonymous visitor observability — durable signed `visitorId` in server logs.**
   The proxy now issues a durable, HMAC-signed `sunrise_vid` cookie (HttpOnly,
   SameSite=Lax, Secure in production, 180-day TTL) and folds a `visitorId` into

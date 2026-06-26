@@ -49,7 +49,7 @@ import {
   updateInvitationToken,
 } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
-import InvitationEmail from '@/emails/invitation';
+import { resolveEmailTemplate } from '@/lib/email/registry';
 import { getRouteLogger } from '@/lib/api/context';
 import { env } from '@/lib/env';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -174,7 +174,7 @@ export const POST = withAdminAuth(async (request, session) => {
   const emailResult = await sendEmail({
     to: body.email,
     subject: `You've been invited to join Sunrise`,
-    react: InvitationEmail({
+    react: resolveEmailTemplate('invitation', {
       inviterName: session.user.name || 'Administrator',
       inviteeName: body.name,
       inviteeEmail: body.email,

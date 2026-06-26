@@ -16,6 +16,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
 import { initAppCapabilities } from '@/lib/app/capabilities';
 import { initAppNav } from '@/lib/app/admin-nav';
+import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
+import { emailOverrides } from '@/lib/app/emails';
 import { getEffectiveRateLimitPolicy, RATE_LIMIT_POLICY } from '@/lib/security/rate-limit-policy';
 import { getRegisteredNavSections, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 
@@ -48,5 +50,18 @@ describe('lib/app/ bootstrap defaults are no-ops', () => {
 
     // Assert — nothing registered
     expect(getRegisteredNavSections()).toHaveLength(0);
+  });
+
+  it('public-nav overrides are all null by default (= use platform defaults)', () => {
+    // A stray non-null list here would silently replace the marketing nav for
+    // every install (issue #347 ships these unset).
+    expect(publicNavItems).toBeNull();
+    expect(footerNavItems).toBeNull();
+    expect(footerLegalItems).toBeNull();
+  });
+
+  it('email overrides are empty by default (= use platform templates)', () => {
+    // A stray override here would silently swap an auth email for every install.
+    expect(emailOverrides).toEqual({});
   });
 });

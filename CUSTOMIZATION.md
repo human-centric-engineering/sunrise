@@ -88,12 +88,55 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 **App name (the brand seam):**
 
 - Set **`NEXT_PUBLIC_APP_NAME`** in your `.env` — this renames the app across
-  page-title metadata (all layouts + auth pages) and the email templates in one
-  place, no file edits. Defaults to `"Sunrise"` when unset. Consumed via
-  `lib/brand.ts` (`BRAND.name`); import that constant if you add new
-  brand-bearing surfaces. Marketing-page **body copy** (`app/(public)/*`) is not
-  driven by this seam — re-skin it with the thin-shim pattern in
-  [§6](#6-landing-page--routes) so your content stays sync-safe.
+  page-title metadata (all layouts + auth pages), the **header/footer brand**,
+  and the email templates in one place, no file edits. Defaults to `"Sunrise"`
+  when unset. Consumed via `lib/brand.ts` (`BRAND.name`); import that constant
+  if you add new brand-bearing surfaces. Marketing-page **body copy**
+  (`app/(public)/*`) is not driven by this seam — re-skin it with the thin-shim
+  pattern in [§6](#6-landing-page--routes) so your content stays sync-safe.
+
+**Header / footer brand — the `<BrandMark>` slot:**
+
+- A header brand is a **render** concern (image vs. styled wordmark vs. text,
+  sizing, `alt`, dark/light variants) that an env string can't express, so the
+  seam is a component: **`components/brand/brand-mark.tsx`** — a fork-owned
+  scaffold. Its default body renders `BRAND.name` as text; replace only that
+  file's body to render a logo, e.g. `<Image src="/logo.svg" alt={BRAND.name} …/>`
+  (with `dark:` classes for dark/light variants) or a styled wordmark. Keep
+  `BRAND.name` as the `alt` / `aria-label` even when a logo renders. `AppHeader`
+  renders `<BrandMark/>` automatically; the footer copyright uses `BRAND.name`.
+  (It lives in `components/`, not `lib/app/`, because the `lib/app/**` boundary
+  bans runtime `next/*` imports and a logo commonly needs `next/image`.)
+
+**Public nav & footer links — replace-with-fallback:**
+
+- Forks **own** the marketing nav (remove/rename/reorder), so the model is
+  _replacement_, not append. Edit only **`lib/app/public-nav.ts`** (a fork-owned
+  scaffold): set `publicNavItems` (header nav), `footerNavItems` (footer links),
+  and/or `footerLegalItems` (footer legal links) to a `PublicNavItem[]`. Each
+  defaults to `null` = use the platform default; a non-null array **replaces**
+  that default wholesale. Items are `{ href, label, icon? }` (string +
+  `lucide-react`); the `next/link` / active-state glue stays in the platform
+  components (`components/layouts/public-nav.tsx`, `public-footer.tsx`).
+- **Replaceable content vs. non-negotiable platform control:** the footer's
+  **Cookie Preferences** button is **always rendered** by the platform in the
+  legal cluster, regardless of your `footerLegalItems` override. The override
+  governs _links_; the consent control is not overridable (it's a legal
+  requirement in many jurisdictions). This principle recurs for any surface that
+  mixes fork copy with required platform behavior.
+
+**Auth email copy — the email resolver:**
+
+- Every auth email (`welcome`, `verifyEmail`, `resetPassword`, `invitation`, …)
+  resolves through `lib/email/registry.ts`, so you override copy without editing
+  platform call sites. Copy the platform default from `emails/<kind>.tsx` into
+  `components/app/emails/<kind>.tsx`, adapt it, and register it in
+  **`lib/app/emails.ts`** keyed by its `EmailKind`. Unset kinds keep the
+  platform default (which Sunrise keeps improving for cross-client
+  deliverability). Your override must accept that kind's props — the platform
+  publishes a stable typed `EmailPropsMap` contract per kind in
+  `lib/email/registry.ts`; changing a kind's props is a versioned public-surface
+  change.
 
 **Other project metadata:**
 
@@ -161,8 +204,9 @@ _does_ keep improving — those stay sync-safe via the thin-shim in
 [§6](#6-landing-page--routes), not by editing the platform file in place.) The stable
 contract the platform depends on is each file's _export_ (`appEnvSchema`,
 `registerAppRateLimits`, `initAppCapabilities`, `initAppNav`,
-`registerAppDriftProbes`) — which the core imports — **not** the body, which is
-yours. Keep the export name and signature;
+`registerAppDriftProbes`, the `publicNavItems` / `footerNavItems` /
+`footerLegalItems` lists, `emailOverrides`) — which the core imports — **not**
+the body, which is yours. Keep the export name and signature;
 everything inside is free to change. (Detailed examples live here in this guide,
 not in the files, precisely so the files stay small and conflict-free.)
 
@@ -173,6 +217,8 @@ not in the files, precisely so the files stay small and conflict-free.)
 | `lib/app/capabilities.ts` | agent capabilities (tools)       | the capability registry (server route-handler) |
 | `lib/app/admin-nav.ts`    | admin sidebar sections           | `admin-sidebar.tsx` (client)                   |
 | `lib/app/db-drift.ts`     | Prisma-unmodelled DB objects     | `scripts/db/check-drift.ts` (CI / `/pre-pr`)   |
+| `lib/app/public-nav.ts`   | public nav / footer link lists   | `public-nav.tsx`, `public-footer.tsx` (client) |
+| `lib/app/emails.ts`       | auth email template overrides    | `lib/email/registry.ts` (server)               |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a

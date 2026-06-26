@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useConsent } from '@/lib/consent';
+import { BRAND } from '@/lib/brand';
 
 /**
  * Protected Footer Component
@@ -19,7 +20,9 @@ export function ProtectedFooter() {
     <footer className="border-t">
       <div className="container mx-auto px-4 py-4">
         <div className="text-muted-foreground flex flex-col items-center justify-between gap-2 text-sm sm:flex-row">
-          <p>&copy; {currentYear} Sunrise</p>
+          <p>
+            &copy; {currentYear} {BRAND.name}
+          </p>
           <div className="flex items-center gap-4">
             <button onClick={openPreferences} className="hover:text-foreground transition-colors">
               Cookie Preferences
