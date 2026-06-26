@@ -20,8 +20,8 @@
  * @see lib/security/rate-limit-middleware.ts
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NextRequest } from 'next/server';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { NextRequest, NextResponse } from 'next/server';
 import { proxy } from '@/proxy';
 
 vi.mock('@/lib/logging/context', () => ({
@@ -42,6 +42,8 @@ vi.mock('@/lib/security/rate-limit-middleware', () => ({
 }));
 
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
+import { logger } from '@/lib/logging';
+import { signVisitorId, verifyVisitorId, VISITOR_COOKIE_NAME } from '@/lib/logging/visitor-id';
 
 function createMockRequest(
   pathname: string,
@@ -495,5 +497,133 @@ describe('proxy (project root)', () => {
       const forwardedNonce = response.headers.get('x-middleware-request-x-nonce');
       expect(forwardedNonce).toBe(nonceArg as string);
     });
+  });
+});
+
+describe('proxy — anonymous visitor id', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(applyRateLimit).mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    delete process.env.LOG_VISITOR_ID;
+    delete process.env.LOG_HTTP_ACCESS;
+  });
+
+  it('mints and Set-Cookies a signed visitor id when none is present', async () => {
+    const request = createMockRequest('/', { cookies: {} });
+
+    const response = await proxy(request);
+
+    const setCookie = (response as NextResponse).cookies.get(VISITOR_COOKIE_NAME);
+    expect(setCookie).toBeDefined();
+    // The cookie value must verify under the server's signing key.
+    const id = await verifyVisitorId(setCookie?.value);
+    expect(id).toBeTruthy();
+    // HttpOnly + Lax so it can't be read by client JS or sent cross-site.
+    expect(setCookie?.httpOnly).toBe(true);
+    expect(setCookie?.sameSite).toBe('lax');
+  });
+
+  it('forwards the minted visitor id to server components via x-visitor-id', async () => {
+    const request = createMockRequest('/', { cookies: {} });
+
+    const response = await proxy(request);
+
+    const setCookie = (response as NextResponse).cookies.get(VISITOR_COOKIE_NAME);
+    const id = await verifyVisitorId(setCookie?.value);
+    const forwarded = response.headers.get('x-middleware-request-x-visitor-id');
+    expect(forwarded).toBe(id);
+  });
+
+  it('reuses a valid cookie without re-issuing Set-Cookie', async () => {
+    const cookieValue = await signVisitorId('returning-visitor');
+    const request = createMockRequest('/', {
+      cookies: { [VISITOR_COOKIE_NAME]: cookieValue },
+    });
+
+    const response = await proxy(request);
+
+    // No fresh Set-Cookie for a returning visitor with a valid cookie.
+    expect((response as NextResponse).cookies.get(VISITOR_COOKIE_NAME)).toBeUndefined();
+    // The existing id is forwarded unchanged.
+    expect(response.headers.get('x-middleware-request-x-visitor-id')).toBe('returning-visitor');
+  });
+
+  it('strips a spoofed inbound x-visitor-id header (proxy is sole writer)', async () => {
+    const cookieValue = await signVisitorId('real-visitor');
+    const request = createMockRequest('/', {
+      cookies: { [VISITOR_COOKIE_NAME]: cookieValue },
+      headers: { 'x-visitor-id': 'attacker-supplied' },
+    });
+
+    const response = await proxy(request);
+
+    // The forwarded value comes from the verified cookie, never the header.
+    expect(response.headers.get('x-middleware-request-x-visitor-id')).toBe('real-visitor');
+    expect(response.headers.get('x-middleware-request-x-visitor-id')).not.toBe('attacker-supplied');
+  });
+
+  it('re-mints when the cookie signature is invalid (tamper-resistant)', async () => {
+    const request = createMockRequest('/', {
+      cookies: { [VISITOR_COOKIE_NAME]: 'forged-id.not-a-real-signature' },
+    });
+
+    const response = await proxy(request);
+
+    const setCookie = (response as NextResponse).cookies.get(VISITOR_COOKIE_NAME);
+    expect(setCookie).toBeDefined();
+    const id = await verifyVisitorId(setCookie?.value);
+    expect(id).toBeTruthy();
+    expect(id).not.toBe('forged-id');
+  });
+
+  it('sets the cookie on a redirect response (journey starts even on redirect)', async () => {
+    // Unauthenticated hit on a protected route → redirect to /login.
+    const request = createMockRequest('/dashboard', { cookies: {} });
+
+    const response = await proxy(request);
+
+    expect(response.status).toBe(307);
+    expect((response as NextResponse).cookies.get(VISITOR_COOKIE_NAME)).toBeDefined();
+  });
+
+  it('issues no cookie and strips the header when tracking is disabled', async () => {
+    process.env.LOG_VISITOR_ID = 'false';
+    const request = createMockRequest('/', {
+      cookies: {},
+      headers: { 'x-visitor-id': 'attacker-supplied' },
+    });
+
+    const response = await proxy(request);
+
+    expect((response as NextResponse).cookies.get(VISITOR_COOKIE_NAME)).toBeUndefined();
+    // Even disabled, a client-supplied header must not reach the app.
+    expect(response.headers.get('x-middleware-request-x-visitor-id')).not.toBe('attacker-supplied');
+  });
+
+  it('emits a structured access log line when LOG_HTTP_ACCESS=true', async () => {
+    process.env.LOG_HTTP_ACCESS = 'true';
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const request = createMockRequest('/pricing', { cookies: {}, method: 'GET' });
+
+    await proxy(request);
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      'http_access',
+      expect.objectContaining({ method: 'GET', path: '/pricing', visitorId: expect.any(String) })
+    );
+    infoSpy.mockRestore();
+  });
+
+  it('emits no access log line by default (LOG_HTTP_ACCESS unset)', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const request = createMockRequest('/pricing', { cookies: {} });
+
+    await proxy(request);
+
+    expect(infoSpy).not.toHaveBeenCalledWith('http_access', expect.anything());
+    infoSpy.mockRestore();
   });
 });

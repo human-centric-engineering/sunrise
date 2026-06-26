@@ -59,6 +59,25 @@ export async function getRequestId(): Promise<string> {
 }
 
 /**
+ * Get the durable anonymous visitor ID from headers
+ *
+ * Set by the proxy from the verified signed cookie (see
+ * `lib/logging/visitor-id.ts`). Returns `undefined` when visitor tracking
+ * is disabled, or on a cross-site request where the SameSite=Lax cookie
+ * isn't sent (e.g. a third-party embed POST).
+ *
+ * @example
+ * ```typescript
+ * const visitorId = await getVisitorId();
+ * const events = streamChat({ ...request, visitorId });
+ * ```
+ */
+export async function getVisitorId(): Promise<string | undefined> {
+  const headersList = await headers();
+  return headersList.get('x-visitor-id') || undefined;
+}
+
+/**
  * Get full request context for logging
  * Extracts relevant information from the request
  *
@@ -76,6 +95,7 @@ export async function getRequestId(): Promise<string> {
  */
 export async function getRequestContext(request?: Request): Promise<{
   requestId: string;
+  visitorId?: string;
   method?: string;
   url?: string;
   userAgent?: string;
@@ -85,6 +105,10 @@ export async function getRequestContext(request?: Request): Promise<{
 
   return {
     requestId,
+    // Durable anonymous visitor id, set by the proxy from the verified
+    // signed cookie (see lib/logging/visitor-id.ts). Present for anonymous
+    // and authenticated callers alike; absent when tracking is disabled.
+    visitorId: headersList.get('x-visitor-id') || undefined,
     method: request?.method,
     url: request?.url,
     userAgent: headersList.get('user-agent') || undefined,
@@ -148,6 +172,7 @@ export async function getUserContext(): Promise<{
  */
 export async function getFullContext(request?: Request): Promise<{
   requestId: string;
+  visitorId?: string;
   method?: string;
   url?: string;
   userAgent?: string;

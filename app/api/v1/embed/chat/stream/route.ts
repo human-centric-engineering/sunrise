@@ -202,6 +202,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     conversationId: body.conversationId,
     attachments: body.attachments,
     requestId,
+    // Present for same-origin embeds (first-party Lax cookie); absent for
+    // true third-party embeds, which keep their `embed_<hash>` identity.
+    visitorId: requestContext.visitorId,
     signal: request.signal,
   });
 

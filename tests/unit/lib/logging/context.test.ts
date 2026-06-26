@@ -16,6 +16,7 @@ import {
   generateRequestId,
   getRequestId,
   getRequestContext,
+  getVisitorId,
   getUserContext,
   getFullContext,
   getEndpointPath,
@@ -213,6 +214,43 @@ describe('Logging Context Utilities', () => {
       // Assert
       expect(context.userAgent).toBeUndefined();
     });
+
+    it('should include visitorId from the x-visitor-id header', async () => {
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({
+          'x-request-id': 'req-123',
+          'x-visitor-id': 'visitor-abc',
+        }) as any
+      );
+
+      const context = await getRequestContext();
+
+      expect(context.visitorId).toBe('visitor-abc');
+    });
+
+    it('should leave visitorId undefined when the header is absent', async () => {
+      vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'req-123' }) as any);
+
+      const context = await getRequestContext();
+
+      expect(context.visitorId).toBeUndefined();
+    });
+  });
+
+  describe('getVisitorId()', () => {
+    it('returns the x-visitor-id header value when present', async () => {
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({ 'x-visitor-id': 'visitor-xyz' }) as any
+      );
+
+      expect(await getVisitorId()).toBe('visitor-xyz');
+    });
+
+    it('returns undefined when the header is absent (tracking off / cross-site)', async () => {
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
+
+      expect(await getVisitorId()).toBeUndefined();
+    });
   });
 
   describe('getUserContext()', () => {
@@ -335,6 +373,21 @@ describe('Logging Context Utilities', () => {
         sessionId: 'session-456',
         email: 'john@example.com',
       } as any);
+    });
+
+    it('should carry visitorId through into the combined context', async () => {
+      const mockRequest = { method: 'GET', url: 'http://localhost:3000/' } as Request;
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders({
+          'x-request-id': 'req-789',
+          'x-visitor-id': 'visitor-merged',
+        }) as any
+      );
+      vi.mocked(auth.api.getSession).mockResolvedValue(null);
+
+      const context = await getFullContext(mockRequest);
+
+      expect(context.visitorId).toBe('visitor-merged');
     });
 
     it('should work when not authenticated', async () => {

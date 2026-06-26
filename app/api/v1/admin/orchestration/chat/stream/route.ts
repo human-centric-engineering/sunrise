@@ -29,7 +29,7 @@ import {
 } from '@/lib/security/rate-limit';
 import { streamChat } from '@/lib/orchestration/chat';
 import { chatStreamRequestSchema } from '@/lib/validations/orchestration';
-import { getRequestId } from '@/lib/logging/context';
+import { getRequestId, getVisitorId } from '@/lib/logging/context';
 import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
 
 export const POST = withAdminAuth(async (request, session) => {
@@ -39,6 +39,7 @@ export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, chatStreamRequestSchema);
   const requestId = await getRequestId();
+  const visitorId = await getVisitorId();
 
   // Per-agent rate limit (honours `agent.rateLimitRpm`). Mirrors the
   // consumer route so the field works the same way regardless of which
@@ -123,6 +124,7 @@ export const POST = withAdminAuth(async (request, session) => {
     entityContext: body.entityContext,
     attachments: body.attachments,
     requestId,
+    visitorId,
     signal: request.signal,
     // Admin route: clients opt in to inline trace annotations by setting
     // `includeTrace: true` (Learning Lab, agent test tab, evaluation
