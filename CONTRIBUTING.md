@@ -161,8 +161,15 @@ public-surface contract behind the bump decision lives in
 2. **Bump the platform version.** Edit
    [`lib/sunrise-version.ts`](./lib/sunrise-version.ts) — change
    `SUNRISE_VERSION` to the new value.
-3. **Match `package.json.version`.** Set it to the same value (lint-staged
-   formats the file on commit).
+3. **Match the version in `package.json` _and_ the lockfile.** Set
+   `package.json.version` to the same value (lint-staged formats the file on
+   commit). Then hand-edit the two top-of-file `"version"` keys in
+   `package-lock.json` — the root object and `packages[""]` — to match. Edit
+   them by hand; do **not** run `npm install` / `npm version` to do it, because
+   on macOS that recomputes the tree and strips the `libc` metadata on the
+   native Linux packages (`@img/sharp-*`, `@next/swc-*`, `@rolldown/binding-*`)
+   that Linux CI and production installs rely on. Hand-editing `package.json`
+   alone leaves the lockfile root stale (it was missed for 0.1.0 and 0.2.0).
 4. **Update the changelog.** Move the entries under `## [Unreleased]` in
    `CHANGELOG.md` to a new dated heading: `## [X.Y.Z] — YYYY-MM-DD`. During
    `0.x`, mark the entry **alpha**. Leave `## [Unreleased]` in place (empty,
