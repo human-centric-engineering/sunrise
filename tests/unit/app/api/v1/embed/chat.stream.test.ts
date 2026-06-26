@@ -49,8 +49,21 @@ vi.mock('@/lib/api/sse', () => ({
   sseResponse: vi.fn(() => new Response('stream', { status: 200 })),
 }));
 
-vi.mock('@/lib/logging', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+vi.mock('@/lib/logging', () => {
+  const scoped = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  return {
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      withContext: vi.fn(() => scoped),
+    },
+  };
+});
+
+vi.mock('@/lib/logging/context', () => ({
+  getRequestId: vi.fn(() => Promise.resolve('req-test-123')),
 }));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
@@ -231,6 +244,19 @@ describe('POST /api/v1/embed/chat/stream', () => {
           userId: VALID_CONTEXT.userId,
           conversationId: validCuid,
         })
+      );
+    });
+
+    it('threads requestId into streamChat so embed log lines correlate', async () => {
+      await POST(
+        makePostRequest(
+          { message: 'Hello bot' },
+          { 'x-embed-token': VALID_TOKEN, origin: 'https://mysite.com' }
+        )
+      );
+
+      expect(vi.mocked(streamChat)).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'req-test-123' })
       );
     });
 

@@ -1086,6 +1086,8 @@ export class StreamingChatHandler {
                 if (!nextSlug || streamRetries > MAX_STREAM_RETRIES) {
                   log.error('Stream failed, no more fallback providers', streamErr, {
                     agentSlug: request.agentSlug,
+                    userId: request.userId,
+                    conversationId,
                     provider: currentProviderSlug,
                     retries: streamRetries,
                   });
@@ -1097,6 +1099,9 @@ export class StreamingChatHandler {
                 }
 
                 log.warn('Stream failed, retrying with fallback provider', {
+                  agentSlug: request.agentSlug,
+                  userId: request.userId,
+                  conversationId,
                   failedProvider: currentProviderSlug,
                   nextProvider: nextSlug,
                   error: streamErr instanceof Error ? streamErr.message : String(streamErr),

@@ -18,6 +18,7 @@ import { embedChatLimiter, createRateLimitResponse, imageLimiter } from '@/lib/s
 import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { streamChat } from '@/lib/orchestration/chat';
 import { logger } from '@/lib/logging';
+import { getRequestId } from '@/lib/logging/context';
 import { cuidSchema } from '@/lib/validations/common';
 import { chatAttachmentsArraySchema } from '@/lib/validations/orchestration';
 import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
@@ -74,6 +75,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const clientIp = getClientIP(request);
+
+  // Request-scoped logger so every embed log line — including the
+  // mid-stream errors inside `streamChat` — shares a correlation key.
+  // The embed path has no session, so we thread `requestId` explicitly
+  // rather than going through `getRouteLogger` (which would do a wasted
+  // auth-session lookup).
+  const requestId = await getRequestId();
+  const log = logger.withContext({ requestId });
 
   // Rate limit per token + IP
   const rateKey = `${token}:${clientIp}`;
@@ -136,8 +145,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         const buffer = Buffer.from(attachment.data, 'base64');
         const validation = validateImageMagicBytes(buffer);
         if (!validation.valid || validation.detectedType !== attachment.mediaType) {
-          logger.warn('Embed image attachment magic-byte validation failed', {
+          log.warn('Embed image attachment magic-byte validation failed', {
             agentSlug: ctx.agentSlug,
+            userId: ctx.userId,
             declaredMediaType: attachment.mediaType,
             detectedMediaType: validation.detectedType,
             error: validation.error,
@@ -157,8 +167,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       } else if (attachment.mediaType === 'application/pdf') {
         const buffer = Buffer.from(attachment.data, 'base64');
         if (!validatePdfMagicBytes(buffer)) {
-          logger.warn('Embed PDF attachment magic-byte validation failed', {
+          log.warn('Embed PDF attachment magic-byte validation failed', {
             agentSlug: ctx.agentSlug,
+            userId: ctx.userId,
           });
           return NextResponse.json(
             {
@@ -175,7 +186,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   }
 
-  logger.info('Embed chat stream started', {
+  log.info('Embed chat stream started', {
     agentSlug: ctx.agentSlug,
     userId: ctx.userId,
     conversationId: body.conversationId,
@@ -188,6 +199,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     userId: ctx.userId,
     conversationId: body.conversationId,
     attachments: body.attachments,
+    requestId,
     signal: request.signal,
   });
 
