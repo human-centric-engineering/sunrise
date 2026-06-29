@@ -29,12 +29,18 @@ release process.
   descriptor is a compile error rather than a silent runtime gap. Forks add
   their own agent fields in the empty fork-owned scaffold `lib/app/agent-fields.ts`
   (`appAgentFields`) without editing a platform list. The registry is the source
-  of truth for the agent versioning, snapshot, diff, and restore surfaces; a
-  parity test keeps the create/update validation schemas in lockstep with it, so
-  adding a field to one without the other is a loud test failure.
-- **`updateAgentObjectSchema`** (`lib/validations/orchestration.ts`) — the agent
-  PATCH field shape exported without its cross-field refinement, so other call
-  sites (notably version restore) can reuse the same per-field validators.
+  of truth (derived) for the versioning, snapshot, diff, restore, PATCH, and
+  clone surfaces; parity tests keep the create/update validation schemas and the
+  export bundle / full-backup schemas in lockstep with it, so adding a field to
+  one without the other is a loud test failure. Documented in
+  [`.context/orchestration/agent-fields.md`](.context/orchestration/agent-fields.md).
+- **Newly-exported validation surfaces** (`lib/validations/orchestration.ts`):
+  `createAgentObjectSchema` / `updateAgentObjectSchema` (the agent create/PATCH
+  field shapes without their cross-field refinement, so other call sites — e.g.
+  version restore — can reuse the same per-field validators) and
+  `bundledAgentSchema`; plus `agentBackupSchema` from
+  `lib/orchestration/backup/schema.ts`. Exported to anchor the registry parity
+  tests.
 
 ### Fixed
 

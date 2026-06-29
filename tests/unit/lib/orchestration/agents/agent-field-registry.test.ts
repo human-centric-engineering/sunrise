@@ -27,7 +27,11 @@ import {
   labelForField,
   SNAPSHOT_FIELDS,
 } from '@/lib/orchestration/agent-version-diff';
-import { bundledAgentSchema, updateAgentObjectSchema } from '@/lib/validations/orchestration';
+import {
+  bundledAgentSchema,
+  createAgentObjectSchema,
+  updateAgentObjectSchema,
+} from '@/lib/validations/orchestration';
 import { agentBackupSchema } from '@/lib/orchestration/backup/schema';
 
 // ---------------------------------------------------------------------------
@@ -251,6 +255,25 @@ describe('agent-field-registry — parity with the validation schemas', () => {
     // Every PATCH field is registered — catches a schema field with no
     // descriptor (the silent-gap this whole registry exists to prevent).
     for (const key of updateKeys) {
+      expect(registryNames.has(key)).toBe(true);
+    }
+  });
+
+  // Fields the registry has but the CREATE schema omits:
+  //  - widgetConfig: managed via its own endpoint, not the create body
+  //  - knowledgeAccessMode: update-only; create defaults it to 'full' at the DB
+  const CREATE_OMITTED = new Set(['widgetConfig', 'knowledgeAccessMode']);
+
+  it('registry scalars and the CREATE schema field set agree in both directions', () => {
+    const createKeys = new Set(Object.keys(createAgentObjectSchema.shape));
+    const registryScalars = AGENT_FIELDS.filter((f) => f.kind === 'scalar').map((f) => f.name);
+    const registryNames = new Set(AGENT_FIELDS.map((f) => f.name));
+
+    for (const field of registryScalars) {
+      if (CREATE_OMITTED.has(field)) continue;
+      expect(createKeys.has(field)).toBe(true);
+    }
+    for (const key of createKeys) {
       expect(registryNames.has(key)).toBe(true);
     }
   });
