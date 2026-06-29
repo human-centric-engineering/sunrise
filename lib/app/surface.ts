@@ -22,8 +22,16 @@
  */
 export type Surface = 'admin' | 'consumer';
 
+/**
+ * The surface to assume when none is classified — i.e. the value `classifySurface`
+ * returns for a non-admin path, and the fallback the root layout uses if the
+ * `x-surface` header is ever absent. Exported so those two callers share ONE
+ * default: a fork that re-points the default policy changes it here only.
+ */
+export const DEFAULT_SURFACE: Surface = 'consumer';
+
 export function classifySurface(pathname: string): Surface {
   // Exact `/admin` or a `/admin/` descendant — not a `/admin`-prefixed sibling
   // like `/administrators`, which is consumer.
-  return pathname === '/admin' || pathname.startsWith('/admin/') ? 'admin' : 'consumer';
+  return pathname === '/admin' || pathname.startsWith('/admin/') ? 'admin' : DEFAULT_SURFACE;
 }

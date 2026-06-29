@@ -10,6 +10,7 @@ import { CookieBanner } from '@/components/cookie-consent';
 import { AnalyticsProvider } from '@/lib/analytics';
 import { AnalyticsScripts, UserIdentifier, PageTracker } from '@/components/analytics';
 import { SurfaceSync } from '@/components/surface-sync';
+import { DEFAULT_SURFACE } from '@/lib/app/surface';
 import { BRAND } from '@/lib/brand';
 
 export const metadata: Metadata = {
@@ -28,7 +29,7 @@ export default async function RootLayout({
   // Rendering surface, classified per-request in proxy.ts. Drives the fork-owned
   // app/brand-theme.css (empty in vanilla Sunrise). On <html> so body-portaled
   // overlays inherit it; kept current across client nav by <SurfaceSync> below.
-  const surface = headersList.get('x-surface') ?? 'consumer';
+  const surface = headersList.get('x-surface') ?? DEFAULT_SURFACE;
 
   return (
     <html lang="en" data-surface={surface} suppressHydrationWarning>
