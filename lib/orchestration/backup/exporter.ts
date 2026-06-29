@@ -156,7 +156,11 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
 
   // Flatten agent grants into the slug/hash arrays the backup format expects.
   // `grantedTags`/`grantedDocuments` are include-shaped (join rows with one
-  // nested entity each) — flatten them before serialising.
+  // nested entity each) — flatten them before serialising. The narrowing tables
+  // and helper are loop-invariant, so they live outside the per-agent map.
+  const retrievalModes = ['model', 'first_turn', 'every_turn', 'keywords'] as const;
+  const reasoningEfforts = ['minimal', 'low', 'medium', 'high'] as const;
+  const narrowMode = (m: string) => (m === 'append' ? ('append' as const) : ('override' as const));
   const flattenedAgents = agents.map((a) => {
     const {
       grantedTags,
@@ -170,10 +174,6 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
       reasoningEffort,
       ...rest
     } = a;
-    const retrievalModes = ['model', 'first_turn', 'every_turn', 'keywords'] as const;
-    const reasoningEfforts = ['minimal', 'low', 'medium', 'high'] as const;
-    const narrowMode = (m: string) =>
-      m === 'append' ? ('append' as const) : ('override' as const);
     return {
       ...rest,
       // The DB columns are `String`; coerce to the strict enums the backup schema wants.

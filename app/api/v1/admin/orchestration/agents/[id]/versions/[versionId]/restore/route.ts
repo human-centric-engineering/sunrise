@@ -10,7 +10,7 @@
  * Authentication: Admin role required.
  */
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -26,7 +26,10 @@ import {
   updateAgentObjectSchema,
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
-import { versionedScalarFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
+import {
+  getAgentField,
+  versionedScalarFieldNames,
+} from '@/lib/orchestration/agents/agent-field-registry';
 
 /**
  * A version snapshot is validated against the same per-field rules a PATCH uses
@@ -120,14 +123,24 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // registry-derived, so restore covers the full versioned config by
     // construction — no field can be silently omitted the way the old
     // hand-maintained apply-list dropped persona/guardrails/modes and the
-    // knowledge/runtime-prompt fields. Grant relations are versioned but aren't
-    // columns, so they're not restored here (tracked for the #330 restore work).
+    // knowledge-retrieval/runtime-prompt fields. Grant relations are versioned
+    // but aren't columns, so they're not restored here (tracked for #330).
     const snapshotRecord = snapshot as Record<string, unknown>;
     for (const field of versionedScalarFieldNames()) {
-      if (field === 'systemInstructions') continue;
+      // systemInstructions is applied above with history tracking.
+      // knowledgeAccessMode is deliberately NOT restored here: it's only
+      // coherent alongside the knowledge grants, which restore doesn't yet
+      // reapply (deferred to #330). Restoring the mode alone would pair a
+      // snapshot's 'restricted' with the agent's *current* grants — a different,
+      // possibly broken access state — and would stale the access-resolver
+      // cache (which PATCH invalidates on knowledgeAccessMode change). #330
+      // restores mode + grants together and invalidates.
+      if (field === 'systemInstructions' || field === 'knowledgeAccessMode') continue;
       const value = snapshotRecord[field];
       if (value === undefined) continue;
-      updateData[field] = value;
+      // JSON columns (metadata/providerConfig) reject a literal null on write —
+      // coerce to Prisma.JsonNull, as the create/clone/import paths do.
+      updateData[field] = getAgentField(field)?.json && value === null ? Prisma.JsonNull : value;
     }
 
     // Wrap in a transaction to prevent race conditions on version numbering

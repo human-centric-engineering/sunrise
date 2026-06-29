@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 
 // ─── Module mocks ───────────────────────────────────────────────────────
 
@@ -344,6 +345,45 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     expect(txVersionFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { agentId: AGENT_ID }, orderBy: { version: 'desc' } })
     );
+  });
+
+  it('coerces null JSON columns to Prisma.JsonNull and does not restore knowledgeAccessMode', async () => {
+    // metadata/providerConfig are nullable Json columns — Prisma rejects a
+    // literal null on write, so restore must coerce to Prisma.JsonNull (as the
+    // create/clone/import paths do). knowledgeAccessMode is grant-coupled and
+    // deferred to #330, but the grant-independent knowledgeRetrievalMode is
+    // restored.
+    const snapshot = {
+      systemInstructions: 'x',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      metadata: null,
+      providerConfig: null,
+      knowledgeAccessMode: 'restricted',
+      knowledgeRetrievalMode: 'every_turn',
+    };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(makeVersion({ snapshot }));
+    const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent());
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+      const tx = {
+        aiAgent: { update: txAgentUpdate },
+        aiAgentVersion: {
+          findFirst: vi.fn().mockResolvedValue({ version: 1 }),
+          create: vi.fn().mockResolvedValue({}),
+        },
+      };
+      return callback(tx as never);
+    });
+
+    await POST(makeRequest(AGENT_ID, VERSION_ID), makeParams(AGENT_ID, VERSION_ID));
+
+    const data = (txAgentUpdate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.metadata).toBe(Prisma.JsonNull);
+    expect(data.providerConfig).toBe(Prisma.JsonNull);
+    expect(data).not.toHaveProperty('knowledgeAccessMode');
+    expect(data.knowledgeRetrievalMode).toBe('every_turn');
   });
 
   it('uses nextVersion = 1 when no prior versions exist in the transaction', async () => {
