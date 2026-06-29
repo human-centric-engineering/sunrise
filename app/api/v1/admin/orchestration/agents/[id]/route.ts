@@ -33,7 +33,10 @@ import {
   buildChangeSummary,
   extractSnapshotFromAgent,
 } from '@/lib/orchestration/agent-version-diff';
-import { versionedScalarFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
+import {
+  patchAssignableScalarFields,
+  versionedScalarFieldNames,
+} from '@/lib/orchestration/agents/agent-field-registry';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import {
@@ -151,53 +154,16 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
 
   // Build the update payload. Only include fields the caller actually sent.
+  // Plain scalar fields are assigned generically from the registry's
+  // patch-assignable set, so a new agent field is picked up here automatically.
+  // systemInstructions (history) and profileId (relation) are special-write
+  // fields, handled explicitly below.
   const data: Prisma.AiAgentUpdateInput = {};
-  if (body.name !== undefined) data.name = body.name;
-  if (body.slug !== undefined) data.slug = body.slug;
-  if (body.description !== undefined) data.description = body.description;
-  if (body.model !== undefined) data.model = body.model;
-  if (body.provider !== undefined) data.provider = body.provider;
-  if (body.providerConfig !== undefined) {
-    data.providerConfig = body.providerConfig as Prisma.InputJsonValue;
+  const bodyRecord = body as Record<string, unknown>;
+  const dataRecord = data as Record<string, unknown>;
+  for (const field of patchAssignableScalarFields()) {
+    if (bodyRecord[field] !== undefined) dataRecord[field] = bodyRecord[field];
   }
-  if (body.temperature !== undefined) data.temperature = body.temperature;
-  if (body.maxTokens !== undefined) data.maxTokens = body.maxTokens;
-  if (body.reasoningEffort !== undefined) data.reasoningEffort = body.reasoningEffort;
-  if (body.monthlyBudgetUsd !== undefined) data.monthlyBudgetUsd = body.monthlyBudgetUsd;
-  if (body.maxCostPerTurnUsd !== undefined) data.maxCostPerTurnUsd = body.maxCostPerTurnUsd;
-  if (body.metadata !== undefined) {
-    data.metadata = body.metadata;
-  }
-  if (body.isActive !== undefined) data.isActive = body.isActive;
-  if (body.knowledgeAccessMode !== undefined) data.knowledgeAccessMode = body.knowledgeAccessMode;
-  if (body.knowledgeRetrievalMode !== undefined)
-    data.knowledgeRetrievalMode = body.knowledgeRetrievalMode;
-  if (body.knowledgeTriggerKeywords !== undefined)
-    data.knowledgeTriggerKeywords = body.knowledgeTriggerKeywords;
-  if (body.topicBoundaries !== undefined) data.topicBoundaries = body.topicBoundaries;
-  if (body.brandVoiceInstructions !== undefined)
-    data.brandVoiceInstructions = body.brandVoiceInstructions;
-  if (body.rateLimitRpm !== undefined) data.rateLimitRpm = body.rateLimitRpm;
-  if (body.visibility !== undefined) data.visibility = body.visibility;
-  if (body.fallbackProviders !== undefined) data.fallbackProviders = body.fallbackProviders;
-  if (body.inputGuardMode !== undefined) data.inputGuardMode = body.inputGuardMode;
-  if (body.outputGuardMode !== undefined) data.outputGuardMode = body.outputGuardMode;
-  if (body.citationGuardMode !== undefined) data.citationGuardMode = body.citationGuardMode;
-  if (body.maxHistoryTokens !== undefined) data.maxHistoryTokens = body.maxHistoryTokens;
-  if (body.maxHistoryMessages !== undefined) data.maxHistoryMessages = body.maxHistoryMessages;
-  if (body.retentionDays !== undefined) data.retentionDays = body.retentionDays;
-  if (body.enableVoiceInput !== undefined) data.enableVoiceInput = body.enableVoiceInput;
-  if (body.enableImageInput !== undefined) data.enableImageInput = body.enableImageInput;
-  if (body.enableDocumentInput !== undefined) data.enableDocumentInput = body.enableDocumentInput;
-  if (body.runtimePromptManaged !== undefined)
-    data.runtimePromptManaged = body.runtimePromptManaged;
-  if (body.runtimePromptNote !== undefined) data.runtimePromptNote = body.runtimePromptNote;
-  // Agent-profile inheritance fields.
-  if (body.persona !== undefined) data.persona = body.persona;
-  if (body.guardrails !== undefined) data.guardrails = body.guardrails;
-  if (body.personaMode !== undefined) data.personaMode = body.personaMode;
-  if (body.voiceMode !== undefined) data.voiceMode = body.voiceMode;
-  if (body.guardrailsMode !== undefined) data.guardrailsMode = body.guardrailsMode;
   if (body.profileId !== undefined) {
     // Use the relation form so null cleanly detaches the agent. Setting
     // the scalar `profileId` directly works for non-null values but
@@ -269,7 +235,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     return newValue !== currentValue;
   };
 
-  const dataRecord = data as Record<string, unknown>;
   const currentRecord = current as unknown as Record<string, unknown>;
   const changedVersionedFields = VERSIONED_FIELDS.filter(
     (f) => dataRecord[f] !== undefined && isFieldChanged(dataRecord[f], currentRecord[f])

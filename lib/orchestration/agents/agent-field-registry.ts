@@ -78,6 +78,26 @@ export interface AgentFieldDescriptor {
   versioned: boolean;
   /** Diff/form metadata — present iff `versioned` (enforced by a registry test). */
   ui?: AgentFieldUi;
+  /**
+   * Special write handling in the create/PATCH data mapping. Plain column
+   * assignment when absent. `'relation'` = written via a Prisma connect/
+   * disconnect (`profileId`); `'historyTracked'` = pushes the prior value onto a
+   * history column before overwriting (`systemInstructions`). These fields are
+   * excluded from the generic plain-assignment loop and handled explicitly.
+   */
+  write?: 'relation' | 'historyTracked';
+  /**
+   * Excluded from the PATCH update body — either create-only and immutable
+   * (`kind`) or managed through a dedicated endpoint (`widgetConfig`).
+   */
+  patchOmit?: true;
+  /**
+   * The column is a Prisma `Json` type. Server-side write paths coerce a null
+   * value to `Prisma.JsonNull` on create. (The coercion itself lives in the
+   * route — this flag stays data-only so the registry never imports the Prisma
+   * runtime and remains safe to bundle into client components.)
+   */
+  json?: true;
 }
 
 /**
@@ -133,6 +153,7 @@ const CORE_SCALAR_FIELDS = {
   systemInstructions: {
     versioned: true,
     ui: { label: 'System instructions', tab: 'Instructions', order: 90 },
+    write: 'historyTracked',
   },
   runtimePromptManaged: {
     versioned: true,
@@ -217,15 +238,19 @@ const CORE_SCALAR_FIELDS = {
     versioned: true,
     ui: { label: 'Document input', tab: 'Model', order: 310 },
   },
-  providerConfig: { versioned: true, ui: { label: 'Provider config', tab: 'Model', order: 320 } },
-  metadata: { versioned: true, ui: { label: 'Metadata', tab: 'Model', order: 330 } },
+  providerConfig: {
+    versioned: true,
+    ui: { label: 'Provider config', tab: 'Model', order: 320 },
+    json: true,
+  },
+  metadata: { versioned: true, ui: { label: 'Metadata', tab: 'Model', order: 330 }, json: true },
   // Not versioned. `profileId` is a relation pointer, not content — the
   // inheritance change surfaces implicitly through the resolved persona/voice/
   // guardrails values (see the PATCH route's VERSIONED_FIELDS note). `kind` is
   // immutable after create. `widgetConfig` carries embed presentation only.
-  profileId: { versioned: false },
-  kind: { versioned: false },
-  widgetConfig: { versioned: false },
+  profileId: { versioned: false, write: 'relation' },
+  kind: { versioned: false, patchOmit: true },
+  widgetConfig: { versioned: false, patchOmit: true, json: true },
 } satisfies Record<AgentConfigScalarField, ScalarFieldSpec>;
 
 /**
@@ -321,6 +346,32 @@ export function fieldOrder(): string[] {
     .slice()
     .sort((a, b) => (a.ui as AgentFieldUi).order - (b.ui as AgentFieldUi).order)
     .map((f) => f.name);
+}
+
+/**
+ * Scalar fields the PATCH route assigns plainly from the request body
+ * (`data[field] = body[field]` when present). Excludes the relation/history
+ * special-write fields and create-only / elsewhere-managed fields, which the
+ * route handles explicitly.
+ */
+export function patchAssignableScalarFields(): string[] {
+  return AGENT_FIELDS.filter((f) => f.kind === 'scalar' && !f.write && !f.patchOmit).map(
+    (f) => f.name
+  );
+}
+
+/**
+ * Scalar fields copied verbatim from the source agent when cloning — every
+ * scalar except the ones the clone route sets explicitly (`name`/`slug` get
+ * fresh values, `isActive` resets to false). Each entry flags whether it's a
+ * JSON column so the caller can coerce null → `Prisma.JsonNull`.
+ */
+export function cloneCopiedScalarFields(): { name: string; json: boolean }[] {
+  const explicit = new Set(['name', 'slug', 'isActive']);
+  return AGENT_FIELDS.filter((f) => f.kind === 'scalar' && !explicit.has(f.name)).map((f) => ({
+    name: f.name,
+    json: f.json === true,
+  }));
 }
 
 /** Look up a single descriptor by field name. */
