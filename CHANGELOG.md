@@ -16,6 +16,22 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Agent field registry + fork-owned `lib/app/agent-fields.ts` seam.** A single
+  declarative descriptor per `AiAgent` config field
+  (`lib/orchestration/agents/agent-field-registry.ts`, exporting `AGENT_FIELDS`,
+  the `AgentFieldDescriptor` type, and the `versionedFieldNames` /
+  `snapshotFieldNames` / `fieldLabels` / `fieldToTab` / `fieldOrder` selectors)
+  replaces the ~15 disconnected hand-maintained field lists that previously had
+  to be kept in lockstep. The scalar set is exhaustiveness-checked against
+  Prisma's generated `AiAgentScalarFieldEnum`, so adding a column without a
+  descriptor is a compile error rather than a silent runtime gap. Forks add
+  their own agent fields in the empty fork-owned scaffold `lib/app/agent-fields.ts`
+  (`appAgentFields`) without editing a platform list. This first step lands the
+  registry as the source of truth for the versioning/diff surfaces and is
+  behaviour-neutral (no runtime consumer switched over yet).
+
 ## [0.3.0] — 2026-06-26
 
 > **Alpha release.** Fourth tagged Sunrise release. **MINOR bump** — adds new
