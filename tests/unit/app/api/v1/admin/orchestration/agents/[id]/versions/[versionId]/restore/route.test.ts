@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 
 // ─── Module mocks ───────────────────────────────────────────────────────
 
@@ -346,6 +347,45 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     );
   });
 
+  it('coerces null JSON columns to Prisma.JsonNull and does not restore knowledgeAccessMode', async () => {
+    // metadata/providerConfig are nullable Json columns — Prisma rejects a
+    // literal null on write, so restore must coerce to Prisma.JsonNull (as the
+    // create/clone/import paths do). knowledgeAccessMode is grant-coupled and
+    // deferred to #330, but the grant-independent knowledgeRetrievalMode is
+    // restored.
+    const snapshot = {
+      systemInstructions: 'x',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      metadata: null,
+      providerConfig: null,
+      knowledgeAccessMode: 'restricted',
+      knowledgeRetrievalMode: 'every_turn',
+    };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(makeVersion({ snapshot }));
+    const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent());
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+      const tx = {
+        aiAgent: { update: txAgentUpdate },
+        aiAgentVersion: {
+          findFirst: vi.fn().mockResolvedValue({ version: 1 }),
+          create: vi.fn().mockResolvedValue({}),
+        },
+      };
+      return callback(tx as never);
+    });
+
+    await POST(makeRequest(AGENT_ID, VERSION_ID), makeParams(AGENT_ID, VERSION_ID));
+
+    const data = (txAgentUpdate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.metadata).toBe(Prisma.JsonNull);
+    expect(data.providerConfig).toBe(Prisma.JsonNull);
+    expect(data).not.toHaveProperty('knowledgeAccessMode');
+    expect(data.knowledgeRetrievalMode).toBe('every_turn');
+  });
+
   it('uses nextVersion = 1 when no prior versions exist in the transaction', async () => {
     // Arrange: lastVersion query returns null — (null?.version ?? 0) + 1 = 1
     const updatedAgent = makeAgent();
@@ -471,10 +511,11 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     expect(callArgs[0].data).toHaveProperty('monthlyBudgetUsd', 100);
   });
 
-  it('omits null temperature and maxTokens from updateData (null guard)', async () => {
-    // Arrange: snapshot includes temperature=null and maxTokens=null.
-    // The handler has an extra `!== null` guard for these two fields, so they
-    // must NOT appear in updateData even though snapshot.temperature !== undefined.
+  it('rejects a snapshot with null in a non-nullable column (temperature/maxTokens)', async () => {
+    // The snapshot is validated against the same per-field rules a PATCH uses
+    // (updateAgentObjectSchema). temperature/maxTokens are non-nullable there, so
+    // a null — which can only come from a corrupt/synthetic snapshot, never the
+    // snapshot writer — is a clean 400 rather than a silent partial restore.
     const snapshotWithNulls = {
       systemInstructions: 'test',
       model: 'claude-sonnet-4-6',
@@ -488,27 +529,17 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
       makeVersion({ snapshot: snapshotWithNulls })
     );
 
-    const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent());
-    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
-      const tx = {
-        aiAgent: { update: txAgentUpdate },
-        aiAgentVersion: {
-          findFirst: vi.fn().mockResolvedValue({ version: 1 }),
-          create: vi.fn().mockResolvedValue({}),
-        },
-      };
-      return callback(tx as never);
-    });
-
     // Act
-    await POST(makeRequest(AGENT_ID, VERSION_ID), makeParams(AGENT_ID, VERSION_ID));
+    const response = await POST(
+      makeRequest(AGENT_ID, VERSION_ID),
+      makeParams(AGENT_ID, VERSION_ID)
+    );
 
-    // Assert — temperature and maxTokens are NOT in updateData
-    const callArgs = txAgentUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
-    expect(callArgs[0].data).not.toHaveProperty('temperature');
-    expect(callArgs[0].data).not.toHaveProperty('maxTokens');
-    // Other fields that were set should still appear
-    expect(callArgs[0].data).toHaveProperty('systemInstructions', 'test');
-    expect(callArgs[0].data).toHaveProperty('model', 'claude-sonnet-4-6');
+    // Assert — rejected before any write
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.success).toBe(false);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

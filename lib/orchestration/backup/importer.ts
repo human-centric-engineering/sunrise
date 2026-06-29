@@ -132,6 +132,20 @@ export async function importOrchestrationConfig(
             retentionDays: agent.retentionDays,
             providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            // Discriminator + inheritance + attachment + runtime-prompt fields.
+            // The schema defaults them for older bundles, so an overwrite always
+            // applies a coherent value rather than silently leaving the prior one.
+            kind: agent.kind,
+            persona: agent.persona,
+            guardrails: agent.guardrails,
+            personaMode: agent.personaMode,
+            voiceMode: agent.voiceMode,
+            guardrailsMode: agent.guardrailsMode,
+            enableVoiceInput: agent.enableVoiceInput,
+            enableImageInput: agent.enableImageInput,
+            enableDocumentInput: agent.enableDocumentInput,
+            runtimePromptManaged: agent.runtimePromptManaged,
+            runtimePromptNote: agent.runtimePromptNote,
           },
         });
         result.agents.updated++;

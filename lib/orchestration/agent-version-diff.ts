@@ -11,134 +11,39 @@
  * unknown>` rather than a strict type so the helper survives future
  * snapshot extensions without a compile break on the UI side.
  */
-
-/** Human-readable labels for the fields we expect to see in a snapshot. */
-const FIELD_LABELS: Record<string, string> = {
-  name: 'Name',
-  slug: 'Slug',
-  description: 'Description',
-  isActive: 'Active',
-  systemInstructions: 'System instructions',
-  model: 'Model',
-  provider: 'Provider',
-  fallbackProviders: 'Fallback providers',
-  temperature: 'Temperature',
-  maxTokens: 'Max output tokens',
-  topicBoundaries: 'Topic boundaries',
-  brandVoiceInstructions: 'Brand voice',
-  metadata: 'Metadata',
-  knowledgeAccessMode: 'Knowledge access mode',
-  knowledgeRetrievalMode: 'Knowledge retrieval mode',
-  knowledgeTriggerKeywords: 'Knowledge trigger keywords',
-  grantedTagIds: 'Knowledge tag grants',
-  grantedDocumentIds: 'Knowledge document grants',
-  rateLimitRpm: 'Rate limit (req/min)',
-  visibility: 'Visibility',
-  inputGuardMode: 'Input guard',
-  outputGuardMode: 'Output guard',
-  citationGuardMode: 'Citation guard',
-  maxHistoryTokens: 'Max history tokens',
-  maxHistoryMessages: 'Memory length (messages)',
-  retentionDays: 'Retention (days)',
-  providerConfig: 'Provider config',
-  monthlyBudgetUsd: 'Monthly budget (USD)',
-  enableVoiceInput: 'Voice input',
-  enableImageInput: 'Image input',
-  enableDocumentInput: 'Document input',
-  runtimePromptManaged: 'Runtime-built prompt',
-  runtimePromptNote: 'Runtime prompt note',
-};
+import {
+  fieldLabels,
+  fieldOrder,
+  fieldToTab,
+  snapshotFieldNames,
+} from '@/lib/orchestration/agents/agent-field-registry';
 
 /**
- * Mapping from snapshot field → admin form tab. Used by
- * `buildChangeSummary` to produce a tab-prefixed headline so the
- * operator can tell at a glance which tab the changes landed on.
- * Keep this in sync with `components/admin/orchestration/agent-form.tsx`.
+ * Field metadata is now derived from the agent field registry — the single
+ * source of truth (`lib/orchestration/agents/agent-field-registry.ts`). These
+ * module-level constants are materialised once at import; the registry is a
+ * static array, so this is cheap and stable.
  */
-const FIELD_TO_TAB: Record<string, string> = {
-  // General tab
-  name: 'General',
-  slug: 'General',
-  description: 'General',
-  isActive: 'General',
-  visibility: 'General',
-  retentionDays: 'General',
-  // Model tab
-  provider: 'Model',
-  fallbackProviders: 'Model',
-  model: 'Model',
-  temperature: 'Model',
-  maxTokens: 'Model',
-  monthlyBudgetUsd: 'Model',
-  rateLimitRpm: 'Model',
-  maxHistoryTokens: 'Model',
-  maxHistoryMessages: 'Model',
-  enableVoiceInput: 'Model',
-  enableImageInput: 'Model',
-  enableDocumentInput: 'Model',
-  inputGuardMode: 'Model',
-  outputGuardMode: 'Model',
-  citationGuardMode: 'Model',
-  providerConfig: 'Model',
-  metadata: 'Model',
-  // Instructions tab
-  systemInstructions: 'Instructions',
-  brandVoiceInstructions: 'Instructions',
-  knowledgeAccessMode: 'Instructions',
-  knowledgeRetrievalMode: 'Instructions',
-  knowledgeTriggerKeywords: 'Instructions',
-  grantedTagIds: 'Instructions',
-  grantedDocumentIds: 'Instructions',
-  topicBoundaries: 'Instructions',
-  runtimePromptManaged: 'Instructions',
-  runtimePromptNote: 'Instructions',
-};
+
+/** Human-readable labels for the versioned fields we expect in a snapshot. */
+const FIELD_LABELS: Record<string, string> = fieldLabels();
+
+/**
+ * Mapping from snapshot field → admin form tab. Used by `buildChangeSummary`
+ * to produce a tab-prefixed headline so the operator can tell at a glance which
+ * tab the changes landed on.
+ */
+const FIELD_TO_TAB: Record<string, string> = fieldToTab();
 
 const TAB_ORDER: string[] = ['General', 'Model', 'Instructions'];
 
 /**
- * Whitelist of snapshot-shape fields. Used to extract the snapshot
- * subset from a live `AiAgent` row, so the diff against the newest
- * version row doesn't surface non-versioned columns like `name`,
- * `slug`, or `createdAt` as spurious "changes". Keep in sync with
- * the snapshot writer in
- * `app/api/v1/admin/orchestration/agents/[id]/route.ts`.
+ * Whitelist of snapshot-shape fields. Used to extract the snapshot subset from
+ * a live `AiAgent` row, so the diff against the newest version row doesn't
+ * surface non-versioned columns like `createdAt` as spurious "changes". Equal to
+ * the registry's snapshot set — the same list the PATCH snapshot writer captures.
  */
-export const SNAPSHOT_FIELDS = [
-  'name',
-  'slug',
-  'description',
-  'isActive',
-  'systemInstructions',
-  'model',
-  'provider',
-  'fallbackProviders',
-  'temperature',
-  'maxTokens',
-  'topicBoundaries',
-  'brandVoiceInstructions',
-  'metadata',
-  'knowledgeAccessMode',
-  'knowledgeRetrievalMode',
-  'knowledgeTriggerKeywords',
-  'grantedTagIds',
-  'grantedDocumentIds',
-  'rateLimitRpm',
-  'visibility',
-  'inputGuardMode',
-  'outputGuardMode',
-  'citationGuardMode',
-  'maxHistoryTokens',
-  'maxHistoryMessages',
-  'retentionDays',
-  'providerConfig',
-  'monthlyBudgetUsd',
-  'enableVoiceInput',
-  'enableImageInput',
-  'enableDocumentInput',
-  'runtimePromptManaged',
-  'runtimePromptNote',
-] as const;
+export const SNAPSHOT_FIELDS: readonly string[] = snapshotFieldNames();
 
 export function extractSnapshotFromAgent(agent: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -149,41 +54,7 @@ export function extractSnapshotFromAgent(agent: Record<string, unknown>): Record
 }
 
 /** Stable display order: most-meaningful fields first. */
-const FIELD_ORDER: string[] = [
-  'name',
-  'slug',
-  'description',
-  'isActive',
-  'visibility',
-  'model',
-  'provider',
-  'fallbackProviders',
-  'systemInstructions',
-  'runtimePromptManaged',
-  'runtimePromptNote',
-  'temperature',
-  'maxTokens',
-  'maxHistoryTokens',
-  'maxHistoryMessages',
-  'monthlyBudgetUsd',
-  'rateLimitRpm',
-  'retentionDays',
-  'inputGuardMode',
-  'outputGuardMode',
-  'citationGuardMode',
-  'topicBoundaries',
-  'brandVoiceInstructions',
-  'knowledgeAccessMode',
-  'knowledgeRetrievalMode',
-  'knowledgeTriggerKeywords',
-  'grantedTagIds',
-  'grantedDocumentIds',
-  'enableVoiceInput',
-  'enableImageInput',
-  'enableDocumentInput',
-  'providerConfig',
-  'metadata',
-];
+const FIELD_ORDER: string[] = fieldOrder();
 
 export interface FieldChange {
   /** Raw snapshot key, e.g. `systemInstructions`. */

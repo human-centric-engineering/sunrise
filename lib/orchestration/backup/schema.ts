@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-const agentBackupSchema = z.object({
+export const agentBackupSchema = z.object({
   name: z.string(),
   slug: z.string(),
   description: z.string(),
@@ -66,6 +66,21 @@ const agentBackupSchema = z.object({
   grantedDocumentHashes: z.array(z.string()).optional().default([]),
   topicBoundaries: z.array(z.string()),
   brandVoiceInstructions: z.string().nullable(),
+  // Discriminator + profile-inheritance + attachment + runtime-prompt fields.
+  // All added after the initial backup schema; older bundles omit them, so each
+  // is optional with the same default the agent create path applies — a v1/v2
+  // bundle round-trips unchanged, a new bundle preserves the full config.
+  kind: z.enum(['chat', 'judge']).optional().default('chat'),
+  persona: z.string().nullable().optional().default(null),
+  guardrails: z.string().nullable().optional().default(null),
+  personaMode: z.enum(['override', 'append']).optional().default('override'),
+  voiceMode: z.enum(['override', 'append']).optional().default('override'),
+  guardrailsMode: z.enum(['override', 'append']).optional().default('override'),
+  enableVoiceInput: z.boolean().optional().default(false),
+  enableImageInput: z.boolean().optional().default(false),
+  enableDocumentInput: z.boolean().optional().default(false),
+  runtimePromptManaged: z.boolean().optional().default(false),
+  runtimePromptNote: z.string().nullable().optional().default(null),
   rateLimitRpm: z.number().nullable().optional().default(null),
   inputGuardMode: z.string().nullable().optional().default(null),
   outputGuardMode: z.string().nullable().optional().default(null),

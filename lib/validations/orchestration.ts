@@ -52,393 +52,402 @@ export const capabilityFunctionDefinitionSchema = z.object({
 // ============================================================================
 
 /**
- * Create agent schema (POST /api/v1/admin/orchestration/agents)
+ * Create agent field shape (POST /api/v1/admin/orchestration/agents). Exported
+ * as a bare `z.object` (without the keyword-mode refinement) so its field set is
+ * introspectable for the registry parity test. `createAgentSchema` below wraps it.
  */
-export const createAgentSchema = z
-  .object({
-    name: z
-      .string()
-      .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters')
-      .trim(),
+export const createAgentObjectSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters')
+    .trim(),
 
-    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
+  slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
 
-    /**
-     * Discriminator: `chat` (default) for end-user-facing agents, `judge`
-     * for evaluation judges driven by the worker. Mutually exclusive — a
-     * chat agent never appears in the judge picker and vice versa.
-     */
-    kind: z.enum(['chat', 'judge']).default('chat'),
+  /**
+   * Discriminator: `chat` (default) for end-user-facing agents, `judge`
+   * for evaluation judges driven by the worker. Mutually exclusive — a
+   * chat agent never appears in the judge picker and vice versa.
+   */
+  kind: z.enum(['chat', 'judge']).default('chat'),
 
-    description: z
-      .string()
-      .min(1, 'Description is required')
-      .max(5000, 'Description must be less than 5000 characters')
-      .trim(),
+  description: z
+    .string()
+    .min(1, 'Description is required')
+    .max(5000, 'Description must be less than 5000 characters')
+    .trim(),
 
-    systemInstructions: z
-      .string()
-      .min(1, 'System instructions are required')
-      .max(50000, 'System instructions must be less than 50000 characters'),
+  systemInstructions: z
+    .string()
+    .min(1, 'System instructions are required')
+    .max(50000, 'System instructions must be less than 50000 characters'),
 
-    model: z
-      .string()
-      .min(1, 'Model is required')
-      .max(100, 'Model must be less than 100 characters'),
+  model: z.string().min(1, 'Model is required').max(100, 'Model must be less than 100 characters'),
 
-    provider: z
-      .string()
-      .min(1, 'Provider is required')
-      .max(50, 'Provider must be less than 50 characters')
-      .default('anthropic'),
+  provider: z
+    .string()
+    .min(1, 'Provider is required')
+    .max(50, 'Provider must be less than 50 characters')
+    .default('anthropic'),
 
-    fallbackProviders: z
-      .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
-      .max(5, 'At most 5 fallback providers')
-      .default([]),
+  fallbackProviders: z
+    .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
+    .max(5, 'At most 5 fallback providers')
+    .default([]),
 
-    providerConfig: z.record(z.string(), z.unknown()).optional(),
+  providerConfig: z.record(z.string(), z.unknown()).optional(),
 
-    temperature: z
-      .number()
-      .min(0, 'Temperature must be at least 0')
-      .max(2, 'Temperature must be at most 2')
-      .default(0.7),
+  temperature: z
+    .number()
+    .min(0, 'Temperature must be at least 0')
+    .max(2, 'Temperature must be at most 2')
+    .default(0.7),
 
-    maxTokens: z
-      .number()
-      .int('Max tokens must be an integer')
-      .min(1, 'Max tokens must be at least 1')
-      .max(200000, 'Max tokens must be at most 200000')
-      .default(4096),
+  maxTokens: z
+    .number()
+    .int('Max tokens must be an integer')
+    .min(1, 'Max tokens must be at least 1')
+    .max(200000, 'Max tokens must be at most 200000')
+    .default(4096),
 
-    // Reasoning-effort bucket. Honoured only by reasoning-capable models
-    // (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking). Silently
-    // dropped by other models. Null / undefined = use provider default.
-    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  // Reasoning-effort bucket. Honoured only by reasoning-capable models
+  // (OpenAI o-series / gpt-5, Anthropic Claude 4 thinking). Silently
+  // dropped by other models. Null / undefined = use provider default.
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
 
-    monthlyBudgetUsd: z
-      .number()
-      .positive('Monthly budget must be positive')
-      .max(10000, 'Monthly budget must be at most $10,000')
-      .optional(),
+  monthlyBudgetUsd: z
+    .number()
+    .positive('Monthly budget must be positive')
+    .max(10000, 'Monthly budget must be at most $10,000')
+    .optional(),
 
-    // Per-turn cost cap (USD) for chat — runaway-loop guard from
-    // improvement #39. Null inherits from
-    // AiOrchestrationSettings.defaultMaxCostPerTurnUsd; null there
-    // means no per-turn cap (monthly budget still applies). Min 0.01
-    // rejects an accidental 0 which would silently block every turn.
-    maxCostPerTurnUsd: z
-      .number()
-      .min(0.01, 'Per-turn cap must be at least $0.01')
-      .max(10000, 'Per-turn cap must be at most $10,000')
-      .nullable()
-      .optional(),
+  // Per-turn cost cap (USD) for chat — runaway-loop guard from
+  // improvement #39. Null inherits from
+  // AiOrchestrationSettings.defaultMaxCostPerTurnUsd; null there
+  // means no per-turn cap (monthly budget still applies). Min 0.01
+  // rejects an accidental 0 which would silently block every turn.
+  maxCostPerTurnUsd: z
+    .number()
+    .min(0.01, 'Per-turn cap must be at least $0.01')
+    .max(10000, 'Per-turn cap must be at most $10,000')
+    .nullable()
+    .optional(),
 
-    metadata: metadataSchema,
+  metadata: metadataSchema,
 
-    rateLimitRpm: z
-      .number()
-      .int('Rate limit must be an integer')
-      .min(1, 'Rate limit must be at least 1 RPM')
-      .max(10000, 'Rate limit must be at most 10,000 RPM')
-      .nullable()
-      .optional(),
+  rateLimitRpm: z
+    .number()
+    .int('Rate limit must be an integer')
+    .min(1, 'Rate limit must be at least 1 RPM')
+    .max(10000, 'Rate limit must be at most 10,000 RPM')
+    .nullable()
+    .optional(),
 
-    inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    maxHistoryTokens: z
-      .number()
-      .int('Max history tokens must be an integer')
-      .min(1000, 'Max history tokens must be at least 1000')
-      .max(2000000, 'Max history tokens must be at most 2,000,000')
-      .nullable()
-      .optional(),
-    maxHistoryMessages: z
-      .number()
-      .int('Memory length must be an integer')
-      .min(0, 'Memory length must be at least 0')
-      .max(500, 'Memory length must be at most 500')
-      .nullable()
-      .optional(),
-    retentionDays: z
-      .number()
-      .int('Retention days must be an integer')
-      .min(1, 'Retention days must be at least 1')
-      .max(3650, 'Retention days must be at most 3650')
-      .nullable()
-      .optional(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z
+    .number()
+    .int('Max history tokens must be an integer')
+    .min(1000, 'Max history tokens must be at least 1000')
+    .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
+    .nullable()
+    .optional(),
+  retentionDays: z
+    .number()
+    .int('Retention days must be an integer')
+    .min(1, 'Retention days must be at least 1')
+    .max(3650, 'Retention days must be at most 3650')
+    .nullable()
+    .optional(),
 
-    visibility: agentVisibilitySchema.default('internal'),
+  visibility: agentVisibilitySchema.default('internal'),
 
-    knowledgeRetrievalMode: z
-      .enum(['model', 'first_turn', 'every_turn', 'keywords'])
-      .default('model'),
-    knowledgeTriggerKeywords: z
-      .array(z.string().min(1).max(100))
-      .max(50, 'At most 50 trigger keywords')
-      .default([]),
+  knowledgeRetrievalMode: z
+    .enum(['model', 'first_turn', 'every_turn', 'keywords'])
+    .default('model'),
+  knowledgeTriggerKeywords: z
+    .array(z.string().min(1).max(100))
+    .max(50, 'At most 50 trigger keywords')
+    .default([]),
 
-    topicBoundaries: z
-      .array(z.string().max(200))
-      .max(50, 'At most 50 topic boundaries')
-      .default([]),
+  topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').default([]),
 
-    brandVoiceInstructions: z
-      .string()
-      .max(10000, 'Brand voice instructions must be less than 10,000 characters')
-      .nullable()
-      .optional(),
+  brandVoiceInstructions: z
+    .string()
+    .max(10000, 'Brand voice instructions must be less than 10,000 characters')
+    .nullable()
+    .optional(),
 
-    // Agent-profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
-    profileId: cuidSchema.nullable().optional(),
-    persona: z
-      .string()
-      .max(50000, 'Persona must be less than 50,000 characters')
-      .nullable()
-      .optional(),
-    guardrails: z
-      .string()
-      .max(10000, 'Guardrails must be less than 10,000 characters')
-      .nullable()
-      .optional(),
-    personaMode: z.enum(['override', 'append']).default('override'),
-    voiceMode: z.enum(['override', 'append']).default('override'),
-    guardrailsMode: z.enum(['override', 'append']).default('override'),
+  // Agent-profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
+  profileId: cuidSchema.nullable().optional(),
+  persona: z
+    .string()
+    .max(50000, 'Persona must be less than 50,000 characters')
+    .nullable()
+    .optional(),
+  guardrails: z
+    .string()
+    .max(10000, 'Guardrails must be less than 10,000 characters')
+    .nullable()
+    .optional(),
+  personaMode: z.enum(['override', 'append']).default('override'),
+  voiceMode: z.enum(['override', 'append']).default('override'),
+  guardrailsMode: z.enum(['override', 'append']).default('override'),
 
-    enableVoiceInput: z.boolean().default(false),
+  enableVoiceInput: z.boolean().default(false),
 
-    enableImageInput: z.boolean().default(false),
+  enableImageInput: z.boolean().default(false),
 
-    enableDocumentInput: z.boolean().default(false),
+  enableDocumentInput: z.boolean().default(false),
 
-    // Advisory honesty flag — when true the agent's stored instruction fields
-    // are not sent to the model (the prompt is built in app code per call).
-    // App-populated, behaviour-neutral. See AiAgent.runtimePromptManaged.
-    runtimePromptManaged: z.boolean().default(false),
-    runtimePromptNote: z
-      .string()
-      .max(2000, 'Runtime prompt note must be less than 2,000 characters')
-      .nullable()
-      .optional(),
+  // Advisory honesty flag — when true the agent's stored instruction fields
+  // are not sent to the model (the prompt is built in app code per call).
+  // App-populated, behaviour-neutral. See AiAgent.runtimePromptManaged.
+  runtimePromptManaged: z.boolean().default(false),
+  runtimePromptNote: z
+    .string()
+    .max(2000, 'Runtime prompt note must be less than 2,000 characters')
+    .nullable()
+    .optional(),
 
-    isActive: z.boolean().default(true),
-  })
-  .superRefine((data, ctx) => {
-    // mode='keywords' with an empty keyword list silently degrades to the
-    // model-decides path at runtime — operators see "Force on keywords" but get
-    // no forced retrieval. Require at least one trigger when the mode is set.
-    if (
-      data.knowledgeRetrievalMode === 'keywords' &&
-      (!data.knowledgeTriggerKeywords || data.knowledgeTriggerKeywords.length === 0)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['knowledgeTriggerKeywords'],
-        message: 'Add at least one trigger keyword when retrieval mode is "keywords".',
-      });
-    }
-  });
+  isActive: z.boolean().default(true),
+});
 
 /**
- * Update agent schema (PATCH /api/v1/admin/orchestration/agents/[id])
+ * Create agent schema (POST /api/v1/admin/orchestration/agents) — the field
+ * shape plus the keyword-mode cross-field check.
  */
-export const updateAgentSchema = z
-  .object({
-    name: z
-      .string()
-      .min(1, 'Name cannot be empty')
-      .max(100, 'Name must be less than 100 characters')
-      .trim()
-      .optional(),
+export const createAgentSchema = createAgentObjectSchema.superRefine((data, ctx) => {
+  // mode='keywords' with an empty keyword list silently degrades to the
+  // model-decides path at runtime — operators see "Force on keywords" but get
+  // no forced retrieval. Require at least one trigger when the mode is set.
+  if (
+    data.knowledgeRetrievalMode === 'keywords' &&
+    (!data.knowledgeTriggerKeywords || data.knowledgeTriggerKeywords.length === 0)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['knowledgeTriggerKeywords'],
+      message: 'Add at least one trigger keyword when retrieval mode is "keywords".',
+    });
+  }
+});
 
-    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
+/**
+ * Update agent field shape (PATCH /api/v1/admin/orchestration/agents/[id]).
+ *
+ * Exported as a bare `z.object` (without the cross-field refinement) so other
+ * call sites can reuse its per-field validators — notably the version-restore
+ * route, which validates a stored snapshot against the same rules a PATCH uses.
+ * `updateAgentSchema` below wraps it with the keyword-mode refinement.
+ */
+export const updateAgentObjectSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name cannot be empty')
+    .max(100, 'Name must be less than 100 characters')
+    .trim()
+    .optional(),
 
-    description: z
-      .string()
-      .min(1, 'Description cannot be empty')
-      .max(5000, 'Description must be less than 5000 characters')
-      .trim()
-      .optional(),
+  slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
 
-    systemInstructions: z
-      .string()
-      .min(1, 'System instructions cannot be empty')
-      .max(50000, 'System instructions must be less than 50000 characters')
-      .optional(),
+  description: z
+    .string()
+    .min(1, 'Description cannot be empty')
+    .max(5000, 'Description must be less than 5000 characters')
+    .trim()
+    .optional(),
 
-    model: z
-      .string()
-      .min(1, 'Model cannot be empty')
-      .max(100, 'Model must be less than 100 characters')
-      .optional(),
+  systemInstructions: z
+    .string()
+    .min(1, 'System instructions cannot be empty')
+    .max(50000, 'System instructions must be less than 50000 characters')
+    .optional(),
 
-    provider: z
-      .string()
-      .min(1, 'Provider cannot be empty')
-      .max(50, 'Provider must be less than 50 characters')
-      .optional(),
+  model: z
+    .string()
+    .min(1, 'Model cannot be empty')
+    .max(100, 'Model must be less than 100 characters')
+    .optional(),
 
-    fallbackProviders: z
-      .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
-      .max(5, 'At most 5 fallback providers')
-      .optional(),
+  provider: z
+    .string()
+    .min(1, 'Provider cannot be empty')
+    .max(50, 'Provider must be less than 50 characters')
+    .optional(),
 
-    providerConfig: z.record(z.string(), z.unknown()).optional(),
+  fallbackProviders: z
+    .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
+    .max(5, 'At most 5 fallback providers')
+    .optional(),
 
-    temperature: z
-      .number()
-      .min(0, 'Temperature must be at least 0')
-      .max(2, 'Temperature must be at most 2')
-      .optional(),
+  providerConfig: z.record(z.string(), z.unknown()).optional(),
 
-    maxTokens: z
-      .number()
-      .int('Max tokens must be an integer')
-      .min(1, 'Max tokens must be at least 1')
-      .max(200000, 'Max tokens must be at most 200000')
-      .optional(),
+  temperature: z
+    .number()
+    .min(0, 'Temperature must be at least 0')
+    .max(2, 'Temperature must be at most 2')
+    .optional(),
 
-    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  maxTokens: z
+    .number()
+    .int('Max tokens must be an integer')
+    .min(1, 'Max tokens must be at least 1')
+    .max(200000, 'Max tokens must be at most 200000')
+    .optional(),
 
-    monthlyBudgetUsd: z
-      .number()
-      .positive('Monthly budget must be positive')
-      .max(10000, 'Monthly budget must be at most $10,000')
-      .nullable()
-      .optional(),
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
 
-    // See createAgentSchema for the per-turn cap framing — runaway-loop
-    // guard from improvement #39. Nullable on update so admins can clear
-    // the override and fall back to the org default.
-    maxCostPerTurnUsd: z
-      .number()
-      .min(0.01, 'Per-turn cap must be at least $0.01')
-      .max(10000, 'Per-turn cap must be at most $10,000')
-      .nullable()
-      .optional(),
+  monthlyBudgetUsd: z
+    .number()
+    .positive('Monthly budget must be positive')
+    .max(10000, 'Monthly budget must be at most $10,000')
+    .nullable()
+    .optional(),
 
-    metadata: metadataSchema,
+  // See createAgentSchema for the per-turn cap framing — runaway-loop
+  // guard from improvement #39. Nullable on update so admins can clear
+  // the override and fall back to the org default.
+  maxCostPerTurnUsd: z
+    .number()
+    .min(0.01, 'Per-turn cap must be at least $0.01')
+    .max(10000, 'Per-turn cap must be at most $10,000')
+    .nullable()
+    .optional(),
 
-    rateLimitRpm: z
-      .number()
-      .int('Rate limit must be an integer')
-      .min(1, 'Rate limit must be at least 1 RPM')
-      .max(10000, 'Rate limit must be at most 10,000 RPM')
-      .nullable()
-      .optional(),
+  metadata: metadataSchema,
 
-    inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    maxHistoryTokens: z
-      .number()
-      .int('Max history tokens must be an integer')
-      .min(1000, 'Max history tokens must be at least 1000')
-      .max(2000000, 'Max history tokens must be at most 2,000,000')
-      .nullable()
-      .optional(),
-    maxHistoryMessages: z
-      .number()
-      .int('Memory length must be an integer')
-      .min(0, 'Memory length must be at least 0')
-      .max(500, 'Memory length must be at most 500')
-      .nullable()
-      .optional(),
-    retentionDays: z
-      .number()
-      .int('Retention days must be an integer')
-      .min(1, 'Retention days must be at least 1')
-      .max(3650, 'Retention days must be at most 3650')
-      .nullable()
-      .optional(),
+  rateLimitRpm: z
+    .number()
+    .int('Rate limit must be an integer')
+    .min(1, 'Rate limit must be at least 1 RPM')
+    .max(10000, 'Rate limit must be at most 10,000 RPM')
+    .nullable()
+    .optional(),
 
-    visibility: agentVisibilitySchema.optional(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z
+    .number()
+    .int('Max history tokens must be an integer')
+    .min(1000, 'Max history tokens must be at least 1000')
+    .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
+    .nullable()
+    .optional(),
+  retentionDays: z
+    .number()
+    .int('Retention days must be an integer')
+    .min(1, 'Retention days must be at least 1')
+    .max(3650, 'Retention days must be at most 3650')
+    .nullable()
+    .optional(),
 
-    knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
+  visibility: agentVisibilitySchema.optional(),
 
-    /**
-     * IDs of `KnowledgeTag` rows this agent may search (only consulted when
-     * knowledgeAccessMode === 'restricted'). When omitted from the patch body the
-     * route leaves the join rows untouched; pass `[]` to clear all tag grants.
-     */
-    grantedTagIds: z.array(cuidSchema).max(200, 'At most 200 tag grants per agent').optional(),
+  knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
 
-    /**
-     * IDs of `AiKnowledgeDocument` rows this agent may search directly (only
-     * consulted when knowledgeAccessMode === 'restricted'). Omit to leave grants
-     * untouched; pass `[]` to clear them. System-scoped docs always pass through
-     * the resolver — granting them explicitly is unnecessary.
-     */
-    grantedDocumentIds: z
-      .array(cuidSchema)
-      .max(1000, 'At most 1000 document grants per agent')
-      .optional(),
+  /**
+   * IDs of `KnowledgeTag` rows this agent may search (only consulted when
+   * knowledgeAccessMode === 'restricted'). When omitted from the patch body the
+   * route leaves the join rows untouched; pass `[]` to clear all tag grants.
+   */
+  grantedTagIds: z.array(cuidSchema).max(200, 'At most 200 tag grants per agent').optional(),
 
-    topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
+  /**
+   * IDs of `AiKnowledgeDocument` rows this agent may search directly (only
+   * consulted when knowledgeAccessMode === 'restricted'). Omit to leave grants
+   * untouched; pass `[]` to clear them. System-scoped docs always pass through
+   * the resolver — granting them explicitly is unnecessary.
+   */
+  grantedDocumentIds: z
+    .array(cuidSchema)
+    .max(1000, 'At most 1000 document grants per agent')
+    .optional(),
 
-    knowledgeRetrievalMode: z.enum(['model', 'first_turn', 'every_turn', 'keywords']).optional(),
-    knowledgeTriggerKeywords: z
-      .array(z.string().min(1).max(100))
-      .max(50, 'At most 50 trigger keywords')
-      .optional(),
+  topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
 
-    brandVoiceInstructions: z
-      .string()
-      .max(10000, 'Brand voice instructions must be less than 10000 characters')
-      .nullable()
-      .optional(),
+  knowledgeRetrievalMode: z.enum(['model', 'first_turn', 'every_turn', 'keywords']).optional(),
+  knowledgeTriggerKeywords: z
+    .array(z.string().min(1).max(100))
+    .max(50, 'At most 50 trigger keywords')
+    .optional(),
 
-    // Agent-profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
-    profileId: cuidSchema.nullable().optional(),
-    persona: z
-      .string()
-      .max(50000, 'Persona must be less than 50,000 characters')
-      .nullable()
-      .optional(),
-    guardrails: z
-      .string()
-      .max(10000, 'Guardrails must be less than 10,000 characters')
-      .nullable()
-      .optional(),
-    personaMode: z.enum(['override', 'append']).optional(),
-    voiceMode: z.enum(['override', 'append']).optional(),
-    guardrailsMode: z.enum(['override', 'append']).optional(),
+  brandVoiceInstructions: z
+    .string()
+    .max(10000, 'Brand voice instructions must be less than 10000 characters')
+    .nullable()
+    .optional(),
 
-    enableVoiceInput: z.boolean().optional(),
+  // Agent-profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
+  profileId: cuidSchema.nullable().optional(),
+  persona: z
+    .string()
+    .max(50000, 'Persona must be less than 50,000 characters')
+    .nullable()
+    .optional(),
+  guardrails: z
+    .string()
+    .max(10000, 'Guardrails must be less than 10,000 characters')
+    .nullable()
+    .optional(),
+  personaMode: z.enum(['override', 'append']).optional(),
+  voiceMode: z.enum(['override', 'append']).optional(),
+  guardrailsMode: z.enum(['override', 'append']).optional(),
 
-    enableImageInput: z.boolean().optional(),
+  enableVoiceInput: z.boolean().optional(),
 
-    enableDocumentInput: z.boolean().optional(),
+  enableImageInput: z.boolean().optional(),
 
-    runtimePromptManaged: z.boolean().optional(),
-    runtimePromptNote: z
-      .string()
-      .max(2000, 'Runtime prompt note must be less than 2,000 characters')
-      .nullable()
-      .optional(),
+  enableDocumentInput: z.boolean().optional(),
 
-    isActive: z.boolean().optional(),
-  })
-  .superRefine((data, ctx) => {
-    // See createAgentSchema — same UX trap. We only enforce when both fields
-    // are present in the same payload (the form always sends them as a pair).
-    // A bare `mode: 'keywords'` patch without keywords passes; the caller is
-    // expected to verify the resulting combined row is consistent.
-    if (
-      data.knowledgeRetrievalMode === 'keywords' &&
-      data.knowledgeTriggerKeywords !== undefined &&
-      data.knowledgeTriggerKeywords.length === 0
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['knowledgeTriggerKeywords'],
-        message: 'Add at least one trigger keyword when retrieval mode is "keywords".',
-      });
-    }
-  });
+  runtimePromptManaged: z.boolean().optional(),
+  runtimePromptNote: z
+    .string()
+    .max(2000, 'Runtime prompt note must be less than 2,000 characters')
+    .nullable()
+    .optional(),
+
+  isActive: z.boolean().optional(),
+});
+
+/**
+ * Update agent schema (PATCH /api/v1/admin/orchestration/agents/[id]) — the
+ * field shape plus the keyword-mode cross-field check.
+ */
+export const updateAgentSchema = updateAgentObjectSchema.superRefine((data, ctx) => {
+  // See createAgentSchema — same UX trap. We only enforce when both fields
+  // are present in the same payload (the form always sends them as a pair).
+  // A bare `mode: 'keywords'` patch without keywords passes; the caller is
+  // expected to verify the resulting combined row is consistent.
+  if (
+    data.knowledgeRetrievalMode === 'keywords' &&
+    data.knowledgeTriggerKeywords !== undefined &&
+    data.knowledgeTriggerKeywords.length === 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['knowledgeTriggerKeywords'],
+      message: 'Add at least one trigger keyword when retrieval mode is "keywords".',
+    });
+  }
+});
 
 /**
  * List agents query schema — GET /api/v1/admin/orchestration/agents
@@ -1144,7 +1153,7 @@ export const listWebhooksQuerySchema = paginationQuerySchema.extend({
  * (`id`, `createdAt`, `updatedAt`, `createdBy`) and embeds attached
  * capabilities by slug so the bundle is portable across environments.
  */
-const bundledAgentSchema = z.object({
+export const bundledAgentSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100),
   isSystem: z.boolean().default(false),

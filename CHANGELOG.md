@@ -16,6 +16,53 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Agent field registry + fork-owned `lib/app/agent-fields.ts` seam.** A single
+  declarative descriptor per `AiAgent` config field
+  (`lib/orchestration/agents/agent-field-registry.ts`, exporting `AGENT_FIELDS`,
+  the `AgentFieldDescriptor` type, and the `versionedFieldNames` /
+  `snapshotFieldNames` / `fieldLabels` / `fieldToTab` / `fieldOrder` selectors)
+  replaces the ~15 disconnected hand-maintained field lists that previously had
+  to be kept in lockstep. The scalar set is exhaustiveness-checked against
+  Prisma's generated `AiAgentScalarFieldEnum`, so adding a column without a
+  descriptor is a compile error rather than a silent runtime gap. Forks add
+  their own agent fields in the empty fork-owned scaffold `lib/app/agent-fields.ts`
+  (`appAgentFields`) without editing a platform list. The registry is the source
+  of truth (derived) for the versioning, snapshot, diff, restore, PATCH, and
+  clone surfaces; parity tests keep the create/update validation schemas and the
+  export bundle / full-backup schemas in lockstep with it, so adding a field to
+  one without the other is a loud test failure. Documented in
+  [`.context/orchestration/agent-fields.md`](.context/orchestration/agent-fields.md).
+- **Newly-exported validation surfaces** (`lib/validations/orchestration.ts`):
+  `createAgentObjectSchema` / `updateAgentObjectSchema` (the agent create/PATCH
+  field shapes without their cross-field refinement, so other call sites — e.g.
+  version restore — can reuse the same per-field validators) and
+  `bundledAgentSchema`; plus `agentBackupSchema` from
+  `lib/orchestration/backup/schema.ts`. Exported to anchor the registry parity
+  tests.
+
+### Fixed
+
+- **Full-config backup no longer silently drops agent fields.** The
+  backup/restore agent schema, exporter, and importer had drifted from the
+  `AiAgent` model and omitted `kind`, `reasoningEffort`, `persona`, `guardrails`,
+  the three inheritance `*Mode` fields, the three attachment toggles, and the two
+  runtime-prompt fields — so exporting and re-importing a config reset a `judge`
+  agent to `chat` and lost persona/guardrails/toggles. All are now serialized and
+  restored (additive, optional-with-default schema fields, so older bundles still
+  import unchanged). A registry parity test now fails if any config field is
+  missing from the bundle or backup schema.
+- **Agent version history no longer silently loses fields.** `persona`,
+  `guardrails`, `personaMode`, `voiceMode`, and `guardrailsMode` were treated as
+  versioned (editing them logged a "changed" version) but were never written to
+  the snapshot, so the change was unrecoverable; `reasoningEffort` and
+  `maxCostPerTurnUsd` were captured but invisible in the diff viewer. All are now
+  snapshotted, diffed, and restored. Version **restore** likewise applies the
+  full versioned field set (previously its hand-maintained apply-list dropped
+  persona/guardrails/modes and the knowledge/runtime-prompt fields) and validates
+  the stored snapshot against the same per-field rules a PATCH uses.
+
 ## [0.3.0] — 2026-06-26
 
 > **Alpha release.** Fourth tagged Sunrise release. **MINOR bump** — adds new
