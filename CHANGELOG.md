@@ -38,6 +38,15 @@ release process.
 
 ### Fixed
 
+- **Full-config backup no longer silently drops agent fields.** The
+  backup/restore agent schema, exporter, and importer had drifted from the
+  `AiAgent` model and omitted `kind`, `reasoningEffort`, `persona`, `guardrails`,
+  the three inheritance `*Mode` fields, the three attachment toggles, and the two
+  runtime-prompt fields — so exporting and re-importing a config reset a `judge`
+  agent to `chat` and lost persona/guardrails/toggles. All are now serialized and
+  restored (additive, optional-with-default schema fields, so older bundles still
+  import unchanged). A registry parity test now fails if any config field is
+  missing from the bundle or backup schema.
 - **Agent version history no longer silently loses fields.** `persona`,
   `guardrails`, `personaMode`, `voiceMode`, and `guardrailsMode` were treated as
   versioned (editing them logged a "changed" version) but were never written to

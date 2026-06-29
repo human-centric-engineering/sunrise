@@ -27,7 +27,8 @@ import {
   labelForField,
   SNAPSHOT_FIELDS,
 } from '@/lib/orchestration/agent-version-diff';
-import { updateAgentObjectSchema } from '@/lib/validations/orchestration';
+import { bundledAgentSchema, updateAgentObjectSchema } from '@/lib/validations/orchestration';
+import { agentBackupSchema } from '@/lib/orchestration/backup/schema';
 
 // ---------------------------------------------------------------------------
 // Characterisation fixtures — verbatim snapshots of the current hand-lists as of
@@ -251,6 +252,30 @@ describe('agent-field-registry — parity with the validation schemas', () => {
     // descriptor (the silent-gap this whole registry exists to prevent).
     for (const key of updateKeys) {
       expect(registryNames.has(key)).toBe(true);
+    }
+  });
+});
+
+describe('agent-field-registry — parity with the export/import surfaces', () => {
+  // The one config scalar legitimately absent from both serialised shapes:
+  // the agent bundle exports the profile by slug (`profileSlug`), and the
+  // full-config backup doesn't carry profile inheritance at all.
+  const EXPORT_OMITTED = new Set(['profileId']);
+  const registryScalars = AGENT_FIELDS.filter((f) => f.kind === 'scalar').map((f) => f.name);
+
+  it('every registry config scalar is present in the agent export/import bundle schema', () => {
+    const bundleKeys = new Set(Object.keys(bundledAgentSchema.shape));
+    for (const field of registryScalars) {
+      if (EXPORT_OMITTED.has(field)) continue;
+      expect(bundleKeys.has(field)).toBe(true);
+    }
+  });
+
+  it('every registry config scalar is present in the full-config backup schema', () => {
+    const backupKeys = new Set(Object.keys(agentBackupSchema.shape));
+    for (const field of registryScalars) {
+      if (EXPORT_OMITTED.has(field)) continue;
+      expect(backupKeys.has(field)).toBe(true);
     }
   });
 });

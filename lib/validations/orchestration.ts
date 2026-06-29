@@ -1153,7 +1153,7 @@ export const listWebhooksQuerySchema = paginationQuerySchema.extend({
  * (`id`, `createdAt`, `updatedAt`, `createdBy`) and embeds attached
  * capabilities by slug so the bundle is portable across environments.
  */
-const bundledAgentSchema = z.object({
+export const bundledAgentSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100),
   isSystem: z.boolean().default(false),

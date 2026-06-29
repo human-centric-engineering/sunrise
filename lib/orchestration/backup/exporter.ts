@@ -42,6 +42,22 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         retentionDays: true,
         providerConfig: true,
         widgetConfig: true,
+        // Discriminator + profile-inheritance + attachment + runtime-prompt
+        // fields. Previously absent from this select, so a config backup
+        // silently dropped them on round-trip (a judge agent restored as chat,
+        // persona/guardrails/toggles lost). Restored here for full fidelity.
+        kind: true,
+        reasoningEffort: true,
+        persona: true,
+        guardrails: true,
+        personaMode: true,
+        voiceMode: true,
+        guardrailsMode: true,
+        enableVoiceInput: true,
+        enableImageInput: true,
+        enableDocumentInput: true,
+        runtimePromptManaged: true,
+        runtimePromptNote: true,
         grantedTags: { select: { tag: { select: { slug: true } } } },
         grantedDocuments: { select: { document: { select: { fileHash: true } } } },
       },
@@ -142,9 +158,22 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
   // `grantedTags`/`grantedDocuments` are include-shaped (join rows with one
   // nested entity each) — flatten them before serialising.
   const flattenedAgents = agents.map((a) => {
-    const { grantedTags, grantedDocuments, knowledgeAccessMode, knowledgeRetrievalMode, ...rest } =
-      a;
+    const {
+      grantedTags,
+      grantedDocuments,
+      knowledgeAccessMode,
+      knowledgeRetrievalMode,
+      kind,
+      personaMode,
+      voiceMode,
+      guardrailsMode,
+      reasoningEffort,
+      ...rest
+    } = a;
     const retrievalModes = ['model', 'first_turn', 'every_turn', 'keywords'] as const;
+    const reasoningEfforts = ['minimal', 'low', 'medium', 'high'] as const;
+    const narrowMode = (m: string) =>
+      m === 'append' ? ('append' as const) : ('override' as const);
     return {
       ...rest,
       // The DB columns are `String`; coerce to the strict enums the backup schema wants.
@@ -153,6 +182,13 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
       knowledgeRetrievalMode: (retrievalModes as readonly string[]).includes(knowledgeRetrievalMode)
         ? (knowledgeRetrievalMode as (typeof retrievalModes)[number])
         : ('model' as const),
+      kind: kind === 'judge' ? ('judge' as const) : ('chat' as const),
+      personaMode: narrowMode(personaMode),
+      voiceMode: narrowMode(voiceMode),
+      guardrailsMode: narrowMode(guardrailsMode),
+      reasoningEffort: (reasoningEfforts as readonly string[]).includes(reasoningEffort ?? '')
+        ? (reasoningEffort as (typeof reasoningEfforts)[number])
+        : null,
       // `knowledgeCategories` was dropped from the DB in Phase 6 but the
       // backup schema keeps the field on the wire for older importers
       // that still read it. Always emit empty.

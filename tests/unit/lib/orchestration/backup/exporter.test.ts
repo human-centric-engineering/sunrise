@@ -47,9 +47,25 @@ const agentRow = {
   metadata: null,
   knowledgeCategories: [],
   knowledgeAccessMode: 'full',
+  knowledgeRetrievalMode: 'keywords',
   topicBoundaries: [],
   brandVoiceInstructions: null,
   widgetConfig: null,
+  // Discriminator + inheritance + attachment + runtime-prompt fields — these
+  // were silently dropped from config backups before; distinctive values here
+  // assert they now round-trip rather than reverting to defaults.
+  kind: 'judge',
+  reasoningEffort: 'high',
+  persona: 'A terse support persona',
+  guardrails: 'Never disclose internal pricing',
+  personaMode: 'append',
+  voiceMode: 'append',
+  guardrailsMode: 'append',
+  enableVoiceInput: true,
+  enableImageInput: true,
+  enableDocumentInput: true,
+  runtimePromptManaged: true,
+  runtimePromptNote: 'Prompt assembled in app code',
   // Include shape from the new exporter query — no grants for the default fixture.
   grantedTags: [],
   grantedDocuments: [],
@@ -160,8 +176,22 @@ describe('exportOrchestrationConfig', () => {
     const payload = await exportOrchestrationConfig();
 
     expect(payload.data.agents).toHaveLength(1);
-    expect(payload.data.agents[0].name).toBe('Support Bot');
-    expect(payload.data.agents[0].slug).toBe('support-bot');
+    const exported = payload.data.agents[0];
+    expect(exported.name).toBe('Support Bot');
+    expect(exported.slug).toBe('support-bot');
+    // Fields that a config backup previously dropped — assert they survive.
+    expect(exported.kind).toBe('judge');
+    expect(exported.reasoningEffort).toBe('high');
+    expect(exported.persona).toBe('A terse support persona');
+    expect(exported.guardrails).toBe('Never disclose internal pricing');
+    expect(exported.personaMode).toBe('append');
+    expect(exported.voiceMode).toBe('append');
+    expect(exported.guardrailsMode).toBe('append');
+    expect(exported.enableVoiceInput).toBe(true);
+    expect(exported.enableImageInput).toBe(true);
+    expect(exported.enableDocumentInput).toBe(true);
+    expect(exported.runtimePromptManaged).toBe(true);
+    expect(exported.runtimePromptNote).toBe('Prompt assembled in app code');
   });
 
   it('queries agents with where: { isSystem: false }', async () => {
