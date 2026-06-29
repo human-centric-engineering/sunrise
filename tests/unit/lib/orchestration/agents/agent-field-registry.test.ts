@@ -20,12 +20,14 @@ import {
   getAgentField,
   snapshotFieldNames,
   versionedFieldNames,
+  versionedScalarFieldNames,
 } from '@/lib/orchestration/agents/agent-field-registry';
 import {
   buildChangeSummary,
   labelForField,
   SNAPSHOT_FIELDS,
 } from '@/lib/orchestration/agent-version-diff';
+import { updateAgentObjectSchema } from '@/lib/validations/orchestration';
 
 // ---------------------------------------------------------------------------
 // Characterisation fixtures — verbatim snapshots of the current hand-lists as of
@@ -217,5 +219,38 @@ describe('agent-field-registry — divergence ledger vs current hand-lists', () 
     expect(diff(registry, CURRENT_VERSIONED_FIELDS)).toEqual(
       ['grantedDocumentIds', 'grantedTagIds', 'reasoningEffort'].sort()
     );
+  });
+});
+
+describe('agent-field-registry — parity with the validation schemas', () => {
+  // Fields the registry has but the PATCH schema deliberately omits:
+  //  - kind: set at create, immutable thereafter (create-only)
+  //  - widgetConfig: managed via its own endpoint, not the agent PATCH body
+  const PATCH_OMITTED = new Set(['kind', 'widgetConfig']);
+
+  it('every versioned scalar field exists on updateAgentObjectSchema (so restore can validate it)', () => {
+    const updateKeys = new Set(Object.keys(updateAgentObjectSchema.shape));
+    for (const field of versionedScalarFieldNames()) {
+      expect(updateKeys.has(field)).toBe(true);
+    }
+  });
+
+  it('registry scalars and the PATCH schema field set agree in both directions (drift guard)', () => {
+    const updateKeys = new Set(Object.keys(updateAgentObjectSchema.shape));
+    const registryScalars = AGENT_FIELDS.filter((f) => f.kind === 'scalar').map((f) => f.name);
+    const registryNames = new Set(AGENT_FIELDS.map((f) => f.name));
+
+    // Every registry scalar (except the documented PATCH-omitted ones) is a
+    // PATCH field — catches a registered field with no validation surface.
+    for (const field of registryScalars) {
+      if (PATCH_OMITTED.has(field)) continue;
+      expect(updateKeys.has(field)).toBe(true);
+    }
+
+    // Every PATCH field is registered — catches a schema field with no
+    // descriptor (the silent-gap this whole registry exists to prevent).
+    for (const key of updateKeys) {
+      expect(registryNames.has(key)).toBe(true);
+    }
   });
 });

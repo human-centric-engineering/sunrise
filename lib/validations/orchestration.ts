@@ -243,202 +243,211 @@ export const createAgentSchema = z
   });
 
 /**
- * Update agent schema (PATCH /api/v1/admin/orchestration/agents/[id])
+ * Update agent field shape (PATCH /api/v1/admin/orchestration/agents/[id]).
+ *
+ * Exported as a bare `z.object` (without the cross-field refinement) so other
+ * call sites can reuse its per-field validators — notably the version-restore
+ * route, which validates a stored snapshot against the same rules a PATCH uses.
+ * `updateAgentSchema` below wraps it with the keyword-mode refinement.
  */
-export const updateAgentSchema = z
-  .object({
-    name: z
-      .string()
-      .min(1, 'Name cannot be empty')
-      .max(100, 'Name must be less than 100 characters')
-      .trim()
-      .optional(),
+export const updateAgentObjectSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Name cannot be empty')
+    .max(100, 'Name must be less than 100 characters')
+    .trim()
+    .optional(),
 
-    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
+  slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
 
-    description: z
-      .string()
-      .min(1, 'Description cannot be empty')
-      .max(5000, 'Description must be less than 5000 characters')
-      .trim()
-      .optional(),
+  description: z
+    .string()
+    .min(1, 'Description cannot be empty')
+    .max(5000, 'Description must be less than 5000 characters')
+    .trim()
+    .optional(),
 
-    systemInstructions: z
-      .string()
-      .min(1, 'System instructions cannot be empty')
-      .max(50000, 'System instructions must be less than 50000 characters')
-      .optional(),
+  systemInstructions: z
+    .string()
+    .min(1, 'System instructions cannot be empty')
+    .max(50000, 'System instructions must be less than 50000 characters')
+    .optional(),
 
-    model: z
-      .string()
-      .min(1, 'Model cannot be empty')
-      .max(100, 'Model must be less than 100 characters')
-      .optional(),
+  model: z
+    .string()
+    .min(1, 'Model cannot be empty')
+    .max(100, 'Model must be less than 100 characters')
+    .optional(),
 
-    provider: z
-      .string()
-      .min(1, 'Provider cannot be empty')
-      .max(50, 'Provider must be less than 50 characters')
-      .optional(),
+  provider: z
+    .string()
+    .min(1, 'Provider cannot be empty')
+    .max(50, 'Provider must be less than 50 characters')
+    .optional(),
 
-    fallbackProviders: z
-      .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
-      .max(5, 'At most 5 fallback providers')
-      .optional(),
+  fallbackProviders: z
+    .array(z.string().max(50, 'Provider slug must be less than 50 characters'))
+    .max(5, 'At most 5 fallback providers')
+    .optional(),
 
-    providerConfig: z.record(z.string(), z.unknown()).optional(),
+  providerConfig: z.record(z.string(), z.unknown()).optional(),
 
-    temperature: z
-      .number()
-      .min(0, 'Temperature must be at least 0')
-      .max(2, 'Temperature must be at most 2')
-      .optional(),
+  temperature: z
+    .number()
+    .min(0, 'Temperature must be at least 0')
+    .max(2, 'Temperature must be at most 2')
+    .optional(),
 
-    maxTokens: z
-      .number()
-      .int('Max tokens must be an integer')
-      .min(1, 'Max tokens must be at least 1')
-      .max(200000, 'Max tokens must be at most 200000')
-      .optional(),
+  maxTokens: z
+    .number()
+    .int('Max tokens must be an integer')
+    .min(1, 'Max tokens must be at least 1')
+    .max(200000, 'Max tokens must be at most 200000')
+    .optional(),
 
-    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
 
-    monthlyBudgetUsd: z
-      .number()
-      .positive('Monthly budget must be positive')
-      .max(10000, 'Monthly budget must be at most $10,000')
-      .nullable()
-      .optional(),
+  monthlyBudgetUsd: z
+    .number()
+    .positive('Monthly budget must be positive')
+    .max(10000, 'Monthly budget must be at most $10,000')
+    .nullable()
+    .optional(),
 
-    // See createAgentSchema for the per-turn cap framing — runaway-loop
-    // guard from improvement #39. Nullable on update so admins can clear
-    // the override and fall back to the org default.
-    maxCostPerTurnUsd: z
-      .number()
-      .min(0.01, 'Per-turn cap must be at least $0.01')
-      .max(10000, 'Per-turn cap must be at most $10,000')
-      .nullable()
-      .optional(),
+  // See createAgentSchema for the per-turn cap framing — runaway-loop
+  // guard from improvement #39. Nullable on update so admins can clear
+  // the override and fall back to the org default.
+  maxCostPerTurnUsd: z
+    .number()
+    .min(0.01, 'Per-turn cap must be at least $0.01')
+    .max(10000, 'Per-turn cap must be at most $10,000')
+    .nullable()
+    .optional(),
 
-    metadata: metadataSchema,
+  metadata: metadataSchema,
 
-    rateLimitRpm: z
-      .number()
-      .int('Rate limit must be an integer')
-      .min(1, 'Rate limit must be at least 1 RPM')
-      .max(10000, 'Rate limit must be at most 10,000 RPM')
-      .nullable()
-      .optional(),
+  rateLimitRpm: z
+    .number()
+    .int('Rate limit must be an integer')
+    .min(1, 'Rate limit must be at least 1 RPM')
+    .max(10000, 'Rate limit must be at most 10,000 RPM')
+    .nullable()
+    .optional(),
 
-    inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-    maxHistoryTokens: z
-      .number()
-      .int('Max history tokens must be an integer')
-      .min(1000, 'Max history tokens must be at least 1000')
-      .max(2000000, 'Max history tokens must be at most 2,000,000')
-      .nullable()
-      .optional(),
-    maxHistoryMessages: z
-      .number()
-      .int('Memory length must be an integer')
-      .min(0, 'Memory length must be at least 0')
-      .max(500, 'Memory length must be at most 500')
-      .nullable()
-      .optional(),
-    retentionDays: z
-      .number()
-      .int('Retention days must be an integer')
-      .min(1, 'Retention days must be at least 1')
-      .max(3650, 'Retention days must be at most 3650')
-      .nullable()
-      .optional(),
+  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
+  maxHistoryTokens: z
+    .number()
+    .int('Max history tokens must be an integer')
+    .min(1000, 'Max history tokens must be at least 1000')
+    .max(2000000, 'Max history tokens must be at most 2,000,000')
+    .nullable()
+    .optional(),
+  maxHistoryMessages: z
+    .number()
+    .int('Memory length must be an integer')
+    .min(0, 'Memory length must be at least 0')
+    .max(500, 'Memory length must be at most 500')
+    .nullable()
+    .optional(),
+  retentionDays: z
+    .number()
+    .int('Retention days must be an integer')
+    .min(1, 'Retention days must be at least 1')
+    .max(3650, 'Retention days must be at most 3650')
+    .nullable()
+    .optional(),
 
-    visibility: agentVisibilitySchema.optional(),
+  visibility: agentVisibilitySchema.optional(),
 
-    knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
+  knowledgeAccessMode: z.enum(['full', 'restricted']).optional(),
 
-    /**
-     * IDs of `KnowledgeTag` rows this agent may search (only consulted when
-     * knowledgeAccessMode === 'restricted'). When omitted from the patch body the
-     * route leaves the join rows untouched; pass `[]` to clear all tag grants.
-     */
-    grantedTagIds: z.array(cuidSchema).max(200, 'At most 200 tag grants per agent').optional(),
+  /**
+   * IDs of `KnowledgeTag` rows this agent may search (only consulted when
+   * knowledgeAccessMode === 'restricted'). When omitted from the patch body the
+   * route leaves the join rows untouched; pass `[]` to clear all tag grants.
+   */
+  grantedTagIds: z.array(cuidSchema).max(200, 'At most 200 tag grants per agent').optional(),
 
-    /**
-     * IDs of `AiKnowledgeDocument` rows this agent may search directly (only
-     * consulted when knowledgeAccessMode === 'restricted'). Omit to leave grants
-     * untouched; pass `[]` to clear them. System-scoped docs always pass through
-     * the resolver — granting them explicitly is unnecessary.
-     */
-    grantedDocumentIds: z
-      .array(cuidSchema)
-      .max(1000, 'At most 1000 document grants per agent')
-      .optional(),
+  /**
+   * IDs of `AiKnowledgeDocument` rows this agent may search directly (only
+   * consulted when knowledgeAccessMode === 'restricted'). Omit to leave grants
+   * untouched; pass `[]` to clear them. System-scoped docs always pass through
+   * the resolver — granting them explicitly is unnecessary.
+   */
+  grantedDocumentIds: z
+    .array(cuidSchema)
+    .max(1000, 'At most 1000 document grants per agent')
+    .optional(),
 
-    topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
+  topicBoundaries: z.array(z.string().max(200)).max(50, 'At most 50 topic boundaries').optional(),
 
-    knowledgeRetrievalMode: z.enum(['model', 'first_turn', 'every_turn', 'keywords']).optional(),
-    knowledgeTriggerKeywords: z
-      .array(z.string().min(1).max(100))
-      .max(50, 'At most 50 trigger keywords')
-      .optional(),
+  knowledgeRetrievalMode: z.enum(['model', 'first_turn', 'every_turn', 'keywords']).optional(),
+  knowledgeTriggerKeywords: z
+    .array(z.string().min(1).max(100))
+    .max(50, 'At most 50 trigger keywords')
+    .optional(),
 
-    brandVoiceInstructions: z
-      .string()
-      .max(10000, 'Brand voice instructions must be less than 10000 characters')
-      .nullable()
-      .optional(),
+  brandVoiceInstructions: z
+    .string()
+    .max(10000, 'Brand voice instructions must be less than 10000 characters')
+    .nullable()
+    .optional(),
 
-    // Agent-profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
-    profileId: cuidSchema.nullable().optional(),
-    persona: z
-      .string()
-      .max(50000, 'Persona must be less than 50,000 characters')
-      .nullable()
-      .optional(),
-    guardrails: z
-      .string()
-      .max(10000, 'Guardrails must be less than 10,000 characters')
-      .nullable()
-      .optional(),
-    personaMode: z.enum(['override', 'append']).optional(),
-    voiceMode: z.enum(['override', 'append']).optional(),
-    guardrailsMode: z.enum(['override', 'append']).optional(),
+  // Agent-profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
+  profileId: cuidSchema.nullable().optional(),
+  persona: z
+    .string()
+    .max(50000, 'Persona must be less than 50,000 characters')
+    .nullable()
+    .optional(),
+  guardrails: z
+    .string()
+    .max(10000, 'Guardrails must be less than 10,000 characters')
+    .nullable()
+    .optional(),
+  personaMode: z.enum(['override', 'append']).optional(),
+  voiceMode: z.enum(['override', 'append']).optional(),
+  guardrailsMode: z.enum(['override', 'append']).optional(),
 
-    enableVoiceInput: z.boolean().optional(),
+  enableVoiceInput: z.boolean().optional(),
 
-    enableImageInput: z.boolean().optional(),
+  enableImageInput: z.boolean().optional(),
 
-    enableDocumentInput: z.boolean().optional(),
+  enableDocumentInput: z.boolean().optional(),
 
-    runtimePromptManaged: z.boolean().optional(),
-    runtimePromptNote: z
-      .string()
-      .max(2000, 'Runtime prompt note must be less than 2,000 characters')
-      .nullable()
-      .optional(),
+  runtimePromptManaged: z.boolean().optional(),
+  runtimePromptNote: z
+    .string()
+    .max(2000, 'Runtime prompt note must be less than 2,000 characters')
+    .nullable()
+    .optional(),
 
-    isActive: z.boolean().optional(),
-  })
-  .superRefine((data, ctx) => {
-    // See createAgentSchema — same UX trap. We only enforce when both fields
-    // are present in the same payload (the form always sends them as a pair).
-    // A bare `mode: 'keywords'` patch without keywords passes; the caller is
-    // expected to verify the resulting combined row is consistent.
-    if (
-      data.knowledgeRetrievalMode === 'keywords' &&
-      data.knowledgeTriggerKeywords !== undefined &&
-      data.knowledgeTriggerKeywords.length === 0
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['knowledgeTriggerKeywords'],
-        message: 'Add at least one trigger keyword when retrieval mode is "keywords".',
-      });
-    }
-  });
+  isActive: z.boolean().optional(),
+});
+
+/**
+ * Update agent schema (PATCH /api/v1/admin/orchestration/agents/[id]) — the
+ * field shape plus the keyword-mode cross-field check.
+ */
+export const updateAgentSchema = updateAgentObjectSchema.superRefine((data, ctx) => {
+  // See createAgentSchema — same UX trap. We only enforce when both fields
+  // are present in the same payload (the form always sends them as a pair).
+  // A bare `mode: 'keywords'` patch without keywords passes; the caller is
+  // expected to verify the resulting combined row is consistent.
+  if (
+    data.knowledgeRetrievalMode === 'keywords' &&
+    data.knowledgeTriggerKeywords !== undefined &&
+    data.knowledgeTriggerKeywords.length === 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['knowledgeTriggerKeywords'],
+      message: 'Add at least one trigger keyword when retrieval mode is "keywords".',
+    });
+  }
+});
 
 /**
  * List agents query schema — GET /api/v1/admin/orchestration/agents

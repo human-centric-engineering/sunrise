@@ -23,42 +23,29 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { logger } from '@/lib/logging';
 import {
   systemInstructionsHistorySchema,
+  updateAgentObjectSchema,
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
+import { versionedScalarFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
 
-const versionSnapshotSchema = z.object({
-  name: z.string().optional(),
-  slug: z.string().optional(),
-  description: z.string().optional(),
-  isActive: z.boolean().optional(),
-  systemInstructions: z.string().optional(),
-  model: z.string().optional(),
-  provider: z.string().optional(),
-  fallbackProviders: z.array(z.string()).optional(),
-  temperature: z.number().nullable().optional(),
-  maxTokens: z.number().int().nullable().optional(),
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
-  topicBoundaries: z.array(z.string()).optional(),
-  brandVoiceInstructions: z.string().nullable().optional(),
+/**
+ * A version snapshot is validated against the same per-field rules a PATCH uses
+ * (`updateAgentObjectSchema`) — every versioned field is an optional field
+ * there, so enum/bound validation is preserved and a snapshot can never restore
+ * an invalid value into a plain `String` column. Unknown keys (e.g. the
+ * long-dropped `knowledgeCategories`) are stripped; absent fields are skipped on
+ * apply. Which fields are written back is the registry's job
+ * (`versionedScalarFieldNames()`), so restore covers the full versioned config
+ * by construction.
+ *
+ * `metadata` / `providerConfig` are relaxed to opaque optionals: they're
+ * arbitrary JSON the DB may hold as `null`, which the PATCH schema (built for
+ * user input) doesn't accept. A stored snapshot only needs them to round-trip —
+ * they were validated when first written — so we don't re-validate their shape.
+ */
+const versionSnapshotSchema = updateAgentObjectSchema.extend({
   metadata: z.unknown().optional(),
-  // `knowledgeCategories` was dropped in Phase 6. Older version snapshots
-  // may still include it; we accept and ignore the field rather than
-  // refusing to restore them.
-  knowledgeCategories: z.array(z.string()).optional(),
-  rateLimitRpm: z.number().int().nullable().optional(),
-  visibility: z.enum(['internal', 'public', 'invite_only']).optional(),
-  inputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-  outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-  citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
-  maxHistoryTokens: z.number().int().nullable().optional(),
-  maxHistoryMessages: z.number().int().nullable().optional(),
-  retentionDays: z.number().int().nullable().optional(),
   providerConfig: z.unknown().optional(),
-  monthlyBudgetUsd: z.number().nullable().optional(),
-  maxCostPerTurnUsd: z.number().nullable().optional(),
-  enableVoiceInput: z.boolean().optional(),
-  enableImageInput: z.boolean().optional(),
-  enableDocumentInput: z.boolean().optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(
@@ -98,87 +85,57 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     }
     const snapshot = parsed.data;
 
-    // If the snapshot restores systemInstructions, push the current value
-    // onto the history column (same pattern as the PATCH route).
-    const updateData: Prisma.AiAgentUncheckedUpdateInput = {};
-    if (
-      snapshot.systemInstructions !== undefined &&
-      snapshot.systemInstructions !== agent.systemInstructions
-    ) {
-      const historyParse = systemInstructionsHistorySchema.safeParse(
-        agent.systemInstructionsHistory
-      );
-      if (!historyParse.success) {
-        logger.warn('Restore: systemInstructionsHistory malformed, resetting', {
-          agentId: id,
-          issues: historyParse.error.issues,
+    const updateData: Record<string, unknown> = {};
+
+    // systemInstructions is restored with history tracking: push the current
+    // value onto the history column (same pattern as the PATCH route) before
+    // overwriting. Handled out of the generic loop because of that extra write.
+    if (snapshot.systemInstructions !== undefined) {
+      if (snapshot.systemInstructions !== agent.systemInstructions) {
+        const historyParse = systemInstructionsHistorySchema.safeParse(
+          agent.systemInstructionsHistory
+        );
+        if (!historyParse.success) {
+          logger.warn('Restore: systemInstructionsHistory malformed, resetting', {
+            agentId: id,
+            issues: historyParse.error.issues,
+          });
+        }
+        const history: SystemInstructionsHistoryEntry[] = historyParse.success
+          ? historyParse.data
+          : [];
+        history.push({
+          instructions: agent.systemInstructions,
+          changedAt: new Date().toISOString(),
+          changedBy: session.user.id,
         });
+        updateData.systemInstructions = snapshot.systemInstructions;
+        updateData.systemInstructionsHistory = history;
+      } else {
+        updateData.systemInstructions = snapshot.systemInstructions;
       }
-      const history: SystemInstructionsHistoryEntry[] = historyParse.success
-        ? historyParse.data
-        : [];
-      history.push({
-        instructions: agent.systemInstructions,
-        changedAt: new Date().toISOString(),
-        changedBy: session.user.id,
-      });
-      updateData.systemInstructions = snapshot.systemInstructions;
-      updateData.systemInstructionsHistory = history;
-    } else if (snapshot.systemInstructions !== undefined) {
-      updateData.systemInstructions = snapshot.systemInstructions;
     }
 
-    if (snapshot.name !== undefined) updateData.name = snapshot.name;
-    if (snapshot.slug !== undefined) updateData.slug = snapshot.slug;
-    if (snapshot.description !== undefined) updateData.description = snapshot.description;
-    if (snapshot.isActive !== undefined) updateData.isActive = snapshot.isActive;
-    if (snapshot.model !== undefined) updateData.model = snapshot.model;
-    if (snapshot.provider !== undefined) updateData.provider = snapshot.provider;
-    if (snapshot.fallbackProviders !== undefined)
-      updateData.fallbackProviders = snapshot.fallbackProviders;
-    if (snapshot.temperature !== undefined && snapshot.temperature !== null)
-      updateData.temperature = snapshot.temperature;
-    if (snapshot.maxTokens !== undefined && snapshot.maxTokens !== null)
-      updateData.maxTokens = snapshot.maxTokens;
-    if (snapshot.reasoningEffort !== undefined)
-      updateData.reasoningEffort = snapshot.reasoningEffort;
-    if (snapshot.topicBoundaries !== undefined)
-      updateData.topicBoundaries = snapshot.topicBoundaries;
-    if (snapshot.brandVoiceInstructions !== undefined)
-      updateData.brandVoiceInstructions = snapshot.brandVoiceInstructions;
-    // `snapshot.knowledgeCategories` is accepted by the schema for backwards-
-    // compat with older versions but the underlying column was dropped in
-    // Phase 6 — nothing to write.
-    if (snapshot.rateLimitRpm !== undefined) updateData.rateLimitRpm = snapshot.rateLimitRpm;
-    if (snapshot.visibility !== undefined) updateData.visibility = snapshot.visibility;
-    if (snapshot.metadata !== undefined)
-      updateData.metadata = snapshot.metadata as Prisma.InputJsonValue;
-    if (snapshot.inputGuardMode !== undefined) updateData.inputGuardMode = snapshot.inputGuardMode;
-    if (snapshot.outputGuardMode !== undefined)
-      updateData.outputGuardMode = snapshot.outputGuardMode;
-    if (snapshot.citationGuardMode !== undefined)
-      updateData.citationGuardMode = snapshot.citationGuardMode;
-    if (snapshot.maxHistoryTokens !== undefined)
-      updateData.maxHistoryTokens = snapshot.maxHistoryTokens;
-    if (snapshot.maxHistoryMessages !== undefined)
-      updateData.maxHistoryMessages = snapshot.maxHistoryMessages;
-    if (snapshot.retentionDays !== undefined) updateData.retentionDays = snapshot.retentionDays;
-    if (snapshot.providerConfig !== undefined)
-      updateData.providerConfig = snapshot.providerConfig as Prisma.InputJsonValue;
-    if (snapshot.monthlyBudgetUsd !== undefined)
-      updateData.monthlyBudgetUsd = snapshot.monthlyBudgetUsd;
-    if (snapshot.maxCostPerTurnUsd !== undefined)
-      updateData.maxCostPerTurnUsd = snapshot.maxCostPerTurnUsd;
-    if (snapshot.enableVoiceInput !== undefined)
-      updateData.enableVoiceInput = snapshot.enableVoiceInput;
-    if (snapshot.enableImageInput !== undefined)
-      updateData.enableImageInput = snapshot.enableImageInput;
-    if (snapshot.enableDocumentInput !== undefined)
-      updateData.enableDocumentInput = snapshot.enableDocumentInput;
+    // Apply every versioned scalar field present in the snapshot. The set is
+    // registry-derived, so restore covers the full versioned config by
+    // construction — no field can be silently omitted the way the old
+    // hand-maintained apply-list dropped persona/guardrails/modes and the
+    // knowledge/runtime-prompt fields. Grant relations are versioned but aren't
+    // columns, so they're not restored here (tracked for the #330 restore work).
+    const snapshotRecord = snapshot as Record<string, unknown>;
+    for (const field of versionedScalarFieldNames()) {
+      if (field === 'systemInstructions') continue;
+      const value = snapshotRecord[field];
+      if (value === undefined) continue;
+      updateData[field] = value;
+    }
 
     // Wrap in a transaction to prevent race conditions on version numbering
     const { updated, nextVersion } = await prisma.$transaction(async (tx) => {
-      const txUpdated = await tx.aiAgent.update({ where: { id }, data: updateData });
+      const txUpdated = await tx.aiAgent.update({
+        where: { id },
+        data: updateData,
+      });
 
       const lastVersion = await tx.aiAgentVersion.findFirst({
         where: { agentId: id },

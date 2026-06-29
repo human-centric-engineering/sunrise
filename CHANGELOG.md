@@ -28,9 +28,25 @@ release process.
   Prisma's generated `AiAgentScalarFieldEnum`, so adding a column without a
   descriptor is a compile error rather than a silent runtime gap. Forks add
   their own agent fields in the empty fork-owned scaffold `lib/app/agent-fields.ts`
-  (`appAgentFields`) without editing a platform list. This first step lands the
-  registry as the source of truth for the versioning/diff surfaces and is
-  behaviour-neutral (no runtime consumer switched over yet).
+  (`appAgentFields`) without editing a platform list. The registry is the source
+  of truth for the agent versioning, snapshot, diff, and restore surfaces; a
+  parity test keeps the create/update validation schemas in lockstep with it, so
+  adding a field to one without the other is a loud test failure.
+- **`updateAgentObjectSchema`** (`lib/validations/orchestration.ts`) — the agent
+  PATCH field shape exported without its cross-field refinement, so other call
+  sites (notably version restore) can reuse the same per-field validators.
+
+### Fixed
+
+- **Agent version history no longer silently loses fields.** `persona`,
+  `guardrails`, `personaMode`, `voiceMode`, and `guardrailsMode` were treated as
+  versioned (editing them logged a "changed" version) but were never written to
+  the snapshot, so the change was unrecoverable; `reasoningEffort` and
+  `maxCostPerTurnUsd` were captured but invisible in the diff viewer. All are now
+  snapshotted, diffed, and restored. Version **restore** likewise applies the
+  full versioned field set (previously its hand-maintained apply-list dropped
+  persona/guardrails/modes and the knowledge/runtime-prompt fields) and validates
+  the stored snapshot against the same per-field rules a PATCH uses.
 
 ## [0.3.0] — 2026-06-26
 
