@@ -26,6 +26,7 @@
 
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db/client';
+import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
 import { ValidationError, handleAPIError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
@@ -124,7 +125,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       try {
         const emailResult = await sendEmail({
           to: adminEmail,
-          subject: `[Sunrise Contact] ${body.subject}`,
+          subject: `[${BRAND.name} Contact] ${body.subject}`,
           react: ContactNotificationEmail({
             name: body.name,
             email: body.email,

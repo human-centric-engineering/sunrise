@@ -3,6 +3,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { getOAuthState, APIError } from 'better-auth/api';
 import { prisma } from '@/lib/db/client';
+import { BRAND } from '@/lib/brand';
 import { SYSTEM_USER_EMAIL, AUTH_BOOTSTRAP_ID } from '@/lib/auth/constants';
 import { humanWhere } from '@/lib/auth/account';
 import { env } from '@/lib/env';
@@ -307,7 +308,7 @@ export async function userCreateAfterHook(
 
     await sendEmail({
       to: user.email,
-      subject: 'Welcome to Sunrise',
+      subject: `Welcome to ${BRAND.name}`,
       react: resolveEmailTemplate('welcome', {
         userName: user.name || 'User',
         userEmail: user.email,
@@ -405,7 +406,7 @@ export async function afterEmailVerificationHook(user: {
   // Send welcome email AFTER verification completes
   await sendEmail({
     to: user.email,
-    subject: 'Welcome to Sunrise',
+    subject: `Welcome to ${BRAND.name}`,
     react: resolveEmailTemplate('welcome', {
       userName: user.name || 'User',
       userEmail: user.email,
