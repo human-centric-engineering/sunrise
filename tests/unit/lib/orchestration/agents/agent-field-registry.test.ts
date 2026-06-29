@@ -200,26 +200,15 @@ describe('agent-field-registry — divergence ledger vs current hand-lists', () 
     }
   });
 
-  it('supersedes SNAPSHOT_FIELDS — adds exactly the fields the snapshot writer silently dropped', () => {
-    const registry = versionedFieldNames();
-    // The registry covers everything currently snapshotted...
-    expect(diff([...SNAPSHOT_FIELDS], registry)).toEqual([]);
-    // ...plus the known bug: fields that were versioned/written but never
-    // appeared in the snapshot whitelist or diff maps.
-    expect(diff(registry, [...SNAPSHOT_FIELDS])).toEqual(
-      [
-        'guardrails',
-        'guardrailsMode',
-        'maxCostPerTurnUsd',
-        'persona',
-        'personaMode',
-        'reasoningEffort',
-        'voiceMode',
-      ].sort()
-    );
+  it('agent-version-diff SNAPSHOT_FIELDS is wired to the registry (ledger delta closed)', () => {
+    // This consumer now derives from the registry, so the snapshot whitelist and
+    // the diff maps are the registry's versioned set by construction — the
+    // historic "versioned but not snapshotted" gap (persona/guardrails/*Mode,
+    // reasoningEffort, maxCostPerTurnUsd) can no longer reopen.
+    expect([...SNAPSHOT_FIELDS].sort()).toEqual(versionedFieldNames().sort());
   });
 
-  it('supersedes VERSIONED_FIELDS — adds exactly the fields missing from the versioned set', () => {
+  it('supersedes the legacy VERSIONED_FIELDS — adds exactly the fields missing from the old versioned set', () => {
     const registry = versionedFieldNames();
     // Everything currently versioned stays versioned...
     expect(diff(CURRENT_VERSIONED_FIELDS, registry)).toEqual([]);

@@ -35,7 +35,7 @@
  * scaffold) — `AGENT_FIELDS` is `[...CORE_AGENT_FIELDS, ...appAgentFields]`, so a
  * fork never edits this file and never conflicts with upstream on a field add.
  */
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 import { appAgentFields } from '@/lib/app/agent-fields';
 
@@ -269,6 +269,20 @@ export const AGENT_FIELDS: readonly AgentFieldDescriptor[] = [
  *  whitelist — the same list, by design. */
 export function versionedFieldNames(): string[] {
   return AGENT_FIELDS.filter((f) => f.versioned)
+    .slice()
+    .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0))
+    .map((f) => f.name);
+}
+
+/**
+ * Versioned scalar columns only (excludes the grant relations), in display
+ * order. The PATCH change-detection loop runs over the `data` update object,
+ * which carries scalars; grant changes are detected separately from their join
+ * rows. Use this for "did a versioned column change", {@link snapshotFieldNames}
+ * for "what to capture in the snapshot".
+ */
+export function versionedScalarFieldNames(): string[] {
+  return AGENT_FIELDS.filter((f) => f.versioned && f.kind === 'scalar')
     .slice()
     .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0))
     .map((f) => f.name);

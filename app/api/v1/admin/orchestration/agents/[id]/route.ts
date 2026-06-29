@@ -29,7 +29,11 @@ import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
-import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
+import {
+  buildChangeSummary,
+  extractSnapshotFromAgent,
+} from '@/lib/orchestration/agent-version-diff';
+import { versionedScalarFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import {
@@ -227,56 +231,15 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     data.systemInstructionsHistory = history;
   }
 
-  // Version-triggering fields — snapshot the current config before
-  // the update if any of these are changing. Every editable field on
-  // the admin form is included so the audit trail is complete:
-  // operators rely on the version list to recover from accidental
-  // changes (description rewrites, slug typos, active-flag flips), so
-  // omitting any field silently loses recovery surface.
-  const VERSIONED_FIELDS = [
-    'name',
-    'slug',
-    'description',
-    'isActive',
-    'systemInstructions',
-    'model',
-    'temperature',
-    'maxTokens',
-    'topicBoundaries',
-    'brandVoiceInstructions',
-    'provider',
-    'fallbackProviders',
-    'knowledgeAccessMode',
-    'knowledgeRetrievalMode',
-    'knowledgeTriggerKeywords',
-    'rateLimitRpm',
-    'visibility',
-    'inputGuardMode',
-    'outputGuardMode',
-    'citationGuardMode',
-    'maxHistoryTokens',
-    'maxHistoryMessages',
-    'retentionDays',
-    'providerConfig',
-    'monthlyBudgetUsd',
-    'maxCostPerTurnUsd',
-    'metadata',
-    'enableVoiceInput',
-    'enableImageInput',
-    'enableDocumentInput',
-    'runtimePromptManaged',
-    'runtimePromptNote',
-    'persona',
-    'guardrails',
-    'personaMode',
-    'voiceMode',
-    'guardrailsMode',
-    // profileId intentionally excluded from VERSIONED_FIELDS — `data` uses
-    // the Prisma relation form (`profile: { connect }` / `disconnect`), so
-    // the scalar key isn't in `data`. The profile linkage is a pointer
-    // rather than content; the inheritance change shows up implicitly
-    // through the persona/voice/guardrails effective values.
-  ] as const;
+  // Version-triggering fields — snapshot the current config before the update
+  // if any of these are changing. Derived from the agent field registry (the
+  // single source of truth), so the audit trail is complete by construction:
+  // every versioned scalar is included and a new field can't silently lose
+  // recovery surface. Grant relations are versioned too but detected separately
+  // below (they're join-row writes, not entries in `data`). `profileId` is a
+  // pointer, not content, so it's non-versioned in the registry — the
+  // inheritance change surfaces through the resolved persona/voice/guardrails.
+  const VERSIONED_FIELDS = versionedScalarFieldNames();
 
   // Only treat a versioned field as "changed" if the new value actually
   // differs from the stored value. Previously this filtered on
@@ -306,10 +269,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     return newValue !== currentValue;
   };
 
+  const dataRecord = data as Record<string, unknown>;
+  const currentRecord = current as unknown as Record<string, unknown>;
   const changedVersionedFields = VERSIONED_FIELDS.filter(
-    (f) =>
-      data[f] !== undefined &&
-      isFieldChanged(data[f], (current as unknown as Record<string, unknown>)[f])
+    (f) => dataRecord[f] !== undefined && isFieldChanged(dataRecord[f], currentRecord[f])
   );
 
   // Grant changes don't go through the `data` object (they're join-row writes),
@@ -353,44 +316,17 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         const nextVersion = (lastVersion?.version ?? 0) + 1;
         bumpedToVersion = nextVersion;
 
-        // Snapshot the current (pre-update) agent config
-        const snapshot = {
-          name: current.name,
-          slug: current.slug,
-          description: current.description,
-          isActive: current.isActive,
-          systemInstructions: current.systemInstructions,
-          model: current.model,
-          provider: current.provider,
-          fallbackProviders: current.fallbackProviders,
-          temperature: current.temperature,
-          maxTokens: current.maxTokens,
-          reasoningEffort: current.reasoningEffort,
-          topicBoundaries: current.topicBoundaries,
-          brandVoiceInstructions: current.brandVoiceInstructions,
-          metadata: current.metadata,
-          knowledgeAccessMode: current.knowledgeAccessMode,
-          knowledgeRetrievalMode: current.knowledgeRetrievalMode,
-          knowledgeTriggerKeywords: current.knowledgeTriggerKeywords,
+        // Snapshot the current (pre-update) agent config. The captured set is
+        // the registry's snapshot whitelist — the same source of truth that
+        // drives VERSIONED_FIELDS and the diff viewer — so a versioned field can
+        // never be "tracked as changed but absent from the snapshot". The grant
+        // relations aren't columns on `current`, so inject their sorted id
+        // arrays before extracting.
+        const snapshot = extractSnapshotFromAgent({
+          ...current,
           grantedTagIds: currentGrantedTagIds,
           grantedDocumentIds: currentGrantedDocumentIds,
-          rateLimitRpm: current.rateLimitRpm,
-          visibility: current.visibility,
-          inputGuardMode: current.inputGuardMode,
-          outputGuardMode: current.outputGuardMode,
-          citationGuardMode: current.citationGuardMode,
-          maxHistoryTokens: current.maxHistoryTokens,
-          maxHistoryMessages: current.maxHistoryMessages,
-          retentionDays: current.retentionDays,
-          providerConfig: current.providerConfig,
-          monthlyBudgetUsd: current.monthlyBudgetUsd,
-          maxCostPerTurnUsd: current.maxCostPerTurnUsd,
-          enableVoiceInput: current.enableVoiceInput,
-          enableImageInput: current.enableImageInput,
-          enableDocumentInput: current.enableDocumentInput,
-          runtimePromptManaged: current.runtimePromptManaged,
-          runtimePromptNote: current.runtimePromptNote,
-        };
+        });
 
         const summaryFields = [
           ...changedVersionedFields,
@@ -403,7 +339,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           data: {
             agentId: id,
             version: nextVersion,
-            snapshot: snapshot,
+            snapshot: snapshot as Prisma.InputJsonValue,
             changeSummary,
             createdBy: session.user.id,
           },
