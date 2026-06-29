@@ -155,7 +155,7 @@ Agents seeded by the platform (e.g. `pattern-advisor`, `quiz-master`) have `isSy
 - **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System agents cannot be deactivated')`.
 - **Cannot have their `systemInstructions`, `slug`, or `isActive` changed** — `PATCH` rejects each with a 403 `ForbiddenError` (`'System agent instructions cannot be modified'` / `'System agent slugs cannot be changed'` / `'System agents cannot be deactivated'`), preserving rollback consistency and the internal slug contract.
 - **Can otherwise be edited** — `PATCH` with any other field (model, temperature, guard modes, `runtimePromptManaged`, etc.) succeeds and versions normally.
-- **Cannot be version-restored** — `POST /versions/:versionId/restore` returns 403 (see [Agent version restore](#agent-version-restore)). Whether this is the right policy given system agents _can_ accumulate versions is under discussion in issue #330.
+- **Can be version-restored, with the protected fields skipped** — `POST /versions/:versionId/restore` applies the snapshot but leaves `slug`, `systemInstructions`, and `isActive` at their current values (the same set guarded above), so a restore can't bypass the read-only guarantees (see [Agent version restore](#agent-version-restore)).
 
 The `isSystem` flag is set during seeding and is not exposed as a writable field on create/update schemas.
 
@@ -276,11 +276,11 @@ Schema: `cloneAgentBodySchema` in `lib/validations/orchestration.ts`.
 POST /api/v1/admin/orchestration/agents/:id/versions/:versionId/restore
 ```
 
-Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies all snapshotted fields to the agent, and creates a new version entry recording the restore action. System agents (`isSystem: true`) cannot be restored — returns **403**.
+Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snapshot` JSON, applies the snapshotted config to the agent, replaces the knowledge grants, and writes a new version recording the restore. The snapshot model is **point-in-time** (`snapshot` = config _as of_ that version), so "restore to vN" reproduces the agent exactly as it was at vN.
 
-**Fields re-applied on restore** (the config subset `versionSnapshotSchema` in the restore route accepts, plus `name` / `slug` / `description` / `isActive`): `systemInstructions`, `model`, `provider`, `fallbackProviders`, `temperature`, `maxTokens`, `reasoningEffort`, `topicBoundaries`, `brandVoiceInstructions`, `knowledgeCategories` (accepted-but-ignored — column dropped in Phase 6), `rateLimitRpm`, `visibility`, `metadata`, `inputGuardMode`, `outputGuardMode`, `citationGuardMode`, `maxHistoryTokens`, `maxHistoryMessages`, `retentionDays`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `enableVoiceInput`, `enableImageInput`, `enableDocumentInput`.
+**Fields re-applied on restore** are the registry's versioned scalar set (`versionedScalarFieldNames()` — the single source of truth, so a new versioned field is restored automatically), **plus the knowledge grants** (`grantedTagIds` / `grantedDocumentIds`, reconnected from the snapshot; ids whose tag/document was deleted since are dropped so a stale id can't FK-fail the restore) and **`knowledgeAccessMode`** (restored together with the grants, followed by an access-resolver cache invalidation). `systemInstructions` is restored with the same history-push the PATCH route uses.
 
-> **Capture-vs-restore gap:** the PATCH version-snapshot _writer_ stores several fields the restore route's schema then strips, so restoring a version silently leaves them unchanged — the knowledge-scoping fields (`knowledgeAccessMode`, `knowledgeRetrievalMode`, `knowledgeTriggerKeywords`, `grantedTagIds`, `grantedDocumentIds`) and `runtimePromptManaged` / `runtimePromptNote`. Separately, `persona` / `guardrails` / the `*Mode` inheritance columns are in `VERSIONED_FIELDS` (so editing them bumps the version) but are captured by neither the snapshot writer nor the restore schema. Both gaps are tracked in issue #330.
+**System agents (`isSystem: true`) are restorable**, but the fields the PATCH route guards as read-only are **skipped** — `slug`, `systemInstructions`, and `isActive` keep their current values; everything else in the snapshot is applied. Non-system agents restore the full config.
 
 **Response (200):**
 
@@ -297,7 +297,9 @@ Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snap
 }
 ```
 
-Returns **404** if the agent or version doesn't exist. Returns **403** for system agents.
+Returns **404** if the agent or version doesn't exist; **400** if the stored snapshot fails validation.
+
+Every agent gets an explicit **`v1` ("Initial configuration")** snapshot at create/clone time (and the seed backfill gives pre-existing agents one), so the original config is always a restorable entry — a single later edit can be rolled back. The first edit of a legacy agent that has no version rows backfills its pre-edit state as `v1` before writing the post-edit version.
 
 **Key file:** `app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/restore/route.ts`
 
