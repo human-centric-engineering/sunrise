@@ -41,6 +41,11 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
+// Mock the brand seam to a distinctive, non-default name so the subject
+// assertion proves the BRAND.name interpolation (a revert to a hardcoded
+// "Sunrise" would fail). The default behaviour is covered by lib/brand.test.tsx.
+vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
+
 // Mock env module (with CONTACT_EMAIL set by default)
 vi.mock('@/lib/env', () => ({
   env: {
@@ -212,7 +217,7 @@ describe('POST /api/v1/contact', () => {
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'admin@example.com',
-          subject: `[Sunrise Contact] ${validPayload.subject}`,
+          subject: `[Aurora Labs Contact] ${validPayload.subject}`,
           replyTo: validPayload.email,
         })
       );

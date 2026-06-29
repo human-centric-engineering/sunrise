@@ -36,6 +36,10 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
+// Distinctive brand name so the subject assertion proves BRAND.name interpolation
+// rather than the "Sunrise" default (covered by lib/brand.test.tsx).
+vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
+
 // Mock getRouteLogger - already mocked globally in tests/setup.ts
 // We'll import it to get access to the mock
 
@@ -249,7 +253,7 @@ describe('POST /api/v1/contact', () => {
       // Assert: Email was sent to admin (sendEmail is awaited in the handler)
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith({
         to: 'admin@sunrise.example.com',
-        subject: `[Sunrise Contact] ${validContactData.subject}`,
+        subject: `[Aurora Labs Contact] ${validContactData.subject}`,
         react: expect.any(Object),
         replyTo: validContactData.email,
       });
