@@ -74,6 +74,10 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
+// Distinctive brand name so the welcome-subject assertion proves BRAND.name
+// interpolation rather than the "Sunrise" default (covered by lib/brand.test.tsx).
+vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
+
 vi.mock('@/lib/email/client', () => ({
   validateEmailConfig: vi.fn(),
 }));
@@ -250,7 +254,7 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
       expect(sendEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: user.email,
-          subject: 'Welcome to Sunrise',
+          subject: 'Welcome to Aurora Labs',
           react: expect.any(Object),
         })
       );
@@ -270,7 +274,7 @@ describe('lib/auth/config - afterEmailVerification callback', () => {
       expect(sendEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: user.email,
-          subject: 'Welcome to Sunrise',
+          subject: 'Welcome to Aurora Labs',
         })
       );
     });

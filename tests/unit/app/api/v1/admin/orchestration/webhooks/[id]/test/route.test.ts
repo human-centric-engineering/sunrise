@@ -76,6 +76,10 @@ vi.mock('@react-email/render', () => ({
   render: vi.fn().mockResolvedValue('<html>rendered</html>'),
 }));
 
+// Distinctive brand name so the subject assertion proves BRAND.name interpolation
+// rather than the "Sunrise" default (covered by lib/brand.test.tsx).
+vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -519,7 +523,7 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
         expect.objectContaining({
           from: 'Sunrise <noreply@example.com>',
           to: TEST_EMAIL,
-          subject: '[Sunrise] Test event',
+          subject: '[Aurora Labs] Test event',
           html: expect.stringContaining('rendered'),
         })
       );

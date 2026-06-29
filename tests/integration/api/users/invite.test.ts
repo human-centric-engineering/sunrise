@@ -65,6 +65,10 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
+// Distinctive brand name so the invitation-subject assertion proves BRAND.name
+// interpolation rather than the "Sunrise" default (covered by lib/brand.test.tsx).
+vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
+
 // Note: getRouteLogger is mocked globally in tests/setup.ts
 
 // Mock env module
@@ -238,7 +242,7 @@ describe('POST /api/v1/users/invite', () => {
       // Assert: Email was sent
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith({
         to: 'john@example.com',
-        subject: "You've been invited to join Sunrise",
+        subject: "You've been invited to join Aurora Labs",
         react: expect.any(Object),
       });
 

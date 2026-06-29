@@ -44,6 +44,13 @@ release process.
 
 ### Fixed
 
+- **Email subject lines now honor the `BRAND.name` seam.** Five transactional
+  email subjects (contact-form notification, welcome on signup, welcome after
+  verification, user invitation, admin webhook test) hardcoded the literal
+  `"Sunrise"` while their bodies already used `BRAND.name` — so a fork setting
+  `NEXT_PUBLIC_APP_NAME` got branded bodies but stale subjects (and a
+  subject/body mismatch on the invitation). All five now interpolate
+  `BRAND.name`. Vanilla Sunrise is unchanged (the name defaults to `"Sunrise"`).
 - **Full-config backup no longer silently drops agent fields.** The
   backup/restore agent schema, exporter, and importer had drifted from the
   `AiAgent` model and omitted `kind`, `reasoningEffort`, `persona`, `guardrails`,

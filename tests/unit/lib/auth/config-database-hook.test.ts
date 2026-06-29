@@ -66,6 +66,10 @@ vi.mock('@/lib/env', () => ({
   env: mockEnv,
 }));
 
+// Distinctive brand name so welcome-subject assertions prove BRAND.name
+// interpolation rather than the "Sunrise" default (covered by lib/brand.test.tsx).
+vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
+
 vi.mock('better-auth', () => ({
   betterAuth: vi.fn(() => ({
     api: { getSession: vi.fn() },
@@ -1000,7 +1004,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
             to: mockUser.email,
-            subject: 'Welcome to Sunrise',
+            subject: 'Welcome to Aurora Labs',
           })
         );
       });
@@ -1036,7 +1040,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
             to: mockUser.email,
-            subject: 'Welcome to Sunrise',
+            subject: 'Welcome to Aurora Labs',
           })
         );
       });
@@ -1094,7 +1098,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         });
         expect(mocks.sendEmail).toHaveBeenCalledWith({
           to: mockUser.email,
-          subject: 'Welcome to Sunrise',
+          subject: 'Welcome to Aurora Labs',
           react: expect.any(Object),
         });
       });
@@ -1124,7 +1128,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
         expect(mocks.sendEmail).toHaveBeenCalledWith({
           to: mockUser.email,
-          subject: 'Welcome to Sunrise',
+          subject: 'Welcome to Aurora Labs',
           react: expect.any(Object),
         });
       });
@@ -1263,7 +1267,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
             to: mockUser.email,
-            subject: 'Welcome to Sunrise',
+            subject: 'Welcome to Aurora Labs',
           })
         );
       });
@@ -1310,7 +1314,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(mocks.sendEmail).toHaveBeenCalledWith(
           expect.objectContaining({
             to: mockUser.email,
-            subject: 'Welcome to Sunrise',
+            subject: 'Welcome to Aurora Labs',
           })
         );
 

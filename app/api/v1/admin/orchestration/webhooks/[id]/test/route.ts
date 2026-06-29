@@ -13,6 +13,7 @@
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
+import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
@@ -66,7 +67,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       const result = await resend.emails.send({
         from: getDefaultSender(),
         to: webhook.emailAddress,
-        subject: '[Sunrise] Test event',
+        subject: `[${BRAND.name}] Test event`,
         html,
       });
       const durationMs = Date.now() - start;

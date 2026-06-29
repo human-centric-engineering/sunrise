@@ -39,6 +39,7 @@
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
+import { BRAND } from '@/lib/brand';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
@@ -173,7 +174,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const emailResult = await sendEmail({
     to: body.email,
-    subject: `You've been invited to join Sunrise`,
+    subject: `You've been invited to join ${BRAND.name}`,
     react: resolveEmailTemplate('invitation', {
       inviterName: session.user.name || 'Administrator',
       inviteeName: body.name,
