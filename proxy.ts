@@ -13,6 +13,7 @@ import {
 } from '@/lib/logging/visitor-id';
 import { setSecurityHeaders } from '@/lib/security/headers';
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
+import { classifySurface } from '@/lib/app/surface';
 
 /**
  * Next.js Proxy
@@ -243,6 +244,12 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // add it to inline <script> tags (e.g. theme detection script in root layout).
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
+
+  // Classify the rendering surface so the root layout can theme the first paint —
+  // it sets `<html data-surface>` from this header. Kept correct across client-side
+  // navigation by `<SurfaceSync>`, which re-derives it from the pathname (the root
+  // <html> doesn't re-render on App Router nav). See lib/app/surface.ts.
+  requestHeaders.set('x-surface', classifySurface(pathname));
 
   // Forward the verified visitor id to server components. The proxy is the
   // sole writer of this header: set it from the verified/minted id, or

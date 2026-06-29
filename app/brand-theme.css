@@ -1,0 +1,58 @@
+/* app/brand-theme.css
+ *
+ * Fork-owned per-surface theming. SHIPS EMPTY — vanilla Sunrise is byte-for-byte
+ * unchanged: with no overrides here, every surface inherits app/globals.css's
+ * `@theme` defaults. A fork fills this file to repaint one surface (e.g. its
+ * consumer-facing pages) while leaving others (e.g. `/admin`) on the platform
+ * defaults, including future upstream palette tweaks. No platform layout or page
+ * is ever edited — that's the whole point of the seam.
+ *
+ * Imported once in app/layout.tsx AFTER globals.css. Keep these selectors
+ * UNLAYERED (no `@layer`): Tailwind 4 emits its `@theme` tokens inside a layer at
+ * `:root`, so an unlayered selector here beats them by layer order, and a
+ * descendant subtree pin beats the `<html>`-level scope by specificity.
+ *
+ * MECHANISM
+ *   proxy.ts classifies each request via `classifySurface(pathname)` and sets the
+ *   `x-surface` request header; the root layout puts it on `<html data-surface>`;
+ *   `<SurfaceSync>` keeps that attribute correct across client-side navigation.
+ *   Because the marker is on `<html>`, body-portaled overlays (Radix dialog /
+ *   dropdown / popover / toast, the cookie-consent modal) inherit it too — they
+ *   mount at document.body, outside any route-group subtree, which is exactly why
+ *   the marker must live at the root and not on a `(group)/layout.tsx`.
+ *
+ * The two surfaces vanilla Sunrise classifies are `admin` and `consumer`
+ * (see lib/app/surface.ts — the policy seam). Redeclare only the tokens you
+ * change; everything else inherits, so upstream palette changes flow through the
+ * tokens you didn't touch.
+ *
+ * --------------------------------------------------------------------------
+ * EXAMPLE (commented out — uncomment and adjust to brand a surface). Note the
+ * TWO dark-mode selector FORMS; they are NOT interchangeable (see the docs):
+ *
+ *   [data-surface='consumer'] {                 // light, on <html>
+ *     --color-primary: #0a1a3a;
+ *     --color-background: #fbf6ec;
+ *     --color-foreground: #16213d;
+ *   }
+ *   [data-surface='consumer'].dark {            // dark: `.dark` is on the SAME
+ *     --color-primary: #ffc73a;                 // element (<html>) -> COMPOUND
+ *     --color-background: #0a1a3a;
+ *     --color-foreground: #f2eede;
+ *   }
+ *
+ * For a surface PINNED on a descendant element (a wrapper that sets its own
+ * `data-surface`), the dark scope is a DESCENDANT selector instead, because the
+ * pin sits below `<html>.dark`:
+ *
+ *   .dark [data-surface='canvas'] { --color-background: #0a0a0a; ... }
+ *
+ * And because a pin only re-tokenises its own subtree, an ANCESTOR that frames it
+ * (e.g. a `<main>`) still shows the parent surface's background; paint it with
+ * `:has()`:
+ *
+ *   main:has([data-surface='canvas']) { background-color: #ffffff; }
+ *
+ * See .context/ui/surface-theming.md for all six design constraints.
+ * --------------------------------------------------------------------------
+ */

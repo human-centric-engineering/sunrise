@@ -499,6 +499,28 @@ describe('proxy (project root)', () => {
       expect(forwardedNonce).toBe(nonceArg as string);
     });
   });
+
+  describe('Surface classification', () => {
+    // The proxy forwards `x-surface` so the root layout can theme the first paint.
+    // Like x-nonce above, the overridden request header surfaces on the response
+    // with the 'x-middleware-request-' prefix. Assert a distinct value per surface
+    // so a regression in the classification (or dropping the header) fails here.
+    it('forwards x-surface=admin for an /admin route', async () => {
+      // /admin is protected, so authenticate to reach the header-forwarding path
+      // (an unauthenticated request would redirect before x-surface is set).
+      const request = createMockRequest('/admin/users', {
+        cookies: { 'better-auth.session_token': 'valid-token' },
+      });
+      const response = await proxy(request);
+      expect(response.headers.get('x-middleware-request-x-surface')).toBe('admin');
+    });
+
+    it('forwards x-surface=consumer for a non-admin route', async () => {
+      const request = createMockRequest('/', { cookies: {} });
+      const response = await proxy(request);
+      expect(response.headers.get('x-middleware-request-x-surface')).toBe('consumer');
+    });
+  });
 });
 
 describe('proxy — anonymous visitor id', () => {
