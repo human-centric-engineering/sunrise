@@ -257,6 +257,22 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.webhooks[0].url).toBe('https://example.com/hook');
   });
 
+  it('narrows an email-channel webhook to the "email" literal', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([
+        { ...webhookRow, channel: 'email', emailAddress: 'ops@example.com' },
+      ]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    expect(payload.data.webhooks[0].channel).toBe('email');
+  });
+
   it('returns all four data collections in the correct positions', async () => {
     mockFindMany
       .mockResolvedValueOnce([agentRow])
@@ -348,6 +364,39 @@ describe('exportOrchestrationConfig', () => {
     const payload = await exportOrchestrationConfig();
 
     expect(payload.data.agents[0].knowledgeAccessMode).toBe('full');
+  });
+
+  it('narrows the discriminator/inheritance/reasoning enums on the fallback side', async () => {
+    // The default fixture exercises judge/append/high/keywords; this row covers
+    // the other branch of each narrowing: chat, override, an unrecognised
+    // reasoningEffort coerced to null, and an unrecognised retrieval mode coerced
+    // to 'model'.
+    const fallbackAgentRow = {
+      ...agentRow,
+      kind: 'chat',
+      personaMode: 'override',
+      voiceMode: 'override',
+      guardrailsMode: 'override',
+      reasoningEffort: 'not-a-real-effort',
+      knowledgeRetrievalMode: 'not-a-real-mode',
+    };
+    mockFindMany
+      .mockResolvedValueOnce([fallbackAgentRow]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    const payload = await exportOrchestrationConfig();
+
+    const exported = payload.data.agents[0];
+    expect(exported.kind).toBe('chat');
+    expect(exported.personaMode).toBe('override');
+    expect(exported.voiceMode).toBe('override');
+    expect(exported.guardrailsMode).toBe('override');
+    expect(exported.reasoningEffort).toBeNull();
+    expect(exported.knowledgeRetrievalMode).toBe('model');
   });
 
   it('flattens grantedTags into grantedTagSlugs array', async () => {

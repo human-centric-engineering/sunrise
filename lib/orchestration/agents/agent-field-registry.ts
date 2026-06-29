@@ -290,12 +290,20 @@ export const AGENT_FIELDS: readonly AgentFieldDescriptor[] = [
   ...appAgentFields,
 ];
 
+/**
+ * Sort comparator by `ui.order`. Only applied to fields known to carry `ui` —
+ * every versioned field has it (the versioned ⟺ ui invariant, enforced by a
+ * registry test), so the cast is safe and there's no unreachable fallback.
+ */
+const byUiOrder = (a: AgentFieldDescriptor, b: AgentFieldDescriptor): number =>
+  (a.ui as AgentFieldUi).order - (b.ui as AgentFieldUi).order;
+
 /** Versioned fields, in display order. Drives `VERSIONED_FIELDS` and the snapshot
  *  whitelist — the same list, by design. */
 export function versionedFieldNames(): string[] {
   return AGENT_FIELDS.filter((f) => f.versioned)
     .slice()
-    .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0))
+    .sort(byUiOrder)
     .map((f) => f.name);
 }
 
@@ -309,7 +317,7 @@ export function versionedFieldNames(): string[] {
 export function versionedScalarFieldNames(): string[] {
   return AGENT_FIELDS.filter((f) => f.versioned && f.kind === 'scalar')
     .slice()
-    .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0))
+    .sort(byUiOrder)
     .map((f) => f.name);
 }
 
@@ -344,7 +352,7 @@ export function fieldToTab(): Record<string, string> {
 export function fieldOrder(): string[] {
   return AGENT_FIELDS.filter((f) => f.ui)
     .slice()
-    .sort((a, b) => (a.ui as AgentFieldUi).order - (b.ui as AgentFieldUi).order)
+    .sort(byUiOrder)
     .map((f) => f.name);
 }
 
