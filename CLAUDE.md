@@ -348,6 +348,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Setup Wizard             | `.context/admin/setup-wizard.md`                          | 5-step guided setup flow, resume behavior                                                                                   |
 | Contextual Help          | `.context/ui/contextual-help.md`                          | `<FieldHelp>` directive for form fields                                                                                     |
 | UI Hooks                 | `.context/ui/hooks.md`                                    | `useLocalStorage`, `useWizard`                                                                                              |
+| Per-Surface Theming      | `.context/ui/surface-theming.md`                          | `data-surface` seam: proxy classification, `<SurfaceSync>`, fork-owned `brand-theme.css`, the six design constraints        |
 
 ## Troubleshooting
 

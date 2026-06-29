@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **Per-surface theming seam (`data-surface`) + fork-owned `app/brand-theme.css`.**
+  A fork can now repaint one rendering surface (e.g. its consumer-facing pages)
+  with its own palette/typography while leaving others (e.g. `/admin`) on the
+  Sunrise defaults — without editing `app/globals.css` or any platform layout.
+  `proxy.ts` classifies each request via the fork-owned `classifySurface(pathname)`
+  policy seam (`lib/app/surface.ts`, exporting the `Surface` type) and forwards an
+  `x-surface` request header; the root layout renders `<html data-surface>`; the
+  new `<SurfaceSync>` client component (`components/surface-sync.tsx`) keeps that
+  attribute correct across App Router navigation. The fork's per-surface CSS-variable
+  overrides live in `app/brand-theme.css`, which **ships empty** — vanilla Sunrise
+  is visually unchanged until a fork fills it. Documented (including the six
+  design constraints — `<html>`-level marker for portals, the client re-sync, the
+  subtree pin, the two dark-mode selector forms, the `:has()` backdrop, and
+  unlayered overrides) in
+  [`.context/ui/surface-theming.md`](.context/ui/surface-theming.md).
 - **Agent field registry + fork-owned `lib/app/agent-fields.ts` seam.** A single
   declarative descriptor per `AiAgent` config field
   (`lib/orchestration/agents/agent-field-registry.ts`, exporting `AGENT_FIELDS`,
