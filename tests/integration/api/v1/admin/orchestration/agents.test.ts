@@ -27,11 +27,16 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const mock = {
     aiAgent: {
       findMany: vi.fn(),
       count: vi.fn(),
+      create: vi.fn(),
+    },
+    // Create now writes a v1 "Initial configuration" version in the same
+    // transaction as the agent row.
+    aiAgentVersion: {
       create: vi.fn(),
     },
     aiCostLog: {
@@ -40,8 +45,12 @@ vi.mock('@/lib/db/client', () => ({
     aiOrchestrationSettings: {
       findUnique: vi.fn(),
     },
-  },
-}));
+    $transaction: vi.fn(),
+  };
+  // $transaction runs the callback with the mock itself as the tx client.
+  mock.$transaction.mockImplementation((fn: (tx: typeof mock) => Promise<unknown>) => fn(mock));
+  return { prisma: mock };
+});
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   getMonthToDateGlobalSpend: vi.fn(),
@@ -381,6 +390,31 @@ describe('POST /api/v1/admin/orchestration/agents', () => {
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data).toMatchObject({ slug: 'test-agent' });
+    });
+
+    it('writes an "Initial configuration" v1 snapshot of the new agent', async () => {
+      // Point-in-time versioning makes the original config a first-class,
+      // restorable entry from creation, so a single later edit can be rolled
+      // back. A green-bar version would pass without any version write.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const created = makeAgent({ id: AGENT_ID, model: 'claude-opus-4-8' });
+      vi.mocked(prisma.aiAgent.create).mockResolvedValue(created as never);
+
+      await POST(makePostRequest(VALID_AGENT));
+
+      expect(vi.mocked(prisma.aiAgentVersion.create)).toHaveBeenCalledTimes(1);
+      const versionCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
+      expect(versionCall.data).toMatchObject({
+        agentId: AGENT_ID,
+        version: 1,
+        changeSummary: 'Initial configuration',
+      });
+      // The snapshot captures the created agent's config (point-in-time), with
+      // empty grants for a fresh agent.
+      const snapshot = versionCall.data.snapshot as Record<string, unknown>;
+      expect(snapshot).toMatchObject({ model: 'claude-opus-4-8' });
+      expect(snapshot).toHaveProperty('grantedTagIds', []);
+      expect(snapshot).toHaveProperty('grantedDocumentIds', []);
     });
 
     it('stores createdBy from session user id', async () => {

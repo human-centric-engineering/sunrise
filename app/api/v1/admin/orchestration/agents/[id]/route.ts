@@ -29,14 +29,17 @@ import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
-import {
-  buildChangeSummary,
-  extractSnapshotFromAgent,
-} from '@/lib/orchestration/agent-version-diff';
+import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import {
   patchAssignableScalarFields,
   versionedScalarFieldNames,
 } from '@/lib/orchestration/agents/agent-field-registry';
+import {
+  INITIAL_VERSION_SUMMARY,
+  asSnapshotJson,
+  buildAgentSnapshot,
+  nextAgentVersionNumber,
+} from '@/lib/orchestration/agents/agent-versioning';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import {
@@ -266,55 +269,52 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // unversioned fields.
   let bumpedToVersion: number | null = null;
 
+  const versionEvent = changedVersionedFields.length > 0 || grantsChanged;
+  const summaryFields = [
+    ...changedVersionedFields,
+    ...(tagGrantsChanged ? (['grantedTagIds'] as const) : []),
+    ...(docGrantsChanged ? (['grantedDocumentIds'] as const) : []),
+  ];
+
+  // The grant lists as they will be AFTER this PATCH — the body's lists when it
+  // sent them, otherwise unchanged. Drives the post-update snapshot below.
+  const newGrantedTagIds = body.grantedTagIds ?? currentGrantedTagIds;
+  const newGrantedDocumentIds = body.grantedDocumentIds ?? currentGrantedDocumentIds;
+
   try {
-    // Auto-create version snapshot if versioned fields changed.
-    // Both the snapshot and the update run inside a transaction so an
-    // update failure doesn't leave an orphaned version entry.
+    // Point-in-time versioning: a version row holds the config AS OF that
+    // version. When versioned fields/grants change we snapshot the POST-update
+    // state (not the pre-update state), so "restore to vN" reproduces the agent
+    // as it was at vN and the newest row always equals live. Snapshot + update
+    // run in one transaction so a failure can't orphan a version row.
     const agent = await prisma.$transaction(async (tx) => {
-      if (changedVersionedFields.length > 0 || grantsChanged) {
-        // Get next version number
-        const lastVersion = await tx.aiAgentVersion.findFirst({
+      // Backfill an explicit original for legacy agents created before
+      // create-time versioning: if this is the first version event and the agent
+      // has no rows yet, capture the PRE-update state as v1 ("Initial
+      // configuration") so the original isn't lost when v2 (the post-update
+      // state) lands. New agents already get v1 at create, so this never fires
+      // for them.
+      if (versionEvent) {
+        const existing = await tx.aiAgentVersion.findFirst({
           where: { agentId: id },
-          orderBy: { version: 'desc' },
           select: { version: true },
         });
-        const nextVersion = (lastVersion?.version ?? 0) + 1;
-        bumpedToVersion = nextVersion;
-
-        // Snapshot the current (pre-update) agent config. The captured set is
-        // the registry's snapshot whitelist — the same source of truth that
-        // drives VERSIONED_FIELDS and the diff viewer — so a versioned field can
-        // never be "tracked as changed but absent from the snapshot". The grant
-        // relations aren't columns on `current`, so inject their sorted id
-        // arrays before extracting.
-        const snapshot = extractSnapshotFromAgent({
-          ...current,
-          grantedTagIds: currentGrantedTagIds,
-          grantedDocumentIds: currentGrantedDocumentIds,
-        });
-
-        const summaryFields = [
-          ...changedVersionedFields,
-          ...(tagGrantsChanged ? (['grantedTagIds'] as const) : []),
-          ...(docGrantsChanged ? (['grantedDocumentIds'] as const) : []),
-        ];
-        const changeSummary = buildChangeSummary(summaryFields);
-
-        await tx.aiAgentVersion.create({
-          data: {
-            agentId: id,
-            version: nextVersion,
-            snapshot: snapshot as Prisma.InputJsonValue,
-            changeSummary,
-            createdBy: session.user.id,
-          },
-        });
-
-        log.info('Agent version snapshot created', {
-          agentId: id,
-          version: nextVersion,
-          changes: summaryFields,
-        });
+        if (!existing) {
+          await tx.aiAgentVersion.create({
+            data: {
+              agentId: id,
+              version: 1,
+              snapshot: asSnapshotJson(
+                buildAgentSnapshot(current, {
+                  grantedTagIds: currentGrantedTagIds,
+                  grantedDocumentIds: currentGrantedDocumentIds,
+                })
+              ),
+              changeSummary: INITIAL_VERSION_SUMMARY,
+              createdBy: session.user.id,
+            },
+          });
+        }
       }
 
       // Replace tag grants if the body provided a new list.
@@ -338,7 +338,38 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         }
       }
 
-      return tx.aiAgent.update({ where: { id }, data });
+      const updated = await tx.aiAgent.update({ where: { id }, data });
+
+      // Snapshot the post-update config (incl. the just-written grants) as the
+      // new version. Computed after the backfill so the number is correct in
+      // both the new-agent (v2+) and backfilled-legacy (v2) cases.
+      if (versionEvent) {
+        const nextVersion = await nextAgentVersionNumber(tx, id);
+        bumpedToVersion = nextVersion;
+
+        await tx.aiAgentVersion.create({
+          data: {
+            agentId: id,
+            version: nextVersion,
+            snapshot: asSnapshotJson(
+              buildAgentSnapshot(updated, {
+                grantedTagIds: newGrantedTagIds,
+                grantedDocumentIds: newGrantedDocumentIds,
+              })
+            ),
+            changeSummary: buildChangeSummary(summaryFields),
+            createdBy: session.user.id,
+          },
+        });
+
+        log.info('Agent version snapshot created', {
+          agentId: id,
+          version: nextVersion,
+          changes: summaryFields,
+        });
+      }
+
+      return updated;
     });
 
     // Evict the resolver cache so the next chat turn sees the new grants.

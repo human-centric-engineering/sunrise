@@ -29,8 +29,20 @@ vi.mock('@/lib/db/client', () => ({
     aiAgentVersion: {
       findFirst: vi.fn(),
     },
+    // Used to drop grants that reference tags/documents deleted since the
+    // snapshot was taken (so a stale id can't FK-fail the restore).
+    knowledgeTag: {
+      findMany: vi.fn(),
+    },
+    aiKnowledgeDocument: {
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
+  invalidateAgentAccess: vi.fn(),
 }));
 
 vi.mock('@/lib/security/ip', () => ({
@@ -46,6 +58,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { POST } from '@/app/api/v1/admin/orchestration/agents/[id]/versions/[versionId]/restore/route';
 
@@ -180,20 +193,63 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
 
   // ── System agent protection ────────────────────────────────────────
 
-  it('returns 403 when restoring a system agent', async () => {
+  it('restores a system agent but skips the protected fields (slug, systemInstructions, isActive)', async () => {
+    // System agents are restorable now (#330), but the fields the PATCH route
+    // guards as read-only must NOT be reverted by a restore — only the rest of
+    // the config is. A green-bar version would let the snapshot's slug/
+    // instructions/active state through; this proves they're held back while a
+    // non-protected field (model) IS restored.
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isSystem: true }) as never);
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({
+        isSystem: true,
+        slug: 'sys-current',
+        systemInstructions: 'current instructions',
+        isActive: true,
+      }) as never
+    );
+    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
+      makeVersion({
+        snapshot: {
+          slug: 'sys-old',
+          systemInstructions: 'old instructions',
+          isActive: false,
+          model: 'claude-opus-4-8',
+          temperature: 0.2,
+          provider: 'anthropic',
+        },
+      })
+    );
+    const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent({ isSystem: true }));
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+      const tx = {
+        aiAgent: { update: txAgentUpdate },
+        aiAgentVersion: {
+          findFirst: vi.fn().mockResolvedValue({ version: 2 }),
+          create: vi.fn().mockResolvedValue({}),
+        },
+        aiAgentKnowledgeTag: { deleteMany: vi.fn(), createMany: vi.fn() },
+        aiAgentKnowledgeDocument: { deleteMany: vi.fn(), createMany: vi.fn() },
+      };
+      return callback(tx as never);
+    });
 
     const response = await POST(
       makeRequest(AGENT_ID, VERSION_ID),
       makeParams(AGENT_ID, VERSION_ID)
     );
 
-    expect(response.status).toBe(403);
-    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
-    expect(body.success).toBe(false);
-    expect(body.error.code).toBe('FORBIDDEN');
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(prisma.$transaction).toHaveBeenCalled();
+    const data = (txAgentUpdate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    // Protected system fields are NOT reverted by the restore…
+    expect(data).not.toHaveProperty('slug');
+    expect(data).not.toHaveProperty('systemInstructions');
+    expect(data).not.toHaveProperty('systemInstructionsHistory');
+    expect(data).not.toHaveProperty('isActive');
+    // …but the rest of the config IS restored.
+    expect(data.model).toBe('claude-opus-4-8');
+    expect(data.temperature).toBe(0.2);
   });
 
   // ── Not found ──────────────────────────────────────────────────────
@@ -347,12 +403,12 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     );
   });
 
-  it('coerces null JSON columns to Prisma.JsonNull and does not restore knowledgeAccessMode', async () => {
+  it('coerces null JSON columns to Prisma.JsonNull and restores knowledgeAccessMode', async () => {
     // metadata/providerConfig are nullable Json columns — Prisma rejects a
     // literal null on write, so restore must coerce to Prisma.JsonNull (as the
-    // create/clone/import paths do). knowledgeAccessMode is grant-coupled and
-    // deferred to #330, but the grant-independent knowledgeRetrievalMode is
-    // restored.
+    // create/clone/import paths do). knowledgeAccessMode is now restored too:
+    // #330 reapplies it alongside the knowledge grants + a cache invalidation
+    // (it was deferred in #333 only because grants weren't yet reapplied).
     const snapshot = {
       systemInstructions: 'x',
       model: 'claude-sonnet-4-6',
@@ -382,8 +438,73 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     const data = (txAgentUpdate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
     expect(data.metadata).toBe(Prisma.JsonNull);
     expect(data.providerConfig).toBe(Prisma.JsonNull);
-    expect(data).not.toHaveProperty('knowledgeAccessMode');
+    expect(data.knowledgeAccessMode).toBe('restricted');
     expect(data.knowledgeRetrievalMode).toBe('every_turn');
+  });
+
+  it('restores knowledge grants from the snapshot, dropping ids deleted since, and invalidates the cache', async () => {
+    // The snapshot grants two tags and one document; one tag was deleted since,
+    // so it must be filtered out (a stale id would FK-fail the restore). The
+    // surviving grants are written and the access-resolver cache is evicted.
+    // Grant ids must be valid CUIDs — the snapshot is validated against the same
+    // per-field schema a PATCH uses.
+    const TAG_KEEP = 'cmjbv4i3x00003wsloputgta1';
+    const TAG_GONE = 'cmjbv4i3x00003wsloputgta2';
+    const DOC_KEEP = 'cmjbv4i3x00003wsloputgdo1';
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makeAgent({
+        grantedTags: [{ tagId: 'cmjbv4i3x00003wsloputgta9' }],
+        grantedDocuments: [],
+      }) as never
+    );
+    vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
+      makeVersion({
+        snapshot: {
+          model: 'claude-sonnet-4-6',
+          provider: 'anthropic',
+          grantedTagIds: [TAG_KEEP, TAG_GONE],
+          grantedDocumentIds: [DOC_KEEP],
+        },
+      })
+    );
+    // TAG_GONE no longer exists; DOC_KEEP does.
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([{ id: TAG_KEEP }] as never);
+    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([{ id: DOC_KEEP }] as never);
+
+    const txTagDelete = vi.fn();
+    const txTagCreate = vi.fn();
+    const txDocDelete = vi.fn();
+    const txDocCreate = vi.fn();
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
+      const tx = {
+        aiAgent: { update: vi.fn().mockResolvedValue(makeAgent()) },
+        aiAgentVersion: {
+          findFirst: vi.fn().mockResolvedValue({ version: 2 }),
+          create: vi.fn().mockResolvedValue({}),
+        },
+        aiAgentKnowledgeTag: { deleteMany: txTagDelete, createMany: txTagCreate },
+        aiAgentKnowledgeDocument: { deleteMany: txDocDelete, createMany: txDocCreate },
+      };
+      return callback(tx as never);
+    });
+
+    const response = await POST(
+      makeRequest(AGENT_ID, VERSION_ID),
+      makeParams(AGENT_ID, VERSION_ID)
+    );
+
+    expect(response.status).toBe(200);
+    // TAG_GONE filtered out; only TAG_KEEP written.
+    expect(txTagDelete).toHaveBeenCalledWith({ where: { agentId: AGENT_ID } });
+    expect(txTagCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ agentId: AGENT_ID, tagId: TAG_KEEP }] })
+    );
+    expect(txDocCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ agentId: AGENT_ID, documentId: DOC_KEEP }] })
+    );
+    // Cache eviction so the next chat turn sees the restored access.
+    expect(vi.mocked(invalidateAgentAccess)).toHaveBeenCalledWith(AGENT_ID);
   });
 
   it('uses nextVersion = 1 when no prior versions exist in the transaction', async () => {

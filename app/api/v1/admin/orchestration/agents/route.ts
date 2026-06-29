@@ -19,6 +19,11 @@ import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orch
 import { getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
+import {
+  INITIAL_VERSION_SUMMARY,
+  asSnapshotJson,
+  buildAgentSnapshot,
+} from '@/lib/orchestration/agents/agent-versioning';
 import { logger } from '@/lib/logging';
 import type { BudgetSummary } from '@/types/orchestration';
 
@@ -156,50 +161,72 @@ export const POST = withAdminAuth(async (request, session) => {
   const body = await validateRequestBody(request, createAgentSchema);
 
   try {
-    const agent = await prisma.aiAgent.create({
-      data: {
-        name: body.name,
-        slug: body.slug,
-        kind: body.kind,
-        description: body.description,
-        systemInstructions: body.systemInstructions,
-        systemInstructionsHistory: [],
-        model: body.model,
-        provider: body.provider,
-        providerConfig: (body.providerConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        temperature: body.temperature,
-        maxTokens: body.maxTokens,
-        reasoningEffort: body.reasoningEffort ?? null,
-        monthlyBudgetUsd: body.monthlyBudgetUsd ?? null,
-        maxCostPerTurnUsd: body.maxCostPerTurnUsd ?? null,
-        metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        isActive: body.isActive,
-        inputGuardMode: body.inputGuardMode ?? null,
-        outputGuardMode: body.outputGuardMode ?? null,
-        citationGuardMode: body.citationGuardMode ?? null,
-        maxHistoryTokens: body.maxHistoryTokens ?? null,
-        maxHistoryMessages: body.maxHistoryMessages ?? null,
-        retentionDays: body.retentionDays ?? null,
-        visibility: body.visibility ?? 'internal',
-        rateLimitRpm: body.rateLimitRpm ?? null,
-        fallbackProviders: body.fallbackProviders ?? [],
-        topicBoundaries: body.topicBoundaries ?? [],
-        knowledgeRetrievalMode: body.knowledgeRetrievalMode ?? 'model',
-        knowledgeTriggerKeywords: body.knowledgeTriggerKeywords ?? [],
-        brandVoiceInstructions: body.brandVoiceInstructions ?? null,
-        profileId: body.profileId ?? null,
-        persona: body.persona ?? null,
-        guardrails: body.guardrails ?? null,
-        personaMode: body.personaMode,
-        voiceMode: body.voiceMode,
-        guardrailsMode: body.guardrailsMode,
-        enableVoiceInput: body.enableVoiceInput ?? false,
-        enableImageInput: body.enableImageInput ?? false,
-        enableDocumentInput: body.enableDocumentInput ?? false,
-        runtimePromptManaged: body.runtimePromptManaged ?? false,
-        runtimePromptNote: body.runtimePromptNote ?? null,
-        createdBy: session.user.id,
-      },
+    // Create the agent and its explicit `v1` ("Initial configuration") in one
+    // transaction. The point-in-time version model makes the original config a
+    // first-class, restorable entry from the moment the agent exists — so a
+    // single later edit can always be rolled back, and "restore to v1" means the
+    // factory state. A fresh agent has no knowledge grants yet, so the snapshot's
+    // grant arrays are empty.
+    const agent = await prisma.$transaction(async (tx) => {
+      const created = await tx.aiAgent.create({
+        data: {
+          name: body.name,
+          slug: body.slug,
+          kind: body.kind,
+          description: body.description,
+          systemInstructions: body.systemInstructions,
+          systemInstructionsHistory: [],
+          model: body.model,
+          provider: body.provider,
+          providerConfig: (body.providerConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          temperature: body.temperature,
+          maxTokens: body.maxTokens,
+          reasoningEffort: body.reasoningEffort ?? null,
+          monthlyBudgetUsd: body.monthlyBudgetUsd ?? null,
+          maxCostPerTurnUsd: body.maxCostPerTurnUsd ?? null,
+          metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          isActive: body.isActive,
+          inputGuardMode: body.inputGuardMode ?? null,
+          outputGuardMode: body.outputGuardMode ?? null,
+          citationGuardMode: body.citationGuardMode ?? null,
+          maxHistoryTokens: body.maxHistoryTokens ?? null,
+          maxHistoryMessages: body.maxHistoryMessages ?? null,
+          retentionDays: body.retentionDays ?? null,
+          visibility: body.visibility ?? 'internal',
+          rateLimitRpm: body.rateLimitRpm ?? null,
+          fallbackProviders: body.fallbackProviders ?? [],
+          topicBoundaries: body.topicBoundaries ?? [],
+          knowledgeRetrievalMode: body.knowledgeRetrievalMode ?? 'model',
+          knowledgeTriggerKeywords: body.knowledgeTriggerKeywords ?? [],
+          brandVoiceInstructions: body.brandVoiceInstructions ?? null,
+          profileId: body.profileId ?? null,
+          persona: body.persona ?? null,
+          guardrails: body.guardrails ?? null,
+          personaMode: body.personaMode,
+          voiceMode: body.voiceMode,
+          guardrailsMode: body.guardrailsMode,
+          enableVoiceInput: body.enableVoiceInput ?? false,
+          enableImageInput: body.enableImageInput ?? false,
+          enableDocumentInput: body.enableDocumentInput ?? false,
+          runtimePromptManaged: body.runtimePromptManaged ?? false,
+          runtimePromptNote: body.runtimePromptNote ?? null,
+          createdBy: session.user.id,
+        },
+      });
+
+      await tx.aiAgentVersion.create({
+        data: {
+          agentId: created.id,
+          version: 1,
+          snapshot: asSnapshotJson(
+            buildAgentSnapshot(created, { grantedTagIds: [], grantedDocumentIds: [] })
+          ),
+          changeSummary: INITIAL_VERSION_SUMMARY,
+          createdBy: session.user.id,
+        },
+      });
+
+      return created;
     });
 
     log.info('Agent created', {
