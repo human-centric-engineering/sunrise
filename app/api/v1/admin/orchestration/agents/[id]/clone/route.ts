@@ -21,6 +21,11 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { cloneAgentBodySchema } from '@/lib/validations/orchestration';
 import { cloneCopiedScalarFields } from '@/lib/orchestration/agents/agent-field-registry';
+import {
+  INITIAL_VERSION_SUMMARY,
+  asSnapshotJson,
+  buildAgentSnapshot,
+} from '@/lib/orchestration/agents/agent-versioning';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
@@ -124,6 +129,24 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             skipDuplicates: true,
           });
         }
+
+        // Point-in-time versioning: capture the clone's starting config as its
+        // own v1 ("Initial configuration"), incl. the carried-over grants, so it
+        // has a restorable original like any freshly-created agent.
+        await tx.aiAgentVersion.create({
+          data: {
+            agentId: agent.id,
+            version: 1,
+            snapshot: asSnapshotJson(
+              buildAgentSnapshot(agent, {
+                grantedTagIds: sourceTagIds,
+                grantedDocumentIds: sourceDocumentIds,
+              })
+            ),
+            changeSummary: INITIAL_VERSION_SUMMARY,
+            createdBy: session.user.id,
+          },
+        });
 
         return agent;
       });

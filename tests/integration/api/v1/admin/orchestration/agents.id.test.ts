@@ -442,9 +442,11 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
     it('returns 400 for P2002 slug conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      // A real slug-uniqueness P2002 names the slug column in meta.target.
       const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
         code: 'P2002',
         clientVersion: '7.0.0',
+        meta: { target: ['slug'] },
       });
       vi.mocked(prisma.aiAgent.update).mockRejectedValue(p2002);
 
@@ -454,10 +456,50 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       );
 
       expect(response.status).toBe(400);
+      const body = await parseJson<{ error: { code: string } }>(response);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('maps a version-number P2002 (concurrent PATCH race) to 409, not a bogus slug error', async () => {
+      // Two concurrent versioned PATCHes can compute the same next version and
+      // collide on @@unique([agentId, version]). That must NOT be reported as a
+      // slug conflict — it's a retryable concurrency conflict.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ temperature: 0.99 }) as never);
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue({ version: 1 } as never);
+      const versionCollision = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed',
+        {
+          code: 'P2002',
+          clientVersion: '7.0.0',
+          meta: { target: ['agentId', 'version'] },
+        }
+      );
+      // The post-update version create happens inside the $transaction; reject it.
+      vi.mocked(prisma.aiAgentVersion.create).mockRejectedValueOnce(versionCollision);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { temperature: 0.99 }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(409);
+      const body = await parseJson<{ error: { code: string } }>(response);
+      expect(body.error.code).toBe('CONFLICT');
     });
   });
 
   describe('Version snapshot triggers', () => {
+    // Point-in-time model: a version row holds the POST-update config, and the
+    // newest row equals live. These agents already have history (every agent
+    // gets a v1 at create), so a versioned edit writes exactly one new version
+    // (the post-update state) — no original backfill. The backfill path for
+    // legacy agents with no rows is covered by its own test below.
+    beforeEach(() => {
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue({ version: 1 } as never);
+    });
+
     it('creates a version snapshot when a newly-versioned field changes (inputGuardMode)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
@@ -510,8 +552,16 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
           monthlyBudgetUsd: 50,
         }) as never
       );
+      // Post-update agent: the unchanged fields plus the new budget.
       vi.mocked(prisma.aiAgent.update).mockResolvedValue(
-        makeAgent({ monthlyBudgetUsd: 100 }) as never
+        makeAgent({
+          inputGuardMode: 'log_only',
+          outputGuardMode: 'block',
+          maxHistoryTokens: 4000,
+          retentionDays: 90,
+          providerConfig: { timeout: 3000 },
+          monthlyBudgetUsd: 100,
+        }) as never
       );
 
       await PATCH(makeRequest('PATCH', { monthlyBudgetUsd: 100 }), makeParams(AGENT_ID));
@@ -524,7 +574,9 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(snapshot).toHaveProperty('maxHistoryTokens', 4000);
       expect(snapshot).toHaveProperty('retentionDays', 90);
       expect(snapshot).toHaveProperty('providerConfig', { timeout: 3000 });
-      expect(snapshot).toHaveProperty('monthlyBudgetUsd', 50);
+      // Point-in-time: the snapshot is the POST-update state, so the just-saved
+      // value (100) is captured, not the pre-update 50.
+      expect(snapshot).toHaveProperty('monthlyBudgetUsd', 100);
     });
 
     it('captures the three attachment-input toggles in the snapshot', async () => {
@@ -541,7 +593,11 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
         }) as never
       );
       vi.mocked(prisma.aiAgent.update).mockResolvedValue(
-        makeAgent({ enableDocumentInput: true }) as never
+        makeAgent({
+          enableVoiceInput: true,
+          enableImageInput: true,
+          enableDocumentInput: true,
+        }) as never
       );
 
       await PATCH(makeRequest('PATCH', { enableDocumentInput: true }), makeParams(AGENT_ID));
@@ -549,11 +605,11 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(prisma.aiAgentVersion.create).toHaveBeenCalledOnce();
       const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
       const snapshot = createCall.data.snapshot as Record<string, unknown>;
-      // Snapshot is of the PRE-update state, so we expect the values
-      // that were live on the agent before this PATCH ran.
+      // Point-in-time: the snapshot is the POST-update state, so the just-saved
+      // toggle (document=true) is captured alongside the unchanged ones.
       expect(snapshot).toHaveProperty('enableVoiceInput', true);
       expect(snapshot).toHaveProperty('enableImageInput', true);
-      expect(snapshot).toHaveProperty('enableDocumentInput', false);
+      expect(snapshot).toHaveProperty('enableDocumentInput', true);
     });
 
     it('creates a version snapshot for General-tab changes (name, slug, description, isActive)', async () => {
@@ -572,9 +628,9 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       // changeSummary is tab-prefixed and uses the friendly label.
       expect(createCall.data.changeSummary).toBe('General: Name');
       const snapshot = createCall.data.snapshot as Record<string, unknown>;
-      // Snapshot captures the PRE-update value so a restore would
-      // revert the rename.
-      expect(snapshot).toHaveProperty('name', 'Test Agent');
+      // Point-in-time: the snapshot captures the POST-update value, so "restore
+      // to this version" reproduces the rename rather than reverting it.
+      expect(snapshot).toHaveProperty('name', 'Renamed');
     });
 
     it('builds a tab-prefixed change summary that groups changes by their parent tab', async () => {
@@ -741,6 +797,12 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
   });
 
   describe('enableVoiceInput field', () => {
+    // Agent already has history, so a versioned edit writes one post-update
+    // version (no original backfill — see the dedicated backfill test).
+    beforeEach(() => {
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue({ version: 1 } as never);
+    });
+
     it('persists enableVoiceInput=true via PATCH', async () => {
       // Regression: pre-fix the PATCH route had no `if
       // (body.enableVoiceInput !== undefined)` branch, so toggling the
@@ -796,7 +858,39 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       const createCall = vi.mocked(prisma.aiAgentVersion.create).mock.calls[0][0];
       expect(createCall.data.changeSummary).toContain('Voice input');
       const snapshot = createCall.data.snapshot as Record<string, unknown>;
-      expect(snapshot).toHaveProperty('enableVoiceInput', false); // pre-update value
+      expect(snapshot).toHaveProperty('enableVoiceInput', true); // post-update value
+    });
+
+    it('backfills the original as v1, then writes the post-update version, on a legacy agent first edit', async () => {
+      // Legacy agents created before create-time versioning have no version rows.
+      // The first versioned edit must not lose the original: it backfills the
+      // PRE-update state as v1 ("Initial configuration") and writes the
+      // POST-update state as v2 — two creates in one transaction.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ enableVoiceInput: false }) as never
+      );
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(
+        makeAgent({ enableVoiceInput: true }) as never
+      );
+      // No prior versions on the backfill check; after v1 is inserted, the
+      // next-number query sees it, so the post-update version is numbered 2.
+      vi.mocked(prisma.aiAgentVersion.findFirst)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ version: 1 } as never);
+
+      await PATCH(makeRequest('PATCH', { enableVoiceInput: true }), makeParams(AGENT_ID));
+
+      expect(prisma.aiAgentVersion.create).toHaveBeenCalledTimes(2);
+      const [firstCall, secondCall] = vi.mocked(prisma.aiAgentVersion.create).mock.calls;
+      // v1 = original (pre-update) state.
+      expect(firstCall[0].data.version).toBe(1);
+      expect(firstCall[0].data.changeSummary).toBe('Initial configuration');
+      expect((firstCall[0].data.snapshot as Record<string, unknown>).enableVoiceInput).toBe(false);
+      // v2 = post-update state, summarising the actual edit.
+      expect(secondCall[0].data.version).toBe(2);
+      expect(secondCall[0].data.changeSummary).toContain('Voice input');
+      expect((secondCall[0].data.snapshot as Record<string, unknown>).enableVoiceInput).toBe(true);
     });
   });
 
@@ -945,11 +1039,15 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
   });
 
   describe('Snapshot completeness — every versioned field is captured', () => {
-    // Belt-and-braces: when any versioned field changes, the snapshot
-    // must include the pre-update value of every other versioned field
-    // so a future restore round-trips cleanly. Catches the regression
-    // where a new field is added to VERSIONED_FIELDS but forgotten in
-    // the snapshot object (or vice versa).
+    // Belt-and-braces: when any versioned field changes, the (point-in-time)
+    // snapshot must include the POST-update value of every other versioned field
+    // so a future restore round-trips cleanly. Catches the regression where a
+    // new field is added to VERSIONED_FIELDS but forgotten in the snapshot
+    // object (or vice versa). Agent already has history → one post-update create.
+    beforeEach(() => {
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue({ version: 1 } as never);
+    });
+
     it('snapshot object carries every key in VERSIONED_FIELDS', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const stored = makeAgent({
@@ -975,7 +1073,8 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
         enableVoiceInput: true,
       });
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(stored as never);
-      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ temperature: 0.9 }) as never);
+      // Post-update agent = the stored config with the one changed field.
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue({ ...stored, temperature: 0.9 } as never);
 
       // Trigger via any single change.
       await PATCH(makeRequest('PATCH', { temperature: 0.9 }), makeParams(AGENT_ID));
@@ -1009,9 +1108,10 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       for (const key of expected) {
         expect(snapshot).toHaveProperty(key);
       }
-      // Spot-check a few values to confirm it's the pre-update state,
-      // not an empty placeholder.
-      expect(snapshot).toHaveProperty('temperature', 0.5);
+      // Spot-check a few values to confirm it's the post-update state, not an
+      // empty placeholder: the just-saved temperature (0.9) plus carried-over
+      // fields.
+      expect(snapshot).toHaveProperty('temperature', 0.9);
       expect(snapshot).toHaveProperty('enableVoiceInput', true);
       expect(snapshot).toHaveProperty('providerConfig', { t: 1 });
     });

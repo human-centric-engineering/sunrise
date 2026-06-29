@@ -195,6 +195,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
     // Default: transaction resolves with the cloned agent
     vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
       const tx = {
+        aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
         aiAgent: {
           create: vi.fn().mockResolvedValue(makeClonedAgent()),
         },
@@ -264,6 +265,35 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(data.data.name).toBe('My Agent (Copy)');
     });
 
+    it('writes an "Initial configuration" v1 for the clone so it has a restorable original', async () => {
+      // Point-in-time: a clone is a new agent and must get its own v1, or a
+      // single later edit couldn't be rolled back. A green-bar version passes
+      // without any version write.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
+      const cloned = makeClonedAgent();
+      const versionCreate = vi.fn().mockResolvedValue({});
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
+        const tx = {
+          aiAgent: { create: vi.fn().mockResolvedValue(cloned) },
+          aiAgentCapability: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
+          aiAgentKnowledgeTag: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          aiAgentKnowledgeDocument: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+          aiAgentVersion: { create: versionCreate },
+        };
+        return fn(tx as never);
+      });
+
+      await POST(makePostRequest(), makeParams(AGENT_ID));
+
+      expect(versionCreate).toHaveBeenCalledTimes(1);
+      expect(versionCreate.mock.calls[0][0].data).toMatchObject({
+        agentId: cloned.id,
+        version: 1,
+        changeSummary: 'Initial configuration',
+      });
+    });
+
     it('tolerates empty body and uses source-based name/slug defaults', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
@@ -293,6 +323,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       let capturedCreateData: Record<string, unknown> | null = null;
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: {
             create: vi.fn((args: { data: Record<string, unknown> }) => {
               capturedCreateData = args.data;
@@ -317,6 +348,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: { create: vi.fn().mockResolvedValue(customAgent) },
           aiAgentCapability: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
         };
@@ -414,6 +446,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       let capturedTagCreateMany: unknown = null;
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: { create: vi.fn().mockResolvedValue(makeClonedAgent()) },
           aiAgentCapability: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
           aiAgentKnowledgeTag: {
@@ -446,6 +479,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       let capturedDocCreateMany: unknown = null;
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: { create: vi.fn().mockResolvedValue(makeClonedAgent()) },
           aiAgentCapability: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
           aiAgentKnowledgeTag: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
@@ -481,6 +515,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       let capturedCreateArgs: Record<string, unknown> | null = null;
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: {
             create: vi.fn((args: { data: Record<string, unknown> }) => {
               capturedCreateArgs = args.data;
@@ -533,6 +568,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       let capturedCreate: Record<string, unknown> | null = null;
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: {
             create: vi.fn((args: { data: Record<string, unknown> }) => {
               capturedCreate = args.data;
@@ -596,6 +632,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       let capturedCapCreateMany: { data: Array<Record<string, unknown>> } | null = null;
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
         const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
           aiAgent: { create: vi.fn().mockResolvedValue(makeClonedAgent()) },
           aiAgentCapability: {
             createMany: vi.fn((args: { data: Array<Record<string, unknown>> }) => {

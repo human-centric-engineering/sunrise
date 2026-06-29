@@ -90,15 +90,14 @@ const VERSIONS = [
 describe('AgentVersionHistoryTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // The component fires two mount-time GETs (versions list + live
-    // agent state). Route the default mock by URL so existing tests
-    // that focus on the list still pass, and the agent fetch
-    // resolves to an empty live snapshot they don't care about.
+    // The component fires a single mount-time GET (the versions list); per-row
+    // snapshots are fetched lazily on expand. Route the default mock by URL so
+    // list-focused tests pass and any version-detail fetch resolves to an empty
+    // snapshot they don't care about.
     mockGet.mockImplementation((url: string) => {
       if (url.includes('/versions?limit')) return Promise.resolve(VERSIONS);
       if (/\/versions\/ver-/.test(url))
         return Promise.resolve({ id: 'x', version: 0, snapshot: {} });
-      // /agents/:id — the live agent state.
       return Promise.resolve({});
     });
   });
@@ -306,18 +305,19 @@ describe('AgentVersionHistoryTab', () => {
 
   // ─── Expandable diff ────────────────────────────────────────────────────────
   //
-  // Snapshots capture PRE-update state (see the PATCH route writer),
-  // so for the row at index i:
-  //   • Before = versions[i].snapshot
-  //   • After  = versions[i-1].snapshot if a newer row exists,
-  //              else the LIVE agent state for the newest row.
+  // Snapshots are POINT-IN-TIME — `versions[i].snapshot` is the config AS OF
+  // that version (the post-save state). Versions are newest-first, so for the
+  // row at index i:
+  //   • After  = versions[i].snapshot   (this version's own state)
+  //   • Before = versions[i+1].snapshot (the next-OLDER version), or null for
+  //              the oldest row, which then shows the full initial config.
+  // The newest row equals live by construction, so there's no live-agent fetch.
   describe('expandable diff', () => {
-    // Each row's snapshot is the state JUST BEFORE the save that
-    // created that row. The live agent state is what the most recent
-    // save (v3) wrote out.
+    // Each row's snapshot is the state AS OF that version (post-save). ver-3 is
+    // newest (== live), ver-1 is the initial configuration.
     const SNAPSHOTS: Record<string, { snapshot: Record<string, unknown> }> = {
       'ver-3': {
-        // Pre-save-3 = post-save-2.
+        // State as of v3 (newest = live).
         snapshot: {
           model: 'claude-opus-4-6',
           temperature: 0.9,
@@ -325,7 +325,7 @@ describe('AgentVersionHistoryTab', () => {
         },
       },
       'ver-2': {
-        // Pre-save-2 = post-save-1.
+        // State as of v2.
         snapshot: {
           model: 'claude-sonnet-4-6',
           temperature: 0.7,
@@ -333,20 +333,13 @@ describe('AgentVersionHistoryTab', () => {
         },
       },
       'ver-1': {
-        // Pre-save-1 = initial post-create state.
+        // Initial configuration (v1).
         snapshot: {
           model: 'claude-sonnet-4-6',
           temperature: 0.5,
           systemInstructions: 'Initial system prompt.',
         },
       },
-    };
-
-    const LIVE_AGENT = {
-      // Post-save-3 — what the most recent save committed.
-      model: 'claude-opus-4-7',
-      temperature: 0.95,
-      systemInstructions: 'You are concise and helpful.',
     };
 
     function routeFetch(url: string): Promise<unknown> {
@@ -358,8 +351,7 @@ describe('AgentVersionHistoryTab', () => {
         if (!detail) return Promise.reject(new Error(`unknown version ${id}`));
         return Promise.resolve({ id, version: 0, ...detail });
       }
-      // Live agent endpoint — /agents/:id (no trailing /versions).
-      if (/\/agents\/[^/]+$/.test(url)) return Promise.resolve(LIVE_AGENT);
+      // No live-agent fetch in the point-in-time model.
       return Promise.reject(new Error(`unmatched URL: ${url}`));
     }
 
@@ -367,7 +359,7 @@ describe('AgentVersionHistoryTab', () => {
       mockGet.mockImplementation((url: string) => routeFetch(url));
     });
 
-    it('expands the newest row and diffs its snapshot against the LIVE agent state', async () => {
+    it('expands the newest row and diffs its snapshot against the next-older version', async () => {
       const user = userEvent.setup();
       render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
 
@@ -383,17 +375,18 @@ describe('AgentVersionHistoryTab', () => {
         expect(screen.getByRole('columnheader', { name: 'After' })).toBeInTheDocument();
       });
 
-      // v3.snapshot.model (Before) = claude-opus-4-6
-      // live.model (After) = claude-opus-4-7
+      // Before = ver-2 (the next-older version): model claude-sonnet-4-6, temp 0.7
+      // After  = ver-3 (this version):           model claude-opus-4-6,  temp 0.9
       expect(screen.getByText('Model')).toBeInTheDocument();
+      expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
       expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
-      expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument();
-      // Older-still values from ver-2 must NOT appear under v3's diff —
-      // regression guard for the "shifted by one save" bug.
-      expect(screen.queryByText('claude-sonnet-4-6')).not.toBeInTheDocument();
+      // ver-1's distinctive values must NOT appear under v3's diff — regression
+      // guard for diffing against the wrong neighbour.
+      expect(screen.queryByText('Initial system prompt.')).not.toBeInTheDocument();
+      expect(screen.queryByText('0.5')).not.toBeInTheDocument();
     });
 
-    it('expands an older row and diffs against the next-newer snapshot', async () => {
+    it('expands an older row and diffs against the next-OLDER snapshot', async () => {
       const user = userEvent.setup();
       render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
 
@@ -403,15 +396,17 @@ describe('AgentVersionHistoryTab', () => {
 
       await user.click(screen.getByText('Changed temperature'));
 
-      // v2.snapshot (Before) → v3.snapshot (After):
-      //   model: claude-sonnet-4-6 → claude-opus-4-6
-      //   temperature: 0.7 → 0.9
+      // Before = ver-1 (next-older), After = ver-2 (this version):
+      //   temperature: 0.5 → 0.7
+      //   systemInstructions: 'Initial system prompt.' → 'You are concise…'
       await waitFor(() => {
-        expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
-        expect(screen.getByText('claude-opus-4-6')).toBeInTheDocument();
+        expect(screen.getByText('0.5')).toBeInTheDocument();
+        expect(screen.getByText('0.7')).toBeInTheDocument();
       });
-      // Live state is NOT involved here — only adjacent snapshots.
-      expect(screen.queryByText('claude-opus-4-7')).not.toBeInTheDocument();
+      expect(screen.getByText('Initial system prompt.')).toBeInTheDocument();
+      // The newer (v3) state is NOT involved — only this version + its older
+      // neighbour. claude-opus-4-6 belongs to ver-3.
+      expect(screen.queryByText('claude-opus-4-6')).not.toBeInTheDocument();
     });
 
     it('caches snapshots — each version snapshot is fetched at most once', async () => {
@@ -422,20 +417,21 @@ describe('AgentVersionHistoryTab', () => {
         expect(screen.getByText('v3')).toBeInTheDocument();
       });
 
-      // Expand v3 → fetches ver-3 (its own snapshot = Before).
-      // The "After" comes from the live agent fetch that already
-      // happened at mount, so no extra version fetch.
+      // Expand v3 → fetches ver-3 (its own snapshot = After) and ver-2 (the
+      // older neighbour = Before).
       await user.click(screen.getByText('Updated model to claude-opus-4-6'));
       await waitFor(() => {
         const urls = mockGet.mock.calls.map(([u]) => String(u));
         expect(urls).toContain(`/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-3`);
+        expect(urls).toContain(`/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-2`);
       });
 
-      // Expand v2 → fetches ver-2; ver-3 is already cached.
+      // Expand v2 → ver-2 is already cached from the v3 expand; only ver-1 (its
+      // older neighbour) is newly fetched.
       await user.click(screen.getByText('Changed temperature'));
       await waitFor(() => {
         const urls = mockGet.mock.calls.map(([u]) => String(u));
-        expect(urls).toContain(`/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-2`);
+        expect(urls).toContain(`/api/v1/admin/orchestration/agents/${AGENT_ID}/versions/ver-1`);
       });
 
       // Each version detail URL should appear at most once.
@@ -449,7 +445,7 @@ describe('AgentVersionHistoryTab', () => {
       }
     });
 
-    it('diffs the OLDEST row against the next-newer snapshot (initial → first save result)', async () => {
+    it('diffs the OLDEST row against null — shows the full initial config', async () => {
       const user = userEvent.setup();
       render(<AgentVersionHistoryTab agentId={AGENT_ID} />);
 
@@ -457,18 +453,17 @@ describe('AgentVersionHistoryTab', () => {
         expect(screen.getByText('v1')).toBeInTheDocument();
       });
 
-      // v1.snapshot (Before — initial pre-save-1 state)
-      // → v2.snapshot (After — post-save-1 state).
+      // Oldest row (Initial configuration) has no older neighbour, so Before is
+      // null and every field shows as its initial value.
       await user.click(screen.getByText('Configuration updated'));
 
       await waitFor(() => {
         expect(screen.getByRole('columnheader', { name: 'Before' })).toBeInTheDocument();
         expect(screen.getByRole('columnheader', { name: 'After' })).toBeInTheDocument();
       });
-      // temperature: 0.5 (v1) → 0.7 (v2)
+      // ver-1 (initial) values surface as the "After" column.
+      expect(screen.getByText('claude-sonnet-4-6')).toBeInTheDocument();
       expect(screen.getByText('0.5')).toBeInTheDocument();
-      expect(screen.getByText('0.7')).toBeInTheDocument();
-      // systemInstructions: 'Initial system prompt.' (v1) → 'You are concise…' (v2)
       expect(screen.getByText('Initial system prompt.')).toBeInTheDocument();
     });
 
@@ -503,7 +498,6 @@ describe('AgentVersionHistoryTab', () => {
             new MockAPIClientError('Snapshot is unavailable', 'NOT_FOUND', 404)
           );
         }
-        if (/\/agents\/[^/]+$/.test(url)) return Promise.resolve(LIVE_AGENT);
         return Promise.resolve({ id: 'x', version: 0, snapshot: {} });
       });
 

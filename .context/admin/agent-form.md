@@ -322,11 +322,11 @@ Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedA
 
 **File:** `components/admin/orchestration/agent-version-history-tab.tsx` (client component, lazy-loaded).
 
-Displays the `AiAgentVersion` timeline — every save creates a full config snapshot. Each row shows version number (badge), change summary, and formatted date. Expanding a row shows the creator tooltip.
+Displays the `AiAgentVersion` timeline — **point-in-time** snapshots, each holding the config _as of_ that version. Every agent has an explicit `v1` ("Initial configuration") from create/clone (or a seed backfill), and every versioned save appends a row. Each row shows version number (badge), change summary, and formatted date. Expanding a row lazy-loads its snapshot and that of its next-**older** neighbour and renders a Before→After diff for that save (the oldest row, having no older neighbour, shows the full initial config). The newest row equals the live agent by construction, so there's no live-agent fetch.
 
 ### Restore
 
-All rows except the latest version show a **Restore** button. Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which pushes the pre-restore `systemInstructions` onto `systemInstructionsHistory` (keeping the JSONB history in sync with the version table) and creates a _new_ version entry so the action is auditable. The restore dialog clears any previous error on close. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
+All rows except the latest version show a **Restore** button (restoring the newest is a no-op — it already equals live). Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which reproduces the agent as it was at that version: it applies the snapshot's config, pushes the pre-restore `systemInstructions` onto `systemInstructionsHistory`, reconnects the knowledge grants + `knowledgeAccessMode` (then invalidates the access cache), and writes a _new_ version recording the action. **System agents are restorable**, but `slug` / `systemInstructions` / `isActive` are left untouched (the same fields the form guards). The restore dialog clears any previous error on close. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
 
 ### API endpoints
 

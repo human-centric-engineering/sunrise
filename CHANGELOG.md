@@ -57,7 +57,35 @@ release process.
   `lib/orchestration/backup/schema.ts`. Exported to anchor the registry parity
   tests.
 
+### Changed
+
+- **Agent version snapshots are now point-in-time** (`AiAgentVersion.snapshot`
+  holds the config _as of_ that version, the post-save state — previously it held
+  the pre-update state). "Restore to vN" now reproduces the agent exactly as it
+  was at vN, so version labels match their content and the newest row equals the
+  live agent. Every agent now gets an explicit **`v1` ("Initial configuration")**
+  at create and clone, a new seed unit (`020-agent-initial-versions`) backfills
+  one for pre-existing agents, and the first edit of a legacy agent with no rows
+  backfills its pre-edit state as `v1` — so a single later edit is always
+  recoverable. New shared helper `lib/orchestration/agents/agent-versioning.ts`
+  (`buildAgentSnapshot`, `nextAgentVersionNumber`, `INITIAL_VERSION_SUMMARY`).
+  _Existing pre-`0.x` version rows are reinterpreted under the new model; during
+  `0.x` alpha this is acceptable (forks expect migration work between releases)._
+- **System agents are now version-restorable.** `POST /agents/:id/versions/:versionId/restore`
+  no longer returns 403 for `isSystem` agents; it applies the snapshot while
+  skipping the read-only fields (`slug`, `systemInstructions`, `isActive`),
+  mirroring the PATCH route's guards. (Resolves the open question in #330.)
+
 ### Fixed
+
+- **Agent version restore now reconnects knowledge grants and `knowledgeAccessMode`.**
+  Restore previously left an agent's tag/document grants and access mode at their
+  current values (the grants were captured in the snapshot but never reapplied,
+  and `knowledgeAccessMode` was deliberately skipped to avoid pairing it with
+  stale grants — see #333). Restore now reapplies the snapshot's grants (dropping
+  any tag/document deleted since, so a stale id can't FK-fail the restore) and
+  mode together, then invalidates the access-resolver cache so the next chat turn
+  sees the restored scope.
 
 - **Email subject lines now honor the `BRAND.name` seam.** Five transactional
   email subjects (contact-form notification, welcome on signup, welcome after

@@ -21,7 +21,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
@@ -29,14 +29,17 @@ import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
-import {
-  buildChangeSummary,
-  extractSnapshotFromAgent,
-} from '@/lib/orchestration/agent-version-diff';
+import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import {
   patchAssignableScalarFields,
   versionedScalarFieldNames,
 } from '@/lib/orchestration/agents/agent-field-registry';
+import {
+  INITIAL_VERSION_SUMMARY,
+  asSnapshotJson,
+  buildAgentSnapshot,
+  nextAgentVersionNumber,
+} from '@/lib/orchestration/agents/agent-versioning';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import {
@@ -133,6 +136,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     .sort();
 
   const body = await validateRequestBody(request, updateAgentSchema);
+
+  // System-agent read-only guards. These three fields are the
+  // SYSTEM_AGENT_PROTECTED_FIELDS set (lib/orchestration/agents/agent-field-registry.ts) —
+  // the version-restore route skips the same set. Keep both in step: a new
+  // protected field is added to the constant AND guarded here (the messages are
+  // field-specific, so the guards aren't a generic loop).
 
   // System agents cannot be deactivated via PATCH (equivalent to deletion).
   if (current.isSystem && body.isActive === false) {
@@ -266,55 +275,54 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // unversioned fields.
   let bumpedToVersion: number | null = null;
 
+  const versionEvent = changedVersionedFields.length > 0 || grantsChanged;
+  const summaryFields = [
+    ...changedVersionedFields,
+    ...(tagGrantsChanged ? (['grantedTagIds'] as const) : []),
+    ...(docGrantsChanged ? (['grantedDocumentIds'] as const) : []),
+  ];
+
+  // The grant lists as they will be AFTER this PATCH — the body's lists when it
+  // sent them, otherwise unchanged. Drives the post-update snapshot below.
+  const newGrantedTagIds = body.grantedTagIds ?? currentGrantedTagIds;
+  const newGrantedDocumentIds = body.grantedDocumentIds ?? currentGrantedDocumentIds;
+
   try {
-    // Auto-create version snapshot if versioned fields changed.
-    // Both the snapshot and the update run inside a transaction so an
-    // update failure doesn't leave an orphaned version entry.
+    // Point-in-time versioning: a version row holds the config AS OF that
+    // version. When versioned fields/grants change we snapshot the POST-update
+    // state (not the pre-update state), so "restore to vN" reproduces the agent
+    // as it was at vN and the newest row always equals live. Snapshot + update
+    // run in one transaction so a failure can't orphan a version row.
     const agent = await prisma.$transaction(async (tx) => {
-      if (changedVersionedFields.length > 0 || grantsChanged) {
-        // Get next version number
-        const lastVersion = await tx.aiAgentVersion.findFirst({
-          where: { agentId: id },
-          orderBy: { version: 'desc' },
-          select: { version: true },
-        });
-        const nextVersion = (lastVersion?.version ?? 0) + 1;
-        bumpedToVersion = nextVersion;
-
-        // Snapshot the current (pre-update) agent config. The captured set is
-        // the registry's snapshot whitelist — the same source of truth that
-        // drives VERSIONED_FIELDS and the diff viewer — so a versioned field can
-        // never be "tracked as changed but absent from the snapshot". The grant
-        // relations aren't columns on `current`, so inject their sorted id
-        // arrays before extracting.
-        const snapshot = extractSnapshotFromAgent({
-          ...current,
-          grantedTagIds: currentGrantedTagIds,
-          grantedDocumentIds: currentGrantedDocumentIds,
-        });
-
-        const summaryFields = [
-          ...changedVersionedFields,
-          ...(tagGrantsChanged ? (['grantedTagIds'] as const) : []),
-          ...(docGrantsChanged ? (['grantedDocumentIds'] as const) : []),
-        ];
-        const changeSummary = buildChangeSummary(summaryFields);
-
-        await tx.aiAgentVersion.create({
-          data: {
-            agentId: id,
-            version: nextVersion,
-            snapshot: snapshot as Prisma.InputJsonValue,
-            changeSummary,
-            createdBy: session.user.id,
-          },
-        });
-
-        log.info('Agent version snapshot created', {
-          agentId: id,
-          version: nextVersion,
-          changes: summaryFields,
-        });
+      // Decide the version numbering up front with a single query.
+      // `nextAgentVersionNumber` returns 1 iff the agent has no version rows yet
+      // — a legacy agent created before create-time versioning. In that case we
+      // backfill its PRE-update state as v1 ("Initial configuration") so the
+      // original isn't lost when the post-update row lands, and the post-update
+      // row becomes v2. New agents already have v1 from create, so the next
+      // number is ≥ 2 and no backfill happens.
+      let postVersion = 0;
+      if (versionEvent) {
+        const firstNumber = await nextAgentVersionNumber(tx, id);
+        if (firstNumber === 1) {
+          await tx.aiAgentVersion.create({
+            data: {
+              agentId: id,
+              version: 1,
+              snapshot: asSnapshotJson(
+                buildAgentSnapshot(current, {
+                  grantedTagIds: currentGrantedTagIds,
+                  grantedDocumentIds: currentGrantedDocumentIds,
+                })
+              ),
+              changeSummary: INITIAL_VERSION_SUMMARY,
+              createdBy: session.user.id,
+            },
+          });
+          postVersion = 2;
+        } else {
+          postVersion = firstNumber;
+        }
       }
 
       // Replace tag grants if the body provided a new list.
@@ -338,7 +346,36 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         }
       }
 
-      return tx.aiAgent.update({ where: { id }, data });
+      const updated = await tx.aiAgent.update({ where: { id }, data });
+
+      // Snapshot the post-update config (incl. the just-written grants) as the
+      // new version, numbered above (post-backfill in the legacy case).
+      if (versionEvent) {
+        bumpedToVersion = postVersion;
+
+        await tx.aiAgentVersion.create({
+          data: {
+            agentId: id,
+            version: postVersion,
+            snapshot: asSnapshotJson(
+              buildAgentSnapshot(updated, {
+                grantedTagIds: newGrantedTagIds,
+                grantedDocumentIds: newGrantedDocumentIds,
+              })
+            ),
+            changeSummary: buildChangeSummary(summaryFields),
+            createdBy: session.user.id,
+          },
+        });
+
+        log.info('Agent version snapshot created', {
+          agentId: id,
+          version: postVersion,
+          changes: summaryFields,
+        });
+      }
+
+      return updated;
     });
 
     // Evict the resolver cache so the next chat turn sees the new grants.
@@ -429,9 +466,20 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     return successResponse(agent);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
-        slug: ['Slug is already in use'],
-      });
+      // Disambiguate which unique constraint collided. A slug clash is a real
+      // user error; a collision on @@unique([agentId, version]) means two
+      // concurrent PATCHes raced for the same version number — surface that as a
+      // retryable conflict, not a misleading "slug already in use".
+      const target = err.meta?.target;
+      const onSlug = Array.isArray(target)
+        ? target.includes('slug')
+        : typeof target === 'string' && target.includes('slug');
+      if (onSlug) {
+        throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
+          slug: ['Slug is already in use'],
+        });
+      }
+      throw new ConflictError('Agent update conflicted with a concurrent change. Please retry.');
     }
     throw err;
   }
