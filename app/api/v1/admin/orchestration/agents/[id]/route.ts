@@ -21,7 +21,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
@@ -136,6 +136,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     .sort();
 
   const body = await validateRequestBody(request, updateAgentSchema);
+
+  // System-agent read-only guards. These three fields are the
+  // SYSTEM_AGENT_PROTECTED_FIELDS set (lib/orchestration/agents/agent-field-registry.ts) —
+  // the version-restore route skips the same set. Keep both in step: a new
+  // protected field is added to the constant AND guarded here (the messages are
+  // field-specific, so the guards aren't a generic loop).
 
   // System agents cannot be deactivated via PATCH (equivalent to deletion).
   if (current.isSystem && body.isActive === false) {
@@ -288,18 +294,17 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     // as it was at vN and the newest row always equals live. Snapshot + update
     // run in one transaction so a failure can't orphan a version row.
     const agent = await prisma.$transaction(async (tx) => {
-      // Backfill an explicit original for legacy agents created before
-      // create-time versioning: if this is the first version event and the agent
-      // has no rows yet, capture the PRE-update state as v1 ("Initial
-      // configuration") so the original isn't lost when v2 (the post-update
-      // state) lands. New agents already get v1 at create, so this never fires
-      // for them.
+      // Decide the version numbering up front with a single query.
+      // `nextAgentVersionNumber` returns 1 iff the agent has no version rows yet
+      // — a legacy agent created before create-time versioning. In that case we
+      // backfill its PRE-update state as v1 ("Initial configuration") so the
+      // original isn't lost when the post-update row lands, and the post-update
+      // row becomes v2. New agents already have v1 from create, so the next
+      // number is ≥ 2 and no backfill happens.
+      let postVersion = 0;
       if (versionEvent) {
-        const existing = await tx.aiAgentVersion.findFirst({
-          where: { agentId: id },
-          select: { version: true },
-        });
-        if (!existing) {
+        const firstNumber = await nextAgentVersionNumber(tx, id);
+        if (firstNumber === 1) {
           await tx.aiAgentVersion.create({
             data: {
               agentId: id,
@@ -314,6 +319,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
               createdBy: session.user.id,
             },
           });
+          postVersion = 2;
+        } else {
+          postVersion = firstNumber;
         }
       }
 
@@ -341,16 +349,14 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       const updated = await tx.aiAgent.update({ where: { id }, data });
 
       // Snapshot the post-update config (incl. the just-written grants) as the
-      // new version. Computed after the backfill so the number is correct in
-      // both the new-agent (v2+) and backfilled-legacy (v2) cases.
+      // new version, numbered above (post-backfill in the legacy case).
       if (versionEvent) {
-        const nextVersion = await nextAgentVersionNumber(tx, id);
-        bumpedToVersion = nextVersion;
+        bumpedToVersion = postVersion;
 
         await tx.aiAgentVersion.create({
           data: {
             agentId: id,
-            version: nextVersion,
+            version: postVersion,
             snapshot: asSnapshotJson(
               buildAgentSnapshot(updated, {
                 grantedTagIds: newGrantedTagIds,
@@ -364,7 +370,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
         log.info('Agent version snapshot created', {
           agentId: id,
-          version: nextVersion,
+          version: postVersion,
           changes: summaryFields,
         });
       }
@@ -460,9 +466,20 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     return successResponse(agent);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
-        slug: ['Slug is already in use'],
-      });
+      // Disambiguate which unique constraint collided. A slug clash is a real
+      // user error; a collision on @@unique([agentId, version]) means two
+      // concurrent PATCHes raced for the same version number — surface that as a
+      // retryable conflict, not a misleading "slug already in use".
+      const target = err.meta?.target;
+      const onSlug = Array.isArray(target)
+        ? target.includes('slug')
+        : typeof target === 'string' && target.includes('slug');
+      if (onSlug) {
+        throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
+          slug: ['Slug is already in use'],
+        });
+      }
+      throw new ConflictError('Agent update conflicted with a concurrent change. Please retry.');
     }
     throw err;
   }

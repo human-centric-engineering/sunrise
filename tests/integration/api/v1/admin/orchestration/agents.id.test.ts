@@ -442,9 +442,11 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
     it('returns 400 for P2002 slug conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      // A real slug-uniqueness P2002 names the slug column in meta.target.
       const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
         code: 'P2002',
         clientVersion: '7.0.0',
+        meta: { target: ['slug'] },
       });
       vi.mocked(prisma.aiAgent.update).mockRejectedValue(p2002);
 
@@ -454,6 +456,37 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       );
 
       expect(response.status).toBe(400);
+      const body = await parseJson<{ error: { code: string } }>(response);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('maps a version-number P2002 (concurrent PATCH race) to 409, not a bogus slug error', async () => {
+      // Two concurrent versioned PATCHes can compute the same next version and
+      // collide on @@unique([agentId, version]). That must NOT be reported as a
+      // slug conflict — it's a retryable concurrency conflict.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ temperature: 0.99 }) as never);
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue({ version: 1 } as never);
+      const versionCollision = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed',
+        {
+          code: 'P2002',
+          clientVersion: '7.0.0',
+          meta: { target: ['agentId', 'version'] },
+        }
+      );
+      // The post-update version create happens inside the $transaction; reject it.
+      vi.mocked(prisma.aiAgentVersion.create).mockRejectedValueOnce(versionCollision);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { temperature: 0.99 }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(409);
+      const body = await parseJson<{ error: { code: string } }>(response);
+      expect(body.error.code).toBe('CONFLICT');
     });
   });
 

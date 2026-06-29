@@ -27,6 +27,7 @@ import {
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
 import {
+  SYSTEM_AGENT_PROTECTED_FIELDS,
   getAgentField,
   versionedScalarFieldNames,
 } from '@/lib/orchestration/agents/agent-field-registry';
@@ -103,8 +104,9 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // would defeat the platform's read-only guarantees. Every other versioned
     // field (model, guard modes, persona, knowledge config, grants) is restored.
     // Non-system agents restore the full config.
-    const PROTECTED_SYSTEM_FIELDS = new Set(['slug', 'systemInstructions', 'isActive']);
-    const skip = agent.isSystem ? PROTECTED_SYSTEM_FIELDS : new Set<string>();
+    const skip = agent.isSystem
+      ? new Set<string>(SYSTEM_AGENT_PROTECTED_FIELDS)
+      : new Set<string>();
 
     const updateData: Record<string, unknown> = {};
 

@@ -386,3 +386,13 @@ export function cloneCopiedScalarFields(): { name: string; json: boolean }[] {
 export function getAgentField(name: string): AgentFieldDescriptor | undefined {
   return AGENT_FIELDS.find((f) => f.name === name);
 }
+
+/**
+ * Config fields that stay read-only on **system agents** (`isSystem: true`).
+ * The single source for this policy: the PATCH route blocks changes to them and
+ * the version-restore route skips re-applying them, so neither an edit nor a
+ * snapshot restore can revert a system agent's identity (`slug`), instructions,
+ * or activation. Adding a field here protects both paths; keep the PATCH guards
+ * (which carry field-specific messages) in step with it.
+ */
+export const SYSTEM_AGENT_PROTECTED_FIELDS = ['slug', 'systemInstructions', 'isActive'] as const;
