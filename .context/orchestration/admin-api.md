@@ -305,7 +305,7 @@ Every agent gets an explicit **`v1` ("Initial configuration")** snapshot at crea
 
 ## Export / import
 
-Bundles are versioned (`version: '1'`) and strip server-owned fields (`id`, `createdAt`, `updatedAt`, `createdBy`). Capabilities are embedded by **slug**, not by id, so bundles are portable across environments.
+Bundles are versioned (`version: '1'`) and strip server-owned fields (`id`, `createdAt`, `updatedAt`, `createdBy`). Cross-environment relations travel by **slug**, not by id, so bundles are portable: capabilities (`capabilities[].slug`), the linked profile (`profileSlug`), granted knowledge tags (`knowledgeTagSlugs`), and granted knowledge documents (`knowledgeDocumentSlugs` — `AiKnowledgeDocument.slug`, #338). A capability slug missing in the target env warn-skips; a missing profile / tag / document slug **fails the whole import** with an actionable message.
 
 ### Export
 
@@ -338,6 +338,9 @@ Validated by `exportAgentsSchema` (1–100 ids). Any missing id → 404. Respons
         "monthlyBudgetUsd": null,
         "metadata": null,
         "isActive": true,
+        "profileSlug": null,
+        "knowledgeTagSlugs": ["hr-policies"],
+        "knowledgeDocumentSlugs": ["employee-handbook-a3f9c1b2"],
         "capabilities": [
           { "slug": "search-web", "isEnabled": true, "customConfig": null, "customRateLimit": null }
         ]

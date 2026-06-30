@@ -253,7 +253,7 @@ Response: `{ usage: { "search_knowledge_base": 12, "get_pattern_detail": 3 } }`
 
 ### `POST /agents/export` / `POST /agents/import`
 
-Versioned bundle format. Import runs in a single transaction with `conflictMode: 'skip' | 'overwrite'`. Capabilities are embedded by slug for cross-environment portability.
+Versioned bundle format. Import runs in a single transaction with `conflictMode: 'skip' | 'overwrite'`. Cross-environment relations travel by stable slug: capabilities (warn-skip on miss), and profile / knowledge tags / knowledge documents (fail-clear on miss — a missing reference fails the whole import with an actionable message). Document grants use `AiKnowledgeDocument.slug` (#338).
 
 ---
 

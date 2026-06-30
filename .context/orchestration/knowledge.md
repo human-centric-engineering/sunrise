@@ -154,6 +154,21 @@ pending → processing → ready
 | `ready`          | All chunks and embeddings are persisted. Searchable.                                                   |
 | `failed`         | Chunking or embedding threw. The document row stays in place for inspection / retry via rechunk.       |
 
+### Cross-environment export key (`slug`)
+
+`AiKnowledgeDocument.slug` is a `@unique` column — the stable cross-environment
+key that lets agent→document grants round-trip through agent export/import and
+the full backup/restore (the same role `KnowledgeTag.slug` plays for tags). It is
+**deterministic**: `slugify(name) + '-' + first8(fileHash)` (built by
+`buildDocumentSlugBase` in `lib/orchestration/knowledge/document-slug.ts`). Same
+display name + same content ⇒ same slug in any environment, so a document
+re-ingested into a target environment reconnects its grants automatically. The
+upload paths use `generateUniqueDocumentSlug`, which appends `-2`, `-3`, … on the
+rare collision (a stale non-`ready` row already holding the base slug); the seeded
+patterns document derives its slug from the committed-content `fileHash`, so it is
+identical across environments by construction. See `.context/orchestration/backup.md`
+for the import reconnection (fail-clear in the agent bundle, warn-skip in backup).
+
 ## Upload
 
 The upload route (`POST /knowledge/documents`) supports multiple formats with format-specific processing pipelines. See [document-ingestion.md](./document-ingestion.md) for full parser details.
