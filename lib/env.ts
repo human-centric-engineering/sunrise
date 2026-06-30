@@ -139,6 +139,14 @@ const clientEnvSchema = z.object({
     .optional()
     .describe('Display name for the app brand (layout titles, emails). Defaults to "Sunrise".'),
 
+  // Consumed via `lib/brand.ts` (`BRAND.legalName`), same client-safe pattern as
+  // NEXT_PUBLIC_APP_NAME. Copyright holder / legal entity for the footer
+  // copyright (and future legal surfaces); defaults to the product name.
+  NEXT_PUBLIC_LEGAL_NAME: z
+    .string()
+    .optional()
+    .describe('Legal entity / copyright holder for the footer. Defaults to NEXT_PUBLIC_APP_NAME.'),
+
   // Analytics (optional - auto-detected based on available credentials)
   NEXT_PUBLIC_ANALYTICS_PROVIDER: z
     .enum(['ga4', 'posthog', 'plausible', 'console'])
@@ -224,6 +232,7 @@ const parsed = isBrowser
   ? clientEnvSchema.safeParse({
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
       NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
+      NEXT_PUBLIC_LEGAL_NAME: process.env.NEXT_PUBLIC_LEGAL_NAME,
       // Analytics (optional)
       NEXT_PUBLIC_ANALYTICS_PROVIDER: process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER,
       NEXT_PUBLIC_GA4_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,

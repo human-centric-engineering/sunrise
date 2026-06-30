@@ -64,7 +64,7 @@ export function PublicFooter() {
 
         {/* Copyright */}
         <div className="text-muted-foreground mt-6 text-center text-sm">
-          &copy; {currentYear} {BRAND.name}. All rights reserved.
+          &copy; {currentYear} {BRAND.legalName}. All rights reserved.
         </div>
       </div>
     </footer>

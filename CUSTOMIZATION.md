@@ -95,6 +95,18 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
   (`app/(public)/*`) is not driven by this seam — re-skin it with the thin-shim
   pattern in [§6](#6-landing-page--routes) so your content stays sync-safe.
 
+**Legal entity / copyright holder (`BRAND.legalName`):**
+
+- Set **`NEXT_PUBLIC_LEGAL_NAME`** when the copyright is held by a company whose
+  name differs from the product — the public footer copyright (`© YEAR …`)
+  attributes to this value, not the product name. Defaults to
+  `NEXT_PUBLIC_APP_NAME` (then `"Sunrise"`), so a fork that only sets the app
+  name keeps today's output. Consumed via `lib/brand.ts` (`BRAND.legalName`);
+  it's deliberately broader than "copyright holder" so it can later drive other
+  legal surfaces (Terms/Privacy boilerplate, email footers). Example: product
+  `"ConQuest"` with `NEXT_PUBLIC_LEGAL_NAME="All Too Human Ltd"` →
+  `© 2026 All Too Human Ltd. All rights reserved.`
+
 **Header / footer brand — the `<BrandMark>` slot:**
 
 - A header brand is a **render** concern (image vs. styled wordmark vs. text,
@@ -104,7 +116,8 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
   file's body to render a logo, e.g. `<Image src="/logo.svg" alt={BRAND.name} …/>`
   (with `dark:` classes for dark/light variants) or a styled wordmark. Keep
   `BRAND.name` as the `alt` / `aria-label` even when a logo renders. `AppHeader`
-  renders `<BrandMark/>` automatically; the footer copyright uses `BRAND.name`.
+  renders `<BrandMark/>` automatically; the footer copyright uses `BRAND.legalName`
+  (see above).
   (It lives in `components/`, not `lib/app/`, because the `lib/app/**` boundary
   bans runtime `next/*` imports and a logo commonly needs `next/image`.)
 

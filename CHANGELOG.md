@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- **Legal-name brand seam (`BRAND.legalName` / `NEXT_PUBLIC_LEGAL_NAME`).** The
+  public footer copyright now attributes to a fork's legal entity rather than its
+  product name. `lib/brand.ts` gains `legalName`, defaulting to
+  `NEXT_PUBLIC_LEGAL_NAME` → `NEXT_PUBLIC_APP_NAME` → `"Sunrise"`, so a fork that
+  only renames the app is byte-for-byte unchanged; set `NEXT_PUBLIC_LEGAL_NAME`
+  (registered in `lib/env.ts`) when the copyright holder differs from the product
+  (e.g. product "ConQuest" © "All Too Human Ltd"). Deliberately broader than
+  "copyright holder" so it can later drive other legal surfaces (Terms/Privacy
+  boilerplate, email footers). See `CUSTOMIZATION.md` §2. (#363)
+
 - **Per-surface theming seam (`data-surface`) + fork-owned `app/brand-theme.css`.**
   A fork can now repaint one rendering surface (e.g. its consumer-facing pages)
   with its own palette/typography while leaving others (e.g. `/admin`) on the

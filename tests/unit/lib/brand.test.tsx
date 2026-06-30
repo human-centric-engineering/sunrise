@@ -16,6 +16,17 @@ async function loadBrandName(value: string): Promise<string> {
   return BRAND.name;
 }
 
+// legalName derives from NEXT_PUBLIC_LEGAL_NAME, then NEXT_PUBLIC_APP_NAME, then
+// "Sunrise" — so both vars matter. Empty string == unset-equivalent (the seam
+// uses `?.trim() ||`).
+async function loadLegalName(legal: string, appName: string): Promise<string> {
+  vi.resetModules();
+  vi.stubEnv('NEXT_PUBLIC_APP_NAME', appName);
+  vi.stubEnv('NEXT_PUBLIC_LEGAL_NAME', legal);
+  const { BRAND } = await import('@/lib/brand');
+  return BRAND.legalName;
+}
+
 async function renderWelcomeWith(value: string): Promise<string> {
   vi.resetModules();
   vi.stubEnv('NEXT_PUBLIC_APP_NAME', value);
@@ -51,6 +62,33 @@ describe('BRAND.name', () => {
 
   it('trims surrounding whitespace from a custom value', async () => {
     expect(await loadBrandName('  Acme Corp  ')).toBe('Acme Corp');
+  });
+});
+
+describe('BRAND.legalName', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('uses NEXT_PUBLIC_LEGAL_NAME verbatim when set (distinct from the product name)', async () => {
+    expect(await loadLegalName('All Too Human Ltd', 'ConQuest')).toBe('All Too Human Ltd');
+  });
+
+  it('trims surrounding whitespace from the legal name', async () => {
+    expect(await loadLegalName('  All Too Human Ltd  ', 'ConQuest')).toBe('All Too Human Ltd');
+  });
+
+  it('falls back to the product name when the legal name is unset', async () => {
+    expect(await loadLegalName('', 'ConQuest')).toBe('ConQuest');
+  });
+
+  it('falls back to the product name when the legal name is only whitespace', async () => {
+    expect(await loadLegalName('   ', 'ConQuest')).toBe('ConQuest');
+  });
+
+  it('falls back to "Sunrise" when both legal name and product name are unset', async () => {
+    expect(await loadLegalName('', '')).toBe('Sunrise');
   });
 });
 

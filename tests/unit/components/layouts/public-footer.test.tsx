@@ -25,6 +25,7 @@ vi.mock('@/lib/consent', () => ({
 afterEach(() => {
   vi.resetModules();
   vi.doUnmock('@/lib/app/public-nav');
+  vi.unstubAllEnvs();
   openPreferences.mockClear();
 });
 
@@ -46,6 +47,19 @@ describe('PublicFooter', () => {
     expect(screen.getByText(/All rights reserved/)).toHaveTextContent('Sunrise');
     // Cookie Preferences control is present out of the box.
     expect(screen.getByRole('button', { name: 'Cookie Preferences' })).toBeInTheDocument();
+  });
+
+  it('attributes the copyright to NEXT_PUBLIC_LEGAL_NAME, not the product name (#363)', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_APP_NAME', 'ConQuest');
+    vi.stubEnv('NEXT_PUBLIC_LEGAL_NAME', 'All Too Human Ltd');
+    const { PublicFooter } = await import('@/components/layouts/public-footer');
+    render(React.createElement(PublicFooter));
+
+    const copyright = screen.getByText(/All rights reserved/);
+    expect(copyright).toHaveTextContent('All Too Human Ltd');
+    // The copyright line names the legal entity, NOT the product.
+    expect(copyright).not.toHaveTextContent('ConQuest');
   });
 
   it('replaces nav and legal clusters wholesale with override lists', async () => {
