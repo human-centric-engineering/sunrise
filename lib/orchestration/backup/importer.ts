@@ -150,10 +150,17 @@ export async function importOrchestrationConfig(
         });
         result.agents.updated++;
       } else {
+        // Strip every backup-only field that is NOT an `AiAgent` column before
+        // spreading into `create` — Prisma rejects unknown args. `knowledgeCategories`
+        // is kept on the wire for old-bundle back-compat (and the v1->v2 tag
+        // backfill above still reads it off `agent`), but the column was dropped
+        // in Phase 6, so it must not reach `create` (#353). The grant arrays are
+        // applied separately below.
         const {
           grantedTagSlugs: _ignoreTagSlugs,
           grantedDocumentSlugs: _ignoreDocSlugs,
           grantedDocumentHashes: _ignoreDocHashes,
+          knowledgeCategories: _ignoreKnowledgeCategories,
           ...createAgent
         } = agent;
         await tx.aiAgent.create({

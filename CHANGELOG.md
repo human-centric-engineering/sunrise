@@ -98,6 +98,16 @@ release process.
 
 ### Fixed
 
+- **Backup import to a fresh environment no longer crashes on `knowledgeCategories`.**
+  The full-config backup importer's agent CREATE branch spread the parsed agent
+  into `prisma.aiAgent.create`, leaking the wire-only `knowledgeCategories` field
+  (kept for old-bundle back-compat) whose column was dropped in Phase 6. Prisma
+  rejected the unknown argument and rolled back the entire import — exactly the
+  primary disaster-recovery / new-environment restore path (the UPDATE/overwrite
+  path was unaffected). The field is now stripped before the spread, and a
+  regression test exercises the CREATE path against a create that rejects unknown
+  arguments (the prior tests mocked it away). (#353)
+
 - **Agent version restore now reconnects knowledge grants and `knowledgeAccessMode`.**
   Restore previously left an agent's tag/document grants and access mode at their
   current values (the grants were captured in the snapshot but never reapplied,
