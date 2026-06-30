@@ -47,12 +47,12 @@ if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 Utility functions in `lib/db/utils.ts` for common database operations:
 
-| Function                    | Purpose                      | Returns                            |
-| --------------------------- | ---------------------------- | ---------------------------------- |
-| `checkDatabaseConnection()` | Verify database is reachable | `Promise<boolean>`                 |
-| `disconnectDatabase()`      | Safe shutdown                | `Promise<void>`                    |
-| `getDatabaseHealth()`       | Health check with latency    | `Promise<{ connected, latency? }>` |
-| `executeTransaction(cb)`    | Typed transaction wrapper    | `Promise<T>`                       |
+| Function                           | Purpose                      | Returns                            |
+| ---------------------------------- | ---------------------------- | ---------------------------------- |
+| `checkDatabaseConnection()`        | Verify database is reachable | `Promise<boolean>`                 |
+| `disconnectDatabase()`             | Safe shutdown                | `Promise<void>`                    |
+| `getDatabaseHealth()`              | Health check with latency    | `Promise<{ connected, latency? }>` |
+| `executeTransaction(cb, options?)` | Typed transaction wrapper    | `Promise<T>`                       |
 
 ### Usage Examples
 
@@ -74,6 +74,13 @@ const result = await executeTransaction(async (tx) => {
   await tx.account.create({ data: { userId: user.id, ... } });
   return user;
 });
+
+// Raise the ceiling for a genuinely heavy callback. `options` mirrors
+// Prisma's interactive-transaction options (timeout / maxWait / isolationLevel)
+// and is optional — omit it to keep Prisma's defaults (5000 ms / 2000 ms).
+// Prefer reducing round-trips (createMany / createManyAndReturn) before
+// reaching for a higher timeout.
+await executeTransaction(work, { timeout: 20_000, maxWait: 10_000 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

@@ -469,4 +469,46 @@ describe('executeTransaction', () => {
       meta: { target: ['email'] },
     });
   });
+
+  it('should forward transaction options to prisma.$transaction', async () => {
+    // Arrange: Mock transaction that executes callback
+    vi.mocked(prisma.$transaction).mockImplementation(
+      async (callback: (tx: typeof prisma) => Promise<unknown>) => {
+        return callback(prisma);
+      }
+    );
+
+    const callback = vi.fn().mockResolvedValue(null);
+    const options = {
+      timeout: 20_000,
+      maxWait: 10_000,
+      isolationLevel: 'Serializable' as const,
+    };
+
+    // Act: Execute with options
+    await executeTransaction(callback, options);
+
+    // Assert: The exact options object is forwarded as the second arg — this is the
+    // whole point of the seam; a caller raising the timeout ceiling must reach Prisma.
+    expect(vi.mocked(prisma.$transaction)).toHaveBeenCalledWith(callback, options);
+  });
+
+  it('should call prisma.$transaction without an options arg when options omitted', async () => {
+    // Arrange: Mock transaction that executes callback
+    vi.mocked(prisma.$transaction).mockImplementation(
+      async (callback: (tx: typeof prisma) => Promise<unknown>) => {
+        return callback(prisma);
+      }
+    );
+
+    const callback = vi.fn().mockResolvedValue(null);
+
+    // Act: Execute without options (the backward-compatible call shape)
+    await executeTransaction(callback);
+
+    // Assert: $transaction receives ONLY the callback — passing an explicit
+    // `undefined` second arg would be harmless, but asserting the exact call shape
+    // documents that existing callers keep Prisma's default timeout/maxWait untouched.
+    expect(vi.mocked(prisma.$transaction)).toHaveBeenCalledWith(callback, undefined);
+  });
 });
