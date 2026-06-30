@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db/client';
 import { serviceAccountWhere } from '@/lib/auth/account';
 import { logger } from '@/lib/logging';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
+import { buildDocumentSlugBase } from '@/lib/orchestration/knowledge/document-slug';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 
 /** Shape of a chunk entry in the pre-parsed chunks.json */
@@ -116,8 +117,12 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
   const contentForHash = chunks.map((c) => c.content).join('');
   const fileHash = createHash('sha256').update(contentForHash).digest('hex');
 
+  // Deterministic slug from the committed-content fileHash, so a freshly-seeded
+  // environment and a migrated-then-backfilled one key this document identically
+  // (lets grants on the patterns doc round-trip — same helper as uploads).
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
+      slug: buildDocumentSlugBase(DOCUMENT_NAME, fileHash),
       name: DOCUMENT_NAME,
       fileName: DOCUMENT_FILE_NAME,
       fileHash,

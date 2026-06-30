@@ -19,6 +19,7 @@ import {
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
 import { buildCoverageWarning, computeCoverage } from '@/lib/orchestration/knowledge/coverage';
+import { generateUniqueDocumentSlug } from '@/lib/orchestration/knowledge/document-slug';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
@@ -244,8 +245,10 @@ export async function uploadDocument(
 
   // Create document record with processing status
   const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
+  const slug = await generateUniqueDocumentSlug(prisma, name, fileHash);
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
+      slug,
       name,
       fileName,
       fileHash,
@@ -402,8 +405,10 @@ async function uploadCsvFromParsed(
   }
 
   const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
+  const slug = await generateUniqueDocumentSlug(prisma, name, fileHash);
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
+      slug,
       name,
       fileName,
       fileHash,
@@ -635,8 +640,10 @@ export async function previewDocument(
 
   // Create document record in pending_review status
   const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
+  const slug = await generateUniqueDocumentSlug(prisma, name, fileHash);
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
+      slug,
       name,
       fileName,
       fileHash,

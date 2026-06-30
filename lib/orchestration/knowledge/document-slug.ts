@@ -1,0 +1,78 @@
+/**
+ * Knowledge-document export slug
+ *
+ * `AiKnowledgeDocument.slug` is the stable cross-environment key used to
+ * round-trip agent->document grants through export/import and backup/restore
+ * (#338), mirroring `KnowledgeTag.slug`.
+ *
+ * The slug is DETERMINISTIC — `slugify(name) + '-' + first8(fileHash)` — so the
+ * "same" document (same display name + same content) produces the same slug in
+ * any environment. That is what lets a grant reconnect after an operator
+ * re-ingests the document into the target environment, with no manual key
+ * matching. The seeded patterns document derives its slug the same way: its
+ * `fileHash` comes from the committed `chunks.json`, so it is identical across
+ * environments by construction.
+ *
+ * `buildDocumentSlugBase` MUST stay in lockstep with the SQL backfill in
+ * `prisma/migrations/20260629120000_add_knowledge_document_slug/migration.sql`
+ * (lowercase, non-alphanumeric -> '-', trim, cap 60, empty -> 'document', then
+ * '-' + 8 hex of the hash). If you change one, change the other, or legacy rows
+ * and freshly-created rows will key differently.
+ */
+
+import { slugify } from '@/lib/orchestration/knowledge/chunker';
+
+/** The fallback base when a name slugifies to the empty string. */
+const EMPTY_NAME_FALLBACK = 'document';
+
+/**
+ * The deterministic, collision-unaware slug for a document. Two documents with
+ * the same name and content share this value (they are the same logical
+ * document); the create-time uniqueness loop below only ever diverges them when
+ * a stale non-`ready` row already holds the slug.
+ */
+export function buildDocumentSlugBase(name: string, fileHash: string): string {
+  const base = slugify(name) || EMPTY_NAME_FALLBACK;
+  return `${base}-${fileHash.slice(0, 8)}`;
+}
+
+/** Minimal client surface needed to check slug uniqueness (prisma or a tx). */
+type SlugLookupClient = {
+  aiKnowledgeDocument: {
+    findUnique: (args: {
+      where: { slug: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
+  };
+};
+
+/**
+ * Resolve a unique slug for a NEW document. Returns the deterministic base when
+ * free; otherwise appends `-2`, `-3`, ... (the same convention the migration's
+ * backfill uses for legacy collisions) until an unused slug is found.
+ *
+ * A collision is rare: dedup returns an existing `ready` document before create,
+ * so this only fires when a stale `failed`/`processing`/`pending_review` row
+ * already holds the base slug for the same content.
+ */
+export async function generateUniqueDocumentSlug(
+  client: SlugLookupClient,
+  name: string,
+  fileHash: string
+): Promise<string> {
+  const base = buildDocumentSlugBase(name, fileHash);
+  let candidate = base;
+  let suffix = 2;
+  // Bounded loop — the suffix space is effectively unbounded, but a handful of
+  // collisions on the same base is already pathological.
+  while (
+    await client.aiKnowledgeDocument.findUnique({
+      where: { slug: candidate },
+      select: { id: true },
+    })
+  ) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}

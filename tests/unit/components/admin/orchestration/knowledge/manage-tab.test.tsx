@@ -55,6 +55,7 @@ vi.mock('@/lib/api/client', () => ({
 function makeDocument(
   overrides: Partial<{
     id: string;
+    slug: string;
     name: string;
     fileName: string;
     status: string;
@@ -64,6 +65,7 @@ function makeDocument(
 ) {
   return {
     id: overrides.id ?? 'doc-1',
+    slug: overrides.slug ?? `${overrides.id ?? 'doc-1'}-abc123ab`,
     knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
     name: overrides.name ?? 'My Document',
     fileName: overrides.fileName ?? 'doc.pdf',

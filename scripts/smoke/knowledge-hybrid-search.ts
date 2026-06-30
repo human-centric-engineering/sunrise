@@ -82,6 +82,7 @@ async function main(): Promise<void> {
 
   const doc = await prisma.aiKnowledgeDocument.create({
     data: {
+      slug: 'smoke-test-hybrid-search-document',
       name: DOCUMENT_NAME,
       fileName: 'smoke-test-hybrid-search.md',
       fileHash: 'smoke-test-hybrid-search-hash',

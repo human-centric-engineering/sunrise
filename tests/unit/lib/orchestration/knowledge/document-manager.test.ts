@@ -23,6 +23,7 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn(),
       delete: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       findMany: vi.fn(),
     },
@@ -38,6 +39,14 @@ vi.mock('@/lib/db/client', () => ({
 vi.mock('@/lib/orchestration/knowledge/chunker', () => ({
   chunkMarkdownDocument: vi.fn(),
   chunkCsvDocument: vi.fn(),
+  // Real implementation — document-slug.ts (used via generateUniqueDocumentSlug
+  // in the upload paths) builds the export slug from it, so it must be faithful.
+  slugify: (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 60),
   parseMetadataComments: vi.fn(() => ({})),
   // Mirror the real value so the oversize-row guard's threshold matches what
   // the test fixtures construct (see "drops rows over the embedding-API size
@@ -211,6 +220,8 @@ describe('uploadDocument', () => {
 
     expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith({
       data: {
+        // Deterministic export key: slugify(name) + '-' + first8(fileHash) (#338).
+        slug: `hello-world-${expectedHash.slice(0, 8)}`,
         name: 'hello-world',
         fileName,
         fileHash: expectedHash,
