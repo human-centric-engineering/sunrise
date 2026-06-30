@@ -188,6 +188,14 @@ describe('seedChunks', () => {
 
     await seedChunks(CHUNKS_PATH);
 
+    // The seeded document carries the deterministic export slug (#338):
+    // slugify('Agentic Design Patterns') + '-' + first8(fileHash). The hash is
+    // derived from the committed chunk content, so it's stable across envs.
+    const createCall = vi.mocked(prisma.aiKnowledgeDocument.create).mock.calls[0][0] as {
+      data: { slug: string };
+    };
+    expect(createCall.data.slug).toMatch(/^agentic-design-patterns-[0-9a-f]{8}$/);
+
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
       where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
       select: { id: true, slug: true },

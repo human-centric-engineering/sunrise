@@ -49,6 +49,16 @@ release process.
   export bundle / full-backup schemas in lockstep with it, so adding a field to
   one without the other is a loud test failure. Documented in
   [`.context/orchestration/agent-fields.md`](.context/orchestration/agent-fields.md).
+- **`AiKnowledgeDocument.slug` — stable cross-environment export key** (`@unique`,
+  added by migration `20260629120000_add_knowledge_document_slug` with a
+  deterministic backfill). Mirrors `KnowledgeTag.slug`: the slug is
+  `slugify(name) + '-' + first8(fileHash)` (helper
+  `lib/orchestration/knowledge/document-slug.ts` — `buildDocumentSlugBase`,
+  `generateUniqueDocumentSlug`), so the same document keys identically in any
+  environment. This is the prerequisite that lets **agent→document grants
+  round-trip** through export/import and backup/restore (#338). `slugify` is now
+  exported from `lib/orchestration/knowledge/chunker.ts`. Documented in
+  [`.context/orchestration/knowledge.md`](.context/orchestration/knowledge.md).
 - **Newly-exported validation surfaces** (`lib/validations/orchestration.ts`):
   `createAgentObjectSchema` / `updateAgentObjectSchema` (the agent create/PATCH
   field shapes without their cross-field refinement, so other call sites — e.g.
@@ -75,6 +85,16 @@ release process.
   no longer returns 403 for `isSystem` agents; it applies the snapshot while
   skipping the read-only fields (`slug`, `systemInstructions`, `isActive`),
   mirroring the PATCH route's guards. (Resolves the open question in #330.)
+- **Agent→document grants now round-trip through export/import and backup** (#338).
+  The agent bundle (`bundledAgentSchema`) carries a new `knowledgeDocumentSlugs`
+  array; `POST /agents/export` emits it and `POST /agents/import` reconnects it by
+  `AiKnowledgeDocument.slug`, **failing the whole import** with an actionable
+  message when a referenced document is absent (matching the existing
+  profile/tag behaviour). The full backup schema bumps to **`schemaVersion: 3`**:
+  document grants move from `grantedDocumentHashes` (`fileHash`) to
+  `grantedDocumentSlugs` (`slug`); v2 bundles still import (the importer falls back
+  to `fileHash` lookup when no slugs are present, and document misses there remain
+  warn-skip, consistent with the backup importer's leniency).
 
 ### Fixed
 

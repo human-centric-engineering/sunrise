@@ -15,11 +15,11 @@
  *   into `results.warnings` rather than failing the whole import — it's
  *   common for bundles to come from a superset environment.
  *
- *   Profile and knowledge-tag references (carried by slug) are re-linked
- *   on import; a slug missing in this environment FAILS the whole import
- *   with an actionable message (the agent's identity / knowledge scoping
- *   would otherwise be silently dropped). Agent→document grants are not
- *   carried by the bundle (documents lack a stable cross-env key — #338).
+ *   Profile, knowledge-tag, and knowledge-document references (carried by
+ *   slug) are re-linked on import; a slug missing in this environment FAILS
+ *   the whole import with an actionable message (the agent's identity /
+ *   knowledge scoping would otherwise be silently dropped). Document grants
+ *   reconnect by `AiKnowledgeDocument.slug`, the stable cross-env key (#338).
  *
  *   Everything runs inside a single `prisma.$transaction`, so a partial
  *   failure rolls back the whole import. `capabilityDispatcher.clearCache()`
@@ -97,6 +97,15 @@ export const POST = withAdminAuth(async (request, session) => {
   });
   const tagIdBySlug = new Map(tags.map((t) => [t.slug, t.id]));
 
+  const allDocumentSlugs = Array.from(
+    new Set(bundle.agents.flatMap((a) => a.knowledgeDocumentSlugs))
+  );
+  const documents = await prisma.aiKnowledgeDocument.findMany({
+    where: { slug: { in: allDocumentSlugs } },
+    select: { id: true, slug: true },
+  });
+  const documentIdBySlug = new Map(documents.map((d) => [d.slug, d.id]));
+
   const results: ImportResults = {
     imported: 0,
     overwritten: 0,
@@ -161,6 +170,18 @@ export const POST = withAdminAuth(async (request, session) => {
           );
         }
         tagIds.push(resolved);
+      }
+
+      const documentIds: string[] = [];
+      for (const docSlug of bundled.knowledgeDocumentSlugs) {
+        const resolved = documentIdBySlug.get(docSlug);
+        if (!resolved) {
+          throw new ValidationError(
+            `Agent '${bundled.slug}': knowledge document '${docSlug}' not found in this environment — ingest it before importing.`,
+            { bundle: [`Missing knowledge document: ${docSlug}`] }
+          );
+        }
+        documentIds.push(resolved);
       }
 
       const agentData = {
@@ -231,6 +252,14 @@ export const POST = withAdminAuth(async (request, session) => {
             skipDuplicates: true,
           });
         }
+        // Rebuild knowledge-document grants the same way.
+        await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: existing.id } });
+        if (documentIds.length > 0) {
+          await tx.aiAgentKnowledgeDocument.createMany({
+            data: documentIds.map((documentId) => ({ agentId: existing.id, documentId })),
+            skipDuplicates: true,
+          });
+        }
         results.overwritten += 1;
       } else {
         const created = await tx.aiAgent.create({
@@ -248,6 +277,12 @@ export const POST = withAdminAuth(async (request, session) => {
         if (tagIds.length > 0) {
           await tx.aiAgentKnowledgeTag.createMany({
             data: tagIds.map((tagId) => ({ agentId: created.id, tagId })),
+            skipDuplicates: true,
+          });
+        }
+        if (documentIds.length > 0) {
+          await tx.aiAgentKnowledgeDocument.createMany({
+            data: documentIds.map((documentId) => ({ agentId: created.id, documentId })),
             skipDuplicates: true,
           });
         }

@@ -6,7 +6,7 @@ The backup/restore system exports all non-secret orchestration configuration to 
 
 ```
 lib/orchestration/backup/
-├── schema.ts      — Zod schema (schemaVersion: 1)
+├── schema.ts      — Zod schema (current export: schemaVersion 3; reads 1/2/3)
 ├── exporter.ts    — exportOrchestrationConfig()
 └── importer.ts    — importOrchestrationConfig()
 
@@ -17,11 +17,23 @@ app/api/v1/admin/orchestration/backup/
 
 UI: `components/admin/orchestration/settings/backup-panel.tsx`
 
-## Backup Payload (`schemaVersion: 1`)
+## Backup Payload (current `schemaVersion: 3`)
+
+The importer accepts `schemaVersion` 1, 2, or 3. Version history:
+
+- **v1** — original.
+- **v2** — adds `AiAgent.knowledgeAccessMode`, `grantedTagSlugs`, a top-level
+  `knowledgeTags` taxonomy, and document grants keyed by `grantedDocumentHashes`
+  (`AiKnowledgeDocument.fileHash`).
+- **v3** — document grants move to `grantedDocumentSlugs`
+  (`AiKnowledgeDocument.slug`, the stable cross-environment key — #338),
+  consistent with the agent bundle and with tags/profiles/capabilities. Exports
+  no longer emit `grantedDocumentHashes`; the importer still **falls back** to
+  hash lookup when a (v2) bundle carries no slugs.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "exportedAt": "2026-04-22T10:00:00.000Z",
   "data": {
     "agents":       [...],
@@ -74,6 +86,7 @@ Response 200:
 - Validates body against `backupSchema` (Zod) — 400 `VALIDATION_ERROR` on mismatch
 - Runs in a **single Prisma transaction** — partial failure rolls back everything
 - Agents, capabilities, workflows: **upserted by slug** (create or update)
+- Knowledge-tag grants reconnect by `KnowledgeTag.slug`; knowledge-document grants reconnect by `AiKnowledgeDocument.slug` (v3) or `fileHash` (v2 fallback). A reference missing in the target environment is **warn-skipped** (the grant is dropped, the rest of the agent imports) — the backup importer is deliberately lenient, unlike the agent bundle import which fails the whole import. See `.context/orchestration/knowledge.md` for the slug key.
 - Webhooks: **created only** if no identical URL already exists; otherwise skipped with a warning
 - Settings: **fully replaced** with backup values if present
 - Webhook secrets: always skipped (secret fields are never exported); import adds a warning

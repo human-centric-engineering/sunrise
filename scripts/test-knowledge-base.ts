@@ -19,6 +19,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { seedChunkSchema } from '@/lib/orchestration/knowledge/seeder';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
+import { buildDocumentSlugBase } from '@/lib/orchestration/knowledge/document-slug';
 
 // Load env from .env.local
 config({ path: resolve(__dirname, '../.env.local') });
@@ -80,6 +81,7 @@ async function seedWithoutEmbeddings(): Promise<void> {
 
   const document = await prisma.aiKnowledgeDocument.create({
     data: {
+      slug: buildDocumentSlugBase(DOCUMENT_NAME, fileHash),
       name: DOCUMENT_NAME,
       fileName: 'agentic-design-patterns.md',
       fileHash,

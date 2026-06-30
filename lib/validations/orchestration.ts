@@ -1214,13 +1214,14 @@ export const bundledAgentSchema = z.object({
   runtimePromptManaged: z.boolean().default(false),
   runtimePromptNote: z.string().max(2000).nullable().optional(),
   // Cross-environment relations carried by stable reference (slug), re-linked
-  // on import. A referenced profile/tag missing in the target env FAILS the
-  // import with an actionable message (unlike capabilities, which warn-and-skip)
-  // — a dropped profile or knowledge scope silently changes agent behaviour.
-  // Document grants are intentionally NOT carried here — documents lack a stable
-  // cross-environment key; tracked separately in #338.
+  // on import. A referenced profile/tag/document missing in the target env FAILS
+  // the import with an actionable message (unlike capabilities, which
+  // warn-and-skip) — a dropped profile or knowledge scope silently changes agent
+  // behaviour. Document grants use `AiKnowledgeDocument.slug`, the stable
+  // cross-environment key added in #338.
   profileSlug: z.string().min(1).max(100).nullable().optional(),
   knowledgeTagSlugs: z.array(z.string().min(1).max(100)).max(200).default([]),
+  knowledgeDocumentSlugs: z.array(z.string().min(1).max(150)).max(500).default([]),
   capabilities: z
     .array(
       z.object({

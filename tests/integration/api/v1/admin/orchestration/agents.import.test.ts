@@ -50,6 +50,10 @@ vi.mock('@/lib/db/client', () => {
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    aiAgentKnowledgeDocument: {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
   };
 
   return {
@@ -57,6 +61,7 @@ vi.mock('@/lib/db/client', () => {
       aiCapability: { findMany: vi.fn() },
       aiAgentProfile: { findMany: vi.fn(async () => []) },
       knowledgeTag: { findMany: vi.fn(async () => []) },
+      aiKnowledgeDocument: { findMany: vi.fn(async () => []) },
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock)),
       _txMock: txMock, // expose for test assertions
     },
@@ -143,6 +148,14 @@ function getTxMock() {
       update: ReturnType<typeof vi.fn>;
     };
     aiAgentCapability: {
+      deleteMany: ReturnType<typeof vi.fn>;
+      createMany: ReturnType<typeof vi.fn>;
+    };
+    aiAgentKnowledgeTag: {
+      deleteMany: ReturnType<typeof vi.fn>;
+      createMany: ReturnType<typeof vi.fn>;
+    };
+    aiAgentKnowledgeDocument: {
       deleteMany: ReturnType<typeof vi.fn>;
       createMany: ReturnType<typeof vi.fn>;
     };
@@ -338,6 +351,57 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         expect.objectContaining({ where: { agentId: existingAgent.id } })
       );
       expect(tx.aiAgentCapability.createMany).toHaveBeenCalled();
+    });
+
+    it('rebuilds knowledge-document grants by slug on overwrite (#338)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
+      const tx = getTxMock();
+      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+      // Target env resolves the document slug to a local id.
+      vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
+        { id: 'local-doc-1', slug: 'handbook-abc12345' },
+      ] as never);
+
+      const bundled = {
+        ...makeBundledAgent('existing-agent'),
+        knowledgeDocumentSlugs: ['handbook-abc12345'],
+      };
+      const response = await POST(
+        makeRequest({ bundle: makeBundle([bundled]), conflictMode: 'overwrite' })
+      );
+
+      expect(response.status).toBe(200);
+      // Old document grants cleared, then rebuilt from the resolved id.
+      expect(tx.aiAgentKnowledgeDocument.deleteMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { agentId: existingAgent.id } })
+      );
+      expect(tx.aiAgentKnowledgeDocument.createMany).toHaveBeenCalledWith({
+        data: [{ agentId: existingAgent.id, documentId: 'local-doc-1' }],
+        skipDuplicates: true,
+      });
+    });
+
+    it('fails the whole import when a document slug is missing in the target env (fail-clear)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
+      const tx = getTxMock();
+      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+      vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([] as never); // not found
+
+      const bundled = {
+        ...makeBundledAgent('existing-agent'),
+        knowledgeDocumentSlugs: ['gone-deadbeef12'],
+      };
+      const response = await POST(
+        makeRequest({ bundle: makeBundle([bundled]), conflictMode: 'overwrite' })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { message: string } }>(response);
+      expect(data.error.message).toContain('gone-deadbeef12');
+      // Unlike the backup importer, the agent bundle fails the whole import.
+      expect(tx.aiAgentKnowledgeDocument.createMany).not.toHaveBeenCalled();
     });
 
     it('writes the imported widgetConfig through to the agent row (overwrite branch)', async () => {

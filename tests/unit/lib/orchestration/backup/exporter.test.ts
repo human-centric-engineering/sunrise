@@ -131,7 +131,7 @@ describe('exportOrchestrationConfig', () => {
     vi.resetAllMocks();
   });
 
-  it('returns payload with schemaVersion: 2', async () => {
+  it('returns payload with schemaVersion: 3', async () => {
     mockFindMany
       .mockResolvedValueOnce([]) // agents
       .mockResolvedValueOnce([]) // capabilities
@@ -142,7 +142,7 @@ describe('exportOrchestrationConfig', () => {
 
     const payload = await exportOrchestrationConfig();
 
-    expect(payload.schemaVersion).toBe(2);
+    expect(payload.schemaVersion).toBe(3);
   });
 
   it('returns payload with exportedAt as an ISO string', async () => {
@@ -418,13 +418,13 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.agents[0].grantedTagSlugs).toEqual(['billing', 'support']);
   });
 
-  it('flattens grantedDocuments into grantedDocumentHashes array', async () => {
+  it('flattens grantedDocuments into grantedDocumentSlugs array (v3 — by slug)', async () => {
     const agentWithDocs = {
       ...agentRow,
       grantedTags: [],
       grantedDocuments: [
-        { document: { fileHash: 'abc123' } },
-        { document: { fileHash: 'def456' } },
+        { document: { slug: 'doc-one-abc123ab' } },
+        { document: { slug: 'doc-two-def456cd' } },
       ],
     };
     mockFindMany
@@ -437,7 +437,12 @@ describe('exportOrchestrationConfig', () => {
 
     const payload = await exportOrchestrationConfig();
 
-    expect(payload.data.agents[0].grantedDocumentHashes).toEqual(['abc123', 'def456']);
+    expect(payload.data.agents[0].grantedDocumentSlugs).toEqual([
+      'doc-one-abc123ab',
+      'doc-two-def456cd',
+    ]);
+    // v3 no longer emits the legacy fileHash-keyed field.
+    expect(payload.data.agents[0].grantedDocumentHashes).toBeUndefined();
   });
 
   it('always emits empty knowledgeCategories array (legacy field kept on wire)', async () => {

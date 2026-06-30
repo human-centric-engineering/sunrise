@@ -54,6 +54,7 @@ model AiKnowledgeBase {
 model AiKnowledgeDocument {
   id              String   @id @default(cuid())
   knowledgeBaseId String
+  slug            String   @unique // stable cross-environment key (used in backup/export); deterministic: slugify(name)-<first8 of fileHash>
   name            String
   fileName        String
   fileHash        String // SHA-256 for deduplication
