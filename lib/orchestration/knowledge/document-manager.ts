@@ -19,7 +19,10 @@ import {
 } from '@/lib/orchestration/knowledge/chunker';
 import type { Chunk } from '@/lib/orchestration/knowledge/chunker';
 import { buildCoverageWarning, computeCoverage } from '@/lib/orchestration/knowledge/coverage';
-import { generateUniqueDocumentSlug } from '@/lib/orchestration/knowledge/document-slug';
+import {
+  generateUniqueDocumentSlug,
+  isDuplicateSlugError,
+} from '@/lib/orchestration/knowledge/document-slug';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbeddingProvenance } from '@/lib/orchestration/knowledge/embedder';
@@ -246,19 +249,35 @@ export async function uploadDocument(
   // Create document record with processing status
   const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
   const slug = await generateUniqueDocumentSlug(prisma, name, fileHash);
-  const document = await prisma.aiKnowledgeDocument.create({
-    data: {
-      slug,
-      name,
-      fileName,
+  let document: AiKnowledgeDocument;
+  try {
+    document = await prisma.aiKnowledgeDocument.create({
+      data: {
+        slug,
+        name,
+        fileName,
+        fileHash,
+        scope: 'app',
+        sourceUrl: sourceUrl ?? null,
+        status: 'processing',
+        uploadedBy: userId,
+        knowledgeBaseId,
+      },
+    });
+  } catch (err) {
+    // A concurrent upload of identical content won the slug race. Dedup to that
+    // row (it holds our exact deterministic slug) instead of surfacing the
+    // unique-constraint violation as a 500. A genuine different-content slug
+    // collision (vanishingly rare) is re-thrown.
+    if (!isDuplicateSlugError(err)) throw err;
+    const winner = await prisma.aiKnowledgeDocument.findUnique({ where: { slug } });
+    if (!winner || winner.fileHash !== fileHash) throw err;
+    logger.info('Document slug race — returning concurrent winner', {
+      documentId: winner.id,
       fileHash,
-      scope: 'app',
-      sourceUrl: sourceUrl ?? null,
-      status: 'processing',
-      uploadedBy: userId,
-      knowledgeBaseId,
-    },
-  });
+    });
+    return winner;
+  }
 
   try {
     // Chunk the document
@@ -406,19 +425,33 @@ async function uploadCsvFromParsed(
 
   const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
   const slug = await generateUniqueDocumentSlug(prisma, name, fileHash);
-  const document = await prisma.aiKnowledgeDocument.create({
-    data: {
-      slug,
-      name,
-      fileName,
+  let document: AiKnowledgeDocument;
+  try {
+    document = await prisma.aiKnowledgeDocument.create({
+      data: {
+        slug,
+        name,
+        fileName,
+        fileHash,
+        scope: 'app',
+        sourceUrl: sourceUrl ?? null,
+        status: 'processing',
+        uploadedBy: userId,
+        knowledgeBaseId,
+      },
+    });
+  } catch (err) {
+    // Concurrent same-content upload won the slug race — dedup to it (see
+    // uploadDocument for the rationale); a different-content collision re-throws.
+    if (!isDuplicateSlugError(err)) throw err;
+    const winner = await prisma.aiKnowledgeDocument.findUnique({ where: { slug } });
+    if (!winner || winner.fileHash !== fileHash) throw err;
+    logger.info('CSV document slug race — returning concurrent winner', {
+      documentId: winner.id,
       fileHash,
-      scope: 'app',
-      sourceUrl: sourceUrl ?? null,
-      status: 'processing',
-      uploadedBy: userId,
-      knowledgeBaseId,
-    },
-  });
+    });
+    return winner;
+  }
 
   try {
     // Drop any row whose content would blow past every embedding API's input
@@ -611,11 +644,16 @@ export async function previewDocument(
   });
 
   if (existing) {
+    // The bytes match by hash, but the display name may have changed (OS rename
+    // or a corrected typo). The row is still pending_review (never finalized,
+    // never granted), so re-derive its export slug from the latest name to keep
+    // the deterministic name+content -> slug invariant the round-trip relies on;
+    // excludeId stops the row from treating its own current slug as a collision.
+    const refreshedSlug = await generateUniqueDocumentSlug(prisma, name, fileHash, existing.id);
     const refreshed = await prisma.aiKnowledgeDocument.update({
       where: { id: existing.id },
       data: {
-        // The bytes match by hash, but the file may have been re-named in the
-        // OS — keep the most recent name so the admin sees what they uploaded.
+        slug: refreshedSlug,
         name,
         fileName,
         metadata: previewMetadata,
@@ -641,32 +679,53 @@ export async function previewDocument(
   // Create document record in pending_review status
   const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase();
   const slug = await generateUniqueDocumentSlug(prisma, name, fileHash);
-  const document = await prisma.aiKnowledgeDocument.create({
-    data: {
-      slug,
-      name,
-      fileName,
-      fileHash,
-      scope: 'app',
-      status: 'pending_review',
-      uploadedBy: userId,
-      knowledgeBaseId,
-      metadata: {
-        extractedText: parsed.fullText,
-        parsedTitle: parsed.title,
-        parsedAuthor: parsed.author ?? null,
-        sectionCount: parsed.sections.length,
-        warnings: parsed.warnings,
-        pages: parsed.pageInfo
-          ? parsed.pageInfo.map((p) => ({
-              num: p.num,
-              charCount: p.charCount,
-              hasText: p.hasText,
-            }))
-          : null,
+  let document: AiKnowledgeDocument;
+  try {
+    document = await prisma.aiKnowledgeDocument.create({
+      data: {
+        slug,
+        name,
+        fileName,
+        fileHash,
+        scope: 'app',
+        status: 'pending_review',
+        uploadedBy: userId,
+        knowledgeBaseId,
+        metadata: {
+          extractedText: parsed.fullText,
+          parsedTitle: parsed.title,
+          parsedAuthor: parsed.author ?? null,
+          sectionCount: parsed.sections.length,
+          warnings: parsed.warnings,
+          pages: parsed.pageInfo
+            ? parsed.pageInfo.map((p) => ({
+                num: p.num,
+                charCount: p.charCount,
+                hasText: p.hasText,
+              }))
+            : null,
+        },
       },
-    },
-  });
+    });
+  } catch (err) {
+    // Concurrent same-content preview won the slug race — return its row with
+    // the freshly-parsed text (see uploadDocument for the rationale).
+    if (!isDuplicateSlugError(err)) throw err;
+    const winner = await prisma.aiKnowledgeDocument.findUnique({ where: { slug } });
+    if (!winner || winner.fileHash !== fileHash) throw err;
+    logger.info('Document preview slug race — returning concurrent winner', {
+      documentId: winner.id,
+      fileHash,
+    });
+    return {
+      document: winner,
+      extractedText: parsed.fullText,
+      title: parsed.title,
+      author: parsed.author,
+      sectionCount: parsed.sections.length,
+      warnings: parsed.warnings,
+    };
+  }
 
   logger.info('Document preview created', {
     documentId: document.id,

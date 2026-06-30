@@ -17,9 +17,24 @@
  * `prisma/migrations/20260629120000_add_knowledge_document_slug/migration.sql`
  * (lowercase, non-alphanumeric -> '-', trim, cap 60, empty -> 'document', then
  * '-' + 8 hex of the hash). If you change one, change the other, or legacy rows
- * and freshly-created rows will key differently.
+ * and freshly-created rows will key differently. A parity test in
+ * `tests/unit/lib/orchestration/knowledge/document-slug.test.ts` pins the exact
+ * output for representative names so a `slugify` change fails loudly.
+ *
+ * Known limitations (acceptable during 0.x alpha):
+ *   - When two *different* documents compute the same base (same name + same
+ *     first-8 hex of a different hash — vanishingly rare), the `-N` suffix is
+ *     assigned by row id at backfill time, so the loser may key differently
+ *     across environments and not round-trip. Grants on the unique-base case
+ *     (the overwhelming majority) always round-trip.
+ *   - Non-ASCII names assume the database uses a Unicode-default collation, so
+ *     SQL `LOWER()` matches JS `toLowerCase()`. Under an exotic collation (e.g.
+ *     Turkish `tr_TR`) a backfilled legacy row and a later re-upload of the same
+ *     name could diverge. The slugify step strips non-`[a-z0-9]` anyway, so this
+ *     only bites names whose lowercase form differs in its ASCII letters.
  */
 
+import { Prisma } from '@prisma/client';
 import { slugify } from '@/lib/orchestration/knowledge/chunker';
 
 /** The fallback base when a name slugifies to the empty string. */
@@ -47,6 +62,23 @@ type SlugLookupClient = {
 };
 
 /**
+ * True when `err` is a Prisma unique-constraint violation on the document
+ * `slug` column. Used by the upload paths to turn the (narrow) concurrent
+ * same-content create race into a dedup instead of an unhandled 500 — two
+ * simultaneous uploads of identical content both resolve the same free slug,
+ * and the create that loses the race lands here.
+ */
+export function isDuplicateSlugError(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') {
+    return false;
+  }
+  const target = err.meta?.target;
+  return Array.isArray(target)
+    ? target.includes('slug')
+    : typeof target === 'string' && target.includes('slug');
+}
+
+/**
  * Resolve a unique slug for a NEW document. Returns the deterministic base when
  * free; otherwise appends `-2`, `-3`, ... (the same convention the migration's
  * backfill uses for legacy collisions) until an unused slug is found.
@@ -58,21 +90,22 @@ type SlugLookupClient = {
 export async function generateUniqueDocumentSlug(
   client: SlugLookupClient,
   name: string,
-  fileHash: string
+  fileHash: string,
+  excludeId?: string
 ): Promise<string> {
   const base = buildDocumentSlugBase(name, fileHash);
   let candidate = base;
   let suffix = 2;
-  // Bounded loop — the suffix space is effectively unbounded, but a handful of
-  // collisions on the same base is already pathological.
-  while (
-    await client.aiKnowledgeDocument.findUnique({
+  // `excludeId` lets a row keep (or re-derive to) a slug it already owns — the
+  // preview-refresh path re-derives a pending_review row's slug after a rename
+  // and must not count its own current slug as a collision.
+  for (;;) {
+    const hit = await client.aiKnowledgeDocument.findUnique({
       where: { slug: candidate },
       select: { id: true },
-    })
-  ) {
+    });
+    if (!hit || hit.id === excludeId) return candidate;
     candidate = `${base}-${suffix}`;
     suffix += 1;
   }
-  return candidate;
 }

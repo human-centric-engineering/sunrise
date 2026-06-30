@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import {
   buildDocumentSlugBase,
   generateUniqueDocumentSlug,
+  isDuplicateSlugError,
 } from '@/lib/orchestration/knowledge/document-slug';
 
 // A 64-hex SHA-256-shaped string; only the first 8 chars matter for the slug.
@@ -74,5 +76,74 @@ describe('generateUniqueDocumentSlug', () => {
       where: { slug: 'doc-a3f9c1b2' },
       select: { id: true },
     });
+  });
+
+  it('treats a slug already owned by excludeId as free (preview-refresh re-derive)', async () => {
+    // The taken slug resolves to id `id-<slug>`; passing that id as excludeId
+    // means the row may keep its own slug instead of bumping to -2.
+    const client = clientReturning(['q3-report-a3f9c1b2']);
+    await expect(
+      generateUniqueDocumentSlug(client, 'Q3 Report', HASH, 'id-q3-report-a3f9c1b2')
+    ).resolves.toBe('q3-report-a3f9c1b2');
+  });
+
+  it('still bumps past a slug owned by a DIFFERENT row even with excludeId set', async () => {
+    const client = clientReturning(['q3-report-a3f9c1b2']);
+    await expect(
+      generateUniqueDocumentSlug(client, 'Q3 Report', HASH, 'some-other-id')
+    ).resolves.toBe('q3-report-a3f9c1b2-2');
+  });
+});
+
+describe('buildDocumentSlugBase — SQL backfill parity', () => {
+  // These expectations MUST match the output of the SQL backfill in
+  // prisma/migrations/20260629120000_add_knowledge_document_slug/migration.sql
+  // for the same (name, fileHash). If a slugify() change breaks one, it breaks
+  // the cross-environment round-trip for legacy (backfilled) rows. Update BOTH
+  // the helper and the migration together, or this test should fail.
+  const cases: Array<[string, string, string]> = [
+    // [name, fileHash, expected slug]
+    ['Agentic Design Patterns', 'd0eb6ede1122334455', 'agentic-design-patterns-d0eb6ede'],
+    ['Q3 Report', 'a3f9c1b2ffffffffff', 'q3-report-a3f9c1b2'],
+    ['Hello,  World!! (v2)', 'a3f9c1b200000000', 'hello-world-v2-a3f9c1b2'],
+    ['***edge***', 'a3f9c1b200000000', 'edge-a3f9c1b2'],
+    ['！！！', 'a3f9c1b200000000', 'document-a3f9c1b2'],
+    ['a'.repeat(100), 'a3f9c1b200000000', `${'a'.repeat(60)}-a3f9c1b2`],
+  ];
+
+  it.each(cases)('slug(%j) === %j', (name, hash, expected) => {
+    expect(buildDocumentSlugBase(name, hash)).toBe(expected);
+  });
+});
+
+describe('isDuplicateSlugError', () => {
+  function p2002(target: string[] | string | undefined) {
+    return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+      meta: target === undefined ? undefined : { target },
+    });
+  }
+
+  it('is true for a P2002 whose target array includes "slug"', () => {
+    expect(isDuplicateSlugError(p2002(['slug']))).toBe(true);
+  });
+
+  it('is true for a P2002 whose target is the string "ai_knowledge_document_slug_key"', () => {
+    expect(isDuplicateSlugError(p2002('ai_knowledge_document_slug_key'))).toBe(true);
+  });
+
+  it('is false for a P2002 on a different column (e.g. fileHash)', () => {
+    expect(isDuplicateSlugError(p2002(['fileHash']))).toBe(false);
+  });
+
+  it('is false for a non-P2002 Prisma error and for a plain Error', () => {
+    const p2025 = new Prisma.PrismaClientKnownRequestError('Not found', {
+      code: 'P2025',
+      clientVersion: 'test',
+    });
+    expect(isDuplicateSlugError(p2025)).toBe(false);
+    expect(isDuplicateSlugError(new Error('nope'))).toBe(false);
+    expect(isDuplicateSlugError(undefined)).toBe(false);
   });
 });

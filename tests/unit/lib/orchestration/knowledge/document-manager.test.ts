@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'crypto';
+import { Prisma } from '@prisma/client';
 
 // --- Mocks (must be declared before any imports that touch the mocked modules) ---
 
@@ -239,6 +240,48 @@ describe('uploadDocument', () => {
     const createCallOrder = vi.mocked(prisma.aiKnowledgeDocument.create).mock
       .invocationCallOrder[0];
     expect(upsertCallOrder).toBeLessThan(createCallOrder);
+  });
+
+  it('dedups to the concurrent winner (no 500) when create hits a duplicate-slug race', async () => {
+    const content = '# Raced\n\nIdentical content uploaded twice at once.';
+    const fileHash = createHash('sha256').update(content).digest('hex');
+    const winner = makeDocument({ id: 'winner', status: 'processing', fileHash });
+
+    // No 'ready' dedup row yet (the winner is still processing), so we reach create.
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeDocument.findUnique)
+      .mockResolvedValueOnce(null) // slug generation: base is free
+      .mockResolvedValueOnce(winner as never); // catch handler: winner holds the slug
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { target: ['slug'] },
+      })
+    );
+
+    const result = await uploadDocument(content, 'raced.md', 'user-1');
+
+    expect(result).toBe(winner);
+    // The loser must NOT re-chunk the winner's document.
+    expect(chunkMarkdownDocument).not.toHaveBeenCalled();
+  });
+
+  it('re-throws a non-slug create error (does not swallow it as a race)', async () => {
+    const content = '# Boom';
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('fk', {
+        code: 'P2003',
+        clientVersion: 'test',
+        meta: { field_name: 'knowledgeBaseId' },
+      })
+    );
+
+    await expect(uploadDocument(content, 'boom.md', 'user-1')).rejects.toMatchObject({
+      code: 'P2003',
+    });
   });
 
   it('calls chunkMarkdownDocument with the raw content', async () => {
@@ -1357,6 +1400,80 @@ describe('previewDocument', () => {
         }),
       })
     );
+  });
+
+  it('re-derives the slug from the latest name on the refresh path (#338 round-trip)', async () => {
+    // A pending_review row for the same bytes already exists under an OLD name
+    // (slug `draft-...`). Re-previewing with a new file name must update the slug
+    // to track the new name, not leave it derived from the stale one.
+    const buffer = Buffer.from('same bytes, renamed');
+    const fileHash = createHash('sha256').update(buffer).digest('hex');
+    const hash8 = fileHash.slice(0, 8);
+
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'text',
+      title: 'Q3',
+      author: undefined,
+      sections: [],
+      metadata: { format: 'pdf' },
+      warnings: [],
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
+      makeDocument({
+        id: 'existing-preview',
+        status: 'pending_review',
+        slug: `draft-${hash8}`,
+      }) as never
+    );
+    // generateUniqueDocumentSlug's findUnique sees no conflicting row.
+    vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ id: 'existing-preview', status: 'pending_review' }) as never
+    );
+
+    await previewDocument(buffer, 'q3-report.pdf', 'user-1');
+
+    expect(prisma.aiKnowledgeDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'existing-preview' },
+        data: expect.objectContaining({
+          slug: `q3-report-${hash8}`,
+          name: 'q3-report',
+        }),
+      })
+    );
+  });
+
+  it('returns the concurrent winner instead of 500 when create hits a duplicate-slug race', async () => {
+    const buffer = Buffer.from('raced preview bytes');
+    const fileHash = createHash('sha256').update(buffer).digest('hex');
+    const winner = makeDocument({ id: 'winner', status: 'pending_review', fileHash });
+
+    vi.mocked(parseDocument as ReturnType<typeof vi.fn>).mockResolvedValue({
+      fullText: 'parsed text',
+      title: 'Doc',
+      author: undefined,
+      sections: [],
+      metadata: { format: 'pdf' },
+      warnings: [],
+    });
+    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null); // no existing preview
+    // findUnique: null during slug generation, then the winner in the catch handler.
+    vi.mocked(prisma.aiKnowledgeDocument.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(winner as never);
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('dup', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { target: ['slug'] },
+      })
+    );
+
+    const result = await previewDocument(buffer, 'doc.pdf', 'user-1');
+
+    expect(result.document).toBe(winner);
+    expect(result.extractedText).toBe('parsed text');
   });
 });
 
