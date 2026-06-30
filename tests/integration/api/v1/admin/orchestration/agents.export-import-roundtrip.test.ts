@@ -44,6 +44,10 @@ vi.mock('@/lib/db/client', () => {
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    aiAgentKnowledgeDocument: {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
   };
 
   return {
@@ -52,6 +56,7 @@ vi.mock('@/lib/db/client', () => {
       aiCapability: { findMany: vi.fn() },
       aiAgentProfile: { findMany: vi.fn() },
       knowledgeTag: { findMany: vi.fn() },
+      aiKnowledgeDocument: { findMany: vi.fn() },
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<void>) => fn(txMock)),
       _txMock: txMock,
     },
@@ -85,6 +90,8 @@ const PROFILE_SLUG = 'support-persona';
 const PROFILE_ID = 'profile-1';
 const TAG_SLUG = 'hr-policies';
 const TAG_ID = 'tag-1';
+const DOC_SLUG = 'employee-handbook-a3f9c1b2';
+const DOC_ID = 'doc-1';
 
 function makeDbAgent() {
   return {
@@ -135,6 +142,7 @@ function makeDbAgent() {
     updatedAt: new Date('2025-01-01'),
     profile: { slug: PROFILE_SLUG },
     grantedTags: [{ tag: { slug: TAG_SLUG } }],
+    grantedDocuments: [{ document: { slug: DOC_SLUG } }],
     capabilities: [
       {
         id: 'link-1',
@@ -184,12 +192,16 @@ describe('Agent Export → Import Round-Trip', () => {
     txMock.aiAgent.create.mockResolvedValue({ id: 'new-agent-id', slug: 'research-assistant' });
     txMock.aiAgentCapability.createMany.mockResolvedValue({ count: 1 });
     txMock.aiAgentKnowledgeTag.createMany.mockResolvedValue({ count: 1 });
-    // By default the referenced profile + tag exist in the target environment.
+    txMock.aiAgentKnowledgeDocument.createMany.mockResolvedValue({ count: 1 });
+    // By default the referenced profile + tag + document exist in the target env.
     vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([
       { id: PROFILE_ID, slug: PROFILE_SLUG },
     ] as never);
     vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([
       { id: TAG_ID, slug: TAG_SLUG },
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
+      { id: DOC_ID, slug: DOC_SLUG },
     ] as never);
   });
 
@@ -306,6 +318,37 @@ describe('Agent Export → Import Round-Trip', () => {
     // (which would otherwise P2002 on the (agentId, tagId) PK) — matches the
     // clone/PATCH convention.
     expect(tagCall.skipDuplicates).toBe(true);
+
+    // Step 6: Knowledge-DOCUMENT grant carried by slug (#338) → re-linked to the
+    // target env's document id. The bundle must carry the slug, and the import
+    // must reconnect it via the join table.
+    expect(bundle.agents[0]).toMatchObject({ knowledgeDocumentSlugs: [DOC_SLUG] });
+    expect(txMock.aiAgentKnowledgeDocument.createMany).toHaveBeenCalledOnce();
+    const docCall = txMock.aiAgentKnowledgeDocument.createMany.mock.calls[0][0] as {
+      data: Array<{ agentId: string; documentId: string }>;
+      skipDuplicates?: boolean;
+    };
+    expect(docCall.data).toEqual([{ agentId: 'new-agent-id', documentId: DOC_ID }]);
+    expect(docCall.skipDuplicates).toBe(true);
+  });
+
+  it('fails the import when a granted knowledge-document slug does not exist in the target environment', async () => {
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeDbAgent()] as never);
+    const exportResponse = await ExportPOST(makeExportRequest([AGENT_ID]));
+    const bundle = (JSON.parse(await exportResponse.text()) as { data: unknown }).data;
+
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+      { id: CAPABILITY_ID, slug: CAPABILITY_SLUG },
+    ] as never);
+    // Target env has the profile + tag but NOT the document.
+    vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([] as never);
+
+    const res = await ImportPOST(makeImportRequest({ bundle }));
+    expect(res.status).toBe(400);
+    const body = JSON.parse(await res.text()) as { error: { message: string } };
+    expect(body.error.message).toContain(DOC_SLUG);
+    // Whole import rolled back — no agent created (fail-clear, not warn-skip).
+    expect(txMock.aiAgent.create).not.toHaveBeenCalled();
   });
 
   it('fails the import when a referenced profile slug does not exist in the target environment', async () => {

@@ -96,6 +96,7 @@ function makeDbAgent(id: string, slug: string) {
     updatedAt: new Date('2025-01-01'),
     profile: null,
     grantedTags: [],
+    grantedDocuments: [],
     capabilities: [],
   };
 }

@@ -4,11 +4,11 @@
  * POST /api/v1/admin/orchestration/agents/export
  *   Body: { agentIds: string[] }
  *   Returns a versioned `AgentBundle` containing the selected agents, their
- *   attached capabilities, the linked profile, and granted knowledge tags —
- *   all carried by slug so they re-link on import. Server-owned fields (`id`,
- *   `createdAt`, `updatedAt`, `createdBy`) are stripped so the bundle is
- *   portable across environments. Agent→document grants are not carried —
- *   documents lack a stable cross-environment key (tracked in #338).
+ *   attached capabilities, the linked profile, and granted knowledge tags and
+ *   documents — all carried by slug so they re-link on import. Server-owned
+ *   fields (`id`, `createdAt`, `updatedAt`, `createdBy`) are stripped so the
+ *   bundle is portable across environments. Document grants use
+ *   `AiKnowledgeDocument.slug` (the stable cross-environment key — #338).
  *
  *   The response sets `Content-Disposition: attachment` so hitting the
  *   route directly from a browser triggers a "Save As" dialog.
@@ -59,6 +59,7 @@ export const POST = withAdminAuth(async (request, session) => {
       },
       profile: { select: { slug: true } },
       grantedTags: { select: { tag: { select: { slug: true } } } },
+      grantedDocuments: { select: { document: { select: { slug: true } } } },
     },
   });
 
@@ -131,6 +132,7 @@ export const POST = withAdminAuth(async (request, session) => {
         // Cross-environment relations by stable reference (slug); re-linked on import.
         profileSlug: agent.profile?.slug ?? null,
         knowledgeTagSlugs: agent.grantedTags.map((g) => g.tag.slug),
+        knowledgeDocumentSlugs: agent.grantedDocuments.map((g) => g.document.slug),
         capabilities: agent.capabilities.map((link) => ({
           slug: link.capability.slug,
           isEnabled: link.isEnabled,

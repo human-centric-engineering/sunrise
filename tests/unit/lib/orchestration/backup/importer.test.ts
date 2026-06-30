@@ -632,6 +632,92 @@ describe('importOrchestrationConfig — knowledge grants', () => {
     });
   });
 
+  it('resolves document grants by slug (v3) and calls createMany', async () => {
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3a' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3a' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-9', slug: 'handbook-abc12345' },
+    ]);
+
+    const payload = {
+      ...minPayload,
+      schemaVersion: 3 as const,
+      data: {
+        ...minPayload.data,
+        agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentSlugs: ['handbook-abc12345'] })],
+      },
+    };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    // Lookup is by slug, not fileHash.
+    expect(mockTx.aiKnowledgeDocument.findMany).toHaveBeenCalledWith({
+      where: { slug: { in: ['handbook-abc12345'] } },
+      select: { id: true, slug: true },
+    });
+    expect(mockTx.aiAgentKnowledgeDocument.createMany).toHaveBeenCalledWith({
+      data: [{ agentId: 'agent-3a', documentId: 'doc-9' }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('prefers slug over fileHash when a v3 bundle carries both', async () => {
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3b' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3b' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-by-slug', slug: 'handbook-abc12345' },
+    ]);
+
+    const payload = {
+      ...minPayload,
+      schemaVersion: 3 as const,
+      data: {
+        ...minPayload.data,
+        agents: [
+          makeAgent({
+            grantedTagSlugs: [],
+            grantedDocumentSlugs: ['handbook-abc12345'],
+            grantedDocumentHashes: ['ignoredhash'],
+          }),
+        ],
+      },
+    };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    // Only the slug lookup runs — the hash fallback is skipped when slugs exist.
+    expect(mockTx.aiKnowledgeDocument.findMany).toHaveBeenCalledTimes(1);
+    expect(mockTx.aiKnowledgeDocument.findMany).toHaveBeenCalledWith({
+      where: { slug: { in: ['handbook-abc12345'] } },
+      select: { id: true, slug: true },
+    });
+    expect(mockTx.aiAgentKnowledgeDocument.createMany).toHaveBeenCalledWith({
+      data: [{ agentId: 'agent-3b', documentId: 'doc-by-slug' }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('emits a warning for a missing document slug and skips that grant (warn-skip, not fail)', async () => {
+    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3c' });
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3c' });
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]); // slug not present
+
+    const payload = {
+      ...minPayload,
+      schemaVersion: 3 as const,
+      data: {
+        ...minPayload.data,
+        agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentSlugs: ['gone-deadbeef'] })],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgentKnowledgeDocument.createMany).not.toHaveBeenCalled();
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/missing knowledge document slug.*gone-deadbeef/i),
+      ])
+    );
+  });
+
   it('emits a warning for missing document hashes and skips the missing doc grant', async () => {
     mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-4' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-4' });

@@ -59,7 +59,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         runtimePromptManaged: true,
         runtimePromptNote: true,
         grantedTags: { select: { tag: { select: { slug: true } } } },
-        grantedDocuments: { select: { document: { select: { fileHash: true } } } },
+        grantedDocuments: { select: { document: { select: { slug: true } } } },
       },
     }),
     prisma.aiCapability.findMany({
@@ -194,7 +194,9 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
       // that still read it. Always emit empty.
       knowledgeCategories: [] as string[],
       grantedTagSlugs: grantedTags.map((g) => g.tag.slug),
-      grantedDocumentHashes: grantedDocuments.map((g) => g.document.fileHash),
+      // v3: document grants by stable slug (#338). v2's grantedDocumentHashes is
+      // no longer emitted — the importer still reads it from older bundles.
+      grantedDocumentSlugs: grantedDocuments.map((g) => g.document.slug),
     };
   });
 
@@ -208,7 +210,7 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
   }));
 
   return {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     exportedAt: new Date().toISOString(),
     data: {
       agents: flattenedAgents,

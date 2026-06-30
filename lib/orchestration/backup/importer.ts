@@ -152,6 +152,7 @@ export async function importOrchestrationConfig(
       } else {
         const {
           grantedTagSlugs: _ignoreTagSlugs,
+          grantedDocumentSlugs: _ignoreDocSlugs,
           grantedDocumentHashes: _ignoreDocHashes,
           ...createAgent
         } = agent;
@@ -207,23 +208,44 @@ export async function importOrchestrationConfig(
         });
       }
 
-      // Document grants resolve via fileHash — content-derived, stable across envs.
-      const docHashes = agent.grantedDocumentHashes ?? [];
+      // Document grants resolve via slug (v3 — the stable cross-env key, #338).
+      // v2 backups carried `grantedDocumentHashes` instead; fall back to fileHash
+      // lookup only when no slugs are present, so older bundles still restore.
+      const docSlugs = agent.grantedDocumentSlugs ?? [];
       let resolvedDocIds: string[] = [];
-      if (docHashes.length > 0) {
+      if (docSlugs.length > 0) {
         const docs = await tx.aiKnowledgeDocument.findMany({
-          where: { fileHash: { in: docHashes } },
-          select: { id: true, fileHash: true },
+          where: { slug: { in: docSlugs } },
+          select: { id: true, slug: true },
         });
-        const presentHashes = new Set(docs.map((d) => d.fileHash));
-        for (const h of docHashes) {
-          if (!presentHashes.has(h)) {
+        const presentSlugs = new Set(docs.map((d) => d.slug));
+        for (const slug of docSlugs) {
+          if (!presentSlugs.has(slug)) {
             result.warnings.push(
-              `Agent '${agent.slug}' references missing knowledge document (fileHash ${h.slice(0, 12)}…); grant skipped`
+              `Agent '${agent.slug}' references missing knowledge document slug '${slug}'; grant skipped`
             );
           }
         }
         resolvedDocIds = docs.map((d) => d.id);
+      } else {
+        const docHashes = agent.grantedDocumentHashes ?? [];
+        if (docHashes.length > 0) {
+          const docs = await tx.aiKnowledgeDocument.findMany({
+            where: { fileHash: { in: docHashes } },
+            select: { id: true, fileHash: true },
+          });
+          const presentHashes = new Set(docs.map((d) => d.fileHash));
+          for (const h of docHashes) {
+            if (!presentHashes.has(h)) {
+              result.warnings.push(
+                `Agent '${agent.slug}' references missing knowledge document (fileHash ${h.slice(0, 12)}…); grant skipped`
+              );
+            }
+          }
+          // A single fileHash can match multiple documents (content dedup is
+          // advisory, not unique) — restrict to one grant per agent+document.
+          resolvedDocIds = [...new Set(docs.map((d) => d.id))];
+        }
       }
       await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: target.id } });
       if (resolvedDocIds.length > 0) {
