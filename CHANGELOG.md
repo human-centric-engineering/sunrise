@@ -16,6 +16,16 @@ release process.
 
 ## [Unreleased]
 
+### Changed
+
+- `executeTransaction()` (`lib/db/utils.ts`) now accepts an optional second
+  argument forwarding Prisma's interactive-transaction options
+  (`timeout`, `maxWait`, `isolationLevel`) to `prisma.$transaction`. Fully
+  backward-compatible — existing callers keep Prisma's defaults (5000 ms
+  timeout / 2000 ms maxWait). Lets forks raise the ceiling for genuinely heavy
+  callbacks (e.g. bulk imports over remote/pooled Postgres) without patching the
+  core utility. [#368]
+
 ## [0.4.0] — 2026-06-30
 
 > **Alpha release.** Fifth tagged Sunrise release. **MINOR bump** — adds new
