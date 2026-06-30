@@ -24,10 +24,11 @@
  * today's output; set `NEXT_PUBLIC_LEGAL_NAME` to attribute legal surfaces (the
  * footer copyright today, Terms/Privacy boilerplate later) to the company.
  */
+// Resolve the product name once so the `.trim()` and `'Sunrise'` default live in
+// a single place; `legalName` falls back to it rather than re-deriving it.
+const productName = process.env.NEXT_PUBLIC_APP_NAME?.trim() || 'Sunrise';
+
 export const BRAND = {
-  name: process.env.NEXT_PUBLIC_APP_NAME?.trim() || 'Sunrise',
-  legalName:
-    process.env.NEXT_PUBLIC_LEGAL_NAME?.trim() ||
-    process.env.NEXT_PUBLIC_APP_NAME?.trim() ||
-    'Sunrise',
+  name: productName,
+  legalName: process.env.NEXT_PUBLIC_LEGAL_NAME?.trim() || productName,
 } as const;
