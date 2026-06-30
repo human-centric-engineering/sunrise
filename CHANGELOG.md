@@ -16,6 +16,24 @@ release process.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-30
+
+> **Alpha release.** Fifth tagged Sunrise release. **MINOR bump** — adds new
+> public surface: the per-surface theming seam (`data-surface` + the fork-owned
+> `classifySurface` / `DEFAULT_SURFACE` policy in `lib/app/surface.ts`,
+> `<SurfaceSync>`, and the empty `app/brand-theme.css`), the agent field registry
+> (`AGENT_FIELDS` + the `AgentFieldDescriptor` type and selectors, with the
+> fork-owned `lib/app/agent-fields.ts` seam), the knowledge-document
+> cross-environment export key (`AiKnowledgeDocument.slug` + the bundle/backup
+> `knowledgeDocumentSlugs` grant round-trip), point-in-time agent versioning with
+> system-agent restore, and the legal-name brand seam (`BRAND.legalName` /
+> `NEXT_PUBLIC_LEGAL_NAME`) — plus fixes to backup import on a fresh target and the
+> email-subject branding. Ships in `0.x` per
+> [`VERSIONING.md`](./VERSIONING.md#0x-alpha-semantics--loose-by-design) — forks
+> adopting this release should expect real merge work between any two `0.x`
+> releases. Note: existing pre-`0.x` agent version rows are reinterpreted under
+> the new point-in-time model (see the Changed entry).
+
 ### Added
 
 - **Legal-name brand seam (`BRAND.legalName` / `NEXT_PUBLIC_LEGAL_NAME`).** The
