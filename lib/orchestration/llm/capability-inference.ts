@@ -21,13 +21,7 @@
  */
 
 export type Capability =
-  | 'chat'
-  | 'reasoning'
-  | 'embedding'
-  | 'image'
-  | 'audio'
-  | 'moderation'
-  | 'unknown';
+  'chat' | 'reasoning' | 'embedding' | 'image' | 'audio' | 'moderation' | 'unknown';
 
 /**
  * Infer the single coarse capability for a model id, scoped to the

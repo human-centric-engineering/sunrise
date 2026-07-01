@@ -33,8 +33,7 @@ export const MAX_PARTIAL_LENGTH = 1024;
 
 /** Reference shape per MCP spec. */
 export type McpCompletionRef =
-  | { type: 'ref/prompt'; name: string }
-  | { type: 'ref/resource'; uri: string };
+  { type: 'ref/prompt'; name: string } | { type: 'ref/resource'; uri: string };
 
 export interface McpCompletionResult {
   completion: {

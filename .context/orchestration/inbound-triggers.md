@@ -174,8 +174,7 @@ interface VerifyContext {
 }
 
 type VerifyResult =
-  | { valid: true; externalId?: string }
-  | { valid: false; reason: VerifyFailureReason };
+  { valid: true; externalId?: string } | { valid: false; reason: VerifyFailureReason };
 
 type VerifyFailureReason =
   | 'missing_signature'

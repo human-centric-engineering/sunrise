@@ -466,12 +466,8 @@ Same auth/ownership/rate-limit posture as `/status`, but returns everything the 
   "snapshot": {
     /* id, status, currentStep, errorMessage, tokens, cost, dates — same shape as /status */
   },
-  "trace": [
-    /* persisted ExecutionTraceEntry[] */
-  ],
-  "costEntries": [
-    /* per-LLM-call cost rows keyed by stepId */
-  ],
+  "trace": [/* persisted ExecutionTraceEntry[] */],
+  "costEntries": [/* per-LLM-call cost rows keyed by stepId */],
   "currentRunningSteps": [
     {
       "stepId": "analyse_chat",
@@ -586,9 +582,7 @@ Streams a single chat turn as **Server-Sent Events** (`text/event-stream`). Requ
   "agentSlug": "<slug>",
   "message": "User message text",
   "conversationId": "<cuid>", // optional — creates new conversation when absent
-  "entityContext": {
-    /* optional — record of string → unknown */
-  },
+  "entityContext": {/* optional — record of string → unknown */},
 }
 ```
 

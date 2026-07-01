@@ -903,8 +903,7 @@ export class StreamingChatHandler {
           ? (agent.metadata as Record<string, unknown>)
           : null;
       const responseFormat = agentMetadata?.responseFormat as
-        | import('@/lib/orchestration/llm/types').LlmResponseFormat
-        | undefined;
+        import('@/lib/orchestration/llm/types').LlmResponseFormat | undefined;
 
       // Remaining fallback providers for mid-stream retry
       const remainingFallbacks = [...resolvedFallbackProviders];

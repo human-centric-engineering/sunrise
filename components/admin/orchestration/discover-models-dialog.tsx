@@ -117,13 +117,7 @@ interface Candidate {
   inMatrix: boolean;
   matrixId: string | null;
   inferredCapability:
-    | 'chat'
-    | 'reasoning'
-    | 'embedding'
-    | 'image'
-    | 'audio'
-    | 'moderation'
-    | 'unknown';
+    'chat' | 'reasoning' | 'embedding' | 'image' | 'audio' | 'moderation' | 'unknown';
   suggested: SuggestedFields;
 }
 

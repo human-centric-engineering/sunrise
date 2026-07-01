@@ -91,9 +91,7 @@ Tests that exercise an API route handler end-to-end — validation → auth wrap
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
 vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));
 vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    /* model stubs */
-  },
+  prisma: {/* model stubs */},
 }));
 vi.mock('@/lib/security/rate-limit', () => ({
   adminLimiter: { check: vi.fn(() => ({ success: true })) },

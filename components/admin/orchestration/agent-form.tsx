@@ -1869,8 +1869,7 @@ export function AgentForm({
                         (fresh.knowledgeAccessMode as 'full' | 'restricted' | undefined) ?? 'full',
                       knowledgeRetrievalMode:
                         (fresh.knowledgeRetrievalMode as
-                          | AgentFormData['knowledgeRetrievalMode']
-                          | undefined) ?? 'model',
+                          AgentFormData['knowledgeRetrievalMode'] | undefined) ?? 'model',
                       knowledgeTriggerKeywords: fresh.knowledgeTriggerKeywords?.join(', ') ?? '',
                       knowledgeTagIds: fresh.grantedTagIds ?? [],
                       knowledgeDocumentIds: fresh.grantedDocumentIds ?? [],

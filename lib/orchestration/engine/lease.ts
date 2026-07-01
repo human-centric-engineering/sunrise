@@ -43,11 +43,7 @@ import { WorkflowStatus } from '@/types/orchestration';
  *                       force-fail action
  */
 export type LeaseEventName =
-  | 'claimed'
-  | 'refresh-failed'
-  | 'released'
-  | 'orphan-resume'
-  | 'force-failed';
+  'claimed' | 'refresh-failed' | 'released' | 'orphan-resume' | 'force-failed';
 
 /**
  * Reduce a full lease token to a short tail suitable for audit/inspector

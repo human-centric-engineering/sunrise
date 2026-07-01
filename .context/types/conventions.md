@@ -119,8 +119,7 @@ Use discriminated unions for type-safe response handling:
 
 ```typescript
 export type APIResponse<T> =
-  | { success: true; data: T; meta?: Record<string, unknown> }
-  | { success: false; error: APIError };
+  { success: true; data: T; meta?: Record<string, unknown> } | { success: false; error: APIError };
 
 // Usage
 async function getUser(): Promise<PublicUser> {

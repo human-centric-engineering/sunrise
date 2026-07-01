@@ -24,10 +24,7 @@ import type { WorkflowDefinition } from '@/types/orchestration';
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type SemanticErrorCode =
-  | 'UNKNOWN_MODEL_OVERRIDE'
-  | 'INACTIVE_PROVIDER'
-  | 'INACTIVE_CAPABILITY'
-  | 'INACTIVE_AGENT';
+  'UNKNOWN_MODEL_OVERRIDE' | 'INACTIVE_PROVIDER' | 'INACTIVE_CAPABILITY' | 'INACTIVE_AGENT';
 
 export interface SemanticValidationError {
   code: SemanticErrorCode;

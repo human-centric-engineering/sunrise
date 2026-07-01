@@ -478,8 +478,7 @@ describe('chatStream', () => {
 
     // Assert — done chunk has the usage from the trailing chunk
     const done = collected.find((c) => (c as { type: string }).type === 'done') as
-      | { type: 'done'; usage: { inputTokens: number; outputTokens: number } }
-      | undefined;
+      { type: 'done'; usage: { inputTokens: number; outputTokens: number } } | undefined;
     expect(done?.usage).toEqual({ inputTokens: 20, outputTokens: 10 });
   });
 

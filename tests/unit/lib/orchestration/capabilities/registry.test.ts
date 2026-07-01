@@ -348,8 +348,7 @@ describe('registerAppCapability + registerAppCapabilities', () => {
 
     // After first flush the handler is `first`.
     const handlerAfterFirst = capabilityDispatcher.getHandler(first.slug) as
-      | TaggedCapability
-      | undefined;
+      TaggedCapability | undefined;
     expect(handlerAfterFirst?.tag).toBe('first');
 
     // Act: re-register with a newer instance — must reset the appRegistered flag.
@@ -358,8 +357,7 @@ describe('registerAppCapability + registerAppCapabilities', () => {
 
     // Assert — the handler is now `second`, not `first`.
     const handlerAfterSecond = capabilityDispatcher.getHandler(second.slug) as
-      | TaggedCapability
-      | undefined;
+      TaggedCapability | undefined;
     expect(handlerAfterSecond?.tag).toBe('second');
   });
 

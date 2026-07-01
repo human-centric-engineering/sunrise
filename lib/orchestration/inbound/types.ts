@@ -34,8 +34,7 @@ export interface VerifyContext {
  * so attackers can't probe which check failed.
  */
 export type VerifyResult =
-  | { valid: true; externalId?: string }
-  | { valid: false; reason: VerifyFailureReason };
+  { valid: true; externalId?: string } | { valid: false; reason: VerifyFailureReason };
 
 export type VerifyFailureReason =
   | 'missing_signature'

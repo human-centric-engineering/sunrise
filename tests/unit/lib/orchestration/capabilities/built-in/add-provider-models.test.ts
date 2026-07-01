@@ -81,14 +81,7 @@ function makeNewModel(
     modelId: string;
     description: string;
     capabilities: (
-      | 'chat'
-      | 'reasoning'
-      | 'embedding'
-      | 'audio'
-      | 'image'
-      | 'moderation'
-      | 'vision'
-      | 'documents'
+      'chat' | 'reasoning' | 'embedding' | 'audio' | 'image' | 'moderation' | 'vision' | 'documents'
     )[];
     tierRole: TierRole;
     deploymentProfiles: DeploymentProfile[];
@@ -110,14 +103,7 @@ function makeNewModel(
     modelId: 'gpt-5' as string,
     description: 'Next-generation reasoning model from OpenAI.' as string,
     capabilities: ['chat'] as (
-      | 'chat'
-      | 'reasoning'
-      | 'embedding'
-      | 'audio'
-      | 'image'
-      | 'moderation'
-      | 'vision'
-      | 'documents'
+      'chat' | 'reasoning' | 'embedding' | 'audio' | 'image' | 'moderation' | 'vision' | 'documents'
     )[],
     tierRole: 'thinking' as TierRole,
     deploymentProfiles: ['hosted'] as DeploymentProfile[],

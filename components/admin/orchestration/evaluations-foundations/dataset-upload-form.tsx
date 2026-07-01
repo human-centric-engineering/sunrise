@@ -94,8 +94,7 @@ export function DatasetUploadForm(): React.ReactElement {
         body: formData,
       });
       const payload = (await res.json()) as
-        | { success: true; data: UploadResult }
-        | { success: false; error: { message: string } };
+        { success: true; data: UploadResult } | { success: false; error: { message: string } };
       if (!res.ok || !payload.success) {
         const msg = !payload.success ? payload.error.message : `Upload failed (${res.status})`;
         setError(msg);

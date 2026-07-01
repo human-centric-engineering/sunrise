@@ -1023,9 +1023,7 @@ describe('dispatchWebhookEvent: entity-scoped matching', () => {
       makeSub({ agentIds: ['agent-X'] }),
     ] as never);
 
-    await dispatchWebhookEvent('budget_exceeded', {
-      /* missing agentId */
-    });
+    await dispatchWebhookEvent('budget_exceeded', {/* missing agentId */});
 
     expect(prisma.aiWebhookDelivery.create).not.toHaveBeenCalled();
   });

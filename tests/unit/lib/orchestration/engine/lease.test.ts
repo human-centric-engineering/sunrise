@@ -148,8 +148,7 @@ describe('claimLease', () => {
     };
 
     const expiredArm = where.OR.find((arm) => 'leaseExpiresAt' in arm) as
-      | { leaseExpiresAt: { lt: Date } }
-      | undefined;
+      { leaseExpiresAt: { lt: Date } } | undefined;
     expect(expiredArm).toBeDefined();
     // The comparison key must be 'lt' (strict less-than), not 'lte' (less-than-or-equal).
     // If this fails after someone changes lt→lte, this test catches the regression.
