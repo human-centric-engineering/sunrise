@@ -264,6 +264,11 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 
 **Entry point:** `.context/substrate.md` — full navigation and AI usage patterns
 
+> **`.context/app/` is reserved for downstream forks** (their own app docs). Do
+> not create or add platform docs there — keeping it empty upstream is what lets a
+> fork's docs merge cleanly. Sunrise platform docs go under a named domain folder
+> (below). See [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#the-appplatform-model).
+
 | Domain                   | Path                                                      | Key Content                                                                                                                 |
 | ------------------------ | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Architecture             | `.context/architecture/`                                  | System design, deployment                                                                                                   |

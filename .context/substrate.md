@@ -39,6 +39,13 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **Commands**       | `commands.md`    | All CLI commands reference                        |
 | **Workflow**       | `workflow.md`    | Git, commits, PR process                          |
 
+> **`app/` is reserved for downstream forks.** `.context/app/` is the fork-owned
+> documentation tree — where a fork building on Sunrise keeps its own app docs,
+> mirroring this platform substrate. **Sunrise itself must not create or write to
+> `.context/app/`**: keeping it empty upstream is what lets a fork's docs there
+> merge without ever conflicting. Sunrise platform docs always go under a named
+> domain folder above. See [`CUSTOMIZATION.md`](../CUSTOMIZATION.md#the-appplatform-model).
+
 ## Task Lookup
 
 | Task                                                | Start Here                                       | Also See                                  |

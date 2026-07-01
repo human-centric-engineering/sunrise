@@ -54,6 +54,18 @@ Two principles keep an upgrade from upstream a clean merge instead of a fight:
 | Environment variables      | `lib/app/env.ts` (`appEnvSchema`) — see [§4](#4-configuration--environment--the-libapp-surface)                     |
 | App rate-limit tier / rule | `registerRateLimitTier()` / `registerRateLimitRule()` — see [§4](#4-configuration--environment--the-libapp-surface) |
 | Dependencies & scripts     | `package.json` — see [§7](#7-adding-dependencies--scripts)                                                          |
+| Your own documentation     | `.context/app/` — the fork-owned docs folder (see below)                                                            |
+
+**Where your documentation goes — the `.context/app/` convention.** Sunrise's
+platform docs live under `.context/<domain>/` (e.g. `.context/auth/`,
+`.context/orchestration/`); those are Sunrise-owned and merge from upstream, so
+don't edit them. Put **your fork's own documentation in `.context/app/`** —
+Sunrise never creates or writes to that folder, so, like your other new files,
+nothing you add there ever conflicts on an upstream merge. Treat `.context/app/`
+as the fork-owned mirror of the platform substrate: add
+`.context/app/<feature>.md` files and, if you like, a `.context/app/README.md`
+index. (This convention is used across Sunrise forks; adopting it keeps app docs
+findable in the same place in every fork.)
 
 ---
 
@@ -642,8 +654,8 @@ the database migration history — your app's migrations and Sunrise's share one
 directory.
 
 **What does _not_ conflict.** Your own new files (routes, components, `lib/`
-modules, `prisma/schema/app.prisma`) are invisible to upstream, so they never
-conflict. The `lib/app/` bootstrap files ([§4](#4-configuration--environment--the-libapp-surface))
+modules, `prisma/schema/app.prisma`, and your docs under `.context/app/`) are
+invisible to upstream, so they never conflict. The `lib/app/` bootstrap files ([§4](#4-configuration--environment--the-libapp-surface))
 are **fork-owned scaffold**: Sunrise ships them empty and doesn't re-edit them,
 so the registrations you add there merge cleanly too — no special handling. The
 files that _can_ conflict are the ones both you and upstream edit (the migration
