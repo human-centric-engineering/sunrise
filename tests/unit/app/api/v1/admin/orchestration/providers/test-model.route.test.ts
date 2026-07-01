@@ -274,8 +274,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       await POST(makePostRequest({ model: 'gpt-5' }), makeParams(PROVIDER_ID));
 
       const callOpts = mockChat.mock.calls[0]?.[1] as
-        | { maxTokens?: number; temperature?: number }
-        | undefined;
+        { maxTokens?: number; temperature?: number } | undefined;
       expect(callOpts?.maxTokens).toBe(256);
       // temperature is omitted for reasoning models (gpt-5 rejects
       // non-default temperature).
@@ -296,8 +295,7 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       await POST(makePostRequest({ model: 'gpt-4o' }), makeParams(PROVIDER_ID));
 
       const callOpts = mockChat.mock.calls[0]?.[1] as
-        | { maxTokens?: number; temperature?: number }
-        | undefined;
+        { maxTokens?: number; temperature?: number } | undefined;
       expect(callOpts?.maxTokens).toBe(10);
       expect(callOpts?.temperature).toBe(0);
     });

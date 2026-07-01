@@ -70,11 +70,7 @@ export interface SafeUrlCheckResult {
   ok: boolean;
   /** Machine-readable rejection reason. */
   reason?:
-    | 'invalid_url'
-    | 'disallowed_scheme'
-    | 'blocked_host'
-    | 'private_ip'
-    | 'loopback_not_allowed';
+    'invalid_url' | 'disallowed_scheme' | 'blocked_host' | 'private_ip' | 'loopback_not_allowed';
   /** Human-readable message for Zod error rendering. */
   message?: string;
 }

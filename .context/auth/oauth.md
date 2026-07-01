@@ -186,9 +186,7 @@ GITHUB_CLIENT_SECRET="your-github-client-secret"
 // lib/auth/config.ts
 export const auth = betterAuth({
   socialProviders: {
-    google: {
-      /* ... */
-    },
+    google: {/* ... */},
     github: {
       clientId: process.env.GITHUB_CLIENT_ID || '',
       clientSecret: process.env.GITHUB_CLIENT_SECRET || '',

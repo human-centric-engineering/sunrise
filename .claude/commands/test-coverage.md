@@ -142,17 +142,20 @@ generated: { ISO 8601 UTC timestamp }
 These files have zero test coverage — no dedicated test file and no indirect coverage.
 
 **Security-critical (fix immediately):**
-| File | Type | Module | Required Threshold |
-|------|------|--------|--------------------|
-| `lib/auth/guards.ts` | middleware | Auth | 90% |
+
+| File                 | Type       | Module | Required Threshold |
+| -------------------- | ---------- | ------ | ------------------ |
+| `lib/auth/guards.ts` | middleware | Auth   | 90%                |
 
 **Business logic (fix before next release):**
+
 | File | Type | Module | Required Threshold |
-|------|------|--------|--------------------|
+| ---- | ---- | ------ | ------------------ |
 
 **UI/Other (backlog):**
+
 | File | Type | Module | Required Threshold |
-|------|------|--------|--------------------|
+| ---- | ---- | ------ | ------------------ |
 
 ## Category B: Below Threshold ({count} files)
 

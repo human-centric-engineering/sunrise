@@ -302,8 +302,7 @@ export function RunCreateForm({
         }),
       });
       const payload = (await res.json()) as
-        | { success: true; data: { id: string } }
-        | { success: false; error: { message: string } };
+        { success: true; data: { id: string } } | { success: false; error: { message: string } };
       if (!res.ok || !payload.success) {
         setError(!payload.success ? payload.error.message : `Failed (${res.status})`);
         return;

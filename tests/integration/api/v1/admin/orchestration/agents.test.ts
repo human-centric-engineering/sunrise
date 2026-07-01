@@ -320,8 +320,7 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       await GET(makeGetRequest({}));
 
       const call = vi.mocked(prisma.aiAgent.findMany).mock.calls[0]?.[0] as
-        | { where: Record<string, unknown> }
-        | undefined;
+        { where: Record<string, unknown> } | undefined;
       expect(call).toBeDefined();
       expect(call!.where).toMatchObject({ deletedAt: null });
       expect(call!.where).not.toHaveProperty('isActive');

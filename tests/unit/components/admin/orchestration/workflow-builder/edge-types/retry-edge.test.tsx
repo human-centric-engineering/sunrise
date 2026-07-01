@@ -259,8 +259,7 @@ describe('RetryEdge', () => {
       // setEdges receives an updater. Run it on a stub edge to inspect the
       // updated controlPoint.
       const updater = setEdgesMock.mock.calls.at(-1)?.[0] as
-        | ((edges: { id: string; data?: unknown }[]) => { id: string; data?: unknown }[])
-        | undefined;
+        ((edges: { id: string; data?: unknown }[]) => { id: string; data?: unknown }[]) | undefined;
       expect(typeof updater).toBe('function');
       const result = updater!([{ id: 'edge-1', data: { maxRetries: 2 } }]);
       const updatedData = result[0].data as { controlPoint: { x: number; y: number } };

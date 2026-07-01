@@ -347,8 +347,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/dry-run', () => {
       // definition (entryStepId='step-1' from makeValidDefinition), not the
       // published one (entryStepId='step-2' from ALT_DEF).
       const arg = vi.mocked(semanticValidateWorkflow).mock.calls[0]?.[0] as
-        | { entryStepId?: string }
-        | undefined;
+        { entryStepId?: string } | undefined;
       expect(arg?.entryStepId).toBe('step-1');
     });
 
@@ -381,8 +380,7 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/dry-run', () => {
 
       expect(response.status).toBe(200);
       const arg = vi.mocked(semanticValidateWorkflow).mock.calls[0]?.[0] as
-        | { entryStepId?: string }
-        | undefined;
+        { entryStepId?: string } | undefined;
       expect(arg?.entryStepId).toBe('step-2');
     });
 

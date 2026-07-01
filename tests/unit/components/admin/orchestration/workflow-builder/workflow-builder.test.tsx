@@ -1392,8 +1392,7 @@ describe('WorkflowBuilder', () => {
 
       await waitFor(() => expect(apiClient.post).toHaveBeenCalledOnce());
       const options = vi.mocked(apiClient.post).mock.calls[0]?.[1] as
-        | { body?: { changeSummary?: string } }
-        | undefined;
+        { body?: { changeSummary?: string } } | undefined;
       expect(options?.body?.changeSummary).toBe('Tweaked the prompt');
     });
 
@@ -1953,8 +1952,7 @@ describe('WorkflowBuilder', () => {
       selectNode();
       // Re-render so BlockConfigPanel mounts with onLabelChange.
       const onLabelChange = lastBlockConfigPanelProps.onLabelChange as
-        | ((id: string, label: string) => void)
-        | undefined;
+        ((id: string, label: string) => void) | undefined;
       expect(typeof onLabelChange).toBe('function');
       expect(() => onLabelChange?.('step-1', 'Renamed')).not.toThrow();
     });
@@ -1963,8 +1961,7 @@ describe('WorkflowBuilder', () => {
       render(<WorkflowBuilder mode="edit" workflow={makeWorkflow()} />);
       selectNode();
       const onConfigChange = lastBlockConfigPanelProps.onConfigChange as
-        | ((id: string, partial: Record<string, unknown>) => void)
-        | undefined;
+        ((id: string, partial: Record<string, unknown>) => void) | undefined;
       expect(() => onConfigChange?.('step-1', { prompt: 'updated' })).not.toThrow();
     });
 

@@ -481,8 +481,7 @@ describe('StreamingChatHandler', () => {
     // The locked context block was included in the messages passed to chatStream
     const allChatStreamCalls = provider.chatStream.mock.calls as unknown as unknown[][];
     const chatStreamMessages = allChatStreamCalls[0]?.[0] as
-      | Array<{ role: string; content: string }>
-      | undefined;
+      Array<{ role: string; content: string }> | undefined;
     expect(chatStreamMessages).toBeDefined();
     const hasLockedCtx = (chatStreamMessages ?? []).some(
       (m) => m.role === 'system' && m.content.includes('LOCKED CONTEXT')
@@ -3223,8 +3222,7 @@ describe('input guard global settings fallback (block)', () => {
 
     // Assert: input_blocked error is emitted
     const errorEvt = events.find((e) => (e as { type: string }).type === 'error') as
-      | { type: 'error'; code: string }
-      | undefined;
+      { type: 'error'; code: string } | undefined;
     expect(errorEvt).toBeDefined();
     expect(errorEvt?.code).toBe('input_blocked');
 
@@ -3515,8 +3513,7 @@ describe('mid-loop budget re-check with limit:null', () => {
 
     // Assert: budget_exceeded error event emitted after the tool call
     const errorEvt = events.find((e) => (e as { type: string }).type === 'error') as
-      | { type: 'error'; code: string; message: string }
-      | undefined;
+      { type: 'error'; code: string; message: string } | undefined;
     expect(errorEvt).toBeDefined();
     expect(errorEvt?.code).toBe('budget_exceeded');
     // When limit is null, the message should use "its" rather than "$X.XX"
@@ -3932,8 +3929,7 @@ describe('evaluation log mirroring', () => {
     // The turn-3 skipped result must carry the tool_unavailable code.
     const turn3Skip = skippedResultRows[skippedResultRows.length - 1];
     const out = turn3Skip.data.outputData as
-      | { success: boolean; error?: { code: string } }
-      | undefined;
+      { success: boolean; error?: { code: string } } | undefined;
     expect(out?.success).toBe(false);
     expect(out?.error?.code).toBe('tool_unavailable');
   });

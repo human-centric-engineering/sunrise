@@ -56,8 +56,7 @@ export function signHookPayload(
 }
 
 export type VerifyResult =
-  | { valid: true }
-  | { valid: false; reason: 'bad_format' | 'stale_timestamp' | 'bad_signature' };
+  { valid: true } | { valid: false; reason: 'bad_format' | 'stale_timestamp' | 'bad_signature' };
 
 /**
  * Verify a webhook signature. Constant-time comparison; returns a

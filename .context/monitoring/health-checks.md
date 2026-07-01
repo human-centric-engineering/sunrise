@@ -281,9 +281,7 @@ export async function GET() {
   const response: HealthCheckResponse = {
     // ...
     services: {
-      database: {
-        /* ... */
-      },
+      database: {/* ... */},
       redis: redisHealth, // New
     },
   };

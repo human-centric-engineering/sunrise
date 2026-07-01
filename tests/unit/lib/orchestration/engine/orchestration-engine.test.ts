@@ -614,8 +614,7 @@ describe('OrchestrationEngine', () => {
 
     const events = await collect(new OrchestrationEngine(), makeWorkflow(def));
     const completed = events.find((e) => e.type === 'step_completed') as
-      | { tokensUsed: number; costUsd: number }
-      | undefined;
+      { tokensUsed: number; costUsd: number } | undefined;
 
     // Successful attempt yielded 10 tokens / $0.001; failed attempt added
     // 50 tokens / $0.005. The header should now sum to the full billed total.

@@ -181,37 +181,31 @@ async function getActivityFeed(
       : [];
 
     const items: ActivityFeedItem[] = [
-      ...conversations.map(
-        (c): ActivityFeedItem => ({
-          kind: 'conversation',
-          id: c.id,
-          title: c.title ?? 'Untitled conversation',
-          timestamp: (c.updatedAt ?? c.createdAt).toString(),
-          href: `/admin/orchestration/conversations/${c.id}`,
-        })
-      ),
-      ...executions.map(
-        (e): ActivityFeedItem => ({
-          kind: 'execution',
-          id: e.id,
-          title: `Execution ${e.id.slice(0, 8)}`,
-          subtitle: e.status,
-          timestamp: (
-            (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
-          ).toString(),
-          href: `/admin/orchestration/executions/${e.id}`,
-        })
-      ),
-      ...(recentErrors ?? []).map(
-        (err): ActivityFeedItem => ({
-          kind: 'error',
-          id: err.id,
-          title: `Error ${err.id.slice(0, 8)}`,
-          subtitle: err.errorMessage ?? 'Unknown error',
-          timestamp: err.createdAt,
-          href: `/admin/orchestration/executions/${err.id}`,
-        })
-      ),
+      ...conversations.map((c): ActivityFeedItem => ({
+        kind: 'conversation',
+        id: c.id,
+        title: c.title ?? 'Untitled conversation',
+        timestamp: (c.updatedAt ?? c.createdAt).toString(),
+        href: `/admin/orchestration/conversations/${c.id}`,
+      })),
+      ...executions.map((e): ActivityFeedItem => ({
+        kind: 'execution',
+        id: e.id,
+        title: `Execution ${e.id.slice(0, 8)}`,
+        subtitle: e.status,
+        timestamp: (
+          (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
+        ).toString(),
+        href: `/admin/orchestration/executions/${e.id}`,
+      })),
+      ...(recentErrors ?? []).map((err): ActivityFeedItem => ({
+        kind: 'error',
+        id: err.id,
+        title: `Error ${err.id.slice(0, 8)}`,
+        subtitle: err.errorMessage ?? 'Unknown error',
+        timestamp: err.createdAt,
+        href: `/admin/orchestration/executions/${err.id}`,
+      })),
     ];
 
     // Deduplicate: an execution error may appear in both executions and

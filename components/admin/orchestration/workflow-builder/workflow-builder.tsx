@@ -782,8 +782,7 @@ function WorkflowBuilderInner({
           isTemplate={workflow.isTemplate}
           metadata={
             (templateMetadataSchema.safeParse(workflow.metadata).data as
-              | WorkflowTemplateMetadata
-              | undefined) ?? null
+              WorkflowTemplateMetadata | undefined) ?? null
           }
           workflowDefinition={
             workflowDefinitionSchema.safeParse(pickEditableDefinition(workflow)).data ?? null

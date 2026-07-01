@@ -288,9 +288,7 @@ Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snap
 {
   "success": true,
   "data": {
-    "agent": {
-      /* updated agent */
-    },
+    "agent": {/* updated agent */},
     "restoredFromVersion": 3,
     "newVersion": 6,
   },

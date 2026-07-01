@@ -226,9 +226,7 @@ describe('computeTraceAggregates', () => {
   it('sums optional input/output/llmDuration only from entries that report them', () => {
     const trace = [
       entry({ inputTokens: 10, outputTokens: 20, llmDurationMs: 30 }),
-      entry({
-        /* no LLM fields */
-      }),
+      entry({/* no LLM fields */}),
       entry({ inputTokens: 5, outputTokens: 7, llmDurationMs: 12 }),
     ];
     const result = computeTraceAggregates(trace);

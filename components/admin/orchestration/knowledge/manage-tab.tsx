@@ -141,12 +141,7 @@ interface ManageTabProps {
 
 const STATUS_FILTER_ALL = '__all__';
 type StatusFilter =
-  | typeof STATUS_FILTER_ALL
-  | 'pending'
-  | 'processing'
-  | 'ready'
-  | 'failed'
-  | 'pending_review';
+  typeof STATUS_FILTER_ALL | 'pending' | 'processing' | 'ready' | 'failed' | 'pending_review';
 const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: STATUS_FILTER_ALL, label: 'All statuses' },
   { value: 'ready', label: 'Ready' },

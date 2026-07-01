@@ -126,8 +126,7 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
           cache: 'no-store',
         });
         const detailPayload = (await detailRes.json()) as
-          | { success: true; data: RunDetail }
-          | { success: false; error: { message: string } };
+          { success: true; data: RunDetail } | { success: false; error: { message: string } };
         if (!detailRes.ok || !detailPayload.success) {
           setLoadError(
             !detailPayload.success ? detailPayload.error.message : `HTTP ${detailRes.status}`

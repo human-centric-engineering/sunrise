@@ -275,9 +275,11 @@ const CORE_RELATION_FIELDS: readonly AgentFieldDescriptor[] = [
 
 /** The platform's agent field descriptors. Forks extend via `appAgentFields`. */
 export const CORE_AGENT_FIELDS: readonly AgentFieldDescriptor[] = [
-  ...Object.entries(CORE_SCALAR_FIELDS).map(
-    ([name, spec]): AgentFieldDescriptor => ({ name, kind: 'scalar', ...spec })
-  ),
+  ...Object.entries(CORE_SCALAR_FIELDS).map(([name, spec]): AgentFieldDescriptor => ({
+    name,
+    kind: 'scalar',
+    ...spec,
+  })),
   ...CORE_RELATION_FIELDS,
 ];
 

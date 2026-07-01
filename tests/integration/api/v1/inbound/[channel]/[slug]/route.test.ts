@@ -1480,8 +1480,7 @@ describe('Twilio channel + conversation enrichment', () => {
     // conversationId was threaded into the execution's triggerMeta.
     const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
     const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
-      | { inputData?: { triggerMeta?: { conversationId?: string } } }
-      | undefined;
+      { inputData?: { triggerMeta?: { conversationId?: string } } } | undefined;
     expect(lastCall?.inputData?.triggerMeta?.conversationId).toBe('conv-new-1');
   });
 
@@ -1545,8 +1544,7 @@ describe('Twilio channel + conversation enrichment', () => {
     );
     const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
     const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
-      | { inputData?: { triggerMeta?: { optOutStateChanged?: boolean } } }
-      | undefined;
+      { inputData?: { triggerMeta?: { optOutStateChanged?: boolean } } } | undefined;
     expect(lastCall?.inputData?.triggerMeta?.optOutStateChanged).toBe(true);
   });
 
@@ -1586,8 +1584,7 @@ describe('Twilio channel + conversation enrichment', () => {
     expect(response.status).toBe(202);
     const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
     const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
-      | { inputData?: { triggerMeta?: { conversationId?: string } } }
-      | undefined;
+      { inputData?: { triggerMeta?: { conversationId?: string } } } | undefined;
     // No conversationId since the resolver crashed.
     expect(lastCall?.inputData?.triggerMeta?.conversationId).toBeUndefined();
   });
