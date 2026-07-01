@@ -48,7 +48,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                     |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                             |
 | `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                     |
-| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext? }`                                          |
+| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext?, scope? }`                                  |
 | `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                   |
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                  |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                 |
@@ -72,6 +72,10 @@ export function initAppCapabilities(): void {
 `registerBuiltInCapabilities()` (already on the lazy path the chat handler and agent-call executor hit) runs `initAppCapabilities()` once in the **server route-handler runtime**, then flushes — so your capability is in the dispatcher before any agent resolves its tools. Registration is idempotent by slug. `lib/app/capabilities.ts` is one of the `lib/app/` auto-wired bootstrap files; see [Building on Sunrise → §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface) for the full set and the per-runtime rationale.
 
 Like every built-in, an app capability still needs an active `AiCapability` row (and a per-agent `AiAgentCapability` binding) before an LLM will _see_ it — `getCapabilityDefinitions` cross-checks the DB against the in-memory dispatcher.
+
+### Dispatch scope carrier (`CapabilityContext.scope`)
+
+`CapabilityContext.scope?: Record<string, string>` is a free-form, optional string map the dispatcher's caller can populate. It is **generic by design** — core names no keys and no built-in capability reads it; the dispatcher passes it verbatim into `execute()`. A fork uses it to let a capability refuse to run outside its intended scope (e.g. a `module` slug). In vanilla Sunrise the chat handler threads it from `ChatRequest.scope` into the dispatch context, so it stays `undefined` and inert unless a caller sets it.
 
 ## Outbound HTTP: `call_external_api`
 

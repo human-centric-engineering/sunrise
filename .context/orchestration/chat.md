@@ -45,18 +45,19 @@ for await (const event of streamChat({
 
 Everything is exported from `@/lib/orchestration/chat`:
 
-| Export                 | Kind     | Purpose                                                                                                                                                                   |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `streamChat`           | function | Convenience wrapper around `StreamingChatHandler.run`                                                                                                                     |
-| `StreamingChatHandler` | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations                                                                                               |
-| `ChatError`            | class    | Narrow error type with `code` + `message`, caught by the outer try                                                                                                        |
-| `ChatRequest`          | type     | Input shape (see below)                                                                                                                                                   |
-| `ChatStream`           | type     | Alias for `AsyncIterable<ChatEvent>`                                                                                                                                      |
-| `MAX_TOOL_ITERATIONS`  | const    | Tool loop cap (currently `5`)                                                                                                                                             |
-| `MAX_HISTORY_MESSAGES` | const    | Platform default for the message-count history cap (currently `50`). Per-agent overridable via `AiAgent.maxHistoryMessages` — `null` ⇒ use this default, `0` ⇒ stateless. |
-| `buildContext`         | function | Loads and frames entity context with a 60 s TTL cache                                                                                                                     |
-| `invalidateContext`    | function | Drop a single cache entry after a mutating capability                                                                                                                     |
-| `clearContextCache`    | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
+| Export                       | Kind     | Purpose                                                                                                                                                                   |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `streamChat`                 | function | Convenience wrapper around `StreamingChatHandler.run`                                                                                                                     |
+| `StreamingChatHandler`       | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations                                                                                               |
+| `ChatError`                  | class    | Narrow error type with `code` + `message`, caught by the outer try                                                                                                        |
+| `ChatRequest`                | type     | Input shape (see below)                                                                                                                                                   |
+| `ChatStream`                 | type     | Alias for `AsyncIterable<ChatEvent>`                                                                                                                                      |
+| `MAX_TOOL_ITERATIONS`        | const    | Tool loop cap (currently `5`)                                                                                                                                             |
+| `MAX_HISTORY_MESSAGES`       | const    | Platform default for the message-count history cap (currently `50`). Per-agent overridable via `AiAgent.maxHistoryMessages` — `null` ⇒ use this default, `0` ⇒ stateless. |
+| `buildContext`               | function | Loads and frames entity context with a 60 s TTL cache                                                                                                                     |
+| `invalidateContext`          | function | Drop a single cache entry after a mutating capability                                                                                                                     |
+| `clearContextCache`          | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
+| `registerContextContributor` | function | Register a fork-owned prompt-context loader for a new `contextType` (see Context Builder)                                                                                 |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -71,6 +72,7 @@ interface ChatRequest {
   contextType?: string;
   contextId?: string;
   entityContext?: Record<string, unknown>;
+  scope?: Record<string, string>;
   attachments?: { name: string; mimeType: string; data: string }[];
   requestId?: string;
   signal?: AbortSignal;
@@ -81,6 +83,7 @@ interface ChatRequest {
 - Omit `conversationId` to create a new `AiConversation` — `contextType` and `contextId` are persisted on the row at creation time only.
 - Supply `conversationId` to continue an existing conversation. Mismatched `userId` / `agentId` → `conversation_not_found`.
 - `entityContext` is opaque to the handler — it's passed straight through to `CapabilityContext.entityContext` so capabilities can read it.
+- `scope` is opaque to the handler — it's threaded straight through to `CapabilityContext.scope` (a generic carrier; core reads no keys). Absent and inert in vanilla Sunrise.
 - `requestId` is a correlation ID for structured log tracing. When provided, the handler creates a scoped logger via `logger.withContext({ requestId })` so all log entries from the chat turn are traceable. The chat stream route extracts this from the `x-request-id` header automatically.
 - `signal` is forwarded into every `provider.chatStream` call.
 - `includeTrace` is the admin-only opt-in for inline tool-call diagnostics. See [Inline trace annotations](#inline-trace-annotations-admin-only) below.
@@ -412,7 +415,20 @@ Reasoning plus acting is a reflex loop.
 === END LOCKED CONTEXT ===
 ```
 
-**Supported types:** only `pattern` in Phase 2c (delegates to `getPatternDetail`). Other types log a warn and return a benign "no loader" placeholder so the model doesn't hallucinate. Adding types is a ~10-line change — add a `case` in the switch.
+**Supported types:** only `pattern` is a built-in (delegates to `getPatternDetail`). Types with neither a built-in case nor a registered contributor (below) log a warn and return a benign "no loader" placeholder so the model doesn't hallucinate. Adding a built-in type is a ~10-line change — add a `case` in the switch.
+
+**App-contributed context types (forks):** `registerContextContributor(type, loader)` teaches `buildContext` about additional types without editing the core switch. On a cache miss with no matching built-in case, the loader registered for that `type` is invoked; its returned body is framed and cached identically to a built-in. A built-in case always takes precedence over a same-type contributor. Put registrations in the auto-wired fork-owned scaffold **`lib/app/context-contributors.ts`** → `initAppContextContributors()`, which `buildContext` runs once before its first lookup (mirrors `lib/app/capabilities.ts` → `initAppCapabilities`):
+
+```typescript
+// lib/app/context-contributors.ts — called once by buildContext() before the first lookup
+import { registerContextContributor } from '@/lib/orchestration/chat';
+
+export function initAppContextContributors(): void {
+  registerContextContributor('invoice', async (id) => await loadInvoiceSummary(id));
+}
+```
+
+Registration is idempotent by type: re-registering a type replaces its loader. Ships empty upstream so a fork's edits merge cleanly.
 
 **Cache:** plain `Map<string, { value, expiresAt }>` with a 60 s TTL per `(type, id)` pair. Matches the dispatcher's pattern — no shared TTL utility is introduced.
 

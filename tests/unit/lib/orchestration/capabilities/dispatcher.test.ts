@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { z } from 'zod';
+import type { CapabilityContext } from '@/lib/orchestration/capabilities/types';
 
 // ---------------------------------------------------------------------------
 // Module mocks — must be hoisted before any dynamic imports
@@ -68,6 +69,28 @@ class OkCapability extends BaseCapability<{ n: number }, { doubled: number }> {
 
   async execute(args: { n: number }) {
     return this.success({ doubled: args.n * 2 });
+  }
+}
+
+/**
+ * Captures the `CapabilityContext` it receives so a test can assert that the
+ * dispatcher passes the caller's context (including the free-form `scope`
+ * carrier) through to `execute()` verbatim.
+ */
+class ContextCapturingCapability extends BaseCapability<unknown, { ok: true }> {
+  readonly slug = 'capture-context';
+  readonly functionDefinition = {
+    name: 'capture-context',
+    description: '',
+    parameters: {},
+  };
+  protected readonly schema = z.unknown();
+
+  received: CapabilityContext | null = null;
+
+  async execute(_args: unknown, context: CapabilityContext) {
+    this.received = context;
+    return this.success({ ok: true as const });
   }
 }
 
@@ -212,6 +235,31 @@ describe('CapabilityDispatcher', () => {
         success: false,
         error: expect.objectContaining({ code: 'capability_inactive' }),
       });
+    });
+  });
+
+  describe('context pass-through', () => {
+    it('threads the caller scope map through to execute() verbatim', async () => {
+      const capability = new ContextCapturingCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'capture-context' })]);
+
+      const scopedCtx = { ...ctx, scope: { module: 'billing' } };
+      const result = await capabilityDispatcher.dispatch('capture-context', {}, scopedCtx);
+
+      expect(result.success).toBe(true);
+      expect(capability.received?.scope).toEqual({ module: 'billing' });
+    });
+
+    it('leaves scope undefined when the caller omits it', async () => {
+      const capability = new ContextCapturingCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'capture-context' })]);
+
+      const result = await capabilityDispatcher.dispatch('capture-context', {}, ctx);
+
+      expect(result.success).toBe(true);
+      expect(capability.received?.scope).toBeUndefined();
     });
   });
 

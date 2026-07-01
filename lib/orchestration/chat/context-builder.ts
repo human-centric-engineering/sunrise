@@ -8,14 +8,19 @@
  * the streaming handler calls `invalidateContext` after any capability
  * execution that could have mutated the underlying entity.
  *
- * Phase 2c supports only `contextType = "pattern"` because that's the
- * only entity we have a clean loader for (`getPatternDetail`). Unknown
- * types log a warn and return a benign placeholder so the LLM sees
+ * Core supports only `contextType = "pattern"` as a built-in because
+ * that's the only entity we have a clean loader for (`getPatternDetail`).
+ * A fork can teach `buildContext` about additional types by registering
+ * a loader via `registerContextContributor(type, loader)` — the fork-owned
+ * `lib/app/context-contributors.ts` scaffold is auto-wired once before the
+ * first lookup. Types with neither a built-in case nor a registered
+ * contributor log a warn and return a benign placeholder so the LLM sees
  * "no context" rather than hallucinating.
  */
 
 import { logger } from '@/lib/logging';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
+import { initAppContextContributors } from '@/lib/app/context-contributors';
 
 const CONTEXT_CACHE_TTL_MS = 60 * 1000;
 const CONTEXT_CACHE_MAX_SIZE = 500;
@@ -32,6 +37,56 @@ function cacheKey(type: string, id: string): string {
 }
 
 /**
+ * A prompt-context loader keyed by `contextType`. Returns the raw body
+ * string to be framed as `LOCKED CONTEXT`; `buildContext` handles caching
+ * and framing. Registered via `registerContextContributor`.
+ */
+type ContextContributor = (id: string) => Promise<string>;
+
+const contributors = new Map<string, ContextContributor>();
+
+/** Whether the auto-wired app contributor init (`lib/app/context-contributors.ts`) has run. */
+let appInited = false;
+
+/**
+ * Register a prompt-context loader for a given `contextType`. Lets a fork
+ * inject its own `LOCKED CONTEXT` block per turn without editing the core
+ * `buildContext` switch. Idempotent by type: re-registering the same type
+ * replaces the prior loader (mirrors the capability registry's per-slug
+ * `register`). A built-in case (e.g. `"pattern"`) always takes precedence.
+ *
+ * This is the seam that lets a fork add context types without patching
+ * core. Call it at module-import time (e.g. from
+ * `lib/app/context-contributors.ts`), before the first dispatch.
+ *
+ * @see .context/orchestration/chat.md — the app-author guide
+ */
+export function registerContextContributor(type: string, loader: ContextContributor): void {
+  contributors.set(type, loader);
+}
+
+/**
+ * Run the fork's auto-wired contributor init exactly once, lazily, before
+ * the first lookup. Mirrors how `registerBuiltInCapabilities` invokes
+ * `initAppCapabilities()` — the fork accumulates registrations at import
+ * time without a separate startup step.
+ */
+function ensureAppContributorsInited(): void {
+  if (appInited) return;
+  appInited = true;
+  initAppContextContributors();
+}
+
+/**
+ * Test-only: drop all registered contributors and re-arm the one-shot app
+ * init so each test starts from a known state. Not exported from the barrel.
+ */
+export function __resetContextContributorsForTests(): void {
+  contributors.clear();
+  appInited = false;
+}
+
+/**
  * Load and frame context for the given entity, returning a string that
  * can be appended to the system prompt. Cached for 60 s per `(type, id)`.
  */
@@ -41,6 +96,8 @@ export async function buildContext(type: string, id: string): Promise<string> {
   if (hit && hit.expiresAt > Date.now()) {
     return hit.value;
   }
+
+  ensureAppContributorsInited();
 
   let body: string;
   switch (type) {
@@ -62,8 +119,16 @@ export async function buildContext(type: string, id: string): Promise<string> {
       break;
     }
     default: {
-      logger.warn('buildContext: unknown contextType', { type, id });
-      body = `No context loader for type '${type}'.`;
+      // No built-in case — fall back to a fork-registered contributor for
+      // this type before giving up. Keeps core domain-agnostic while
+      // letting a fork add context types without editing this switch.
+      const contributor = contributors.get(type);
+      if (contributor) {
+        body = await contributor(id);
+      } else {
+        logger.warn('buildContext: unknown contextType', { type, id });
+        body = `No context loader for type '${type}'.`;
+      }
     }
   }
 

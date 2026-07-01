@@ -17,4 +17,5 @@ export {
   buildContext,
   invalidateContext,
   clearContextCache,
+  registerContextContributor,
 } from '@/lib/orchestration/chat/context-builder';

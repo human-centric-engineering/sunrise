@@ -16,6 +16,23 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`CapabilityContext.scope?: Record<string, string>`** — an optional, free-form
+  scope map the dispatcher's caller can populate; the dispatcher threads it
+  verbatim into `execute()`. Generic by design: core names no keys and no
+  built-in capability reads it. The chat handler threads it from a new
+  `ChatRequest.scope`. Lets a downstream consumer make a capability refuse to run
+  outside its intended scope. Inert (`undefined`) when unused. (#372)
+- **`registerContextContributor(type, loader)`** (exported from
+  `@/lib/orchestration/chat`) — registers a prompt-context loader for a new
+  `buildContext` `contextType`, so a fork can inject its own `LOCKED CONTEXT`
+  block per turn without editing the core switch. Built-in cases take precedence;
+  the 60 s per-`(type, id)` cache and invalidation behaviour are preserved.
+  Auto-wired once via the new fork-owned empty scaffold
+  `lib/app/context-contributors.ts` → `initAppContextContributors()` (mirrors
+  `lib/app/capabilities.ts`). (#372)
+
 ## [0.4.1] — 2026-07-01
 
 > **Alpha release.** Sixth tagged Sunrise release. **PATCH bump** — no change to

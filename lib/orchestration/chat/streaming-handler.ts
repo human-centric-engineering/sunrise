@@ -1606,6 +1606,7 @@ export class StreamingChatHandler {
           agentId: agent.id,
           conversationId: conversation.id,
           ...(request.entityContext ? { entityContext: request.entityContext } : {}),
+          ...(request.scope ? { scope: request.scope } : {}),
         };
 
         if (toolCallArray.length === 1) {

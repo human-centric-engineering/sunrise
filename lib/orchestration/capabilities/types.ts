@@ -41,6 +41,15 @@ export interface CapabilityContext {
    * it.
    */
   entityContext?: Record<string, unknown>;
+  /**
+   * Optional free-form scope map populated by the dispatcher's caller.
+   * Generic by design — core names no keys and no core capability reads
+   * it; it is purely a carrier threaded through to `execute()`.
+   * Downstream consumers read well-known keys (e.g. a module slug) so a
+   * capability can refuse to run outside its intended scope. Vanilla
+   * behaviour is unchanged when `scope` is undefined.
+   */
+  scope?: Record<string, string>;
 }
 
 /**

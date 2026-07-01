@@ -2,7 +2,8 @@
  * Tests: lib/app/ bootstrap files ship as no-op defaults
  *
  * The auto-wired bootstrap hooks (`lib/app/rate-limit.ts`, `lib/app/capabilities.ts`,
- * `lib/app/admin-nav.ts`) must register NOTHING out of the box — the template
+ * `lib/app/context-contributors.ts`, `lib/app/admin-nav.ts`) must register NOTHING
+ * out of the box — the template
  * ships them empty and forks fill them in. The wiring tests
  * (`bootstrap-wiring.test.ts`, `admin-nav-wiring.test.tsx`) replace these hooks
  * with registering versions; this file exercises the REAL defaults to lock in
@@ -15,6 +16,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
 import { initAppCapabilities } from '@/lib/app/capabilities';
+import { initAppContextContributors } from '@/lib/app/context-contributors';
 import { initAppNav } from '@/lib/app/admin-nav';
 import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
 import { emailOverrides } from '@/lib/app/emails';
@@ -39,6 +41,13 @@ describe('lib/app/ bootstrap defaults are no-ops', () => {
     // registerAppCapability() calls. (Behavioural reach into the dispatcher is
     // covered by bootstrap-wiring.test.ts.)
     expect(initAppCapabilities()).toBeUndefined();
+  });
+
+  it('initAppContextContributors is a no-op by default', () => {
+    // The real default registers no prompt-context loaders and returns void;
+    // forks add registerContextContributor() calls. (Behavioural reach into
+    // buildContext is covered by context-builder.test.ts.)
+    expect(initAppContextContributors()).toBeUndefined();
   });
 
   it('initAppNav registers no admin nav sections by default', () => {

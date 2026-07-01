@@ -12,13 +12,24 @@ vi.mock('@/lib/orchestration/knowledge/search', () => ({
   getPatternDetail: vi.fn(),
 }));
 
+vi.mock('@/lib/app/context-contributors', () => ({
+  initAppContextContributors: vi.fn(),
+}));
+
 const { getPatternDetail } = await import('@/lib/orchestration/knowledge/search');
 const { logger } = await import('@/lib/logging');
-const { buildContext, invalidateContext, clearContextCache } =
-  await import('@/lib/orchestration/chat/context-builder');
+const { initAppContextContributors } = await import('@/lib/app/context-contributors');
+const {
+  buildContext,
+  invalidateContext,
+  clearContextCache,
+  registerContextContributor,
+  __resetContextContributorsForTests,
+} = await import('@/lib/orchestration/chat/context-builder');
 
 const getPatternDetailMock = getPatternDetail as ReturnType<typeof vi.fn>;
 const loggerWarn = logger.warn as ReturnType<typeof vi.fn>;
+const initAppContextContributorsMock = initAppContextContributors as ReturnType<typeof vi.fn>;
 
 function patternFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -43,6 +54,7 @@ function patternFixture(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   clearContextCache();
+  __resetContextContributorsForTests();
 });
 
 afterEach(() => {
@@ -159,5 +171,63 @@ describe('buildContext', () => {
     // Entry 0 was evicted — refetch needed
     await buildContext('pattern', '0');
     expect(getPatternDetailMock).toHaveBeenCalledTimes(502);
+  });
+});
+
+describe('registerContextContributor', () => {
+  it('invokes a registered contributor for its type and frames the body', async () => {
+    registerContextContributor('invoice', async (id) => `Invoice ${id} total: $42`);
+
+    const result = await buildContext('invoice', 'INV-7');
+
+    expect(result).toContain('=== LOCKED CONTEXT ===');
+    expect(result).toContain('type: invoice');
+    expect(result).toContain('id: INV-7');
+    expect(result).toContain('Invoice INV-7 total: $42');
+    // A handled type must not fall through to the warn+placeholder path.
+    expect(loggerWarn).not.toHaveBeenCalled();
+    expect(getPatternDetailMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the benign placeholder for a type with no built-in and no contributor', async () => {
+    registerContextContributor('invoice', async () => 'unused');
+
+    const result = await buildContext('shipment', 'S-1');
+
+    expect(result).toContain("No context loader for type 'shipment'");
+    expect(loggerWarn).toHaveBeenCalledWith(
+      'buildContext: unknown contextType',
+      expect.objectContaining({ type: 'shipment' })
+    );
+  });
+
+  it('lets a built-in case take precedence over a same-type contributor', async () => {
+    getPatternDetailMock.mockResolvedValueOnce(patternFixture());
+    const contributor = vi.fn(async () => 'should not run');
+    registerContextContributor('pattern', contributor);
+
+    const result = await buildContext('pattern', '1');
+
+    expect(result).toContain('Pattern #1: ReAct');
+    expect(contributor).not.toHaveBeenCalled();
+  });
+
+  it('re-registering a type replaces the prior loader', async () => {
+    registerContextContributor('invoice', async () => 'first');
+    registerContextContributor('invoice', async () => 'second');
+
+    const result = await buildContext('invoice', 'X');
+
+    expect(result).toContain('second');
+    expect(result).not.toContain('first');
+  });
+
+  it('auto-wires the fork init exactly once across lookups', async () => {
+    registerContextContributor('invoice', async () => 'body');
+
+    await buildContext('invoice', 'A');
+    await buildContext('invoice', 'B');
+
+    expect(initAppContextContributorsMock).toHaveBeenCalledTimes(1);
   });
 });
