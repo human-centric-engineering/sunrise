@@ -16,6 +16,14 @@ release process.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-01
+
+> **Alpha release.** Sixth tagged Sunrise release. **PATCH bump** — no change to
+> the covered public surface (see [`VERSIONING.md`](./VERSIONING.md#covered)):
+> one backward-compatible enhancement to an uncovered `lib/db/` helper plus
+> routine dependency and CI maintenance. Cut as a clean forking point. Ships in
+> `0.x` per [`VERSIONING.md`](./VERSIONING.md#0x-alpha-semantics--loose-by-design).
+
 ### Changed
 
 - `executeTransaction()` (`lib/db/utils.ts`) now accepts an optional second
