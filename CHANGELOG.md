@@ -16,6 +16,25 @@ release process.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-01
+
+> **Alpha release.** Seventh tagged Sunrise release. **MINOR bump** — adds new
+> public surface: two generic core seams a downstream framework layer needs, both
+> inert in vanilla Sunrise. The per-dispatch **scope carrier**
+> (`CapabilityContext.scope`, threaded verbatim from a new `ChatRequest.scope`;
+> core names no keys and no built-in capability reads it) lets a consumer make a
+> capability refuse to run outside its intended scope. The **context-contributor
+> registry** (`registerContextContributor()` + the fork-owned empty scaffold
+> `lib/app/context-contributors.ts` → `initAppContextContributors()`, a new named
+> seam in [`VERSIONING.md`](./VERSIONING.md#covered)) lets a fork inject its own
+> `LOCKED CONTEXT` block per turn without editing the core `buildContext` switch —
+> with fork loader and one-time-init errors caught so they never fail a chat turn.
+> Both were added so a fork can attach per-dispatch scope and pluggable
+> prompt-context loaders without patching platform code. Ships in `0.x` per
+> [`VERSIONING.md`](./VERSIONING.md#0x-alpha-semantics--loose-by-design) — forks
+> adopting this release should expect real merge work between any two `0.x`
+> releases.
+
 ### Added
 
 - **`CapabilityContext.scope?: Record<string, string>`** — an optional, free-form
