@@ -73,9 +73,11 @@ export function registerContextContributor(type: string, loader: ContextContribu
 
 /**
  * Run the fork's auto-wired contributor init exactly once, lazily, before
- * the first lookup. Mirrors how `registerBuiltInCapabilities` invokes
- * `initAppCapabilities()` — the fork accumulates registrations at import
- * time without a separate startup step.
+ * the first lookup. Mirrors the run-once-lazily *invocation shape* of
+ * `initAppCapabilities()` in `registerBuiltInCapabilities` — the fork
+ * accumulates registrations at import time without a separate startup step.
+ * Error handling deliberately DIFFERS from that registry: this catches init
+ * throws rather than letting them propagate (see the inline comment).
  */
 function ensureAppContributorsInited(): void {
   if (appInited) return;
