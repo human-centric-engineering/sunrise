@@ -29,6 +29,7 @@ const {
 
 const getPatternDetailMock = getPatternDetail as ReturnType<typeof vi.fn>;
 const loggerWarn = logger.warn as ReturnType<typeof vi.fn>;
+const loggerError = logger.error as ReturnType<typeof vi.fn>;
 const initAppContextContributorsMock = initAppContextContributors as ReturnType<typeof vi.fn>;
 
 function patternFixture(overrides: Partial<Record<string, unknown>> = {}) {
@@ -229,5 +230,57 @@ describe('registerContextContributor', () => {
     await buildContext('invoice', 'B');
 
     expect(initAppContextContributorsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('degrades to the placeholder (and logs) when a contributor throws — does not fail the turn', async () => {
+    registerContextContributor('invoice', async () => {
+      throw new Error('loader boom');
+    });
+
+    const result = await buildContext('invoice', 'INV-9');
+
+    expect(result).toContain("No context loader for type 'invoice'");
+    expect(loggerError).toHaveBeenCalledWith(
+      'buildContext: context contributor threw',
+      expect.objectContaining({ type: 'invoice', error: 'loader boom' })
+    );
+  });
+
+  it('does not cache a contributor error, so a recovered loader takes effect on the next turn', async () => {
+    let calls = 0;
+    registerContextContributor('invoice', async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('transient');
+      return 'recovered body';
+    });
+
+    const first = await buildContext('invoice', 'INV-9');
+    const second = await buildContext('invoice', 'INV-9');
+
+    expect(first).toContain("No context loader for type 'invoice'");
+    expect(second).toContain('recovered body');
+    expect(calls).toBe(2);
+  });
+
+  it('does not cache the unknown-type placeholder, so a late-registered contributor takes effect next turn', async () => {
+    const first = await buildContext('invoice', 'INV-9');
+    expect(first).toContain("No context loader for type 'invoice'");
+
+    registerContextContributor('invoice', async () => 'now available');
+    const second = await buildContext('invoice', 'INV-9');
+
+    expect(second).toContain('now available');
+  });
+
+  it('retries the fork init on the next lookup when it throws (flag set only after success)', async () => {
+    initAppContextContributorsMock.mockImplementationOnce(() => {
+      throw new Error('init boom');
+    });
+
+    // First lookup: init throws and propagates; the flag must NOT latch.
+    await expect(buildContext('invoice', 'A')).rejects.toThrow('init boom');
+    // Second lookup: init is retried and succeeds.
+    await expect(buildContext('invoice', 'B')).resolves.toContain('No context loader');
+    expect(initAppContextContributorsMock).toHaveBeenCalledTimes(2);
   });
 });

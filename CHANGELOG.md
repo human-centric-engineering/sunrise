@@ -28,8 +28,11 @@ release process.
   `@/lib/orchestration/chat`) — registers a prompt-context loader for a new
   `buildContext` `contextType`, so a fork can inject its own `LOCKED CONTEXT`
   block per turn without editing the core switch. Built-in cases take precedence;
-  the 60 s per-`(type, id)` cache and invalidation behaviour are preserved.
-  Auto-wired once via the new fork-owned empty scaffold
+  the 60 s per-`(type, id)` cache and invalidation behaviour are preserved for
+  real results. A contributor that throws degrades to the benign placeholder
+  (the chat turn is never failed), and "no context" placeholders are returned
+  uncached so a late-registered or recovered loader takes effect on the next
+  turn. Auto-wired once via the new fork-owned empty scaffold
   `lib/app/context-contributors.ts` → `initAppContextContributors()` (mirrors
   `lib/app/capabilities.ts`). (#372)
 

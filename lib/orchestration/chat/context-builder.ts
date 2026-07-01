@@ -15,7 +15,10 @@
  * `lib/app/context-contributors.ts` scaffold is auto-wired once before the
  * first lookup. Types with neither a built-in case nor a registered
  * contributor log a warn and return a benign placeholder so the LLM sees
- * "no context" rather than hallucinating.
+ * "no context" rather than hallucinating. A contributor that throws is
+ * caught and degraded to the same placeholder — a fork's loader error must
+ * not fail the chat turn. Both placeholder paths are returned uncached so
+ * they self-heal on the next turn.
  */
 
 import { logger } from '@/lib/logging';
@@ -73,8 +76,12 @@ export function registerContextContributor(type: string, loader: ContextContribu
  */
 function ensureAppContributorsInited(): void {
   if (appInited) return;
-  appInited = true;
+  // Set the flag AFTER a successful init (matching `registerBuiltInCapabilities`
+  // in the capability registry). If a fork's init throws, `appInited` stays
+  // false so the next lookup retries rather than latching a half-registered
+  // state for the process lifetime.
   initAppContextContributors();
+  appInited = true;
 }
 
 /**
@@ -100,6 +107,10 @@ export async function buildContext(type: string, id: string): Promise<string> {
   ensureAppContributorsInited();
 
   let body: string;
+  // Real results are cached for the TTL; benign "no context" placeholders are
+  // not, so a contributor registered (or recovered) after a miss takes effect
+  // on the next turn instead of being masked for up to 60 s.
+  let cacheable = true;
   switch (type) {
     case 'pattern': {
       const num = Number.parseInt(id, 10);
@@ -124,23 +135,38 @@ export async function buildContext(type: string, id: string): Promise<string> {
       // letting a fork add context types without editing this switch.
       const contributor = contributors.get(type);
       if (contributor) {
-        body = await contributor(id);
+        try {
+          body = await contributor(id);
+        } catch (err) {
+          // A contributor that throws must not fail the whole chat turn.
+          // Degrade to the benign placeholder (uncached, so a transient
+          // loader error self-heals on the next turn).
+          logger.error('buildContext: context contributor threw', {
+            type,
+            id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          body = `No context loader for type '${type}'.`;
+          cacheable = false;
+        }
       } else {
         logger.warn('buildContext: unknown contextType', { type, id });
         body = `No context loader for type '${type}'.`;
+        cacheable = false;
       }
     }
   }
 
   const framed = formatLockedContext(type, id, body);
 
-  // Evict oldest entry if cache is at capacity
-  if (cache.size >= CONTEXT_CACHE_MAX_SIZE) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+  if (cacheable) {
+    // Evict oldest entry if cache is at capacity
+    if (cache.size >= CONTEXT_CACHE_MAX_SIZE) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+    cache.set(key, { value: framed, expiresAt: Date.now() + CONTEXT_CACHE_TTL_MS });
   }
-
-  cache.set(key, { value: framed, expiresAt: Date.now() + CONTEXT_CACHE_TTL_MS });
   return framed;
 }
 
