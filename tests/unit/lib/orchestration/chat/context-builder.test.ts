@@ -262,25 +262,34 @@ describe('registerContextContributor', () => {
     expect(calls).toBe(2);
   });
 
-  it('does not cache the unknown-type placeholder, so a late-registered contributor takes effect next turn', async () => {
-    const first = await buildContext('invoice', 'INV-9');
-    expect(first).toContain("No context loader for type 'invoice'");
+  it('caches the unknown-type placeholder so the warn fires once within the TTL', async () => {
+    // Unknown type is a deterministic "no data" answer for client-controlled
+    // input — caching it prevents a bad contextType from re-warning every turn.
+    const first = await buildContext('shipment', 'S-9');
+    const second = await buildContext('shipment', 'S-9');
 
-    registerContextContributor('invoice', async () => 'now available');
-    const second = await buildContext('invoice', 'INV-9');
-
-    expect(second).toContain('now available');
+    expect(first).toContain("No context loader for type 'shipment'");
+    expect(second).toBe(first);
+    expect(loggerWarn).toHaveBeenCalledTimes(1);
   });
 
-  it('retries the fork init on the next lookup when it throws (flag set only after success)', async () => {
+  it('catches a throwing fork init — degrades without failing the turn and does not retry', async () => {
     initAppContextContributorsMock.mockImplementationOnce(() => {
       throw new Error('init boom');
     });
 
-    // First lookup: init throws and propagates; the flag must NOT latch.
-    await expect(buildContext('invoice', 'A')).rejects.toThrow('init boom');
-    // Second lookup: init is retried and succeeds.
-    await expect(buildContext('invoice', 'B')).resolves.toContain('No context loader');
-    expect(initAppContextContributorsMock).toHaveBeenCalledTimes(2);
+    // The turn proceeds despite the init throw (no rejection), and the error
+    // is logged rather than propagated to the streaming handler's crash path.
+    const first = await buildContext('invoice', 'A');
+    expect(first).toContain("No context loader for type 'invoice'");
+    expect(loggerError).toHaveBeenCalledWith(
+      'buildContext: initAppContextContributors threw — app context contributors disabled',
+      expect.objectContaining({ error: 'init boom' })
+    );
+
+    // Init is latched, so it is NOT retried (and does not re-throw) next turn.
+    const second = await buildContext('invoice', 'B');
+    expect(second).toContain("No context loader for type 'invoice'");
+    expect(initAppContextContributorsMock).toHaveBeenCalledTimes(1);
   });
 });

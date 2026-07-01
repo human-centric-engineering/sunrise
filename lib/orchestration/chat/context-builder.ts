@@ -14,11 +14,14 @@
  * a loader via `registerContextContributor(type, loader)` — the fork-owned
  * `lib/app/context-contributors.ts` scaffold is auto-wired once before the
  * first lookup. Types with neither a built-in case nor a registered
- * contributor log a warn and return a benign placeholder so the LLM sees
- * "no context" rather than hallucinating. A contributor that throws is
- * caught and degraded to the same placeholder — a fork's loader error must
- * not fail the chat turn. Both placeholder paths are returned uncached so
- * they self-heal on the next turn.
+ * contributor log a warn and return a benign placeholder (cached like any
+ * other "no data" result) so the LLM sees "no context" rather than
+ * hallucinating. A contributor that throws is caught and degraded to that
+ * placeholder — a fork's loader error must not fail the chat turn — and that
+ * errored-contributor placeholder alone is returned uncached, so a transient
+ * loader failure self-heals on the next turn. Errors from the fork's one-time
+ * init are likewise caught (contributors are simply disabled), never failing
+ * a turn.
  */
 
 import { logger } from '@/lib/logging';
@@ -76,12 +79,22 @@ export function registerContextContributor(type: string, loader: ContextContribu
  */
 function ensureAppContributorsInited(): void {
   if (appInited) return;
-  // Set the flag AFTER a successful init (matching `registerBuiltInCapabilities`
-  // in the capability registry). If a fork's init throws, `appInited` stays
-  // false so the next lookup retries rather than latching a half-registered
-  // state for the process lifetime.
-  initAppContextContributors();
+  // Latch BEFORE running so a throwing init neither retries on every lookup nor
+  // propagates out of buildContext to fail the chat turn. An init failure is
+  // caught and degrades to "no app contributors" (built-in types and the
+  // placeholder path keep working), consistent with the loader-error contract
+  // in the file header. This deliberately diverges from the capability registry
+  // (which lets init throw): buildContext runs on the chat-turn hot path and
+  // must not fail the turn over a fork's one-time init bug.
   appInited = true;
+  try {
+    initAppContextContributors();
+  } catch (err) {
+    logger.error(
+      'buildContext: initAppContextContributors threw — app context contributors disabled',
+      { error: err instanceof Error ? err.message : String(err) }
+    );
+  }
 }
 
 /**
@@ -107,9 +120,9 @@ export async function buildContext(type: string, id: string): Promise<string> {
   ensureAppContributorsInited();
 
   let body: string;
-  // Real results are cached for the TTL; benign "no context" placeholders are
-  // not, so a contributor registered (or recovered) after a miss takes effect
-  // on the next turn instead of being masked for up to 60 s.
+  // Everything caches for the TTL EXCEPT the errored-contributor placeholder:
+  // that one loader exists and may recover, so leaving it uncached lets a
+  // transient failure self-heal on the next turn (the catch below flips this).
   let cacheable = true;
   switch (type) {
     case 'pattern': {
@@ -150,9 +163,14 @@ export async function buildContext(type: string, id: string): Promise<string> {
           cacheable = false;
         }
       } else {
+        // Unknown type with no loader — a deterministic "no data" answer for
+        // client-controlled input. Cache it like the other placeholders so a
+        // client repeatedly sending a bad `contextType` doesn't re-warn every
+        // turn. (Contributors register at import time, so this can't "recover"
+        // mid-conversation; the errored-contributor path above is the one that
+        // needs to stay uncached.)
         logger.warn('buildContext: unknown contextType', { type, id });
         body = `No context loader for type '${type}'.`;
-        cacheable = false;
       }
     }
   }
