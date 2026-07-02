@@ -376,6 +376,41 @@ describe('RunWorkflowCapability', () => {
     });
   });
 
+  describe('scope inheritance', () => {
+    it("forwards the parent's scope into the child execution", async () => {
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-9', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute(
+        { workflowSlug: 'refund-flow' },
+        { ...context, scope: { projectId: 'proj-42' } }
+      );
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts.scope).toEqual({ projectId: 'proj-42' });
+    });
+
+    it('omits scope from the child when the parent is unscoped', async () => {
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-10', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute({ workflowSlug: 'refund-flow' }, context);
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty('scope');
+    });
+  });
+
   describe('redactProvenance', () => {
     it('declares processesPii=true', () => {
       expect(new RunWorkflowCapability().processesPii).toBe(true);

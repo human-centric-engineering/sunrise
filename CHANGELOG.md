@@ -29,7 +29,9 @@ release process.
   unchanged. With the MCP `tools/call` path (above), `scope` now reaches
   capability `execute()` on all three dispatch paths (chat, MCP, workflow).
   The execution **rerun** endpoint inherits the original run's `scope`
-  (alongside its inputData / budget / version).
+  (alongside its inputData / budget / version), and the `run_workflow`
+  capability inherits the parent run's `scope` into a sub-workflow — so
+  a capability at any workflow depth sees the run's scope.
 
 ### Changed
 
