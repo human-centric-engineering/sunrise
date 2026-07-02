@@ -306,6 +306,7 @@ async function handleToolsCall(
   const result = await callMcpTool(parsed.data.name, parsed.data.arguments, {
     userId: auth.createdBy,
     scopedAgentId: auth.scopedAgentId,
+    ...(auth.scope ? { scope: auth.scope } : {}),
   });
 
   return result;

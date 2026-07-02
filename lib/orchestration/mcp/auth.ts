@@ -10,6 +10,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { mcpKeyScopeSchema } from '@/lib/validations/mcp';
 import type { McpAuthContext } from '@/types/mcp';
 
 const KEY_PREFIX = 'smcp_';
@@ -104,6 +105,19 @@ export async function authenticateMcpRequest(
       });
     });
 
+  // Re-validate the persisted scope carrier before trusting it — the JSON
+  // column is never used raw. A malformed value is dropped (key treated as
+  // unscoped) rather than failing auth, so a bad row can't lock a caller out.
+  let scope: Record<string, string> | undefined;
+  if (key.scope !== null && key.scope !== undefined) {
+    const parsedScope = mcpKeyScopeSchema.safeParse(key.scope);
+    if (parsedScope.success) {
+      scope = parsedScope.data;
+    } else {
+      logger.warn('MCP auth: dropped malformed key scope', { keyPrefix: key.keyPrefix });
+    }
+  }
+
   return {
     apiKeyId: key.id,
     apiKeyName: key.name,
@@ -112,6 +126,7 @@ export async function authenticateMcpRequest(
     clientIp,
     userAgent,
     scopedAgentId: key.scopedAgentId,
+    ...(scope ? { scope } : {}),
   };
 }
 

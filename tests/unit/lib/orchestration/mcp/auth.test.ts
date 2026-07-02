@@ -36,6 +36,8 @@ function makeMcpApiKey(
     keyHash: string;
     keyPrefix: string;
     scopes: string[];
+    scopedAgentId: string | null;
+    scope: unknown;
     createdBy: string;
     isActive: boolean;
     expiresAt: Date | null;
@@ -47,6 +49,8 @@ function makeMcpApiKey(
     keyHash: 'hash',
     keyPrefix: 'smcp_abc',
     scopes: ['tools:list', 'tools:execute'],
+    scopedAgentId: null,
+    scope: null,
     createdBy: 'user-id-1',
     isActive: true,
     expiresAt: null,
@@ -217,6 +221,44 @@ describe('authenticateMcpRequest', () => {
 
     expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { keyHash: expectedHash } })
+    );
+  });
+
+  it('surfaces a valid persisted key scope on the auth context', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ scope: { projectId: 'proj-42' } }) as never
+    );
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue({} as never);
+
+    const result = await authenticateMcpRequest('smcp_scoped', CLIENT_IP, USER_AGENT);
+    expect(result?.scope).toEqual({ projectId: 'proj-42' });
+  });
+
+  it('omits scope from the context when the key carries none (null)', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ scope: null }) as never
+    );
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue({} as never);
+
+    const result = await authenticateMcpRequest('smcp_unscoped', CLIENT_IP, USER_AGENT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('scope');
+  });
+
+  it('drops a malformed persisted scope (non-string values) and authenticates unscoped', async () => {
+    const { logger } = await import('@/lib/logging');
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ scope: { projectId: 42 } }) as never
+    );
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue({} as never);
+
+    const result = await authenticateMcpRequest('smcp_badscope', CLIENT_IP, USER_AGENT);
+    // Auth still succeeds — a bad row must not lock the caller out.
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('scope');
+    expect(logger.warn).toHaveBeenCalledWith(
+      'MCP auth: dropped malformed key scope',
+      expect.objectContaining({ keyPrefix: 'smcp_abc' })
     );
   });
 });

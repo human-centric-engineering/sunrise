@@ -5,6 +5,7 @@
  * DELETE /api/v1/admin/orchestration/mcp/keys/:id — permanently delete key
  */
 
+import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -28,14 +29,24 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const existing = await prisma.mcpApiKey.findUnique({ where: { id } });
   if (!existing) throw new NotFoundError('API key not found');
 
+  // `scope` is a `Json?` column: JS `null` can't clear it (Prisma requires the
+  // `DbNull` sentinel), and `undefined` must leave it untouched. Everything else
+  // in `body` passes through unchanged.
+  const { scope, ...rest } = body;
+  const data: Prisma.McpApiKeyUpdateInput = {
+    ...rest,
+    ...(scope !== undefined ? { scope: scope === null ? Prisma.DbNull : scope } : {}),
+  };
+
   const updated = await prisma.mcpApiKey.update({
     where: { id },
-    data: body,
+    data,
     select: {
       id: true,
       name: true,
       keyPrefix: true,
       scopes: true,
+      scope: true,
       isActive: true,
       expiresAt: true,
       lastUsedAt: true,

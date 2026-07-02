@@ -251,6 +251,46 @@ describe('POST /mcp/keys', () => {
     );
   });
 
+  it('persists the app scope carrier on create when provided', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(generateApiKey).mockReturnValue({
+      plaintext: 'mcp_secret_abc123',
+      hash: 'hashed_value',
+      prefix: 'mcp_abc',
+    });
+    vi.mocked(prisma.mcpApiKey.create).mockResolvedValue(
+      makeApiKey({ scope: { projectId: 'proj-42' } }) as never
+    );
+
+    await POST(
+      makePostRequest({
+        name: 'Scoped Key',
+        scopes: ['tools:execute'],
+        scope: { projectId: 'proj-42' },
+      })
+    );
+
+    expect(prisma.mcpApiKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+      })
+    );
+  });
+
+  it('rejects a scope carrier with non-string values', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await POST(
+      makePostRequest({
+        name: 'Bad Scope',
+        scopes: ['tools:list'],
+        scope: { projectId: 42 },
+      })
+    );
+
+    expect(response.status).toBe(400);
+  });
+
   it('rejects empty name', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 

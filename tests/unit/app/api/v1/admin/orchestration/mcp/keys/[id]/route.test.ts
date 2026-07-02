@@ -55,6 +55,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
+import { Prisma } from '@prisma/client';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import {
@@ -175,6 +176,53 @@ describe('PATCH /mcp/keys/:id', () => {
         data: expect.objectContaining({ name: 'Updated Key' }),
       })
     );
+  });
+
+  it('updates the app scope carrier to a new value', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(makeApiKey() as never);
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue(
+      makeApiKey({ scope: { projectId: 'proj-42' } }) as never
+    );
+
+    const response = await PATCH(
+      makePatchRequest({ scope: { projectId: 'proj-42' } }),
+      makeParams(KEY_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.mcpApiKey.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+      })
+    );
+  });
+
+  it('clears the scope with Prisma.DbNull when scope is null (not JS null)', async () => {
+    // A `Json?` column can only be cleared with the DbNull sentinel — passing
+    // JS null would throw at the Prisma layer. This is the load-bearing nuance.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeApiKey({ scope: { projectId: 'proj-42' } }) as never
+    );
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue(makeApiKey({ scope: null }) as never);
+
+    const response = await PATCH(makePatchRequest({ scope: null }), makeParams(KEY_ID));
+
+    expect(response.status).toBe(200);
+    const call = vi.mocked(prisma.mcpApiKey.update).mock.calls[0][0];
+    expect((call.data as { scope: unknown }).scope).toBe(Prisma.DbNull);
+  });
+
+  it('leaves scope untouched when the field is absent from the patch', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(makeApiKey() as never);
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue(makeApiKey({ name: 'X' }) as never);
+
+    await PATCH(makePatchRequest({ name: 'X' }), makeParams(KEY_ID));
+
+    const call = vi.mocked(prisma.mcpApiKey.update).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('scope');
   });
 
   it('revokes key by setting isActive to false', async () => {

@@ -18,6 +18,18 @@ release process.
 
 ### Added
 
+- **`McpApiKey.scope` (nullable JSON) — per-key scope population.** An MCP API
+  key may now carry an optional application-level `scope` (a flat string→string
+  map, distinct from the coarse protocol `scopes` array). It is validated on read
+  (`mcpKeyScopeSchema`) and folded into `CapabilityContext.scope` for every
+  `tools/call` made with the key (the dormant `callMcpTool` param from the MCP
+  `tools/call` work is now populated), so an external MCP caller's tool calls are
+  automatically scoped without passing scope on each call. Settable as opaque JSON
+  via the admin key create/PATCH endpoints (clearing uses the `Prisma.DbNull`
+  sentinel); a malformed stored value is dropped at auth (key treated as unscoped)
+  rather than failing authentication. Core names no keys; `NULL`/unset is
+  unchanged behaviour. First populator of the `CapabilityContext.scope` carrier;
+  workflow trigger entry points are tracked separately.
 - **`AiWorkflowExecution.scope` (nullable JSON) + workflow `tool_call` scope
   threading.** Completes the `CapabilityContext.scope` seam (0.5.0) on the
   workflow path. A run started via `OrchestrationEngine.execute` may now carry

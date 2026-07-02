@@ -376,6 +376,13 @@ export interface McpAuthContext {
    * an explicit "unscoped service key" with system-wide access — audited as such.
    */
   scopedAgentId: string | null;
+  /**
+   * Optional application-level scope carrier bound to the key (`McpApiKey.scope`),
+   * validated on read. Folded into `CapabilityContext.scope` for every `tools/call`
+   * so a scoped capability can refuse to run outside the key's scope. Undefined
+   * when the key carries no scope (unchanged behaviour).
+   */
+  scope?: Record<string, string>;
 }
 
 // ============================================================================

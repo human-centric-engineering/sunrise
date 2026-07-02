@@ -72,7 +72,8 @@ SSE push (notifications/{tools,resources,prompts}/list_changed,
 3. Client uses `Authorization: Bearer smcp_...` header
 4. Scopes control access: `tools:list`, `tools:execute`, `resources:read`, `prompts:read`
 5. Keys can be revoked immediately; `expiresAt` for automatic expiry
-6. **Key rotation:** `POST /api/v1/admin/orchestration/mcp/keys/:id/rotate` — generates new key material, returns new plaintext once, immediately invalidates the old key. Optionally set `{ expiresAt }` in the body.
+6. **Application scope carrier** — a key may carry an optional `scope` (`McpApiKey.scope`, a flat string→string map, distinct from the protocol `scopes` above). It is validated on read (`mcpKeyScopeSchema`) and folded into `CapabilityContext.scope` for every `tools/call`, so a scoped capability can refuse to run outside the key's scope. Core names no keys; a fork maps it to its own domain (e.g. `{ projectId }`). NULL = unscoped (unchanged behaviour). Set it as opaque JSON on create/PATCH; clearing it via PATCH uses the `Prisma.DbNull` sentinel. A malformed stored value is dropped at auth (key treated as unscoped) rather than failing authentication.
+7. **Key rotation:** `POST /api/v1/admin/orchestration/mcp/keys/:id/rotate` — generates new key material, returns new plaintext once, immediately invalidates the old key. Optionally set `{ expiresAt }` in the body.
 
 ## Authentication & OAuth 2.1 Roadmap
 

@@ -538,6 +538,29 @@ describe('handleMcpRequest', () => {
       );
     });
 
+    it("forwards the key's scope to callMcpTool so tool calls carry the app scope", async () => {
+      vi.mocked(callMcpTool).mockResolvedValue({
+        content: [{ type: 'text', text: 'result text' }],
+      });
+
+      const scopedAuth = makeAuth({ scope: { projectId: 'proj-42' } });
+      const req = makeRequest({
+        method: 'tools/call',
+        params: { name: 'search_kb', arguments: { q: 'test' } },
+      });
+      await handleMcpRequest(req, { auth: scopedAuth, session, serverState, rateLimiter });
+
+      expect(callMcpTool).toHaveBeenCalledWith(
+        'search_kb',
+        { q: 'test' },
+        {
+          userId: 'user-1',
+          scopedAgentId: null,
+          scope: { projectId: 'proj-42' },
+        }
+      );
+    });
+
     it('returns INVALID_PARAMS error when params are missing name', async () => {
       const req = makeRequest({ method: 'tools/call', params: {} });
       const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });

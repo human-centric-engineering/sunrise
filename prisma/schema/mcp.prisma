@@ -122,6 +122,12 @@ model McpApiKey {
   keyPrefix         String // first 8 chars for UI identification (e.g. "smcp_a1b2")
   scopes            String[] // e.g. ["tools:list", "tools:execute", "resources:read"]
   scopedAgentId     String? // when non-null, MCP calls via this key are scoped to that agent (resources see only that agent's knowledge grants). When null, the key is an explicit "unscoped service key" with system-wide access.
+  // Optional application-level scope carrier, mirroring `CapabilityContext.scope`.
+  // A flat string→string map folded into the capability context on every
+  // `tools/call` made with this key, so a scoped capability can refuse to run
+  // outside the key's scope. Core names no keys; a fork maps it to its own
+  // domain (e.g. `{ projectId }`). NULL = unscoped (unchanged behaviour).
+  scope             Json?
   isActive          Boolean   @default(true)
   expiresAt         DateTime?
   lastUsedAt        DateTime?
