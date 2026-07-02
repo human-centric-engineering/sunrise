@@ -321,6 +321,11 @@ async function runSingleTurn(
         const capResult = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
           userId: ctx.userId,
           agentId: agent!.id,
+          // Forward the run's scope so tools an agent_call turn dispatches are
+          // scoped too — same as the tool_call executor. Without this an
+          // agent_call (and orchestrator, which delegates here) would run its
+          // capabilities unscoped, leaving a hole in the workflow scope path.
+          ...(ctx.scope ? { scope: ctx.scope } : {}),
         });
 
         if (capResult.skipFollowup) {

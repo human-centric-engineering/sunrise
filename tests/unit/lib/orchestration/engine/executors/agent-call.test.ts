@@ -438,6 +438,36 @@ describe('executeAgentCall', () => {
     expect(toolMessage?.toolCallId).toBe('tc_1');
   });
 
+  it('forwards the run scope into capabilities dispatched during the tool loop', async () => {
+    // A scoped workflow's agent_call must dispatch its tools scoped too —
+    // otherwise the scope seam has a hole on the agent_call/orchestrator path.
+    mockChat.mockResolvedValueOnce({
+      content: 'Let me search...',
+      toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
+      usage: { inputTokens: 50, outputTokens: 30 },
+      finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
+    });
+    mockChat.mockResolvedValueOnce({
+      content: 'done.',
+      usage: { inputTokens: 80, outputTokens: 60 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await executeAgentCall(makeStep(), makeCtx({ scope: { projectId: 'proj-42' } }));
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search-knowledge',
+      { query: 'test' },
+      { userId: 'user_1', agentId: 'agent_1', scope: { projectId: 'proj-42' } }
+    );
+  });
+
   it('tool with skipFollowup returns tool result as output', async () => {
     mockChat.mockResolvedValueOnce({
       content: '',

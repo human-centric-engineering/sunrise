@@ -24,7 +24,9 @@ release process.
   an optional `scope` (`ExecuteOptions.scope`); it is persisted on the execution
   row so it survives crash-resume (the resume path reads it back, validated by
   `workflowScopeSchema`, and rethreads it into the rebuilt `ExecutionContext`),
-  and the `tool_call` executor forwards it into capability dispatch. Core names
+  and every capability dispatch forwards it — the `tool_call` executor and the
+  `agent_call` tool-use loop (so `orchestrator` delegations are scoped too).
+  Core names
   no keys and no built-in capability reads it; `NULL`/unset leaves behaviour
   unchanged. With the MCP `tools/call` path (above), `scope` now reaches
   capability `execute()` on all three dispatch paths (chat, MCP, workflow).
