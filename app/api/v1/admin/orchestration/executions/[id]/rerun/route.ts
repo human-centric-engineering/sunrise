@@ -22,6 +22,10 @@
  * `parentExecutionId` set to the original's id, so the detail view
  * can render a "Re-run of execution X" breadcrumb.
  *
+ * Scope: the original's `scope` carrier is inherited so the rerun stays
+ * in the same scope it originally ran under (alongside inputData / budget /
+ * version). A malformed stored scope is dropped and the rerun runs unscoped.
+ *
  * Authorization: admin role required. The original execution must
  * belong to the same user (`session.user.id`) — cross-user reruns
  * return 404 (not 403) so existence isn't leaked.
@@ -36,7 +40,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
-import { rerunExecutionBodySchema } from '@/lib/validations/orchestration';
+import { rerunExecutionBodySchema, workflowScopeSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import {
   prepareWorkflowExecution,
@@ -68,6 +72,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       inputData: true,
       budgetLimitUsd: true,
       versionId: true,
+      scope: true,
     },
   });
   if (!original) {
@@ -104,6 +109,23 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // error instead of an unexpected shape downstream.
   const inputData = z.record(z.string(), z.unknown()).parse(original.inputData ?? {});
 
+  // Inherit the original's scope carrier so a rerun stays in the same scope
+  // it originally ran under — consistent with inputData / budget / version
+  // inheritance above. Validated like the resume path (`row.scope`); a
+  // malformed stored value is dropped and the rerun proceeds unscoped rather
+  // than failing. Absent/NULL on the original → unscoped rerun (unchanged).
+  let rerunScope: Record<string, string> | undefined;
+  if (original.scope !== null && original.scope !== undefined) {
+    const parsedScope = workflowScopeSchema.safeParse(original.scope);
+    if (parsedScope.success) {
+      rerunScope = parsedScope.data;
+    } else {
+      log.warn('execution rerun: dropped malformed scope from original', {
+        originalExecutionId: original.id,
+      });
+    }
+  }
+
   // Budget resolution: caller override > original's stamped cap > workflow
   // default > settings default. Treating the original's cap as a "caller
   // override" in the resolver chain preserves the historic semantics —
@@ -132,6 +154,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
     userId: session.user.id,
     ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
+    ...(rerunScope ? { scope: rerunScope } : {}),
     signal: request.signal,
     parentExecutionId: original.id,
   });

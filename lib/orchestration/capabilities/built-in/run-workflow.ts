@@ -282,6 +282,10 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
           ...(effectiveBudgetLimitUsd !== undefined
             ? { budgetLimitUsd: effectiveBudgetLimitUsd }
             : {}),
+          // NOTE: the parent's `context.scope` is intentionally NOT forwarded to
+          // the child here yet — whether a sub-workflow inherits or isolates the
+          // parent scope is an open design decision tracked in #384 (to land with
+          // scope population). Today scope is unpopulated, so this is inert.
         }
       )) {
         if (event.type === 'workflow_started') {

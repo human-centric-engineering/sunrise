@@ -28,6 +28,8 @@ release process.
   no keys and no built-in capability reads it; `NULL`/unset leaves behaviour
   unchanged. With the MCP `tools/call` path (above), `scope` now reaches
   capability `execute()` on all three dispatch paths (chat, MCP, workflow).
+  The execution **rerun** endpoint inherits the original run's `scope`
+  (alongside its inputData / budget / version).
 
 ### Changed
 

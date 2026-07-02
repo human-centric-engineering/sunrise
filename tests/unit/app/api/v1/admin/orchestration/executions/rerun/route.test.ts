@@ -68,6 +68,7 @@ const engineExecuteMock = vi.fn(
       userId: string;
       budgetLimitUsd?: number;
       parentExecutionId?: string;
+      scope?: Record<string, string>;
     }
   ): AsyncIterable<unknown> => {
     // The route passes the AsyncIterable to sseResponse, which we have
@@ -241,6 +242,44 @@ describe('POST /executions/:id/rerun', () => {
 
     const [, , options] = engineExecuteMock.mock.calls[0];
     expect(options.budgetLimitUsd).toBe(12);
+  });
+
+  it('inherits the original execution scope carrier into the rerun', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+      makeOriginal({ scope: { projectId: 'proj-42' } }) as never
+    );
+    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare());
+
+    await POST(makeRequest(), makeContext());
+
+    const [, , options] = engineExecuteMock.mock.calls[0];
+    expect(options.scope).toEqual({ projectId: 'proj-42' });
+  });
+
+  it('omits scope when the original ran unscoped (scope null)', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+      makeOriginal({ scope: null }) as never
+    );
+    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare());
+
+    await POST(makeRequest(), makeContext());
+
+    const [, , options] = engineExecuteMock.mock.calls[0];
+    expect(options).not.toHaveProperty('scope');
+  });
+
+  it('drops a malformed original scope and reruns unscoped', async () => {
+    // Non-string value → fails workflowScopeSchema; must not crash the rerun.
+    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+      makeOriginal({ scope: { projectId: 42 } }) as never
+    );
+    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare());
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    const [, , options] = engineExecuteMock.mock.calls[0];
+    expect(options).not.toHaveProperty('scope');
   });
 
   it('original null budget passes through as undefined (engine treats as no limit)', async () => {
