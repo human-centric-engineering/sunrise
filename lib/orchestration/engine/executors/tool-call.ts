@@ -101,6 +101,7 @@ export async function executeToolCall(
   const result = await capabilityDispatcher.dispatch(slug, rawArgs, {
     userId: ctx.userId,
     agentId: `workflow:${ctx.workflowId}`,
+    ...(ctx.scope ? { scope: ctx.scope } : {}),
   });
 
   if (!result.success) {

@@ -49,6 +49,7 @@ import {
   executionTraceEntrySchema,
   stepErrorConfigSchema,
   turnEntriesSchema,
+  workflowScopeSchema,
 } from '@/lib/validations/orchestration';
 import {
   WorkflowStatus,
@@ -156,6 +157,15 @@ export interface ExecuteOptions {
   userId: string | null;
   budgetLimitUsd?: number;
   signal?: AbortSignal;
+  /**
+   * Optional free-form scope carrier for this run. Persisted onto
+   * `AiWorkflowExecution.scope` and rethreaded into the `ExecutionContext`
+   * (survives crash-resume), then forwarded by the `tool_call` executor into
+   * capability dispatch (`CapabilityContext.scope`). Only meaningful on the
+   * fresh-run path — resumes read the persisted value back from the row.
+   * Core names no keys; undefined leaves behaviour unchanged.
+   */
+  scope?: Record<string, string>;
   /**
    * Optional subscriber that receives every event in addition to the
    * AsyncIterable. Useful for tapping events without consuming the
@@ -1878,11 +1888,27 @@ export class OrchestrationEngine {
           validEntries: trace.length,
         });
       }
+      // Rethread the persisted scope carrier so a resumed run's `tool_call`
+      // dispatches stay scoped exactly as they were pre-crash. A malformed
+      // payload is dropped (run continues unscoped) rather than failing resume.
+      let resumeScope: Record<string, string> | undefined;
+      if (row.scope !== null && row.scope !== undefined) {
+        const parsedScope = workflowScopeSchema.safeParse(row.scope);
+        if (parsedScope.success) {
+          resumeScope = parsedScope.data;
+        } else {
+          baseLogger.warn('Resume: dropped malformed execution scope', {
+            executionId: row.id,
+            issues: parsedScope.error.issues.length,
+          });
+        }
+      }
       const ctx = createContext({
         executionId: row.id,
         workflowId: workflow.id,
         userId: options.userId,
         inputData,
+        ...(resumeScope ? { scope: resumeScope } : {}),
         defaultErrorStrategy: workflow.definition.errorStrategy,
         budgetLimitUsd: row.budgetLimitUsd ?? options.budgetLimitUsd,
         signal: options.signal,
@@ -1975,6 +2001,7 @@ export class OrchestrationEngine {
         ...(options.parentExecutionId ? { parentExecutionId: options.parentExecutionId } : {}),
         status: WorkflowStatus.RUNNING,
         inputData: inputData as unknown as Prisma.InputJsonValue,
+        ...(options.scope ? { scope: options.scope } : {}),
         executionTrace: [],
         totalTokensUsed: 0,
         totalCostUsd: 0,
@@ -1991,6 +2018,7 @@ export class OrchestrationEngine {
       workflowId: workflow.id,
       userId: options.userId,
       inputData,
+      ...(options.scope ? { scope: options.scope } : {}),
       defaultErrorStrategy: workflow.definition.errorStrategy,
       budgetLimitUsd: options.budgetLimitUsd,
       signal: options.signal,

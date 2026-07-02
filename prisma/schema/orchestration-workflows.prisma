@@ -205,6 +205,13 @@ model AiWorkflowExecution {
   // the child stays.
   parentExecutionId    String?
   userId               String?
+  // Optional free-form scope carrier for this run, mirroring
+  // `CapabilityContext.scope`. Persisted (not just in-memory) so it survives
+  // crash-resume: the resume path reads it back and rethreads it into the
+  // rebuilt `ExecutionContext`. The engine forwards it to `tool_call`
+  // capability dispatch; core names no keys and no built-in capability reads
+  // it. NULL for runs that don't set a scope (unchanged behaviour).
+  scope                Json?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

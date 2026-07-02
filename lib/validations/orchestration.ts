@@ -2968,6 +2968,15 @@ export const turnEntrySchema = z.union([
 
 export const turnEntriesSchema = z.array(turnEntrySchema);
 
+/**
+ * Shape of the persisted `AiWorkflowExecution.scope` carrier — a flat
+ * string→string map, mirroring `CapabilityContext.scope`. Parsed on the
+ * crash-resume path before the value is rethreaded into the rebuilt
+ * `ExecutionContext`; a malformed payload is dropped (run continues
+ * unscoped) rather than failing the resume.
+ */
+export const workflowScopeSchema = z.record(z.string(), z.string());
+
 export const executionTraceEntrySchema = z
   .object({
     stepId: z.string(),

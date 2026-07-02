@@ -62,6 +62,36 @@ describe('context helpers', () => {
     }
   });
 
+  it('createContext threads the scope carrier when provided', () => {
+    const ctx = createContext({
+      executionId: 'exec-s',
+      workflowId: 'wf-s',
+      userId: 'user-s',
+      inputData: {},
+      scope: { projectId: 'proj-42' },
+      logger,
+    });
+    expect(ctx.scope).toEqual({ projectId: 'proj-42' });
+  });
+
+  it('createContext omits scope entirely when not provided (unchanged behaviour)', () => {
+    const ctx = makeCtx();
+    expect(ctx).not.toHaveProperty('scope');
+  });
+
+  it('snapshotContext carries scope through to the frozen executor view', () => {
+    const ctx = createContext({
+      executionId: 'exec-s',
+      workflowId: 'wf-s',
+      userId: 'user-s',
+      inputData: {},
+      scope: { projectId: 'proj-42' },
+      logger,
+    });
+    const snap = snapshotContext(ctx);
+    expect(snap.scope).toEqual({ projectId: 'proj-42' });
+  });
+
   it('mergeStepResult accumulates tokens + cost and records outputs keyed by step id', () => {
     const ctx = makeCtx();
     mergeStepResult(ctx, 'step1', { output: 'hi', tokensUsed: 10, costUsd: 0.01 });

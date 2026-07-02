@@ -30,6 +30,16 @@ export interface ExecutionContext {
   userId: string | null;
   /** The raw `inputData` supplied by the caller. */
   inputData: Record<string, unknown>;
+  /**
+   * Optional free-form scope carrier for this run, mirroring
+   * `CapabilityContext.scope`. The engine forwards it verbatim into the
+   * `CapabilityContext` built by the `tool_call` executor, so a capability
+   * can refuse to run outside its intended scope. Sourced from
+   * `AiWorkflowExecution.scope` (so it survives crash-resume) — core names
+   * no keys and no built-in capability reads it. Undefined leaves behaviour
+   * unchanged.
+   */
+  scope?: Record<string, string>;
   /** Map of `step.id` → that step's structured output so far. */
   stepOutputs: Record<string, unknown>;
   /** Free-form scratchpad for executors (planner state, loop counters, ...). */
@@ -120,6 +130,7 @@ export function createContext(params: {
   workflowId: string;
   userId: string | null;
   inputData: Record<string, unknown>;
+  scope?: Record<string, string>;
   defaultErrorStrategy?: 'retry' | 'fallback' | 'skip' | 'fail';
   budgetLimitUsd?: number;
   signal?: AbortSignal;
@@ -140,6 +151,7 @@ export function createContext(params: {
     signal: params.signal,
     logger: params.logger,
     stepTelemetry: [],
+    ...(params.scope ? { scope: params.scope } : {}),
     ...(params.costLogMetadata ? { costLogMetadata: params.costLogMetadata } : {}),
   };
 }

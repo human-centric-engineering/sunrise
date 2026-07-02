@@ -760,6 +760,122 @@ describe('OrchestrationEngine', () => {
     );
   });
 
+  // ─── Scope carrier (issue #375, PR B) ───────────────────────────────
+
+  describe('execution scope carrier', () => {
+    function resumeRow(scope: unknown) {
+      return {
+        id: 'exec_scope',
+        workflowId: 'wf_test',
+        userId: USER_ID,
+        status: 'paused_for_approval',
+        inputData: {},
+        scope,
+        executionTrace: [
+          {
+            stepId: 'a',
+            stepType: 'llm_call',
+            label: 'A',
+            status: 'completed',
+            output: 'out:a',
+            tokensUsed: 5,
+            costUsd: 0.01,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            durationMs: 10,
+          },
+        ],
+        totalTokensUsed: 5,
+        totalCostUsd: 0.01,
+        budgetLimitUsd: null,
+        currentStep: 'a',
+        startedAt: new Date(),
+        completedAt: null,
+        outputData: null,
+        errorMessage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    }
+
+    it('persists options.scope on the created row and threads it to executors', async () => {
+      let seenScope: Record<string, string> | undefined;
+      registerStepType('llm_call', async (_step, ctx) => {
+        seenScope = ctx.scope;
+        return { output: 'x', tokensUsed: 1, costUsd: 0 };
+      });
+
+      const engine = new OrchestrationEngine();
+      await collect(engine, makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        scope: { projectId: 'proj-42' },
+      });
+
+      // (a) persisted on the row so it survives crash-resume
+      expect(prisma.aiWorkflowExecution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+        })
+      );
+      // (b) visible to the executor during the run
+      expect(seenScope).toEqual({ projectId: 'proj-42' });
+    });
+
+    it('omits scope from the created row when no scope is supplied', async () => {
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0 }));
+
+      const engine = new OrchestrationEngine();
+      await collect(engine, makeWorkflow(linearDefinition()), { userId: USER_ID });
+
+      const createArg = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls[0][0];
+      expect(createArg.data).not.toHaveProperty('scope');
+    });
+
+    it('rethreads the persisted scope from the row on crash-resume', async () => {
+      let seenScope: Record<string, string> | undefined;
+      registerStepType('llm_call', async (_step, ctx) => {
+        seenScope = ctx.scope;
+        return { output: 'out:b', tokensUsed: 5, costUsd: 0.01 };
+      });
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        resumeRow({ projectId: 'proj-42' }) as never
+      );
+
+      const engine = new OrchestrationEngine();
+      await collect(engine, makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: 'exec_scope',
+      });
+
+      // Step b runs on resume; it must see the scope persisted before the crash.
+      expect(seenScope).toEqual({ projectId: 'proj-42' });
+    });
+
+    it('drops a malformed persisted scope on resume and continues unscoped', async () => {
+      let seenScope: Record<string, string> | undefined = { sentinel: 'unset' };
+      registerStepType('llm_call', async (_step, ctx) => {
+        seenScope = ctx.scope;
+        return { output: 'out:b', tokensUsed: 5, costUsd: 0.01 };
+      });
+      // Non-string value → fails workflowScopeSchema (z.record(z.string(), z.string()))
+      vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+        resumeRow({ projectId: 42 }) as never
+      );
+
+      const engine = new OrchestrationEngine();
+      await collect(engine, makeWorkflow(linearDefinition()), {
+        userId: USER_ID,
+        resumeFromExecutionId: 'exec_scope',
+      });
+
+      expect(seenScope).toBeUndefined();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Resume: dropped malformed execution scope',
+        expect.objectContaining({ executionId: 'exec_scope' })
+      );
+    });
+  });
+
   // ─── AbortSignal ───────────────────────────────────────────────────
 
   it('aborts execution when signal is already aborted', async () => {

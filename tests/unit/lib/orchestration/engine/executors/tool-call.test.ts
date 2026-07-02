@@ -164,6 +164,37 @@ describe('executeToolCall', () => {
     );
   });
 
+  it('forwards ctx.scope into the capability dispatch context when present', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const step = makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } });
+    const ctx = makeCtx({ scope: { projectId: 'proj-42' } });
+    await executeToolCall(step, ctx);
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'my-tool',
+      { x: 1 },
+      { userId: 'user_1', agentId: 'workflow:wf_tool', scope: { projectId: 'proj-42' } }
+    );
+  });
+
+  it('omits scope from the dispatch context when ctx.scope is unset (unchanged behaviour)', async () => {
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: {},
+    });
+
+    const step = makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } });
+    await executeToolCall(step, makeCtx());
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).not.toHaveProperty('scope');
+    expect(context).toEqual({ userId: 'user_1', agentId: 'workflow:wf_tool' });
+  });
+
   it('uses argsFrom step output (object) when config.args is absent', async () => {
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
       success: true,
