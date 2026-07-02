@@ -129,7 +129,7 @@ Rough estimate: 2–3 weeks of one engineer for a production-ready implementatio
 1. Admin enables a capability as an MCP tool via the Tools page
 2. `McpExposedTool` row links to `AiCapability` with `isEnabled: true`
 3. `tools/list` joins both tables, serves only doubly-enabled tools
-4. `tools/call` dispatches through `capabilityDispatcher.dispatch()` using the `mcp-system` agent
+4. `tools/call` dispatches through `capabilityDispatcher.dispatch()` under the key's `scopedAgentId` when the key is bound to an agent, else the shared `mcp-system` agent — the same resolution the `resources/read` path uses, so cost/budget attribution and knowledge-base grant resolution (`resolveAgentDocumentAccess`) follow the scoped agent. It also threads the optional per-dispatch `scope` carrier (`CapabilityContext.scope`) through to `execute()`.
 5. Full 9-step pipeline applies: validation, rate limiting, execution, cost tracking
 
 If `capabilityDispatcher.dispatch()` throws an unexpected exception (as opposed to returning `{ success: false }`), `callMcpTool` catches it and returns an MCP error content block (`isError: true`) with a generic message rather than escalating to a JSON-RPC protocol error.

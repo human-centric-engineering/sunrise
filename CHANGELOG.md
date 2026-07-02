@@ -16,6 +16,26 @@ release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **`callMcpTool()` signature** — the third parameter changed from
+  `userId: string | null` to a caller object
+  `{ userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> }`.
+  This lets an MCP tool call run under the API key's scoped agent and carry the
+  optional per-dispatch `scope` carrier (`CapabilityContext.scope`, added in
+  0.5.0) through to `execute()`. Direct callers passing a bare `userId` must
+  wrap it as `{ userId }`.
+
+### Fixed
+
+- **MCP `tools/call` ignored the API key's `scopedAgentId`.** Tool calls always
+  ran under the shared `mcp-system` agent, so cost/budget attribution and
+  knowledge-base grant resolution (`resolveAgentDocumentAccess`) did not honour a
+  scoped key — inconsistent with the `resources/read` path, which already
+  resolved via `scopedAgentId`. `tools/call` now resolves the executing agent
+  from the key's `scopedAgentId` when set, falling back to `mcp-system` for
+  unscoped keys (unchanged behaviour for keys with no scoped agent).
+
 ## [0.5.0] — 2026-07-01
 
 > **Alpha release.** Seventh tagged Sunrise release. **MINOR bump** — adds new

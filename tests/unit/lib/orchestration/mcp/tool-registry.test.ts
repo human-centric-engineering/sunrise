@@ -283,7 +283,7 @@ describe('callMcpTool', () => {
   it('returns isError=true for an unknown tool name', async () => {
     vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([]);
 
-    const result = await callMcpTool('nonexistent_tool', {}, 'user-1');
+    const result = await callMcpTool('nonexistent_tool', {}, { userId: 'user-1' });
 
     // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
@@ -299,7 +299,7 @@ describe('callMcpTool', () => {
     );
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
@@ -320,7 +320,7 @@ describe('callMcpTool', () => {
       data: { answer: 'result' },
     });
 
-    const result = await callMcpTool('search_knowledge', { query: 'test' }, 'user-1');
+    const result = await callMcpTool('search_knowledge', { query: 'test' }, { userId: 'user-1' });
 
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'search_knowledge',
@@ -342,7 +342,7 @@ describe('callMcpTool', () => {
       data: { key: 'value', count: 42 },
     });
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     const parsed = JSON.parse(asText(result.content[0]));
     expect(parsed).toEqual({ key: 'value', count: 42 });
@@ -359,7 +359,7 @@ describe('callMcpTool', () => {
       error: { code: 'EXECUTION_FAILED', message: 'Something broke' },
     });
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
@@ -376,7 +376,7 @@ describe('callMcpTool', () => {
       success: false,
     });
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     // test-review:accept tobe_true — boolean field isError on McpToolCallResult; structural assertion on MCP error contract
     expect(result.isError).toBe(true);
@@ -395,7 +395,7 @@ describe('callMcpTool', () => {
     );
 
     // Act: callMcpTool catches the throw and returns an error content block
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
     expect(result.isError).toBe(true);
     expect(asText(result.content[0])).toBe('Tool execution failed unexpectedly');
   });
@@ -408,7 +408,7 @@ describe('callMcpTool', () => {
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-1' } as never);
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
 
-    await callMcpTool('search_knowledge', undefined, 'user-1');
+    await callMcpTool('search_knowledge', undefined, { userId: 'user-1' });
 
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'search_knowledge',
@@ -426,8 +426,8 @@ describe('callMcpTool', () => {
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
 
     // Two calls without clearing cache — agent lookup should fire only once
-    await callMcpTool('search_knowledge', {}, 'user-1');
-    await callMcpTool('search_knowledge', {}, 'user-1');
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(prisma.aiAgent.findUnique).toHaveBeenCalledOnce();
   });
@@ -440,14 +440,14 @@ describe('callMcpTool', () => {
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-1' } as never);
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
 
-    await callMcpTool('search_knowledge', {}, 'user-1');
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
     clearMcpToolCache();
 
     vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
     vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
       makeSuccessfulParse() as never
     );
-    await callMcpTool('search_knowledge', {}, 'user-1');
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(prisma.aiAgent.findUnique).toHaveBeenCalledTimes(2);
   });
@@ -460,11 +460,91 @@ describe('callMcpTool', () => {
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-sys' } as never);
     vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
 
-    await callMcpTool('search_knowledge', {}, 'user-1');
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { slug: 'mcp-system' } })
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// callMcpTool: scoped agent + scope carrier (issue #375)
+// ---------------------------------------------------------------------------
+
+describe('callMcpTool: scoped agent resolution', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearMcpToolCache();
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+  });
+
+  it("dispatches under the key's scopedAgentId when bound, without a mcp-system lookup", async () => {
+    // A scoped key must run its tool calls under its own agent so cost/budget
+    // and knowledge-base grants resolve to that agent — matching the resources
+    // path. The mcp-system fallback must NOT be consulted.
+    await callMcpTool(
+      'search_knowledge',
+      { query: 'x' },
+      {
+        userId: 'user-1',
+        scopedAgentId: 'agent-scoped',
+      }
+    );
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search_knowledge',
+      { query: 'x' },
+      { userId: 'user-1', agentId: 'agent-scoped' }
+    );
+    expect(prisma.aiAgent.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the mcp-system agent when scopedAgentId is null', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-sys' } as never);
+
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1', scopedAgentId: null });
+
+    expect(prisma.aiAgent.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'mcp-system' } })
+    );
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search_knowledge',
+      {},
+      { userId: 'user-1', agentId: 'agent-sys' }
+    );
+  });
+
+  it('threads the scope carrier into the dispatch context when supplied', async () => {
+    await callMcpTool(
+      'search_knowledge',
+      {},
+      {
+        userId: 'user-1',
+        scopedAgentId: 'agent-scoped',
+        scope: { projectId: 'proj-42' },
+      }
+    );
+
+    expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+      'search_knowledge',
+      {},
+      { userId: 'user-1', agentId: 'agent-scoped', scope: { projectId: 'proj-42' } }
+    );
+  });
+
+  it('omits the scope key entirely when no scope is supplied (vanilla context unchanged)', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-sys' } as never);
+
+    await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).not.toHaveProperty('scope');
+    expect(context).toEqual({ userId: 'user-1', agentId: 'agent-sys' });
   });
 });
 
@@ -608,7 +688,7 @@ describe('callMcpTool: rich content blocks', () => {
       ])
     );
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toHaveLength(2);
@@ -620,7 +700,7 @@ describe('callMcpTool: rich content blocks', () => {
     const tinyPng = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64');
     mockDispatch(mkPayload([{ type: 'image', data: tinyPng, mimeType: 'image/png' }]));
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].type).toBe('image');
@@ -629,7 +709,7 @@ describe('callMcpTool: rich content blocks', () => {
   it('rejects invalid base64 in image block', async () => {
     mockDispatch(mkPayload([{ type: 'image', data: 'not!base64!', mimeType: 'image/png' }]));
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
     expect(asText(result.content[0])).toContain('invalid base64');
@@ -640,7 +720,7 @@ describe('callMcpTool: rich content blocks', () => {
     const big = 'A'.repeat(7 * 1024 * 1024); // ~5.25 MB decoded
     mockDispatch(mkPayload([{ type: 'image', data: big, mimeType: 'image/png' }]));
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
     expect(asText(result.content[0])).toContain('size limit');
@@ -657,7 +737,7 @@ describe('callMcpTool: rich content blocks', () => {
       ])
     );
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
   });
@@ -669,7 +749,7 @@ describe('callMcpTool: rich content blocks', () => {
     }));
     mockDispatch(mkPayload(blocks));
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
     expect(asText(result.content[0])).toContain('too many');
@@ -680,7 +760,7 @@ describe('callMcpTool: rich content blocks', () => {
       mkPayload([{ type: 'resource', resource: { uri: 'sunrise://x', mimeType: 'text/plain' } }])
     );
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
     expect(asText(result.content[0])).toContain('exactly one');
@@ -701,7 +781,7 @@ describe('callMcpTool: rich content blocks', () => {
       ])
     );
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
   });
@@ -716,7 +796,7 @@ describe('callMcpTool: rich content blocks', () => {
       ])
     );
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].type).toBe('resource');
@@ -725,7 +805,7 @@ describe('callMcpTool: rich content blocks', () => {
   it('rejects an unknown content block type', async () => {
     mockDispatch(mkPayload([{ type: 'video', data: 'x', mimeType: 'video/mp4' }]));
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBe(true);
     expect(asText(result.content[0])).toContain('unknown content block type');
@@ -736,7 +816,7 @@ describe('callMcpTool: rich content blocks', () => {
     // opt-in shape — anything else must round-trip through JSON.stringify.
     mockDispatch({ result: 42 });
 
-    const result = await callMcpTool('search_knowledge', {}, 'user-1');
+    const result = await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(result.isError).toBeUndefined();
     expect(asText(result.content[0])).toBe('{"result":42}');

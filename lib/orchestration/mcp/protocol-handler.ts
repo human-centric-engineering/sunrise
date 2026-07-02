@@ -303,7 +303,10 @@ async function handleToolsCall(
     );
   }
 
-  const result = await callMcpTool(parsed.data.name, parsed.data.arguments, auth.createdBy);
+  const result = await callMcpTool(parsed.data.name, parsed.data.arguments, {
+    userId: auth.createdBy,
+    scopedAgentId: auth.scopedAgentId,
+  });
 
   return result;
 }

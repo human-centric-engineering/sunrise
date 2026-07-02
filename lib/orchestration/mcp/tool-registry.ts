@@ -96,13 +96,18 @@ async function getMcpSystemAgentId(): Promise<string | null> {
 /**
  * Call an MCP tool by delegating to the capability dispatcher.
  *
- * Creates a synthetic CapabilityContext with the mcp-system agent
- * and translates the CapabilityResult to MCP content blocks.
+ * Resolves the executing agent from the key's `scopedAgentId` when set —
+ * so a scoped key's tool calls attribute cost/budget and scope knowledge-base
+ * retrieval (`resolveAgentDocumentAccess`) to that agent, matching the MCP
+ * resources path (`handleResourcesRead`). Falls back to the `mcp-system`
+ * agent for unscoped keys, preserving prior behaviour. An optional `scope`
+ * carrier is threaded through to `execute()` (see `CapabilityContext.scope`);
+ * it is undefined until a caller supplies it.
  */
 export async function callMcpTool(
   toolName: string,
   args: Record<string, unknown> | undefined,
-  userId: string | null
+  caller: { userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> }
 ): Promise<McpToolCallResult> {
   // Resolve the actual capability slug from tool name
   // (custom names are supported, so we need to look up by either)
@@ -116,7 +121,9 @@ export async function callMcpTool(
     };
   }
 
-  const agentId = await getMcpSystemAgentId();
+  // Honour the key's scoped agent when bound; otherwise fall back to the
+  // shared mcp-system agent (which every backend caller can dispatch under).
+  const agentId = caller.scopedAgentId ?? (await getMcpSystemAgentId());
   if (!agentId) {
     logger.error('MCP tool call: mcp-system agent not found — run db:seed');
     return {
@@ -126,8 +133,9 @@ export async function callMcpTool(
   }
 
   const context: CapabilityContext = {
-    userId,
+    userId: caller.userId,
     agentId,
+    ...(caller.scope ? { scope: caller.scope } : {}),
   };
 
   let result;
