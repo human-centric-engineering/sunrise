@@ -32,6 +32,13 @@ let mcpSystemAgentId: string | null = null;
 /**
  * List all MCP-exposed tools that are both enabled in McpExposedTool
  * and active in AiCapability.
+ *
+ * NOTE: this list is global — it is not scoped to the caller's
+ * `scopedAgentId`. Since `tools/call` now dispatches under the scoped agent
+ * (see `callMcpTool`), a capability disabled for that agent is still
+ * discoverable here but fails on call. Making the list agent-aware (and the
+ * cache per-agent) is tracked in #381, to be designed alongside the MCP-key
+ * scoping work in #377.
  */
 export async function listMcpTools(): Promise<McpToolDefinition[]> {
   const now = Date.now();
