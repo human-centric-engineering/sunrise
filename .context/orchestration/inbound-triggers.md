@@ -148,7 +148,7 @@ POST /api/v1/inbound/:channel/:slug
   ↓ normalised = adapter.normalise(bodyParsed, headers)
   ↓ optional metadata.eventTypes filter           → 200 {skipped} if filtered
   ↓ compute dedupKey per channel                  (see "Replay protection" below)
-  ↓ scope = { ...validate(normalised.scope), ...resolvePersistedScope(trigger.scope) }
+  ↓ scope = { ...resolvePersistedScope(normalised.scope), ...resolvePersistedScope(trigger.scope) }
   ↓                                                (static trigger scope wins; both dropped-to-unscoped if malformed)
   ↓ workflowDefinitionSchema.safeParse(snapshot)  → 500 on operator error
   ↓ prisma.aiWorkflowExecution.create({...dedupKey, ...scope})
@@ -174,9 +174,10 @@ own domain (e.g. `{ projectId }`). The scope is assembled from **two sources**:
   on `NormalisedTriggerPayload`, computed from the **verified** request body
   (e.g. a fork's GitHub adapter maps the `pull_request` repo to `{ projectId }`).
   Core's built-in adapters leave it undefined; derivation is fork-specific. It is
-  **lower-trust than the static scope** — the route re-validates it against
-  `capabilityScopeSchema` (adapters aren't trusted to return well-formed data; a
-  malformed value is dropped to unscoped) before use.
+  **lower-trust than the static scope** — the route runs it through the same
+  `resolvePersistedScope` validate-on-read guard as the static column (adapters
+  aren't trusted to return well-formed data; a malformed value is dropped to
+  unscoped) before use.
 
 The two are **shallow-merged with the static scope last** (`{ ...adapterScope,
 ...triggerScope }`), so the operator's config **wins on key conflicts**: an

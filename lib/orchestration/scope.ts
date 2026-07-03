@@ -10,7 +10,11 @@
  * This helper centralises the validate-on-read contract for the workflow-side
  * columns: parse against `workflowScopeSchema`, and on failure drop to
  * unscoped (return `undefined`) with a warning rather than throwing. Callers
- * spread the result conditionally: `...(scope ? { scope } : {})`.
+ * spread the result conditionally: `...(scope ? { scope } : {})`. The same
+ * guard is applied to any other untrusted scope value that is about to be
+ * persisted onto one of those columns — notably an inbound adapter's
+ * `normalise()`-returned scope, which is derived from the request payload and
+ * is likewise not trusted raw (tag it `{ source: 'adapter' }` in `context`).
  */
 
 import { logger as defaultLogger, type Logger } from '@/lib/logging';
@@ -25,9 +29,10 @@ import { workflowScopeSchema } from '@/lib/validations/orchestration';
  * the same contract but validates inline in `lib/orchestration/mcp/auth.ts`
  * against its own `mcpKeyScopeSchema` alias, kept local to the MCP auth module.
  *
- * @param value   The raw column value (`null`/`undefined` when unset).
- * @param context Structured fields identifying the row, logged if the value is
- *   malformed (e.g. `{ scheduleId }`, `{ triggerId }`, `{ executionId }`).
+ * @param value   The raw scope value (`null`/`undefined` when unset).
+ * @param context Structured fields identifying the source, logged if the value
+ *   is malformed (e.g. `{ scheduleId }`, `{ triggerId }`, `{ executionId }`, or
+ *   `{ triggerId, source: 'adapter' }` for an adapter-derived value).
  * @param log     Logger for the malformed-drop warning. Pass a context-bound
  *   logger (e.g. the engine's `baseLogger`, which carries `workflowId`/`userId`)
  *   to preserve correlation; defaults to the module logger.

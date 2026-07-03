@@ -31,7 +31,7 @@ import { logger } from '@/lib/logging';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { inboundLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { slugSchema, capabilityScopeSchema } from '@/lib/validations/common';
+import { slugSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { WorkflowStatus } from '@/types/orchestration';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
@@ -327,29 +327,22 @@ export async function POST(
     settingsDefault: orgSettings?.defaultMaxCostPerExecutionUsd ?? null,
   });
 
-  // Resolve the run's scope from two sources, static winning over dynamic:
+  // Resolve the run's scope from two sources, both run through the shared
+  // validate-on-read guard (drop-to-unscoped + warn on malformed):
   //   - `trigger.scope`   — operator-configured static scope (higher trust).
   //   - `normalised.scope` — adapter-derived from the verified payload (lower
-  //     trust: adapters aren't trusted to return well-formed data, so validate
-  //     it here and drop-to-unscoped on malformed, same discipline as the
-  //     persisted column).
+  //     trust: adapters aren't trusted to return well-formed data). Tagged
+  //     `source: 'adapter'` so a dropped-scope warning is attributable.
   // Shallow-merge with the static scope last so the operator's config wins on
   // key conflicts — an adapter may fill in keys the operator didn't pin, but
   // cannot override one they did.
   const triggerScope = resolvePersistedScope(trigger.scope, { triggerId: trigger.id });
-  let adapterScope: Record<string, string> | undefined;
-  if (normalised.scope !== undefined) {
-    const parsedAdapterScope = capabilityScopeSchema.safeParse(normalised.scope);
-    if (parsedAdapterScope.success) {
-      adapterScope = parsedAdapterScope.data;
-    } else {
-      logger.warn('Inbound: dropped malformed adapter-derived scope', {
-        channel,
-        slug,
-        triggerId: trigger.id,
-      });
-    }
-  }
+  const adapterScope = resolvePersistedScope(normalised.scope, {
+    triggerId: trigger.id,
+    channel,
+    slug,
+    source: 'adapter',
+  });
   const scope =
     adapterScope !== undefined || triggerScope !== undefined
       ? { ...adapterScope, ...triggerScope }
