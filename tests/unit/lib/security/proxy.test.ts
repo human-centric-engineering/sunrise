@@ -41,6 +41,15 @@ vi.mock('@/lib/security/rate-limit-middleware', () => ({
   applyRateLimit: vi.fn(async () => null),
 }));
 
+// Fork-owned protected-route registry (#378). Simulate a fork that registered
+// `/projects` plus a malformed empty-string entry, to exercise both the merge
+// with the core prefixes and the empty-string guard in `proxy.ts`. `proxy.ts`
+// reads this at module load, so the mock must be hoisted above the `@/proxy`
+// import (vi.mock is hoisted regardless of source position).
+vi.mock('@/lib/app/protected-routes', () => ({
+  appProtectedRoutes: ['/projects', ''],
+}));
+
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 import { logger } from '@/lib/logging';
 import { signVisitorId, verifyVisitorId, VISITOR_COOKIE_NAME } from '@/lib/logging/visitor-id';
@@ -173,6 +182,50 @@ describe('proxy (project root)', () => {
       expect(response.status).toBe(307);
       const location = response.headers.get('location');
       expect(location).toContain('/login');
+    });
+  });
+
+  describe('Protected routes — fork-registered prefixes (#378)', () => {
+    it('redirects a fork-registered prefix (/projects) to /login without a session', async () => {
+      const request = createMockRequest('/projects', { cookies: {} });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(307);
+      const location = response.headers.get('location');
+      expect(location).toContain('/login');
+      expect(location).toContain('callbackUrl=%2Fprojects');
+    });
+
+    it('protects nested paths under a fork-registered prefix', async () => {
+      const request = createMockRequest('/projects/proj-42/tasks', { cookies: {} });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toContain('/login');
+    });
+
+    it('allows an authenticated user through a fork-registered prefix', async () => {
+      const request = createMockRequest('/projects', {
+        cookies: { 'better-auth.session_token': 'valid-token' },
+      });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(200);
+    });
+
+    it('drops a malformed empty-string entry so it is not treated as a catch-all', async () => {
+      // The mocked app list includes `''`; if it were not filtered, `''` would
+      // match every path and redirect an unauthenticated public request to
+      // /login. The public root must stay reachable.
+      const request = createMockRequest('/', { cookies: {} });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('location')).toBeNull();
     });
   });
 

@@ -14,6 +14,7 @@ import {
 import { setSecurityHeaders } from '@/lib/security/headers';
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 import { classifySurface } from '@/lib/app/surface';
+import { appProtectedRoutes } from '@/lib/app/protected-routes';
 
 /**
  * Next.js Proxy
@@ -33,6 +34,7 @@ import { classifySurface } from '@/lib/app/surface';
  * - /dashboard/*
  * - /settings/*
  * - /profile/*
+ * - Any prefix a fork registers in `lib/app/protected-routes.ts`
  * - Any route in the (protected) route group
  *
  * Public routes:
@@ -43,9 +45,19 @@ import { classifySurface } from '@/lib/app/surface';
  */
 
 /**
- * Define which routes require authentication
+ * Core routes that require authentication.
+ *
+ * A fork adds its own authenticated top-level sections via the fork-owned
+ * `appProtectedRoutes` (`lib/app/protected-routes.ts`) rather than editing this
+ * literal. The two are merged below; malformed app entries (anything not
+ * starting with `/`, e.g. an empty string that would match every path) are
+ * dropped so a fork typo can't lock the whole app behind the login redirect.
  */
-const protectedRoutes = ['/dashboard', '/settings', '/profile'];
+const CORE_PROTECTED_ROUTES = ['/dashboard', '/settings', '/profile'];
+const protectedRoutes = [
+  ...CORE_PROTECTED_ROUTES,
+  ...appProtectedRoutes.filter((route) => route.startsWith('/')),
+];
 
 /**
  * Define which routes are auth pages (login, signup, etc.)

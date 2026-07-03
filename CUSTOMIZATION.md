@@ -236,16 +236,17 @@ the body, which is yours. Keep the export name and signature;
 everything inside is free to change. (Detailed examples live here in this guide,
 not in the files, precisely so the files stay small and conflict-free.)
 
-| Edit this file                    | To register                                   | Auto-wired by (runtime)                         |
-| --------------------------------- | --------------------------------------------- | ----------------------------------------------- |
-| `lib/app/env.ts`                  | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)             |
-| `lib/app/rate-limit.ts`           | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)      |
-| `lib/app/capabilities.ts`         | agent capabilities (tools)                    | the capability registry (server route-handler)  |
-| `lib/app/context-contributors.ts` | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler) |
-| `lib/app/admin-nav.ts`            | admin sidebar sections                        | `admin-sidebar.tsx` (client)                    |
-| `lib/app/db-drift.ts`             | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)    |
-| `lib/app/public-nav.ts`           | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)  |
-| `lib/app/emails.ts`               | auth email template overrides                 | `lib/email/registry.ts` (server)                |
+| Edit this file                    | To register                                   | Auto-wired by (runtime)                           |
+| --------------------------------- | --------------------------------------------- | ------------------------------------------------- |
+| `lib/app/env.ts`                  | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)               |
+| `lib/app/rate-limit.ts`           | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)        |
+| `lib/app/protected-routes.ts`     | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime) |
+| `lib/app/capabilities.ts`         | agent capabilities (tools)                    | the capability registry (server route-handler)    |
+| `lib/app/context-contributors.ts` | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)   |
+| `lib/app/admin-nav.ts`            | admin sidebar sections                        | `admin-sidebar.tsx` (client)                      |
+| `lib/app/db-drift.ts`             | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)      |
+| `lib/app/public-nav.ts`           | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)    |
+| `lib/app/emails.ts`               | auth email template overrides                 | `lib/email/registry.ts` (server)                  |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a
@@ -307,6 +308,23 @@ also env-tunable via `RATE_LIMIT_*` overrides. Full reference:
 > Most apps never need a custom tier — every new `/api/v1/**` route already inherits
 > the 100/min `api` cap automatically. Reach for this only when a route needs a
 > genuinely different cap or keying.
+
+**Protected route prefixes — `lib/app/protected-routes.ts`.** When your fork adds
+a new authenticated top-level section (its own route group under a fresh path,
+e.g. `/projects`), list the prefix here to get the cheap edge redirect-to-login
+for signed-out visitors — without editing `proxy.ts`:
+
+```typescript
+// lib/app/protected-routes.ts — yours to edit (ships empty)
+export const appProtectedRoutes: string[] = ['/projects'];
+```
+
+The proxy **merges** these with the core prefixes (`/dashboard`, `/settings`,
+`/profile`) — the model is _append_, not replacement. This is only the
+"is-logged-in-at-all" edge gate; per-resource ownership/membership checks stay in
+the `withAuth` / `withAdminAuth` guards. Malformed entries (anything not starting
+with `/`, including an empty string that would otherwise match every path) are
+dropped, so a typo can't lock the whole app behind the login redirect.
 
 **Agent capabilities — `lib/app/capabilities.ts`.** Fill in the auto-wired
 `initAppCapabilities()` with `registerAppCapability(new YourTool())` calls (your

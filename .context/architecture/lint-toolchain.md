@@ -132,8 +132,9 @@ surfaces the blanket rule had missed (e.g. the `apiClient` methods in
 `lib/app/**` is the supported surface where forks/apps add their own platform-level
 code. Its inhabitants are the **auto-wired bootstrap files** — `lib/app/env.ts`
 (env schema), `lib/app/rate-limit.ts`, `lib/app/capabilities.ts`,
-`lib/app/admin-nav.ts` — each imported by the core consumer that runs in the
-matching Next.js bundle realm (server / middleware / client). A dedicated
+`lib/app/admin-nav.ts`, `lib/app/protected-routes.ts` (extra authed route
+prefixes, read by the proxy) — each imported by the core consumer that runs in
+the matching Next.js bundle realm (server / middleware / client). A dedicated
 flat-config override keeps that surface **framework-agnostic** so it survives Next.js
 upgrades and can be reasoned about in isolation:
 

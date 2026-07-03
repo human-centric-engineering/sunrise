@@ -21,9 +21,18 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 /**
- * Define which routes require authentication
+ * Core routes that require authentication. A fork appends its own authenticated
+ * sections via `appProtectedRoutes` (lib/app/protected-routes.ts) — the two are
+ * merged, and app entries not starting with `/` (e.g. an empty string) are
+ * dropped so a typo can't protect every path. See CUSTOMIZATION.md §4.
  */
-const protectedRoutes = ['/dashboard', '/settings', '/profile'];
+import { appProtectedRoutes } from '@/lib/app/protected-routes';
+
+const CORE_PROTECTED_ROUTES = ['/dashboard', '/settings', '/profile'];
+const protectedRoutes = [
+  ...CORE_PROTECTED_ROUTES,
+  ...appProtectedRoutes.filter((route) => route.startsWith('/')),
+];
 
 /**
  * Define which routes are auth pages (login, signup, etc.)

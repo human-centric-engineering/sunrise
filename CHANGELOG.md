@@ -18,6 +18,15 @@ release process.
 
 ### Added
 
+- **`lib/app/protected-routes.ts` — fork-owned protected-route registry.** A new
+  `lib/app/**` seam: a fork lists extra authenticated route prefixes in
+  `appProtectedRoutes` (ships empty) and the proxy **merges** them with the core
+  prefixes (`/dashboard`, `/settings`, `/profile`) for the edge redirect-to-login,
+  instead of editing the `proxy.ts` literal. Append semantics (core prefixes always
+  stay protected); malformed entries not starting with `/` (e.g. an empty string
+  that would match every path) are dropped. This is only the "is-logged-in-at-all"
+  edge gate — per-resource authorisation stays in the `withAuth`/`withAdminAuth`
+  guards. Default (empty list) is unchanged behaviour.
 - **Payload-derived inbound scope — `NormalisedTriggerPayload.scope`.** An inbound
   adapter's `normalise()` may now return an optional `scope` (a flat string→string
   map) computed from the verified request body, letting an event-triggered run be
