@@ -191,6 +191,21 @@ export const queryBooleanSchema = z.union([
 ]);
 
 /**
+ * The persisted shape of `CapabilityContext.scope` — a flat string→string map
+ * carried on a scoped entity (an MCP key, a workflow execution row, …) and
+ * folded into a capability's execution context so a scoped capability can
+ * refuse to run outside its intended scope. Core names no keys; a fork maps it
+ * to its own domain (e.g. `{ projectId }`).
+ *
+ * The single source of truth for that contract — validated both when an
+ * admin-supplied value is written and when the persisted JSON is read back
+ * (never trusted raw). Domain modules re-export it under a local name
+ * (`mcpKeyScopeSchema`, `workflowScopeSchema`) so the read/write call sites read
+ * naturally while the shape stays defined once.
+ */
+export const capabilityScopeSchema = z.record(z.string(), z.string());
+
+/**
  * Type inference helpers
  *
  * Export inferred types for use in other files.

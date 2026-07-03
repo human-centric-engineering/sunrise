@@ -6,7 +6,12 @@
  */
 
 import { z } from 'zod';
-import { paginationQuerySchema, cuidSchema, queryBooleanSchema } from '@/lib/validations/common';
+import {
+  paginationQuerySchema,
+  cuidSchema,
+  queryBooleanSchema,
+  capabilityScopeSchema,
+} from '@/lib/validations/common';
 import { McpScope, ALL_MCP_SCOPES, McpResourceType } from '@/types/mcp';
 
 // ============================================================================
@@ -31,14 +36,14 @@ const mcpScopeSchema = z.enum([
 ]);
 
 /**
- * Application-level scope carrier stored on an MCP key (`McpApiKey.scope`) —
- * a flat string→string map mirroring `CapabilityContext.scope`. Distinct from
- * `mcpScopeSchema` above (which is the coarse protocol-scope enum). Used both
- * to validate the admin-supplied value on create/update and to re-validate the
- * persisted JSON column when it is read back at auth time — the stored value is
- * never trusted raw.
+ * Application-level scope carrier stored on an MCP key (`McpApiKey.scope`).
+ * The shared `capabilityScopeSchema` contract (flat string→string map mirroring
+ * `CapabilityContext.scope`), aliased for MCP call sites. Distinct from
+ * `mcpScopeSchema` above (the coarse protocol-scope enum). Validates the
+ * admin-supplied value on create/update and re-validates the persisted JSON
+ * column when read back at auth time — the stored value is never trusted raw.
  */
-export const mcpKeyScopeSchema = z.record(z.string(), z.string());
+export const mcpKeyScopeSchema = capabilityScopeSchema;
 
 // ============================================================================
 // MCP Server Config (Singleton Settings)

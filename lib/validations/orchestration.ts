@@ -12,6 +12,7 @@ import {
   cuidSchema,
   slugSchema,
   queryBooleanSchema,
+  capabilityScopeSchema,
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
@@ -2969,13 +2970,14 @@ export const turnEntrySchema = z.union([
 export const turnEntriesSchema = z.array(turnEntrySchema);
 
 /**
- * Shape of the persisted `AiWorkflowExecution.scope` carrier — a flat
- * string→string map, mirroring `CapabilityContext.scope`. Parsed on the
+ * Shape of the persisted `AiWorkflowExecution.scope` carrier — the shared
+ * `capabilityScopeSchema` contract (a flat string→string map mirroring
+ * `CapabilityContext.scope`), aliased for workflow call sites. Parsed on the
  * crash-resume path before the value is rethreaded into the rebuilt
- * `ExecutionContext`; a malformed payload is dropped (run continues
- * unscoped) rather than failing the resume.
+ * `ExecutionContext`; a malformed payload is dropped (run continues unscoped)
+ * rather than failing the resume.
  */
-export const workflowScopeSchema = z.record(z.string(), z.string());
+export const workflowScopeSchema = capabilityScopeSchema;
 
 export const executionTraceEntrySchema = z
   .object({
