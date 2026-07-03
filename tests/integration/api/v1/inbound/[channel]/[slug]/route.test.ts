@@ -531,6 +531,87 @@ describe('Slack channel', () => {
       expect(call.data).not.toHaveProperty('scope');
     });
 
+    it('stamps an adapter-derived scope when the trigger carries no static scope', async () => {
+      // A fork adapter derives the run's scope from the verified payload; here
+      // the trigger has no static scope, so the adapter's value is used as-is.
+      const slack = getInboundAdapter('slack');
+      vi.spyOn(slack!, 'normalise').mockReturnValueOnce({
+        channel: 'slack',
+        payload: { text: 'hi' },
+        externalId: 'evt-adapter-scope-1',
+        scope: { projectId: 'from-payload' },
+      });
+      vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+        makeTriggerRow({ id: TRIGGER_ID_SLACK, channel: 'slack', scope: null })
+      );
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.0.1.1' });
+
+      const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+      expect(response.status).toBe(202);
+      expect(prisma.aiWorkflowExecution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scope: { projectId: 'from-payload' } }),
+        })
+      );
+    });
+
+    it('merges adapter scope under the static trigger scope — static wins on key conflicts', async () => {
+      const slack = getInboundAdapter('slack');
+      vi.spyOn(slack!, 'normalise').mockReturnValueOnce({
+        channel: 'slack',
+        payload: { text: 'hi' },
+        externalId: 'evt-adapter-scope-2',
+        // `projectId` collides with the static scope; `repo` is adapter-only.
+        scope: { projectId: 'from-payload', repo: 'acme/widgets' },
+      });
+      vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+        makeTriggerRow({
+          id: TRIGGER_ID_SLACK,
+          channel: 'slack',
+          scope: { projectId: 'operator-pinned', tenant: 'acme' },
+        })
+      );
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.0.1.2' });
+
+      const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+      expect(response.status).toBe(202);
+      // Operator-pinned projectId wins; adapter-only `repo` fills in; static `tenant` kept.
+      expect(prisma.aiWorkflowExecution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            scope: { projectId: 'operator-pinned', tenant: 'acme', repo: 'acme/widgets' },
+          }),
+        })
+      );
+    });
+
+    it('drops a malformed adapter-derived scope and falls back to the static scope', async () => {
+      // Adapters are not trusted to return well-formed data — a non-string value
+      // is dropped, leaving only the operator's static scope.
+      const slack = getInboundAdapter('slack');
+      vi.spyOn(slack!, 'normalise').mockReturnValueOnce({
+        channel: 'slack',
+        payload: { text: 'hi' },
+        externalId: 'evt-adapter-scope-3',
+        scope: { projectId: 42 } as unknown as Record<string, string>,
+      });
+      vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+        makeTriggerRow({ id: TRIGGER_ID_SLACK, channel: 'slack', scope: { projectId: 'static' } })
+      );
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.0.1.3' });
+
+      const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+      expect(response.status).toBe(202);
+      expect(prisma.aiWorkflowExecution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scope: { projectId: 'static' } }),
+        })
+      );
+    });
+
     it('carries normalised Slack event payload in inputData.trigger and triggerMeta envelope', async () => {
       // Arrange
       vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(

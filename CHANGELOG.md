@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **Payload-derived inbound scope — `NormalisedTriggerPayload.scope`.** An inbound
+  adapter's `normalise()` may now return an optional `scope` (a flat string→string
+  map) computed from the verified request body, letting an event-triggered run be
+  scoped by what the caller sent (e.g. a fork's GitHub adapter mapping a
+  `pull_request` repo to `{ projectId }`). The inbound route re-validates the
+  adapter-returned value against `capabilityScopeSchema` (adapters aren't trusted
+  to return well-formed data — malformed drops to unscoped) and shallow-merges it
+  **under** the static `AiWorkflowTrigger.scope`, so the operator's config wins on
+  key conflicts. Core's built-in adapters leave it undefined; derivation is
+  fork-specific. Completes the `CapabilityContext.scope` trigger-entry population
+  (the static half shipped alongside).
 - **`AiWorkflowSchedule.scope` + `AiWorkflowTrigger.scope` (nullable JSON) —
   trigger-entry scope population.** Scheduled and inbound-triggered workflow runs
   can now carry a static application-level `scope` (a flat string→string map),

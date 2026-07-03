@@ -42,8 +42,8 @@ domain (e.g. `{ projectId }`). `NULL`/unset = unscoped (unchanged behaviour).
 The generic webhook trigger (`POST /api/v1/webhooks/trigger/:slug`) has no
 per-trigger config row and is deliberately left unscoped — a scoped event trigger
 is expressed through the [inbound-adapter seam](./inbound-triggers.md) instead
-(`AiWorkflowTrigger.scope` for static scope; a future adapter-derived scope for
-payload-dependent cases).
+(`AiWorkflowTrigger.scope` for static scope, plus an adapter-derived
+payload-dependent scope from `normalise()`, static winning on key conflicts).
 
 ## Scheduler Service
 

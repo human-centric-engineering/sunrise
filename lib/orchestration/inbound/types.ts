@@ -95,6 +95,21 @@ export interface NormalisedTriggerPayload {
    * of the `(channel, fromAddress)` conversation key.
    */
   fromAddress?: string;
+  /**
+   * Optional adapter-derived `CapabilityContext.scope` for the run this
+   * request fires — a flat string→string map the adapter computes from the
+   * verified payload (e.g. a fork's GitHub adapter mapping the `pull_request`
+   * repo to `{ projectId }`). Core built-in adapters leave this undefined;
+   * scope derivation is fork-specific.
+   *
+   * This value is **payload-derived, so lower-trust than the operator's static
+   * `AiWorkflowTrigger.scope`**. The inbound route re-validates it (adapters are
+   * not trusted to return well-formed data — a malformed value is dropped to
+   * unscoped) and shallow-merges it UNDER the static trigger scope: the
+   * operator's config wins on key conflicts. So an adapter may fill in keys the
+   * operator didn't pin, but cannot override one they did.
+   */
+  scope?: Record<string, string>;
 }
 
 export interface InboundAdapter {
