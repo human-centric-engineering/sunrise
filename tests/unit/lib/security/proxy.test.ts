@@ -42,12 +42,13 @@ vi.mock('@/lib/security/rate-limit-middleware', () => ({
 }));
 
 // Fork-owned protected-route registry (#378). Simulate a fork that registered
-// `/projects` plus a malformed empty-string entry, to exercise both the merge
-// with the core prefixes and the empty-string guard in `proxy.ts`. `proxy.ts`
-// reads this at module load, so the mock must be hoisted above the `@/proxy`
-// import (vi.mock is hoisted regardless of source position).
+// `/projects` (clean), `/reports/` (trailing slash, to exercise normalisation),
+// and a malformed empty-string entry — covering the merge with the core
+// prefixes, the trailing-slash strip, and the empty-string guard in `proxy.ts`.
+// `proxy.ts` reads this at module load, so the mock must be hoisted above the
+// `@/proxy` import (vi.mock is hoisted regardless of source position).
 vi.mock('@/lib/app/protected-routes', () => ({
-  appProtectedRoutes: ['/projects', ''],
+  appProtectedRoutes: ['/projects', '/reports/', ''],
 }));
 
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
@@ -214,6 +215,20 @@ describe('proxy (project root)', () => {
       const response = await proxy(request);
 
       expect(response.status).toBe(200);
+    });
+
+    it('normalises a trailing slash so the bare index of a registered prefix is protected', async () => {
+      // The fork registered `/reports/` (trailing slash). Without normalisation
+      // `'/reports'.startsWith('/reports/')` is false, so the section's landing
+      // page would leak to signed-out visitors while nested paths stayed
+      // protected. The proxy strips the trailing slash so the bare index is
+      // covered too.
+      const request = createMockRequest('/reports', { cookies: {} });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toContain('/login');
     });
 
     it('drops a malformed empty-string entry so it is not treated as a catch-all', async () => {

@@ -49,14 +49,19 @@ import { appProtectedRoutes } from '@/lib/app/protected-routes';
  *
  * A fork adds its own authenticated top-level sections via the fork-owned
  * `appProtectedRoutes` (`lib/app/protected-routes.ts`) rather than editing this
- * literal. The two are merged below; malformed app entries (anything not
- * starting with `/`, e.g. an empty string that would match every path) are
- * dropped so a fork typo can't lock the whole app behind the login redirect.
+ * literal. The two are merged below. Fork entries are normalised so a typo
+ * can't silently open a gap: a trailing slash is stripped (`/projects/` still
+ * matches the bare `/projects` index — matching is `startsWith`), and any entry
+ * that isn't left as a non-empty `/`-prefixed path is dropped (in particular an
+ * empty string — or a lone `/`, which normalises to empty — that would
+ * otherwise match every path and lock the whole app behind the login redirect).
  */
 const CORE_PROTECTED_ROUTES = ['/dashboard', '/settings', '/profile'];
 const protectedRoutes = [
   ...CORE_PROTECTED_ROUTES,
-  ...appProtectedRoutes.filter((route) => route.startsWith('/')),
+  ...appProtectedRoutes
+    .map((route) => route.replace(/\/+$/, ''))
+    .filter((route) => route.startsWith('/')),
 ];
 
 /**

@@ -23,15 +23,18 @@ import type { NextRequest } from 'next/server';
 /**
  * Core routes that require authentication. A fork appends its own authenticated
  * sections via `appProtectedRoutes` (lib/app/protected-routes.ts) — the two are
- * merged, and app entries not starting with `/` (e.g. an empty string) are
- * dropped so a typo can't protect every path. See CUSTOMIZATION.md §4.
+ * merged. Fork entries are normalised (trailing slash stripped) and any that
+ * isn't a non-empty `/`-prefixed path (e.g. an empty string) is dropped so a
+ * typo can't protect every path. See CUSTOMIZATION.md §4.
  */
 import { appProtectedRoutes } from '@/lib/app/protected-routes';
 
 const CORE_PROTECTED_ROUTES = ['/dashboard', '/settings', '/profile'];
 const protectedRoutes = [
   ...CORE_PROTECTED_ROUTES,
-  ...appProtectedRoutes.filter((route) => route.startsWith('/')),
+  ...appProtectedRoutes
+    .map((route) => route.replace(/\/+$/, ''))
+    .filter((route) => route.startsWith('/')),
 ];
 
 /**
