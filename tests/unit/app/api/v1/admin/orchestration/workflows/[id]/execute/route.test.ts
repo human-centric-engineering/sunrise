@@ -391,6 +391,37 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/execute', () => {
       );
     });
 
+    it('threads the body scope into engine.execute options when provided', async () => {
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+
+      await POST(
+        makeRequest(WORKFLOW_ID, { inputData: { key: 'value' }, scope: { projectId: 'proj-42' } }),
+        makeParams()
+      );
+
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.objectContaining({ id: WORKFLOW_ID }),
+        { key: 'value' },
+        expect.objectContaining({ scope: { projectId: 'proj-42' } })
+      );
+    });
+
+    it('omits scope from engine.execute options when the body carries none', async () => {
+      const adminSession = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue(adminSession);
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+
+      await POST(makeRequest(WORKFLOW_ID, { inputData: { key: 'value' } }), makeParams());
+
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.not.objectContaining({ scope: expect.anything() })
+      );
+    });
+
     it('should pass resumeFromExecutionId to the engine when provided and ownership check passes', async () => {
       // Arrange
       const adminSession = mockAdminUser();

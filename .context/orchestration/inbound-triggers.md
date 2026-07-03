@@ -148,14 +148,32 @@ POST /api/v1/inbound/:channel/:slug
   ↓ normalised = adapter.normalise(bodyParsed, headers)
   ↓ optional metadata.eventTypes filter           → 200 {skipped} if filtered
   ↓ compute dedupKey per channel                  (see "Replay protection" below)
+  ↓ resolvePersistedScope(trigger.scope)          (static scope carrier; dropped-to-unscoped if malformed)
   ↓ workflowDefinitionSchema.safeParse(snapshot)  → 500 on operator error
-  ↓ prisma.aiWorkflowExecution.create({...dedupKey})
+  ↓ prisma.aiWorkflowExecution.create({...dedupKey, ...scope})
   ↓                                              → 200 {deduped: true} if P2002 on dedupKey
   ↓ trigger.lastFiredAt update (best-effort)
   ↓ logAdminAction(workflow_trigger.fire)
   ↓ void drainEngine(...)                        # fire-and-forget; identical crash handling to schedule path
   ↓ 202 {executionId, channel, workflowSlug, status: 'pending'}
 ```
+
+## Static scope carrier
+
+An `AiWorkflowTrigger` may carry an optional `scope` (`Json?`, a flat
+string→string map mirroring [`CapabilityContext.scope`](./capabilities.md)). When
+set, it is stamped onto every `AiWorkflowExecution` this trigger fires (validated
+on read via `resolvePersistedScope` — a malformed row drops to unscoped, never
+wedging a fire), so capabilities inside the run enforce it. Set it via the admin
+trigger create/PATCH endpoints; core names no keys (a fork maps it to its own
+domain, e.g. `{ projectId }`). `NULL`/unset = unscoped.
+
+This is **static** scope — fixed per trigger. **Payload-derived** scope (deriving
+the scope from the incoming request body, e.g. a GitHub `pull_request` repo →
+project) is a separate future seam: `InboundAdapter.normalise()` returning an
+optional `scope` merged in at the create call. The generic webhook trigger
+(`/api/v1/webhooks/trigger/:slug`) has no trigger row and stays unscoped —
+register an inbound adapter when a webhook-driven run needs a scope.
 
 ## Adapter interface
 

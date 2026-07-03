@@ -78,6 +78,7 @@ const mockScheduleRecord = {
   name: 'Daily run',
   cronExpression: '0 9 * * *',
   inputTemplate: {},
+  scope: null,
   isEnabled: true,
   lastRunAt: null,
   nextRunAt: new Date('2026-04-19T09:00:00Z'),

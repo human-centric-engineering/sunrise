@@ -18,6 +18,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
+import { resolvePersistedScope } from '@/lib/orchestration/scope';
 import { recordReleaseEvent } from '@/lib/orchestration/engine/lease';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
@@ -297,6 +298,11 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
         settingsDefault: orgSettings?.defaultMaxCostPerExecutionUsd ?? null,
       });
 
+      // Stamp the schedule's static scope onto the run so capabilities inside
+      // it enforce it. Validated on read (drop-to-unscoped on malformed); the
+      // persisted column then flows through the resume-mode engine invocation.
+      const scheduleScope = resolvePersistedScope(schedule.scope, { scheduleId: schedule.id });
+
       // Create execution row, pinned to the resolved version
       const execution = await prisma.aiWorkflowExecution.create({
         data: {
@@ -306,6 +312,7 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           inputData: schedule.inputTemplate ?? {},
           executionTrace: [],
           userId: schedule.createdBy,
+          ...(scheduleScope ? { scope: scheduleScope } : {}),
           ...(effectiveBudgetLimitUsd !== undefined
             ? { budgetLimitUsd: effectiveBudgetLimitUsd }
             : {}),

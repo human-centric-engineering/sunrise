@@ -870,7 +870,7 @@ describe('OrchestrationEngine', () => {
 
       expect(seenScope).toBeUndefined();
       expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Resume: dropped malformed execution scope',
+        'Dropped malformed persisted workflow scope',
         expect.objectContaining({ executionId: 'exec_scope' })
       );
     });

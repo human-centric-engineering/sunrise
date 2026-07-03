@@ -59,7 +59,11 @@ vi.mock('@/lib/orchestration/engine/orchestration-engine', () => ({
   },
 }));
 
-vi.mock('@/lib/validations/orchestration', () => ({
+// Partial mock: override only `workflowDefinitionSchema.safeParse` while
+// keeping the real remaining exports (e.g. `workflowScopeSchema`, used by the
+// scope-stamping path via `resolvePersistedScope`).
+vi.mock('@/lib/validations/orchestration', async (importActual) => ({
+  ...(await importActual<typeof import('@/lib/validations/orchestration')>()),
   workflowDefinitionSchema: {
     safeParse: vi.fn().mockReturnValue({
       success: true,
@@ -290,6 +294,46 @@ describe('processDueSchedules', () => {
         userId: 'user_1',
       }),
     });
+  });
+
+  it('stamps the schedule scope onto the created execution', async () => {
+    const schedule = makeSchedule({ scope: { projectId: 'proj-42' } });
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({ id: 'exec_1' } as never);
+
+    await processDueSchedules();
+
+    expect(prisma.aiWorkflowExecution.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+    });
+  });
+
+  it('omits scope from the execution when the schedule carries none', async () => {
+    const schedule = makeSchedule({ scope: null });
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({ id: 'exec_1' } as never);
+
+    await processDueSchedules();
+
+    const call = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('scope');
+  });
+
+  it('drops a malformed schedule scope and still creates the run unscoped', async () => {
+    // A hand-edited row with non-string values must not wedge the tick.
+    const schedule = makeSchedule({ scope: { projectId: 42 } });
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({ id: 'exec_1' } as never);
+
+    const result = await processDueSchedules();
+
+    expect(result.succeeded).toBe(1);
+    const call = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('scope');
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Dropped malformed persisted workflow scope',
+      expect.objectContaining({ scheduleId: 'sched_1' })
+    );
   });
 
   it('skips schedule when optimistic lock fails (already claimed)', async () => {

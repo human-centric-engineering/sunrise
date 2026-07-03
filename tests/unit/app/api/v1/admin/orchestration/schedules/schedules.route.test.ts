@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ const mockScheduleRecord = {
   name: 'Daily run',
   cronExpression: '0 9 * * *',
   inputTemplate: {},
+  scope: null,
   isEnabled: true,
   lastRunAt: null,
   nextRunAt: new Date('2026-04-19T09:00:00Z'),
@@ -201,6 +203,40 @@ describe('Schedule CRUD API', () => {
       expect(json.data.schedule.name).toBe('Daily run');
     });
 
+    it('persists the scope carrier on create when provided', async () => {
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
+      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
+      vi.mocked(prisma.aiWorkflowSchedule.create).mockResolvedValue(mockScheduleRecord);
+
+      await createSchedule(
+        makePostRequest({
+          name: 'Scoped',
+          cronExpression: '0 9 * * *',
+          scope: { projectId: 'proj-42' },
+        }),
+        { params: Promise.resolve({ id: VALID_WF_ID }) }
+      );
+
+      expect(prisma.aiWorkflowSchedule.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+        })
+      );
+    });
+
+    it('rejects a scope carrier with non-string values (400)', async () => {
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
+      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
+
+      const res = await createSchedule(
+        makePostRequest({ name: 'Bad', cronExpression: '0 9 * * *', scope: { projectId: 42 } }),
+        { params: Promise.resolve({ id: VALID_WF_ID }) }
+      );
+
+      expect(res.status).toBe(400);
+      expect(prisma.aiWorkflowSchedule.create).not.toHaveBeenCalled();
+    });
+
     it('rejects invalid cron expression (400)', async () => {
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
       vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
@@ -278,6 +314,47 @@ describe('Schedule CRUD API', () => {
       });
 
       expect(res.status).toBe(400);
+    });
+
+    it('sets a new scope on update', async () => {
+      vi.mocked(prisma.aiWorkflowSchedule.findFirst).mockResolvedValue(mockScheduleRecord);
+      vi.mocked(prisma.aiWorkflowSchedule.update).mockResolvedValue(mockScheduleRecord);
+
+      await updateSchedule(makePatchRequest({ scope: { projectId: 'proj-42' } }), {
+        params: Promise.resolve({ id: VALID_WF_ID, scheduleId: VALID_SCHED_ID }),
+      });
+
+      expect(prisma.aiWorkflowSchedule.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+        })
+      );
+    });
+
+    it('clears the scope with Prisma.DbNull when scope is null (not JS null)', async () => {
+      // A `Json?` column can only be cleared with the DbNull sentinel — passing
+      // JS null throws at the Prisma layer.
+      vi.mocked(prisma.aiWorkflowSchedule.findFirst).mockResolvedValue(mockScheduleRecord);
+      vi.mocked(prisma.aiWorkflowSchedule.update).mockResolvedValue(mockScheduleRecord);
+
+      await updateSchedule(makePatchRequest({ scope: null }), {
+        params: Promise.resolve({ id: VALID_WF_ID, scheduleId: VALID_SCHED_ID }),
+      });
+
+      const call = vi.mocked(prisma.aiWorkflowSchedule.update).mock.calls[0][0];
+      expect((call.data as { scope: unknown }).scope).toBe(Prisma.DbNull);
+    });
+
+    it('leaves scope untouched when the field is absent from the patch', async () => {
+      vi.mocked(prisma.aiWorkflowSchedule.findFirst).mockResolvedValue(mockScheduleRecord);
+      vi.mocked(prisma.aiWorkflowSchedule.update).mockResolvedValue(mockScheduleRecord);
+
+      await updateSchedule(makePatchRequest({ name: 'Renamed' }), {
+        params: Promise.resolve({ id: VALID_WF_ID, scheduleId: VALID_SCHED_ID }),
+      });
+
+      const call = vi.mocked(prisma.aiWorkflowSchedule.update).mock.calls[0][0];
+      expect(call.data).not.toHaveProperty('scope');
     });
   });
 

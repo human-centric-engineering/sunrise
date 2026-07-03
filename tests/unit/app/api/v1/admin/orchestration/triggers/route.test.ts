@@ -20,6 +20,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
@@ -80,6 +81,7 @@ function makeTrigger(overrides: Record<string, unknown> = {}) {
     name: 'Slack mention trigger',
     metadata: { eventTypes: ['app_mention'] },
     signingSecret: null,
+    scope: null,
     isEnabled: true,
     lastFiredAt: null,
     createdBy: 'user-1',
@@ -173,6 +175,56 @@ describe('POST /api/v1/admin/orchestration/triggers', () => {
 
     const res = await Create(req);
     expect(res.status).toBe(201);
+  });
+
+  it('persists the scope carrier on create when provided', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue({
+      id: WORKFLOW_ID,
+      slug: 'test-workflow',
+    } as never);
+    vi.mocked(prisma.aiWorkflowTrigger.create).mockResolvedValue(
+      makeTrigger({ scope: { projectId: 'proj-42' } })
+    );
+
+    const req = makeReq('http://localhost/api/v1/admin/orchestration/triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workflowId: WORKFLOW_ID,
+        channel: 'slack',
+        name: 'Scoped trigger',
+        scope: { projectId: 'proj-42' },
+      }),
+    });
+
+    await Create(req);
+    expect(prisma.aiWorkflowTrigger.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+      })
+    );
+  });
+
+  it('rejects a scope carrier with non-string values (400)', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue({
+      id: WORKFLOW_ID,
+      slug: 'test-workflow',
+    } as never);
+
+    const req = makeReq('http://localhost/api/v1/admin/orchestration/triggers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workflowId: WORKFLOW_ID,
+        channel: 'slack',
+        name: 'Bad scope',
+        scope: { projectId: 42 },
+      }),
+    });
+
+    const res = await Create(req);
+    expect(res.status).toBe(400);
+    expect(prisma.aiWorkflowTrigger.create).not.toHaveBeenCalled();
   });
 
   it('rejects when workflow does not exist with a clean ValidationError', async () => {
@@ -306,6 +358,56 @@ describe('PATCH /api/v1/admin/orchestration/triggers/:id', () => {
     });
     const res = await Update(req, { params: Promise.resolve({ id: TRIGGER_ID }) });
     expect(res.status).toBe(200);
+  });
+
+  it('sets a new scope on update', async () => {
+    vi.mocked(prisma.aiWorkflowTrigger.findUnique).mockResolvedValue(makeTrigger());
+    vi.mocked(prisma.aiWorkflowTrigger.update).mockResolvedValue(
+      makeTrigger({ scope: { projectId: 'proj-42' } })
+    );
+
+    const req = makeReq(`http://localhost/api/v1/admin/orchestration/triggers/${TRIGGER_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: { projectId: 'proj-42' } }),
+    });
+    await Update(req, { params: Promise.resolve({ id: TRIGGER_ID }) });
+
+    const call = vi.mocked(prisma.aiWorkflowTrigger.update).mock.calls[0][0];
+    expect((call.data as { scope: unknown }).scope).toEqual({ projectId: 'proj-42' });
+  });
+
+  it('clears the scope with Prisma.DbNull when scope is null (not JS null)', async () => {
+    // A `Json?` column can only be cleared with the DbNull sentinel.
+    vi.mocked(prisma.aiWorkflowTrigger.findUnique).mockResolvedValue(
+      makeTrigger({ scope: { projectId: 'proj-42' } })
+    );
+    vi.mocked(prisma.aiWorkflowTrigger.update).mockResolvedValue(makeTrigger({ scope: null }));
+
+    const req = makeReq(`http://localhost/api/v1/admin/orchestration/triggers/${TRIGGER_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope: null }),
+    });
+    await Update(req, { params: Promise.resolve({ id: TRIGGER_ID }) });
+
+    const call = vi.mocked(prisma.aiWorkflowTrigger.update).mock.calls[0][0];
+    expect((call.data as { scope: unknown }).scope).toBe(Prisma.DbNull);
+  });
+
+  it('leaves scope untouched when the field is absent from the patch', async () => {
+    vi.mocked(prisma.aiWorkflowTrigger.findUnique).mockResolvedValue(makeTrigger());
+    vi.mocked(prisma.aiWorkflowTrigger.update).mockResolvedValue(makeTrigger({ name: 'Renamed' }));
+
+    const req = makeReq(`http://localhost/api/v1/admin/orchestration/triggers/${TRIGGER_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Renamed' }),
+    });
+    await Update(req, { params: Promise.resolve({ id: TRIGGER_ID }) });
+
+    const call = vi.mocked(prisma.aiWorkflowTrigger.update).mock.calls[0][0];
+    expect(call.data).not.toHaveProperty('scope');
   });
 
   it('refuses to clear the signingSecret on an HMAC trigger', async () => {

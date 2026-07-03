@@ -78,6 +78,11 @@ model AiWorkflowSchedule {
   name           String
   cronExpression String    @db.VarChar(100)
   inputTemplate  Json      @default("{}")
+  // Optional static scope carrier for runs this schedule fires, mirroring
+  // `CapabilityContext.scope`. Stamped onto the created `AiWorkflowExecution.scope`
+  // so capabilities inside the run enforce it. Core names no keys; a fork maps it
+  // to its own domain (e.g. `{ projectId }`). NULL = unscoped (unchanged behaviour).
+  scope          Json?
   isEnabled      Boolean   @default(true)
   lastRunAt      DateTime?
   nextRunAt      DateTime?
@@ -107,6 +112,13 @@ model AiWorkflowTrigger {
   channel       String    @db.VarChar(40) // "slack" | "postmark" | "hmac"
   name          String
   metadata      Json      @default("{}")
+  // Optional static scope carrier for runs this trigger fires, mirroring
+  // `CapabilityContext.scope`. Stamped onto the created `AiWorkflowExecution.scope`
+  // so capabilities inside the run enforce it. Core names no keys; a fork maps it
+  // to its own domain (e.g. `{ projectId }`). NULL = unscoped (unchanged behaviour).
+  // Payload-derived (dynamic) scope for an inbound channel is a separate seam
+  // (`InboundAdapter.normalise()` returning a scope) tracked separately.
+  scope         Json?
   signingSecret String?   @db.Text // per-trigger HMAC shared secret (plaintext, mirrors AiEventHook.secret); null for env-var-keyed channels
   isEnabled     Boolean   @default(true)
   lastFiredAt   DateTime?

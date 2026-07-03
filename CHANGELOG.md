@@ -18,6 +18,22 @@ release process.
 
 ### Added
 
+- **`AiWorkflowSchedule.scope` + `AiWorkflowTrigger.scope` (nullable JSON) —
+  trigger-entry scope population.** Scheduled and inbound-triggered workflow runs
+  can now carry a static application-level `scope` (a flat string→string map),
+  stamped onto the created `AiWorkflowExecution.scope` so capabilities inside the
+  run enforce it. A schedule/trigger's `scope` is settable as opaque JSON via the
+  admin schedule/trigger create + PATCH endpoints (clearing uses the
+  `Prisma.DbNull` sentinel); the admin `POST /workflows/:id/execute` +
+  `execute-stream` routes accept an optional `scope` for a manual run. Persisted
+  values are validated on read via a new shared helper `resolvePersistedScope`
+  (`lib/orchestration/scope.ts`) — a malformed row is dropped to unscoped (never
+  wedges a run) — which also now backs the engine resume path. The generic
+  webhook trigger is deliberately left unscoped: scoped event triggers use the
+  inbound-adapter seam. Core names no keys; `NULL`/unset is unchanged behaviour.
+  The second populator of the `CapabilityContext.scope` carrier (after the MCP
+  key); payload-derived (dynamic) scope for inbound adapters is tracked
+  separately.
 - **`McpApiKey.scope` (nullable JSON) — per-key scope population.** An MCP API
   key may now carry an optional application-level `scope` (a flat string→string
   map, distinct from the coarse protocol `scopes` array). It is validated on read

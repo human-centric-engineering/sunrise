@@ -9,6 +9,7 @@
  */
 
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -17,7 +18,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
-import { cuidSchema } from '@/lib/validations/common';
+import { cuidSchema, capabilityScopeSchema } from '@/lib/validations/common';
 
 const updateTriggerMetadataSchema = z
   .object({
@@ -32,6 +33,8 @@ const updateTriggerSchema = z.object({
   /** Pass `null` to clear, a string to rotate. Min 16 chars when set. */
   signingSecret: z.string().min(16).max(512).nullable().optional(),
   isEnabled: z.boolean().optional(),
+  /** Static scope carrier; `null` clears it, omit to leave unchanged. */
+  scope: capabilityScopeSchema.nullable().optional(),
 });
 
 function resolveTriggerId(rawId: string): string {
@@ -87,6 +90,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (input.metadata !== undefined) data.metadata = input.metadata;
   if (input.signingSecret !== undefined) data.signingSecret = input.signingSecret;
   if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
+  // `scope` is a `Json?` column: JS `null` can't clear it (Prisma needs the
+  // `DbNull` sentinel), and `undefined` leaves it untouched.
+  if (input.scope !== undefined) data.scope = input.scope === null ? Prisma.DbNull : input.scope;
 
   const updated = await prisma.aiWorkflowTrigger.update({
     where: { id },

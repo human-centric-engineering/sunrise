@@ -2221,6 +2221,10 @@ export const executeWorkflowBodySchema = z.object({
     .positive('Budget limit must be positive')
     .max(1000, 'Budget limit must be at most $1,000')
     .optional(),
+  // Optional scope carrier for this manual run — a trusted admin explicitly
+  // choosing the scope capabilities inside the run should enforce. Threaded
+  // into `ExecuteOptions.scope`; absent = unscoped (unchanged behaviour).
+  scope: capabilityScopeSchema.optional(),
 });
 
 /**
@@ -3677,6 +3681,8 @@ export const createScheduleSchema = z.object({
   cronExpression: z.string().min(1).max(100),
   inputTemplate: z.record(z.string(), z.unknown()).optional(),
   isEnabled: z.boolean().optional(),
+  // Static scope carrier stamped onto every run this schedule fires.
+  scope: capabilityScopeSchema.optional(),
 });
 
 export const updateScheduleSchema = z.object({
@@ -3684,6 +3690,8 @@ export const updateScheduleSchema = z.object({
   cronExpression: z.string().min(1).max(100).optional(),
   inputTemplate: z.record(z.string(), z.unknown()).optional(),
   isEnabled: z.boolean().optional(),
+  // `null` clears the scope (unscoped); omit to leave unchanged.
+  scope: capabilityScopeSchema.nullable().optional(),
 });
 
 // ---------- Analytics Query ─────────────────────────────────────────────────

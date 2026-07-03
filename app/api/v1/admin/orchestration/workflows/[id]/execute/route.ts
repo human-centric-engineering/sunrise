@@ -112,6 +112,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     {
       userId: session.user.id,
       ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
+      ...(body.scope ? { scope: body.scope } : {}),
       signal: request.signal,
       resumeFromExecutionId,
     }

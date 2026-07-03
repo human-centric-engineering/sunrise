@@ -21,6 +21,7 @@ import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
+import { capabilityScopeSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { listInboundChannels } from '@/lib/orchestration/inbound/registry';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
@@ -48,6 +49,8 @@ const createTriggerSchema = z
     /** Per-trigger HMAC secret for the `hmac` channel; null for env-keyed channels. */
     signingSecret: z.string().min(16).max(512).nullable().optional(),
     isEnabled: z.boolean().optional().default(true),
+    /** Static scope carrier stamped onto every run this trigger fires. */
+    scope: capabilityScopeSchema.optional(),
   })
   .refine(
     (data) => data.channel !== 'hmac' || (data.signingSecret && data.signingSecret.length >= 16),
@@ -130,6 +133,7 @@ export const POST = withAdminAuth(async (request, session) => {
         metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
         signingSecret: input.signingSecret ?? null,
         isEnabled: input.isEnabled,
+        ...(input.scope ? { scope: input.scope } : {}),
         createdBy: session.user.id,
       },
       include: {

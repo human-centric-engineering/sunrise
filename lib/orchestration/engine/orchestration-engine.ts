@@ -49,8 +49,8 @@ import {
   executionTraceEntrySchema,
   stepErrorConfigSchema,
   turnEntriesSchema,
-  workflowScopeSchema,
 } from '@/lib/validations/orchestration';
+import { resolvePersistedScope } from '@/lib/orchestration/scope';
 import {
   WorkflowStatus,
   type ExecutionEvent,
@@ -1891,18 +1891,7 @@ export class OrchestrationEngine {
       // Rethread the persisted scope carrier so a resumed run's `tool_call`
       // dispatches stay scoped exactly as they were pre-crash. A malformed
       // payload is dropped (run continues unscoped) rather than failing resume.
-      let resumeScope: Record<string, string> | undefined;
-      if (row.scope !== null && row.scope !== undefined) {
-        const parsedScope = workflowScopeSchema.safeParse(row.scope);
-        if (parsedScope.success) {
-          resumeScope = parsedScope.data;
-        } else {
-          baseLogger.warn('Resume: dropped malformed execution scope', {
-            executionId: row.id,
-            issues: parsedScope.error.issues.length,
-          });
-        }
-      }
+      const resumeScope = resolvePersistedScope(row.scope, { executionId: row.id });
       const ctx = createContext({
         executionId: row.id,
         workflowId: workflow.id,

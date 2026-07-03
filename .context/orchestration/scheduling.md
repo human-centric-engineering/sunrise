@@ -14,19 +14,36 @@ lib/orchestration/scheduling/
 
 `AiWorkflowSchedule` — stored in `ai_workflow_schedule`:
 
-| Field            | Type      | Notes                                 |
-| ---------------- | --------- | ------------------------------------- |
-| `id`             | CUID      | Primary key                           |
-| `workflowId`     | FK        | Links to `AiWorkflow`                 |
-| `name`           | String    | Human label                           |
-| `cronExpression` | String    | 5-field cron (`0 9 * * 1-5`)          |
-| `inputTemplate`  | JSON      | Passed as `inputData` on execution    |
-| `isEnabled`      | Boolean   | Must be `true` and `nextRunAt <= now` |
-| `lastRunAt`      | DateTime? | Set after each trigger                |
-| `nextRunAt`      | DateTime? | Precomputed next fire time (indexed)  |
-| `createdBy`      | FK        | User who created the schedule         |
+| Field            | Type      | Notes                                                       |
+| ---------------- | --------- | ----------------------------------------------------------- |
+| `id`             | CUID      | Primary key                                                 |
+| `workflowId`     | FK        | Links to `AiWorkflow`                                       |
+| `name`           | String    | Human label                                                 |
+| `cronExpression` | String    | 5-field cron (`0 9 * * 1-5`)                                |
+| `inputTemplate`  | JSON      | Passed as `inputData` on execution                          |
+| `scope`          | JSON?     | Static `CapabilityContext.scope` for fired runs (see below) |
+| `isEnabled`      | Boolean   | Must be `true` and `nextRunAt <= now`                       |
+| `lastRunAt`      | DateTime? | Set after each trigger                                      |
+| `nextRunAt`      | DateTime? | Precomputed next fire time (indexed)                        |
+| `createdBy`      | FK        | User who created the schedule                               |
 
 Index: `(isEnabled, nextRunAt)` for efficient due-schedule queries.
+
+### Static scope carrier
+
+`AiWorkflowSchedule.scope` and `AiWorkflowTrigger.scope` are optional flat
+string→string maps mirroring [`CapabilityContext.scope`](./capabilities.md). When
+set, the scope is stamped onto the created `AiWorkflowExecution.scope` (validated
+on read via `resolvePersistedScope` in `lib/orchestration/scope.ts` — a malformed
+row is dropped to unscoped, never wedging a fire), so capabilities inside the run
+can refuse to run outside it. Core names no keys; a fork maps them to its own
+domain (e.g. `{ projectId }`). `NULL`/unset = unscoped (unchanged behaviour).
+
+The generic webhook trigger (`POST /api/v1/webhooks/trigger/:slug`) has no
+per-trigger config row and is deliberately left unscoped — a scoped event trigger
+is expressed through the [inbound-adapter seam](./inbound-triggers.md) instead
+(`AiWorkflowTrigger.scope` for static scope; a future adapter-derived scope for
+payload-dependent cases).
 
 ## Scheduler Service
 
@@ -162,8 +179,8 @@ See [Inbound triggers](./inbound-triggers.md) for the full guide — quick-start
 
 ## Validation Schemas
 
-- `createScheduleSchema` — `name` (required), `cronExpression` (required), `inputTemplate` (optional JSON), `isEnabled` (optional boolean)
-- `updateScheduleSchema` — all fields optional
+- `createScheduleSchema` — `name` (required), `cronExpression` (required), `inputTemplate` (optional JSON), `isEnabled` (optional boolean), `scope` (optional flat string→string map)
+- `updateScheduleSchema` — all fields optional; `scope` accepts `null` to clear (persisted via the `Prisma.DbNull` sentinel)
 
 Both defined in `lib/validations/orchestration.ts`.
 

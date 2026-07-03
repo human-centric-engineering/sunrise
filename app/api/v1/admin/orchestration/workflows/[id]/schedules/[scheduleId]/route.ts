@@ -6,7 +6,7 @@
  * DELETE /api/v1/admin/orchestration/workflows/:id/schedules/:scheduleId
  */
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -73,6 +73,11 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
         ? { inputTemplate: body.inputTemplate as Prisma.InputJsonValue }
         : {}),
       ...(body.isEnabled !== undefined ? { isEnabled: body.isEnabled } : {}),
+      // `scope` is a `Json?` column: JS `null` can't clear it (Prisma needs the
+      // `DbNull` sentinel), and `undefined` leaves it untouched.
+      ...(body.scope !== undefined
+        ? { scope: body.scope === null ? Prisma.DbNull : body.scope }
+        : {}),
       nextRunAt,
     },
   });

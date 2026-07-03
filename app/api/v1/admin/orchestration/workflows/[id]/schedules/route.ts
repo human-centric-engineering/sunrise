@@ -76,6 +76,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       cronExpression: body.cronExpression,
       inputTemplate: (body.inputTemplate ?? {}) as Prisma.InputJsonValue,
       isEnabled: body.isEnabled ?? true,
+      ...(body.scope ? { scope: body.scope } : {}),
       nextRunAt,
       createdBy: session.user.id,
     },

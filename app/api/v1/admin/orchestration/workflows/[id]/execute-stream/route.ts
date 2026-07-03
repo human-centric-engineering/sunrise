@@ -21,6 +21,7 @@ import {
   prepareWorkflowExecution,
   resolveEffectiveExecutionCap,
 } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
+import { capabilityScopeSchema } from '@/lib/validations/common';
 import { z } from 'zod';
 
 const MAX_INPUT_SIZE = 256 * 1024; // 256 KB
@@ -68,6 +69,26 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     budgetLimitUsd = parsed.data;
   }
 
+  // Optional scope carrier — a trusted admin choosing the scope this run's
+  // capabilities enforce. JSON-encoded query param, mirroring `inputData`.
+  const scopeRaw = url.searchParams.get('scope');
+  let scope: Record<string, string> | undefined;
+  if (scopeRaw !== null) {
+    let rawParsed: unknown;
+    try {
+      rawParsed = JSON.parse(scopeRaw);
+    } catch {
+      throw new ValidationError('Invalid scope', { scope: ['Must be valid JSON'] });
+    }
+    const result = capabilityScopeSchema.safeParse(rawParsed);
+    if (!result.success) {
+      throw new ValidationError('Invalid scope', {
+        scope: ['Must be a flat object of string values'],
+      });
+    }
+    scope = result.data;
+  }
+
   // Shared pre-flight: ID parse, DB lookup, isActive, definition + DAG + semantic validation
   const { workflow, definition, version } = await prepareWorkflowExecution(rawId);
 
@@ -90,6 +111,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
     userId: session.user.id,
     ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
+    ...(scope ? { scope } : {}),
     signal: request.signal,
   });
 

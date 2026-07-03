@@ -141,7 +141,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/workflows/:id/schedules`                | GET, POST          | List / create cron schedules for a workflow                                                                                                                                                                                | 5.1     |
 | `/workflows/:id/schedules/:scheduleId`    | GET, PATCH, DELETE | Read / update / delete a workflow schedule                                                                                                                                                                                 | 5.1     |
 
-**Schedule constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`.
+**Schedule constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`. Create/update accept an optional `scope` (a flat string→string map stamped onto fired runs; `null` on update clears it via `Prisma.DbNull`) — see [Scheduling — Static scope carrier](../orchestration/scheduling.md#static-scope-carrier). The `POST /triggers` + `PATCH /triggers/:id` inbound-trigger routes accept the same `scope` field.
 
 | `/executions` | GET | List workflow executions (paginated) | 5.1 |
 | `/conversations/export` | POST | Export conversations as JSON | 5.1 |
@@ -414,7 +414,7 @@ Response: `{ ok, errors, warnings, extractedVariables }`. Warnings (uncovered te
 
 ### `POST /workflows/:id/execute`
 
-Runs a workflow as a live SSE `text/event-stream`. Body: `{ inputData, budgetLimitUsd? }`. See [`.context/orchestration/engine.md`](../orchestration/engine.md) for event types and lifecycle. Optional query param `?resumeFromExecutionId=<cuid>` resumes a paused execution.
+Runs a workflow as a live SSE `text/event-stream`. Body: `{ inputData, budgetLimitUsd?, scope? }` — `scope` is an optional flat string→string map (`CapabilityContext.scope`) for a manually-scoped run, threaded into `ExecuteOptions.scope`. See [`.context/orchestration/engine.md`](../orchestration/engine.md) for event types and lifecycle. Optional query param `?resumeFromExecutionId=<cuid>` resumes a paused execution.
 
 ### `GET /workflows/:id/cost-estimate`
 
@@ -429,7 +429,7 @@ See [`.context/orchestration/cost-estimation.md`](../orchestration/cost-estimati
 
 ### `GET /workflows/:id/execute-stream`
 
-Alternative to `POST /execute` for clients that prefer GET-based SSE (the browser `EventSource` API requires GET). Input is passed as query params: `?inputData=<json>&budgetLimitUsd=<number>`. Events are identical to the POST variant. On client disconnect, execution continues server-side but stops streaming.
+Alternative to `POST /execute` for clients that prefer GET-based SSE (the browser `EventSource` API requires GET). Input is passed as query params: `?inputData=<json>&budgetLimitUsd=<number>&scope=<json>` (`scope` is a JSON-encoded flat string→string map, mirroring the POST body's `scope`). Events are identical to the POST variant. On client disconnect, execution continues server-side but stops streaming.
 
 ### `GET /workflows/:id/definition-history`
 

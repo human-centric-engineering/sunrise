@@ -327,4 +327,63 @@ describe('GET /workflows/:id/execute-stream', () => {
       expect.objectContaining({ budgetLimitUsd: 5 })
     );
   });
+
+  it('passes a valid scope query param into the engine options', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+
+    await ExecuteStream(
+      makeRequest(WORKFLOW_ID, { scope: JSON.stringify({ projectId: 'proj-42' }) }),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.anything(),
+      {},
+      expect.objectContaining({ scope: { projectId: 'proj-42' } })
+    );
+  });
+
+  it('omits scope from the engine options when the query param is absent', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+
+    await ExecuteStream(makeRequest(WORKFLOW_ID), makeParams(WORKFLOW_ID));
+
+    expect(mockExecute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.not.objectContaining({ scope: expect.anything() })
+    );
+  });
+
+  it('returns 400 when the scope query param is not valid JSON', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+
+    const response = await ExecuteStream(
+      makeRequest(WORKFLOW_ID, { scope: '{not-json' }),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when the scope query param has non-string values', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+
+    const response = await ExecuteStream(
+      makeRequest(WORKFLOW_ID, { scope: JSON.stringify({ projectId: 42 }) }),
+      makeParams(WORKFLOW_ID)
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { code: string } }>(response);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(mockExecute).not.toHaveBeenCalled();
+  });
 });

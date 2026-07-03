@@ -146,6 +146,7 @@ function makeTriggerRow(overrides: Record<string, unknown> = {}) {
     name: 'Integration Slack Trigger',
     metadata: {},
     signingSecret: null,
+    scope: null,
     isEnabled: true,
     lastFiredAt: null,
     createdBy: USER_ID,
@@ -500,6 +501,34 @@ describe('Slack channel', () => {
           }),
         })
       );
+    });
+
+    it('stamps the trigger scope onto the created execution', async () => {
+      vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+        makeTriggerRow({ id: TRIGGER_ID_SLACK, channel: 'slack', scope: { projectId: 'proj-42' } })
+      );
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.0.0.99' });
+
+      const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+      expect(response.status).toBe(202);
+      expect(prisma.aiWorkflowExecution.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ scope: { projectId: 'proj-42' } }),
+        })
+      );
+    });
+
+    it('omits scope from the execution when the trigger carries none', async () => {
+      vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+        makeTriggerRow({ id: TRIGGER_ID_SLACK, channel: 'slack', scope: null })
+      );
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.0.0.98' });
+
+      await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+      const call = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls[0][0];
+      expect(call.data).not.toHaveProperty('scope');
     });
 
     it('carries normalised Slack event payload in inputData.trigger and triggerMeta envelope', async () => {

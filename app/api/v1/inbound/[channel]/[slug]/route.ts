@@ -36,6 +36,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { WorkflowStatus } from '@/types/orchestration';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { drainEngine } from '@/lib/orchestration/scheduling/scheduler';
+import { resolvePersistedScope } from '@/lib/orchestration/scope';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
@@ -326,6 +327,12 @@ export async function POST(
     settingsDefault: orgSettings?.defaultMaxCostPerExecutionUsd ?? null,
   });
 
+  // Stamp the trigger's static scope onto the run so capabilities inside it
+  // enforce it. Validated on read (drop-to-unscoped on malformed). Payload-
+  // derived (dynamic) scope for a channel is a separate seam and would merge
+  // in here from `normalised`.
+  const triggerScope = resolvePersistedScope(trigger.scope, { triggerId: trigger.id });
+
   let executionId: string;
   try {
     const execution = await prisma.aiWorkflowExecution.create({
@@ -339,6 +346,7 @@ export async function POST(
         triggerSource,
         triggerExternalId: externalId,
         dedupKey,
+        ...(triggerScope ? { scope: triggerScope } : {}),
         ...(effectiveBudgetLimitUsd !== undefined
           ? { budgetLimitUsd: effectiveBudgetLimitUsd }
           : {}),
