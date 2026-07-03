@@ -13,26 +13,36 @@
  * spread the result conditionally: `...(scope ? { scope } : {})`.
  */
 
-import { logger } from '@/lib/logging';
+import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import { workflowScopeSchema } from '@/lib/validations/orchestration';
 
 /**
  * Validate a persisted scope JSON column before trusting it.
  *
+ * Covers the **workflow-side** columns (`AiWorkflowExecution.scope`,
+ * `AiWorkflowSchedule.scope`, `AiWorkflowTrigger.scope`), which all validate
+ * against `workflowScopeSchema`. The MCP-key column (`McpApiKey.scope`) shares
+ * the same contract but validates inline in `lib/orchestration/mcp/auth.ts`
+ * against its own `mcpKeyScopeSchema` alias, kept local to the MCP auth module.
+ *
  * @param value   The raw column value (`null`/`undefined` when unset).
  * @param context Structured fields identifying the row, logged if the value is
  *   malformed (e.g. `{ scheduleId }`, `{ triggerId }`, `{ executionId }`).
+ * @param log     Logger for the malformed-drop warning. Pass a context-bound
+ *   logger (e.g. the engine's `baseLogger`, which carries `workflowId`/`userId`)
+ *   to preserve correlation; defaults to the module logger.
  * @returns The validated `Record<string, string>`, or `undefined` when the
  *   column is unset or malformed (drop-to-unscoped — never throws).
  */
 export function resolvePersistedScope(
   value: unknown,
-  context: Record<string, unknown>
+  context: Record<string, unknown>,
+  log: Logger = defaultLogger
 ): Record<string, string> | undefined {
   if (value === null || value === undefined) return undefined;
   const parsed = workflowScopeSchema.safeParse(value);
   if (parsed.success) return parsed.data;
-  logger.warn('Dropped malformed persisted workflow scope', {
+  log.warn('Dropped malformed persisted workflow scope', {
     ...context,
     issues: parsed.error.issues.length,
   });

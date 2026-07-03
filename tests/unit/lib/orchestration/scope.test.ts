@@ -63,4 +63,22 @@ describe('resolvePersistedScope', () => {
     expect(resolvePersistedScope('nope', { executionId: 'e1' })).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledTimes(2);
   });
+
+  it('warns via the supplied logger (preserving its bound context), not the default', () => {
+    // The engine passes a context-bound baseLogger (workflowId/userId) so the
+    // malformed-drop warning keeps correlation; verify the override is honoured.
+    const customLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const result = resolvePersistedScope(
+      { projectId: 42 },
+      { executionId: 'e1' },
+      customLogger as never
+    );
+
+    expect(result).toBeUndefined();
+    expect(customLogger.warn).toHaveBeenCalledWith(
+      'Dropped malformed persisted workflow scope',
+      expect.objectContaining({ executionId: 'e1' })
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
 });

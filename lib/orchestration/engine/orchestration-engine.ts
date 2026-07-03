@@ -1889,9 +1889,12 @@ export class OrchestrationEngine {
         });
       }
       // Rethread the persisted scope carrier so a resumed run's `tool_call`
-      // dispatches stay scoped exactly as they were pre-crash. A malformed
+      // dispatches stay scoped exactly as they were pre-crash. Scope is pinned
+      // to the row at creation (like `versionId`) and is intentionally NOT
+      // overridable by `options.scope` on resume — honouring a caller-supplied
+      // scope here would let a paused run be re-scoped mid-flight. A malformed
       // payload is dropped (run continues unscoped) rather than failing resume.
-      const resumeScope = resolvePersistedScope(row.scope, { executionId: row.id });
+      const resumeScope = resolvePersistedScope(row.scope, { executionId: row.id }, baseLogger);
       const ctx = createContext({
         executionId: row.id,
         workflowId: workflow.id,
