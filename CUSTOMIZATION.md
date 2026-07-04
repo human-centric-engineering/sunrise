@@ -537,12 +537,13 @@ folder is a clean, Next-native operation; the only upstream-sync cost is the sam
 as for any removed core file — if Sunrise later edits that exact page you get a
 routine delete/modify conflict, resolved with "keep mine (deleted)".
 
-**Legal-page caveat.** `/privacy` and `/contact` are linked from surfaces that
-always render — the cookie-consent banner and the error pages (`app/error.tsx`,
-`app/global-error.tsx`), in addition to the footer. The footer's legal links are
-overridable via `public-nav.ts`'s `footerLegalItems`, but if you remove `/privacy`
-or `/contact` outright, repoint (or keep) those banner/error links so they don't
-404 — point them at your own equivalents, or leave the pages in place.
+**Legal-page caveat.** Two of these pages are linked from surfaces that always
+render, beyond the footer: the cookie-consent banner links `/privacy`, and the
+error pages (`app/error.tsx`, `app/global-error.tsx`) link `/contact`. The
+footer's legal links are overridable via `public-nav.ts`'s `footerLegalItems`, but
+if you remove `/privacy` or `/contact` outright, repoint (or keep) the banner /
+error link so it doesn't 404 — point it at your own equivalent, or leave the page
+in place.
 
 ### Making it an auth-only app
 
