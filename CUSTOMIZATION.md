@@ -510,13 +510,64 @@ Functional app pages have no platform copy to conflict with — edit them direct
 **Adding new pages:**
 
 - **Public page:** Create `app/(public)/pricing/page.tsx` (uses public layout)
-- **Protected page:** Create `app/(protected)/analytics/page.tsx` (uses protected layout)
+- **Protected page:** Create `app/(protected)/analytics/page.tsx` (uses protected
+  layout) **and** register its prefix in `lib/app/protected-routes.ts`
+  (`appProtectedRoutes`) so the proxy edge-redirects signed-out visitors — see
+  [§4](#4-configuration--environment--the-libapp-surface). The `(protected)`
+  folder supplies the chrome; the registered prefix supplies the auth gate. (Route
+  groups like `(protected)` are invisible to the URL and to the proxy, so the
+  folder alone does not gate auth.)
 - **Different layout:** Create a new route group, e.g. `app/(marketing)/layout.tsx`
 
 **Navigation:**
 
 - Update layouts in route groups: `app/(public)/layout.tsx`, `app/(protected)/layout.tsx`
 - Update navigation components as needed
+
+### Removing default public pages
+
+Sunrise ships public pages a given fork may not want: `/about`, `/contact`,
+`/privacy`, `/terms` (alongside the `/` landing). Because the App Router derives
+routes from the folder tree, you remove one by **deleting its folder** under
+`app/(public)/` and dropping its link from the fork-owned nav lists in
+`lib/app/public-nav.ts` (`footerNavItems` / `footerLegalItems` — see
+[§4](#4-configuration--environment--the-libapp-surface)). Adding a public page is
+the same in reverse — create `app/(public)/pricing/page.tsx`. Deleting a leaf page
+folder is a clean, Next-native operation; the only upstream-sync cost is the same
+as for any removed core file — if Sunrise later edits that exact page you get a
+routine delete/modify conflict, resolved with "keep mine (deleted)".
+
+**Legal-page caveat.** `/privacy` and `/contact` are linked from surfaces that
+always render — the cookie-consent banner and the error pages (`app/error.tsx`,
+`app/global-error.tsx`), in addition to the footer. The footer's legal links are
+overridable via `public-nav.ts`'s `footerLegalItems`, but if you remove `/privacy`
+or `/contact` outright, repoint (or keep) those banner/error links so they don't
+404 — point them at your own equivalents, or leave the pages in place.
+
+### Making it an auth-only app
+
+For an internal tool where **every** route requires a login, you don't need a
+proxy change or a config flag — it's folder placement plus the existing seams:
+
+- **New authenticated sections** go under `app/(protected)/` (for the shared
+  chrome) **and** get their prefix registered in `lib/app/protected-routes.ts`, as
+  above. Protected pages also self-guard server-side with `getServerSession()` (as
+  `app/(protected)/dashboard/page.tsx` does) for defense-in-depth.
+- **The homepage `/`** is the one route the proxy can't prefix-protect (a `/`
+  prefix would match every path, including `/login`). Two clean options:
+  - **Redirect it to the app** — reduce `app/(public)/page.tsx` to
+    `export default function Page() { redirect('/dashboard'); }`. `/dashboard` is
+    already proxy-protected, so a signed-out visitor to `/` bounces root →
+    dashboard → login. Simplest when there's no distinct public homepage.
+  - **Move it into the protected side** — `git mv app/(public)/page.tsx
+app/(protected)/page.tsx` and self-guard it (`getServerSession()` →
+    `redirect('/login')` when there's no session), when you want `/` to be an
+    authenticated landing with the protected chrome. The move is a delete-plus-add,
+    so its upstream-sync cost is the same as removing any core page.
+
+Either way there's no core proxy edit: the built-in `protectedRoutes` list stays
+as Sunrise ships it, and you extend behaviour through `lib/app/protected-routes.ts`
+and folder placement.
 
 ---
 
@@ -744,6 +795,9 @@ extension requirement, and zero-downtime patterns — lives in
 - [ ] Delete route folders you don't need (e.g., `app/(protected)/profile/`)
 - [ ] Remove corresponding API endpoints: `app/api/v1/[resource]/`
 - [ ] Clean up navigation references
+- [ ] For the default **public** pages (marketing / legal) and making an
+      **auth-only** app, see [§6](#6-landing-page--routes) — it covers the
+      cookie-banner/error legal-link caveat and protecting the homepage.
 
 ---
 
