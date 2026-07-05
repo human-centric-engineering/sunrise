@@ -208,9 +208,10 @@ describe('PATCH /mcp/keys/:id', () => {
     };
     expect(updateArg.select).toEqual(findArg.select);
 
-    // The audit diff ignores the @updatedAt column (it bumps on every update).
+    // The audit diff ignores the timestamp columns (updatedAt bumps on every
+    // update; createdAt is immutable, listed for parity with other admin routes).
     const computeArgs = vi.mocked(computeChanges).mock.calls[0];
-    expect(computeArgs[2]).toEqual({ ignoreKeys: ['updatedAt'] });
+    expect(computeArgs[2]).toEqual({ ignoreKeys: ['updatedAt', 'createdAt'] });
   });
 
   it('updates the app scope carrier to a new value', async () => {

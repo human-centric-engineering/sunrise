@@ -28,14 +28,17 @@ export interface AdminAuditEntry {
 // ─── Secret sanitisation ────────────────────────────────────────────────────
 
 /**
- * Matches field names that are likely secrets. For common words (`key`,
- * `token`, `hash`) requires them to END the field name (or the whole name) to
- * avoid over-redacting fields like `apiKeyCount`, `tokenizeInput`, or
- * `hashtagCount`. Longer words (`password`, `secret`, `credential`) are matched
- * anywhere. `hash` is included so credential-derived digests such as `keyHash`
- * / `passwordHash` are redacted even when they reach a diff (issue #388).
+ * Matches field names that are likely secrets. `key`/`token` must END the field
+ * name (optionally `s`-pluralised, or suffixed with `Hash`/`Hashes`) so that
+ * credential digests like `keyHash` / `tokenHash` are redacted while non-secret
+ * fields such as `apiKeyCount` or `tokenizeInput` are not. Longer words
+ * (`password`, `secret`, `credential`) match anywhere — so `passwordHash` /
+ * `secretHash` are already covered. `hash` is deliberately NOT matched on its
+ * own: fields like `fileHash` / `contentHash` / `subjectEmailHash` are non-secret
+ * dedup/correlation digests that should stay visible in an audit diff (issue
+ * #388 — the credential digest that motivated this is `keyHash`).
  */
-const SECRET_PATTERN = /password|secret|credential|(?:key|token|hash)(?:s?$)/i;
+const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s|hash(?:es)?)?$/i;
 
 function sanitizeChanges(
   changes: Record<string, { from: unknown; to: unknown }> | null | undefined

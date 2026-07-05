@@ -26,9 +26,11 @@ release process.
   `→ undefined` change on **every** PATCH, writing the hash into
   `AiAdminAuditLog.changes`. Both rows are now fetched through the same
   projection (which omits `keyHash`/`scopedAgentId`/`createdBy`), and
-  `SECRET_PATTERN` additionally redacts any `*hash` field name as defense in
-  depth. The hash is not the key and the log is admin-only, so impact is low —
-  but a credential-derived value no longer sits in the audit table. (#388)
+  `SECRET_PATTERN` additionally redacts `key`/`token` digest fields (`keyHash`,
+  `tokenHash`) as defense in depth — without over-redacting non-secret digests
+  like `fileHash`/`contentHash`. The hash is not the key and the log is
+  admin-only, so impact is low — but a credential-derived value no longer sits
+  in the audit table. (#388)
 
 ### Added
 

@@ -78,8 +78,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     entityId: id,
     entityName: updated.name,
     // `updatedAt` is `@updatedAt` — it bumps on every `update()`, so ignore it
-    // or every PATCH would record a spurious timestamp change.
-    changes: computeChanges({ ...existing }, { ...updated }, { ignoreKeys: ['updatedAt'] }),
+    // or every PATCH would record a spurious timestamp change. `createdAt` is
+    // immutable (never diffs) but is listed too for parity with the other admin
+    // routes' audit diffs.
+    changes: computeChanges(existing, updated, { ignoreKeys: ['updatedAt', 'createdAt'] }),
     clientIp: clientIP,
   });
 
