@@ -38,7 +38,11 @@ export interface AdminAuditEntry {
  * dedup/correlation digests that should stay visible in an audit diff (issue
  * #388 — the credential digest that motivated this is `keyHash`).
  */
-const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s|hash(?:es)?)?$/i;
+// The end anchor is kept INSIDE the `(?:…$)` group so it clearly binds only to
+// the `key`/`token` branch (password/secret/credential match anywhere) — a bare
+// top-level `$` reads as anchoring the whole alternation (CodeQL
+// js/regex/missing-regexp-anchor).
+const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:(?:s|hash(?:es)?)?$)/i;
 
 function sanitizeChanges(
   changes: Record<string, { from: unknown; to: unknown }> | null | undefined
