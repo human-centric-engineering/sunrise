@@ -292,7 +292,7 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
 
       await PATCH(makeRequest('PATCH', { name: 'Updated' }), makeParams(PROVIDER_ID));
 
-      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
         ignoreKeys: ['updatedAt', 'createdAt'],
       });
     });

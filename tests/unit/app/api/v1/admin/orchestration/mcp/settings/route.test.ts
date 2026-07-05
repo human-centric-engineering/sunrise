@@ -206,7 +206,7 @@ describe('PATCH /mcp/settings', () => {
 
     await PATCH(makePatchRequest({ isEnabled: false }));
 
-    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+    expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
       ignoreKeys: ['updatedAt', 'createdAt'],
     });
   });

@@ -356,11 +356,10 @@ describe('PATCH /hooks/:id', () => {
     // admin-audit-logger.test.ts).
     vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook());
     vi.mocked(prisma.aiEventHook.update).mockResolvedValue(makeHook({ name: 'Updated Hook' }));
-    vi.mocked(computeChanges).mockClear();
 
     await PATCH(makePatchRequest(updatePayload), makeParams(HOOK_ID));
 
-    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+    expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
       ignoreKeys: ['updatedAt', 'createdAt'],
     });
   });

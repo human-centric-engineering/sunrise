@@ -218,7 +218,7 @@ describe('PATCH /api/v1/admin/orchestration/agent-profiles/[id]', () => {
 
     await PATCH(makePatchRequest(PROFILE_ID, { name: 'Renamed' }), paramsOf(PROFILE_ID));
 
-    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+    expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
       ignoreKeys: ['updatedAt', 'createdAt'],
     });
   });

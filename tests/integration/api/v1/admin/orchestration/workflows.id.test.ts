@@ -234,7 +234,7 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
 
       await PATCH(makeRequest('PATCH', { name: 'Updated' }), makeParams(WORKFLOW_ID));
 
-      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
         ignoreKeys: ['updatedAt', 'createdAt'],
       });
     });

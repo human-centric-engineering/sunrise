@@ -326,11 +326,10 @@ describe('PATCH /webhooks/:id', () => {
     vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(
       makeWebhook({ isActive: false }) as never
     );
-    vi.mocked(computeChanges).mockClear();
 
     await PATCH(makePatchRequest(updatePayload), makeParams(WEBHOOK_ID));
 
-    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+    expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
       ignoreKeys: ['updatedAt', 'createdAt'],
     });
   });

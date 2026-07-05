@@ -337,7 +337,7 @@ describe('Admin Orchestration — /settings', () => {
 
       await PATCH(makePatch({ globalMonthlyBudgetUsd: 500 }));
 
-      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
         ignoreKeys: ['updatedAt', 'createdAt'],
       });
     });

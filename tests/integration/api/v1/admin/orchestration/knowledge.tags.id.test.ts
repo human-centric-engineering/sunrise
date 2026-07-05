@@ -368,7 +368,7 @@ describe('PATCH /api/v1/admin/orchestration/knowledge/tags/:id', () => {
 
       await PATCH(makeRequest('PATCH', { name: 'Renamed' }), makeParams(TAG_ID));
 
-      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
         ignoreKeys: ['updatedAt', 'createdAt'],
       });
     });
