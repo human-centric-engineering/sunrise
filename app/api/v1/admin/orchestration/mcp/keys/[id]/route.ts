@@ -26,7 +26,28 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, updateApiKeySchema);
 
-  const existing = await prisma.mcpApiKey.findUnique({ where: { id } });
+  // Audited + client-facing projection. Deliberately excludes `keyHash` (a
+  // credential-derived value that must never enter the audit diff) and the
+  // system columns `scopedAgentId` / `createdBy`. Fetching `existing` and
+  // `updated` through the SAME projection keeps the change diff symmetric — so
+  // no column present on one side but not the other is recorded as a spurious
+  // `→ undefined` change (which previously leaked `keyHash` into the audit log
+  // on every PATCH). See issue #388.
+  const keySelect = {
+    id: true,
+    name: true,
+    keyPrefix: true,
+    scopes: true,
+    scope: true,
+    isActive: true,
+    expiresAt: true,
+    lastUsedAt: true,
+    rateLimitOverride: true,
+    createdAt: true,
+    updatedAt: true,
+  } satisfies Prisma.McpApiKeySelect;
+
+  const existing = await prisma.mcpApiKey.findUnique({ where: { id }, select: keySelect });
   if (!existing) throw new NotFoundError('API key not found');
 
   // `scope` is a `Json?` column: JS `null` can't clear it (Prisma requires the
@@ -41,19 +62,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const updated = await prisma.mcpApiKey.update({
     where: { id },
     data,
-    select: {
-      id: true,
-      name: true,
-      keyPrefix: true,
-      scopes: true,
-      scope: true,
-      isActive: true,
-      expiresAt: true,
-      lastUsedAt: true,
-      rateLimitOverride: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    select: keySelect,
   });
 
   log.info('MCP API key updated', {
@@ -68,8 +77,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     entityType: 'mcp_api_key',
     entityId: id,
     entityName: updated.name,
-    // Shallow copy to plain objects for change comparison
-    changes: computeChanges({ ...existing }, { ...updated }),
+    // `updatedAt` is `@updatedAt` — it bumps on every `update()`, so ignore it
+    // or every PATCH would record a spurious timestamp change.
+    changes: computeChanges({ ...existing }, { ...updated }, { ignoreKeys: ['updatedAt'] }),
     clientIp: clientIP,
   });
 

@@ -64,6 +64,7 @@ import {
   mockAuthenticatedUser,
 } from '@/tests/helpers/auth';
 import { PATCH, DELETE } from '@/app/api/v1/admin/orchestration/mcp/keys/[id]/route';
+import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,40 @@ describe('PATCH /mcp/keys/:id', () => {
         data: expect.objectContaining({ name: 'Updated Key' }),
       })
     );
+  });
+
+  it('audits through a projection that omits keyHash/scopedAgentId/createdBy and ignores updatedAt (#388)', async () => {
+    // Before the fix, `existing` was a full-row findUnique while `updated` was a
+    // narrow select, so computeChanges recorded the credential digest keyHash
+    // (and scopedAgentId/createdBy) as a spurious `→ undefined` change on every
+    // PATCH — leaking the hash into the audit log. Fetch both through the SAME
+    // projection so those columns can't enter the diff, and ignore the
+    // always-bumping updatedAt.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(makeApiKey() as never);
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue(makeApiKey({ name: 'Updated' }) as never);
+
+    const response = await PATCH(makePatchRequest({ name: 'Updated' }), makeParams(KEY_ID));
+    expect(response.status).toBe(200);
+
+    // `existing` is fetched through a projection, and it omits the secret columns.
+    const findArg = vi.mocked(prisma.mcpApiKey.findUnique).mock.calls[0][0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(findArg.select).toBeDefined();
+    for (const secret of ['keyHash', 'scopedAgentId', 'createdBy']) {
+      expect(findArg.select).not.toHaveProperty(secret);
+    }
+
+    // `updated` uses the exact same projection — so before/after are symmetric.
+    const updateArg = vi.mocked(prisma.mcpApiKey.update).mock.calls[0][0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(updateArg.select).toEqual(findArg.select);
+
+    // The audit diff ignores the @updatedAt column (it bumps on every update).
+    const computeArgs = vi.mocked(computeChanges).mock.calls[0];
+    expect(computeArgs[2]).toEqual({ ignoreKeys: ['updatedAt'] });
   });
 
   it('updates the app scope carrier to a new value', async () => {

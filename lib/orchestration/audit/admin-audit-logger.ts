@@ -29,11 +29,13 @@ export interface AdminAuditEntry {
 
 /**
  * Matches field names that are likely secrets. For common words (`key`,
- * `token`) requires them to END the field name (or the whole name) to
- * avoid over-redacting fields like `apiKeyCount` or `tokenizeInput`.
- * Longer words (`password`, `secret`, `credential`) are matched anywhere.
+ * `token`, `hash`) requires them to END the field name (or the whole name) to
+ * avoid over-redacting fields like `apiKeyCount`, `tokenizeInput`, or
+ * `hashtagCount`. Longer words (`password`, `secret`, `credential`) are matched
+ * anywhere. `hash` is included so credential-derived digests such as `keyHash`
+ * / `passwordHash` are redacted even when they reach a diff (issue #388).
  */
-const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:s?$)/i;
+const SECRET_PATTERN = /password|secret|credential|(?:key|token|hash)(?:s?$)/i;
 
 function sanitizeChanges(
   changes: Record<string, { from: unknown; to: unknown }> | null | undefined

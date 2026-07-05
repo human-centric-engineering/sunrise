@@ -16,6 +16,20 @@ release process.
 
 ## [Unreleased]
 
+### Security
+
+- **Admin MCP API-key audit no longer records the key hash.** The
+  `PATCH /api/v1/admin/orchestration/mcp/keys/:id` handler diffed a full-row
+  `existing` against a narrower `select`-ed `updated`, so `computeChanges`
+  recorded every column present only on `existing` — including `keyHash` (the
+  SHA-256 of the key), which `SECRET_PATTERN` did not redact — as a spurious
+  `→ undefined` change on **every** PATCH, writing the hash into
+  `AiAdminAuditLog.changes`. Both rows are now fetched through the same
+  projection (which omits `keyHash`/`scopedAgentId`/`createdBy`), and
+  `SECRET_PATTERN` additionally redacts any `*hash` field name as defense in
+  depth. The hash is not the key and the log is admin-only, so impact is low —
+  but a credential-derived value no longer sits in the audit table. (#388)
+
 ### Added
 
 - **`lib/app/protected-routes.ts` — fork-owned protected-route registry.** A new

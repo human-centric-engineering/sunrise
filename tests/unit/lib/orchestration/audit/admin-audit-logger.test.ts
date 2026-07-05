@@ -233,6 +233,8 @@ describe('logAdminAction', () => {
         apiKey: { from: 'old-key', to: 'new-key' },
         refreshToken: { from: 'tok-a', to: 'tok-b' },
         API_KEY: { from: 'UP_OLD', to: 'UP_NEW' }, // uppercase — exercises /i flag
+        keyHash: { from: 'sha256-old', to: 'sha256-new' }, // #388 — credential digest ending in `Hash`
+        passwordHash: { from: 'bcrypt-a', to: 'bcrypt-b' },
         displayName: { from: 'Alice', to: 'Bob' }, // safe field, must pass through
       },
     });
@@ -246,6 +248,8 @@ describe('logAdminAction', () => {
     expect(storedChanges.apiKey).toEqual({ from: '[REDACTED]', to: '[REDACTED]' });
     expect(storedChanges.refreshToken).toEqual({ from: '[REDACTED]', to: '[REDACTED]' });
     expect(storedChanges.API_KEY).toEqual({ from: '[REDACTED]', to: '[REDACTED]' });
+    expect(storedChanges.keyHash).toEqual({ from: '[REDACTED]', to: '[REDACTED]' });
+    expect(storedChanges.passwordHash).toEqual({ from: '[REDACTED]', to: '[REDACTED]' });
     expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
   });
 
@@ -260,6 +264,7 @@ describe('logAdminAction', () => {
         apiKeyCount: { from: 3, to: 5 },
         tokenizeInput: { from: false, to: true },
         encryptionKeyRotation: { from: 'weekly', to: 'daily' },
+        hashtagCount: { from: 1, to: 2 }, // 'hash' as a prefix — must NOT redact
         displayName: { from: 'Alice', to: 'Bob' },
       },
     });
@@ -268,10 +273,11 @@ describe('logAdminAction', () => {
     const call = vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0];
     const storedChanges = call.data.changes as Record<string, { from: unknown; to: unknown }>;
 
-    // 'key' and 'token' as prefixes of longer words should NOT be redacted
+    // 'key', 'token', 'hash' as prefixes of longer words should NOT be redacted
     expect(storedChanges.apiKeyCount).toEqual({ from: 3, to: 5 });
     expect(storedChanges.tokenizeInput).toEqual({ from: false, to: true });
     expect(storedChanges.encryptionKeyRotation).toEqual({ from: 'weekly', to: 'daily' });
+    expect(storedChanges.hashtagCount).toEqual({ from: 1, to: 2 });
     expect(storedChanges.displayName).toEqual({ from: 'Alice', to: 'Bob' });
   });
 
