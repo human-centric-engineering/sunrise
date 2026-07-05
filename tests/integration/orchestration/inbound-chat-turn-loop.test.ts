@@ -222,10 +222,18 @@ function makeCtxFor(inbound: {
     executionId: `exec_${Math.random().toString(36).slice(2, 9)}`,
     workflowId: 'wf_inbound',
     userId: 'system',
+    // Mirror the real inbound route's shape: the raw adapter payload sits at
+    // `trigger` (text/from, NO conversationId), and the RESOLVED conversationId
+    // at `triggerMeta`. `{{trigger.conversationId}}` must resolve via the
+    // payload→envelope fallback — a fabricated `trigger.conversationId` would
+    // pass while production (which emits it in triggerMeta) fails.
     inputData: {
       trigger: {
         text: inbound.text,
         from: inbound.from,
+        subChannel: 'whatsapp',
+      },
+      triggerMeta: {
         channel: 'whatsapp_cloud',
         conversationId: inbound.conversationId,
       },

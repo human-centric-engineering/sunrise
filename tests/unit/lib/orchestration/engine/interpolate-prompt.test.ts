@@ -6,9 +6,9 @@
  * and the admin trace viewer's prompt-replay surface, but those tests
  * pin behaviour through wide integration paths — this file exists to
  * lock down each documented branch (`{{input}}`, `{{input.key}}`,
- * `{{previous.output}}`, `{{<stepId>.output}}`, `{{vars.path}}`, and
- * the flat `{{#if vars.path}}body{{/if}}` conditional) plus the two
- * stringification modes (`plain` and `markdown`).
+ * `{{previous.output}}`, `{{<stepId>.output}}`, `{{vars.path}}`,
+ * `{{trigger.path}}`, and the flat `{{#if vars.path}}body{{/if}}`
+ * conditional) plus the two stringification modes (`plain` and `markdown`).
  *
  * @see lib/orchestration/engine/interpolate-prompt.ts
  */
@@ -114,14 +114,34 @@ describe('interpolatePrompt', () => {
   });
 
   describe('{{trigger.path}}', () => {
-    // Inbound-triggered runs store the verified adapter payload under
-    // `inputData.trigger`. `{{trigger.<path>}}` drills into it (like `vars.`),
-    // which is how a `chat_turn` step reads `{{trigger.conversationId}}` /
-    // `{{trigger.text}}`. Regression guard for #394 — before that fix there was
-    // no `trigger.` branch, so these tokens silently resolved to ''.
-    it('resolves a single-level trigger reference from inputData.trigger', () => {
-      const ctx = makeCtx({ inputData: { trigger: { conversationId: 'conv_1' } } });
+    // Inbound runs store the raw adapter payload at `inputData.trigger` and the
+    // resolved envelope (channel, conversationId, …) at `inputData.triggerMeta`.
+    // `{{trigger.<path>}}` presents both as one namespace: payload first, then
+    // the envelope. Regression guard for #394 — before that fix there was no
+    // `trigger.` branch, so these tokens silently resolved to ''; and the
+    // resolved conversationId lives in `triggerMeta`, not the payload.
+    it('resolves a payload field (e.g. {{trigger.text}}) from inputData.trigger', () => {
+      const ctx = makeCtx({ inputData: { trigger: { text: 'hello' }, triggerMeta: {} } });
+      expect(interpolatePrompt('{{trigger.text}}', ctx)).toBe('hello');
+    });
+
+    it('falls back to the resolved envelope for {{trigger.conversationId}} (lives in triggerMeta)', () => {
+      // The real inbound shape: payload has no conversationId; the resolved id
+      // is in triggerMeta. This is the production path chat_turn depends on.
+      const ctx = makeCtx({
+        inputData: {
+          trigger: { text: 'hi', from: '+15551230000' },
+          triggerMeta: { channel: 'whatsapp_cloud', conversationId: 'conv_1' },
+        },
+      });
       expect(interpolatePrompt('{{trigger.conversationId}}', ctx)).toBe('conv_1');
+    });
+
+    it('prefers the payload over the envelope on a key collision', () => {
+      const ctx = makeCtx({
+        inputData: { trigger: { channel: 'payload-chan' }, triggerMeta: { channel: 'meta-chan' } },
+      });
+      expect(interpolatePrompt('{{trigger.channel}}', ctx)).toBe('payload-chan');
     });
 
     it('walks a multi-level dotted path under trigger', () => {
@@ -134,14 +154,32 @@ describe('interpolatePrompt', () => {
       expect(interpolatePrompt('{{trigger.count}}', ctx)).toBe('3');
     });
 
-    it('expands to empty string when there is no trigger key (e.g. a scheduled run)', () => {
+    it('expands to empty string when there is no trigger data (e.g. a scheduled run)', () => {
       const ctx = makeCtx({ inputData: { userEmail: 'a@example.com' } });
       expect(interpolatePrompt('[{{trigger.conversationId}}]', ctx)).toBe('[]');
     });
 
-    it('expands to empty string when the trigger path is missing', () => {
-      const ctx = makeCtx({ inputData: { trigger: { text: 'hi' } } });
+    it('expands to empty string when the path is in neither payload nor envelope', () => {
+      const ctx = makeCtx({
+        inputData: { trigger: { text: 'hi' }, triggerMeta: { channel: 'x' } },
+      });
       expect(interpolatePrompt('[{{trigger.conversationId}}]', ctx)).toBe('[]');
+    });
+
+    it('resolves {{trigger.<path>}} inside a {{#if}} conditional (both passes handle trigger.)', () => {
+      // Guards finder-2's report: the {{#if}} first pass only handled `vars.`,
+      // so {{#if trigger.x}} silently dropped its body — the same silent-empty
+      // failure #394 fixes, one layer up.
+      const ctx = makeCtx({
+        inputData: { trigger: {}, triggerMeta: { conversationId: 'conv_1' } },
+      });
+      expect(interpolatePrompt('{{#if trigger.conversationId}}HAS_CONV{{/if}}', ctx)).toBe(
+        'HAS_CONV'
+      );
+      const empty = makeCtx({ inputData: { trigger: {}, triggerMeta: {} } });
+      expect(interpolatePrompt('[{{#if trigger.conversationId}}HAS_CONV{{/if}}]', empty)).toBe(
+        '[]'
+      );
     });
   });
 

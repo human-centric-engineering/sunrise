@@ -87,7 +87,14 @@ function makeCtx(overrides: Partial<ExecutionContext> = {}): ExecutionContext {
     executionId: 'exec_1',
     workflowId: 'wf_1',
     userId: 'user_1',
-    inputData: { trigger: { conversationId: 'conv_1', text: 'hello agent' } },
+    // Real inbound shape: the adapter payload lives at `trigger` (no
+    // conversationId), and the RESOLVED conversationId at `triggerMeta` — so
+    // `{{trigger.conversationId}}` exercises the payload→envelope fallback the
+    // way production emits it (not a fabricated `trigger.conversationId`).
+    inputData: {
+      trigger: { text: 'hello agent', from: '+15551230000' },
+      triggerMeta: { channel: 'whatsapp_cloud', conversationId: 'conv_1' },
+    },
     stepOutputs: {},
     variables: {},
     totalTokensUsed: 0,

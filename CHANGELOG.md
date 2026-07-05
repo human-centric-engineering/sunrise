@@ -113,11 +113,15 @@ release process.
   inbound-triggered `chat_turn` steps, and what the step's own error messages tell
   you to use) silently expanded to the empty string — an inbound-triggered
   `chat_turn` would fail with `missing_conversation_id` / `missing_message` on
-  every real run. `{{trigger.<dotted.path>}}` now drills into the verified adapter
-  payload the inbound route stores at `inputData.trigger` (mirroring `{{vars.*}}`).
-  The bug was masked because the `chat_turn` unit + inbound integration suites
-  **mocked** `interpolatePrompt` with a stub that faked `trigger.` support; both
-  now exercise the real interpolator. Also corrected the workflow-builder editors'
+  every real run. `{{trigger.<dotted.path>}}` now reads an inbound run's data —
+  the verified adapter payload (`inputData.trigger`) with a fallback to the
+  resolved envelope (`inputData.triggerMeta`), so `{{trigger.text}}` reads the
+  payload and `{{trigger.conversationId}}` the envelope where the resolved id
+  actually lives. It also works inside `{{#if …}}` conditionals. The bug was
+  masked because the `chat_turn` unit + inbound integration suites **mocked**
+  `interpolatePrompt` with a stub that faked `trigger.` support (and fabricated a
+  `trigger.conversationId` shape production never emits); both now exercise the
+  real interpolator against the real inbound shape. Also corrected the workflow-builder editors'
   help text (`{{steps.<stepId>.output}}` → `{{<stepId>.output}}`; there is no
   `steps.` prefix) and stopped the builder's `send_notification` check from
   false-flagging a valid array-shaped `to` as "needs recipients".

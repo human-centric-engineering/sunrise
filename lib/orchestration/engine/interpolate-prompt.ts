@@ -20,12 +20,15 @@
  *   - `{{vars.<path>}}`           → drills into ctx.variables along the
  *                                   dotted path; e.g.
  *                                   `vars.__retryContext.failureReason`.
- *   - `{{trigger.<path>}}`        → drills into ctx.inputData.trigger along
- *                                   the dotted path (the verified adapter
- *                                   payload an inbound-triggered run stores
- *                                   there); e.g. `trigger.conversationId`.
- *                                   Non-trigger runs have no `trigger` key,
- *                                   so this resolves to the empty string.
+ *   - `{{trigger.<path>}}`        → an inbound-triggered run's data: the raw
+ *                                   verified adapter payload (`inputData.trigger`),
+ *                                   falling back to the resolved envelope
+ *                                   (`inputData.triggerMeta`: channel, eventType,
+ *                                   externalId, conversationId, …). So
+ *                                   `{{trigger.text}}` reads the payload and
+ *                                   `{{trigger.conversationId}}` the envelope.
+ *                                   Non-inbound runs have neither, resolving to
+ *                                   the empty string.
  *   - `{{#if vars.<path>}}body{{/if}}`
  *                                 → body is included only when the
  *                                   resolved value is truthy. Flat
@@ -82,7 +85,9 @@ export function interpolatePrompt(
       const expr = rawExpr.trim();
       const value = expr.startsWith('vars.')
         ? resolveDottedPath(ctx.variables, expr.slice('vars.'.length))
-        : undefined;
+        : expr.startsWith('trigger.')
+          ? resolveTriggerPath(ctx, expr.slice('trigger.'.length))
+          : undefined;
       return isTruthy(value) ? body : '';
     }
   );
@@ -114,14 +119,7 @@ export function interpolatePrompt(
     }
 
     if (expr.startsWith('trigger.')) {
-      // Inbound-triggered runs store the verified adapter payload under
-      // `inputData.trigger` (see the inbound route). `{{trigger.<path>}}`
-      // drills into it, mirroring `vars.` — so a `chat_turn` step can read
-      // `{{trigger.conversationId}}` / `{{trigger.text}}`. Non-trigger runs
-      // (e.g. scheduled) have no `trigger` key, so this resolves to '' and
-      // those workflows use `{{input.<key>}}` instead.
-      const triggerData = ctx.inputData.trigger;
-      return stringify(resolveDottedPath(triggerData, expr.slice('trigger.'.length)));
+      return stringify(resolveTriggerPath(ctx, expr.slice('trigger.'.length)));
     }
 
     const dotIdx = expr.lastIndexOf('.');
@@ -132,6 +130,23 @@ export function interpolatePrompt(
 
     return '';
   });
+}
+
+/**
+ * Resolve a `{{trigger.<path>}}` reference. Inbound-triggered runs store the raw
+ * verified adapter payload at `inputData.trigger` and the resolved envelope
+ * (channel, eventType, externalId, conversationId, …) at `inputData.triggerMeta`
+ * — see the inbound route. `{{trigger.*}}` presents both as one namespace: the
+ * payload is checked first, falling back to the envelope, so `{{trigger.text}}`
+ * reads the payload while `{{trigger.conversationId}}` reads the resolved
+ * envelope (the payload never carries the conversation id). Non-inbound runs
+ * (e.g. scheduled) have neither key, so this resolves to undefined → '' and
+ * those workflows use `{{input.<key>}}` instead.
+ */
+function resolveTriggerPath(ctx: Readonly<InterpolationContext>, path: string): unknown {
+  const fromPayload = resolveDottedPath(ctx.inputData.trigger, path);
+  if (fromPayload !== undefined) return fromPayload;
+  return resolveDottedPath(ctx.inputData.triggerMeta, path);
 }
 
 function resolveDottedPath(root: unknown, path: string): unknown {
