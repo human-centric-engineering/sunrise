@@ -66,7 +66,9 @@ export function NotificationEditor({ config, onChange }: EditorProps<Notificatio
               Recipients{' '}
               <FieldHelp title="Recipients">
                 Email address(es) to send the notification to. For multiple recipients, separate
-                with commas.
+                with commas. Supports <code>{'{{input}}'}</code> interpolation — e.g.{' '}
+                <code>{'{{trigger.userEmail}}'}</code> for a per-user run. The resolved value must
+                be a valid email address.
               </FieldHelp>
             </Label>
             <Input

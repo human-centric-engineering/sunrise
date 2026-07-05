@@ -80,6 +80,8 @@ interface ConditionalEdge {
 
 > **Note:** `send_notification` config is discriminated by `channel`: email mode requires `to` and `subject`; webhook mode requires `webhookUrl`. The UI editor switches fields dynamically based on the selected channel.
 
+> **Templated recipient:** In email mode, `to` supports the same `{{…}}` interpolation as `subject` and `bodyTemplate` — e.g. `to: '{{trigger.userEmail}}'` for a per-user scheduled workflow. A plain literal is validated as an email at design time (unchanged); a template is validated on resolution at runtime, and a template that resolves to a non-email fails the step non-retriably (`INVALID_RECIPIENT`). This lets a fanned-out per-user workflow (e.g. a morning brief) deliver with the built-in step instead of a bespoke `sendEmail` capability.
+
 ### Orchestration Steps
 
 | Type           | Label        | Purpose                                                                  | Key Config                                                           | Default Config                                                                                                                      |

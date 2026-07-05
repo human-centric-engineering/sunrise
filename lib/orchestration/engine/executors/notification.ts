@@ -3,12 +3,15 @@
  *
  * Config:
  *   - `channel: 'email' | 'webhook'` — notification channel.
- *   - `to: string | string[]` — recipients (email addresses or webhook URL).
+ *   - `to: string | string[]` — email recipients. Each may be a literal address
+ *     or a `{{…}}` template resolved per run (e.g. `{{trigger.userEmail}}`); the
+ *     resolved value is validated as an email at runtime.
  *   - `subject?: string` — email subject (required for email channel).
  *   - `bodyTemplate: string` — message body with `{{input}}` interpolation.
  *   - `webhookUrl?: string` — target URL (required for webhook channel).
  *
- * Supports `{{input}}` and `{{steps.<stepId>.output}}` template variables.
+ * Supports `{{input}}` and `{{steps.<stepId>.output}}` template variables in
+ * `to`, `subject`, and `bodyTemplate`.
  */
 
 import { z } from 'zod';
@@ -26,6 +29,7 @@ import { sendEmail } from '@/lib/email/send';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
 import { WorkflowNotification } from '@/emails/workflow-notification';
+import { notificationToSchema } from '@/lib/validations/orchestration';
 
 // ─── Config schema ──────────────────────────────────────────────────────────
 
@@ -45,7 +49,10 @@ const terminalStatusSchema = z.enum(['completed', 'failed']).optional();
 const notificationConfigSchema = z.discriminatedUnion('channel', [
   z.object({
     channel: z.literal('email'),
-    to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
+    // `to` may be a literal email OR a `{{…}}` template resolved per run — the
+    // resolved value is validated as an email at runtime (see `resolveRecipients`
+    // below). Shared with the design-time schema so validation can't drift.
+    to: notificationToSchema,
     subject: z.string().min(1).max(200),
     bodyTemplate: z.string().min(1).max(10_000),
     terminalStatus: terminalStatusSchema,
@@ -68,6 +75,40 @@ function deriveFailureReason(body: string): string {
   if (trimmed.length === 0) return 'Workflow terminated by send_notification (no body)';
   if (trimmed.length <= FAILURE_REASON_MAX) return trimmed;
   return `${trimmed.slice(0, FAILURE_REASON_MAX - 1).trimEnd()}…`;
+}
+
+/**
+ * Resolve the email recipient(s) for this run: interpolate each address the
+ * same way `subject`/`bodyTemplate` are, then validate the *resolved* value is
+ * a well-formed email. A literal `to` interpolates to itself and validates
+ * exactly as before; a `{{…}}` template (e.g. `{{trigger.userEmail}}`) is
+ * resolved per run. The single-vs-array shape is preserved so `sendEmail`
+ * receives the same type a literal config would produce today.
+ *
+ * A recipient that doesn't resolve to a valid email throws a non-retriable
+ * `ExecutorError` — a bad address won't fix itself on retry, and re-sending is
+ * pointless (the caller's error strategy still applies).
+ */
+function resolveRecipients(
+  to: string | string[],
+  ctx: Readonly<ExecutionContext>,
+  stepId: string
+): string | string[] {
+  const resolveOne = (raw: string): string => {
+    const resolved = interpolatePrompt(raw, ctx, stepId).trim();
+    if (!z.string().email().safeParse(resolved).success) {
+      throw new ExecutorError(
+        stepId,
+        'INVALID_RECIPIENT',
+        `Notification recipient "${raw}" resolved to "${resolved}", which is not a valid email address`,
+        undefined,
+        false
+      );
+    }
+    return resolved;
+  };
+
+  return Array.isArray(to) ? to.map(resolveOne) : resolveOne(to);
 }
 
 // ─── Executor ───────────────────────────────────────────────────────────────
@@ -117,9 +158,12 @@ async function executeNotification(
   let stepResult: StepResult;
 
   if (config.channel === 'email') {
+    // Interpolate + validate the recipient(s) before any send. Throws a
+    // non-retriable ExecutorError if a resolved address isn't a valid email.
+    const to = resolveRecipients(config.to, ctx, step.id);
     try {
       const result = await sendEmail({
-        to: config.to,
+        to,
         subject: interpolatePrompt(config.subject, ctx, step.id),
         react: WorkflowNotification({ body, workflowName }),
       });
@@ -136,7 +180,7 @@ async function executeNotification(
 
       logger.info('Notification step: email sent', {
         stepId: step.id,
-        to: config.to,
+        to,
         status: result.status,
       });
 

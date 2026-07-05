@@ -85,6 +85,7 @@ import {
   listProviderModelsQuerySchema,
   updateOrchestrationSettingsSchema,
   executionCountsResponseSchema,
+  sendNotificationConfigSchema,
 } from '@/lib/validations/orchestration';
 
 beforeEach(() => {
@@ -1628,6 +1629,70 @@ describe('executionCountsResponseSchema', () => {
     });
 
     // Assert: parse fails
+    expect(result.success).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// sendNotificationConfigSchema — templatable `to` recipient (#379)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('sendNotificationConfigSchema — email recipient (#379)', () => {
+  const baseEmail = {
+    channel: 'email' as const,
+    subject: 'Daily brief',
+    bodyTemplate: 'Here is your brief.',
+  };
+
+  it('accepts a literal email `to` (unchanged behaviour)', () => {
+    const result = sendNotificationConfigSchema.safeParse({
+      ...baseEmail,
+      to: 'user@example.com',
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a templated `to` so a per-user run can resolve the recipient', () => {
+    // The literal-email constraint used to reject this at design time, forcing
+    // a bespoke capability. The resolved value is validated at runtime instead.
+    const result = sendNotificationConfigSchema.safeParse({
+      ...baseEmail,
+      to: '{{trigger.userEmail}}',
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a mixed array of a literal and a templated recipient', () => {
+    const result = sendNotificationConfigSchema.safeParse({
+      ...baseEmail,
+      to: ['ops@example.com', '{{input.userEmail}}'],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('still rejects a non-email literal that contains no template token', () => {
+    // A plain string with no `{{…}}` is treated as a literal and validated as an
+    // email now — a mistyped address is caught at design time, as before.
+    const result = sendNotificationConfigSchema.safeParse({
+      ...baseEmail,
+      to: 'not-an-email',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty-string recipient', () => {
+    const result = sendNotificationConfigSchema.safeParse({ ...baseEmail, to: '' });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty recipient array', () => {
+    const result = sendNotificationConfigSchema.safeParse({ ...baseEmail, to: [] });
+
     expect(result.success).toBe(false);
   });
 });

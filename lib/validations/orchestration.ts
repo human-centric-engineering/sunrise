@@ -3652,10 +3652,34 @@ export const parallelConfigSchema = stepErrorConfigSchema.extend({
   stragglerStrategy: z.enum(['wait-all', 'first-success']).optional(),
 });
 
+/**
+ * A `send_notification` email recipient. Either a literal address (validated
+ * as an email now, at design time — unchanged behaviour) or a template
+ * containing `{{…}}` whose resolved value is validated at runtime by the
+ * executor. This lets a per-user scheduled workflow template the recipient
+ * (`to: '{{trigger.userEmail}}'`) while still catching a mistyped literal
+ * (e.g. `simon@`) early. Shared with the executor's runtime schema so the
+ * two can't drift. See `lib/orchestration/engine/executors/notification.ts`.
+ */
+const RECIPIENT_TEMPLATE_TOKEN = /\{\{/;
+const notificationRecipientSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => RECIPIENT_TEMPLATE_TOKEN.test(value) || z.string().email().safeParse(value).success,
+    { message: 'must be a valid email address or a template (e.g. {{trigger.userEmail}})' }
+  );
+
+/** `to` accepts a single recipient or a non-empty list of them. */
+export const notificationToSchema = z.union([
+  notificationRecipientSchema,
+  z.array(notificationRecipientSchema).min(1),
+]);
+
 export const sendNotificationConfigSchema = z.discriminatedUnion('channel', [
   stepErrorConfigSchema.extend({
     channel: z.literal('email'),
-    to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),
+    to: notificationToSchema,
     subject: z.string().min(1).max(200),
     bodyTemplate: z.string().min(1).max(10_000),
     // Opt-in: 'failed' tells the engine to finalise the workflow as
