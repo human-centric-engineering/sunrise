@@ -287,7 +287,7 @@ export const PATCH = withAdminAuth(async (request, session) => {
     action: 'settings.update',
     entityType: 'settings',
     entityId: 'global',
-    changes: computeChanges(existing ?? {}, row),
+    changes: computeChanges(existing ?? {}, row, { ignoreKeys: ['updatedAt', 'createdAt'] }),
     metadata: { changedKeys: Object.keys(body) },
     clientIp: clientIP,
   });

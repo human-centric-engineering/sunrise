@@ -98,7 +98,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     entityType: 'hook',
     entityId: id,
     entityName: updated.name,
-    changes: computeChanges(existing, updated),
+    changes: computeChanges(existing, updated, { ignoreKeys: ['updatedAt', 'createdAt'] }),
     clientIp: getClientIP(request),
   });
 

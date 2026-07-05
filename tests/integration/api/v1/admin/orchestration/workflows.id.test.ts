@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/workflows/[id]/route';
+import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -218,6 +219,24 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       const data = await parseJson<{ success: boolean }>(response);
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
+    });
+
+    it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+      // `updatedAt` bumps on every Prisma `update()`, so the route must filter
+      // it (and createdAt) out of the audit diff — otherwise every PATCH records
+      // a spurious timestamp change. computeChanges' ignoreKeys behaviour is
+      // unit-tested for real in admin-audit-logger.test.ts.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(
+        makeWorkflow({ name: 'Updated' }) as never
+      );
+
+      await PATCH(makeRequest('PATCH', { name: 'Updated' }), makeParams(WORKFLOW_ID));
+
+      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+        ignoreKeys: ['updatedAt', 'createdAt'],
+      });
     });
 
     it('updates all optional fields in a single payload', async () => {

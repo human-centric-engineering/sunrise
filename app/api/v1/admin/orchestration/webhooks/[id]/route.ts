@@ -111,7 +111,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     entityType: 'webhook_subscription',
     entityId: parsed.data,
     entityName: (webhook.channel === 'webhook' ? webhook.url : webhook.emailAddress) ?? webhook.id,
-    changes: computeChanges(existing, webhook),
+    changes: computeChanges(existing, webhook, { ignoreKeys: ['updatedAt', 'createdAt'] }),
     clientIp: getClientIP(request),
   });
 

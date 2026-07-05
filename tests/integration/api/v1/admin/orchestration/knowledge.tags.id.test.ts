@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/knowledge/tags/[id]/route';
+import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -354,6 +355,22 @@ describe('PATCH /api/v1/admin/orchestration/knowledge/tags/:id', () => {
       await PATCH(makeRequest('PATCH', { name: 'Updated' }), makeParams(TAG_ID));
 
       expect(vi.mocked(invalidateAllAgentAccess)).toHaveBeenCalled();
+    });
+
+    it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+      // `updatedAt` bumps on every Prisma `update()`, so the route must filter
+      // it (and createdAt) out of the audit diff — otherwise every PATCH records
+      // a spurious timestamp change. computeChanges' ignoreKeys behaviour is
+      // unit-tested for real in admin-audit-logger.test.ts.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(makeTag());
+      vi.mocked(prisma.knowledgeTag.update).mockResolvedValue(makeTag({ name: 'Renamed' }));
+
+      await PATCH(makeRequest('PATCH', { name: 'Renamed' }), makeParams(TAG_ID));
+
+      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+        ignoreKeys: ['updatedAt', 'createdAt'],
+      });
     });
   });
 });

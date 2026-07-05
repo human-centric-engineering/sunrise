@@ -19,6 +19,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/settings/route';
+import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -323,6 +324,22 @@ describe('Admin Orchestration — /settings', () => {
       const body = await parseJson<{ data: { globalMonthlyBudgetUsd: number | null } }>(res);
       expect(body.data.globalMonthlyBudgetUsd).toBe(500);
       expect(vi.mocked(invalidateSettingsCache)).toHaveBeenCalledOnce();
+    });
+
+    it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+      // The settings row carries `updatedAt`/`createdAt`; both change (or are
+      // asymmetric) across a save, so the route must filter them out of the
+      // audit diff. computeChanges' ignoreKeys behaviour is unit-tested for real
+      // in admin-audit-logger.test.ts.
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ globalMonthlyBudgetUsd: 500 }) as never
+      );
+
+      await PATCH(makePatch({ globalMonthlyBudgetUsd: 500 }));
+
+      expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+        ignoreKeys: ['updatedAt', 'createdAt'],
+      });
     });
 
     it('clears the global cap when set to null', async () => {

@@ -68,7 +68,7 @@ vi.mock('@/lib/api/validation', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { validateRequestBody } from '@/lib/api/validation';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/webhooks/[id]/route';
@@ -315,6 +315,24 @@ describe('PATCH /webhooks/:id', () => {
         userId: ADMIN_ID,
       })
     );
+  });
+
+  it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+    // `updatedAt` bumps on every Prisma `update()`, so the route must filter it
+    // (and createdAt) out of the audit diff — otherwise every PATCH records a
+    // spurious timestamp change. computeChanges' ignoreKeys behaviour is
+    // unit-tested for real in admin-audit-logger.test.ts.
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(makeWebhook() as never);
+    vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(
+      makeWebhook({ isActive: false }) as never
+    );
+    vi.mocked(computeChanges).mockClear();
+
+    await PATCH(makePatchRequest(updatePayload), makeParams(WEBHOOK_ID));
+
+    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      ignoreKeys: ['updatedAt', 'createdAt'],
+    });
   });
 
   // ── Channel-coherence validation ────────────────────────────────────────

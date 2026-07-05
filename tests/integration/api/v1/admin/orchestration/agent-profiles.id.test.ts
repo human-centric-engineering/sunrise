@@ -50,7 +50,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 import { DELETE, GET, PATCH } from '@/app/api/v1/admin/orchestration/agent-profiles/[id]/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 
 const PROFILE_ID = 'cmjbv4i3x00003wsloputgwul';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -205,6 +205,22 @@ describe('PATCH /api/v1/admin/orchestration/agent-profiles/[id]', () => {
         entityId: PROFILE_ID,
       })
     );
+  });
+
+  it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+    // `updatedAt` bumps on every Prisma `update()`, so the route must filter it
+    // (and createdAt) out of the audit diff — otherwise every PATCH records a
+    // spurious timestamp change. computeChanges' ignoreKeys behaviour is
+    // unit-tested for real in admin-audit-logger.test.ts.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.findUnique).mockResolvedValue(makeProfile());
+    vi.mocked(prisma.aiAgentProfile.update).mockResolvedValue(makeProfile({ name: 'Renamed' }));
+
+    await PATCH(makePatchRequest(PROFILE_ID, { name: 'Renamed' }), paramsOf(PROFILE_ID));
+
+    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      ignoreKeys: ['updatedAt', 'createdAt'],
+    });
   });
 
   it('silently drops a slug change — slug is not in the update schema', async () => {

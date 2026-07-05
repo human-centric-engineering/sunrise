@@ -125,7 +125,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       entityType: 'knowledge_tag',
       entityId: id,
       entityName: tag.name,
-      changes: computeChanges(current, tag),
+      changes: computeChanges(current, tag, { ignoreKeys: ['updatedAt', 'createdAt'] }),
       clientIp: clientIP,
     });
 

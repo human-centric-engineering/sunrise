@@ -130,7 +130,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       entityType: 'workflow',
       entityId: id,
       entityName: workflow.name,
-      changes: computeChanges(baseline, workflow),
+      changes: computeChanges(baseline, workflow, { ignoreKeys: ['updatedAt', 'createdAt'] }),
       clientIp: clientIP,
     });
 

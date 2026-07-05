@@ -62,6 +62,7 @@ vi.mock('@/lib/orchestration/inbound/registry', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser } from '@/tests/helpers/auth';
+import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { GET as List, POST as Create } from '@/app/api/v1/admin/orchestration/triggers/route';
 import {
   GET as GetOne,
@@ -358,6 +359,26 @@ describe('PATCH /api/v1/admin/orchestration/triggers/:id', () => {
     });
     const res = await Update(req, { params: Promise.resolve({ id: TRIGGER_ID }) });
     expect(res.status).toBe(200);
+  });
+
+  it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+    // `updatedAt` bumps on every Prisma `update()`; without an ignoreKeys filter
+    // every PATCH would record a spurious timestamp change (the diff runs on the
+    // secret-redacted before/after). computeChanges' ignoreKeys behaviour is
+    // unit-tested for real in admin-audit-logger.test.ts.
+    vi.mocked(prisma.aiWorkflowTrigger.findUnique).mockResolvedValue(makeTrigger());
+    vi.mocked(prisma.aiWorkflowTrigger.update).mockResolvedValue(makeTrigger({ name: 'Renamed' }));
+
+    const req = makeReq(`http://localhost/api/v1/admin/orchestration/triggers/${TRIGGER_ID}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Renamed' }),
+    });
+    await Update(req, { params: Promise.resolve({ id: TRIGGER_ID }) });
+
+    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      ignoreKeys: ['updatedAt', 'createdAt'],
+    });
   });
 
   it('sets a new scope on update', async () => {

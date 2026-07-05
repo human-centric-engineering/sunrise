@@ -86,7 +86,7 @@ vi.mock('@/lib/security/safe-url', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { invalidateHookCache } from '@/lib/orchestration/hooks/registry';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { validateRequestBody } from '@/lib/api/validation';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/hooks/[id]/route';
@@ -346,6 +346,23 @@ describe('PATCH /hooks/:id', () => {
         userId: ADMIN_ID,
       })
     );
+  });
+
+  it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+    // `updatedAt` is `@updatedAt` — Prisma bumps it on every `update()`, so
+    // without an ignoreKeys filter every PATCH would record a spurious
+    // timestamp change. Assert the route passes the filter through to
+    // computeChanges (whose ignoreKeys behaviour is unit-tested for real in
+    // admin-audit-logger.test.ts).
+    vi.mocked(prisma.aiEventHook.findUnique).mockResolvedValue(makeHook());
+    vi.mocked(prisma.aiEventHook.update).mockResolvedValue(makeHook({ name: 'Updated Hook' }));
+    vi.mocked(computeChanges).mockClear();
+
+    await PATCH(makePatchRequest(updatePayload), makeParams(HOOK_ID));
+
+    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      ignoreKeys: ['updatedAt', 'createdAt'],
+    });
   });
 
   it('does not include secret in the update data', async () => {

@@ -114,7 +114,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       // Don't leak the rotated/cleared signing secret into the audit
       // diff — its presence is recorded via `hasSigningSecret`.
       redactSecrets(existing),
-      redactSecrets(updated)
+      redactSecrets(updated),
+      { ignoreKeys: ['updatedAt', 'createdAt'] }
     ),
     clientIp: getClientIP(request),
   });

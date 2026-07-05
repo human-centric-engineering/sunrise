@@ -308,7 +308,8 @@ describe('PATCH /workflows/:id with draftDefinition', () => {
     // removed (the computeChanges mock accepts null without throwing).
     expect(computeChanges).toHaveBeenCalledWith(
       expect.objectContaining({ id: current.id, name: current.name }),
-      expect.any(Object)
+      expect.any(Object),
+      { ignoreKeys: ['updatedAt', 'createdAt'] }
     );
   });
 

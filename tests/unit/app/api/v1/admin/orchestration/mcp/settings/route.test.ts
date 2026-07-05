@@ -67,6 +67,7 @@ import {
   mockAuthenticatedUser,
 } from '@/tests/helpers/auth';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/mcp/settings/route';
+import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -193,6 +194,21 @@ describe('PATCH /mcp/settings', () => {
         update: expect.objectContaining({ isEnabled: false }),
       })
     );
+  });
+
+  it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {
+    // The settings row carries `updatedAt`/`createdAt`; both change (or are
+    // asymmetric) across a save, so the route must filter them out of the audit
+    // diff. computeChanges' ignoreKeys behaviour is unit-tested for real in
+    // admin-audit-logger.test.ts.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.mcpServerConfig.upsert).mockResolvedValue(makeMcpConfig({ isEnabled: false }));
+
+    await PATCH(makePatchRequest({ isEnabled: false }));
+
+    expect(vi.mocked(computeChanges).mock.calls[0]?.[2]).toEqual({
+      ignoreKeys: ['updatedAt', 'createdAt'],
+    });
   });
 
   it('updates multiple fields', async () => {

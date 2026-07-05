@@ -148,6 +148,16 @@ release process.
   resolved via `scopedAgentId`. `tools/call` now resolves the executing agent
   from the key's `scopedAgentId` when set, falling back to `mcp-system` for
   unscoped keys (unchanged behaviour for keys with no scoped agent).
+- **Admin config-update audit diffs no longer record a spurious `updatedAt`
+  change.** Nine admin orchestration PATCH routes (`settings`, `mcp/settings`,
+  `triggers/:id`, `providers/:id`, `workflows/:id`, `knowledge/tags/:id`,
+  `hooks/:id`, `webhooks/:id`, `agent-profiles/:id`) diffed the pre-update row
+  against the post-update row without ignoring Prisma's `@updatedAt` column,
+  which bumps on every `update()` — so `AiAdminAuditLog.changes` recorded a
+  timestamp `from`/`to` on **every** edit, drowning the real field changes. All
+  nine now pass `ignoreKeys: ['updatedAt', 'createdAt']` to `computeChanges`,
+  matching the `agents/:id` route that already did. Signal-quality only — no data
+  exposure. (#396)
 
 ## [0.5.0] — 2026-07-01
 
