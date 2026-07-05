@@ -274,7 +274,7 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
         if (!isNonEmptyString(config.bodyTemplate)) {
           emit(`Notification "${label}" needs a body template`);
         }
-        if (channel === 'email' && !isNonEmptyString(config.to)) {
+        if (channel === 'email' && !hasRecipients(config.to)) {
           emit(`Notification "${label}" (email) needs recipients`);
         }
         if (channel === 'webhook' && !isNonEmptyString(config.webhookUrl)) {
@@ -292,6 +292,20 @@ function checkRequiredConfig(nodes: readonly PatternNode[]): ExtraCheckError[] {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * A `send_notification` `to` is valid if it's a non-empty string OR a non-empty
+ * array of non-empty strings (the schema accepts both — `z.string() | string[]`).
+ * The string-only guard used to false-positive "needs recipients" on the array
+ * shape, which the API/import path can produce even though the single-input
+ * editor only emits a string.
+ */
+function hasRecipients(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every(isNonEmptyString);
+  }
+  return isNonEmptyString(value);
 }
 
 // ---------------------------------------------------------------------------

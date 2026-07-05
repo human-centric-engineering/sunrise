@@ -258,6 +258,64 @@ describe('runExtraChecks', () => {
       expect(missing[0].stepId).toBe('n1');
     });
 
+    it('flags email send_notification with no recipients', () => {
+      const nodes = [
+        makeNode(
+          'n1',
+          'send_notification',
+          { channel: 'email', to: '', bodyTemplate: 'hi' },
+          'Notify'
+        ),
+      ];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(1);
+      expect(missing[0].message).toContain('needs recipients');
+    });
+
+    it('accepts a single-string recipient', () => {
+      const nodes = [
+        makeNode(
+          'n1',
+          'send_notification',
+          { channel: 'email', to: 'a@example.com', bodyTemplate: 'hi' },
+          'Notify'
+        ),
+      ];
+      const errors = runExtraChecks(nodes, []);
+      expect(errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG')).toHaveLength(0);
+    });
+
+    it('accepts an array of recipients without a spurious "needs recipients" (#394)', () => {
+      // Regression: `isNonEmptyString` returned false for an array, so a valid
+      // multi-recipient config (producible via API/import) was wrongly flagged.
+      const nodes = [
+        makeNode(
+          'n1',
+          'send_notification',
+          { channel: 'email', to: ['a@example.com', 'b@example.com'], bodyTemplate: 'hi' },
+          'Notify'
+        ),
+      ];
+      const errors = runExtraChecks(nodes, []);
+      expect(errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG')).toHaveLength(0);
+    });
+
+    it('flags an empty recipient array', () => {
+      const nodes = [
+        makeNode(
+          'n1',
+          'send_notification',
+          { channel: 'email', to: [], bodyTemplate: 'hi' },
+          'Notify'
+        ),
+      ];
+      const errors = runExtraChecks(nodes, []);
+      const missing = errors.filter((e) => e.code === 'MISSING_REQUIRED_CONFIG');
+      expect(missing).toHaveLength(1);
+      expect(missing[0].message).toContain('needs recipients');
+    });
+
     it('does NOT flag chain or parallel (no required config)', () => {
       const nodes = [
         makeNode('n1', 'chain', {}, 'Chain'),

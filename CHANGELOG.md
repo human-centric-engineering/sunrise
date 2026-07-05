@@ -107,6 +107,20 @@ release process.
 
 ### Fixed
 
+- **Workflow template namespace `{{trigger.*}}` did not resolve.** The engine's
+  `interpolatePrompt` had no `trigger.` branch, so a documented, widely-used token
+  like `{{trigger.conversationId}}` / `{{trigger.text}}` (the default config for
+  inbound-triggered `chat_turn` steps, and what the step's own error messages tell
+  you to use) silently expanded to the empty string — an inbound-triggered
+  `chat_turn` would fail with `missing_conversation_id` / `missing_message` on
+  every real run. `{{trigger.<dotted.path>}}` now drills into the verified adapter
+  payload the inbound route stores at `inputData.trigger` (mirroring `{{vars.*}}`).
+  The bug was masked because the `chat_turn` unit + inbound integration suites
+  **mocked** `interpolatePrompt` with a stub that faked `trigger.` support; both
+  now exercise the real interpolator. Also corrected the workflow-builder editors'
+  help text (`{{steps.<stepId>.output}}` → `{{<stepId>.output}}`; there is no
+  `steps.` prefix) and stopped the builder's `send_notification` check from
+  false-flagging a valid array-shaped `to` as "needs recipients".
 - **MCP `tools/call` ignored the API key's `scopedAgentId`.** Tool calls always
   ran under the shared `mcp-system` agent, so cost/budget attribution and
   knowledge-base grant resolution (`resolveAgentDocumentAccess`) did not honour a

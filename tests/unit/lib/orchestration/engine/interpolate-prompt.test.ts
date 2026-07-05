@@ -113,6 +113,38 @@ describe('interpolatePrompt', () => {
     });
   });
 
+  describe('{{trigger.path}}', () => {
+    // Inbound-triggered runs store the verified adapter payload under
+    // `inputData.trigger`. `{{trigger.<path>}}` drills into it (like `vars.`),
+    // which is how a `chat_turn` step reads `{{trigger.conversationId}}` /
+    // `{{trigger.text}}`. Regression guard for #394 — before that fix there was
+    // no `trigger.` branch, so these tokens silently resolved to ''.
+    it('resolves a single-level trigger reference from inputData.trigger', () => {
+      const ctx = makeCtx({ inputData: { trigger: { conversationId: 'conv_1' } } });
+      expect(interpolatePrompt('{{trigger.conversationId}}', ctx)).toBe('conv_1');
+    });
+
+    it('walks a multi-level dotted path under trigger', () => {
+      const ctx = makeCtx({ inputData: { trigger: { user: { email: 'a@example.com' } } } });
+      expect(interpolatePrompt('{{trigger.user.email}}', ctx)).toBe('a@example.com');
+    });
+
+    it('stringifies a non-string trigger value', () => {
+      const ctx = makeCtx({ inputData: { trigger: { count: 3 } } });
+      expect(interpolatePrompt('{{trigger.count}}', ctx)).toBe('3');
+    });
+
+    it('expands to empty string when there is no trigger key (e.g. a scheduled run)', () => {
+      const ctx = makeCtx({ inputData: { userEmail: 'a@example.com' } });
+      expect(interpolatePrompt('[{{trigger.conversationId}}]', ctx)).toBe('[]');
+    });
+
+    it('expands to empty string when the trigger path is missing', () => {
+      const ctx = makeCtx({ inputData: { trigger: { text: 'hi' } } });
+      expect(interpolatePrompt('[{{trigger.conversationId}}]', ctx)).toBe('[]');
+    });
+  });
+
   describe('{{#if vars.path}}body{{/if}}', () => {
     it('includes the body when the value is a non-empty string', () => {
       const ctx = makeCtx({ variables: { flag: 'on' } });

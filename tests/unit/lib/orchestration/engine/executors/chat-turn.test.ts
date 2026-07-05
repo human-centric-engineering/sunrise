@@ -59,16 +59,15 @@ vi.mock('@/lib/orchestration/agents/resolve-effective-prompt', () => ({
   composeSystemPromptString: vi.fn(() => 'You are a helpful agent.'),
 }));
 
-vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
-  interpolatePrompt: vi.fn((s: string, ctx: { inputData: Record<string, unknown> }) => {
-    // Tiny stub — replaces {{trigger.x}} with ctx.inputData.trigger.x.
-    return s.replace(/\{\{trigger\.(\w+)\}\}/g, (_m: string, key: string) => {
-      const trigger = (ctx.inputData as { trigger?: Record<string, unknown> }).trigger ?? {};
-      const value = trigger[key];
-      return typeof value === 'string' ? value : '';
-    });
-  }),
-}));
+vi.mock('@/lib/orchestration/engine/llm-runner', async () => {
+  // Use the REAL interpolator, not a stub. The pure `interpolate-prompt` module
+  // has no heavy deps, so importing it here is safe — and it means this suite
+  // actually exercises `{{trigger.*}}` resolution rather than a hand-rolled
+  // fake. A stub that fakes the `trigger.` namespace is exactly what let the
+  // missing-branch bug (#394) stay green; `chat_turn` uses `{{trigger.*}}`.
+  const { interpolatePrompt } = await import('@/lib/orchestration/engine/interpolate-prompt');
+  return { interpolatePrompt };
+});
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 

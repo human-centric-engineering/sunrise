@@ -119,7 +119,7 @@ export function NotificationEditor({ config, onChange }: EditorProps<Notificatio
           Body template{' '}
           <FieldHelp title="Body template">
             The notification body. Supports <code>{'{{input}}'}</code> to inject the workflow input
-            and <code>{'{{steps.<stepId>.output}}'}</code> to reference previous step outputs.
+            and <code>{'{{<stepId>.output}}'}</code> to reference previous step outputs.
           </FieldHelp>
         </Label>
         <Textarea

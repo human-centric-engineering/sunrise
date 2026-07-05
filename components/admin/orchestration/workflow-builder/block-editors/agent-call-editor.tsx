@@ -79,7 +79,7 @@ export function AgentCallEditor({
           Message{' '}
           <FieldHelp title="Message template">
             The user message sent to the agent. Supports <code>{'{{input}}'}</code> to inject the
-            workflow input and <code>{'{{steps.<stepId>.output}}'}</code> to reference previous step
+            workflow input and <code>{'{{<stepId>.output}}'}</code> to reference previous step
             outputs.
           </FieldHelp>
         </Label>

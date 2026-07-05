@@ -12,7 +12,7 @@ Workflows are DAGs (directed acyclic graphs) of steps executed by the `Orchestra
 | Validator              | `validateWorkflow()` — pure function, no DB, no I/O                                                                                                                                                                                                        |
 | Semantic validator     | `semanticValidateWorkflow()` — DB-backed checks for model overrides, capability slugs, agent slugs                                                                                                                                                         |
 | Engine                 | `OrchestrationEngine.execute()` — returns `AsyncIterable<ExecutionEvent>`                                                                                                                                                                                  |
-| Template interpolation | `{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`                                                                                                                                                                                 |
+| Template interpolation | `{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`, `{{vars.<path>}}`, `{{trigger.<path>}}`                                                                                                                                        |
 
 ## Workflow Definition Structure
 
@@ -135,12 +135,14 @@ If no `budgetLimitUsd` is supplied, the check is skipped entirely.
 
 Prompts in `llm_call`, `route`, `reflect`, `plan`, `agent_call`, and `send_notification` steps support template variables resolved by `llm-runner.ts`:
 
-| Variable              | Resolves to                                |
-| --------------------- | ------------------------------------------ |
-| `{{input}}`           | The workflow's `inputData` (stringified)   |
-| `{{input.key}}`       | A specific key from `inputData`            |
-| `{{previous.output}}` | Output of the most recently completed step |
-| `{{<stepId>.output}}` | Output of a specific earlier step, by ID   |
+| Variable              | Resolves to                                                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{{input}}`           | The workflow's `inputData` (stringified)                                                                                                     |
+| `{{input.key}}`       | A specific key from `inputData` (single level — not a nested path)                                                                           |
+| `{{previous.output}}` | Output of the most recently completed step                                                                                                   |
+| `{{<stepId>.output}}` | Output of a specific earlier step, by ID                                                                                                     |
+| `{{vars.<path>}}`     | Drills `ctx.variables` along a dotted path (e.g. `vars.__retryContext.attempt`)                                                              |
+| `{{trigger.<path>}}`  | Drills the verified adapter payload an inbound run stores at `inputData.trigger` (e.g. `trigger.conversationId`); empty for non-inbound runs |
 
 Variables read from a frozen snapshot of `ExecutionContext`, so any step that completed earlier in the DAG walk is addressable by its `id`.
 

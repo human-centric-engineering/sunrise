@@ -20,6 +20,12 @@
  *   - `{{vars.<path>}}`           → drills into ctx.variables along the
  *                                   dotted path; e.g.
  *                                   `vars.__retryContext.failureReason`.
+ *   - `{{trigger.<path>}}`        → drills into ctx.inputData.trigger along
+ *                                   the dotted path (the verified adapter
+ *                                   payload an inbound-triggered run stores
+ *                                   there); e.g. `trigger.conversationId`.
+ *                                   Non-trigger runs have no `trigger` key,
+ *                                   so this resolves to the empty string.
  *   - `{{#if vars.<path>}}body{{/if}}`
  *                                 → body is included only when the
  *                                   resolved value is truthy. Flat
@@ -105,6 +111,17 @@ export function interpolatePrompt(
 
     if (expr.startsWith('vars.')) {
       return stringify(resolveDottedPath(ctx.variables, expr.slice('vars.'.length)));
+    }
+
+    if (expr.startsWith('trigger.')) {
+      // Inbound-triggered runs store the verified adapter payload under
+      // `inputData.trigger` (see the inbound route). `{{trigger.<path>}}`
+      // drills into it, mirroring `vars.` — so a `chat_turn` step can read
+      // `{{trigger.conversationId}}` / `{{trigger.text}}`. Non-trigger runs
+      // (e.g. scheduled) have no `trigger` key, so this resolves to '' and
+      // those workflows use `{{input.<key>}}` instead.
+      const triggerData = ctx.inputData.trigger;
+      return stringify(resolveDottedPath(triggerData, expr.slice('trigger.'.length)));
     }
 
     const dotIdx = expr.lastIndexOf('.');

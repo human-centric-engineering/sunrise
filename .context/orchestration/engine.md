@@ -196,9 +196,9 @@ Every step + LLM call + capability dispatch is wrapped in an OTEL span via the h
 
 See [`tracing.md`](tracing.md) for the full guide — span tree, attribute reference, sampling, bootstrap recipes (Datadog / Honeycomb / Tempo / Langfuse), span-status semantics, and anti-patterns.
 
-Template interpolation (`{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`) is applied inside `llm-runner.ts` and reads from the snapshot — so any step that ran earlier in the walk is addressable by id.
+Template interpolation (`{{input}}`, `{{input.key}}`, `{{previous.output}}`, `{{<stepId>.output}}`, `{{vars.<path>}}`, `{{trigger.<path>}}`) is applied inside `llm-runner.ts` and reads from the snapshot — so any step that ran earlier in the walk is addressable by id. `{{trigger.<path>}}` drills the verified adapter payload an inbound-triggered run stores at `inputData.trigger` (e.g. `{{trigger.conversationId}}`); it is empty for non-inbound runs.
 
-**Template limitations:** Interpolation supports one level of property access (`{{input.key}}`) but not deeper paths (`{{input.key.nested}}`). For nested data, flatten in an intermediate step or use an LLM step to extract the needed value. Interpolated values have no per-value size limit — very large objects will be serialised in full and sent to the LLM provider, relying on the provider's token limit to reject oversized prompts. The workflow execution body is capped at 256 KB for `inputData` to prevent oversized payloads.
+**Template limitations:** `{{input.key}}` supports one level of property access, not deeper paths (`{{input.key.nested}}`) — for nested `input` data, flatten in an intermediate step or use an LLM step to extract the value. (`{{vars.<path>}}` and `{{trigger.<path>}}` **do** walk dotted paths.) Interpolated values have no per-value size limit — very large objects will be serialised in full and sent to the LLM provider, relying on the provider's token limit to reject oversized prompts. The workflow execution body is capped at 256 KB for `inputData` to prevent oversized payloads.
 
 ## Executor registry
 

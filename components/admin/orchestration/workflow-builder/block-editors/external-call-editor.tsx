@@ -188,7 +188,7 @@ export function ExternalCallEditor({ config, onChange }: EditorProps<ExternalCal
             Body template{' '}
             <FieldHelp title="Body template">
               JSON body to send. Use <code>{'{{input}}'}</code> to interpolate the workflow input or{' '}
-              <code>{'{{steps.stepId.output}}'}</code> for previous step outputs.
+              <code>{'{{<stepId>.output}}'}</code> for previous step outputs.
             </FieldHelp>
           </Label>
           <Textarea
