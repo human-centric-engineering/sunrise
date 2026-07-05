@@ -89,13 +89,14 @@ release process.
   recipient(s) are now run through the same `{{…}}` interpolation as `subject`
   and `bodyTemplate`, and the **resolved** value is validated as an email at
   runtime (a template resolving to a non-email fails the step non-retriably with
-  `INVALID_RECIPIENT`). A literal `to` continues to validate at design time and
-  behaves identically. This lets a per-user scheduled workflow template the
-  recipient (`to: '{{trigger.userEmail}}'`) with the built-in step instead of a
-  bespoke `sendEmail` capability. The exported `sendNotificationConfigSchema`
-  relaxes `to` accordingly: a plain string with no template token is still
-  validated as an email now; a `{{…}}` template is accepted and validated on
-  resolution.
+  `INVALID_RECIPIENT`). A literal `to` is still validated as an email when the
+  step config is parsed at execution start (`INVALID_CONFIG` on a mistyped
+  literal) and behaves identically. This lets a per-user scheduled workflow
+  template the recipient (`to: '{{input.userEmail}}'`) with the built-in step
+  instead of a bespoke `sendEmail` capability. The exported
+  `sendNotificationConfigSchema` relaxes `to` accordingly: a plain string with no
+  template token is still validated as an email; a `{{…}}` template is accepted
+  and validated on resolution.
 - **`callMcpTool()` signature** — the third parameter changed from
   `userId: string | null` to a caller object
   `{ userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> }`.

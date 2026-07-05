@@ -4,14 +4,14 @@
  * Config:
  *   - `channel: 'email' | 'webhook'` — notification channel.
  *   - `to: string | string[]` — email recipients. Each may be a literal address
- *     or a `{{…}}` template resolved per run (e.g. `{{trigger.userEmail}}`); the
+ *     or a `{{…}}` template resolved per run (e.g. `{{input.userEmail}}`); the
  *     resolved value is validated as an email at runtime.
  *   - `subject?: string` — email subject (required for email channel).
  *   - `bodyTemplate: string` — message body with `{{input}}` interpolation.
  *   - `webhookUrl?: string` — target URL (required for webhook channel).
  *
- * Supports `{{input}}` and `{{steps.<stepId>.output}}` template variables in
- * `to`, `subject`, and `bodyTemplate`.
+ * Supports `{{input}}` / `{{input.<key>}}` and `{{<stepId>.output}}` template
+ * variables in `to`, `subject`, and `bodyTemplate`.
  */
 
 import { z } from 'zod';
@@ -81,7 +81,7 @@ function deriveFailureReason(body: string): string {
  * Resolve the email recipient(s) for this run: interpolate each address the
  * same way `subject`/`bodyTemplate` are, then validate the *resolved* value is
  * a well-formed email. A literal `to` interpolates to itself and validates
- * exactly as before; a `{{…}}` template (e.g. `{{trigger.userEmail}}`) is
+ * exactly as before; a `{{…}}` template (e.g. `{{input.userEmail}}`) is
  * resolved per run. The single-vs-array shape is preserved so `sendEmail`
  * receives the same type a literal config would produce today.
  *

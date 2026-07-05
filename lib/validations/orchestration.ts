@@ -3654,10 +3654,10 @@ export const parallelConfigSchema = stepErrorConfigSchema.extend({
 
 /**
  * A `send_notification` email recipient. Either a literal address (validated
- * as an email now, at design time — unchanged behaviour) or a template
- * containing `{{…}}` whose resolved value is validated at runtime by the
- * executor. This lets a per-user scheduled workflow template the recipient
- * (`to: '{{trigger.userEmail}}'`) while still catching a mistyped literal
+ * as an email when the step config is parsed at execution start — unchanged
+ * behaviour) or a template containing `{{…}}` whose resolved value is validated
+ * at runtime by the executor. This lets a per-user scheduled workflow template the recipient
+ * (`to: '{{input.userEmail}}'`) while still catching a mistyped literal
  * (e.g. `simon@`) early. Shared with the executor's runtime schema so the
  * two can't drift. See `lib/orchestration/engine/executors/notification.ts`.
  */
@@ -3667,7 +3667,7 @@ const notificationRecipientSchema = z
   .min(1)
   .refine(
     (value) => RECIPIENT_TEMPLATE_TOKEN.test(value) || z.string().email().safeParse(value).success,
-    { message: 'must be a valid email address or a template (e.g. {{trigger.userEmail}})' }
+    { message: 'must be a valid email address or a template (e.g. {{input.userEmail}})' }
   );
 
 /** `to` accepts a single recipient or a non-empty list of them. */

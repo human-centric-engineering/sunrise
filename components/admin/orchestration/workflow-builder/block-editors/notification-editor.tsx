@@ -65,10 +65,9 @@ export function NotificationEditor({ config, onChange }: EditorProps<Notificatio
             <Label htmlFor="notification-to" className="flex items-center text-xs">
               Recipients{' '}
               <FieldHelp title="Recipients">
-                Email address(es) to send the notification to. For multiple recipients, separate
-                with commas. Supports <code>{'{{input}}'}</code> interpolation — e.g.{' '}
-                <code>{'{{trigger.userEmail}}'}</code> for a per-user run. The resolved value must
-                be a valid email address.
+                The email address to send the notification to. Supports <code>{'{{input}}'}</code>{' '}
+                interpolation — e.g. <code>{'{{input.userEmail}}'}</code> for a per-user run. The
+                resolved value must be a valid email address.
               </FieldHelp>
             </Label>
             <Input
