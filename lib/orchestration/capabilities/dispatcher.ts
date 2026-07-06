@@ -35,6 +35,8 @@ import type {
   AgentCapabilityBinding,
   CapabilityContext,
   CapabilityFunctionDefinition,
+  CapabilityGuard,
+  CapabilityRegisterOptions,
   CapabilityRegistryEntry,
   CapabilityResult,
   QuarantineState,
@@ -79,6 +81,7 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 
 class CapabilityDispatcher {
   private handlers = new Map<string, BaseCapability>();
+  private guards = new Map<string, CapabilityGuard>();
   private registry = new Map<string, CapabilityRegistryEntry>();
   private rateLimiters = new Map<string, RateLimiter>();
   private agentBindings = new Map<string, Map<string, AgentCapabilityBinding>>();
@@ -90,15 +93,28 @@ class CapabilityDispatcher {
 
   /**
    * Register an in-memory capability handler. Idempotent: re-registering
-   * the same slug replaces the previous handler.
+   * the same key replaces the previous handler *and* its guard together.
    *
    * Throws if a capability declares `processesPii = true` but does not
    * override `redactProvenance()`. Forces capability authors to make an
    * explicit decision about what gets persisted onto durable audit
    * rows — silent passthrough for PII-handling capabilities is a
    * footgun, not a feature.
+   *
+   * `options` is a fork seam (both fields opt-in; the no-options call is
+   * unchanged):
+   * - `slug` overrides the handler key (defaults to `capability.slug`). See
+   *   the ⚠️ contract on {@link CapabilityRegisterOptions.slug}: the override
+   *   must map to an active `AiCapability` row or dispatch dies at
+   *   `capability_inactive`.
+   * - `guard` attaches a pre-execute predicate run as a dispatch gate.
+   *
+   * The PII check inspects the real (unwrapped) `capability` instance, so
+   * `isRedactorOverridden` sees the true subclass prototype regardless of a
+   * slug override — this seam is exactly what lets a fork avoid wrapping a
+   * capability (which would have defeated that own-property check).
    */
-  register(capability: BaseCapability): void {
+  register(capability: BaseCapability, options?: CapabilityRegisterOptions): void {
     if (capability.processesPii && !isRedactorOverridden(capability)) {
       throw new Error(
         `Capability "${capability.slug}" declares processesPii=true but does not ` +
@@ -106,7 +122,15 @@ class CapabilityDispatcher {
           `explicit redaction. See .context/security/pii-redaction.md`
       );
     }
-    this.handlers.set(capability.slug, capability);
+    const key = options?.slug ?? capability.slug;
+    this.handlers.set(key, capability);
+    // Replace the guard atomically with the handler: a re-registration without
+    // a guard must drop any guard a prior registration left under this key.
+    if (options?.guard) {
+      this.guards.set(key, options.guard);
+    } else {
+      this.guards.delete(key);
+    }
   }
 
   has(slug: string): boolean {
@@ -270,6 +294,57 @@ class CapabilityDispatcher {
           message: `Capability ${slug} is disabled for this agent`,
         },
       };
+    }
+
+    // 4a. Capability guard. A fork-attached pre-execute predicate gating on
+    //     the generic `context.scope` carrier (e.g. refuse a tool outside its
+    //     module/tenant). Runs after enablement, before the rate limiter, so a
+    //     denied call consumes no rate token. Inert unless a fork passed
+    //     `{ guard }` to `register()` — core registers none.
+    const guard = this.guards.get(slug);
+    if (guard) {
+      let allow: boolean;
+      let reason: string | undefined;
+      try {
+        const decision = await guard(context);
+        allow = decision.allow;
+        reason = decision.reason;
+      } catch (err) {
+        // Fail closed: a guard whose purpose is to restrict must not be
+        // bypassed by its own bug. Deny and log; the reason is withheld from
+        // the client since it's an internal error, not a policy decision.
+        logger.error('Capability dispatch: guard threw — denying', {
+          slug,
+          agentId: context.agentId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          success: false,
+          error: {
+            code: 'capability_guard_denied',
+            message: `Capability ${slug} was blocked by a guard`,
+          },
+        };
+      }
+      if (!allow) {
+        logger.warn('Capability dispatch: guard denied', {
+          slug,
+          agentId: context.agentId,
+          reason,
+        });
+        return {
+          success: false,
+          error: {
+            code: 'capability_guard_denied',
+            // `reason` folded in when the guard supplied one; no internal ids —
+            // this message is surfaced verbatim to clients (mirrors the
+            // binding-gate contract above).
+            message: reason
+              ? `Capability ${slug} was blocked: ${reason}`
+              : `Capability ${slug} was blocked by a guard`,
+          },
+        };
+      }
     }
 
     // 5. Rate limit. Effective limit is the binding override, else the

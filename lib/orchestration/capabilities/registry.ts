@@ -38,7 +38,10 @@ import { UploadToStorageCapability } from '@/lib/orchestration/capabilities/buil
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import { initAppCapabilities } from '@/lib/app/capabilities';
 import type { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
-import type { CapabilityFunctionDefinition } from '@/lib/orchestration/capabilities/types';
+import type {
+  CapabilityFunctionDefinition,
+  CapabilityRegisterOptions,
+} from '@/lib/orchestration/capabilities/types';
 
 // ─── Registration state machine ──────────────────────────────────────────────
 //
@@ -86,7 +89,10 @@ let appInited = false;
  * re-registration under HMR / repeated imports replaces rather than
  * duplicates — mirroring the dispatcher's own per-slug `register()`.
  */
-const appCapabilities = new Map<string, BaseCapability>();
+const appCapabilities = new Map<
+  string,
+  { capability: BaseCapability; options?: CapabilityRegisterOptions }
+>();
 let appRegistered = false;
 
 /**
@@ -95,13 +101,22 @@ let appRegistered = false;
  * app's other startup wiring), before any dispatch.
  *
  * This is the seam that lets a fork add agent tools without editing
- * `registerBuiltInCapabilities()`. Idempotent by slug: re-registering the
- * same slug replaces the prior instance.
+ * `registerBuiltInCapabilities()`. Idempotent by registration key
+ * (`options.slug ?? capability.slug`): re-registering the same key replaces
+ * the prior instance.
+ *
+ * `options` (both fields opt-in) is forwarded verbatim to
+ * `capabilityDispatcher.register` — pass `slug` to mount one capability class
+ * under a namespaced slug, and/or `guard` to gate its dispatch. See
+ * {@link CapabilityRegisterOptions} for the slug↔active-row contract.
  *
  * @see .context/orchestration/capabilities.md — the app-author guide
  */
-export function registerAppCapability(capability: BaseCapability): void {
-  appCapabilities.set(capability.slug, capability);
+export function registerAppCapability(
+  capability: BaseCapability,
+  options?: CapabilityRegisterOptions
+): void {
+  appCapabilities.set(options?.slug ?? capability.slug, { capability, options });
   // A new registration must be flushed even if a prior pass already ran
   // (e.g. an app registers after the first dispatch under HMR).
   appRegistered = false;
@@ -116,8 +131,8 @@ export function registerAppCapability(capability: BaseCapability): void {
  */
 export function registerAppCapabilities(): void {
   if (appRegistered) return;
-  for (const capability of appCapabilities.values()) {
-    capabilityDispatcher.register(capability);
+  for (const { capability, options } of appCapabilities.values()) {
+    capabilityDispatcher.register(capability, options);
   }
   appRegistered = true;
 }

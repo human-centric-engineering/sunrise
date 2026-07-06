@@ -442,6 +442,46 @@ describe('registerAppCapability + registerAppCapabilities', () => {
   // registerAppCapabilities() runs inside registerBuiltInCapabilities(), so that
   // existing assertion would fail if the flush erroneously called register().
   // No separate regression test is added here to avoid a duplicate hardcoded count.
+
+  it('forwards register options (slug override) to the dispatcher (#398)', () => {
+    // A fork can mount one class under a namespaced slug; the flush must pass
+    // `options` through so the handler lands under the override key, not the
+    // capability's own slug.
+    const cap = makeAppCap('opt_base');
+    registerAppCapability(cap, { slug: 'ns:opt' });
+    registerAppCapabilities();
+
+    expect(capabilityDispatcher.has('ns:opt')).toBe(true);
+    // The capability's own slug was NOT used as the key.
+    expect(capabilityDispatcher.has(cap.slug)).toBe(false);
+  });
+
+  it('forwards a register guard to the dispatcher (#398)', () => {
+    // Spy on the real dispatcher.register to assert the guard option is passed
+    // through verbatim (the guard behaviour itself is covered in dispatcher.test).
+    const cap = makeAppCap('opt_guard');
+    const guard = vi.fn().mockResolvedValue({ allow: true });
+    const spy = vi.spyOn(capabilityDispatcher, 'register');
+
+    registerAppCapability(cap, { guard });
+    registerAppCapabilities();
+
+    const call = spy.mock.calls.find(([c]) => c.slug === cap.slug);
+    expect(call?.[1]).toEqual({ guard });
+    spy.mockRestore();
+  });
+
+  it('keys the app map on the override slug — two mounts of one class both survive (#398)', () => {
+    // Same class, two override slugs → both must flush (keying on the override
+    // slug, not the shared capability.slug, or one would clobber the other).
+    const cap = makeAppCap('opt_shared');
+    registerAppCapability(cap, { slug: 'ns:a' });
+    registerAppCapability(cap, { slug: 'ns:b' });
+    registerAppCapabilities();
+
+    expect(capabilityDispatcher.has('ns:a')).toBe(true);
+    expect(capabilityDispatcher.has('ns:b')).toBe(true);
+  });
 });
 
 // ─── Barrel re-export surface ─────────────────────────────────────────────────

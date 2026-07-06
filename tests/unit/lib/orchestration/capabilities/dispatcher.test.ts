@@ -435,6 +435,168 @@ describe('CapabilityDispatcher', () => {
     });
   });
 
+  describe('capability guard (#398)', () => {
+    // Re-register 'ok' WITHOUT a guard after each guard test so a guard set on
+    // the shared singleton can't leak into later suites (clearCache() does not
+    // touch handlers/guards). register() drops a prior guard when none is given.
+    afterEach(() => {
+      capabilityDispatcher.register(new OkCapability());
+    });
+
+    it('runs the capability when the guard allows', async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: true });
+      const executeSpy = vi.spyOn(OkCapability.prototype, 'execute');
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 3 }, ctx);
+
+      expect(result).toEqual({ success: true, data: { doubled: 6 } });
+      expect(executeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes the caller context (incl. the scope carrier) to the guard', async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: true });
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const scopedCtx = { ...ctx, scope: { module: 'billing' } };
+      await capabilityDispatcher.dispatch('ok', { n: 1 }, scopedCtx);
+
+      expect(guard).toHaveBeenCalledTimes(1);
+      expect(guard).toHaveBeenCalledWith(scopedCtx);
+    });
+
+    it('blocks with capability_guard_denied and never executes when the guard denies', async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: false });
+      const executeSpy = vi.spyOn(OkCapability.prototype, 'execute');
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(result).toEqual({
+        success: false,
+        error: {
+          code: 'capability_guard_denied',
+          message: 'Capability ok was blocked by a guard',
+        },
+      });
+      expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it("folds the guard's reason into the denial message", async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: false, reason: 'out of scope' });
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      const message = (result as { error: { message: string } }).error.message;
+      expect(message).toBe('Capability ok was blocked: out of scope');
+      // Client-surfaced message: no internal ids leak (mirrors the #381 contract).
+      expect(message).not.toContain(ctx.agentId);
+    });
+
+    it('awaits an async guard', async () => {
+      const guard = vi.fn(
+        () =>
+          new Promise<{ allow: boolean }>((resolve) =>
+            setTimeout(() => resolve({ allow: false }), 0)
+          )
+      );
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(result.error?.code).toBe('capability_guard_denied');
+    });
+
+    it('fails closed (denies + logs) when the guard throws', async () => {
+      const guard = vi.fn().mockRejectedValue(new Error('guard bug'));
+      const executeSpy = vi.spyOn(OkCapability.prototype, 'execute');
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(result).toEqual({
+        success: false,
+        error: {
+          code: 'capability_guard_denied',
+          message: 'Capability ok was blocked by a guard',
+        },
+      });
+      expect(executeSpy).not.toHaveBeenCalled();
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        'Capability dispatch: guard threw — denying',
+        expect.objectContaining({ slug: 'ok', error: 'guard bug' })
+      );
+    });
+
+    it('runs before the rate limiter — a denied call consumes no rate token', async () => {
+      // rateLimit=1 would let exactly one call through the limiter. If the guard
+      // ran AFTER the limiter, repeated denied calls would eventually surface
+      // rate_limited; every call staying guard_denied proves guard-before-limit.
+      const guard = vi.fn().mockResolvedValue({ allow: false });
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ rateLimit: 1 })]);
+
+      const r1 = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+      const r2 = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+      const r3 = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(r1.error?.code).toBe('capability_guard_denied');
+      expect(r2.error?.code).toBe('capability_guard_denied');
+      expect(r3.error?.code).toBe('capability_guard_denied');
+    });
+
+    it('re-registering without a guard drops the prior guard', async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: false });
+      capabilityDispatcher.register(new OkCapability(), { guard });
+      // Overwrite the same key with a guard-less registration.
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 2 }, ctx);
+
+      expect(result).toEqual({ success: true, data: { doubled: 4 } });
+      expect(guard).not.toHaveBeenCalled();
+    });
+
+    it('registers a handler under an override slug and guards that key', async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: false });
+      capabilityDispatcher.register(new OkCapability(), { slug: 'ns:ok', guard });
+      // The override slug must have its own active AiCapability row (the
+      // documented contract) or dispatch dies at capability_inactive first.
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'ns:ok' })]);
+
+      const result = await capabilityDispatcher.dispatch('ns:ok', { n: 1 }, ctx);
+
+      expect(result.error?.code).toBe('capability_guard_denied');
+      expect(guard).toHaveBeenCalledTimes(1);
+      // The original slug is untouched — no guard, no handler collision.
+      expect(capabilityDispatcher.has('ns:ok')).toBe(true);
+      // Clean up the override registration (survives clearCache()).
+      capabilityDispatcher.register(new OkCapability(), { slug: 'ns:ok' });
+    });
+
+    it('an override slug with no active AiCapability row dies at capability_inactive', async () => {
+      const guard = vi.fn().mockResolvedValue({ allow: false });
+      capabilityDispatcher.register(new OkCapability(), { slug: 'ns:missing', guard });
+      // No matching active row → registry lookup (step 3) rejects before the
+      // guard gate (step 4a) is ever reached.
+      mockFindMany.mockResolvedValue([]);
+
+      const result = await capabilityDispatcher.dispatch('ns:missing', { n: 1 }, ctx);
+
+      expect(result.error?.code).toBe('capability_inactive');
+      expect(guard).not.toHaveBeenCalled();
+      capabilityDispatcher.register(new OkCapability(), { slug: 'ns:missing' });
+    });
+  });
+
   describe('rate limiting', () => {
     it('returns rate_limited on the third call when rateLimit=2', async () => {
       capabilityDispatcher.register(new RateLimitedCapability());

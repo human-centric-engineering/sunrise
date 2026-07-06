@@ -34,6 +34,23 @@ release process.
 
 ### Added
 
+- **Capability `register` options — `slug` override + pre-execute `guard`.**
+  `capabilityDispatcher.register(capability, options?)` and
+  `registerAppCapability(capability, options?)` now accept an optional
+  `{ slug?, guard? }` (new exported types `CapabilityRegisterOptions`,
+  `CapabilityGuard`, `CapabilityGuardDecision`). `slug` overrides the in-memory
+  handler key so a fork can mount one capability class under a namespaced slug;
+  `guard` is an async-capable predicate run as dispatch **step 4a** (after the
+  per-agent binding, before the rate limiter) that reads the generic
+  `CapabilityContext.scope` and returns `{ allow, reason? }` — `{ allow: false }`
+  (or a throw) denies with the new `capability_guard_denied` code, failing
+  **closed**. Together they let a fork mount and scope-gate a capability
+  **without wrapping it** — a wrapper would have defeated `register()`'s
+  PII-redaction own-property check, so both options keep that guard inspecting
+  the real subclass. Hard contract: an override `slug` must map to an **active
+  `AiCapability` row** or dispatch dies at `capability_inactive` before the
+  handler/guard runs. Both fields are opt-in; core attaches no guards and uses
+  no slug overrides, so vanilla behaviour is byte-for-byte unchanged. (#398)
 - **`lib/app/knowledge-access-contributors.ts` — fork-owned knowledge
   access-contributor seam.** A new `lib/app/**` seam mirroring
   `registerContextContributor`: a fork registers
