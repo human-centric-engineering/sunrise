@@ -36,6 +36,7 @@ import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
   CapabilityGuard,
+  CapabilityGuardDecision,
   CapabilityRegisterOptions,
   CapabilityRegistryEntry,
   CapabilityResult,
@@ -303,12 +304,9 @@ class CapabilityDispatcher {
     //     `{ guard }` to `register()` — core registers none.
     const guard = this.guards.get(slug);
     if (guard) {
-      let allow: boolean;
-      let reason: string | undefined;
+      let decision: CapabilityGuardDecision;
       try {
-        const decision = await guard(context);
-        allow = decision.allow;
-        reason = decision.reason;
+        decision = await guard(context);
       } catch (err) {
         // Fail closed: a guard whose purpose is to restrict must not be
         // bypassed by its own bug. Deny and log; the reason is withheld from
@@ -326,11 +324,11 @@ class CapabilityDispatcher {
           },
         };
       }
-      if (!allow) {
+      if (!decision.allow) {
         logger.warn('Capability dispatch: guard denied', {
           slug,
           agentId: context.agentId,
-          reason,
+          reason: decision.reason,
         });
         return {
           success: false,
@@ -339,8 +337,8 @@ class CapabilityDispatcher {
             // `reason` folded in when the guard supplied one; no internal ids —
             // this message is surfaced verbatim to clients (mirrors the
             // binding-gate contract above).
-            message: reason
-              ? `Capability ${slug} was blocked: ${reason}`
+            message: decision.reason
+              ? `Capability ${slug} was blocked: ${decision.reason}`
               : `Capability ${slug} was blocked by a guard`,
           },
         };
