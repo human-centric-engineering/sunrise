@@ -34,6 +34,17 @@ release process.
 
 ### Added
 
+- **`lib/app/eslint.config.mjs` + `app:ci-checks` — fork-owned ESLint & CI
+  seams.** A fork can now add its own ESLint import-boundary rules and CI checks
+  without editing platform-owned files (which would conflict on every
+  `git merge vX.Y.Z`). The root `eslint.config.mjs` imports and spreads the
+  reserved `lib/app/eslint.config.mjs` (ships `export default []`) as its **last**
+  argument, so fork blocks land after core and win for their own `files`; the
+  seam header documents the load-bearing spread order and the flat-config
+  `no-restricted-imports` **replace-not-merge** footgun (restate the `@/`-alias
+  ban per glob). The CI `lint` job runs `npm run app:ci-checks --if-present`, so
+  a fork adds an `app:ci-checks` script to `package.json` with **no `ci.yml`
+  edit** (no-op in vanilla Sunrise). Both default to inert. (#382)
 - **`lib/app/bootstrap.ts` — fork-owned server boot seam (`initApp`).** A new
   `lib/app/**` seam: `instrumentation.ts` `register()` calls the reserved,
   empty-by-default `initApp()` once per server process for one-time startup work

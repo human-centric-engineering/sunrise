@@ -5,6 +5,13 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import jsxA11yPlugin from 'eslint-plugin-jsx-a11y';
 import tseslint from 'typescript-eslint';
 
+// Fork-owned ESLint seam — reserved, `export default []` in vanilla Sunrise.
+// A fork adds its own import-boundary blocks here instead of editing this file.
+// Spread LAST (below), after every core block, so a fork block wins for its own
+// `files`. See lib/app/eslint.config.mjs for the seam contract (notably the
+// `no-restricted-imports` replace-not-merge footgun).
+import appEslintConfig from './lib/app/eslint.config.mjs';
+
 export default tseslint.config(
   // Global ignores
   {
@@ -306,5 +313,10 @@ export default tseslint.config(
       'react-hooks/preserve-manual-memoization': 'off',
       'react-hooks/exhaustive-deps': 'off',
     },
-  }
+  },
+
+  // Fork-owned ESLint seam — spread LAST so a fork's blocks override core for
+  // their own `files`. Empty (`[]`) in vanilla Sunrise. See the import above
+  // and lib/app/eslint.config.mjs.
+  ...appEslintConfig
 );

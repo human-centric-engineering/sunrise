@@ -154,6 +154,14 @@ jobs:
         if: needs.config.outputs.code == 'true'
         run: npm run lint
       - run: npm run format:check
+      # Fork-owned CI checks seam. A fork adds an `app:ci-checks` script to
+      # package.json (a boundary check, migration-hygiene lint, etc.); vanilla
+      # Sunrise ships no such script, so `--if-present` makes this a no-op here
+      # — no ci.yml edit required downstream. Gated on the code filter like
+      # ESLint above (skip on docs-only PRs). See CUSTOMIZATION.md §4.
+      - name: Fork checks (if present)
+        if: needs.config.outputs.code == 'true'
+        run: npm run app:ci-checks --if-present
 
   build:
     name: Build

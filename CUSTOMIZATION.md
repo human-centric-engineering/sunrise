@@ -259,6 +259,7 @@ not in the files, precisely so the files stay small and conflict-free.)
 | `lib/app/public-nav.ts`           | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)       |
 | `lib/app/emails.ts`               | auth email template overrides                 | `lib/email/registry.ts` (server)                     |
 | `lib/app/bootstrap.ts`            | one-time server boot work (`initApp`)         | `instrumentation.ts` `register()` (server, all envs) |
+| `lib/app/eslint.config.mjs`       | ESLint import-boundary blocks (fork tiers)    | root `eslint.config.mjs` spread (lint)               |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a
@@ -282,6 +283,22 @@ carries zero framework vocabulary. A **framework-layer fork** (see the two-tier
 model below) boots its tier in `bootstrap.ts` and then delegates to a fresh
 reserved leaf hook (e.g. `lib/app/leaf-bootstrap.ts`), so a leaf-on-framework
 fork can still hook boot without colliding on `bootstrap.ts`.
+
+**ESLint boundary rules + CI checks — `lib/app/eslint.config.mjs`.** To enforce
+your tier's own import boundary (e.g. a `framework ↔ core` rule), add flat-config
+blocks to `lib/app/eslint.config.mjs` (ships `export default []`) instead of
+editing the root config. The root `eslint.config.mjs` spreads your array **last**
+— after every Sunrise block — so a block of yours **wins for its own `files`**.
+Two things to know: (1) a framework-tier fork spreads its
+`lib/framework/eslint.config.mjs` first and keeps this leaf seam last; (2)
+flat-config **`no-restricted-imports` replaces, it does not merge** — a block
+that restricts imports for a glob must **restate the base `@/`-alias ban** for
+that glob or relative-import enforcement silently drops there (see
+[`.context/architecture/lint-toolchain.md`](./.context/architecture/lint-toolchain.md#app-boundary--libapp)
+for the worked example). For **CI**, add an `app:ci-checks` script to
+`package.json` (a boundary check, migration-hygiene lint, etc.) — Sunrise's
+`lint` job already runs `npm run app:ci-checks --if-present`, so it executes with
+**no `ci.yml` edit** (and no-ops in vanilla Sunrise, which ships no such script).
 
 **Environment variables — `lib/app/env.ts`.** Declare your own server-side env
 vars in `appEnvSchema`; the core validator merges them into the **same fail-fast
