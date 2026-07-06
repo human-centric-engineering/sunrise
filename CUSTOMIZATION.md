@@ -67,6 +67,17 @@ as the fork-owned mirror of the platform substrate: add
 index. (This convention is used across Sunrise forks; adopting it keeps app docs
 findable in the same place in every fork.)
 
+**Two reserved fork tiers — `/app` (leaf) and `/framework`.** The `/app` surface
+above is the **leaf-fork** tier: fork Sunrise directly and build your product in
+`lib/app/**` + `.context/app/`. Some forks instead build a reusable
+**framework layer** that sits _between_ Sunrise and their own leaf forks (e.g.
+Daybreak). For those, Sunrise reserves a second tier one level up —
+`lib/framework/`, `.context/framework/`, `prisma/schema/framework-*.prisma`, and
+the `framework_` table prefix. **Sunrise core never creates files or tables
+under either tier**, so both merge cleanly on upgrade. A framework fork owns
+`/framework` and re-exposes `/app` to _its_ leaf forks; boot both through the
+`lib/app/bootstrap.ts` seam ([§4](#4-configuration--environment--the-libapp-surface)).
+
 ---
 
 ## 1. First steps
@@ -236,17 +247,18 @@ the body, which is yours. Keep the export name and signature;
 everything inside is free to change. (Detailed examples live here in this guide,
 not in the files, precisely so the files stay small and conflict-free.)
 
-| Edit this file                    | To register                                   | Auto-wired by (runtime)                           |
-| --------------------------------- | --------------------------------------------- | ------------------------------------------------- |
-| `lib/app/env.ts`                  | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)               |
-| `lib/app/rate-limit.ts`           | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)        |
-| `lib/app/protected-routes.ts`     | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime) |
-| `lib/app/capabilities.ts`         | agent capabilities (tools)                    | the capability registry (server route-handler)    |
-| `lib/app/context-contributors.ts` | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)   |
-| `lib/app/admin-nav.ts`            | admin sidebar sections                        | `admin-sidebar.tsx` (client)                      |
-| `lib/app/db-drift.ts`             | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)      |
-| `lib/app/public-nav.ts`           | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)    |
-| `lib/app/emails.ts`               | auth email template overrides                 | `lib/email/registry.ts` (server)                  |
+| Edit this file                    | To register                                   | Auto-wired by (runtime)                              |
+| --------------------------------- | --------------------------------------------- | ---------------------------------------------------- |
+| `lib/app/env.ts`                  | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)                  |
+| `lib/app/rate-limit.ts`           | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)           |
+| `lib/app/protected-routes.ts`     | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime)    |
+| `lib/app/capabilities.ts`         | agent capabilities (tools)                    | the capability registry (server route-handler)       |
+| `lib/app/context-contributors.ts` | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)      |
+| `lib/app/admin-nav.ts`            | admin sidebar sections                        | `admin-sidebar.tsx` (client)                         |
+| `lib/app/db-drift.ts`             | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)         |
+| `lib/app/public-nav.ts`           | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)       |
+| `lib/app/emails.ts`               | auth email template overrides                 | `lib/email/registry.ts` (server)                     |
+| `lib/app/bootstrap.ts`            | one-time server boot work (`initApp`)         | `instrumentation.ts` `register()` (server, all envs) |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a
@@ -256,6 +268,20 @@ the lean middleware bundle free of capability/Prisma code.) An ESLint boundary
 keeps `lib/app/` portable: no runtime `next/*` imports (type-only is fine), `@/`
 alias only; framework glue goes in `app/` or `lib/app/<name>/server/`. See
 [`.context/architecture/lint-toolchain.md`](./.context/architecture/lint-toolchain.md#app-boundary--libapp).
+
+**Server boot work — `lib/app/bootstrap.ts`.** For one-time startup work (warm a
+cache, register a background worker, boot a framework tier), fill the empty
+`initApp()`. `instrumentation.ts` `register()` calls it once per server process
+in **every** environment (it sits above the dev-only maintenance-ticker guards),
+isolated in a try/catch so a boot error is logged but never crashes
+instrumentation. **Import your framework tier _dynamically_** from here
+(`await import('@/lib/framework')`) — a _static_ framework specifier is resolved
+at `next build` and breaks the build in vanilla Sunrise or any fork without that
+folder, which is exactly why core references only `@/lib/app/bootstrap` and
+carries zero framework vocabulary. A **framework-layer fork** (see the two-tier
+model below) boots its tier in `bootstrap.ts` and then delegates to a fresh
+reserved leaf hook (e.g. `lib/app/leaf-bootstrap.ts`), so a leaf-on-framework
+fork can still hook boot without colliding on `bootstrap.ts`.
 
 **Environment variables — `lib/app/env.ts`.** Declare your own server-side env
 vars in `appEnvSchema`; the core validator merges them into the **same fail-fast

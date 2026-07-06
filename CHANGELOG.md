@@ -34,6 +34,21 @@ release process.
 
 ### Added
 
+- **`lib/app/bootstrap.ts` — fork-owned server boot seam (`initApp`).** A new
+  `lib/app/**` seam: `instrumentation.ts` `register()` calls the reserved,
+  empty-by-default `initApp()` once per server process for one-time startup work
+  (warm a cache, start a worker, boot a framework tier). It runs in **every**
+  environment (placed above the dev-only maintenance-ticker guards) and is
+  isolated in a try/catch, so a fork's boot failure is logged but never crashes
+  instrumentation or stops the dev ticker arming. Core imports only
+  `@/lib/app/bootstrap`; a fork imports its own tier **dynamically** from there
+  (a static `@/lib/framework` specifier breaks `next build` in vanilla Sunrise).
+  Also **reserves a second fork-namespace tier, `/framework`**, for
+  framework-layer forks that sit between Sunrise and their own leaf forks
+  (`lib/framework/`, `.context/framework/`, `prisma/schema/framework-*.prisma`,
+  the `framework_` table prefix) — Sunrise core never creates files or tables
+  there, generalising #371's `/app` (leaf) reservation to two tiers. Default
+  (empty `initApp`) is unchanged behaviour. (#385)
 - **`lib/app/protected-routes.ts` — fork-owned protected-route registry.** A new
   `lib/app/**` seam: a fork lists extra authenticated route prefixes in
   `appProtectedRoutes` (ships empty) and the proxy **merges** them with the core

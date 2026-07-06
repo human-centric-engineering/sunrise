@@ -20,6 +20,7 @@ import { initAppContextContributors } from '@/lib/app/context-contributors';
 import { initAppNav } from '@/lib/app/admin-nav';
 import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
 import { emailOverrides } from '@/lib/app/emails';
+import { initApp } from '@/lib/app/bootstrap';
 import { getEffectiveRateLimitPolicy, RATE_LIMIT_POLICY } from '@/lib/security/rate-limit-policy';
 import { getRegisteredNavSections, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 
@@ -72,5 +73,13 @@ describe('lib/app/ bootstrap defaults are no-ops', () => {
   it('email overrides are empty by default (= use platform templates)', () => {
     // A stray override here would silently swap an auth email for every install.
     expect(emailOverrides).toEqual({});
+  });
+
+  it('initApp does no boot work by default (resolves to undefined)', async () => {
+    // The real default is an empty async fn; forks fill it. A stray default
+    // would run one-time work on every install boot. (The instrumentation
+    // wiring — that register() calls this in all envs, isolated in try/catch —
+    // is covered by tests/unit/instrumentation.test.ts.)
+    await expect(initApp()).resolves.toBeUndefined();
   });
 });

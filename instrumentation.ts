@@ -21,6 +21,23 @@
 
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
+
+  // App boot seam — runs in ALL environments (prod included), so it sits above
+  // the dev-only ticker guards below. Core carries zero reference to any fork:
+  // the reserved `lib/app/bootstrap.ts` ships an empty `initApp()` and a fork
+  // fills it (dynamically importing its own framework tier). Isolated in
+  // try/catch so a fork's boot failure can't crash instrumentation or prevent
+  // the dev maintenance ticker from arming. See lib/app/bootstrap.ts.
+  try {
+    const { initApp } = await import('@/lib/app/bootstrap');
+    await initApp();
+  } catch (err) {
+    const { logger } = await import('@/lib/logging');
+    logger.error('instrumentation: app boot seam (initApp) failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   if (process.env.NODE_ENV !== 'development') return;
   if (process.env.SUNRISE_DISABLE_DEV_TICK === '1') return;
 
