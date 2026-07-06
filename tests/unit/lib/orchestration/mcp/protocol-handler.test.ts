@@ -409,6 +409,27 @@ describe('handleMcpRequest', () => {
       expect((data.tools[0] as Record<string, unknown>).name).toBe('search_kb');
     });
 
+    it('scopes the listing to the key’s agent (passes scopedAgentId to listMcpTools) (#381)', async () => {
+      vi.mocked(listMcpTools).mockResolvedValue([]);
+      const scopedAuth = makeAuth({ scopedAgentId: 'agent-42' });
+
+      const req = makeRequest({ method: 'tools/list' });
+      await handleMcpRequest(req, { auth: scopedAuth, session, serverState, rateLimiter });
+
+      // discovery must match dispatch — the list is filtered for the bound agent
+      expect(listMcpTools).toHaveBeenCalledWith('agent-42');
+    });
+
+    it('passes null to listMcpTools for an unscoped key (full global list)', async () => {
+      vi.mocked(listMcpTools).mockResolvedValue([]);
+      const unscopedAuth = makeAuth({ scopedAgentId: null });
+
+      const req = makeRequest({ method: 'tools/list' });
+      await handleMcpRequest(req, { auth: unscopedAuth, session, serverState, rateLimiter });
+
+      expect(listMcpTools).toHaveBeenCalledWith(null);
+    });
+
     it('wraps inputSchema with type: object', async () => {
       vi.mocked(listMcpTools).mockResolvedValue([
         {

@@ -127,6 +127,17 @@ release process.
 
 ### Changed
 
+- **MCP `tools/list` is scoped to the key's agent (list/call parity).** When an
+  MCP API key is bound to an agent (`scopedAgentId`), `tools/list` now hides
+  capabilities **explicitly disabled** for that agent (an `AiAgentCapability`
+  row with `isEnabled = false`) — so a scoped key can no longer *discover* a
+  tool it would then be refused on *call* (since #380, `tools/call` dispatches
+  under the scoped agent). Scoping stays **default-allow**: capabilities with no
+  binding row remain listed and callable; only explicit disables are honoured.
+  Unscoped keys see the full global list, unchanged. The shared
+  `capability_disabled_for_agent` dispatcher error message no longer embeds the
+  internal agent cuid (it's surfaced verbatim to MCP clients); the id stays in
+  server logs only. (#381)
 - **`send_notification` step interpolates the `to` recipient.** The email
   recipient(s) are now run through the same `{{…}}` interpolation as `subject`
   and `bodyTemplate`, and the **resolved** value is validated as an email at

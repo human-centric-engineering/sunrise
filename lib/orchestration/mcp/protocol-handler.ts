@@ -144,7 +144,7 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
     case 'tools/list':
       requireInitialized(session);
       requireScope(auth, McpScope.TOOLS_LIST);
-      return handleToolsList(request.params, session);
+      return handleToolsList(request.params, session, auth);
 
     case 'tools/call':
       requireInitialized(session);
@@ -264,9 +264,13 @@ const DEFAULT_PAGE_SIZE = 50;
 
 async function handleToolsList(
   params: Record<string, unknown> | undefined,
-  session: McpSession
+  session: McpSession,
+  auth: McpAuthContext
 ): Promise<{ tools: unknown[]; nextCursor?: string }> {
-  const allTools = await listMcpTools();
+  // Scope the catalogue to the key's agent so discovery matches dispatch: a
+  // tool disabled for the scoped agent (which `tools/call` would refuse) is
+  // hidden here. Unscoped keys see the full list. See listMcpTools (#381).
+  const allTools = await listMcpTools(auth.scopedAgentId);
   const { offset, limit } = decodeCursor(params?.cursor, DEFAULT_PAGE_SIZE);
   const page = allTools.slice(offset, offset + limit);
   const nextCursor = offset + limit < allTools.length ? encodeCursor(offset + limit) : undefined;

@@ -263,7 +263,11 @@ class CapabilityDispatcher {
         success: false,
         error: {
           code: 'capability_disabled_for_agent',
-          message: `Capability ${slug} is disabled for agent ${context.agentId}`,
+          // No agent id in the message: it's surfaced verbatim to clients (e.g.
+          // the MCP tool-registry passes `result.error.message` through), and
+          // the internal cuid adds nothing a scoped caller can act on. The
+          // agentId stays in the structured `logger.warn` above for operators.
+          message: `Capability ${slug} is disabled for this agent`,
         },
       };
     }

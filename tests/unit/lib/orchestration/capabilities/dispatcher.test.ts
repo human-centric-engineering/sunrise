@@ -400,6 +400,39 @@ describe('CapabilityDispatcher', () => {
         error: expect.objectContaining({ code: 'capability_disabled_for_agent' }),
       });
     });
+
+    it('does not leak the internal agent id in the client-facing message (#381)', async () => {
+      // The message is surfaced verbatim to callers (e.g. the MCP tool-registry
+      // passes error.message through), so the internal cuid must not appear.
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockAgentFindMany.mockResolvedValue([
+        {
+          id: 'aac-1',
+          agentId: 'agent-1',
+          capabilityId: 'cap-1',
+          isEnabled: false,
+          customRateLimit: null,
+          capability: {
+            id: 'cap-1',
+            slug: 'ok',
+            name: 'ok',
+            category: 'test',
+            isActive: true,
+            requiresApproval: false,
+            rateLimit: null,
+            functionDefinition: { name: 'ok', description: '', parameters: {} },
+          },
+        },
+      ]);
+
+      const result = await capabilityDispatcher.dispatch('ok', { n: 1 }, ctx);
+
+      expect(result.success).toBe(false);
+      const message = (result as { error: { message: string } }).error.message;
+      expect(message).toBe('Capability ok is disabled for this agent');
+      expect(message).not.toContain(ctx.agentId);
+    });
   });
 
   describe('rate limiting', () => {

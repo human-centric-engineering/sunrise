@@ -8,6 +8,9 @@ vi.mock('@/lib/db/client', () => ({
     aiAgent: {
       findUnique: vi.fn(),
     },
+    aiAgentCapability: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -267,6 +270,75 @@ describe('listMcpTools', () => {
 
     // Act + Assert: the source does not catch DB errors, so it propagates
     await expect(listMcpTools()).rejects.toThrow('Connection terminated unexpectedly');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listMcpTools — agent-scoped filtering (#381)
+// ---------------------------------------------------------------------------
+
+describe('listMcpTools: agent scoping', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearMcpToolCache();
+  });
+
+  /** Two active exposed tools with distinct slugs (search_knowledge, send_email). */
+  function twoTools(): void {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([
+      makeExposedTool({ capability: makeCapability({ slug: 'search_knowledge' }) }),
+      makeExposedTool({
+        id: 'tool-2',
+        capability: makeCapability({ slug: 'send_email' }),
+      }),
+    ] as never);
+    // safeParse is called per row; return a valid parse each time.
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+  }
+
+  it('does not consult agent bindings for an unscoped call', async () => {
+    twoTools();
+
+    const result = await listMcpTools();
+
+    expect(result.map((t) => t.slug)).toEqual(['search_knowledge', 'send_email']);
+    expect(prisma.aiAgentCapability.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not consult agent bindings when scopedAgentId is null', async () => {
+    twoTools();
+
+    await listMcpTools(null);
+
+    expect(prisma.aiAgentCapability.findMany).not.toHaveBeenCalled();
+  });
+
+  it('drops tools explicitly disabled for the scoped agent (list/call parity)', async () => {
+    twoTools();
+    // `send_email` has an isEnabled=false binding for this agent.
+    vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([
+      { capability: { slug: 'send_email' } },
+    ] as never);
+
+    const result = await listMcpTools('agent-42');
+
+    expect(result.map((t) => t.slug)).toEqual(['search_knowledge']);
+    // Queries only the explicit-disable rows for that agent (default-allow).
+    expect(prisma.aiAgentCapability.findMany).toHaveBeenCalledWith({
+      where: { agentId: 'agent-42', isEnabled: false },
+      select: { capability: { select: { slug: true } } },
+    });
+  });
+
+  it('returns the full list when the scoped agent has no disable bindings (default-allow)', async () => {
+    twoTools();
+    vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([] as never);
+
+    const result = await listMcpTools('agent-42');
+
+    expect(result.map((t) => t.slug)).toEqual(['search_knowledge', 'send_email']);
   });
 });
 
