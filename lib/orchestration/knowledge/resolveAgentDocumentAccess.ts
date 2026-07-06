@@ -130,8 +130,13 @@ async function collectAccessContributions(
   const documentIds: string[] = [];
   const tagIds: string[] = [];
   for (const contribution of results) {
-    if (contribution?.documentIds) documentIds.push(...contribution.documentIds);
-    if (contribution?.tagIds) tagIds.push(...contribution.tagIds);
+    // `Array.isArray` (not just truthy) so a fork returning a malformed shape
+    // that violates the `string[]` type — a bare number (`.push(...123)` would
+    // throw `not iterable`) or a string (which would silently spread into
+    // single chars) — is ignored rather than crashing the resolver or poisoning
+    // the set. Keeps the "never throws" contract literally true.
+    if (Array.isArray(contribution?.documentIds)) documentIds.push(...contribution.documentIds);
+    if (Array.isArray(contribution?.tagIds)) tagIds.push(...contribution.tagIds);
   }
   return { documentIds, tagIds };
 }
@@ -242,6 +247,12 @@ export async function resolveAgentDocumentAccess(agentId: string): Promise<Agent
     documentIds,
     includeSystemScope: true,
   };
+  // Cached unconditionally, even if a contributor errored (degrading to fewer
+  // docs). Intentional and distinct from the chat context seam, which leaves an
+  // errored result uncached to self-heal: for an *access* decision the narrower
+  // set is the safe direction, so a transient contributor blip costing an agent
+  // its contributed docs for ≤1 TTL is acceptable, and re-composing on every
+  // resolve would defeat the cache the hot search path depends on.
   cache.set(agentId, { expiresAt: now + CACHE_TTL_MS, value });
   return value;
 }

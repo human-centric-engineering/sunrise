@@ -318,6 +318,23 @@ describe('resolveAgentDocumentAccess', () => {
       expect(result.documentIds).toEqual(['doc-core']);
     });
 
+    it('ignores a malformed (non-array) contribution shape without throwing or spreading garbage', async () => {
+      // A fork that violates the `string[]` contract must not crash the resolver
+      // (a bare number would make `.push(...)` throw "not iterable") nor poison
+      // the set (a string would spread into single characters).
+      restrictedWith(['doc-core']);
+      // Casts: these deliberately violate the `string[]` contract.
+      registerAgentAccessContributor('bad-number', (async () => ({ documentIds: 123 })) as never);
+      registerAgentAccessContributor('bad-string', (async () => ({
+        documentIds: 'doc-x',
+      })) as never);
+
+      const result = await resolveAgentDocumentAccess('agent-bad');
+
+      if (result.mode !== 'restricted') throw new Error('expected restricted');
+      expect(result.documentIds).toEqual(['doc-core']);
+    });
+
     it('unions contributions from multiple contributors', async () => {
       restrictedWith(['doc-core']);
       registerAgentAccessContributor('a', async () => ({ documentIds: ['doc-a'] }));
