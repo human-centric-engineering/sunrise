@@ -16,7 +16,23 @@ release process.
 
 ## [Unreleased]
 
-## [0.6.0] — 2026-07-06 (alpha)
+## [0.6.0] — 2026-07-06
+
+> **Alpha release.** Eighth tagged Sunrise release. **MINOR bump** — adds new
+> public surface, all fork-facing seams that stay inert in vanilla Sunrise: the
+> capability `register()` **slug override + pre-execute `guard`**
+> (`CapabilityRegisterOptions` / `CapabilityGuard` / `CapabilityGuardDecision`;
+> guard runs as dispatch step 4a, fail-closed), the **knowledge
+> access-contributor** seam (`registerAgentAccessContributor` — a fork widens a
+> restricted agent's document set live), the reserved **`/framework` namespace
+> tier** + generic `initApp()` boot seam (`lib/app/bootstrap.ts`), the fork-owned
+> **ESLint config + `app:ci-checks`** seams, MCP **`tools/list` agent scoping**
+> (with the `callMcpTool()` caller-object signature change), and
+> `send_notification` **`to` interpolation**. Plus fixes: workflow
+> `{{trigger.*}}` template resolution, the admin MCP key-hash audit leak
+> (Security), and spurious `updatedAt` audit-diff noise across nine admin routes.
+> Both new dispatcher/knowledge seams are byte-for-byte inert until a fork opts
+> in.
 
 ### Security
 
