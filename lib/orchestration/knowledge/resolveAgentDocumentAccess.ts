@@ -25,6 +25,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { initAppKnowledgeAccessContributors } from '@/lib/app/knowledge-access-contributors';
 
 export type AgentDocumentAccess =
   | { mode: 'full' }
@@ -35,6 +36,105 @@ export type AgentDocumentAccess =
       /** When true, the search layer should also pass through `d.scope = 'system'` chunks. */
       includeSystemScope: true;
     };
+
+// ─── Access-contributor seam ──────────────────────────────────────────────
+//
+// A fork can widen a *restricted* agent's searchable document set from a
+// relationship it owns (module membership, team ACL, per-tenant grant) —
+// composed live at resolve time instead of materialising derived grants onto
+// the per-agent pivot (which has no provenance column, so a copy-down scheme is
+// clobber-or-leak). Mirrors `registerContextContributor`: a keyed registry the
+// fork fills from `lib/app/knowledge-access-contributors.ts`, run-once-lazily.
+
+/** A live source of extra documents/tags for a restricted agent. */
+export interface AgentAccessContribution {
+  /** Document IDs to add to the agent's searchable set. */
+  documentIds?: string[];
+  /** Tag IDs to add — expanded to their documents by the resolver, like a tag grant. */
+  tagIds?: string[];
+}
+
+export type AgentAccessContributor = (agentId: string) => Promise<AgentAccessContribution>;
+
+const accessContributors = new Map<string, AgentAccessContributor>();
+
+/** Whether the auto-wired app contributor init has run. */
+let appAccessContributorsInited = false;
+
+/**
+ * Register a knowledge access contributor. Lets a fork add documents to a
+ * **restricted** agent's searchable set without materialising grants or editing
+ * the resolver. Idempotent by key: re-registering the same key replaces the
+ * prior contributor (mirrors `registerContextContributor`). Contributors run
+ * only in the `restricted` branch (so a `full` agent is never touched) and can
+ * only *widen* access. Call at module-import time from
+ * `lib/app/knowledge-access-contributors.ts`.
+ *
+ * @see .context/orchestration/knowledge.md — the app-author guide
+ */
+export function registerAgentAccessContributor(
+  key: string,
+  contributor: AgentAccessContributor
+): void {
+  accessContributors.set(key, contributor);
+}
+
+/**
+ * Run the fork's auto-wired contributor init exactly once, lazily, before the
+ * first resolve. Mirrors `ensureAppContributorsInited` in the chat context
+ * builder: latch BEFORE running so a throwing init neither retries on every
+ * resolve nor propagates out of `resolveAgentDocumentAccess` (which is
+ * documented as always-safe-to-call). An init failure degrades to "no app
+ * contributors".
+ */
+function ensureAppAccessContributorsInited(): void {
+  if (appAccessContributorsInited) return;
+  appAccessContributorsInited = true;
+  try {
+    initAppKnowledgeAccessContributors();
+  } catch (err) {
+    logger.error(
+      'resolveAgentDocumentAccess: initAppKnowledgeAccessContributors threw — app access contributors disabled',
+      { error: err instanceof Error ? err.message : String(err) }
+    );
+  }
+}
+
+/**
+ * Consult every registered access contributor for one agent, in parallel.
+ * Never throws: a contributor that rejects OR throws synchronously is logged
+ * and contributes nothing, preserving the resolver's always-safe contract.
+ * Returns flattened `documentIds` / `tagIds` (may contain duplicates; the
+ * caller dedups).
+ */
+async function collectAccessContributions(
+  agentId: string
+): Promise<{ documentIds: string[]; tagIds: string[] }> {
+  if (accessContributors.size === 0) return { documentIds: [], tagIds: [] };
+
+  const results = await Promise.all(
+    Array.from(accessContributors.entries()).map(async ([key, contributor]) => {
+      try {
+        return await contributor(agentId);
+      } catch (err) {
+        logger.error('resolveAgentDocumentAccess: access contributor threw — ignoring', {
+          agentId,
+          contributorKey: key,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return { documentIds: [], tagIds: [] } satisfies AgentAccessContribution;
+      }
+    })
+  );
+
+  const documentIds: string[] = [];
+  const tagIds: string[] = [];
+  for (const contribution of results) {
+    if (contribution?.documentIds) documentIds.push(...contribution.documentIds);
+    if (contribution?.tagIds) tagIds.push(...contribution.tagIds);
+  }
+  return { documentIds, tagIds };
+}
 
 interface CacheEntry {
   expiresAt: number;
@@ -52,6 +152,15 @@ export function invalidateAgentAccess(agentId: string): void {
 /** Invalidate the entire cache (call after bulk operations or schema-shaped changes). */
 export function invalidateAllAgentAccess(): void {
   cache.clear();
+}
+
+/**
+ * Test-only: drop all registered access contributors and re-arm the one-shot
+ * app init so each test starts from a known state.
+ */
+export function __resetAgentAccessContributorsForTests(): void {
+  accessContributors.clear();
+  appAccessContributorsInited = false;
 }
 
 /**
@@ -90,7 +199,12 @@ export async function resolveAgentDocumentAccess(agentId: string): Promise<Agent
     return value;
   }
 
-  const [docGrants, tagGrants] = await Promise.all([
+  // Restricted branch only — contributors run after the `full` short-circuit
+  // above, so they can only WIDEN a restricted agent (never narrow, never touch
+  // a `full` agent). Consulted in parallel with the core grant queries.
+  ensureAppAccessContributorsInited();
+
+  const [docGrants, tagGrants, contributions] = await Promise.all([
     prisma.aiAgentKnowledgeDocument.findMany({
       where: { agentId },
       select: { documentId: true },
@@ -99,9 +213,14 @@ export async function resolveAgentDocumentAccess(agentId: string): Promise<Agent
       where: { agentId },
       select: { tagId: true },
     }),
+    collectAccessContributions(agentId),
   ]);
 
-  const grantedTagIds = tagGrants.map((g) => g.tagId);
+  // Contributed tagIds join the existing tag→doc expansion (deduped so a tag
+  // both operator-granted and contributed doesn't widen the `IN` list twice).
+  const grantedTagIds = Array.from(
+    new Set<string>([...tagGrants.map((g) => g.tagId), ...contributions.tagIds])
+  );
   const tagExpandedDocs =
     grantedTagIds.length === 0
       ? []
@@ -114,6 +233,7 @@ export async function resolveAgentDocumentAccess(agentId: string): Promise<Agent
     new Set<string>([
       ...docGrants.map((g) => g.documentId),
       ...tagExpandedDocs.map((d) => d.documentId),
+      ...contributions.documentIds,
     ])
   );
 

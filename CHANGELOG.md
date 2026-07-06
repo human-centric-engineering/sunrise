@@ -34,6 +34,20 @@ release process.
 
 ### Added
 
+- **`lib/app/knowledge-access-contributors.ts` — fork-owned knowledge
+  access-contributor seam.** A new `lib/app/**` seam mirroring
+  `registerContextContributor`: a fork registers
+  `registerAgentAccessContributor(key, (agentId) => Promise<{ documentIds?, tagIds? }>)`
+  to **widen a restricted agent's searchable document set** from a relationship
+  it owns (module membership, team ACL, per-tenant grant), composed **live** by
+  `resolveAgentDocumentAccess()` instead of materialising derived grants onto the
+  per-agent pivot (which has no provenance column, making copy-down
+  clobber-or-leak). Contributors run only in the `restricted` branch (a `full`
+  agent is never touched) and can only **widen**; contributed `tagIds` expand to
+  their documents like a tag grant; a contributor that throws is logged and
+  ignored; an empty registry is byte-for-byte the previous behaviour. When the
+  data a contributor reads changes, the subsystem calls the existing
+  `invalidateAgentAccess(agentId)`. (#403)
 - **`lib/app/eslint.config.mjs` + `app:ci-checks` — fork-owned ESLint & CI
   seams.** A fork can now add its own ESLint import-boundary rules and CI checks
   without editing platform-owned files (which would conflict on every

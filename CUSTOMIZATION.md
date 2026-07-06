@@ -247,19 +247,20 @@ the body, which is yours. Keep the export name and signature;
 everything inside is free to change. (Detailed examples live here in this guide,
 not in the files, precisely so the files stay small and conflict-free.)
 
-| Edit this file                    | To register                                   | Auto-wired by (runtime)                              |
-| --------------------------------- | --------------------------------------------- | ---------------------------------------------------- |
-| `lib/app/env.ts`                  | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)                  |
-| `lib/app/rate-limit.ts`           | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)           |
-| `lib/app/protected-routes.ts`     | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime)    |
-| `lib/app/capabilities.ts`         | agent capabilities (tools)                    | the capability registry (server route-handler)       |
-| `lib/app/context-contributors.ts` | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)      |
-| `lib/app/admin-nav.ts`            | admin sidebar sections                        | `admin-sidebar.tsx` (client)                         |
-| `lib/app/db-drift.ts`             | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)         |
-| `lib/app/public-nav.ts`           | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)       |
-| `lib/app/emails.ts`               | auth email template overrides                 | `lib/email/registry.ts` (server)                     |
-| `lib/app/bootstrap.ts`            | one-time server boot work (`initApp`)         | `instrumentation.ts` `register()` (server, all envs) |
-| `lib/app/eslint.config.mjs`       | ESLint import-boundary blocks (fork tiers)    | root `eslint.config.mjs` spread (lint)               |
+| Edit this file                             | To register                                   | Auto-wired by (runtime)                               |
+| ------------------------------------------ | --------------------------------------------- | ----------------------------------------------------- |
+| `lib/app/env.ts`                           | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)                   |
+| `lib/app/rate-limit.ts`                    | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)            |
+| `lib/app/protected-routes.ts`              | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime)     |
+| `lib/app/capabilities.ts`                  | agent capabilities (tools)                    | the capability registry (server route-handler)        |
+| `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)       |
+| `lib/app/admin-nav.ts`                     | admin sidebar sections                        | `admin-sidebar.tsx` (client)                          |
+| `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)          |
+| `lib/app/public-nav.ts`                    | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)        |
+| `lib/app/emails.ts`                        | auth email template overrides                 | `lib/email/registry.ts` (server)                      |
+| `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)         | `instrumentation.ts` `register()` (server, all envs)  |
+| `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)    | root `eslint.config.mjs` spread (lint)                |
+| `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent             | `resolveAgentDocumentAccess()` (server route-handler) |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a
@@ -382,6 +383,22 @@ auto-wired `initAppContextContributors()` with
 the core `buildContext` switch. The chat context builder runs it once before its
 first lookup; built-in types (e.g. `pattern`) take precedence. See
 [`.context/orchestration/chat.md`](./.context/orchestration/chat.md).
+
+**Knowledge access contributors — `lib/app/knowledge-access-contributors.ts`.**
+To widen a **restricted** agent's searchable document set from a relationship
+your layer owns (module membership, team ACL, per-tenant grant), fill in the
+auto-wired `initAppKnowledgeAccessContributors()` with
+`registerAgentAccessContributor(key, contributor)` calls. Your contributor
+`(agentId) => Promise<{ documentIds?, tagIds? }>` is composed **live** at resolve
+time and its docs/tags are **unioned** into the agent's set (contributed `tagIds`
+expand to their documents like a tag grant) — so you never materialise derived
+grants onto the per-agent pivot (which has no provenance column, making any
+copy-down scheme clobber-or-leak). Rules: it runs **only** for `restricted`
+agents (a `full` agent is untouched) and can only **widen** access; a contributor
+that throws is logged and ignored; and when the data it reads changes you must
+call `invalidateAgentAccess(agentId)` for the affected agents (the same contract
+direct grants follow) so the cached decision re-composes. See
+[`.context/orchestration/knowledge.md`](./.context/orchestration/knowledge.md).
 
 **Admin sidebar sections — `lib/app/admin-nav.ts`.** Fill in the auto-wired
 `initAppNav()` with `registerNavSection({ … })` calls; the admin sidebar renders
