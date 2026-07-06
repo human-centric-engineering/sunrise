@@ -16,6 +16,8 @@ release process.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-06 (alpha)
+
 ### Security
 
 - **Admin MCP API-key audit no longer records the key hash.** The
