@@ -29,6 +29,16 @@ release process.
   (e.g. Zod). `AgentCapabilityBinding` gains a matching `customConfig` field.
   Inert for existing capabilities (they may adopt it to drop their own lookup);
   no behaviour change.
+- **Consumer chat request accepts an opaque `scope` map** (#415).
+  `consumerChatRequestSchema` (`POST /api/v1/chat/stream`) now takes an optional
+  `scope: Record<string, string>`, threaded verbatim into every capability
+  dispatch for the turn as `CapabilityContext.scope` — the same carrier the
+  internal chat handler already threads. Inert in vanilla Sunrise (no built-in
+  reads it); a fork can surface-scope a consumer conversation without shadowing
+  the route. Because it arrives on an untrusted end-user request it is bounded
+  (≤ 32 entries, keys ≤ 100 chars, values ≤ 500 chars), and a fork reading it
+  for access decisions must re-validate against the user's entitlements — a
+  consumer-supplied scope is a hint, not an authorization grant.
 
 ### Changed
 

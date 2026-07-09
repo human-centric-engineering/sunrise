@@ -59,6 +59,7 @@ import {
   executeWorkflowBodySchema,
   approveExecutionBodySchema,
   chatStreamRequestSchema,
+  consumerChatRequestSchema,
   listConversationsQuerySchema,
   clearConversationsBodySchema,
   listDocumentsQuerySchema,
@@ -1808,6 +1809,61 @@ describe('chatStreamRequestSchema', () => {
       agentSlug: 'test-agent',
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('consumerChatRequestSchema — scope carrier (#415)', () => {
+  const base = { message: 'hi', agentSlug: 'helper-bot' };
+
+  it('accepts a minimal body with no scope', () => {
+    const result = consumerChatRequestSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.scope).toBeUndefined();
+  });
+
+  it('accepts a valid string→string scope map', () => {
+    const result = consumerChatRequestSchema.safeParse({
+      ...base,
+      scope: { module: 'billing', role: 'facilitator' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success)
+      expect(result.data.scope).toEqual({ module: 'billing', role: 'facilitator' });
+  });
+
+  it('rejects a non-string scope value', () => {
+    const result = consumerChatRequestSchema.safeParse({ ...base, scope: { module: 42 } });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a scope value longer than 500 chars', () => {
+    const result = consumerChatRequestSchema.safeParse({
+      ...base,
+      scope: { module: 'x'.repeat(501) },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a scope key longer than 100 chars', () => {
+    const result = consumerChatRequestSchema.safeParse({
+      ...base,
+      scope: { ['k'.repeat(101)]: 'v' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a scope map with more than 32 entries', () => {
+    const scope: Record<string, string> = {};
+    for (let i = 0; i < 33; i++) scope[`key${i}`] = 'v';
+    const result = consumerChatRequestSchema.safeParse({ ...base, scope });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a scope map at the 32-entry boundary', () => {
+    const scope: Record<string, string> = {};
+    for (let i = 0; i < 32; i++) scope[`key${i}`] = 'v';
+    const result = consumerChatRequestSchema.safeParse({ ...base, scope });
+    expect(result.success).toBe(true);
   });
 });
 

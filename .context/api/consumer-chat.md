@@ -39,8 +39,11 @@ Start or continue a streaming chat conversation with a public agent.
   "conversationId": "string (optional — CUID of existing conversation to continue)",
   "inviteToken": "string (optional — required for invite_only agents)",
   "attachments": "[{ name, mediaType, data }] (optional — max 10 per turn; ~5MB per item; ~25MB combined; base64-encoded)",
+  "scope": "{ [key: string]: string } (optional — opaque scope carrier; bounded: ≤32 entries, keys ≤100 chars, values ≤500 chars)",
 }
 ```
+
+**`scope` carrier.** An optional opaque `Record<string, string>` threaded verbatim into every capability dispatch this turn as [`CapabilityContext.scope`](../orchestration/capabilities.md#dispatch-scope-carrier-capabilitycontextscope). Core names no keys and no built-in reads it — **inert in vanilla Sunrise**. A fork uses it to surface-scope a conversation (e.g. `{ module, role }`) without shadowing this route. Because the value arrives on an untrusted end-user request it is bounded here (unlike the admin/persisted carrier). **Security:** a fork that reads `scope` to make an _access_ decision must re-validate it against the user's real entitlements server-side — a consumer-supplied scope is a routing/context hint, never proof of authorization.
 
 **Response:** `text/event-stream` (SSE). Events follow the same shape as the admin chat stream:
 

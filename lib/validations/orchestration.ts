@@ -3963,6 +3963,21 @@ export type UpdateOrchestrationSettingsInput = z.infer<typeof updateOrchestratio
 // ---------------------------------------------------------------------------
 
 /**
+ * Bounded variant of the shared `scope` carrier (`capabilityScopeSchema`) for
+ * the PUBLIC consumer chat route. Same runtime shape — `Record<string, string>`
+ * threaded verbatim into `CapabilityContext.scope` — but this value arrives on
+ * an untrusted end-user request, so unlike the admin/persisted carrier it is
+ * bounded: at most 32 entries, keys ≤ 100 chars, values ≤ 500 chars. Keeps an
+ * unbounded map out of a public body while accepting any realistic scope
+ * (a handful of dimensions such as `{ module, role }`).
+ */
+const consumerScopeSchema = z
+  .record(z.string().max(100), z.string().max(500))
+  .refine((map) => Object.keys(map).length <= 32, {
+    message: 'scope may contain at most 32 entries',
+  });
+
+/**
  * Consumer chat request schema (POST /api/v1/chat/stream).
  * Simpler than admin — no contextType/contextId/entityContext.
  */
@@ -3982,6 +3997,20 @@ export const consumerChatRequestSchema = z.object({
 
   /** File attachments (images, documents) — max 10 per message, ~25 MB combined. */
   attachments: chatAttachmentsArraySchema.optional(),
+
+  /**
+   * Optional opaque scope carrier (see `CapabilityContext.scope`), threaded
+   * verbatim into every capability dispatch for this turn. Core names no keys
+   * and no built-in reads it, so it is inert in vanilla Sunrise; a fork uses it
+   * to surface-scope a conversation (e.g. `{ module, role }`) without having to
+   * shadow this route.
+   *
+   * SECURITY: this arrives from an untrusted end-user request. A fork that
+   * reads `scope` to make an ACCESS decision MUST re-validate it against the
+   * user's real entitlements server-side — a consumer-supplied scope is a
+   * routing/context hint, never proof of authorization.
+   */
+  scope: consumerScopeSchema.optional(),
 });
 
 /** Consumer conversations list query (GET /api/v1/chat/conversations). */

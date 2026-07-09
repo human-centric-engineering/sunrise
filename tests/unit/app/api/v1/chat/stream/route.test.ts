@@ -286,6 +286,44 @@ describe('POST /api/v1/chat/stream', () => {
       const call = vi.mocked(streamChat).mock.calls[0][0] as unknown as Record<string, unknown>;
       expect(call.includeTrace).toBeUndefined();
     });
+
+    it('forwards a valid scope map to streamChat when provided (#415)', async () => {
+      const request = createMockRequest({
+        ...validPayload,
+        scope: { module: 'billing', role: 'facilitator' },
+      });
+
+      await POST(request);
+
+      expect(streamChat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: { module: 'billing', role: 'facilitator' },
+        })
+      );
+    });
+
+    it('leaves scope undefined on the streamChat call when the client omits it (#415)', async () => {
+      const request = createMockRequest(validPayload);
+
+      await POST(request);
+
+      const call = vi.mocked(streamChat).mock.calls[0][0] as unknown as Record<string, unknown>;
+      expect(call.scope).toBeUndefined();
+    });
+
+    it('rejects a request whose scope value is not a string (#415)', async () => {
+      // Bounded, string→string only — a non-string value fails validation
+      // before streamChat is reached.
+      const request = createMockRequest({
+        ...validPayload,
+        scope: { module: 42 },
+      });
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(400);
+      expect(streamChat).not.toHaveBeenCalled();
+    });
   });
 
   // ---------------------------------------------------------------------------
