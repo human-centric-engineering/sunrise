@@ -169,7 +169,7 @@ is expected). `groundedness` and `relevance` must be numbers in `[0, 1]`.
 
 Malformed responses retry once with a stricter prompt at temperature 0.
 Both attempts going through `runStructuredCompletion`
-(`lib/orchestration/evaluations/parse-structured.ts`) — the same
+(`lib/orchestration/llm/structured-completion.ts`) — the same
 machinery the summary call uses. The retry never includes the
 malformed prior response in the prompt.
 
@@ -261,16 +261,17 @@ abuse.
 
 ## Critical files
 
-| Concern                                     | Path                                                                                                                                       |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Judge scorer                                | `lib/orchestration/evaluations/score-response.ts`                                                                                          |
-| Shared structured-completion + parse helper | `lib/orchestration/evaluations/parse-structured.ts`                                                                                        |
-| Completion + rescore handlers               | `lib/orchestration/evaluations/complete-session.ts`                                                                                        |
-| Eval log mirroring (citations snapshot)     | `lib/orchestration/chat/streaming-handler.ts` (`writeEvaluationLog`)                                                                       |
-| Schema migration                            | `prisma/migrations/00000000000000_baseline/migration.sql` (originally 2026-05-03 `evaluation_metrics`, absorbed by the 2026-05-29 squash)  |
-| Type contracts                              | `lib/orchestration/evaluations/types.ts`                                                                                                   |
-| API routes                                  | `app/api/v1/admin/orchestration/evaluations/[id]/rescore/route.ts`, `app/api/v1/admin/orchestration/agents/[id]/evaluation-trend/route.ts` |
-| UI chips                                    | `components/admin/orchestration/evaluation-metric-chips.tsx`                                                                               |
-| UI trend chart                              | `components/admin/orchestration/evaluation-trend-chart.tsx`                                                                                |
-| Runner integration                          | `components/admin/orchestration/evaluation-runner.tsx`                                                                                     |
-| List-page Quality column                    | `components/admin/orchestration/evaluations-table.tsx`                                                                                     |
+| Concern                                 | Path                                                                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Judge scorer                            | `lib/orchestration/evaluations/score-response.ts`                                                                                          |
+| Structured-completion runner            | `lib/orchestration/llm/structured-completion.ts`                                                                                           |
+| LLM-as-judge JSON parse helper          | `lib/orchestration/evaluations/parse-structured.ts`                                                                                        |
+| Completion + rescore handlers           | `lib/orchestration/evaluations/complete-session.ts`                                                                                        |
+| Eval log mirroring (citations snapshot) | `lib/orchestration/chat/streaming-handler.ts` (`writeEvaluationLog`)                                                                       |
+| Schema migration                        | `prisma/migrations/00000000000000_baseline/migration.sql` (originally 2026-05-03 `evaluation_metrics`, absorbed by the 2026-05-29 squash)  |
+| Type contracts                          | `lib/orchestration/evaluations/types.ts`                                                                                                   |
+| API routes                              | `app/api/v1/admin/orchestration/evaluations/[id]/rescore/route.ts`, `app/api/v1/admin/orchestration/agents/[id]/evaluation-trend/route.ts` |
+| UI chips                                | `components/admin/orchestration/evaluation-metric-chips.tsx`                                                                               |
+| UI trend chart                          | `components/admin/orchestration/evaluation-trend-chart.tsx`                                                                                |
+| Runner integration                      | `components/admin/orchestration/evaluation-runner.tsx`                                                                                     |
+| List-page Quality column                | `components/admin/orchestration/evaluations-table.tsx`                                                                                     |

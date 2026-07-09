@@ -43,10 +43,8 @@ import type {
   RescoreEvaluationParams,
   RescoreEvaluationResult,
 } from '@/lib/orchestration/evaluations/types';
-import {
-  runStructuredCompletion,
-  tryParseJson,
-} from '@/lib/orchestration/evaluations/parse-structured';
+import { runStructuredCompletion } from '@/lib/orchestration/llm/structured-completion';
+import { tryParseJson } from '@/lib/orchestration/evaluations/parse-structured';
 import { scoreResponse } from '@/lib/orchestration/evaluations/score-response';
 import {
   type Annotation,

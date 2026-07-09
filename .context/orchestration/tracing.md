@@ -71,7 +71,7 @@ The full tree above is what every OTLP backend (Honeycomb, Datadog, Tempo, Langf
 | -------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `SPAN_WORKFLOW_EXECUTE`    | `workflow.execute`         | `orchestration-engine.ts` — top-level workflow run                                                                        |
 | `SPAN_WORKFLOW_STEP`       | `workflow.step`            | `orchestration-engine.ts` — per step (sequential + parallel)                                                              |
-| `SPAN_LLM_CALL`            | `llm.call`                 | `llm-runner.ts`, `streaming-handler.ts`, `summarizer.ts`, `evaluations/parse-structured.ts`                               |
+| `SPAN_LLM_CALL`            | `llm.call`                 | `llm-runner.ts`, `streaming-handler.ts`, `summarizer.ts`, `llm/structured-completion.ts`                                  |
 | `SPAN_AGENT_CALL_TURN`     | `agent_call.turn`          | `executors/agent-call.ts` — per turn                                                                                      |
 | `SPAN_CAPABILITY_DISPATCH` | `capability.dispatch`      | `capabilities/dispatcher.ts` — single internal wrap                                                                       |
 | `SPAN_CHAT_TURN`           | `chat.turn`                | `streaming-handler.ts` — top-level chat run                                                                               |
@@ -100,23 +100,23 @@ These align with [OpenTelemetry's GenAI semantic conventions](https://openteleme
 
 ### Sunrise extensions
 
-| Constant                         | Key                              | Type    | Where set                                                         |
-| -------------------------------- | -------------------------------- | ------- | ----------------------------------------------------------------- |
-| `SUNRISE_EXECUTION_ID`           | `sunrise.execution_id`           | string  | `workflow.execute` + every `workflow.step` + nested LLM spans     |
-| `SUNRISE_WORKFLOW_ID`            | `sunrise.workflow_id`            | string  | `workflow.execute`                                                |
-| `SUNRISE_STEP_ID`                | `sunrise.step_id`                | string  | `workflow.step`, `llm.call` (via `runLlmCall`), `agent_call.turn` |
-| `SUNRISE_STEP_TYPE`              | `sunrise.step_type`              | string  | `workflow.step` — values match `WorkflowStep.type`                |
-| `SUNRISE_AGENT_ID`               | `sunrise.agent_id`               | string  | `chat.turn`, `llm.call`, `capability.dispatch`, `agent_call.turn` |
-| `SUNRISE_AGENT_SLUG`             | `sunrise.agent_slug`             | string  | `chat.turn`, `llm.call`, `agent_call.turn`                        |
-| `SUNRISE_CONVERSATION_ID`        | `sunrise.conversation_id`        | string  | `chat.turn`, `llm.call`, `capability.dispatch` (when set)         |
-| `SUNRISE_CAPABILITY_SLUG`        | `sunrise.capability`             | string  | `capability.dispatch`                                             |
-| `SUNRISE_CAPABILITY_SUCCESS`     | `sunrise.capability.success`     | boolean | `capability.dispatch` — application-level outcome flag            |
-| `SUNRISE_USER_ID`                | `sunrise.user_id`                | string  | `workflow.execute`, `chat.turn`, `capability.dispatch`            |
-| `SUNRISE_COST_USD`               | `sunrise.cost_usd`               | number  | `llm.call`, `agent_call.turn`                                     |
-| `SUNRISE_TOOL_ITERATION`         | `sunrise.tool_iteration`         | number  | `llm.call` (chat handler), `agent_call.turn`                      |
-| `SUNRISE_PROVIDER_FAILOVER_FROM` | `sunrise.provider.failover_from` | string  | failed `llm.call` in the chat handler when retry triggers         |
-| `SUNRISE_PROVIDER_FAILOVER_TO`   | `sunrise.provider.failover_to`   | string  | same span as `from`                                               |
-| `SUNRISE_EVALUATION_PHASE`       | `sunrise.evaluation.phase`       | string  | `llm.call` from `parse-structured.ts` — `summary` or `scoring`    |
+| Constant                         | Key                              | Type    | Where set                                                                                                   |
+| -------------------------------- | -------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| `SUNRISE_EXECUTION_ID`           | `sunrise.execution_id`           | string  | `workflow.execute` + every `workflow.step` + nested LLM spans                                               |
+| `SUNRISE_WORKFLOW_ID`            | `sunrise.workflow_id`            | string  | `workflow.execute`                                                                                          |
+| `SUNRISE_STEP_ID`                | `sunrise.step_id`                | string  | `workflow.step`, `llm.call` (via `runLlmCall`), `agent_call.turn`                                           |
+| `SUNRISE_STEP_TYPE`              | `sunrise.step_type`              | string  | `workflow.step` — values match `WorkflowStep.type`                                                          |
+| `SUNRISE_AGENT_ID`               | `sunrise.agent_id`               | string  | `chat.turn`, `llm.call`, `capability.dispatch`, `agent_call.turn`                                           |
+| `SUNRISE_AGENT_SLUG`             | `sunrise.agent_slug`             | string  | `chat.turn`, `llm.call`, `agent_call.turn`                                                                  |
+| `SUNRISE_CONVERSATION_ID`        | `sunrise.conversation_id`        | string  | `chat.turn`, `llm.call`, `capability.dispatch` (when set)                                                   |
+| `SUNRISE_CAPABILITY_SLUG`        | `sunrise.capability`             | string  | `capability.dispatch`                                                                                       |
+| `SUNRISE_CAPABILITY_SUCCESS`     | `sunrise.capability.success`     | boolean | `capability.dispatch` — application-level outcome flag                                                      |
+| `SUNRISE_USER_ID`                | `sunrise.user_id`                | string  | `workflow.execute`, `chat.turn`, `capability.dispatch`                                                      |
+| `SUNRISE_COST_USD`               | `sunrise.cost_usd`               | number  | `llm.call`, `agent_call.turn`                                                                               |
+| `SUNRISE_TOOL_ITERATION`         | `sunrise.tool_iteration`         | number  | `llm.call` (chat handler), `agent_call.turn`                                                                |
+| `SUNRISE_PROVIDER_FAILOVER_FROM` | `sunrise.provider.failover_from` | string  | failed `llm.call` in the chat handler when retry triggers                                                   |
+| `SUNRISE_PROVIDER_FAILOVER_TO`   | `sunrise.provider.failover_to`   | string  | same span as `from`                                                                                         |
+| `SUNRISE_EVALUATION_PHASE`       | `sunrise.evaluation.phase`       | string  | `llm.call` from `structured-completion.ts` — caller-set phase (`summary` / `scoring` for evals; any string) |
 
 ### Attribute size cap
 
@@ -144,7 +144,7 @@ WHERE cost.createdAt > now() - interval '1 hour';
 
 The columns are populated automatically by `runLlmCall`, the chat handler's terminal + tool-call paths, the dispatcher, the summarizer, and the agent-call multi-turn executor. Empty-string IDs (returned by the no-op tracer) are normalised to `NULL` at the cost-tracker boundary — historical rows naturally have `NULL` for both columns.
 
-The two evaluation `logCost` sites in `complete-session.ts` are intentionally not yet correlated (the spans live inside `parse-structured.ts` and would need to thread IDs back through `runStructuredCompletion`'s return type). Additive future change.
+The two evaluation `logCost` sites in `complete-session.ts` are intentionally not yet correlated (the spans live inside `structured-completion.ts` and would need to thread IDs back through `runStructuredCompletion`'s return type). Additive future change.
 
 ## Sampling
 

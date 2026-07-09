@@ -16,6 +16,22 @@ release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **LLM structured-completion runner relocated to a neutral home** (#410). Moved
+  `runStructuredCompletion` (with `StructuredCompletionOptions` /
+  `StructuredCompletionResult`) out of
+  `lib/orchestration/evaluations/parse-structured.ts` into
+  `lib/orchestration/llm/structured-completion.ts` — it is a general LLM utility
+  with no evaluation coupling, so a non-evaluation caller no longer imports
+  through an eval-shaped path. The `phase` option widens from the closed
+  `'summary' | 'scoring'` union to an open `string`, letting a caller tag its own
+  span/cost phase (e.g. `'slot-extraction'`). No behaviour change: the OTEL
+  attributes (`gen_ai.operation.name`, `sunrise.evaluation.phase`) and the
+  omitted-`phase` default (`'evaluation'`) are unchanged. The `tryParseJson` /
+  `stripCodeFence` JSON parse helpers remain in `parse-structured.ts` (every
+  caller is an evaluation grader).
+
 ## [0.6.0] — 2026-07-06
 
 > **Alpha release.** Eighth tagged Sunrise release. **MINOR bump** — adds new
