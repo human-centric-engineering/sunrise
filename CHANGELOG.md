@@ -16,6 +16,23 @@ release process.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-09
+
+> **Alpha release.** Ninth tagged Sunrise release. **MINOR bump** — adds new
+> public surface: seven fork-facing seams and primitives requested by Daybreak
+> under the fork-first pattern, all additive and inert in vanilla Sunrise until
+> a fork opts in. Two chat guard seams — **`registerGuardFloorContributor`**
+> (raise an inline input/output/citation guard to a per-turn minimum; raise-only)
+> and its post-detection sibling **`registerGuardEventContributor`**
+> (fire-and-forget observation of a guard firing). Context + conversation —
+> **per-user `buildContext`** (`ContextRequest { userId? }` threaded to
+> contributors + a user-partitioned cache) and **`findResumableConversation`**
+> (resume a surface's conversation by its `(contextType, contextId)` tuple).
+> Capability + chat carriers — **`CapabilityContext.customConfig` + `isEnabled`**
+> surfaced from the resolved binding, and a bounded **consumer chat `scope` map**
+> on the public route. Plus **`runStructuredCompletion` relocated** to a neutral
+> `lib/orchestration/llm/` home with an open `phase` tag. No breaking changes.
+
 ### Added
 
 - **Chat guard-event seam — a fork can OBSERVE an inline guard firing
