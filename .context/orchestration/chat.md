@@ -45,20 +45,22 @@ for await (const event of streamChat({
 
 Everything is exported from `@/lib/orchestration/chat`:
 
-| Export                       | Kind     | Purpose                                                                                                                                                                   |
-| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `streamChat`                 | function | Convenience wrapper around `StreamingChatHandler.run`                                                                                                                     |
-| `StreamingChatHandler`       | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations                                                                                               |
-| `ChatError`                  | class    | Narrow error type with `code` + `message`, caught by the outer try                                                                                                        |
-| `ChatRequest`                | type     | Input shape (see below)                                                                                                                                                   |
-| `ChatStream`                 | type     | Alias for `AsyncIterable<ChatEvent>`                                                                                                                                      |
-| `MAX_TOOL_ITERATIONS`        | const    | Tool loop cap (currently `5`)                                                                                                                                             |
-| `MAX_HISTORY_MESSAGES`       | const    | Platform default for the message-count history cap (currently `50`). Per-agent overridable via `AiAgent.maxHistoryMessages` — `null` ⇒ use this default, `0` ⇒ stateless. |
-| `buildContext`               | function | Loads and frames entity context with a 60 s TTL cache                                                                                                                     |
-| `invalidateContext`          | function | Drop a single cache entry after a mutating capability                                                                                                                     |
-| `clearContextCache`          | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
-| `registerContextContributor` | function | Register a fork-owned prompt-context loader for a new `contextType` (see Context Builder)                                                                                 |
-| `ContextRequest`             | type     | Per-request inputs threaded into `buildContext`/contributors: `{ userId? }` (per-user context + cache partition)                                                          |
+| Export                                                                                    | Kind     | Purpose                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `streamChat`                                                                              | function | Convenience wrapper around `StreamingChatHandler.run`                                                                                                                     |
+| `StreamingChatHandler`                                                                    | class    | Main handler. Instantiate and call `.run(request)` for multiple invocations                                                                                               |
+| `ChatError`                                                                               | class    | Narrow error type with `code` + `message`, caught by the outer try                                                                                                        |
+| `ChatRequest`                                                                             | type     | Input shape (see below)                                                                                                                                                   |
+| `ChatStream`                                                                              | type     | Alias for `AsyncIterable<ChatEvent>`                                                                                                                                      |
+| `MAX_TOOL_ITERATIONS`                                                                     | const    | Tool loop cap (currently `5`)                                                                                                                                             |
+| `MAX_HISTORY_MESSAGES`                                                                    | const    | Platform default for the message-count history cap (currently `50`). Per-agent overridable via `AiAgent.maxHistoryMessages` — `null` ⇒ use this default, `0` ⇒ stateless. |
+| `buildContext`                                                                            | function | Loads and frames entity context with a 60 s TTL cache                                                                                                                     |
+| `invalidateContext`                                                                       | function | Drop a single cache entry after a mutating capability                                                                                                                     |
+| `clearContextCache`                                                                       | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
+| `registerContextContributor`                                                              | function | Register a fork-owned prompt-context loader for a new `contextType` (see Context Builder)                                                                                 |
+| `ContextRequest`                                                                          | type     | Per-request inputs threaded into `buildContext`/contributors: `{ userId? }` (per-user context + cache partition)                                                          |
+| `registerGuardFloorContributor`                                                           | function | Register a fork-owned per-turn **minimum** mode for the inline input/output/citation guards (see Guard-floor seam)                                                        |
+| `GuardKind` / `GuardMode` / `GuardFloors` / `GuardFloorRequest` / `GuardFloorContributor` | types    | Guard-floor seam types                                                                                                                                                    |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -438,6 +440,27 @@ Registration is idempotent by type: re-registering a type replaces its loader. T
 **Cache:** plain `Map<string, { value, expiresAt }>` with a 60 s TTL per `(type, id, userId)`. An empty `userId` collapses to a single shared partition (byte-for-byte the pre-widening `(type, id)` key space), so one user's per-user context never leaks to another. Matches the dispatcher's pattern — no shared TTL utility is introduced.
 
 **Invalidation:** `invalidateContext(type, id, request?)` drops a single entry — pass the same `request` (i.e. `userId`) given to `buildContext` so the matching per-user partition is cleared. The streaming handler calls this after every tool dispatch when a context is bound, so a future mutating capability (e.g. `update_pattern`) triggers a re-fetch on the next turn. Phase 2c ships no mutating capabilities, but the hook is wired so later slices don't need to retrofit.
+
+## Guard-floor seam
+
+The three inline guards — input (prompt-injection scan), [output](./output-guard.md) (topic/brand), [citation](./output-guard.md#citation-guard) — resolve their mode from the agent config (falling back to the global setting). `registerGuardFloorContributor(key, contributor)` lets a fork enforce a per-turn **minimum** mode for any of them without editing the guard sites — e.g. a governance policy that says "this surface must at least warn on output".
+
+**A floor only ever RAISES a guard, never lowers it.** Strictness is ordered `none` < `log_only` < `warn_and_continue` < `block`, and the effective mode is `max(resolved agent/global mode, strictest registered floor)`. An empty registry leaves guard-mode resolution byte-for-byte unchanged (inert in vanilla Sunrise).
+
+A contributor is keyed on the turn's `(contextType, contextId, agentId)` and returns a `GuardFloors` = `Partial<Record<'input'|'output'|'citation', GuardMode>>` (it may be async). The handler collects floors **once** per turn (`collectGuardFloors`) and applies each via `applyGuardFloor(guard, resolvedMode, floors)` at the three guard sites. Multiple contributors merge to the strictest per guard; a contributor that throws is logged and ignored (never fails the turn); a returned value that isn't a known `GuardMode` is dropped.
+
+```typescript
+// lib/app/guard-floor-contributors.ts — called once by the chat handler
+import { registerGuardFloorContributor } from '@/lib/orchestration/chat';
+
+export function initAppGuardFloorContributors(): void {
+  registerGuardFloorContributor('facilitation-policy', async ({ contextType, agentId }) =>
+    contextType === 'facilitation' ? { output: 'warn_and_continue' } : {}
+  );
+}
+```
+
+Pairs with a sibling post-detection observation seam (filed separately as #414): a floor is a **pre-detection** input to how strictly a guard acts; an event is a **post-detection** observation that a guard fired.
 
 ## Rolling Conversation Summary
 

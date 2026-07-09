@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **Chat guard-floor seam — a fork can RAISE an inline guard to a minimum for a
+  turn** (#413). New `registerGuardFloorContributor(key, contributor)` (exported
+  from `@/lib/orchestration/chat`, with types `GuardKind` / `GuardMode` /
+  `GuardFloors` / `GuardFloorRequest` / `GuardFloorContributor`). A contributor
+  keyed on the turn's `(contextType, contextId, agentId)` returns a per-guard
+  **minimum** mode for the three inline guards (input / output / citation), and
+  the handler raises each guard to the strictest registered floor. **A floor
+  only ever RAISES a guard, never lowers it** (`none` < `log_only` <
+  `warn_and_continue` < `block`); an empty registry leaves guard-mode resolution
+  byte-for-byte unchanged, and a throwing contributor is skipped. Fork-owned
+  scaffold `lib/app/guard-floor-contributors.ts` (`initAppGuardFloorContributors()`).
 - **`CapabilityContext` now carries the resolved binding's `customConfig` +
   `isEnabled`** (#411). The dispatcher populates `context.customConfig`
   (`AiAgentCapability.customConfig`, normalised to an object or `null`) and

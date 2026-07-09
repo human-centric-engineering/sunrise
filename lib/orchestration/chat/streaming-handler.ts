@@ -71,6 +71,11 @@ import {
   registerBuiltInCapabilities,
 } from '@/lib/orchestration/capabilities/registry';
 import { buildContext, invalidateContext } from '@/lib/orchestration/chat/context-builder';
+import {
+  collectGuardFloors,
+  applyGuardFloor,
+  type GuardFloors,
+} from '@/lib/orchestration/chat/guard-floor';
 import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
@@ -669,6 +674,17 @@ export class StreamingChatHandler {
         role: 'user',
       });
 
+      // Guard-floor seam: a fork can RAISE any of the three inline guards
+      // (input / output / citation) to a minimum mode for this turn, keyed on
+      // the turn's (contextType, contextId, agentId). Collected once here and
+      // applied at each guard below. Empty registry → `{}` → guard modes
+      // resolve exactly as before (inert in vanilla Sunrise).
+      const guardFloors: GuardFloors = await collectGuardFloors({
+        contextType: request.contextType,
+        contextId: request.contextId,
+        agentId: agent.id,
+      });
+
       // Input guard — mode-dependent behaviour
       const scanResult = scanForInjection(request.message);
       if (scanResult.flagged) {
@@ -691,6 +707,9 @@ export class StreamingChatHandler {
             );
           }
         }
+
+        // Raise to the strictest registered floor for this turn (no-op when none).
+        guardMode = applyGuardFloor('input', guardMode, guardFloors);
 
         if (guardMode === 'block') {
           yield errorEvent('input_blocked', 'Message blocked by security policy.');
@@ -1189,6 +1208,9 @@ export class StreamingChatHandler {
                 }
               }
 
+              // Raise to the strictest registered floor for this turn (no-op when none).
+              outputMode = applyGuardFloor('output', outputMode, guardFloors);
+
               if (outputMode === 'block') {
                 yield errorEvent(
                   'output_blocked',
@@ -1231,6 +1253,9 @@ export class StreamingChatHandler {
                   );
                 }
               }
+
+              // Raise to the strictest registered floor for this turn (no-op when none).
+              citationMode = applyGuardFloor('citation', citationMode, guardFloors);
 
               if (citationMode === 'block') {
                 yield errorEvent(

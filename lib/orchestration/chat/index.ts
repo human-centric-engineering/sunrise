@@ -20,3 +20,11 @@ export {
   registerContextContributor,
 } from '@/lib/orchestration/chat/context-builder';
 export type { ContextRequest } from '@/lib/orchestration/chat/context-builder';
+export { registerGuardFloorContributor } from '@/lib/orchestration/chat/guard-floor';
+export type {
+  GuardKind,
+  GuardMode,
+  GuardFloors,
+  GuardFloorRequest,
+  GuardFloorContributor,
+} from '@/lib/orchestration/chat/guard-floor';

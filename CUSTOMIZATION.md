@@ -247,20 +247,21 @@ the body, which is yours. Keep the export name and signature;
 everything inside is free to change. (Detailed examples live here in this guide,
 not in the files, precisely so the files stay small and conflict-free.)
 
-| Edit this file                             | To register                                   | Auto-wired by (runtime)                               |
-| ------------------------------------------ | --------------------------------------------- | ----------------------------------------------------- |
-| `lib/app/env.ts`                           | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)                   |
-| `lib/app/rate-limit.ts`                    | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)            |
-| `lib/app/protected-routes.ts`              | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime)     |
-| `lib/app/capabilities.ts`                  | agent capabilities (tools)                    | the capability registry (server route-handler)        |
-| `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)       |
-| `lib/app/admin-nav.ts`                     | admin sidebar sections                        | `admin-sidebar.tsx` (client)                          |
-| `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)          |
-| `lib/app/public-nav.ts`                    | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)        |
-| `lib/app/emails.ts`                        | auth email template overrides                 | `lib/email/registry.ts` (server)                      |
-| `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)         | `instrumentation.ts` `register()` (server, all envs)  |
-| `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)    | root `eslint.config.mjs` spread (lint)                |
-| `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent             | `resolveAgentDocumentAccess()` (server route-handler) |
+| Edit this file                             | To register                                   | Auto-wired by (runtime)                                          |
+| ------------------------------------------ | --------------------------------------------- | ---------------------------------------------------------------- |
+| `lib/app/env.ts`                           | server env vars (`appEnvSchema`)              | `lib/env.ts` startup parse (server)                              |
+| `lib/app/rate-limit.ts`                    | rate-limit tiers / rules                      | rate-limit middleware (middleware runtime)                       |
+| `lib/app/protected-routes.ts`              | extra authed route prefixes (append)          | `proxy.ts` edge redirect-to-login (proxy runtime)                |
+| `lib/app/capabilities.ts`                  | agent capabilities (tools)                    | the capability registry (server route-handler)                   |
+| `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types) | the chat context builder (server route-handler)                  |
+| `lib/app/admin-nav.ts`                     | admin sidebar sections                        | `admin-sidebar.tsx` (client)                                     |
+| `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                  | `scripts/db/check-drift.ts` (CI / `/pre-pr`)                     |
+| `lib/app/public-nav.ts`                    | public nav / footer link lists                | `public-nav.tsx`, `public-footer.tsx` (client)                   |
+| `lib/app/emails.ts`                        | auth email template overrides                 | `lib/email/registry.ts` (server)                                 |
+| `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)         | `instrumentation.ts` `register()` (server, all envs)             |
+| `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)    | root `eslint.config.mjs` spread (lint)                           |
+| `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent             | `resolveAgentDocumentAccess()` (server route-handler)            |
+| `lib/app/guard-floor-contributors.ts`      | per-turn minimum for inline chat guards       | the chat handler's `collectGuardFloors()` (server route-handler) |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a

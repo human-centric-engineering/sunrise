@@ -7,7 +7,7 @@
  * cost logging, and message persistence.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Module mocks — hoisted before dynamic imports
@@ -163,6 +163,8 @@ const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler'
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
+const { registerGuardFloorContributor, __resetGuardFloorContributorsForTests } =
+  await import('@/lib/orchestration/chat/guard-floor');
 const { scanOutput, scanCitations } = await import('@/lib/orchestration/chat/output-guard');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
@@ -2820,6 +2822,79 @@ describe('input guard mode dispatch', () => {
     expect(events[events.length - 1]).toMatchObject({ type: 'done' });
 
     // Assert: provider WAS invoked exactly once — message was not blocked
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard-floor seam (#413) — a registered floor RAISES an inline guard for a turn
+// ---------------------------------------------------------------------------
+
+describe('guard-floor seam (#413)', () => {
+  afterEach(() => {
+    __resetGuardFloorContributorsForTests();
+  });
+
+  it('raises the input guard to block for the turn even though the agent mode is log_only', async () => {
+    // Agent + settings both resolve the input guard to log_only (would only log).
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'log_only' })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // A fork policy floors the input guard to block for this surface.
+    registerGuardFloorContributor('policy', () => ({ input: 'block' }));
+
+    const events = await collect(streamChat(baseRequest));
+
+    const errorEvt = events.find(
+      (e: unknown) => (e as Record<string, unknown>).type === 'error'
+    ) as Record<string, unknown> | undefined;
+    expect(errorEvt).toMatchObject({ type: 'error', code: 'input_blocked' });
+    // Floor raised log_only → block, so the turn short-circuits before the LLM.
+    expect(provider.chatStream).not.toHaveBeenCalled();
+  });
+
+  it('leaves the input guard at log_only when no floor is registered (inert)', async () => {
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'log_only' })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    // No floor → log_only stays log_only → not blocked, no warning, LLM runs.
+    expect(
+      events.find((e: unknown) => (e as Record<string, unknown>).type === 'error')
+    ).toBeUndefined();
     expect(provider.chatStream).toHaveBeenCalledTimes(1);
   });
 });
