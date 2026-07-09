@@ -65,6 +65,19 @@ release process.
   (≤ 32 entries, keys ≤ 100 chars, values ≤ 500 chars), and a fork reading it
   for access decisions must re-validate against the user's entitlements — a
   consumer-supplied scope is a hint, not an authorization grant.
+- **`findResumableConversation` — resume a surface's conversation by its context
+  tuple** (#416). New helper (exported from `@/lib/orchestration/chat`, with type
+  `ResumableConversationQuery`) that resolves a user's most-recent-active
+  conversation for a `(userId, agentId, contextType, contextId)` surface, ordered
+  by `updatedAt` desc, or `null` if none. Core already **binds** that tuple onto a
+  conversation at creation and **injects** entity context for it (`buildContext`)
+  but had no resume-by-tuple path — a "surface" (a stable place a user returns to)
+  had to re-derive the query. The lookup is always scoped to `userId` + `agentId`
+  + `isActive`, so centralising it also removes the risk a hand-rolled copy omits
+  `userId` (a cross-user leak). Deciding *when* to resume stays the caller's job
+  (the handler never resumes by tuple on its own); the existing
+  `@@index([contextType, contextId])` supports it — no migration. Inert in vanilla
+  Sunrise (no core surface calls it).
 
 ### Changed
 

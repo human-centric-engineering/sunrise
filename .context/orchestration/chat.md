@@ -63,6 +63,8 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `GuardKind` / `GuardMode` / `GuardFloors` / `GuardFloorRequest` / `GuardFloorContributor` | types    | Guard-floor seam types                                                                                                                                                    |
 | `registerGuardEventContributor`                                                           | function | Register a fork-owned fire-and-forget observer for an inline guard firing (see Guard-events seam)                                                                         |
 | `GuardEventContext` / `GuardEvent` / `GuardEventContributor`                              | types    | Guard-events seam types                                                                                                                                                   |
+| `findResumableConversation`                                                               | function | Resolve a surface's most-recent-active conversation by `(userId, agentId, contextType, contextId)` (see Resuming a surface conversation)                                  |
+| `ResumableConversationQuery`                                                              | type     | Input to `findResumableConversation`                                                                                                                                      |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -442,6 +444,22 @@ Registration is idempotent by type: re-registering a type replaces its loader. T
 **Cache:** plain `Map<string, { value, expiresAt }>` with a 60 s TTL per `(type, id, userId)`. An empty `userId` collapses to a single shared partition (byte-for-byte the pre-widening `(type, id)` key space), so one user's per-user context never leaks to another. Matches the dispatcher's pattern — no shared TTL utility is introduced.
 
 **Invalidation:** `invalidateContext(type, id, request?)` drops a single entry — pass the same `request` (i.e. `userId`) given to `buildContext` so the matching per-user partition is cleared. The streaming handler calls this after every tool dispatch when a context is bound, so a future mutating capability (e.g. `update_pattern`) triggers a re-fetch on the next turn. Phase 2c ships no mutating capabilities, but the hook is wired so later slices don't need to retrofit.
+
+## Resuming a surface conversation
+
+A **surface** is a stable place a user returns to that is bound to an entity tuple — `AiConversation.(contextType, contextId)` (a pattern, a document, a fork's "module" or "role"). The chat handler already does two of the three things you'd expect with that tuple: it **binds** it onto a conversation at creation (`loadOrCreateConversation` stamps `contextType`/`contextId`) and **injects** entity context for it (`buildContext`). The third leg — **resuming** the surface's conversation — is `findResumableConversation`:
+
+```typescript
+import { findResumableConversation, streamChat } from '@/lib/orchestration/chat';
+
+const conversationId =
+  (await findResumableConversation({ userId, agentId, contextType, contextId })) ?? undefined;
+
+// null → undefined → streamChat opens a fresh conversation, tagged with the tuple.
+const events = streamChat({ message, agentSlug, userId, conversationId, contextType, contextId });
+```
+
+It returns the **id** of the user's most-recent-active conversation for that tuple (ordered by `updatedAt` desc), or `null` if none. The query is always scoped to `userId` + `agentId` + `isActive`, so a surface can never resume into another user's, another agent's, or an archived conversation — centralising that scoping is the point (a hand-rolled copy that forgets `userId` is a cross-user leak). **Deciding when to resume is the caller's job** — the handler never resumes by tuple on its own (a chat request with no `conversationId` still opens a fresh conversation), so this is opt-in per surface. Vanilla Sunrise ships no surface that calls it; it's the primitive a fork (or a future core UI) uses instead of re-deriving the query. The existing `@@index([contextType, contextId])` on `AiConversation` supports the lookup — no migration.
 
 ## Guard-floor seam
 

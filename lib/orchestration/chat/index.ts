@@ -34,3 +34,5 @@ export type {
   GuardEvent,
   GuardEventContributor,
 } from '@/lib/orchestration/chat/guard-events';
+export { findResumableConversation } from '@/lib/orchestration/chat/resume-conversation';
+export type { ResumableConversationQuery } from '@/lib/orchestration/chat/resume-conversation';
