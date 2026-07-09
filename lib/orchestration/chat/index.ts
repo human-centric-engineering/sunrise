@@ -19,3 +19,4 @@ export {
   clearContextCache,
   registerContextContributor,
 } from '@/lib/orchestration/chat/context-builder';
+export type { ContextRequest } from '@/lib/orchestration/chat/context-builder';

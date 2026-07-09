@@ -58,6 +58,7 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `invalidateContext`          | function | Drop a single cache entry after a mutating capability                                                                                                                     |
 | `clearContextCache`          | function | Wipe the entire cache (tests and admin hooks)                                                                                                                             |
 | `registerContextContributor` | function | Register a fork-owned prompt-context loader for a new `contextType` (see Context Builder)                                                                                 |
+| `ContextRequest`             | type     | Per-request inputs threaded into `buildContext`/contributors: `{ userId? }` (per-user context + cache partition)                                                          |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -397,7 +398,7 @@ See [`.context/orchestration/agent-profiles.md`](./agent-profiles.md) for the re
 
 ## Context Builder
 
-`buildContext(type, id)` returns a `LOCKED CONTEXT` text block that gets spliced in as a second `system` message after the agent's stable instructions (KV-cache friendly — the instructions prefix is invariant across turns).
+`buildContext(type, id, request?)` returns a `LOCKED CONTEXT` text block that gets spliced in as a second `system` message after the agent's stable instructions (KV-cache friendly — the instructions prefix is invariant across turns). The optional `request` is a generic `ContextRequest { userId? }` carrying per-request inputs — the streaming handler passes the turn's `userId` so a contributor can return **per-user** context, and the cache partitions by it. Omitting `request` (or an empty `userId`) is the shared-cache behaviour from before the widening.
 
 ```
 === LOCKED CONTEXT ===
@@ -424,15 +425,19 @@ Reasoning plus acting is a reflex loop.
 import { registerContextContributor } from '@/lib/orchestration/chat';
 
 export function initAppContextContributors(): void {
-  registerContextContributor('invoice', async (id) => await loadInvoiceSummary(id));
+  // The loader receives the entity id and the per-request ContextRequest, so it
+  // can key on `request.userId` to return per-user context.
+  registerContextContributor('invoice', async (id, request) =>
+    loadInvoiceSummary(id, request.userId)
+  );
 }
 ```
 
-Registration is idempotent by type: re-registering a type replaces its loader. Ships empty upstream so a fork's edits merge cleanly.
+Registration is idempotent by type: re-registering a type replaces its loader. The loader signature is `(id, request: ContextRequest) => Promise<string>`; a loader that ignores the 2nd arg (`(id) => …`) stays valid. Ships empty upstream so a fork's edits merge cleanly.
 
-**Cache:** plain `Map<string, { value, expiresAt }>` with a 60 s TTL per `(type, id)` pair. Matches the dispatcher's pattern — no shared TTL utility is introduced.
+**Cache:** plain `Map<string, { value, expiresAt }>` with a 60 s TTL per `(type, id, userId)`. An empty `userId` collapses to a single shared partition (byte-for-byte the pre-widening `(type, id)` key space), so one user's per-user context never leaks to another. Matches the dispatcher's pattern — no shared TTL utility is introduced.
 
-**Invalidation:** `invalidateContext(type, id)` drops a single entry. The streaming handler calls this after every tool dispatch when a context is bound, so a future mutating capability (e.g. `update_pattern`) triggers a re-fetch on the next turn. Phase 2c ships no mutating capabilities, but the hook is wired so later slices don't need to retrofit.
+**Invalidation:** `invalidateContext(type, id, request?)` drops a single entry — pass the same `request` (i.e. `userId`) given to `buildContext` so the matching per-user partition is cleared. The streaming handler calls this after every tool dispatch when a context is bound, so a future mutating capability (e.g. `update_pattern`) triggers a re-fetch on the next turn. Phase 2c ships no mutating capabilities, but the hook is wired so later slices don't need to retrofit.
 
 ## Rolling Conversation Summary
 

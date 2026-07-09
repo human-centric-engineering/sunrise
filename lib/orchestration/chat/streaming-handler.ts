@@ -779,7 +779,9 @@ export class StreamingChatHandler {
 
       const contextBlock =
         request.contextType && request.contextId
-          ? await buildContext(request.contextType, request.contextId)
+          ? await buildContext(request.contextType, request.contextId, {
+              userId: request.userId,
+            })
           : null;
 
       // Load per-user-per-agent memories for context injection
@@ -1755,7 +1757,9 @@ export class StreamingChatHandler {
           });
 
           if (request.contextType && request.contextId) {
-            invalidateContext(request.contextType, request.contextId);
+            invalidateContext(request.contextType, request.contextId, {
+              userId: request.userId,
+            });
           }
 
           // run_workflow → pending approval: surface a card, persist a
@@ -2005,7 +2009,9 @@ export class StreamingChatHandler {
           yield { type: 'capability_results', results };
 
           if (request.contextType && request.contextId) {
-            invalidateContext(request.contextType, request.contextId);
+            invalidateContext(request.contextType, request.contextId, {
+              userId: request.userId,
+            });
           }
 
           // Scan parallel results for any run_workflow pause. Each

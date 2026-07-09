@@ -475,8 +475,8 @@ describe('StreamingChatHandler', () => {
       })
     );
 
-    // buildContext was called
-    expect(buildContext).toHaveBeenCalledWith('pattern', '7');
+    // buildContext was called with the per-request userId (#412)
+    expect(buildContext).toHaveBeenCalledWith('pattern', '7', { userId: 'u1' });
 
     // The locked context block was included in the messages passed to chatStream
     const allChatStreamCalls = provider.chatStream.mock.calls as unknown as unknown[][];
@@ -1062,7 +1062,7 @@ describe('StreamingChatHandler', () => {
     const request = { ...baseRequest, contextType: 'pattern', contextId: '5' };
     await collect(streamChat(request));
 
-    expect(invalidateContext).toHaveBeenCalledWith('pattern', '5');
+    expect(invalidateContext).toHaveBeenCalledWith('pattern', '5', { userId: 'u1' });
   });
 
   // 14a ---------------------------------------------------------------------
@@ -3465,7 +3465,7 @@ describe('context invalidation after parallel capability results', () => {
     await collect(streamChat(request));
 
     // Assert: invalidateContext was called with the correct arguments (parallel path L781-782)
-    expect(invalidateContext).toHaveBeenCalledWith('page', 'page-1');
+    expect(invalidateContext).toHaveBeenCalledWith('page', 'page-1', { userId: 'u1' });
   });
 });
 

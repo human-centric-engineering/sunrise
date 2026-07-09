@@ -42,6 +42,16 @@ release process.
 
 ### Changed
 
+- **Context builder threads per-request `userId` + partitions its cache by
+  user** (#412). `buildContext` and `invalidateContext` take an optional third
+  argument — a generic `ContextRequest { userId? }` (new exported type) — passed
+  through to each `ContextContributor` (its loader signature widens to
+  `(id, request) => Promise<string>`), and the 60 s result cache now keys on
+  `(type, id, userId)` instead of `(type, id)`. Lets a fork return **per-user**
+  prompt context without risking a cross-user cache leak. An empty/absent
+  `userId` collapses to a single shared partition — byte-for-byte the previous
+  behaviour — and a loader that ignores the new arg (`(id) => …`) stays valid.
+  The streaming handler passes the turn's `userId` at all three call sites.
 - **LLM structured-completion runner relocated to a neutral home** (#410). Moved
   `runStructuredCompletion` (with `StructuredCompletionOptions` /
   `StructuredCompletionResult`) out of

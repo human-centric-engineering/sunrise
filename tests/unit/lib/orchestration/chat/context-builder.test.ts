@@ -293,3 +293,71 @@ describe('registerContextContributor', () => {
     expect(initAppContextContributorsMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('per-user context (#412)', () => {
+  it('passes the ContextRequest (userId) through to the contributor', async () => {
+    const contributor = vi.fn(async (id: string) => `body for ${id}`);
+    registerContextContributor('invoice', contributor);
+
+    await buildContext('invoice', 'INV-1', { userId: 'user-a' });
+
+    expect(contributor).toHaveBeenCalledWith('INV-1', { userId: 'user-a' });
+  });
+
+  it('partitions the cache by userId — no cross-user leak for the same (type, id)', async () => {
+    const contributor = vi.fn(
+      async (id: string, req: { userId?: string }) => `${id} for ${req.userId}`
+    );
+    registerContextContributor('invoice', contributor);
+
+    const a = await buildContext('invoice', 'INV-1', { userId: 'user-a' });
+    const b = await buildContext('invoice', 'INV-1', { userId: 'user-b' });
+
+    // Different users get their own context and their own cache entry.
+    expect(a).toContain('INV-1 for user-a');
+    expect(b).toContain('INV-1 for user-b');
+    expect(contributor).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches per user — a repeat call for the same userId does not re-run the contributor', async () => {
+    const contributor = vi.fn(
+      async (id: string, req: { userId?: string }) => `${id}:${req.userId}`
+    );
+    registerContextContributor('invoice', contributor);
+
+    const first = await buildContext('invoice', 'INV-1', { userId: 'user-a' });
+    const second = await buildContext('invoice', 'INV-1', { userId: 'user-a' });
+
+    expect(second).toBe(first);
+    expect(contributor).toHaveBeenCalledTimes(1);
+  });
+
+  it('an absent userId is the shared partition — two callers share one cache entry (today’s behaviour)', async () => {
+    const contributor = vi.fn(async (id: string) => `shared ${id}`);
+    registerContextContributor('invoice', contributor);
+
+    await buildContext('invoice', 'INV-1');
+    await buildContext('invoice', 'INV-1', {});
+
+    expect(contributor).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidateContext only drops the matching user partition, leaving other users cached', async () => {
+    const contributor = vi.fn(
+      async (id: string, req: { userId?: string }) => `${id}:${req.userId}`
+    );
+    registerContextContributor('invoice', contributor);
+
+    await buildContext('invoice', 'INV-1', { userId: 'user-a' });
+    await buildContext('invoice', 'INV-1', { userId: 'user-b' });
+    expect(contributor).toHaveBeenCalledTimes(2);
+
+    // Invalidate only user-a's entry.
+    invalidateContext('invoice', 'INV-1', { userId: 'user-a' });
+
+    await buildContext('invoice', 'INV-1', { userId: 'user-a' }); // refetch (3rd call)
+    await buildContext('invoice', 'INV-1', { userId: 'user-b' }); // still cached — no call
+
+    expect(contributor).toHaveBeenCalledTimes(3);
+  });
+});
