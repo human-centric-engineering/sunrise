@@ -165,6 +165,8 @@ const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 const { registerGuardFloorContributor, __resetGuardFloorContributorsForTests } =
   await import('@/lib/orchestration/chat/guard-floor');
+const { registerGuardEventContributor, __resetGuardEventContributorsForTests } =
+  await import('@/lib/orchestration/chat/guard-events');
 const { scanOutput, scanCitations } = await import('@/lib/orchestration/chat/output-guard');
 const { getOrchestrationSettings } = await import('@/lib/orchestration/settings');
 const { summarizeMessages } = await import('@/lib/orchestration/chat/summarizer');
@@ -2892,6 +2894,121 @@ describe('guard-floor seam (#413)', () => {
     const events = await collect(streamChat(baseRequest));
 
     // No floor → log_only stays log_only → not blocked, no warning, LLM runs.
+    expect(
+      events.find((e: unknown) => (e as Record<string, unknown>).type === 'error')
+    ).toBeUndefined();
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard-events seam (#414) — a registered contributor OBSERVES a guard firing
+// ---------------------------------------------------------------------------
+
+describe('guard-events seam (#414)', () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  afterEach(() => {
+    __resetGuardEventContributorsForTests();
+  });
+
+  it('emits a fire-and-forget event with the guard + outcome when the input guard fires', async () => {
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'block' })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const observer = vi.fn();
+    registerGuardEventContributor('obs', observer);
+
+    // The turn blocks on input — the observer must still see the firing.
+    const events = await collect(streamChat(baseRequest));
+    await flush();
+
+    expect(
+      events.find((e: unknown) => (e as Record<string, unknown>).type === 'error')
+    ).toMatchObject({ code: 'input_blocked' });
+    expect(observer).toHaveBeenCalledTimes(1);
+    const [ctxArg, eventArg] = observer.mock.calls[0] as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(eventArg).toEqual({ guard: 'input', outcome: 'block' });
+    expect(ctxArg).toMatchObject({ agentId: 'agent-1', userId: 'u1', conversationId: 'conv-1' });
+  });
+
+  it('does not emit when no registry contributor is present and does not break the turn (inert)', async () => {
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'log_only' })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    // No contributor registered — log_only just logs, stream proceeds.
+    const events = await collect(streamChat(baseRequest));
+    await flush();
+
+    expect(
+      events.find((e: unknown) => (e as Record<string, unknown>).type === 'error')
+    ).toBeUndefined();
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing observer never breaks the turn', async () => {
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'log_only' })
+    );
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hello' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 5 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    registerGuardEventContributor('boom', () => {
+      throw new Error('observer bug');
+    });
+
+    // log_only → not blocked; the throwing observer is swallowed, turn completes.
+    const events = await collect(streamChat(baseRequest));
+    await flush();
+
     expect(
       events.find((e: unknown) => (e as Record<string, unknown>).type === 'error')
     ).toBeUndefined();

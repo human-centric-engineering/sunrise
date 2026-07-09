@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **Chat guard-event seam — a fork can OBSERVE an inline guard firing
+  (post-detection) and react** (#414). New `registerGuardEventContributor(key,
+  contributor)` (exported from `@/lib/orchestration/chat`, with types
+  `GuardEventContext` / `GuardEvent` / `GuardEventContributor`). When an inline
+  guard (input / output / citation) flags, the handler calls `emitGuardEvent`
+  **fire-and-forget** to contributors keyed on the turn's `(contextType,
+  contextId, agentId, userId, conversationId)` with `{ guard, outcome }`, so a
+  fork can notify / log / escalate without editing the guard sites. Fire-and-forget
+  — it never delays or breaks the turn (contributors run on a microtask; a
+  throwing/rejecting contributor is swallowed), it fires before the `block`
+  short-circuit so a block is still observed, and an empty registry is inert.
+  Observation only — it cannot change detection or the guard's action (use the
+  guard-floor seam for that). Fork-owned scaffold
+  `lib/app/guard-event-contributors.ts`. The post-detection sibling of the
+  guard-floor seam (#413).
 - **Chat guard-floor seam — a fork can RAISE an inline guard to a minimum for a
   turn** (#413). New `registerGuardFloorContributor(key, contributor)` (exported
   from `@/lib/orchestration/chat`, with types `GuardKind` / `GuardMode` /

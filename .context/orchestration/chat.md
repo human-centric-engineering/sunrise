@@ -61,6 +61,8 @@ Everything is exported from `@/lib/orchestration/chat`:
 | `ContextRequest`                                                                          | type     | Per-request inputs threaded into `buildContext`/contributors: `{ userId? }` (per-user context + cache partition)                                                          |
 | `registerGuardFloorContributor`                                                           | function | Register a fork-owned per-turn **minimum** mode for the inline input/output/citation guards (see Guard-floor seam)                                                        |
 | `GuardKind` / `GuardMode` / `GuardFloors` / `GuardFloorRequest` / `GuardFloorContributor` | types    | Guard-floor seam types                                                                                                                                                    |
+| `registerGuardEventContributor`                                                           | function | Register a fork-owned fire-and-forget observer for an inline guard firing (see Guard-events seam)                                                                         |
+| `GuardEventContext` / `GuardEvent` / `GuardEventContributor`                              | types    | Guard-events seam types                                                                                                                                                   |
 
 `buildMessages` and the internal `PersistMessageParams` type are **not** re-exported — the public surface is deliberately small.
 
@@ -460,7 +462,26 @@ export function initAppGuardFloorContributors(): void {
 }
 ```
 
-Pairs with a sibling post-detection observation seam (filed separately as #414): a floor is a **pre-detection** input to how strictly a guard acts; an event is a **post-detection** observation that a guard fired.
+Pairs with the [Guard-events seam](#guard-events-seam) below: a floor is a **pre-detection** input to how strictly a guard acts; an event is a **post-detection** observation that a guard fired.
+
+## Guard-events seam
+
+The post-detection sibling of the guard-floor seam. When an inline guard **flags**, the handler calls `emitGuardEvent(...)` so a fork can OBSERVE the firing and react — notify, log, escalate — without editing the guard sites or changing detection. `registerGuardEventContributor(key, contributor)` registers the observer.
+
+**Fire-and-forget.** Emission never delays or breaks the turn: each contributor runs on a microtask (so it can't block the handler), and a synchronous throw or an async rejection is swallowed and logged. It fires **before** the `block` short-circuit, so a `block` outcome is still observed. An empty registry is a no-op — inert in vanilla Sunrise.
+
+A contributor receives a `GuardEventContext` keyed on the turn's `(contextType, contextId, agentId, userId, conversationId)` and a `GuardEvent` = `{ guard: 'input'|'output'|'citation', outcome: GuardMode }` — where `outcome` is the effective mode the guard acted in (`block` = turn stopped, `warn_and_continue` = warned, `log_only` = logged only, `none` = flagged but no action). It is **observation only**: it cannot change detection or the action taken (use a guard-floor contributor to raise strictness).
+
+```typescript
+// lib/app/guard-event-contributors.ts — called once by the chat handler
+import { registerGuardEventContributor } from '@/lib/orchestration/chat';
+
+export function initAppGuardEventContributors(): void {
+  registerGuardEventContributor('escalation', (ctx, event) => {
+    if (event.outcome === 'block') void notifyModerators(ctx, event); // fire-and-forget
+  });
+}
+```
 
 ## Rolling Conversation Summary
 

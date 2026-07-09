@@ -262,6 +262,7 @@ not in the files, precisely so the files stay small and conflict-free.)
 | `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)    | root `eslint.config.mjs` spread (lint)                           |
 | `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent             | `resolveAgentDocumentAccess()` (server route-handler)            |
 | `lib/app/guard-floor-contributors.ts`      | per-turn minimum for inline chat guards       | the chat handler's `collectGuardFloors()` (server route-handler) |
+| `lib/app/guard-event-contributors.ts`      | observe an inline chat guard firing           | the chat handler's `emitGuardEvent()` (server route-handler)     |
 
 **Why four files and not one bootstrap call?** Next.js bundles middleware,
 server route-handlers, and the client as three separate module realms — a

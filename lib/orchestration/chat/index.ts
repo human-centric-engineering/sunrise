@@ -28,3 +28,9 @@ export type {
   GuardFloorRequest,
   GuardFloorContributor,
 } from '@/lib/orchestration/chat/guard-floor';
+export { registerGuardEventContributor } from '@/lib/orchestration/chat/guard-events';
+export type {
+  GuardEventContext,
+  GuardEvent,
+  GuardEventContributor,
+} from '@/lib/orchestration/chat/guard-events';
