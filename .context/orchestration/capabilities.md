@@ -48,7 +48,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                             |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                     |
 | `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                             |
-| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext?, scope? }`                                          |
+| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext?, scope?, customConfig?, isEnabled? }`               |
 | `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                           |
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                          |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                         |
@@ -102,6 +102,15 @@ Re-registering the same key **replaces the handler and its guard together** — 
 ### Dispatch scope carrier (`CapabilityContext.scope`)
 
 `CapabilityContext.scope?: Record<string, string>` is a free-form, optional string map the dispatcher's caller can populate. It is **generic by design** — core names no keys and no built-in capability reads it; the dispatcher passes it verbatim into `execute()`. A fork uses it to let a capability refuse to run outside its intended scope (e.g. a `module` slug). In vanilla Sunrise the chat handler threads it from `ChatRequest.scope` into the dispatch context, so it stays `undefined` and inert unless a caller sets it.
+
+### Resolved-binding carrier (`CapabilityContext.customConfig` / `isEnabled`)
+
+Unlike `scope` (populated by the dispatcher's **caller**), `customConfig` and `isEnabled` are populated by the **dispatcher itself** from the per-agent binding it resolves at step 4. They let a capability read its own per-binding config inside `execute()` **without re-querying `AiAgentCapability`** — the dispatcher already did that lookup a moment earlier.
+
+- `customConfig?: Record<string, unknown> | null` — the resolved binding's `AiAgentCapability.customConfig`, normalised to a plain object or `null` (a non-object JSON value or a missing/default binding becomes `null`). It stays an **opaque carrier**: core sets it but reads no keys, so a consumer must validate it (e.g. Zod) before use — the same `customConfigSchema.safeParse` + fail-closed pattern the built-ins (`call_external_api`, `send_message_to_channel`, `upload_to_storage`) already apply.
+- `isEnabled?: boolean` — the resolved binding's flag, carried for parity. On the normal dispatch path it is always `true` at execute time (a disabled binding is rejected at step 4 before execution).
+
+Both are populated **only by the dispatcher**, on a shallow copy of the caller's context (the caller's object is left untouched), and are `undefined` when a context is constructed directly outside `dispatch()`.
 
 ## Outbound HTTP: `call_external_api`
 

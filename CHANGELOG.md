@@ -16,6 +16,20 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`CapabilityContext` now carries the resolved binding's `customConfig` +
+  `isEnabled`** (#411). The dispatcher populates `context.customConfig`
+  (`AiAgentCapability.customConfig`, normalised to an object or `null`) and
+  `context.isEnabled` from the per-agent binding it already resolves at step 4,
+  so a capability can read its own per-binding config inside `execute()` without
+  re-querying `AiAgentCapability`. Both are set on a shallow copy (the caller's
+  context object is untouched) and stay opaque carriers alongside `scope` — core
+  sets `customConfig` but reads no keys, so consumers must still validate it
+  (e.g. Zod). `AgentCapabilityBinding` gains a matching `customConfig` field.
+  Inert for existing capabilities (they may adopt it to drop their own lookup);
+  no behaviour change.
+
 ### Changed
 
 - **LLM structured-completion runner relocated to a neutral home** (#410). Moved

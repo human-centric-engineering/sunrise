@@ -50,6 +50,27 @@ export interface CapabilityContext {
    * behaviour is unchanged when `scope` is undefined.
    */
   scope?: Record<string, string>;
+  /**
+   * The resolved per-agent binding's `customConfig` JSON, surfaced by the
+   * dispatcher so a capability can read its own per-binding configuration
+   * (e.g. a per-agent allowlist) inside `execute()` without re-querying
+   * `AiAgentCapability` — the dispatcher already resolved that binding a
+   * moment earlier. Opaque carrier like `scope`: core sets it from the
+   * binding but reads no keys, so a consumer must validate it (e.g. Zod)
+   * before use. `null` when the binding carries no config, including the
+   * synthesized default-allow binding for an agent with no explicit pivot
+   * row. Populated only by the dispatcher; absent when a caller constructs
+   * a context directly.
+   */
+  customConfig?: Record<string, unknown> | null;
+  /**
+   * The resolved binding's `isEnabled` flag, surfaced alongside
+   * `customConfig`. On the normal dispatch path this is always `true` at
+   * execute time (a disabled binding is rejected before execution); it is
+   * carried for parity with the resolved binding. Populated only by the
+   * dispatcher; absent when a caller constructs a context directly.
+   */
+  isEnabled?: boolean;
 }
 
 /**
@@ -110,6 +131,13 @@ export interface AgentCapabilityBinding {
   isEnabled: boolean;
   /** `customRateLimit ?? rateLimit` from the underlying capability. */
   effectiveRateLimit: number | null;
+  /**
+   * The pivot row's `customConfig` JSON (`AiAgentCapability.customConfig`),
+   * normalised to a plain object or `null` (a non-object JSON value or a
+   * missing config becomes `null`). `null` for the synthesized default-allow
+   * binding an agent with no explicit pivot row falls back to.
+   */
+  customConfig: Record<string, unknown> | null;
   functionDefinition: CapabilityFunctionDefinition;
   requiresApproval: boolean;
 }

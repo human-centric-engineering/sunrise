@@ -166,6 +166,38 @@ function makeCapabilityRow(overrides: CapabilityRowOverrides = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper — build a minimal AiAgentCapability pivot row (with its included
+// base capability) as returned by `findMany({ include: { capability } })`
+// ---------------------------------------------------------------------------
+
+function makeAgentBindingRow(opts: {
+  slug: string;
+  isEnabled?: boolean;
+  customConfig?: unknown;
+  customRateLimit?: number | null;
+}) {
+  const { slug } = opts;
+  return {
+    id: `aac-${slug}`,
+    agentId: 'agent-1',
+    capabilityId: `cap-${slug}`,
+    isEnabled: opts.isEnabled ?? true,
+    customConfig: opts.customConfig ?? null,
+    customRateLimit: opts.customRateLimit ?? null,
+    capability: {
+      id: `cap-${slug}`,
+      slug,
+      name: slug,
+      category: 'test',
+      isActive: true,
+      requiresApproval: false,
+      rateLimit: null,
+      functionDefinition: { name: slug, description: '', parameters: {} },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Default context used throughout
 // ---------------------------------------------------------------------------
 
@@ -260,6 +292,71 @@ describe('CapabilityDispatcher', () => {
 
       expect(result.success).toBe(true);
       expect(capability.received?.scope).toBeUndefined();
+    });
+
+    it('surfaces the resolved binding customConfig + isEnabled on the execute context (#411)', async () => {
+      const capability = new ContextCapturingCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'capture-context' })]);
+      mockAgentFindMany.mockResolvedValue([
+        makeAgentBindingRow({
+          slug: 'capture-context',
+          isEnabled: true,
+          customConfig: { allow: ['alpha', 'beta'] },
+        }),
+      ]);
+
+      const result = await capabilityDispatcher.dispatch('capture-context', {}, ctx);
+
+      expect(result.success).toBe(true);
+      expect(capability.received?.customConfig).toEqual({ allow: ['alpha', 'beta'] });
+      expect(capability.received?.isEnabled).toBe(true);
+    });
+
+    it('surfaces customConfig=null + isEnabled=true for the default-allow binding (no pivot row) (#411)', async () => {
+      const capability = new ContextCapturingCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'capture-context' })]);
+      // mockAgentFindMany defaults to [] → synthesized default-allow binding.
+
+      const result = await capabilityDispatcher.dispatch('capture-context', {}, ctx);
+
+      expect(result.success).toBe(true);
+      expect(capability.received?.customConfig).toBeNull();
+      expect(capability.received?.isEnabled).toBe(true);
+    });
+
+    it('normalises a non-object binding customConfig to null (#411)', async () => {
+      const capability = new ContextCapturingCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'capture-context' })]);
+      mockAgentFindMany.mockResolvedValue([
+        makeAgentBindingRow({
+          slug: 'capture-context',
+          customConfig: ['not', 'an', 'object'],
+        }),
+      ]);
+
+      const result = await capabilityDispatcher.dispatch('capture-context', {}, ctx);
+
+      expect(result.success).toBe(true);
+      expect(capability.received?.customConfig).toBeNull();
+    });
+
+    it('does not mutate the caller context object (#411)', async () => {
+      const capability = new ContextCapturingCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'capture-context' })]);
+      mockAgentFindMany.mockResolvedValue([
+        makeAgentBindingRow({ slug: 'capture-context', customConfig: { a: 1 } }),
+      ]);
+
+      const callerCtx = { userId: 'user-1', agentId: 'agent-1' };
+      await capabilityDispatcher.dispatch('capture-context', {}, callerCtx);
+
+      // Enrichment is a shallow copy — the caller's object stays clean.
+      expect(callerCtx).not.toHaveProperty('customConfig');
+      expect(callerCtx).not.toHaveProperty('isEnabled');
     });
   });
 
@@ -722,14 +819,19 @@ describe('CapabilityDispatcher', () => {
       );
     });
 
-    it('passes validated args and full context to execute', async () => {
+    it('passes validated args and the binding-enriched context to execute', async () => {
       const executeSpy = vi.spyOn(OkCapability.prototype, 'execute');
       capabilityDispatcher.register(new OkCapability());
       mockFindMany.mockResolvedValue([makeCapabilityRow()]);
 
       await capabilityDispatcher.dispatch('ok', { n: 7 }, ctx);
 
-      expect(executeSpy).toHaveBeenCalledWith({ n: 7 }, ctx);
+      // No explicit pivot row → default-allow binding: customConfig null,
+      // isEnabled true, layered onto the caller's context.
+      expect(executeSpy).toHaveBeenCalledWith(
+        { n: 7 },
+        { ...ctx, customConfig: null, isEnabled: true }
+      );
       executeSpy.mockRestore();
     });
   });

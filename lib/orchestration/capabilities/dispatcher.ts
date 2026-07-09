@@ -76,6 +76,20 @@ function parseFunctionDefinition(
   return parsed.data;
 }
 
+/**
+ * Normalise a pivot row's `customConfig` JSON to a plain object or `null`.
+ * The column is `Json?`, so it may be null, a scalar, or an array — none of
+ * which a per-binding config consumer expects — so anything that isn't a
+ * plain object collapses to `null`. The `as` cast is guarded by the runtime
+ * `typeof`/`Array.isArray` checks; the value stays opaque (consumers validate
+ * it, e.g. with Zod, before reading keys).
+ */
+function normalizeCustomConfig(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 /** Cache lifetime for both the registry and per-agent bindings. */
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -297,6 +311,18 @@ class CapabilityDispatcher {
       };
     }
 
+    // Surface the resolved binding onto the execution context so a capability
+    // can read its own per-binding `customConfig` / enablement inside
+    // `execute()` without re-querying `AiAgentCapability` — the binding was
+    // just resolved above. A shallow copy leaves the caller's context object
+    // untouched. `customConfig` stays an opaque carrier (consumers validate);
+    // `isEnabled` is always `true` here (a disabled binding returned above).
+    const executionContext: CapabilityContext = {
+      ...context,
+      customConfig: binding?.customConfig ?? null,
+      isEnabled: binding?.isEnabled ?? true,
+    };
+
     // 4a. Capability guard. A fork-attached pre-execute predicate gating on
     //     the generic `context.scope` carrier (e.g. refuse a tool outside its
     //     module/tenant). Runs after enablement, before the rate limiter, so a
@@ -439,9 +465,10 @@ class CapabilityDispatcher {
         }
 
         // 8. Execute. Any unexpected throw is normalised to execution_error.
+        //    Uses the binding-enriched context (customConfig / isEnabled).
         let result: CapabilityResult;
         try {
-          result = await handler.execute(validated, context);
+          result = await handler.execute(validated, executionContext);
         } catch (err) {
           logger.error('Capability dispatch: execution threw', {
             slug,
@@ -530,6 +557,7 @@ class CapabilityDispatcher {
                 slug: row.capability.slug,
                 isEnabled: row.isEnabled,
                 effectiveRateLimit: row.customRateLimit ?? row.capability.rateLimit ?? null,
+                customConfig: normalizeCustomConfig(row.customConfig),
                 functionDefinition,
                 requiresApproval: row.capability.requiresApproval,
               });
@@ -550,11 +578,12 @@ class CapabilityDispatcher {
     if (binding) return binding;
 
     // No explicit row → synthesize a default-allow binding from the
-    // base capability entry.
+    // base capability entry. No pivot row means no per-binding config.
     return {
       slug,
       isEnabled: true,
       effectiveRateLimit: entry.rateLimit,
+      customConfig: null,
       functionDefinition: entry.functionDefinition,
       requiresApproval: entry.requiresApproval,
     };
