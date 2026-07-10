@@ -62,6 +62,17 @@ updates:
       # bundle (dual-package publish or a Next externalRequire fix).
       - dependency-name: 'jsdom'
         versions: ['>=27']
+      # typescript >=7 is the native (Go) compiler port. `tsc --noEmit` passes
+      # on our code (tsconfig uses none of the flags TS 7 removed — es5 target,
+      # baseUrl, node10 resolution), but the port restructured the JavaScript
+      # compiler API that API-bound tooling depends on: typescript-eslint 8's
+      # peer range is `<6.1.0` and it crashes at load (`reading 'Cjs'`), and
+      # Next.js's TypeScript detection doesn't recognise the native package
+      # ("do not have the required package(s) installed"). Remove once
+      # typescript-eslint widens its peer range to allow TS 7 AND Next.js
+      # supports the native compiler package.
+      - dependency-name: 'typescript'
+        versions: ['>=7']
 
   # GitHub Actions pinned in .github/workflows/**
   - package-ecosystem: 'github-actions'
