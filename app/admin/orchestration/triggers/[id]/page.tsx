@@ -9,7 +9,7 @@ import {
   type TriggerFormInitial,
 } from '@/components/admin/orchestration/trigger-form';
 import { API } from '@/lib/api/endpoints';
-import { getBaseUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { getPublicUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
 
@@ -107,7 +107,7 @@ export default async function EditTriggerPage({ params }: { params: Promise<{ id
         workflows={workflows}
         agents={agents}
         enabledChannels={enabledChannels}
-        baseUrl={getBaseUrl()}
+        baseUrl={getPublicUrl()}
       />
     </div>
   );

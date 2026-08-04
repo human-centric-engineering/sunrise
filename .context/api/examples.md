@@ -221,6 +221,19 @@ trip out to the proxy and back. Set `INTERNAL_API_URL` for the same problem in
 any other environment (a private network where the public hostname resolves
 elsewhere).
 
+**`getPublicUrl()`** - Gets the app's **public** base URL — the address other
+people and systems reach it on:
+
+```typescript
+const url = `${getPublicUrl()}/api/v1/inbound/slack/${slug}`;
+```
+
+Use this for anything that leaves the server and must resolve elsewhere: a
+webhook endpoint an operator pastes into Slack, a link in an email, a URL
+rendered for a user to copy. `getBaseUrl()` is the wrong function for those — in
+development it is loopback, so the result would be unreachable from anywhere but
+the developer's own machine.
+
 ### Response Parsing
 
 Use `parseApiResponse()` to validate API responses follow the expected discriminated union format:

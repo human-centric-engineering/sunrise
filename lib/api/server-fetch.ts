@@ -60,16 +60,40 @@ export async function getCookieHeader(): Promise<string> {
  * 3. `BETTER_AUTH_URL` — the historical behaviour, and correct whenever the
  *    public URL is reachable from the server (the usual production case).
  *
+ * **Do not use this to build a URL someone else has to call** — use
+ * {@link getPublicUrl} for that. This address may be loopback-only.
+ *
  * @returns Base URL without trailing slash (e.g. "http://127.0.0.1:3010")
  */
 export function getBaseUrl(): string {
   const explicit = env.INTERNAL_API_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, '');
 
-  if (process.env.NODE_ENV === 'development' && process.env.PORT) {
-    return `http://127.0.0.1:${process.env.PORT}`;
+  // A port that is not a plain number cannot be trusted to address this app —
+  // fall through to the public URL rather than send cookie-bearing self-calls
+  // to a guess. (`npm run dev -- -p 4100` also leaves PORT pointing elsewhere,
+  // which is the same problem.)
+  const port = process.env.PORT;
+  if (process.env.NODE_ENV === 'development' && port && /^\d{1,5}$/.test(port)) {
+    return `http://127.0.0.1:${port}`;
   }
 
+  return env.BETTER_AUTH_URL;
+}
+
+/**
+ * Get the app's **public** base URL — the address other people and other
+ * systems reach it on.
+ *
+ * Use this for anything that leaves the server and must be resolvable
+ * elsewhere: a webhook endpoint an operator pastes into Slack, a link in an
+ * email, a URL rendered for a user to copy. {@link getBaseUrl} is the wrong
+ * function for those — in development it is loopback, so the resulting URL
+ * would be unreachable from anywhere but this machine.
+ *
+ * @returns Base URL without trailing slash (e.g. "https://app.example.com")
+ */
+export function getPublicUrl(): string {
   return env.BETTER_AUTH_URL;
 }
 

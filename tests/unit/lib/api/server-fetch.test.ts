@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { getCookieHeader, getBaseUrl, serverFetch } from '@/lib/api/server-fetch';
+import { getCookieHeader, getBaseUrl, getPublicUrl, serverFetch } from '@/lib/api/server-fetch';
 
 /**
  * Mock dependencies
@@ -213,6 +213,44 @@ describe('getBaseUrl — internal address resolution', () => {
     vi.stubEnv('PORT', '3000');
 
     expect(getBaseUrl()).toBe(env.BETTER_AUTH_URL);
+  });
+
+  it('ignores a non-numeric PORT rather than addressing a guess', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('PORT', 'not-a-port');
+
+    expect(getBaseUrl()).toBe(env.BETTER_AUTH_URL);
+  });
+});
+
+/**
+ * Test Suite: getPublicUrl
+ *
+ * The internal address is loopback in development, so anything another system
+ * has to call — a webhook URL pasted into Slack, a link in an email — must come
+ * from here instead. Mixing the two produces a URL that works on the developer's
+ * machine and nowhere else.
+ */
+describe('getPublicUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns the public URL, not the internal one', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('PORT', '3010');
+
+    expect(getPublicUrl()).toBe(env.BETTER_AUTH_URL);
+  });
+
+  it('is unaffected by INTERNAL_API_URL, which points inward', () => {
+    (env as { INTERNAL_API_URL?: string }).INTERNAL_API_URL = 'http://127.0.0.1:9000';
+
+    try {
+      expect(getPublicUrl()).toBe(env.BETTER_AUTH_URL);
+    } finally {
+      delete (env as { INTERNAL_API_URL?: string }).INTERNAL_API_URL;
+    }
   });
 });
 

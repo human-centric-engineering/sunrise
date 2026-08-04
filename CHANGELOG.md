@@ -226,6 +226,16 @@ release process.
   app's own address; anything else would receive cookie-bearing internal
   requests.
 
+  **New `getPublicUrl()`, and a rule for choosing between the two.**
+  `getBaseUrl()` had been doing two jobs: addressing the app's own API, and
+  building URLs for *other* systems to call — the inbound-webhook endpoint an
+  operator pastes into Slack (`app/admin/orchestration/triggers/**`). Those
+  answers are no longer the same, so a loopback internal address would have been
+  rendered as a webhook URL reachable from nowhere but the developer's machine.
+  `getPublicUrl()` returns the public address for anything that leaves the
+  server; `getBaseUrl()` stays internal-only. The two trigger pages now use it,
+  restoring exactly their previous output.
+
 - **Hot reload now works when the app is served on a hostname rather than
   `localhost`** — Next allows only `localhost` to reach its dev endpoints and
   blocks the rest, so an app behind a local reverse proxy rendered fine but

@@ -9,7 +9,7 @@ import {
 } from '@/components/admin/orchestration/trigger-form';
 import { WhatsAppWorkedExample } from '@/components/admin/orchestration/whatsapp-worked-example';
 import { API } from '@/lib/api/endpoints';
-import { getBaseUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { getPublicUrl, parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { INBOUND_TRIGGER_STARTER_HREF } from '@/lib/orchestration/admin/inbound-trigger-starter';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
@@ -130,7 +130,7 @@ export default async function NewTriggerPage() {
           workflows={workflows}
           agents={agents}
           enabledChannels={enabledChannels}
-          baseUrl={getBaseUrl()}
+          baseUrl={getPublicUrl()}
         />
       )}
     </div>
