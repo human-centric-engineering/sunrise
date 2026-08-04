@@ -44,7 +44,7 @@ release process.
 > (#469), and for third-party frame hosts (#450); agent-opened chat turns and
 > caller message metadata (#474, #475); `apiClient.put()` (#495);
 > `validatePathParam()` (#435); `slugify()` (#451); and a configurable
-> dev-server port (#520).
+> dev-server port.
 >
 > **Changed.** `HookEventType` and the email-kind registry open to fork-owned
 > values (#465, #468) — the first is _breaking_ for an exhaustive `switch` with
