@@ -5,7 +5,7 @@ Complete list of commands for the Sunrise project.
 ## Development
 
 ```bash
-npm run dev              # Start development server (PORT, default 3000)
+npm run dev              # Start dev server (PORT from .env.development — 3010 upstream)
 npm run dev -- -p 4100   # Start on an explicit port (overrides PORT)
 npm run build            # Build for production
 npm run start            # Start production server (PORT, default 3000)
@@ -94,7 +94,7 @@ docker system prune -f               # Clean up unused Docker resources
 ## Health Check
 
 ```bash
-curl http://localhost:3000/api/health  # Test health endpoint
+curl http://localhost:3010/api/health  # Test health endpoint (upstream PORT; 3000 in Docker)
 ```
 
 ## Git Hooks

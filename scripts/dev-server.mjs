@@ -176,58 +176,98 @@ function readProjectFile(file) {
 }
 
 /**
+ * Where the port comes from, and in what order.
+ *
+ * IO is injected (defaulting to the real filesystem, environment and dotenv) so
+ * the precedence rules can be exercised without a filesystem or a dotenv
+ * install — including the pruned-dotenv path, which by definition cannot be
+ * reproduced in a dev checkout.
+ *
  * @param {Target} target
+ * @param {{
+ *   env?: Record<string, string | undefined>,
+ *   readFile?: (file: string) => string | null,
+ *   loadParser?: () => Promise<(raw: string) => Record<string, string | undefined>>,
+ *   warn?: (message: string) => void,
+ * }} [io]
  * @returns {Promise<{ value: string, file: string } | null>}
  */
-async function resolvePort(target) {
+export async function resolvePort(target, io = {}) {
+  const {
+    env = process.env,
+    readFile = readProjectFile,
+    loadParser = async () => (await import('dotenv')).parse,
+    warn = console.warn,
+  } = io;
+
   // A real environment variable (`PORT=4100 npm run dev`, Docker, a PaaS)
   // outranks the env files — it is the more specific, more deliberate signal.
-  const fromShell = process.env[target.envVar];
+  const fromShell = env[target.envVar];
   if (fromShell) return { value: fromShell, file: 'environment' };
 
   const files = envFilesFor(target.nodeEnv);
-  if (!files.some((file) => existsSync(join(ROOT, file)))) return null;
 
   let parseEnv;
   try {
-    ({ parse: parseEnv } = await import('dotenv'));
+    parseEnv = await loadParser();
   } catch {
     // Pruned by a production install. Say so rather than silently ignoring a
     // port the operator believes they configured.
-    console.warn(
+    warn(
       `> dotenv is not installed — cannot read ${target.envVar} from env files; using the default port`
     );
     return null;
   }
 
-  return readPortFromFiles(target.envVar, files, readProjectFile, parseEnv);
+  return readPortFromFiles(target.envVar, files, readFile, parseEnv);
 }
 
-async function main() {
-  const [name, ...passthrough] = process.argv.slice(2);
+/**
+ * Resolve the port, validate it, and hand the child process its arguments.
+ *
+ * @param {string[]} argv - arguments after the script name
+ * @param {{
+ *   spawnFn?: typeof spawn,
+ *   io?: Parameters<typeof resolvePort>[1],
+ *   log?: (message: string) => void,
+ *   error?: (message: string) => void,
+ *   exit?: (code: number) => void,
+ * }} [deps]
+ * @returns {Promise<import('node:child_process').ChildProcess | undefined>}
+ */
+export async function main(argv = process.argv.slice(2), deps = {}) {
+  const {
+    spawnFn = spawn,
+    io,
+    log = console.log,
+    error = console.error,
+    exit = process.exit,
+  } = deps;
+
+  const [name, ...passthrough] = argv;
   const target = TARGETS[name];
 
   if (!target) {
-    console.error(
-      `Unknown target "${name ?? ''}". Expected one of: ${Object.keys(TARGETS).join(', ')}`
-    );
-    process.exit(1);
+    error(`Unknown target "${name ?? ''}". Expected one of: ${Object.keys(TARGETS).join(', ')}`);
+    exit(1);
+    return undefined;
   }
 
-  const found = hasExplicitPortFlag(passthrough) ? null : await resolvePort(target);
+  const found = hasExplicitPortFlag(passthrough) ? null : await resolvePort(target, io);
 
   if (found && !isValidPort(found.value)) {
-    console.error(
+    error(
       `${target.envVar}="${found.value}" (from ${found.file}) is not a valid port. Expected 1-65535.`
     );
-    process.exit(1);
+    exit(1);
+    return undefined;
   }
 
   const { args, env } = buildLaunch(target, passthrough, found?.value ?? null);
 
-  if (found) console.log(`> ${target.envVar}=${found.value} (from ${found.file})`);
+  if (found) log(`> ${target.envVar}=${found.value} (from ${found.file})`);
 
-  const child = spawn(resolveBin(target.bin), args, {
+  const child = spawnFn(resolveBin(target.bin), args, {
     cwd: ROOT,
     env: { ...process.env, ...env },
     stdio: 'inherit',
@@ -238,9 +278,9 @@ async function main() {
     process.on(signal, () => child.kill(signal));
   }
 
-  child.on('error', (error) => {
-    console.error(`Failed to start "${target.bin}": ${error.message}`);
-    process.exit(1);
+  child.on('error', (spawnError) => {
+    error(`Failed to start "${target.bin}": ${spawnError.message}`);
+    exit(1);
   });
 
   child.on('exit', (code, signal) => {
@@ -252,8 +292,10 @@ async function main() {
       process.kill(process.pid, signal);
       return;
     }
-    process.exit(code ?? 1);
+    exit(code ?? 1);
   });
+
+  return child;
 }
 
 // Guarded so tests can import the resolution helpers without spawning anything.

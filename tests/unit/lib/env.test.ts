@@ -139,6 +139,37 @@ describe('server path (typeof window === undefined)', () => {
     await expect(importEnv()).rejects.toThrow();
   });
 
+  it('should accept an absent INTERNAL_API_URL — it is optional', async () => {
+    // Arrange — the common case: no explicit internal address configured
+    setEnv(validServerEnv);
+
+    // Act
+    const env = await importEnv();
+
+    // Assert
+    expect(env.INTERNAL_API_URL).toBeUndefined();
+  });
+
+  it('should expose INTERNAL_API_URL when set to a valid URL', async () => {
+    // Arrange
+    setEnv({ ...validServerEnv, INTERNAL_API_URL: 'http://127.0.0.1:3000' });
+
+    // Act
+    const env = await importEnv();
+
+    // Assert
+    expect(env.INTERNAL_API_URL).toBe('http://127.0.0.1:3000');
+  });
+
+  it('should throw when INTERNAL_API_URL is not a valid URL', async () => {
+    // Arrange — a bare host is the likely typo, and it would send every
+    // server-side self-call somewhere unresolvable
+    setEnv({ ...validServerEnv, INTERNAL_API_URL: '127.0.0.1:3000' });
+
+    // Act & Assert
+    await expect(importEnv()).rejects.toThrow();
+  });
+
   it('should throw when BETTER_AUTH_SECRET is shorter than 32 characters', async () => {
     // Arrange — 31 chars is under the minimum
     setEnv({ ...validServerEnv, BETTER_AUTH_SECRET: 'a'.repeat(31) });

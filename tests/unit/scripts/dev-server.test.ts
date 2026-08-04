@@ -4,13 +4,24 @@
  *
  * The behaviour that matters is the *precedence* between the four ways a port
  * can be specified, and the fact that two different child CLIs need it
- * delivered two different ways. Both are pure functions here; the spawn wiring
- * around them is not exercised.
+ * delivered two different ways.
+ *
+ * `resolvePort` and `main` take their IO — filesystem, environment, dotenv
+ * loader, spawn — as injected dependencies, so the wiring is exercised without
+ * touching the disk or starting a process. That also reaches the branch a dev
+ * checkout cannot reproduce: dotenv pruned by a production install.
+ *
+ * Not covered here: `resolveBin` and `readProjectFile` (thin wrappers over
+ * `existsSync`/`readFileSync`) and the signal re-raise in the exit handler,
+ * which would kill the test runner. Those were verified by running the launcher
+ * against the real dev server.
  *
  * @see scripts/dev-server.mjs
  */
 
-import { describe, it, expect } from 'vitest';
+import { EventEmitter } from 'node:events';
+
+import { describe, it, expect, afterEach, vi } from 'vitest';
 
 import {
   TARGETS,
@@ -19,6 +30,8 @@ import {
   isValidPort,
   readPortFromFiles,
   buildLaunch,
+  resolvePort,
+  main,
 } from '@/scripts/dev-server.mjs';
 
 /** Build a `readFile` stub over a virtual set of env files. */
@@ -176,6 +189,188 @@ describe('scripts/dev-server', () => {
 
       expect(args).toEqual(['start', '--turbo']);
       expect(env).toEqual({});
+    });
+  });
+
+  describe('resolvePort', () => {
+    const io = (files: Record<string, string>, env: Record<string, string> = {}) => ({
+      env,
+      readFile: fakeReader(files),
+      loadParser: async () => parseEnv,
+      warn: vi.fn(),
+    });
+
+    it('takes a real environment variable over any file', async () => {
+      const deps = io({ '.env.local': 'PORT=3021\n' }, { PORT: '4100' });
+
+      await expect(resolvePort(TARGETS['next-dev'], deps)).resolves.toEqual({
+        value: '4100',
+        file: 'environment',
+      });
+    });
+
+    it('falls to the env files when the environment is silent', async () => {
+      const deps = io({ '.env.development': 'PORT=3021\n' });
+
+      await expect(resolvePort(TARGETS['next-dev'], deps)).resolves.toEqual({
+        value: '3021',
+        file: '.env.development',
+      });
+    });
+
+    it('reads production env files for the production target', async () => {
+      const deps = io({ '.env.development': 'PORT=3021\n', '.env.production': 'PORT=8080\n' });
+
+      await expect(resolvePort(TARGETS['next-start'], deps)).resolves.toEqual({
+        value: '8080',
+        file: '.env.production',
+      });
+    });
+
+    it('returns null when nothing sets the variable', async () => {
+      const deps = io({ '.env': 'DATABASE_URL=postgresql://localhost:5432/app\n' });
+
+      await expect(resolvePort(TARGETS['next-dev'], deps)).resolves.toBeNull();
+    });
+
+    it('warns instead of failing when dotenv has been pruned from the install', async () => {
+      // `npm ci --omit=dev` removes dotenv. The launcher must still start the
+      // server — it just cannot read the files, and must say so rather than
+      // silently ignore a port the operator believes they configured.
+      const warn = vi.fn();
+      const deps = {
+        env: {},
+        readFile: fakeReader({ '.env.development': 'PORT=3021\n' }),
+        loadParser: async () => {
+          throw new Error("Cannot find module 'dotenv'");
+        },
+        warn,
+      };
+
+      await expect(resolvePort(TARGETS['next-dev'], deps)).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('dotenv is not installed'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('PORT'));
+    });
+  });
+
+  describe('main', () => {
+    /** Minimal stand-in for a spawned child process. */
+    function fakeChild() {
+      const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
+      child.kill = vi.fn();
+      return child;
+    }
+
+    type SpawnOptions = { env: Record<string, string | undefined> };
+
+    function deps(overrides: Record<string, unknown> = {}) {
+      return {
+        spawnFn: vi.fn((_command: string, _args: string[], _options: SpawnOptions) => fakeChild()),
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn(),
+        io: { env: {}, readFile: () => null, loadParser: async () => parseEnv, warn: vi.fn() },
+        ...overrides,
+      };
+    }
+
+    /**
+     * The fake child implements only what `main` uses — `on` and `kill` — not
+     * the full ChildProcess surface, so the cast is at the boundary rather than
+     * paid for by loosening the production signature.
+     */
+    const run = (argv: string[], d: ReturnType<typeof deps>) =>
+      main(argv, d as unknown as Parameters<typeof main>[1]);
+
+    afterEach(() => {
+      process.removeAllListeners('SIGINT');
+      process.removeAllListeners('SIGTERM');
+    });
+
+    it('refuses an unknown target and does not spawn anything', async () => {
+      const d = deps();
+
+      await run(['bogus'], d);
+
+      expect(d.error).toHaveBeenCalledWith(expect.stringContaining('Unknown target "bogus"'));
+      expect(d.exit).toHaveBeenCalledWith(1);
+      expect(d.spawnFn).not.toHaveBeenCalled();
+    });
+
+    it('names the file when a configured port is not a valid port', async () => {
+      const d = deps({
+        io: {
+          env: {},
+          readFile: (file: string) => (file === '.env.development' ? 'PORT=not-a-port\n' : null),
+          loadParser: async () => parseEnv,
+          warn: vi.fn(),
+        },
+      });
+
+      await run(['next-dev'], d);
+
+      expect(d.error).toHaveBeenCalledWith(
+        expect.stringContaining('PORT="not-a-port" (from .env.development)')
+      );
+      expect(d.exit).toHaveBeenCalledWith(1);
+      expect(d.spawnFn).not.toHaveBeenCalled();
+    });
+
+    it('passes the resolved port to the child through the environment', async () => {
+      const d = deps({ io: { env: { PORT: '3021' }, readFile: () => null, warn: vi.fn() } });
+
+      await run(['next-dev'], d);
+
+      const [, args, options] = d.spawnFn.mock.calls[0];
+      expect(args).toEqual(['dev']);
+      expect(options.env.PORT).toBe('3021');
+      expect(d.log).toHaveBeenCalledWith('> PORT=3021 (from environment)');
+    });
+
+    it('leaves an explicit -p flag alone and consults no files', async () => {
+      const readFile = vi.fn(() => 'PORT=3021\n');
+      const d = deps({
+        io: { env: {}, readFile, loadParser: async () => parseEnv, warn: vi.fn() },
+      });
+
+      await run(['next-dev', '-p', '4100'], d);
+
+      const [, args, options] = d.spawnFn.mock.calls[0];
+      expect(args).toEqual(['dev', '-p', '4100']);
+      expect(options.env.PORT).toBeUndefined();
+      expect(readFile).not.toHaveBeenCalled();
+      expect(d.log).not.toHaveBeenCalled();
+    });
+
+    it('exits with the child’s code so a failed build fails the npm script', async () => {
+      const child = fakeChild();
+      const d = deps({ spawnFn: vi.fn(() => child) });
+
+      await run(['next-dev'], d);
+      child.emit('exit', 3, null);
+
+      expect(d.exit).toHaveBeenCalledWith(3);
+    });
+
+    it('reports a child that could not be started at all', async () => {
+      const child = fakeChild();
+      const d = deps({ spawnFn: vi.fn(() => child) });
+
+      await run(['next-dev'], d);
+      child.emit('error', new Error('spawn ENOENT'));
+
+      expect(d.error).toHaveBeenCalledWith(expect.stringContaining('Failed to start "next"'));
+      expect(d.exit).toHaveBeenCalledWith(1);
+    });
+
+    it('forwards Ctrl-C to the child rather than orphaning it', async () => {
+      const child = fakeChild();
+      const d = deps({ spawnFn: vi.fn(() => child) });
+
+      await run(['next-dev'], d);
+      process.emit('SIGINT');
+
+      expect(child.kill).toHaveBeenCalledWith('SIGINT');
     });
   });
 
