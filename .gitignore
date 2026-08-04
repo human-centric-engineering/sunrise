@@ -22,8 +22,12 @@ dist/
 .env.test.local
 .env.production.local
 
-# IMPORTANT: Never commit these
-# Only .env.example should be committed
+# IMPORTANT: never commit a file containing secrets — those belong in
+# .env.local, which is ignored above.
+# .env.example is the committed template. `.env.development` is deliberately
+# left un-ignored: it is where a fork commits non-secret local settings such as
+# PORT, so every clone of that app agrees on the port it binds. See
+# .context/environment/services-env.md#port
 *.env
 !.env.example
 

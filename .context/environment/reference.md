@@ -28,6 +28,8 @@ Complete reference for all environment variables used in Sunrise.
 | [`EMAIL_FROM_NAME`](./email-env.md)                       | ❌ No    | String       | -             | Sender display name                   |
 | [`CONTACT_EMAIL`](./email-env.md)                         | ❌ No    | Email        | `EMAIL_FROM`  | Contact form notifications            |
 | [`NODE_ENV`](./services-env.md)                           | ✅ Yes   | Enum         | `development` | Environment name                      |
+| [`PORT`](./services-env.md#port) ¹                        | ❌ No    | Integer      | `3000`        | Port the server listens on            |
+| [`EMAIL_PORT`](./services-env.md#email_port) ¹            | ❌ No    | Integer      | `3000`        | React Email preview server port       |
 | [`TENANCY_MODE`](../architecture/multi-tenancy.md)        | ❌ No    | Enum         | `single`      | Tenancy model (`multi` = opt-in RLS)  |
 | [`NEXT_PUBLIC_APP_URL`](./services-env.md)                | ✅ Yes   | URL          | -             | Public app URL (client-side)          |
 | [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](./services-env.md) | ❌ No    | Boolean      | `true`        | Enable cookie consent banner          |

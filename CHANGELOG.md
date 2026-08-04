@@ -162,6 +162,39 @@ release process.
 
 ### Added
 
+- **`PORT` and `EMAIL_PORT` are now read from the project's env files, so an app
+  can declare the port it binds** — Next's CLI binds `--port` to `PORT` at
+  argument-parse time, which happens before it loads any `.env` file. A `PORT=`
+  line in `.env.local` was therefore visible to the app and invisible to the
+  server hosting it, leaving `-p` on the command line as the only way to move a
+  dev server. For anyone running several Sunrise-derived apps side by side —
+  reverse-proxying `*.test` hostnames to loopback ports, say — that meant
+  remembering which app owned which port, every time.
+
+  `npm run dev`, `npm run start` and `npm run email:dev` now go through
+  `scripts/dev-server.mjs`, which reads *only* the port variable out of the env
+  files, in Next's own precedence order, and passes it to the child process.
+  Resolution runs explicit `-p` flag → real environment variable →
+  `.env.<NODE_ENV>.local` → `.env.local` → `.env.<NODE_ENV>` → `.env` → `3000`,
+  so every existing way of setting the port keeps working and keeps outranking
+  the files. Nothing else about env loading changes, and the port stays
+  independent of `NEXT_PUBLIC_APP_URL` / `BETTER_AUTH_URL` — bind loopback,
+  advertise the proxied hostname.
+
+  `EMAIL_PORT` does the same for the React Email preview server, which also
+  defaults to 3000 and would otherwise collide with an app; it has no env
+  binding of its own, so the launcher passes `-p`.
+
+  The launcher is plain `.mjs` with no runtime dependency: `npm start` must
+  survive a production install (`npm ci --omit=dev`), which prunes both tsx and
+  dotenv. Without dotenv it still starts the server and says it could not read
+  the files. Deployed containers are untouched — the Docker image runs the
+  standalone server, which reads `process.env.PORT` directly.
+
+  **For forks:** commit `PORT` to `.env.development` (the one env file
+  `.gitignore` permits) and `npm run dev` needs no arguments in any clone. See
+  [`environment/services-env.md`](./.context/environment/services-env.md#port).
+
 - **Subject access (GDPR Art. 15) now has a seam, matching erasure** (#467) —
   Sunrise implemented the *erasure* half of GDPR carefully — `eraseUser()`, a
   documented per-table `onDelete` policy, an append-only receipt, a registration

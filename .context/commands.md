@@ -5,9 +5,10 @@ Complete list of commands for the Sunrise project.
 ## Development
 
 ```bash
-npm run dev              # Start development server (port 3000)
+npm run dev              # Start development server (PORT, default 3000)
+npm run dev -- -p 4100   # Start on an explicit port (overrides PORT)
 npm run build            # Build for production
-npm run start            # Start production server
+npm run start            # Start production server (PORT, default 3000)
 npm run lint             # Run ESLint
 npm run lint:fix         # Fix linting issues
 npm run format           # Format code with Prettier

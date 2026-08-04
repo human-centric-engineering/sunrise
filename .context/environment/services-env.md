@@ -25,6 +25,67 @@ Configuration for logging, security, application settings, and cookie consent.
 
 **Note:** Automatically set by Next.js (`next dev` → development, `next build`/`start` → production).
 
+### `PORT`
+
+- **Purpose:** TCP port the server listens on
+- **Required:** ❌ No
+- **Type:** Integer
+- **Default:** `3000`
+- **Used By:**
+  - `scripts/dev-server.mjs` — reads it for `npm run dev` / `npm run start`
+  - `Dockerfile` / `docker-compose.prod.yml` — set in the container environment
+  - Next's standalone server (`node server.js`) reads it directly
+
+**Resolution order** (highest first):
+
+| Source                    | Example                          |
+| ------------------------- | -------------------------------- |
+| Explicit CLI flag         | `npm run dev -- -p 4100`         |
+| Real environment variable | `PORT=4100 npm run dev`, Docker  |
+| `.env.<NODE_ENV>.local`   | `.env.development.local`         |
+| `.env.local`              | per-developer override           |
+| `.env.<NODE_ENV>`         | `.env.development` — committable |
+| `.env`                    | —                                |
+| Next.js default           | `3000`                           |
+
+**Why a launcher script:** Next's CLI binds `--port` to `PORT` at argument-parse
+time, before it loads any `.env` file — so a `PORT=` line in `.env.local` is
+visible to the app but not to the server hosting it. `scripts/dev-server.mjs`
+reads only the port variable out of those files and passes it to the child
+process. Nothing else about env loading changes.
+
+**Running several Sunrise apps at once:** give each fork its own port in a
+committed `.env.development` (the one env file `.gitignore` permits), and
+`npm run dev` needs no arguments in any of them. The port is independent of the
+URL the app is served on — behind a reverse proxy, bind the loopback port here
+and point [`NEXT_PUBLIC_APP_URL`](#next_public_app_url) / `BETTER_AUTH_URL` at
+the proxied hostname:
+
+```bash
+# myapp/.env.development — committed, contains no secrets
+PORT=3021
+NEXT_PUBLIC_APP_URL="https://myapp.test"
+BETTER_AUTH_URL="https://myapp.test"
+```
+
+better-auth derives its trusted origin from `BETTER_AUTH_URL`, so the proxied
+hostname needs no separate allow-listing. `ALLOWED_ORIGINS` stays unset unless
+a _different_ origin calls the API.
+
+**Not validated by `lib/env.ts`** — the port is consumed before the app boots.
+
+### `EMAIL_PORT`
+
+- **Purpose:** Port for the React Email preview server (`npm run email:dev`)
+- **Required:** ❌ No
+- **Type:** Integer
+- **Default:** `3000`
+- **Used By:** `scripts/dev-server.mjs`
+
+React Email's dev server also defaults to 3000 and has no env binding of its
+own, so the launcher passes `-p` for it. Set this when the preview server would
+otherwise collide with an app dev server. Same resolution order as `PORT`.
+
 ### `NEXT_PUBLIC_APP_URL`
 
 - **Purpose:** Public-facing application URL, accessible in client-side code

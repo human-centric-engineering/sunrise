@@ -86,6 +86,10 @@ npm run dev
 
 Open http://localhost:3000 to see the app.
 
+Running more than one Sunrise app on the same machine? Set `PORT` in the app's
+`.env.development` (or `.env.local`) and `npm run dev` will bind it — no `-p`
+flag to remember. See [`PORT`](./.context/environment/services-env.md#port).
+
 ### Using Docker
 
 ```bash
