@@ -147,6 +147,19 @@ const serverEnvSchema = z.object({
         'method, path). Default OFF — opt in with "true" to make navigation visible server-side.'
     ),
 
+  // Internal self-calls (optional)
+  INTERNAL_API_URL: z
+    .string()
+    .url({ message: 'INTERNAL_API_URL must be a valid URL (e.g., http://127.0.0.1:3000)' })
+    .optional()
+    .describe(
+      "Base URL server components use to call this app's own API (lib/api/server-fetch.ts). " +
+        'Defaults to loopback in development and BETTER_AUTH_URL otherwise. Set it when the ' +
+        'public URL is not reachable from inside the server — e.g. a local reverse proxy whose ' +
+        'TLS certificate Node does not trust, or a private network where the public hostname ' +
+        'resolves elsewhere.'
+    ),
+
   // Security Configuration (optional)
   ALLOWED_ORIGINS: z
     .string()

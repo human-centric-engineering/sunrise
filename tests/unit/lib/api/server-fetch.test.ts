@@ -11,7 +11,7 @@
  * @see lib/api/server-fetch.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { getCookieHeader, getBaseUrl, serverFetch } from '@/lib/api/server-fetch';
 
 /**
@@ -148,6 +148,71 @@ describe('getBaseUrl', () => {
 
     // Assert
     expect(result).toBe(env.BETTER_AUTH_URL);
+  });
+});
+
+/**
+ * Test Suite: getBaseUrl — internal vs public address
+ *
+ * A server component calling its own API must use an address the *server* can
+ * reach. That is not always the public one: behind a local reverse proxy
+ * terminating TLS with a certificate Node does not trust, fetching the public
+ * URL fails with UNABLE_TO_VERIFY_LEAF_SIGNATURE and every server-rendered page
+ * silently loses its data.
+ */
+describe('getBaseUrl — internal address resolution', () => {
+  const mutableEnv = env as { INTERNAL_API_URL?: string };
+
+  afterEach(() => {
+    delete mutableEnv.INTERNAL_API_URL;
+    vi.unstubAllEnvs();
+  });
+
+  it('prefers INTERNAL_API_URL over the public URL', () => {
+    mutableEnv.INTERNAL_API_URL = 'http://127.0.0.1:8080';
+
+    expect(getBaseUrl()).toBe('http://127.0.0.1:8080');
+  });
+
+  it('lets INTERNAL_API_URL win in development too, over the loopback default', () => {
+    mutableEnv.INTERNAL_API_URL = 'http://api.internal:9000';
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('PORT', '3010');
+
+    expect(getBaseUrl()).toBe('http://api.internal:9000');
+  });
+
+  it('strips a trailing slash so paths do not double up', () => {
+    mutableEnv.INTERNAL_API_URL = 'http://127.0.0.1:8080/';
+
+    expect(getBaseUrl()).toBe('http://127.0.0.1:8080');
+  });
+
+  it('ignores an INTERNAL_API_URL of only whitespace', () => {
+    mutableEnv.INTERNAL_API_URL = '   ';
+
+    expect(getBaseUrl()).toBe(env.BETTER_AUTH_URL);
+  });
+
+  it('calls loopback in development, not the proxied public hostname', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('PORT', '3010');
+
+    expect(getBaseUrl()).toBe('http://127.0.0.1:3010');
+  });
+
+  it('falls back to the public URL in development when the port is unknown', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('PORT', '');
+
+    expect(getBaseUrl()).toBe(env.BETTER_AUTH_URL);
+  });
+
+  it('does not reroute production to loopback — the public URL is reachable there', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('PORT', '3000');
+
+    expect(getBaseUrl()).toBe(env.BETTER_AUTH_URL);
   });
 });
 

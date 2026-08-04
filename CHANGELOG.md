@@ -204,6 +204,28 @@ release process.
   `next build` and never `npm start`; and `npm start` resolves against
   `.env.production*` / `.env`, never `.env.development`.
 
+- **Server components now call their own API at an address the server can
+  actually reach** — `getBaseUrl()` returned `BETTER_AUTH_URL`, so a server
+  component rendering a page went *out* to the public hostname and back in.
+  Point that hostname at a local reverse proxy terminating TLS with a
+  certificate Node does not trust (Herd, Valet, mkcert) and every self-call
+  fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — while the browser works
+  perfectly, because it trusts the same CA the server doesn't. Pages that catch
+  fetch errors then render empty: an admin user list reporting "No users found"
+  against a populated database.
+
+  `getBaseUrl()` (`lib/api/server-fetch.ts`) now resolves
+  `INTERNAL_API_URL` → `http://127.0.0.1:$PORT` in development when the port is
+  known → `BETTER_AUTH_URL`. Production behaviour is unchanged unless
+  `INTERNAL_API_URL` is set explicitly, which is there for the same split in
+  other environments — a private network where the public hostname resolves
+  elsewhere. Beyond correctness, a self-call over loopback skips a round trip
+  through the proxy.
+
+  `INTERNAL_API_URL` is validated as a URL in `lib/env.ts`. It must be **this**
+  app's own address; anything else would receive cookie-bearing internal
+  requests.
+
 - **Hot reload now works when the app is served on a hostname rather than
   `localhost`** — Next allows only `localhost` to reach its dev endpoints and
   blocks the rest, so an app behind a local reverse proxy rendered fine but

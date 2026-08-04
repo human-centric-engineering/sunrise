@@ -195,12 +195,31 @@ const cookieHeader = await getCookieHeader();
 // Returns: "session_token=abc; other=xyz"
 ```
 
-**`getBaseUrl()`** - Gets the app base URL for constructing absolute URLs:
+**`getBaseUrl()`** - Gets the base URL for the app's own API. This is the
+**internal** address, which is not always the public one:
 
 ```typescript
 const baseUrl = getBaseUrl();
-// Returns: "http://localhost:3000" or production URL
+// dev behind a proxy: "http://127.0.0.1:3010"
+// production:         "https://app.example.com"
 ```
+
+Resolution order:
+
+1. `INTERNAL_API_URL` if set — explicit, wins everywhere
+2. `http://127.0.0.1:$PORT` in development when the port is known (`npm run dev`
+   sets it — see [`environment/services-env.md`](../environment/services-env.md#port))
+3. `BETTER_AUTH_URL` — correct whenever the public URL is reachable from the
+   server, which is the usual production case
+
+**Why it is not simply the public URL.** Serving the app on a hostname whose TLS
+the server itself cannot verify — a local reverse proxy using Herd, Valet or
+mkcert — makes every self-call fail with `UNABLE_TO_VERIFY_LEAF_SIGNATURE` while
+the browser works perfectly. Pages then render with empty data and no visible
+error. Routing self-calls over loopback avoids that, and skips a pointless round
+trip out to the proxy and back. Set `INTERNAL_API_URL` for the same problem in
+any other environment (a private network where the public hostname resolves
+elsewhere).
 
 ### Response Parsing
 

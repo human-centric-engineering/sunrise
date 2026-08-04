@@ -104,6 +104,32 @@ React Email's dev server also defaults to 3000 and has no env binding of its
 own, so the launcher passes `-p` for it. Set this when the preview server would
 otherwise collide with an app dev server. Same resolution order as `PORT`.
 
+### `INTERNAL_API_URL`
+
+- **Purpose:** Base URL server components use to call **this app's own** API
+- **Required:** ❌ No
+- **Type:** URL
+- **Default:** `http://127.0.0.1:$PORT` in development; `BETTER_AUTH_URL` otherwise
+- **Used By:** `lib/api/server-fetch.ts` → `getBaseUrl()`
+
+The address the _server_ can reach is not always the address the _browser_ uses.
+A local reverse proxy terminating TLS with a certificate Node does not trust
+(Herd, Valet, mkcert) is the common case: the browser is happy, while every
+server-side self-call fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Because most
+pages catch fetch errors and render an empty result, this shows up as tables
+that say "none found" rather than as an error.
+
+Development defaults to loopback, so a proxied local setup needs nothing here.
+Set the variable when the same split appears elsewhere:
+
+```bash
+# Public hostname resolves to a load balancer the app cannot call back through
+INTERNAL_API_URL="http://127.0.0.1:3000"
+```
+
+> Do not point this at a _different_ application. It is the app's own address —
+> anything else sends cookie-bearing internal requests to a third party.
+
 ### `ALLOWED_DEV_ORIGINS`
 
 - **Purpose:** Extra hosts allowed to reach Next's **development** endpoints —
