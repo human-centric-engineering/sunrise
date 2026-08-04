@@ -16,6 +16,43 @@ release process.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-04
+
+> **Alpha release.** Tenth tagged Sunrise release. **MINOR bump** — a large
+> batch: an issue burn-down and a security sweep on top of new fork-facing
+> surface.
+>
+> **Security.** An email change now requires approval at the **old** address,
+> the current password, and revokes the account's other sessions (#489) —
+> _breaking for API callers_, since `PATCH /api/v1/users/me` no longer moves the
+> address in-request. Chat dispatch refuses tool names outside the agent's
+> advertised set (#476); `sanitizeUrl()` closes a control-character scheme
+> bypass (#437); JSON API responses carry `Cache-Control: private, no-cache`
+> (#487); and schedule- and inbound-triggered runs are written system-owned, so
+> erasing the operator who configured a trigger no longer destroys third
+> parties' inbound conversations (#502 — **ships migration
+> `20260801090000_system_owned_inbound_runs`**, which backfills inbound history).
+> That is one of **two migrations** in this release; the other,
+> `20260730140000_add_message_role_createdAt_index`, is the index the embedding
+> backfill's anti-join needed (#442).
+>
+> **Added.** The subject-access (GDPR Art. 15) export seam, matching erasure
+> (#467); `SIGNUP_MODE` to run a fork invite-only (#463); the authenticated-nav
+> and post-authentication landing seams (#473); private objects end-to-end in
+> storage, with a signed read route and a private root on the local provider
+> (#490); fork-owned seams at user creation (#464), for recurring app work
+> (#469), and for third-party frame hosts (#450); agent-opened chat turns and
+> caller message metadata (#474, #475); `apiClient.put()` (#495);
+> `validatePathParam()` (#435); `slugify()` (#451); and a configurable
+> dev-server port (#520).
+>
+> **Changed.** `HookEventType` and the email-kind registry open to fork-owned
+> values (#465, #468) — the first is _breaking_ for an exhaustive `switch` with
+> an `assertNever` default, deliberately. `prisma/schema/app.prisma` is now
+> genuinely fork-reserved and ships empty, its three platform models moved to
+> `platform.prisma` with no migration and no client change (#429). An idle
+> maintenance tick now does zero database work (#442).
+
 ### Security
 
 - **Changing an account's email now requires approval at the old address, the
