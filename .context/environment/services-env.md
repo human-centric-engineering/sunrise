@@ -104,6 +104,46 @@ React Email's dev server also defaults to 3000 and has no env binding of its
 own, so the launcher passes `-p` for it. Set this when the preview server would
 otherwise collide with an app dev server. Same resolution order as `PORT`.
 
+### `ALLOWED_DEV_ORIGINS`
+
+- **Purpose:** Extra hosts allowed to reach Next's **development** endpoints —
+  the HMR socket and `/_next/*` dev resources
+- **Required:** ❌ No
+- **Type:** String (comma-separated hosts, `*` wildcards allowed)
+- **Default:** the hostnames of `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL`
+- **Used By:** `next.config.js` → `allowedDevOrigins`
+
+> **Not [`ALLOWED_ORIGINS`](#allowed_origins).** That one is CORS for the API in
+> every environment. This one is hot reload in `next dev`, and Next ignores it
+> in production builds.
+
+Next allows only `localhost` / `*.localhost` to load its dev resources and
+blocks the rest. An app served through a local reverse proxy therefore renders
+fine but never hot-reloads, logging:
+
+```
+⚠ Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr from "myapp.test".
+```
+
+`next.config.js` heads this off by deriving the allowlist from the URLs the app
+is already configured to be served on, so **a fork that sets its URLs to the
+proxied hostname needs nothing here** — and never has to edit `next.config.js`.
+Restart the dev server after changing either URL; the config reads them at
+startup.
+
+Use this variable for hosts those URLs don't cover:
+
+```bash
+# Testing on a phone against your machine's LAN address
+ALLOWED_DEV_ORIGINS="192.168.0.18"
+
+# Serving tenants on subdomains in development
+ALLOWED_DEV_ORIGINS="*.myapp.test"
+```
+
+**Not validated by `lib/env.ts`** — read at config-load time, before the app
+boots.
+
 ### `NEXT_PUBLIC_APP_URL`
 
 - **Purpose:** Public-facing application URL, accessible in client-side code

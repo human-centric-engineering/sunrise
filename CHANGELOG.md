@@ -204,6 +204,21 @@ release process.
   `next build` and never `npm start`; and `npm start` resolves against
   `.env.production*` / `.env`, never `.env.development`.
 
+- **Hot reload now works when the app is served on a hostname rather than
+  `localhost`** — Next allows only `localhost` to reach its dev endpoints and
+  blocks the rest, so an app behind a local reverse proxy rendered fine but
+  never hot-reloaded, logging _"Blocked cross-origin request to Next.js dev
+  resource"_. Rather than have every fork hardcode its own hostname,
+  `next.config.js` now derives `allowedDevOrigins` from the hostnames already in
+  `NEXT_PUBLIC_APP_URL` and `BETTER_AUTH_URL`. Setting those to the proxied
+  hostname is enough; the config never needs editing.
+
+  New optional `ALLOWED_DEV_ORIGINS` adds hosts those URLs don't cover (a LAN IP
+  for device testing, or a `*.myapp.test` wildcard for subdomain-per-tenant
+  development). It is distinct from `ALLOWED_ORIGINS` — that is API CORS in
+  every environment, this is hot reload in `next dev`, and Next ignores it in
+  production builds.
+
 - **Subject access (GDPR Art. 15) now has a seam, matching erasure** (#467) —
   Sunrise implemented the *erasure* half of GDPR carefully — `eraseUser()`, a
   documented per-table `onDelete` policy, an append-only receipt, a registration

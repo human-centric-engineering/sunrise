@@ -148,6 +148,14 @@ Both must change together (`lib/env.ts` expects them to match), and
 after editing, or the browser keeps calling the old origin. better-auth derives
 its trusted origin from `BETTER_AUTH_URL`, so nothing else needs allow-listing.
 
+Hot reload follows automatically: `next.config.js` derives `allowedDevOrigins`
+from those two URLs, so the proxied hostname can reach Next's dev endpoints
+without you editing the config. (Next allows only `localhost` by default —
+without this you would get a page that renders but never hot-reloads, logging
+_"Blocked cross-origin request to Next.js dev resource"_.) For hosts the URLs
+don't cover — a LAN IP for testing on a phone, or `*.myapp.test` if you serve
+tenants on subdomains — add them to `ALLOWED_DEV_ORIGINS` in `.env.local`.
+
 **Deployment is unaffected**, by design:
 
 | Target                       | What happens                                                                                                       |

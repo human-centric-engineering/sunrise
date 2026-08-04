@@ -111,6 +111,9 @@ export default tseslint.config(
         console: 'readonly',
         __dirname: 'readonly',
         __filename: 'readonly',
+        // WHATWG globals Node exposes; next.config.js parses app URLs with URL.
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
       },
     },
   },
