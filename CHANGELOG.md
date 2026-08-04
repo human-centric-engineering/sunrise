@@ -191,9 +191,18 @@ release process.
   the files. Deployed containers are untouched — the Docker image runs the
   standalone server, which reads `process.env.PORT` directly.
 
-  **For forks:** commit `PORT` to `.env.development` (the one env file
-  `.gitignore` permits) and `npm run dev` needs no arguments in any clone. See
-  [`environment/services-env.md`](./.context/environment/services-env.md#port).
+  **For forks:** Sunrise now ships a committed `.env.development` setting
+  `PORT=3010` — the one env file `.gitignore` deliberately permits, for
+  non-secret settings that should travel with the repo. `npm run dev` needs no
+  arguments in any clone. **Change the value in your fork:** two Sunrise-derived
+  apps that both keep 3010 collide the moment they run together. See
+  [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#claiming-your-own-dev-port).
+
+  Deployment is untouched. The production image copies only the standalone
+  build, so neither `.env.development` nor `scripts/` reaches it; `ENV PORT=3000`
+  is a real environment variable, which outranks any file; Vercel runs
+  `next build` and never `npm start`; and `npm start` resolves against
+  `.env.production*` / `.env`, never `.env.development`.
 
 - **Subject access (GDPR Art. 15) now has a seam, matching erasure** (#467) —
   Sunrise implemented the *erasure* half of GDPR carefully — `eraseUser()`, a

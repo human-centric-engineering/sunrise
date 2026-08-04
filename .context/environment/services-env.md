@@ -72,6 +72,24 @@ better-auth derives its trusted origin from `BETTER_AUTH_URL`, so the proxied
 hostname needs no separate allow-listing. `ALLOWED_ORIGINS` stays unset unless
 a _different_ origin calls the API.
 
+**Sunrise ships `PORT=3010` in a committed `.env.development`.** A fork should
+change it — two Sunrise-derived apps that both keep the default collide the
+moment they run together. See
+[`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#claiming-your-own-dev-port).
+
+**Deployment is unaffected.** Two rules make this safe:
+
+1. A real environment variable always outranks a file.
+2. `.env.<NODE_ENV>` is only read in that mode — nothing loads
+   `.env.development` in production.
+
+| Target                       | Behaviour                                                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Docker (prod)                | Runtime image copies only the standalone build — `.env.development` and `scripts/` are never in it. `ENV PORT=3000`. |
+| Docker (dev / compose)       | `Dockerfile.dev` sets `ENV PORT=3000`; the real variable wins over the file. Compose still maps `3000:3000`.         |
+| Vercel                       | Runs `next build`, never `npm start`. The platform assigns the port.                                                 |
+| Any PaaS running `npm start` | Production mode reads `.env.production*` / `.env` only.                                                              |
+
 **Not validated by `lib/env.ts`** — the port is consumed before the app boots.
 
 ### `EMAIL_PORT`

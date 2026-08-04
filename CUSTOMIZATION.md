@@ -99,10 +99,67 @@ under either tier**, so both merge cleanly on upgrade. A framework fork owns
 - [ ] Configure required environment variables (see `.env.example`)
 - [ ] Generate auth secret: `openssl rand -base64 32`
 - [ ] Set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` in `.env.local`
+- [ ] **Change `PORT` in `.env.development`** — see below; Sunrise ships `3010`
+      and your fork should not keep it
 - [ ] Run: `npm install`
 - [ ] Initialize database: `npm run db:migrate:dev`
 - [ ] Start dev server: `npm run dev`
-- [ ] Test at `http://localhost:3000`
+- [ ] Test at `http://localhost:<your port>`
+
+### Claiming your own dev port
+
+Sunrise commits a `.env.development` holding one line:
+
+```bash
+PORT=3010
+```
+
+`npm run dev` reads it (via `scripts/dev-server.mjs`) and binds that port, so a
+checkout needs no `-p` flag and no per-developer setup. **Your fork inherits
+3010 on the first merge — change it.** Two apps derived from Sunrise that both
+keep the default will fight over the port the moment they run together, and the
+second one to start fails with `EADDRINUSE`.
+
+```bash
+# your-app/.env.development — committed, contains no secrets
+PORT=3021
+```
+
+Pick a port per app and commit it. Every clone of your fork then agrees, and
+nobody has to remember which app owns which number.
+
+**This file is committed on purpose.** `.gitignore` blocks `.env`, `.env.local`
+and every `.env*.local`, but deliberately leaves `.env.development` alone — it
+is the one place for non-secret settings that should travel with the repo.
+Never put a secret in it; those belong in `.env.local`, which is ignored.
+
+**Serving it on a hostname.** The port is independent of the URL. Behind a local
+reverse proxy (nginx, Caddy, Herd, Traefik) pointing `myapp.test` at the
+loopback port, bind the port here and set the URLs in `.env.local`:
+
+```bash
+# .env.local — ignored, per-developer
+BETTER_AUTH_URL="https://myapp.test"
+NEXT_PUBLIC_APP_URL="https://myapp.test"
+```
+
+Both must change together (`lib/env.ts` expects them to match), and
+`NEXT_PUBLIC_APP_URL` is inlined at compile time — **restart the dev server**
+after editing, or the browser keeps calling the old origin. better-auth derives
+its trusted origin from `BETTER_AUTH_URL`, so nothing else needs allow-listing.
+
+**Deployment is unaffected**, by design:
+
+| Target                       | What happens                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Docker (prod)                | The runtime image never receives `.env.development` — it copies only the standalone build. `ENV PORT=3000` stands. |
+| Docker (dev / compose)       | `ENV PORT=3000` is a real environment variable, which outranks any env file.                                       |
+| Vercel                       | Builds with `next build` (untouched) and never runs `npm start`. Port is the platform's.                           |
+| Any PaaS running `npm start` | Production mode reads `.env.production*` / `.env` — never `.env.development`.                                      |
+
+The rule underneath: a real environment variable always beats a file, and
+`.env.development` is only ever read in development. See
+[`environment/services-env.md`](./.context/environment/services-env.md#port).
 
 ---
 
