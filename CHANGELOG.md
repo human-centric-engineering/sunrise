@@ -16,7 +16,44 @@ release process.
 
 ## [Unreleased]
 
-## [0.8.0] — 2026-08-04
+## [0.8.1] — 2026-08-06
+
+> **Alpha release.** Eleventh tagged Sunrise release. **PATCH bump** — one
+> dependency fix, no public-surface change, no migration. Forks can take this
+> with a plain `git merge v0.8.1`.
+>
+> **Take this if you are on 0.8.0.** The v0.8.0 lockfile hoists a `ws` version
+> inside a high-severity advisory, so a fork that merged 0.8.0 is running the
+> vulnerable copy whether or not anything told it so.
+>
+> **Most forks will not have been warned.** `dependency-review` is diff-based:
+> once the vulnerable version sits on `main`, no later PR "introduces" it and
+> the job stays green — upstream and downstream alike. A fork only sees an
+> alert if its own `main` had already patched `ws` independently, because then
+> the sync merge reads as a *downgrade*. That is the inverted case — the forks
+> that get blocked are the ones that had already fixed themselves, while the
+> forks still carrying the vulnerability sync silently. Do not read a green
+> sync PR as evidence you are unaffected; check the hoisted `ws` version in
+> your lockfile.
+>
+> **If you worked around it with an `overrides` entry**, drop it when you take
+> this release. Forcing `ws` above the old `~8.20.1` pins was never in-range
+> for the two packages that declared them; the transitive bump below is, so
+> the override is no longer buying anything and is actively masking the
+> resolution.
+
+### Security
+
+- **`ws` lifted out of GHSA-96hv-2xvq-fx4p** — memory-exhaustion DoS from tiny
+  fragments and data chunks, high severity, affected `>=8.0.0 <=8.20.1`. The
+  vulnerable copy was held in place by two transitive packages reached via
+  `react-email` → `socket.io`, whose `~8.20.1` tilde pins excluded the patched
+  line. Refreshing just those two — `engine.io` 6.6.8 → 6.6.9 and
+  `socket.io-adapter` 2.5.7 → 2.5.8, both of which widened to `~8.21.0`
+  specifically to pick up patched `ws` — lets `ws` hoist to `8.21.2` on its
+  own, and every consumer (`jsdom`, `openai`, `happy-dom`, and the two above)
+  is satisfied natively. Lockfile-only: no `overrides` entry, no
+  `package.json` change, and no direct dependency moved (#538).
 
 > **Alpha release.** Tenth tagged Sunrise release. **MINOR bump** — a large
 > batch: an issue burn-down and a security sweep on top of new fork-facing
