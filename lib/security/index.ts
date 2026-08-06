@@ -48,6 +48,7 @@ export {
   sanitizeUrl,
   sanitizeRedirectUrl,
   safeCallbackUrl,
+  normalizeRootRelativePath,
   sanitizeObject,
   sanitizeFilename,
 } from '@/lib/security/sanitize';

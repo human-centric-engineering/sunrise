@@ -14,6 +14,7 @@ import {
   sanitizeRedirectUrl,
   safeCallbackUrl,
   isRootRelativePath,
+  normalizeRootRelativePath,
   sanitizeObject,
   sanitizeFilename,
 } from '@/lib/security/sanitize';
@@ -289,6 +290,28 @@ describe('Input Sanitization', () => {
       expect(safeCallbackUrl('')).toBe('/');
       expect(safeCallbackUrl(undefined as unknown as string)).toBe('/');
     });
+
+    // Reachable sink: login-form.tsx reads `callbackUrl` off the query string
+    // and router.push()es it on success. Next resolves it with
+    // `new URL(href, location.href)`, sees a different origin, and hard-navigates
+    // — the victim authenticates on the genuine page and lands on the attacker's.
+    it.each([
+      ['%09 / tab', '/\t/evil.com'],
+      ['%0A / LF', '/\n/evil.com'],
+      ['%0D / CR', '/\r/evil.com'],
+      ['LF then backslash', '/\n\\evil.com'],
+    ])('rejects a %s control-character redirect (open redirect)', (_label, payload) => {
+      expect(safeCallbackUrl(payload)).toBe('/');
+      expect(safeCallbackUrl(payload, '/dashboard')).toBe('/dashboard');
+    });
+
+    it('returns the normalized value so the judged string is the navigated string', () => {
+      expect(safeCallbackUrl('/dash\tboard')).toBe('/dashboard');
+    });
+
+    it('preserves a space in a legitimate query string', () => {
+      expect(safeCallbackUrl('/search?q=two words')).toBe('/search?q=two words');
+    });
   });
 
   describe('isRootRelativePath', () => {
@@ -304,6 +327,45 @@ describe('Input Sanitization', () => {
 
     it('should reject paths with no leading slash', () => {
       expect(isRootRelativePath('dashboard')).toBe(false);
+    });
+
+    // The WHATWG parser removes tab/LF/CR from anywhere in the input before it
+    // reads the authority, so these survive `trim()` and a naive `path[1]` test
+    // and then collapse to `//evil.com`. Asserted against the real parser below
+    // so the test fails if that platform behaviour is what ever changes.
+    it.each([
+      ['tab', '/\t/evil.com'],
+      ['LF', '/\n/evil.com'],
+      ['CR', '/\r/evil.com'],
+      ['LF then backslash', '/\n\\evil.com'],
+      ['tab then backslash', '/\t\\evil.com'],
+    ])('should reject a %s smuggled after the leading slash', (_label, path) => {
+      expect(new URL(path, 'https://good.example.com').origin).toBe('https://evil.com');
+      expect(isRootRelativePath(path)).toBe(false);
+      expect(normalizeRootRelativePath(path)).toBeNull();
+    });
+  });
+
+  describe('normalizeRootRelativePath', () => {
+    it('returns the normalized path, not the raw input', () => {
+      // The value that was judged safe must be the value the caller navigates
+      // to — returning the raw string would re-open the hole, since the parser
+      // acts on the stripped form.
+      expect(normalizeRootRelativePath('/dash\tboard')).toBe('/dashboard');
+      expect(normalizeRootRelativePath('/dashboard')).toBe('/dashboard');
+    });
+
+    it('does NOT strip spaces — the wider C0 class would corrupt real queries', () => {
+      // URL_NORMALIZE_STRIP covers U+0020 and is correct for scheme inspection,
+      // where the result is only compared. This value gets navigated to.
+      expect(normalizeRootRelativePath('/search?q=two words')).toBe('/search?q=two words');
+    });
+
+    it('returns null for off-origin forms', () => {
+      expect(normalizeRootRelativePath('//evil.com')).toBeNull();
+      expect(normalizeRootRelativePath('/\\evil.com')).toBeNull();
+      expect(normalizeRootRelativePath('https://evil.com')).toBeNull();
+      expect(normalizeRootRelativePath('dashboard')).toBeNull();
     });
   });
 

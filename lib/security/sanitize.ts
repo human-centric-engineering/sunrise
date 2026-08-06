@@ -253,23 +253,57 @@ export function sanitizeRedirectUrl(
  */
 export function safeCallbackUrl(url: string | null, fallback: string = '/'): string {
   if (!url || typeof url !== 'string') return fallback;
-  const trimmed = url.trim();
-  if (isRootRelativePath(trimmed)) return trimmed;
-  return fallback;
+  return normalizeRootRelativePath(url.trim()) ?? fallback;
+}
+
+/**
+ * ASCII tab, LF and CR — removed by the WHATWG URL parser from *anywhere* in
+ * the input, before it reads the authority.
+ *
+ * Deliberately NOT `URL_NORMALIZE_STRIP`, which covers the whole C0-plus-space
+ * range. That is right for scheme inspection, where the normalized value is
+ * only ever compared — but a root-relative path is **returned and navigated
+ * to**, and the wider class includes U+0020, which would silently rewrite a
+ * legitimate `/search?q=two words` into `/search?q=twowords`.
+ */
+const URL_AUTHORITY_STRIP = /[\t\n\r]/g;
+
+/**
+ * Normalize `path` the way the URL parser will, and return it only if what the
+ * parser ends up seeing is genuinely same-origin. Returns `null` otherwise.
+ *
+ * Callers must use the **returned** string rather than the one they passed in.
+ * That is the point of returning it: judging one value and navigating to a
+ * different one is what re-opens the hole this closes.
+ *
+ * Rejects a leading `//` (protocol-relative) AND a leading `/\` — the parser
+ * normalizes a backslash to a forward slash for "special" schemes
+ * (http/https/ws/wss/ftp/file) before reading the authority, so `/\evil.com`
+ * resolves to `//evil.com`, a different origin, without literally starting
+ * with `//`.
+ *
+ * It also rejects those forms once tab/LF/CR are removed. The parser deletes
+ * those characters wherever they appear, so `/<TAB>/evil.com` survives a
+ * `trim()` and a naive `path[1]` test and then collapses to `//evil.com`:
+ * `new URL('/\t/evil.com', 'https://good.example.com').href` is
+ * `'https://evil.com/'`. Same class as the scheme bypass `sanitizeUrl()`
+ * closes; this is the other guard in this file, which it never reached.
+ */
+export function normalizeRootRelativePath(path: string): string | null {
+  const seen = path.replace(URL_AUTHORITY_STRIP, '');
+  if (!seen.startsWith('/') || seen[1] === '/' || seen[1] === '\\') return null;
+  return seen;
 }
 
 /**
  * True if `path` is a root-relative path safe to redirect to same-origin.
  *
- * Rejects a leading `//` (protocol-relative) AND a leading `/\` — the WHATWG
- * URL parser normalizes a backslash to a forward slash for "special" schemes
- * (http/https/ws/wss/ftp/file) before reading the authority, so `/\evil.com`
- * resolves to `//evil.com` — a different origin — even though it doesn't
- * literally start with `//`. `new URL('/\\evil.com', 'https://good.example.com')`
- * confirms this: its `.href` is `https://evil.com/`.
+ * Prefer {@link normalizeRootRelativePath} when the value will be navigated
+ * to — a `true` here means the *normalized* form is safe, and the raw string
+ * you passed in may still differ from what the URL parser acts on.
  */
 export function isRootRelativePath(path: string): boolean {
-  return path.startsWith('/') && path[1] !== '/' && path[1] !== '\\';
+  return normalizeRootRelativePath(path) !== null;
 }
 
 import { isRecord } from '@/lib/utils';

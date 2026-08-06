@@ -16,6 +16,33 @@ release process.
 
 ## [Unreleased]
 
+### Security
+
+- **Open redirect closed in `isRootRelativePath()`.** The WHATWG URL parser
+  removes ASCII tab, LF and CR from anywhere in a URL before reading the
+  authority, so `/<TAB>/evil.com` survived `trim()` and the `path[1]` check and
+  then collapsed to `//evil.com`. The reachable sink was
+  `components/forms/login-form.tsx`, which reads `callbackUrl` off the query
+  string and `router.push()`es it after a successful login — a phishing
+  primitive, since the victim authenticates on the genuine page and lands on
+  the attacker's origin. The OAuth path was never affected (better-auth's
+  `matchesOriginPattern` rejects the character). Same class as #437, which
+  fixed it in `sanitizeUrl()`; the reasoning never propagated to the other
+  guard in the same file (#506).
+- **`safeCallbackUrl()` now returns the normalized string** rather than the raw
+  input, so the value that was judged safe is the value the caller navigates
+  to. `resolveAuthLandingRoute()` in `lib/auth-landing/route.ts` was corrected
+  the same way (#506).
+
+### Added
+
+- **`normalizeRootRelativePath(path)`** in `lib/security/sanitize.ts`, exported
+  via `@/lib/security` — returns the parser-normalized path when it is genuinely
+  same-origin, or `null`. Prefer it over `isRootRelativePath()` wherever the
+  value gets navigated to: returning the normalized form is what stops a caller
+  validating one string and using another. `isRootRelativePath()` is unchanged
+  in signature and now delegates to it (#506).
+
 ## [0.8.1] — 2026-08-06
 
 > **Alpha release.** Eleventh tagged Sunrise release. **PATCH bump** — one

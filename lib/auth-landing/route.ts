@@ -19,7 +19,7 @@
  * page error.
  */
 import { appAuthLandingRoute, appAuthLandingLabel } from '@/lib/app/auth-landing';
-import { isRootRelativePath } from '@/lib/security/sanitize';
+import { normalizeRootRelativePath } from '@/lib/security/sanitize';
 
 /** Sunrise's own landing route, used when the fork seam is `null`. */
 export const DEFAULT_AUTH_LANDING_ROUTE = '/dashboard';
@@ -40,8 +40,11 @@ export const DEFAULT_AUTH_LANDING_LABEL = 'Dashboard';
 function resolveAuthLandingRoute(): string {
   if (appAuthLandingRoute === null) return DEFAULT_AUTH_LANDING_ROUTE;
 
-  const trimmed = appAuthLandingRoute.trim();
-  if (!isRootRelativePath(trimmed)) {
+  // Take the NORMALIZED value, not the raw one: a seam value containing tab/LF/CR
+  // is judged on what the URL parser will see, so returning the input would hand
+  // every consuming redirect a string that resolves somewhere else.
+  const normalized = normalizeRootRelativePath(appAuthLandingRoute.trim());
+  if (normalized === null) {
     throw new Error(
       `Invalid appAuthLandingRoute in lib/app/auth-landing.ts: ${JSON.stringify(appAuthLandingRoute)}. ` +
         'Must be a root-relative path such as "/app" — an absolute or protocol-relative URL ' +
@@ -49,7 +52,7 @@ function resolveAuthLandingRoute(): string {
     );
   }
 
-  return trimmed;
+  return normalized;
 }
 
 /**
