@@ -55,6 +55,8 @@ release process.
   is satisfied natively. Lockfile-only: no `overrides` entry, no
   `package.json` change, and no direct dependency moved (#538).
 
+## [0.8.0] — 2026-08-04
+
 > **Alpha release.** Tenth tagged Sunrise release. **MINOR bump** — a large
 > batch: an issue burn-down and a security sweep on top of new fork-facing
 > surface.
