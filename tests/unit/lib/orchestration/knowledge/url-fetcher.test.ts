@@ -101,14 +101,56 @@ describe('fetchDocumentFromUrl', () => {
   // private target and had its body ingested as a document.
 
   describe('redirect handling', () => {
-    /** A 3xx carrying a Location header. */
-    function makeRedirect(location: string, status = 302) {
+    /**
+     * A 3xx carrying a Location header.
+     *
+     * `body.cancel` is modelled because the loop must release the socket on
+     * every hop — under `redirect: 'manual'` undici no longer drains
+     * intermediate bodies for us, and an unread stream is held out of the
+     * connection pool until GC.
+     */
+    function makeRedirect(
+      location: string,
+      status = 302,
+      cancel = vi.fn().mockResolvedValue(undefined)
+    ) {
       return {
         ...makeFetchResponse({ status, ok: false }),
         status,
         headers: { get: (k: string) => (k.toLowerCase() === 'location' ? location : null) },
+        body: { cancel },
       };
     }
+
+    it('releases each intermediate redirect body', async () => {
+      const cancel = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          makeRedirect('https://cdn.example.com/doc.txt', 302, cancel) as unknown as Response
+        )
+        .mockResolvedValueOnce(makeFetchResponse({ body: 'final' }) as unknown as Response);
+
+      await fetchDocumentFromUrl('https://example.com/doc.txt');
+
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps going when releasing the body fails', async () => {
+      // An already-errored stream rejects on cancel. That must not surface as
+      // the request's failure — there is nothing the caller can do about it and
+      // the redirect itself was fine.
+      const cancel = vi.fn().mockRejectedValue(new Error('stream already errored'));
+      vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          makeRedirect('https://cdn.example.com/doc.txt', 302, cancel) as unknown as Response
+        )
+        .mockResolvedValueOnce(makeFetchResponse({ body: 'final' }) as unknown as Response);
+
+      const result = await fetchDocumentFromUrl('https://example.com/doc.txt');
+
+      expect(result.content.toString()).toBe('final');
+      expect(cancel).toHaveBeenCalledTimes(1);
+    });
 
     it('re-runs the SSRF guard on the redirect target and blocks a private one', async () => {
       const METADATA = 'http://169.254.169.254/latest/meta-data/';
