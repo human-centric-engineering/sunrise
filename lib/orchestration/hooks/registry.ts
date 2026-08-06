@@ -240,6 +240,14 @@ async function attemptDelivery(
       },
       body,
       signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+      // Refuse redirects rather than follow them (#534). `fetch` defaults to
+      // 'follow', and the hook URL is validated once at create/update time and
+      // never again at dispatch — so a redirect is an unvalidated second target
+      // that this request would POST the event payload AND its HMAC signature
+      // headers to. Erroring is also what GitHub and Stripe do for outbound
+      // webhooks: an endpoint that moved should be re-pointed, not chased.
+      // The failure surfaces as a normal delivery error and is retried.
+      redirect: 'error',
     });
 
     statusCode = res.status;

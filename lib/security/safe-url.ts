@@ -21,11 +21,26 @@
  *
  * Limitations — by design:
  *
- *   - No DNS resolution. Defending against DNS rebinding would require
- *     resolving at validate-time AND pinning the resolved IP for the
- *     subsequent fetch, which the OpenAI/Anthropic SDKs don't expose.
- *     We instead block all private ranges at fetch-time too (see the
- *     defense-in-depth check in `provider-manager.buildProviderFromConfig`).
+ *   - **No DNS resolution — so a hostname that resolves to a private or
+ *     metadata address is NOT blocked, and DNS rebinding is not defended
+ *     against.** This is an accepted risk, not a mitigated one. Defending
+ *     against rebinding would require resolving at validate-time AND pinning
+ *     the resolved IP for the subsequent fetch, which the OpenAI/Anthropic
+ *     SDKs don't expose.
+ *
+ *     `provider-manager.buildProviderFromConfig` re-runs this function before
+ *     building a provider. That is worth having, and its own comment is
+ *     accurate about why — it catches a PATCH that flipped `isLocal` without
+ *     re-validating `baseUrl`, and direct DB writes that bypass the Zod layer.
+ *     But it is **not** a compensating control for the gap above: it re-parses
+ *     the same string and never resolves anything, so against a hostname
+ *     pointing at a private address a second identical check adds nothing.
+ *     (An earlier version of this comment claimed otherwise — see #534.)
+ *   - **Validation is per-URL, not per-hop.** A caller that follows redirects
+ *     presents the guard with only the first target; every subsequent `Location`
+ *     is unchecked. Callers must either refuse redirects (`redirect: 'error'`)
+ *     or re-run this check on each hop — see `fetchRevalidatingRedirects` in
+ *     `lib/orchestration/knowledge/url-fetcher.ts` for the loop.
  *   - No IPv4-in-IPv6 mapping parsing beyond what `URL` exposes.
  *
  * This module is platform-agnostic — no Next.js imports.

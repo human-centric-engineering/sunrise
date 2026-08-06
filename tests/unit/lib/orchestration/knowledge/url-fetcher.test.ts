@@ -94,6 +94,91 @@ describe('fetchDocumentFromUrl', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // ── Redirect re-validation (#534) ───────────────────────────────────────
+  //
+  // The guard validates ONE url. With `redirect: 'follow'` it only ever saw the
+  // first, so `https://attacker.example/doc` -> 302 -> cloud metadata reached a
+  // private target and had its body ingested as a document.
+
+  describe('redirect handling', () => {
+    /** A 3xx carrying a Location header. */
+    function makeRedirect(location: string, status = 302) {
+      return {
+        ...makeFetchResponse({ status, ok: false }),
+        status,
+        headers: { get: (k: string) => (k.toLowerCase() === 'location' ? location : null) },
+      };
+    }
+
+    it('re-runs the SSRF guard on the redirect target and blocks a private one', async () => {
+      const METADATA = 'http://169.254.169.254/latest/meta-data/';
+      vi.mocked(checkSafeProviderUrl).mockImplementation((u: string) =>
+        u === METADATA
+          ? { ok: false, reason: 'private_ip', message: 'link-local address blocked' }
+          : { ok: true }
+      );
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(makeRedirect(METADATA) as unknown as Response);
+
+      await expect(fetchDocumentFromUrl('https://attacker.example/doc')).rejects.toThrow(
+        /URL blocked after 1 redirect/
+      );
+
+      // The redirect target must never be requested.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://attacker.example/doc');
+      expect(vi.mocked(checkSafeProviderUrl)).toHaveBeenCalledWith(METADATA);
+    });
+
+    it('never lets fetch follow redirects itself', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(makeFetchResponse({ body: 'ok' }) as unknown as Response);
+
+      await fetchDocumentFromUrl('https://example.com/doc.txt');
+
+      // 'follow' would hand the guard's job to undici and re-open the hole.
+      expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
+    });
+
+    it('follows a safe redirect and returns the final document', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          makeRedirect('https://cdn.example.com/doc.txt') as unknown as Response
+        )
+        .mockResolvedValueOnce(makeFetchResponse({ body: 'final body' }) as unknown as Response);
+
+      const result = await fetchDocumentFromUrl('https://example.com/doc.txt');
+
+      expect(result.content.toString()).toBe('final body');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy.mock.calls[1]?.[0]).toBe('https://cdn.example.com/doc.txt');
+    });
+
+    it('resolves a relative Location against the redirecting URL', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('/moved/doc.txt') as unknown as Response)
+        .mockResolvedValueOnce(makeFetchResponse({ body: 'x' }) as unknown as Response);
+
+      await fetchDocumentFromUrl('https://example.com/orig/doc.txt');
+
+      expect(fetchSpy.mock.calls[1]?.[0]).toBe('https://example.com/moved/doc.txt');
+    });
+
+    it('gives up after the hop cap rather than looping forever', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        makeRedirect('https://example.com/next') as unknown as Response
+      );
+
+      await expect(fetchDocumentFromUrl('https://example.com/start')).rejects.toThrow(
+        /Too many redirects/
+      );
+    });
+  });
+
   // ── HTTP error responses ────────────────────────────────────────────────
 
   it('throws when fetch response is not ok (404)', async () => {
