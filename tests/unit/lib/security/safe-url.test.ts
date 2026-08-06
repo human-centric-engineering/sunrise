@@ -118,6 +118,47 @@ describe('checkSafeProviderUrl', () => {
     });
   });
 
+  // #534: an IPv4-mapped IPv6 literal reaches the same host as its dotted-quad
+  // form (verified: a fetch to `http://[::ffff:127.0.0.1]:PORT/` is served by a
+  // listener bound to 127.0.0.1), but matched nothing in the denylist and made
+  // `parseIpv4` return null, so every range check was false and the guard said
+  // ok. Note the WHATWG parser rewrites the dotted spelling into hex, so these
+  // arrive as `::ffff:a9fe:a9fe` rather than the readable form written here.
+  describe('IPv4-in-IPv6 literals', () => {
+    it('normalizes the mapped form to its dotted quad', () => {
+      // Guards the premise of every case below: if the parser stopped
+      // rewriting, matching only the hex form would silently cover nothing.
+      expect(new URL('http://[::ffff:169.254.169.254]/').hostname).toBe('[::ffff:a9fe:a9fe]');
+    });
+
+    it.each([
+      ['cloud metadata', 'http://[::ffff:169.254.169.254]/latest/meta-data/'],
+      ['metadata, hex spelling', 'http://[::ffff:a9fe:a9fe]/'],
+      ['loopback', 'http://[::ffff:127.0.0.1]/'],
+      ['RFC1918 10/8', 'http://[::ffff:10.0.0.5]/'],
+      ['RFC1918 192.168/16', 'http://[::ffff:192.168.1.1]/'],
+      ['deprecated IPv4-compatible', 'http://[::169.254.169.254]/'],
+    ])('blocks %s', (_label, url) => {
+      expect(checkSafeProviderUrl(url).ok).toBe(false);
+    });
+
+    it('applies the same policy as the plain form, not a blanket refusal', () => {
+      // Unwrapping rather than rejecting means allowLoopback still works for a
+      // local provider addressed this way — and that private ranges stay
+      // blocked even with the opt-in, exactly as for the dotted form.
+      expect(
+        checkSafeProviderUrl('http://[::ffff:127.0.0.1]:11434/', { allowLoopback: true }).ok
+      ).toBe(true);
+      expect(checkSafeProviderUrl('http://[::ffff:10.0.0.5]/', { allowLoopback: true }).ok).toBe(
+        false
+      );
+    });
+
+    it('leaves genuine IPv6 addresses alone', () => {
+      expect(checkSafeProviderUrl('http://[2606:4700:4700::1111]/').ok).toBe(true);
+    });
+  });
+
   describe('public hosts', () => {
     it.each([
       'https://api.openai.com/v1',

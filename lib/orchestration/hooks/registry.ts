@@ -269,7 +269,22 @@ async function attemptDelivery(
 
     error = `HTTP ${res.status}`;
   } catch (err: unknown) {
-    error = err instanceof Error ? err.message : String(err);
+    // undici reports the interesting part on `cause`, not `message`: a refused
+    // redirect, a DNS failure and a connection reset are all a bare
+    // "fetch failed" without it. That matters most for the `redirect: 'error'`
+    // above — an endpoint that started 301-ing would otherwise burn every retry
+    // and land in `exhausted` with nothing telling the operator that
+    // "re-point the URL" is the fix.
+    if (err instanceof Error) {
+      // Only unwrap shapes that stringify usefully — an arbitrary object would
+      // land in the operator-visible delivery log as "[object Object]".
+      const { cause } = err;
+      const detail =
+        cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : null;
+      error = detail ? `${err.message}: ${detail}` : err.message;
+    } else {
+      error = String(err);
+    }
   }
 
   // Delivery failed — update record and maybe schedule retry

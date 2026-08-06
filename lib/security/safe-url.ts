@@ -72,6 +72,43 @@ function stripIpv6Brackets(host: string): string {
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
+/**
+ * IPv4-mapped (`::ffff:a9fe:a9fe`) and the deprecated IPv4-compatible
+ * (`::a9fe:a9fe`) IPv6 forms, as the WHATWG parser normalizes them.
+ *
+ * Note the parser rewrites the readable dotted spelling into hex —
+ * `new URL('http://[::ffff:169.254.169.254]/').hostname` is `[::ffff:a9fe:a9fe]` —
+ * so matching only the dotted form would catch nothing that actually reaches here.
+ */
+const IPV4_IN_IPV6 = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+const IPV4_IN_IPV6_DOTTED = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/;
+
+/**
+ * Rewrite an IPv4-in-IPv6 literal to its dotted-quad equivalent so the IPv4
+ * range checks below actually see it.
+ *
+ * These addresses reach the same host as the bare IPv4 form — verified: a fetch
+ * to `http://[::ffff:127.0.0.1]:PORT/` is served by a listener bound to
+ * `127.0.0.1`. Without this, `http://[::ffff:169.254.169.254]/` matched nothing
+ * in `BLOCKED_HOSTNAMES`, `parseIpv4` returned null so every range check was
+ * false, and cloud metadata was reachable through a guard that reports `ok`.
+ *
+ * Unwrapping rather than rejecting outright is deliberate: it makes the mapped
+ * form obey exactly the same policy as the plain one, so `allowLoopback` still
+ * works for a local provider addressed as `::ffff:127.0.0.1`.
+ */
+function unwrapIpv4InIpv6(host: string): string {
+  const dotted = IPV4_IN_IPV6_DOTTED.exec(host);
+  if (dotted?.[1]) return dotted[1];
+
+  const hex = IPV4_IN_IPV6.exec(host);
+  if (!hex?.[1] || !hex[2]) return host;
+
+  const high = Number.parseInt(hex[1], 16);
+  const low = Number.parseInt(hex[2], 16);
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
 export interface SafeUrlCheckOptions {
   /**
    * When true, permit loopback targets (`localhost`, `127.0.0.1`, `::1`).
@@ -120,7 +157,9 @@ export function checkSafeProviderUrl(
   // Node's WHATWG implementation — e.g. `http://[::1]/` → `[::1]`.
   // Strip them once so hostname comparisons and IP-range checks can use
   // a single canonical form.
-  const host = stripIpv6Brackets(parsed.hostname.toLowerCase());
+  // Unwrap IPv4-in-IPv6 BEFORE any comparison, so a mapped literal is subject
+  // to the identical denylist and range checks as its dotted-quad form (#534).
+  const host = unwrapIpv4InIpv6(stripIpv6Brackets(parsed.hostname.toLowerCase()));
 
   if (BLOCKED_HOSTNAMES.has(host)) {
     return {

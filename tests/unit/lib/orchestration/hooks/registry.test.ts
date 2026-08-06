@@ -972,6 +972,36 @@ describe('HMAC signing (via dispatchWebhook)', () => {
     expect(init.redirect).toBe('error');
   });
 
+  // undici reports the reason on `cause`, not `message` — a refused redirect, a
+  // DNS failure and a connection reset are all a bare "fetch failed" without it.
+  // Without this an endpoint that started 301-ing would burn every retry and
+  // land in `exhausted` with nothing pointing at "re-point the URL".
+  it('records the underlying cause, not a bare "fetch failed"', async () => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({
+        id: 'hook-cause',
+        eventType: 'conversation.started',
+        action: { type: 'webhook', url: 'https://example.com/redirecting' },
+      }),
+    ] as never);
+    mockFetch.mockRejectedValueOnce(
+      Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') })
+    );
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      const writes = vi
+        .mocked(prisma.aiEventHookDelivery.update)
+        .mock.calls.map((c) => (c[0] as { data?: { lastError?: string } })?.data?.lastError)
+        .filter(Boolean);
+      expect(writes.some((e) => e?.includes('unexpected redirect'))).toBe(true);
+    });
+  });
+
   it('omits signing headers when hook.secret is null', async () => {
     vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
       makeHook({

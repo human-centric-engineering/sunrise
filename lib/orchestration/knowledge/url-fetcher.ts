@@ -93,6 +93,15 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
     // `!response.ok` check below report it.
     if (!location) return response;
 
+    // Under `redirect: 'follow'` undici consumed intermediate bodies itself.
+    // Reading only the headers leaves the stream open, and undici holds the
+    // socket out of the pool until the body is consumed or cancelled — so every
+    // hop would leak a connection until GC. Release it before moving on or
+    // throwing, including on the error paths below.
+    await response.body?.cancel().catch(() => {
+      /* already errored or consumed — nothing to release */
+    });
+
     if (hop >= MAX_REDIRECTS) {
       throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`);
     }

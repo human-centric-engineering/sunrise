@@ -46,6 +46,18 @@ release process.
   dispatch, and following a redirect would POST the event payload *and its HMAC
   signature headers* to the new target. Both paths are `withAdminAuth`, so this
   is hardening rather than a privilege boundary (#534).
+- **SSRF guard: IPv4-in-IPv6 literals are no longer a bypass.**
+  `http://[::ffff:169.254.169.254]/` reaches the same host as
+  `http://169.254.169.254/` — verified against a live listener — but the mapped
+  form matched nothing in the denylist and made `parseIpv4()` return `null`, so
+  every range check was false and `checkSafeProviderUrl()` returned `ok`. Cloud
+  metadata, loopback and RFC1918 were all reachable through a guard reporting
+  success. Mapped (`::ffff:`) and the deprecated IPv4-compatible (`::`) forms
+  are now unwrapped to their dotted quad **before** any comparison, so they obey
+  exactly the same policy as the plain form — including `allowLoopback`, which
+  still works for a local provider addressed that way. Found by `/code-review`
+  on the redirect work below, which had claimed to close the metadata attack
+  while this made it reachable in one line (#534).
 - **`safe-url.ts`'s header no longer claims a compensating control it does not
   have.** It cited the re-check in `provider-manager.buildProviderFromConfig`
   as covering DNS rebinding; that call re-parses the same string and resolves
