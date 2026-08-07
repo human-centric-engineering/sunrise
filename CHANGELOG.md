@@ -99,8 +99,27 @@ release process.
   and logs the value with the reasons Zod actually reported. It degrades on any
   `webhookUrl`-only failure — unsafe URL, malformed URL, wrong type — and still
   rejects a config that is invalid for any other reason (#553).
+- **Escalation webhooks refuse redirects — note this failure is quieter than the
+  dispatchers'.** Same reasoning as the two webhook dispatchers above, but
+  `notifyEscalation` is fire-and-forget: there is no retry and no delivery row,
+  so an escalation endpoint that starts redirecting (an `http`→`https` upgrade,
+  say) fails **once per escalation** with a single `logger.warn` as the entire
+  signal. That warning now names the underlying cause rather than reporting a
+  bare `fetch failed` — without it the condition is effectively undiagnosable.
+  If you route escalations through a redirecting endpoint, re-point it (#553).
 
 ### Added
+
+- **`describeFetchFailure(err)`** in `lib/errors/fetch-error.ts` — renders a
+  thrown value for an operator, unwrapping undici's `cause`. Node's `fetch`
+  reports nearly every network-layer failure as a bare
+  `TypeError: fetch failed` and puts the real reason on `error.cause`, so a
+  refused redirect, a DNS miss and a connection reset are indistinguishable
+  from the message alone. Extracted once three outbound callers needed it
+  (`hooks/registry.ts`, `webhooks/dispatcher.ts`, `escalation-notifier.ts`),
+  all of which gained `redirect: 'error'` and have to explain that refusal to a
+  human. Only `Error` and `string` causes are unwrapped — an arbitrary object
+  would reach the log as `[object Object]` (#553).
 
 - **`normalizeRootRelativePath(path)`** in `lib/security/sanitize.ts`, exported
   via `@/lib/security` — returns the parser-normalized path when it is genuinely

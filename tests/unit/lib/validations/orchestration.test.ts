@@ -3311,3 +3311,38 @@ describe('updateOrchestrationSettingsSchema', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// escalationConfig.webhookUrl — SSRF refine on the WRITE path (#553)
+// ---------------------------------------------------------------------------
+
+describe('updateOrchestrationSettingsSchema — escalationConfig.webhookUrl', () => {
+  const base = { emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' as const };
+
+  it('accepts a public https webhook', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      escalationConfig: { ...base, webhookUrl: 'https://hooks.example.com/escalate' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // The read/dispatch side is covered in settings.test.ts; this pins the other
+  // half of the claim, that the refine rejects an unsafe value at the API
+  // boundary rather than only when the stored config is next parsed.
+  it.each([
+    ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
+    ['IPv4-mapped IPv6 metadata', 'http://[::ffff:169.254.169.254]/'],
+    ['RFC1918', 'http://10.0.0.5/hooks'],
+    ['loopback', 'http://127.0.0.1:9000/'],
+  ])('rejects %s', (_label, webhookUrl) => {
+    const result = updateOrchestrationSettingsSchema.safeParse({
+      escalationConfig: { ...base, webhookUrl },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('still accepts a config with no webhook at all', () => {
+    const result = updateOrchestrationSettingsSchema.safeParse({ escalationConfig: base });
+    expect(result.success).toBe(true);
+  });
+});

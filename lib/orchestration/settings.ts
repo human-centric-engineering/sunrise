@@ -49,6 +49,13 @@ export function parseSearchConfig(raw: Prisma.JsonValue | null | undefined): Sea
   return parsed.success ? parsed.data : null;
 }
 
+/** Render a rejected `webhookUrl` for the log. `typeof null` is `'object'`, which reads as "some object was stored" rather than "it was null". */
+function describeWebhookValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null) return 'null';
+  return `<${typeof value}>`;
+}
+
 /**
  * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.escalationConfig`
  * into a typed `EscalationConfig` via Zod. Returns `null` if absent or invalid.
@@ -89,8 +96,16 @@ export function parseEscalationConfig(
   const withoutWebhook = escalationConfigSchema.safeParse({ ...raw, webhookUrl: undefined });
   if (!withoutWebhook.success) return null;
 
+  // Warned on every parse, deliberately. This runs from the admin GET, the
+  // 30s-cached `getOrchestrationSettings()` and every escalation dispatch, so
+  // it repeats until the value is fixed — roughly twice a minute per process.
+  // A once-per-process dedupe was tried and reverted: it makes a
+  // security-relevant misconfiguration invisible to anyone who starts reading
+  // logs after boot, which is worse than the repetition. The line is also the
+  // signal that the condition is ONGOING; it stops the moment the config is
+  // corrected.
   logger.warn('Escalation webhookUrl rejected; keeping the rest of the config', {
-    webhookUrl: typeof raw.webhookUrl === 'string' ? raw.webhookUrl : typeof raw.webhookUrl,
+    webhookUrl: describeWebhookValue(raw.webhookUrl),
     // Report what Zod actually objected to. The branch fires for a missing
     // scheme, an over-length value or a non-string too, and hardcoding the
     // SSRF text would send an operator hunting a firewall problem that isn't

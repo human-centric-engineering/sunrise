@@ -290,7 +290,18 @@ describe('parseEscalationConfig', () => {
       expect(wrongType.reason).toContain('expected string');
       expect(wrongType.reason).not.toContain('private or internal');
       // A non-string cannot be logged verbatim as a URL — record its type.
-      expect(wrongType.webhookUrl).toBe('number');
+      // `typeof null` is 'object', so null is spelled out rather than typed.
+      expect(wrongType.webhookUrl).toBe('<number>');
+    });
+
+    it('logs a null webhookUrl as "null", not as an object', () => {
+      parseEscalationConfig({ ...base, webhookUrl: null });
+
+      const [, meta] = vi.mocked(logger.warn).mock.calls.at(-1) as [
+        string,
+        { webhookUrl: unknown },
+      ];
+      expect(meta.webhookUrl).toBe('null');
     });
 
     it('still rejects the whole config when another field is also invalid', () => {
