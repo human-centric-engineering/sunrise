@@ -2698,7 +2698,19 @@ export const escalationConfigSchema = z.object({
     .array(z.string().email('Each entry must be a valid email address'))
     .min(1, 'At least one email address is required')
     .max(20, 'At most 20 email addresses'),
-  webhookUrl: z.string().url('Must be a valid URL').max(2000).optional(),
+  // Refined like every other outbound target in this file (provider baseUrl,
+  // event-hook action.url, webhook subscription url). This one was missed, so
+  // an escalation POSTed its payload to whatever host was configured —
+  // including cloud metadata and RFC1918 (#553). The schema is re-parsed at
+  // dispatch by `parseEscalationConfig`, so the refine guards both the write
+  // and the use, which is what survives a direct DB write or a restored
+  // backup bundle.
+  webhookUrl: z
+    .string()
+    .url('Must be a valid URL')
+    .max(2000)
+    .refine((url) => isSafeProviderUrl(url), 'URL is not allowed (private or internal address)')
+    .optional(),
   notifyOnPriority: z.enum(['all', 'high', 'medium_and_above']).default('all'),
 });
 

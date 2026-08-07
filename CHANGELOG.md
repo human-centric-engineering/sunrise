@@ -77,6 +77,23 @@ release process.
   as normal. Both dispatchers now also record the underlying `cause` of a fetch
   failure rather than a bare `fetch failed`, so that case is diagnosable from
   the delivery log (#534).
+- **Escalation webhooks are validated against SSRF at last.**
+  `escalationConfig.webhookUrl` was `z.string().url()` with **no**
+  `isSafeProviderUrl` refine, while every comparable outbound target in the same
+  file has one (provider `baseUrl`, event-hook `action.url`, webhook
+  subscription `url`). An escalation therefore POSTed its payload — conversation
+  reason, priority and metadata — to whatever host was configured, cloud
+  metadata and RFC1918 included. The refine is now applied, and because
+  `parseEscalationConfig` re-parses the stored JSON on **every dispatch** it
+  guards the use as well as the write, which is what survives a direct DB write
+  or a restored backup bundle. The same call also refuses redirects (#553).
+- **A rejected escalation webhook no longer silences the escalation emails.**
+  Because the refine makes the whole config fail to parse, the obvious
+  implementation would return `null` and drop everything — so an install that
+  already had a private webhook URL stored would silently stop notifying anyone
+  on upgrade, for a high-priority signal. `parseEscalationConfig` now drops just
+  the webhook, sends the emails, and logs the rejected URL and the reason
+  (#553).
 
 ### Added
 

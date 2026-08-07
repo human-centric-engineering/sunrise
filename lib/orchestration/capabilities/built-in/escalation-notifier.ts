@@ -15,6 +15,7 @@ import { sendEmail } from '@/lib/email/send';
 import { EscalationNotification } from '@/emails/escalation-notification';
 import { escalationConfigSchema } from '@/lib/validations/orchestration';
 import { env } from '@/lib/env';
+import { isRecord } from '@/lib/utils';
 import type { EscalationConfig } from '@/types/orchestration';
 
 interface EscalationPayload {
@@ -56,7 +57,25 @@ function meetsPriorityThreshold(
  */
 function parseEscalationConfig(raw: Prisma.JsonValue | null | undefined): EscalationConfig | null {
   const parsed = escalationConfigSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return parsed.data;
+
+  // `webhookUrl` gained an SSRF refine in #553, so a config stored before that
+  // — or written straight to the DB — can now fail on the webhook alone.
+  // Returning null here would silently stop the EMAIL escalations too, which is
+  // the wrong failure for a high-priority signal and would happen on upgrade
+  // without anyone touching the config. Drop just the webhook and say so.
+  if (isRecord(raw) && typeof raw.webhookUrl === 'string') {
+    const withoutWebhook = escalationConfigSchema.safeParse({ ...raw, webhookUrl: undefined });
+    if (withoutWebhook.success) {
+      logger.warn('Escalation webhookUrl rejected; sending email notifications only', {
+        webhookUrl: raw.webhookUrl,
+        reason: 'URL is not allowed (private or internal address)',
+      });
+      return withoutWebhook.data;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -120,6 +139,10 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
             timestamp: new Date().toISOString(),
           }),
           signal: AbortSignal.timeout(10_000),
+          // Refuse redirects (#534/#553). The URL is validated when the config
+          // is parsed, not per hop, so following one would POST the escalation
+          // payload to a target the guard never saw.
+          redirect: 'error',
         });
 
         if (!response.ok) {

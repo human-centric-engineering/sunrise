@@ -254,6 +254,73 @@ describe('notifyEscalation', () => {
       );
     });
 
+    // #553: `webhookUrl` had only `z.string().url()` — no SSRF refine — while
+    // every comparable outbound target in the same file refines. So an
+    // escalation POSTed its payload to whatever host was configured.
+    // `parseEscalationConfig` re-parses the stored JSON on every dispatch, so
+    // the refine guards the use as well as the write — which is what survives a
+    // direct DB write or a restored backup bundle.
+    describe('SSRF guard on webhookUrl', () => {
+      it.each([
+        ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
+        ['IPv4-mapped IPv6 metadata', 'http://[::ffff:169.254.169.254]/'],
+        ['RFC1918', 'http://10.0.0.5/internal'],
+        ['loopback', 'http://127.0.0.1:9000/'],
+      ])('does not POST to %s', async (_label, url) => {
+        vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+          makeSettings({
+            emailAddresses: ['ops@example.com'],
+            notifyOnPriority: 'all',
+            webhookUrl: url,
+          }) as never
+        );
+
+        await notifyEscalation(makePayload());
+
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      });
+
+      // The refine makes the WHOLE config fail to parse. Returning null there
+      // would silently stop the email escalations too — the wrong failure for a
+      // high-priority signal, and it would happen on upgrade to any install
+      // that already had a private webhook stored.
+      it('still sends the emails, and says why the webhook was dropped', async () => {
+        vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+          makeSettings({
+            emailAddresses: ['ops@example.com'],
+            notifyOnPriority: 'all',
+            webhookUrl: 'http://169.254.169.254/latest/meta-data/',
+          }) as never
+        );
+
+        await notifyEscalation(makePayload());
+
+        expect(vi.mocked(sendEmail)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+          'Escalation webhookUrl rejected; sending email notifications only',
+          expect.objectContaining({ webhookUrl: 'http://169.254.169.254/latest/meta-data/' })
+        );
+      });
+
+      it('still drops the whole config when something other than the webhook is invalid', async () => {
+        vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+          makeSettings({ emailAddresses: [], webhookUrl: 'http://10.0.0.5/' }) as never
+        );
+
+        await notifyEscalation(makePayload());
+
+        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      });
+    });
+
+    it('refuses to follow redirects', async () => {
+      await notifyEscalation(makePayload());
+
+      const init = (vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit])[1];
+      expect(init.redirect).toBe('error');
+    });
+
     it('POSTs to webhookUrl with correct event payload', async () => {
       await notifyEscalation(
         makePayload({ agentId: 'agent-42', conversationId: 'conv-99', priority: 'high' })
