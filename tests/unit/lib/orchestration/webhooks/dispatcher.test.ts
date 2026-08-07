@@ -167,6 +167,36 @@ describe('dispatchWebhookEvent', () => {
     expect(headers['X-Webhook-Signature'].length).toBe(64);
   });
 
+  // #534: `sub.url` is validated by `isSafeProviderUrl` in the Zod refine at
+  // create/update and never again here. `fetch` defaults to redirect: 'follow',
+  // so a redirect would POST the payload AND the signature header above to an
+  // unvalidated second target — reaching private space the guard would reject.
+  it('refuses to follow redirects, so a signed payload cannot be forwarded off-target', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(mockFetch.mock.calls[0][1].redirect).toBe('error');
+  });
+
+  // undici puts the reason on `cause` and leaves `message` as a bare
+  // "fetch failed", so a refused redirect reads identically to a DNS failure.
+  it('records the underlying cause of a failed delivery', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    mockFetch.mockRejectedValueOnce(
+      Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') })
+    );
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    // `create` records the pending row; the outcome lands on `update.lastError`.
+    const errors = vi
+      .mocked(prisma.aiWebhookDelivery.update)
+      .mock.calls.map((c) => (c[0] as { data?: { lastError?: string } })?.data?.lastError)
+      .filter(Boolean);
+    expect(errors.some((e) => e?.includes('unexpected redirect'))).toBe(true);
+  });
+
   it('sends JSON body with event, timestamp, and data', async () => {
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
 

@@ -406,6 +406,15 @@ async function attemptWebhookDelivery(
         },
         body,
         signal: controller.signal,
+        // Refuse redirects rather than follow them (#534). `fetch` defaults to
+        // 'follow', and `sub.url` is validated by `isSafeProviderUrl` only in
+        // the Zod refine at create/update — never again here. So a redirect is
+        // an unvalidated second target that this request would POST the payload
+        // AND its `X-Webhook-Signature` header to, reaching private space the
+        // guard would have rejected. Erroring is also what GitHub and Stripe do
+        // for outbound webhooks: an endpoint that moved should be re-pointed,
+        // not chased. Non-terminal, so delivery retries as normal.
+        redirect: 'error',
       });
 
       if (res.ok) {
@@ -416,7 +425,22 @@ async function attemptWebhookDelivery(
       clearTimeout(timeout);
     }
   } catch (err) {
-    return { delivered: false, error: err instanceof Error ? err.message : String(err) };
+    // undici reports the reason on `cause` and leaves `message` as a bare
+    // "fetch failed", so a refused redirect, a DNS failure and a connection
+    // reset are indistinguishable in the delivery log. That matters most for
+    // the `redirect: 'error'` above: an endpoint that started 301-ing would
+    // otherwise burn every retry with nothing telling the operator that
+    // re-pointing the URL is the fix. Only unwrap shapes that stringify
+    // usefully — an arbitrary object would surface as "[object Object]".
+    // (Same treatment as `hooks/registry.ts`; worth extracting to a shared
+    // helper if a third outbound caller needs it.)
+    if (err instanceof Error) {
+      const { cause } = err;
+      const detail =
+        cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : null;
+      return { delivered: false, error: detail ? `${err.message}: ${detail}` : err.message };
+    }
+    return { delivered: false, error: String(err) };
   }
 }
 

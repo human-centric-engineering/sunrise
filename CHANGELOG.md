@@ -64,6 +64,19 @@ release process.
   nothing, so against a hostname pointing at a private address it adds nothing.
   The absent DNS resolution is now stated as an accepted risk, and the
   per-URL-not-per-hop limitation is documented alongside it (#534).
+- **The webhook subscription dispatcher refuses redirects too.**
+  `attemptWebhookDelivery` in `lib/orchestration/webhooks/dispatcher.ts` had the
+  same defect fixed in the event-hook dispatcher above: `sub.url` is validated
+  by `isSafeProviderUrl` in the Zod refine at create/update and never again at
+  dispatch, while `fetch` defaulted to following redirects — so a redirect
+  POSTed the payload *and its `X-Webhook-Signature` header* to an unvalidated
+  second target. Now `redirect: 'error'`. **Behaviour change on upgrade:** a
+  subscription pointing at an endpoint that responds with a redirect (an
+  `http`→`https` upgrade, or a trailing-slash redirect) will start failing
+  delivery until its URL is re-pointed; the failure is non-terminal and retries
+  as normal. Both dispatchers now also record the underlying `cause` of a fetch
+  failure rather than a bare `fetch failed`, so that case is diagnosable from
+  the delivery log (#534).
 
 ### Added
 
