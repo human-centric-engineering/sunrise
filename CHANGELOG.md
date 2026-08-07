@@ -87,13 +87,18 @@ release process.
   `parseEscalationConfig` re-parses the stored JSON on **every dispatch** it
   guards the use as well as the write, which is what survives a direct DB write
   or a restored backup bundle. The same call also refuses redirects (#553).
-- **A rejected escalation webhook no longer silences the escalation emails.**
-  Because the refine makes the whole config fail to parse, the obvious
-  implementation would return `null` and drop everything — so an install that
-  already had a private webhook URL stored would silently stop notifying anyone
-  on upgrade, for a high-priority signal. `parseEscalationConfig` now drops just
-  the webhook, sends the emails, and logs the rejected URL and the reason
-  (#553).
+- **A rejected escalation webhook no longer silences the escalation emails — or
+  destroys the recipient list.** The refine makes the whole config fail to
+  parse, so returning `null` would drop everything. That has two consequences on
+  upgrade for any install with a private webhook URL already stored: escalation
+  emails stop, and — because `parseEscalationConfig` also backs the admin
+  settings API — the settings page renders escalation as *disabled with no
+  recipients*, after which saving any unrelated setting on that page PATCHes
+  `escalationConfig: null` and **permanently deletes the stored recipients**.
+  `parseEscalationConfig` now drops only the offending webhook, keeps the rest,
+  and logs the value with the reasons Zod actually reported. It degrades on any
+  `webhookUrl`-only failure — unsafe URL, malformed URL, wrong type — and still
+  rejects a config that is invalid for any other reason (#553).
 
 ### Added
 

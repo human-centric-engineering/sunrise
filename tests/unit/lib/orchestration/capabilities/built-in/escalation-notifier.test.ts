@@ -297,7 +297,7 @@ describe('notifyEscalation', () => {
 
         expect(vi.mocked(sendEmail)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-          'Escalation webhookUrl rejected; sending email notifications only',
+          'Escalation webhookUrl rejected; keeping the rest of the config',
           expect.objectContaining({ webhookUrl: 'http://169.254.169.254/latest/meta-data/' })
         );
       });

@@ -20,6 +20,7 @@ import { createHmac } from 'crypto';
 import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
@@ -425,22 +426,9 @@ async function attemptWebhookDelivery(
       clearTimeout(timeout);
     }
   } catch (err) {
-    // undici reports the reason on `cause` and leaves `message` as a bare
-    // "fetch failed", so a refused redirect, a DNS failure and a connection
-    // reset are indistinguishable in the delivery log. That matters most for
-    // the `redirect: 'error'` above: an endpoint that started 301-ing would
-    // otherwise burn every retry with nothing telling the operator that
-    // re-pointing the URL is the fix. Only unwrap shapes that stringify
-    // usefully — an arbitrary object would surface as "[object Object]".
-    // (Same treatment as `hooks/registry.ts`; worth extracting to a shared
-    // helper if a third outbound caller needs it.)
-    if (err instanceof Error) {
-      const { cause } = err;
-      const detail =
-        cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : null;
-      return { delivered: false, error: detail ? `${err.message}: ${detail}` : err.message };
-    }
-    return { delivered: false, error: String(err) };
+    // undici renders a refused redirect, a DNS failure and a connection reset
+    // all as a bare "fetch failed"; the reason lives on `cause`.
+    return { delivered: false, error: describeFetchFailure(err) };
   }
 }
 

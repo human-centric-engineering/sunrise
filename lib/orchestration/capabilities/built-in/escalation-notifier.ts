@@ -8,14 +8,16 @@
  * Called fire-and-forget from `EscalateToHumanCapability.execute()`.
  */
 
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { sendEmail } from '@/lib/email/send';
 import { EscalationNotification } from '@/emails/escalation-notification';
-import { escalationConfigSchema } from '@/lib/validations/orchestration';
 import { env } from '@/lib/env';
-import { isRecord } from '@/lib/utils';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
+// Single implementation, deliberately shared: this used to be a private copy,
+// and hardening one while the settings API kept the other is what opened the
+// recipient-list data-loss path (#553).
+import { parseEscalationConfig } from '@/lib/orchestration/settings';
 import type { EscalationConfig } from '@/types/orchestration';
 
 interface EscalationPayload {
@@ -49,33 +51,6 @@ function meetsPriorityThreshold(
     default:
       return true;
   }
-}
-
-/**
- * Parse the stored `escalationConfig` JSON from the settings singleton.
- * Returns `null` if the value is absent, null, or fails validation.
- */
-function parseEscalationConfig(raw: Prisma.JsonValue | null | undefined): EscalationConfig | null {
-  const parsed = escalationConfigSchema.safeParse(raw);
-  if (parsed.success) return parsed.data;
-
-  // `webhookUrl` gained an SSRF refine in #553, so a config stored before that
-  // — or written straight to the DB — can now fail on the webhook alone.
-  // Returning null here would silently stop the EMAIL escalations too, which is
-  // the wrong failure for a high-priority signal and would happen on upgrade
-  // without anyone touching the config. Drop just the webhook and say so.
-  if (isRecord(raw) && typeof raw.webhookUrl === 'string') {
-    const withoutWebhook = escalationConfigSchema.safeParse({ ...raw, webhookUrl: undefined });
-    if (withoutWebhook.success) {
-      logger.warn('Escalation webhookUrl rejected; sending email notifications only', {
-        webhookUrl: raw.webhookUrl,
-        reason: 'URL is not allowed (private or internal address)',
-      });
-      return withoutWebhook.data;
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -152,8 +127,11 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
           });
         }
       } catch (err) {
+        // `redirect: 'error'` above makes a newly-redirecting endpoint a new
+        // failure mode, and undici renders it as a bare "fetch failed" — this
+        // warning is the only signal there is, so it must name the cause.
         logger.warn('Escalation webhook call failed', {
-          error: err instanceof Error ? err.message : String(err),
+          error: describeFetchFailure(err),
           url: config.webhookUrl,
         });
       }

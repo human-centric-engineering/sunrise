@@ -10,6 +10,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
+import { isRecord } from '@/lib/utils';
 import {
   searchConfigSchema,
   storedDefaultModelsSchema,
@@ -51,12 +52,54 @@ export function parseSearchConfig(raw: Prisma.JsonValue | null | undefined): Sea
 /**
  * Narrow a `Prisma.JsonValue` loaded from `AiOrchestrationSettings.escalationConfig`
  * into a typed `EscalationConfig` via Zod. Returns `null` if absent or invalid.
+ *
+ * **`webhookUrl` degrades rather than failing the whole config.** It gained an
+ * SSRF refine in #553, so a value stored before that — or written straight to
+ * the DB, or restored from a backup bundle — can now fail on the webhook alone.
+ * Returning `null` there would take the `emailAddresses` with it, and that has
+ * two consequences, both bad and neither obvious:
+ *
+ *  - the notifier stops sending escalation **emails**, for a high-priority
+ *    human-in-the-loop signal, with nothing said;
+ *  - `hydrateSettings` feeds the admin API, so the settings form renders
+ *    escalation as *disabled with no recipients* — and saving any unrelated
+ *    setting on that page then PATCHes `escalationConfig: null`, which the route
+ *    writes as `Prisma.JsonNull`, **destroying the stored recipient list.**
+ *
+ * So: drop the offending webhook, keep everything else, and log why. A config
+ * that fails for any other reason is still rejected outright.
+ *
+ * This must stay the single implementation — the notifier previously carried a
+ * private copy, and hardening one while the other blanked the UI is exactly how
+ * the data-loss path above opened.
  */
 export function parseEscalationConfig(
   raw: Prisma.JsonValue | null | undefined
 ): EscalationConfig | null {
   const parsed = escalationConfigSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return parsed.data;
+
+  // Key on WHICH field failed, not on the shape of the stored value: a
+  // `webhookUrl` of `null` or `123` fails `z.string()` just as an unsafe URL
+  // fails the refine, and both must degrade the same way.
+  const issues = parsed.error.issues;
+  const webhookOnly = issues.length > 0 && issues.every((issue) => issue.path[0] === 'webhookUrl');
+  if (!webhookOnly || !isRecord(raw)) return null;
+
+  const withoutWebhook = escalationConfigSchema.safeParse({ ...raw, webhookUrl: undefined });
+  if (!withoutWebhook.success) return null;
+
+  logger.warn('Escalation webhookUrl rejected; keeping the rest of the config', {
+    webhookUrl: typeof raw.webhookUrl === 'string' ? raw.webhookUrl : typeof raw.webhookUrl,
+    // Report what Zod actually objected to. The branch fires for a missing
+    // scheme, an over-length value or a non-string too, and hardcoding the
+    // SSRF text would send an operator hunting a firewall problem that isn't
+    // there. Zod v4 collects every issue rather than short-circuiting, so a
+    // malformed URL reports both the parse failure and the refine it also
+    // trips — the parse failure being the actionable one.
+    reason: issues.map((issue) => issue.message).join('; '),
+  });
+  return withoutWebhook.data;
 }
 
 /**

@@ -19,6 +19,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
   HookEventPayloadSchema,
   WebhookActionSchema,
@@ -269,22 +270,9 @@ async function attemptDelivery(
 
     error = `HTTP ${res.status}`;
   } catch (err: unknown) {
-    // undici reports the interesting part on `cause`, not `message`: a refused
-    // redirect, a DNS failure and a connection reset are all a bare
-    // "fetch failed" without it. That matters most for the `redirect: 'error'`
-    // above — an endpoint that started 301-ing would otherwise burn every retry
-    // and land in `exhausted` with nothing telling the operator that
-    // "re-point the URL" is the fix.
-    if (err instanceof Error) {
-      // Only unwrap shapes that stringify usefully — an arbitrary object would
-      // land in the operator-visible delivery log as "[object Object]".
-      const { cause } = err;
-      const detail =
-        cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : null;
-      error = detail ? `${err.message}: ${detail}` : err.message;
-    } else {
-      error = String(err);
-    }
+    // undici renders a refused redirect, a DNS failure and a connection reset
+    // all as a bare "fetch failed"; the reason lives on `cause`.
+    error = describeFetchFailure(err);
   }
 
   // Delivery failed — update record and maybe schedule retry

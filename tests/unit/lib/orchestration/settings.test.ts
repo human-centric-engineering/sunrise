@@ -243,6 +243,67 @@ describe('parseEscalationConfig', () => {
     // Assert — Zod safeParse fails because emailAddresses is missing
     expect(result).toBeNull();
   });
+
+  // #553. `webhookUrl` gained an SSRF refine, so a config stored before that
+  // can now fail on the webhook alone. Returning null would take the
+  // emailAddresses with it — and because this helper backs `hydrateSettings`
+  // and therefore the admin settings API, that would render escalation as
+  // disabled with no recipients, after which saving ANY unrelated setting on
+  // that page PATCHes `escalationConfig: null` and permanently destroys the
+  // stored recipient list.
+  describe('webhookUrl degradation', () => {
+    const base = { emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' as const };
+
+    it.each([
+      ['an unsafe URL (SSRF refine)', 'http://169.254.169.254/latest/meta-data/'],
+      ['an IPv4-mapped IPv6 literal', 'http://[::ffff:10.0.0.5]/'],
+      ['a malformed URL', 'hooks.example.com/no-scheme'],
+      ['a non-string value', 1234],
+      ['an explicit null', null],
+    ])('keeps the rest of the config when webhookUrl is %s', (_label, webhookUrl) => {
+      const result = parseEscalationConfig({ ...base, webhookUrl });
+
+      expect(result).toEqual({ emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' });
+      expect(result?.webhookUrl).toBeUndefined();
+    });
+
+    it('reports what Zod actually objected to rather than a fixed message', () => {
+      // The branch fires for a missing scheme, an over-length value and a
+      // non-string too — hardcoding the SSRF text would send an operator
+      // hunting a firewall problem that does not exist.
+      parseEscalationConfig({ ...base, webhookUrl: 'hooks.example.com/no-scheme' });
+
+      const [, malformed] = vi.mocked(logger.warn).mock.calls.at(-1) as [
+        string,
+        { reason: string },
+      ];
+      // Zod v4 collects every issue rather than short-circuiting, so a
+      // malformed URL also trips the refine (it cannot be parsed, so it is not
+      // safe either). Both are reported; the parse failure is the actionable one.
+      expect(malformed.reason).toContain('Must be a valid URL');
+
+      parseEscalationConfig({ ...base, webhookUrl: 1234 });
+      const [, wrongType] = vi.mocked(logger.warn).mock.calls.at(-1) as [
+        string,
+        { reason: string; webhookUrl: unknown },
+      ];
+      expect(wrongType.reason).toContain('expected string');
+      expect(wrongType.reason).not.toContain('private or internal');
+      // A non-string cannot be logged verbatim as a URL — record its type.
+      expect(wrongType.webhookUrl).toBe('number');
+    });
+
+    it('still rejects the whole config when another field is also invalid', () => {
+      // Degrading here would resurrect a config the operator never had.
+      expect(
+        parseEscalationConfig({ emailAddresses: [], webhookUrl: 'http://10.0.0.5/' })
+      ).toBeNull();
+    });
+
+    it('does not degrade when the only failure is elsewhere', () => {
+      expect(parseEscalationConfig({ emailAddresses: ['not-an-email'] })).toBeNull();
+    });
+  });
 });
 
 describe('hydrateSettings', () => {
