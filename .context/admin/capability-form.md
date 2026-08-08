@@ -19,7 +19,9 @@ Shared create/edit form for `AiCapability`. Four shadcn tabs, one underlying `<f
 
 Fields: `name`, `slug`, `description`, `category`, `metadata` (optional JSON), `isActive`.
 
-**Slug auto-generation** — identical to `agent-form.tsx`: typing into `name` auto-fills `slug` via `toSlug()` until the user types into the slug input, at which point a local `slugTouched` flag turns off auto-gen. Slug is disabled in edit mode.
+**Slug auto-generation** — the same shape as `agent-form.tsx`: typing into `name` auto-fills `slug` via `toSlug()` until the user types into the slug input, at which point a local `slugTouched` flag turns off auto-gen. Slug is disabled in edit mode.
+
+**Unlike every other slug in the admin, this one is underscore-separated** (`my_knowledge_search`, not `my-knowledge-search`), and the client regex mirrors `capabilitySlugSchema` in accepting either separator. The capability slug is also **the tool name the LLM is given** — `getCapabilityDefinitions` advertises it, because dispatch resolves the name a model emits back as a slug (#509). Underscores are what every built-in uses. The Function name field on Tab 2 is derived from this value and read-only; see [Tab 2](#tab-2--function-definition).
 
 ### Category Select
 
@@ -28,7 +30,8 @@ Populated from the `availableCategories` prop (derived server-side from the curr
 ### Help copy (exact strings — source of truth for later sessions)
 
 - **Name** — "A human-readable label. Shown in the admin list and in the agent's capabilities tab. Defaults to empty."
-- **Slug** — "The stable identifier used by agents and API calls. Auto-generated from the name on first type, but you can edit it. Lowercase letters, numbers, and hyphens only."
+- **Slug** — "A permanent ID for this capability, used in URLs, when attaching it to agents, and **as the tool name the AI calls** — the Function name on the Function tab mirrors it. Auto-generated from the name. Lowercase letters and numbers, separated by underscores or hyphens; underscores are conventional for tool names. Cannot be changed after creation."
+- **Function name** (Tab 2) — "The machine-readable identifier the AI uses to call this capability. **Always the same as the slug**, so edit it on the Basics tab. It has to match: when a model calls a tool, the platform looks the capability up by the name it emitted. If the two could differ, a capability would be permission-checked as one tool and executed as another."
 - **Description** — "One or two sentences explaining what this capability does. Shown on the list page and next to the attach button in the agent form — keep it short."
 - **Category** — "Tag used to group capabilities in the agent form's Capabilities tab. Free-text on the backend, so it's OK to invent new ones — the dropdown lists what's already in use."
 - **Metadata** — "Arbitrary key-value pairs for tagging or external system references (e.g. external IDs, feature flags, notes). Values must be strings, numbers, booleans, or null. Maximum 100 keys. Leave empty if not needed."
@@ -62,7 +65,10 @@ This is the most involved tab — an admin can edit the OpenAI function-definiti
 
 ### Builder mode (default)
 
-- **Top fields** — `fn.name` and `fn.description`. Client-side validation prevents empty name; the backend also enforces it via `capabilityFunctionDefinitionSchema`.
+- **Top fields** — `fn.name` and `fn.description`.
+  - **`fn.name` is read-only and mirrors the slug** (one `useEffect` on the watched `slug`). It has to equal the slug: dispatch resolves the tool name a model emits _as_ the slug, so a divergent pair would be permission-checked as one capability and executed as another. `createCapabilitySchema` / `updateCapabilitySchema` reject the divergence, and the PATCH route re-checks the effective pair against the stored row when only one half is in the body (#509). The field is not editable because the form must not offer a way to author something the API will refuse.
+  - Before #509 the two were derived independently from the display name — `toSlug()` for the slug, `toSlug().replace(/-/g, '_')` for the function name — so the default typing produced `search-web` / `search_web` and every UI-created capability diverged.
+  - **JSON mode can still set a divergent `name`**; the API rejects it with `functionDefinition.name must equal slug`. That is deliberate — the JSON editor is the escape hatch, and the server is the enforcement point.
 - **Parameters table** — `useState<ParameterRow[]>` outside RHF. Each row has:
   - `name` (text, `[a-z_][a-z0-9_]*`)
   - `type` (Select: `string | number | boolean | object | array`)

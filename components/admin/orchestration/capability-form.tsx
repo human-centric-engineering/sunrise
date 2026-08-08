@@ -708,9 +708,16 @@ export function CapabilityForm({
             <Label htmlFor="slug">
               Slug{' '}
               <FieldHelp title="URL-safe identifier">
-                A permanent ID for this capability, used in URLs and when attaching it to agents.
-                Auto-generated from the name. Lowercase letters, numbers, and hyphens only. Cannot
-                be changed after creation.
+                <p>
+                  A permanent ID for this capability, used in URLs, when attaching it to agents, and{' '}
+                  <strong>as the tool name the AI calls</strong> — the Function name on the Function
+                  tab mirrors it.
+                </p>
+                <p>
+                  Auto-generated from the name. Lowercase letters and numbers, separated by
+                  underscores or hyphens; underscores are conventional for tool names. Cannot be
+                  changed after creation.
+                </p>
               </FieldHelp>
             </Label>
             <Input
