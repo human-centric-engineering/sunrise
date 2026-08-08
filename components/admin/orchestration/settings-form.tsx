@@ -139,7 +139,8 @@ const settingsFormSchema = z
     // Escalation
     escalationEnabled: z.boolean(),
     escalationPriorityFilter: z.enum(ESCALATION_PRIORITY_FILTERS),
-    // Refined below via `buildFormSchema` so it can see the deployment flag.
+    // The SSRF check is applied by the `formSchema` memo below, not here, so it
+    // can see the deployment's allow-private flag.
     escalationWebhookUrl: z.string().url().max(2000).or(z.literal('')).optional(),
   })
   /**

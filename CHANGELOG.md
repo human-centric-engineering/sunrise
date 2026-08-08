@@ -79,9 +79,10 @@ release process.
   the delivery log (#534).
 - **Escalation webhooks are validated against SSRF at last.**
   `escalationConfig.webhookUrl` was `z.string().url()` with **no**
-  `isSafeProviderUrl` refine, while every comparable outbound target in the same
-  file has one (provider `baseUrl`, event-hook `action.url`, webhook
-  subscription `url`). An escalation therefore POSTed its payload — conversation
+  `isSafeProviderUrl` refine, while every comparable outbound target has one —
+  provider `baseUrl` and the webhook subscription `url` alongside it in
+  `lib/validations/orchestration.ts`, and event-hook `action.url` in
+  `lib/orchestration/hooks/types.ts`. An escalation therefore POSTed its payload — conversation
   reason, priority and metadata — to whatever host was configured, cloud
   metadata and RFC1918 included. Guarded now in the two places that matter,
   mirroring how provider `baseUrl` is handled: `escalationConfigWriteSchema`
