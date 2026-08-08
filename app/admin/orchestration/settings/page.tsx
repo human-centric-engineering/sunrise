@@ -12,6 +12,7 @@ import {
 } from '@/components/admin/orchestration/settings-form';
 import { BackupPanel } from '@/components/admin/orchestration/settings/backup-panel';
 import { FieldHelp } from '@/components/ui/field-help';
+import { env } from '@/lib/env';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -295,7 +296,11 @@ export default async function OrchestrationSettingsPage() {
         options={embeddingMatrixRows}
       />
 
-      <SettingsForm initialSettings={formSettings} />
+      <SettingsForm
+        initialSettings={formSettings}
+        // Server-only env, so the client guard cannot read it directly (#553).
+        allowPrivateEscalationWebhook={env.ESCALATION_WEBHOOK_ALLOW_PRIVATE}
+      />
 
       <BackupPanel />
     </div>

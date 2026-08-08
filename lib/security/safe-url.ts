@@ -116,6 +116,23 @@ export interface SafeUrlCheckOptions {
    * flag — local model servers run on loopback, not on the LAN.
    */
   allowLoopback?: boolean;
+
+  /**
+   * When true, permit private RFC1918, link-local and IPv6 unique-local
+   * targets. For a service the deployment genuinely runs on its own private
+   * network — an escalation relay inside a VPC, say — where the alternative is
+   * no validation at all.
+   *
+   * **Cloud-metadata hosts and the unspecified address stay blocked**
+   * (`BLOCKED_HOSTNAMES` is checked first and this flag does not reach it):
+   * `169.254.169.254` is never a legitimate relay, and it is the target that
+   * makes SSRF worth exploiting. Loopback is governed separately by
+   * `allowLoopback` — a VPC address is not a loopback address, and conflating
+   * them would widen two things when a caller asked for one.
+   *
+   * Independent of `allowLoopback`; set both if you need both.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 export interface SafeUrlCheckResult {
@@ -182,7 +199,10 @@ export function checkSafeProviderUrl(
     return { ok: true };
   }
 
-  if (isPrivateIp(host) || isLinkLocalIp(host) || isUniqueLocalIpv6(host)) {
+  if (
+    !options.allowPrivateNetwork &&
+    (isPrivateIp(host) || isLinkLocalIp(host) || isUniqueLocalIpv6(host))
+  ) {
     return {
       ok: false,
       reason: 'private_ip',

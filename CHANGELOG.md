@@ -83,22 +83,19 @@ release process.
   file has one (provider `baseUrl`, event-hook `action.url`, webhook
   subscription `url`). An escalation therefore POSTed its payload — conversation
   reason, priority and metadata — to whatever host was configured, cloud
-  metadata and RFC1918 included. The refine is now applied, and because
-  `parseEscalationConfig` re-parses the stored JSON on **every dispatch** it
-  guards the use as well as the write, which is what survives a direct DB write
-  or a restored backup bundle. The same call also refuses redirects (#553).
-- **A rejected escalation webhook no longer silences the escalation emails — or
-  destroys the recipient list.** The refine makes the whole config fail to
-  parse, so returning `null` would drop everything. That has two consequences on
-  upgrade for any install with a private webhook URL already stored: escalation
-  emails stop, and — because `parseEscalationConfig` also backs the admin
-  settings API — the settings page renders escalation as *disabled with no
-  recipients*, after which saving any unrelated setting on that page PATCHes
-  `escalationConfig: null` and **permanently deletes the stored recipients**.
-  `parseEscalationConfig` now drops only the offending webhook, keeps the rest,
-  and logs the value with the reasons Zod actually reported. It degrades on any
-  `webhookUrl`-only failure — unsafe URL, malformed URL, wrong type — and still
-  rejects a config that is invalid for any other reason (#553).
+  metadata and RFC1918 included. Guarded now in the two places that matter,
+  mirroring how provider `baseUrl` is handled: `escalationConfigWriteSchema`
+  rejects an unsafe target at the API boundary, and `notifyEscalation` re-checks
+  at dispatch so a direct DB write, a restored backup bundle or a value stored
+  before this release is still refused. The POST also refuses redirects (#553).
+- **A rejected escalation webhook is preserved, not destroyed.** The guard is
+  deliberately *not* on the read path. Rejecting there would make the stored
+  value invisible to the settings API — and because the settings form rebuilds
+  the whole config blob on save, the next save of any unrelated field would have
+  written it back as absent, silently deleting a URL nobody chose to remove.
+  Instead the value is read, shown in the form, and skipped at dispatch with a
+  warning naming the target, so an operator can see the problem and correct it
+  (#553).
 - **Escalation webhooks refuse redirects — note this failure is quieter than the
   dispatchers'.** Same reasoning as the two webhook dispatchers above, but
   `notifyEscalation` is fire-and-forget: there is no retry and no delivery row,
@@ -110,6 +107,14 @@ release process.
 
 ### Added
 
+- **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation
+  webhooks targeting its own private network (an in-VPC relay), for the case
+  where the alternative is no validation at all. Off by default.
+  **Cloud-metadata hosts stay blocked regardless**, and it does not permit
+  loopback. Backed by a new `allowPrivateNetwork` option on
+  `checkSafeProviderUrl` / `isSafeProviderUrl`, which relaxes RFC1918,
+  link-local and IPv6 unique-local while leaving `BLOCKED_HOSTNAMES` and the
+  scheme check untouched. Independent of the existing `allowLoopback` (#553).
 - **`describeFetchFailure(err)`** in `lib/errors/fetch-error.ts` — renders a
   thrown value for an operator, unwrapping undici's `cause`. Node's `fetch`
   reports nearly every network-layer failure as a bare

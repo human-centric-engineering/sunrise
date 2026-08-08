@@ -147,6 +147,18 @@ const serverEnvSchema = z.object({
         'method, path). Default OFF — opt in with "true" to make navigation visible server-side.'
     ),
 
+  // Escalation webhook target policy (optional)
+  ESCALATION_WEBHOOK_ALLOW_PRIVATE: z
+    .string()
+    .optional()
+    .transform((val) => val === 'true')
+    .describe(
+      'Permit the escalation webhook to POST to a private RFC1918 / link-local address. ' +
+        'Off by default. Set it only when the escalation relay genuinely runs on the ' +
+        "deployment's own private network (a VPC endpoint, say) — it widens the SSRF guard " +
+        'for that one target. Cloud-metadata hosts stay blocked either way.'
+    ),
+
   // Internal self-calls (optional)
   INTERNAL_API_URL: z
     .string()

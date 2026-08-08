@@ -44,6 +44,7 @@ vi.mock('@/lib/env', () => ({
   env: {
     BETTER_AUTH_URL: 'https://app.example.com',
     NEXT_PUBLIC_APP_URL: 'https://app.example.com',
+    ESCALATION_WEBHOOK_ALLOW_PRIVATE: false,
   },
 }));
 
@@ -254,13 +255,12 @@ describe('notifyEscalation', () => {
       );
     });
 
-    // #553: `webhookUrl` had only `z.string().url()` — no SSRF refine — while
-    // every comparable outbound target in the same file refines. So an
-    // escalation POSTed its payload to whatever host was configured.
-    // `parseEscalationConfig` re-parses the stored JSON on every dispatch, so
-    // the refine guards the use as well as the write — which is what survives a
-    // direct DB write or a restored backup bundle.
-    describe('SSRF guard on webhookUrl', () => {
+    // #553: the target is re-checked HERE, at the point of use, not only at the
+    // API boundary — a direct DB write, a restored backup bundle or a value
+    // stored before the refine existed reaches this code unvalidated. Skipping
+    // only the POST (rather than failing the config parse) keeps the emails
+    // flowing and leaves the URL visible in the settings form to be corrected.
+    describe('SSRF guard at dispatch', () => {
       it.each([
         ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
         ['IPv4-mapped IPv6 metadata', 'http://[::ffff:169.254.169.254]/'],
@@ -280,11 +280,7 @@ describe('notifyEscalation', () => {
         expect(globalThis.fetch).not.toHaveBeenCalled();
       });
 
-      // The refine makes the WHOLE config fail to parse. Returning null there
-      // would silently stop the email escalations too — the wrong failure for a
-      // high-priority signal, and it would happen on upgrade to any install
-      // that already had a private webhook stored.
-      it('still sends the emails, and says why the webhook was dropped', async () => {
+      it('still sends the emails and names the rejected target', async () => {
         vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
           makeSettings({
             emailAddresses: ['ops@example.com'],
@@ -297,20 +293,9 @@ describe('notifyEscalation', () => {
 
         expect(vi.mocked(sendEmail)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-          'Escalation webhookUrl rejected; keeping the rest of the config',
-          expect.objectContaining({ webhookUrl: 'http://169.254.169.254/latest/meta-data/' })
+          'Escalation webhook target rejected; skipping the POST',
+          expect.objectContaining({ url: 'http://169.254.169.254/latest/meta-data/' })
         );
-      });
-
-      it('still drops the whole config when something other than the webhook is invalid', async () => {
-        vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
-          makeSettings({ emailAddresses: [], webhookUrl: 'http://10.0.0.5/' }) as never
-        );
-
-        await notifyEscalation(makePayload());
-
-        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
-        expect(globalThis.fetch).not.toHaveBeenCalled();
       });
     });
 

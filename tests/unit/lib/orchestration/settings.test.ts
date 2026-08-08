@@ -244,75 +244,29 @@ describe('parseEscalationConfig', () => {
     expect(result).toBeNull();
   });
 
-  // #553. `webhookUrl` gained an SSRF refine, so a config stored before that
-  // can now fail on the webhook alone. Returning null would take the
-  // emailAddresses with it — and because this helper backs `hydrateSettings`
-  // and therefore the admin settings API, that would render escalation as
-  // disabled with no recipients, after which saving ANY unrelated setting on
-  // that page PATCHes `escalationConfig: null` and permanently destroys the
-  // stored recipient list.
-  describe('webhookUrl degradation', () => {
+  // #553. The SSRF guard deliberately does NOT live on this read path: it is on
+  // `escalationConfigWriteSchema` (the API boundary) and on `notifyEscalation`
+  // (the point of use). Rejecting here would make a stored value invisible to
+  // the settings API, and because the form rebuilds the whole config blob on
+  // save, the next save of any unrelated field would silently destroy it.
+  describe('webhookUrl on the read path', () => {
     const base = { emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' as const };
 
     it.each([
-      ['an unsafe URL (SSRF refine)', 'http://169.254.169.254/latest/meta-data/'],
-      ['an IPv4-mapped IPv6 literal', 'http://[::ffff:10.0.0.5]/'],
-      ['a malformed URL', 'hooks.example.com/no-scheme'],
-      ['a non-string value', 1234],
-      ['an explicit null', null],
-    ])('keeps the rest of the config when webhookUrl is %s', (_label, webhookUrl) => {
+      ['a private RFC1918 target', 'http://10.0.1.5/hooks/escalate'],
+      ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
+    ])('preserves %s so the operator can see and correct it', (_label, webhookUrl) => {
       const result = parseEscalationConfig({ ...base, webhookUrl });
 
-      expect(result).toEqual({ emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' });
-      expect(result?.webhookUrl).toBeUndefined();
+      expect(result?.webhookUrl).toBe(webhookUrl);
     });
 
-    it('reports what Zod actually objected to rather than a fixed message', () => {
-      // The branch fires for a missing scheme, an over-length value and a
-      // non-string too — hardcoding the SSRF text would send an operator
-      // hunting a firewall problem that does not exist.
-      parseEscalationConfig({ ...base, webhookUrl: 'hooks.example.com/no-scheme' });
-
-      const [, malformed] = vi.mocked(logger.warn).mock.calls.at(-1) as [
-        string,
-        { reason: string },
-      ];
-      // Zod v4 collects every issue rather than short-circuiting, so a
-      // malformed URL also trips the refine (it cannot be parsed, so it is not
-      // safe either). Both are reported; the parse failure is the actionable one.
-      expect(malformed.reason).toContain('Must be a valid URL');
-
-      parseEscalationConfig({ ...base, webhookUrl: 1234 });
-      const [, wrongType] = vi.mocked(logger.warn).mock.calls.at(-1) as [
-        string,
-        { reason: string; webhookUrl: unknown },
-      ];
-      expect(wrongType.reason).toContain('expected string');
-      expect(wrongType.reason).not.toContain('private or internal');
-      // A non-string cannot be logged verbatim as a URL — record its type.
-      // `typeof null` is 'object', so null is spelled out rather than typed.
-      expect(wrongType.webhookUrl).toBe('<number>');
+    it('still rejects a syntactically invalid URL', () => {
+      expect(parseEscalationConfig({ ...base, webhookUrl: 'not-a-url' })).toBeNull();
     });
 
-    it('logs a null webhookUrl as "null", not as an object', () => {
-      parseEscalationConfig({ ...base, webhookUrl: null });
-
-      const [, meta] = vi.mocked(logger.warn).mock.calls.at(-1) as [
-        string,
-        { webhookUrl: unknown },
-      ];
-      expect(meta.webhookUrl).toBe('null');
-    });
-
-    it('still rejects the whole config when another field is also invalid', () => {
-      // Degrading here would resurrect a config the operator never had.
-      expect(
-        parseEscalationConfig({ emailAddresses: [], webhookUrl: 'http://10.0.0.5/' })
-      ).toBeNull();
-    });
-
-    it('does not degrade when the only failure is elsewhere', () => {
-      expect(parseEscalationConfig({ emailAddresses: ['not-an-email'] })).toBeNull();
+    it('still rejects a config that is invalid for another reason', () => {
+      expect(parseEscalationConfig({ emailAddresses: [] })).toBeNull();
     });
   });
 });

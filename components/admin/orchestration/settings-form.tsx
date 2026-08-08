@@ -19,6 +19,7 @@ import { AlertCircle, Check, Loader2, Save, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
+import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -78,6 +79,12 @@ export interface OrchestrationSettings {
 
 export interface SettingsFormProps {
   initialSettings: OrchestrationSettings;
+  /**
+   * Mirrors `ESCALATION_WEBHOOK_ALLOW_PRIVATE`, passed down because the form
+   * cannot read a server-only env var. Without it the client guard below would
+   * reject a private target that the server would happily accept (#553).
+   */
+  allowPrivateEscalationWebhook?: boolean;
 }
 
 // ─── Client-side validation schema ──────────────────────────────────────────
@@ -132,6 +139,7 @@ const settingsFormSchema = z
     // Escalation
     escalationEnabled: z.boolean(),
     escalationPriorityFilter: z.enum(ESCALATION_PRIORITY_FILTERS),
+    // Refined below via `buildFormSchema` so it can see the deployment flag.
     escalationWebhookUrl: z.string().url().max(2000).or(z.literal('')).optional(),
   })
   /**
@@ -178,7 +186,29 @@ function guardModeToApi(v: string): string | null {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function SettingsForm({ initialSettings }: SettingsFormProps) {
+export function SettingsForm({
+  initialSettings,
+  allowPrivateEscalationWebhook = false,
+}: SettingsFormProps) {
+  // Mirror the server's SSRF refine so an unsafe webhook is caught beside the
+  // field. Without it the PATCH 400s and, because this page saves every
+  // setting in one request, EVERY other edit on the page is silently lost with
+  // the reason in a page-level banner (#553).
+  const formSchema = React.useMemo(
+    () =>
+      settingsFormSchema.superRefine((values, ctx) => {
+        const url = values.escalationWebhookUrl;
+        if (!url) return;
+        if (isSafeProviderUrl(url, { allowPrivateNetwork: allowPrivateEscalationWebhook })) return;
+        ctx.addIssue({
+          code: 'custom',
+          path: ['escalationWebhookUrl'],
+          message: 'URL is not allowed (private or internal address)',
+        });
+      }),
+    [allowPrivateEscalationWebhook]
+  );
+
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
@@ -250,7 +280,7 @@ export function SettingsForm({ initialSettings }: SettingsFormProps) {
     watch,
     formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
-    resolver: zodResolver(settingsFormSchema),
+    resolver: zodResolver(formSchema),
     defaultValues: defaults,
   });
 

@@ -13,6 +13,7 @@ import { logger } from '@/lib/logging';
 import { sendEmail } from '@/lib/email/send';
 import { EscalationNotification } from '@/emails/escalation-notification';
 import { env } from '@/lib/env';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 // Single implementation, deliberately shared: this used to be a private copy,
 // and hardening one while the settings API kept the other is what opened the
@@ -99,6 +100,25 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
 
     // Optional webhook POST
     if (config.webhookUrl) {
+      // Re-check at the point of use, not just at the API boundary (#553).
+      // `escalationConfigWriteSchema` rejects an unsafe target on PATCH, but a
+      // direct DB write, a restored backup bundle or a value stored before that
+      // refine existed reaches here unvalidated — the same reasoning
+      // provider-manager applies to `baseUrl`. Skipping only the POST (rather
+      // than failing the parse) keeps the emails flowing and leaves the URL
+      // visible in the settings form so it can actually be corrected.
+      const targetCheck = checkSafeProviderUrl(config.webhookUrl, {
+        allowPrivateNetwork: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
+      });
+      if (!targetCheck.ok) {
+        logger.warn('Escalation webhook target rejected; skipping the POST', {
+          url: config.webhookUrl,
+          reason: targetCheck.reason,
+          message: targetCheck.message,
+        });
+        return;
+      }
+
       try {
         const response = await fetch(config.webhookUrl, {
           method: 'POST',

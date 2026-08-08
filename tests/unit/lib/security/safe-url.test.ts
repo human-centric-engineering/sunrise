@@ -159,6 +159,56 @@ describe('checkSafeProviderUrl', () => {
     });
   });
 
+  // #553. An escalation relay inside a VPC is a legitimate target, and before
+  // the refine landed it worked (because nothing was validated). This is the
+  // opt-in that keeps it possible without reverting to no validation at all.
+  describe('allowPrivateNetwork', () => {
+    it.each([
+      ['RFC1918 10/8', 'http://10.0.1.5/hooks/escalate'],
+      ['RFC1918 192.168/16', 'http://192.168.1.20/hooks'],
+      ['link-local', 'http://169.254.10.10/'],
+      ['IPv6 unique local', 'http://[fd12:3456::1]/'],
+    ])('permits %s when opted in', (_label, url) => {
+      expect(checkSafeProviderUrl(url).ok).toBe(false);
+      expect(checkSafeProviderUrl(url, { allowPrivateNetwork: true }).ok).toBe(true);
+    });
+
+    // The whole point of the flag is that it does NOT reopen the target that
+    // makes SSRF worth exploiting. BLOCKED_HOSTNAMES is checked first.
+    it.each([
+      ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
+      ['metadata via IPv4-mapped IPv6', 'http://[::ffff:169.254.169.254]/'],
+      ['GCP metadata hostname', 'http://metadata.google.internal/'],
+      ['unspecified address', 'http://0.0.0.0/'],
+    ])('still blocks %s when opted in', (_label, url) => {
+      expect(checkSafeProviderUrl(url, { allowPrivateNetwork: true }).ok).toBe(false);
+    });
+
+    it('does not imply allowLoopback', () => {
+      // A VPC address is not a loopback address; widening one must not widen
+      // the other.
+      expect(checkSafeProviderUrl('http://127.0.0.1/', { allowPrivateNetwork: true }).ok).toBe(
+        false
+      );
+      expect(checkSafeProviderUrl('http://[::1]/', { allowPrivateNetwork: true }).ok).toBe(false);
+    });
+
+    it('composes with allowLoopback when both are set', () => {
+      expect(
+        checkSafeProviderUrl('http://127.0.0.1:11434/', {
+          allowLoopback: true,
+          allowPrivateNetwork: true,
+        }).ok
+      ).toBe(true);
+    });
+
+    it('does not relax the scheme check', () => {
+      expect(checkSafeProviderUrl('file:///etc/passwd', { allowPrivateNetwork: true }).ok).toBe(
+        false
+      );
+    });
+  });
+
   describe('public hosts', () => {
     it.each([
       'https://api.openai.com/v1',
