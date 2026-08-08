@@ -147,6 +147,43 @@ release process.
   the `deletePrefix` blast radius is total and the check is one comparison. S3
   and Vercel Blob are unaffected: a prefix there is a literal string match
   against keys, not a path (#508).
+- **A capability's advertised tool name is now its slug, closing a gap in the
+  #476 tool-call guard.** The guard built its advertised set from each
+  capability's `functionDefinition.name`, while dispatch resolved the name a
+  model emitted *as the slug*, and no schema required the two to agree — so a
+  capability was checked under one identity and executed under another. A row
+  with `slug: 'estimate_workflow_cost'` and
+  `functionDefinition.name: 'apply_audit_changes'`, bound to a low-privilege
+  agent, passed the guard and ran the privileged built-in. Admin write access
+  was needed to author it, so no trust boundary was crossed; it is fixed because
+  the guard reads as authoritative over the thing that dispatches, and because a
+  future import path or self-service capability builder would turn it into a
+  real escalation. `getCapabilityDefinitions()` now advertises the slug, which
+  also corrects the `capabilitySlug` recorded on tool messages and evaluation
+  logs — previously a name written into a slug field (#509).
+- **`functionDefinition.name` must equal `slug` on create and update.** The
+  runtime override above is the backstop for rows already stored; this stops the
+  divergence being authored. Divergence was never useful even before it was a
+  security question: the tool was advertised under a name dispatch could not
+  resolve, so it failed — unless the name happened to match another capability's
+  slug, which is the escalation. The check is on the write path only; the read
+  path repairs instead of rejecting, so an existing divergent row keeps working
+  rather than vanishing from its agent's toolset (#509).
+- **Capability slugs may now contain underscores**
+  (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`), where the shared slug rule allows hyphens
+  only. Required by the rule above: the slug is the tool name, every built-in
+  uses the underscore convention LLM tool names take, and those rows are seeded
+  through Prisma without ever meeting the API schema — so without this a
+  capability authored through the API could never match the convention its
+  thirteen siblings use. Strictly wider, so no previously valid slug is
+  affected (#509).
+- **A capability whose slug cannot be a tool name is dropped from an agent's
+  toolset with a warning** rather than sent to the provider. Providers reject the
+  *entire request* over a malformed tool name, so a namespaced fork slug from the
+  `register(cap, { slug })` seam — `billing:lookup_order` — would have killed the
+  conversation rather than one call. Such a capability was never reachable from
+  chat anyway; MCP remains its surface, and resolves custom names back to slugs
+  explicitly (#509).
 
 ### Added
 

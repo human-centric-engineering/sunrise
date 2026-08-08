@@ -23,7 +23,10 @@ import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
-import { updateCapabilitySchema } from '@/lib/validations/orchestration';
+import {
+  capabilityFunctionDefinitionSchema,
+  updateCapabilitySchema,
+} from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
@@ -64,6 +67,31 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           { executionHandler: ['Must be a valid URL'] }
         );
       }
+    }
+  }
+
+  // `functionDefinition.name` must equal `slug` — dispatch resolves the name a
+  // model emits AS the slug, so divergence means a capability is checked by the
+  // #476 tool-call guard under one identity and executed under another (#509).
+  // A PATCH can move either half alone, which the schema cannot decide from the
+  // body, so compare the EFFECTIVE pair against the stored row — same shape as
+  // the executionHandler/executionType case above.
+  if (body.slug !== undefined || body.functionDefinition !== undefined) {
+    const storedFn = capabilityFunctionDefinitionSchema.safeParse(current.functionDefinition);
+    const effectiveSlug = body.slug ?? current.slug;
+    // An unparseable stored definition leaves nothing to compare against. The
+    // row is already inert — `getCapabilityDefinitions` skips it — so let the
+    // write through rather than blocking a PATCH that may be repairing it.
+    const effectiveName = body.functionDefinition
+      ? body.functionDefinition.name
+      : storedFn.success
+        ? storedFn.data.name
+        : undefined;
+
+    if (effectiveName !== undefined && effectiveName !== effectiveSlug) {
+      throw new ValidationError('functionDefinition.name must equal slug', {
+        'functionDefinition.name': [`Must equal the capability slug ("${effectiveSlug}")`],
+      });
     }
   }
 

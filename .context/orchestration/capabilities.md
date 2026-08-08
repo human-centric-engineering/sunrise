@@ -38,23 +38,23 @@ Every outcome is a `CapabilityResult` — the dispatcher never throws at its bou
 
 Everything is exported from `@/lib/orchestration/capabilities`:
 
-| Export                         | Kind      | Purpose                                                                                                 |
-| ------------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
-| `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `has`, `clearCache`                     |
-| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the built-in handlers; also runs the app auto-init + flush                         |
-| `registerAppCapability`        | function  | Add one app/fork capability (extends `BaseCapability`); optional `{ slug?, guard? }`; idempotent by key |
-| `registerAppCapabilities`      | function  | Flush app-registered capabilities into the dispatcher (called by `registerBuiltInCapabilities`)         |
-| `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list)                |
-| `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                             |
-| `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                     |
-| `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                             |
-| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext?, scope?, customConfig?, isEnabled? }`               |
-| `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                           |
-| `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                          |
-| `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                         |
-| `CapabilityRegisterOptions`    | type      | Optional 2nd arg to `register` / `registerAppCapability`: `{ slug?, guard? }` (fork seam)               |
-| `CapabilityGuard`              | type      | `(context) => { allow, reason? } \| Promise<…>` — pre-execute dispatch gate                             |
-| `CapabilityGuardDecision`      | type      | `{ allow: boolean; reason?: string }` returned by a `CapabilityGuard`                                   |
+| Export                         | Kind      | Purpose                                                                                                                                  |
+| ------------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `has`, `clearCache`                                                      |
+| `registerBuiltInCapabilities`  | function  | Idempotent wiring of the built-in handlers; also runs the app auto-init + flush                                                          |
+| `registerAppCapability`        | function  | Add one app/fork capability (extends `BaseCapability`); optional `{ slug?, guard? }`; idempotent by key                                  |
+| `registerAppCapabilities`      | function  | Flush app-registered capabilities into the dispatcher (called by `registerBuiltInCapabilities`)                                          |
+| `getCapabilityDefinitions`     | function  | Returns the function definitions an LLM should see for a given agent (strict allow-list); advertises each tool under its **slug** (#509) |
+| `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                                                              |
+| `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                                                      |
+| `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                                                              |
+| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext?, scope?, customConfig?, isEnabled? }`                                                |
+| `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                                                            |
+| `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                                                           |
+| `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                                                          |
+| `CapabilityRegisterOptions`    | type      | Optional 2nd arg to `register` / `registerAppCapability`: `{ slug?, guard? }` (fork seam)                                                |
+| `CapabilityGuard`              | type      | `(context) => { allow, reason? } \| Promise<…>` — pre-execute dispatch gate                                                              |
+| `CapabilityGuardDecision`      | type      | `{ allow: boolean; reason?: string }` returned by a `CapabilityGuard`                                                                    |
 
 Built-in capability classes (`SearchKnowledgeCapability`, `GetPatternDetailCapability`, `EstimateCostCapability`, `ReadUserMemoryCapability`, `WriteUserMemoryCapability`, `EscalateToHumanCapability`, `ApplyAuditChangesCapability`, `AddProviderModelsCapability`, `DeactivateProviderModelsCapability`, `CallExternalApiCapability`, `RunWorkflowCapability`, `UploadToStorageCapability`) are **not** re-exported — callers go through the dispatcher.
 
@@ -94,6 +94,7 @@ export function initAppCapabilities(): void {
 ```
 
 - **`slug`** overrides the in-memory handler key (defaults to `capability.slug`).
+  **⚠️ Second hard contract (#509): a namespaced slug is not advertisable to an LLM.** The slug _is_ the tool name a model sees — `getCapabilityDefinitions` sets `name` from it, because dispatch resolves the emitted name back as a slug. Provider tool names must match `^[a-zA-Z0-9_-]{1,64}$`, so `billing:lookup_order` cannot be one, and a capability whose slug fails that charset is **dropped from the agent's toolset with a warning** rather than sent to the provider — a malformed tool name fails the entire request, not just the call. Such a capability was never reachable from chat regardless (no valid tool name can resolve to a namespaced slug); **MCP is its supported surface**, since `mcp/tool-registry.ts` advertises `customName` and resolves it back to the slug before dispatch. Use an underscore-or-hyphen slug for anything an agent should call directly.
   **⚠️ Hard contract:** the override slug must correspond to an **active `AiCapability` row**. Every downstream gate — registry lookup (step 3), quarantine, per-agent binding, rate limit — looks the DB up by this same slug. An override with no active row dies at `capability_inactive` **before the handler or guard ever runs**. Forks whose module system creates the namespaced rows satisfy this automatically; a bare override with no matching row will silently never dispatch.
 - **`guard`** is an async-capable predicate run as dispatch step 4a (after the per-agent binding, before the rate limiter). It reads the generic [`CapabilityContext.scope`](#dispatch-scope-carrier-capabilitycontextscope) carrier — core names no keys. `{ allow: false }` → `capability_guard_denied`; a guard that throws **fails closed** (denied + logged). Keyed by the same registration key as the handler, so a `slug` override guards the override key.
 

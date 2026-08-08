@@ -265,9 +265,14 @@ describe('getCapabilityDefinitions', () => {
     );
   });
 
-  it('matches on capability slug, not function definition name', async () => {
-    // Capability slug matches a registered handler, but the function definition
-    // name is different — should still be included because we check slug.
+  it('matches on capability slug, and advertises the slug rather than a divergent name', async () => {
+    // Inclusion is decided by slug — that part was always right, and is what
+    // this test was originally written for. What it also used to pin was the
+    // divergent `functionDefinition.name` being passed through to the model,
+    // which is the #509 hole: dispatch resolves the emitted name AS a slug, so
+    // a row advertising `custom_kb_search` while carrying
+    // `slug: 'search_knowledge_base'` was checked by the #476 guard under one
+    // identity and executed under another. The advertised name is now the slug.
     (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: 'aac-3',
@@ -292,9 +297,99 @@ describe('getCapabilityDefinitions', () => {
       },
     ]);
 
+    const { logger } = await import('@/lib/logging');
     const defs = await getCapabilityDefinitions('agent-1');
     expect(defs).toHaveLength(1);
-    expect(defs[0]?.name).toBe('custom_kb_search');
+    expect(defs[0]?.name).toBe('search_knowledge_base');
+    // The rest of the stored definition is untouched — only the name is
+    // overridden, so a divergent row keeps working rather than being dropped.
+    expect(defs[0]?.description).toBe('Search with custom name');
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Capability functionDefinition.name differs from slug; advertising the slug',
+      expect.objectContaining({
+        slug: 'search_knowledge_base',
+        functionDefinitionName: 'custom_kb_search',
+      })
+    );
+  });
+
+  it('drops a capability whose slug cannot be an LLM tool name', async () => {
+    // A namespaced fork slug from the documented `register(cap, { slug })`
+    // seam. Because the slug is now the advertised name, passing it through
+    // would have the provider reject the ENTIRE request over a bad tool-name
+    // charset — killing the conversation, not just the call. It was never
+    // reachable from chat anyway (dispatch resolves the emitted name as a
+    // slug, and no valid name can match this row); MCP is its surface.
+    const appCap = makeAppCap('namespaced');
+    registerAppCapability(appCap, { slug: 'billing:lookup_order' });
+    registerBuiltInCapabilities();
+
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'aac-ns',
+        agentId: 'agent-1',
+        capabilityId: 'cap-ns',
+        isEnabled: true,
+        customRateLimit: null,
+        capability: {
+          id: 'cap-ns',
+          slug: 'billing:lookup_order',
+          name: 'Lookup Order',
+          category: 'billing',
+          isActive: true,
+          requiresApproval: false,
+          rateLimit: null,
+          functionDefinition: {
+            name: 'lookup_order',
+            description: 'Look up an order',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      },
+    ]);
+
+    const { logger } = await import('@/lib/logging');
+    const defs = await getCapabilityDefinitions('agent-1');
+
+    expect(defs).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Capability slug is not a valid LLM tool name; not advertising it',
+      expect.objectContaining({ slug: 'billing:lookup_order' })
+    );
+  });
+
+  it('leaves a non-divergent definition alone, and says nothing about it', async () => {
+    // The overwhelmingly common case: name and slug already agree. No warning,
+    // and the definition reaches the model unchanged.
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'aac-4',
+        agentId: 'agent-1',
+        capabilityId: 'cap-4',
+        isEnabled: true,
+        customRateLimit: null,
+        capability: {
+          id: 'cap-4',
+          slug: 'search_knowledge_base',
+          name: 'Search Knowledge Base',
+          category: 'knowledge',
+          isActive: true,
+          requiresApproval: false,
+          rateLimit: null,
+          functionDefinition: {
+            name: 'search_knowledge_base',
+            description: 'Search the knowledge base',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      },
+    ]);
+
+    const { logger } = await import('@/lib/logging');
+    const defs = await getCapabilityDefinitions('agent-1');
+
+    expect(defs[0]?.name).toBe('search_knowledge_base');
+    expect(logger.warn).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a warning here would fire on every turn of every healthy agent
   });
 });
 
