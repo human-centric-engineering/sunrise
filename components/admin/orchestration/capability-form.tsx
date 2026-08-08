@@ -85,11 +85,24 @@ type ParameterRow = z.infer<typeof parameterRowSchema>;
 const capabilityFormSchema = z
   .object({
     name: z.string().min(1, 'Name is required').max(100),
+    // Mirrors `capabilitySlugSchema` on the server. Underscores are allowed
+    // here and nowhere else, because a capability slug is also the LLM tool
+    // name (#509) — keep the two regexes identical.
+    // Charset mirrors `capabilitySlugSchema` on the server; the LENGTH is
+    // deliberately looser. The server caps new slugs at 64 (the provider
+    // tool-name limit), but a capability created before that cap can be
+    // 65–100 chars, and its edit form must still validate — the slug input is
+    // disabled in edit mode and the value is not submitted, so a stored
+    // over-length slug is not something the admin can act on. `toSlug` never
+    // generates past 64, so the create path effectively caps itself.
     slug: z
       .string()
       .min(1, 'Slug is required')
       .max(100)
-      .regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers, and hyphens only'),
+      .regex(
+        /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
+        'Lowercase letters and numbers, separated by underscores or hyphens'
+      ),
     description: z.string().min(1, 'Description is required').max(5000),
     category: z.string().min(1, 'Category is required').max(50),
     executionType: z.enum(['internal', 'api', 'webhook']),
@@ -137,14 +150,32 @@ export interface CapabilityFormProps {
   availableCategories?: string[];
 }
 
+/**
+ * Derive a capability slug from a display name.
+ *
+ * Underscore-separated, unlike slugs elsewhere in the admin: a capability slug
+ * is also the tool name advertised to the LLM (#509), and every built-in uses
+ * the underscore convention tool names conventionally take
+ * (`search_knowledge_base`). Hyphens remain valid — `capabilitySlugSchema`
+ * accepts both — this only picks the default.
+ */
 function toSlug(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 100);
+  return (
+    value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s_-]/g, '')
+      .replace(/[\s-]+/g, '_')
+      .replace(/_+/g, '_')
+      // 64, matching the provider tool-name cap the slug now has to satisfy.
+      .slice(0, 64)
+      // Trim separators at BOTH ends. A leading one is reachable from a
+      // display name starting with `_`/`-`, or with punctuation that strips to
+      // nothing ("_Internal Ping" → `_internal_ping`), and the slug regex
+      // rejects it — invisibly, because the auto-slug effect sets the value
+      // with `shouldValidate: false`, so the admin only finds out at submit.
+      .replace(/^[_-]+|[_-]+$/g, '')
+  );
 }
 
 interface CompiledFunctionDef {
@@ -256,12 +287,22 @@ export function CapabilityForm({
     typeof initialFnDef.description === 'string' ? initialFnDef.description : ''
   );
   const [rows, setRows] = useState<ParameterRow[]>(initialRows);
-  const [fnMode, setFnMode] = useState<'visual' | 'json'>('visual');
-  const [visualDisabled, setVisualDisabled] = useState<boolean>(
+  // Pre-existing, fixed here because this PR narrowed its escape route: when
+  // the stored definition cannot be reverse-compiled, the form used to open in
+  // Visual mode anyway, and the recompile effect immediately overwrote
+  // `parsedFn` with empty `properties`/`required` — so opening the edit page
+  // for a capability with enums or nested objects (the seeded
+  // `call_external_api`, for one) and pressing Save silently destroyed its
+  // schema, while the banner told the admin to stay in a JSON mode the form
+  // was not in. Open in the mode that can actually represent the data.
+  const initialVisualDisabled =
     initialRows.length === 0 && Object.keys(initialFnDef).length > 0
       ? tryReverseCompile(initialFnDef) === null
-      : false
+      : false;
+  const [fnMode, setFnMode] = useState<'visual' | 'json'>(
+    initialVisualDisabled ? 'json' : 'visual'
   );
+  const [visualDisabled, setVisualDisabled] = useState<boolean>(initialVisualDisabled);
   const [jsonText, setJsonText] = useState<string>(() =>
     Object.keys(initialFnDef).length > 0 ? JSON.stringify(initialFnDef, null, 2) : ''
   );
@@ -365,6 +406,7 @@ export function CapabilityForm({
   });
 
   const currentName = watch('name');
+  const currentSlug = watch('slug');
   const currentExecutionType = watch('executionType');
   const currentIsActive = watch('isActive');
   const currentRequiresApproval = watch('requiresApproval');
@@ -376,13 +418,16 @@ export function CapabilityForm({
     if (currentName) setValue('slug', toSlug(currentName), { shouldValidate: false });
   }, [currentName, slugTouched, isEdit, setValue]);
 
-  // Also feed the function-definition `name` from the capability slug
-  // while the admin hasn't explicitly touched it.
+  // Keep the function-definition `name` equal to the slug — the API rejects
+  // any capability where they differ (#509), because dispatch resolves the tool
+  // name a model emits AS the slug.
+  //
+  // This used to derive from the display NAME rather than the slug (despite a
+  // comment saying otherwise), which produced `search-web` / `search_web` from
+  // the same typing and made every default-valued create diverge.
   useEffect(() => {
-    if (!fnName && currentName) {
-      setFnName(toSlug(currentName).replace(/-/g, '_'));
-    }
-  }, [currentName, fnName]);
+    setFnName(currentSlug ?? '');
+  }, [currentSlug]);
 
   // Recompile the function definition whenever the visual builder inputs change.
   useEffect(() => {
@@ -401,10 +446,20 @@ export function CapabilityForm({
       try {
         const parsed: unknown = JSON.parse(value);
         if (!parsed || typeof parsed !== 'object') throw new Error('Not an object');
-        const fn = parsed as Record<string, unknown>;
-        if (typeof fn.name !== 'string') {
-          throw new Error('`name` must be a string');
+        // Check the whole shape, not just `name`. `description` and
+        // `parameters` are required by the API (#509) — a write replaces the
+        // JSON column wholesale, so a partial definition discards the rest —
+        // and checking only `name` here meant `{"name": "foo"}` sailed through
+        // every client check to come back as a bare 400.
+        const shape = capabilityFunctionDefinitionSchema.safeParse(parsed);
+        if (!shape.success) {
+          throw new Error(
+            `A function definition needs "name", "description" and "parameters" (${shape.error.issues
+              .map((i) => `${i.path.join('.') || 'root'}: ${i.message}`)
+              .join('; ')})`
+          );
         }
+        const fn = parsed as Record<string, unknown>;
         // Only write to form state on success.
         setParsedFn(fn as unknown as CompiledFunctionDef);
         setJsonError(null);
@@ -499,7 +554,11 @@ export function CapabilityForm({
       return;
     }
     const fn = parsed as Record<string, unknown>;
-    setFnName(typeof fn.name === 'string' ? fn.name : '');
+    // `fnName` is NOT taken from the JSON. In Builder mode it mirrors the slug
+    // (#509), and the field is read-only under a hint that says so — adopting a
+    // hand-edited JSON `name` here would display a value the label denies and,
+    // in edit mode (slug disabled, name read-only), leave no way to correct it
+    // without going back to JSON.
     setFnDescription(typeof fn.description === 'string' ? fn.description : '');
     setRows(rev);
     setVisualDisabled(false);
@@ -533,6 +592,19 @@ export function CapabilityForm({
       setError('Metadata is not valid JSON. Fix the editor first.');
       return;
     }
+    // The API refuses a definition whose `name` differs from the slug (#509).
+    // Builder mode cannot produce one — the field mirrors the slug — but the
+    // JSON editor can, and so can the reverse: authoring JSON and then editing
+    // the display name, which regenerates the slug underneath it. Say so here
+    // rather than letting a bare 400 come back from the server.
+    if (parsedFn.name !== data.slug) {
+      setError(
+        `The function name must match the slug. The Function tab says "${parsedFn.name}", ` +
+          `the slug is "${data.slug}" — a capability is looked up by the name the AI emits, ` +
+          `so the two cannot differ.`
+      );
+      return;
+    }
 
     setSubmitting(true);
     setError(null);
@@ -545,8 +617,14 @@ export function CapabilityForm({
         metadata: metadataParsed,
       };
       if (isEdit && capability) {
+        // The slug is immutable after creation — the input is disabled in edit
+        // mode — so sending it back is at best a no-op. It is dropped because
+        // it stopped being harmless: the server caps new slugs at 64, so
+        // echoing a longer legacy slug would fail validation and leave the
+        // capability uneditable through a field the admin cannot change.
+        const { slug: _unusedSlug, ...editPayload } = payload;
         await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
-          body: payload,
+          body: editPayload,
         });
         reset(data);
         // Reset non-RHF state to match what was saved
@@ -689,9 +767,16 @@ export function CapabilityForm({
             <Label htmlFor="slug">
               Slug{' '}
               <FieldHelp title="URL-safe identifier">
-                A permanent ID for this capability, used in URLs and when attaching it to agents.
-                Auto-generated from the name. Lowercase letters, numbers, and hyphens only. Cannot
-                be changed after creation.
+                <p>
+                  A permanent ID for this capability, used in URLs, when attaching it to agents, and{' '}
+                  <strong>as the tool name the AI calls</strong> — the Function name on the Function
+                  tab mirrors it.
+                </p>
+                <p>
+                  Auto-generated from the name. Lowercase letters and numbers, separated by
+                  underscores or hyphens; underscores are conventional for tool names. Cannot be
+                  changed after creation.
+                </p>
               </FieldHelp>
             </Label>
             <Input
@@ -703,7 +788,7 @@ export function CapabilityForm({
               }}
               disabled={isEdit}
               className="font-mono"
-              placeholder="search-knowledge-base"
+              placeholder="search_knowledge_base"
             />
             {errors.slug && <p className="text-destructive text-xs">{errors.slug.message}</p>}
             {isEdit && (
@@ -909,7 +994,7 @@ export function CapabilityForm({
                   } catch {
                     // Fall through with empty
                   }
-                  setFnName(typeof parsed.name === 'string' ? parsed.name : '');
+                  // `fnName` keeps mirroring the slug — see switchToVisualMode.
                   setFnDescription(
                     typeof parsed.description === 'string' ? parsed.description : ''
                   );
@@ -929,18 +1014,28 @@ export function CapabilityForm({
                 <Label htmlFor="fnName">
                   Function name{' '}
                   <FieldHelp title="Function name">
-                    A machine-readable identifier the AI uses to call this capability. Use lowercase
-                    with underscores (e.g. <code>search_knowledge_base</code>,{' '}
-                    <code>create_ticket</code>).
+                    <p>
+                      The machine-readable identifier the AI uses to call this capability.{' '}
+                      <strong>Always the same as the slug</strong>, so edit it on the Basics tab.
+                    </p>
+                    <p>
+                      It has to match: when a model calls a tool, the platform looks the capability
+                      up by the name it emitted. If the two could differ, a capability would be
+                      permission-checked as one tool and executed as another.
+                    </p>
                   </FieldHelp>
                 </Label>
                 <Input
                   id="fnName"
                   value={fnName}
-                  onChange={(e) => setFnName(e.target.value)}
+                  readOnly
+                  aria-describedby="fnName-hint"
                   placeholder="search_knowledge_base"
-                  className="font-mono"
+                  className="bg-muted font-mono"
                 />
+                <p id="fnName-hint" className="text-muted-foreground text-xs">
+                  Mirrors the slug.
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="fnDesc">

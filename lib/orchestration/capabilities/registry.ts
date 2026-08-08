@@ -187,10 +187,58 @@ export function __resetRegistrationForTests(): void {
 }
 
 /**
+ * The charset every supported provider accepts for a tool name. Pinned for
+ * Anthropic in `lib/orchestration/llm/anthropic.ts`; OpenAI is the same for
+ * tools. A capability slug has to satisfy it to be advertised, because the
+ * slug *is* the advertised name (#509).
+ */
+const LLM_TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+
+/**
+ * Slug→name pairs already warned about, so a divergent row does not emit a
+ * warning on every chat turn and every `agent_call` step for the life of the
+ * process. The whole design is that such a row keeps working indefinitely, so
+ * without this the log fills with one line per request, forever.
+ *
+ * Keyed on the exact pair, which is what makes this dedupe safe where the one
+ * attempted in #553 was not: that key collapsed distinct values into a single
+ * rendered token and so could hide a *second*, different misconfiguration
+ * behind the first. Two different divergent rows produce two different keys
+ * here, and a row that changes produces a new key. Process-lifetime only, so a
+ * redeploy re-announces everything still outstanding.
+ */
+const warnedDivergentPairs = new Set<string>();
+
+function warnOnceForDivergence(
+  agentId: string,
+  slug: string,
+  functionDefinitionName: string
+): void {
+  const key = `${slug} ${functionDefinitionName}`;
+  if (warnedDivergentPairs.has(key)) return;
+  warnedDivergentPairs.add(key);
+
+  logger.warn('Capability functionDefinition.name differs from slug; advertising the slug', {
+    agentId,
+    slug,
+    functionDefinitionName,
+  });
+}
+
+/** Test seam: clears the warn-once memo so cases don't leak into each other. */
+export function __resetDivergenceWarningsForTests(): void {
+  warnedDivergentPairs.clear();
+}
+
+/**
  * Return the OpenAI-compatible function definitions an LLM should see
  * when talking to a given agent. Filters out any definition whose
  * slug isn't registered in the in-memory dispatcher (i.e. anything the
- * DB advertises but the code doesn't actually implement).
+ * DB advertises but the code doesn't actually implement), or whose slug
+ * cannot be a tool name.
+ *
+ * **The advertised `name` is the capability slug, not the stored
+ * `functionDefinition.name`** — see the comment at the push site for why.
  */
 export async function getCapabilityDefinitions(
   agentId: string
@@ -220,7 +268,53 @@ export async function getCapabilityDefinitions(
       continue;
     }
     if (capabilityDispatcher.has(row.capability.slug)) {
-      definitions.push(parsed.data);
+      // Since the slug becomes the advertised tool name, it has to be legal as
+      // one. Providers reject the ENTIRE request over a malformed tool name
+      // (Anthropic's charset is pinned in `llm/anthropic.ts`), so advertising
+      // a namespaced fork slug like `billing:lookup_order` — the documented
+      // `register(cap, { slug })` seam — would kill the whole conversation
+      // rather than one tool call.
+      //
+      // Such a capability was never reachable from chat anyway: dispatch
+      // resolves the emitted name as a slug, and no valid-charset name can
+      // match a namespaced row. Dropping it from the toolset makes that
+      // explicit instead of trading a silent per-call failure for a fatal one.
+      // MCP remains its supported surface — `mcp/tool-registry.ts` advertises
+      // `customName` and resolves it back to the slug before dispatch.
+      if (!LLM_TOOL_NAME.test(row.capability.slug)) {
+        logger.warn('Capability slug is not a valid LLM tool name; not advertising it', {
+          agentId,
+          slug: row.capability.slug,
+        });
+        continue;
+      }
+
+      // Advertise the SLUG as the tool name, not `functionDefinition.name`.
+      //
+      // Dispatch takes the name the model emitted and resolves it as a slug,
+      // so the name a capability advertises and the slug that selects the
+      // handler must be the same string. Nothing used to require that
+      // (`capabilityFunctionDefinitionSchema` still doesn't — it validates the
+      // JSON column alone and cannot see the slug), and the #476 tool-call
+      // guard keyed on the name while dispatch keyed on the slug. A row with
+      // `slug: 'estimate_workflow_cost'` and `name: 'apply_audit_changes'`
+      // was therefore *checked* as one capability and *executed* as another
+      // (#509).
+      //
+      // Overriding here rather than rejecting is deliberate: this is the READ
+      // path, and dropping the row would silently strip the tool from the
+      // agent. Divergence is refused at the write boundary instead (see
+      // `createCapabilitySchema` / `updateCapabilitySchema`), so this is the
+      // backstop for rows written before that landed, restored from a backup
+      // bundle, or inserted straight into the database.
+      //
+      // It also makes the two `SEARCH_KNOWLEDGE_SLUG` comparisons in
+      // `chat/streaming-handler.ts` — which match a slug constant against a
+      // tool *name* — correct by construction rather than by luck.
+      if (parsed.data.name !== row.capability.slug) {
+        warnOnceForDivergence(agentId, row.capability.slug, parsed.data.name);
+      }
+      definitions.push({ ...parsed.data, name: row.capability.slug });
     }
   }
   return definitions;

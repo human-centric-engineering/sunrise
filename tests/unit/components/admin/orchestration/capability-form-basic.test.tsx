@@ -191,6 +191,9 @@ describe('CapabilityForm — Basic tab', () => {
   // ── Slug auto-generation ───────────────────────────────────────────────────
 
   describe('slug auto-generation', () => {
+    // #509: a capability slug is also the tool name the LLM is given, so the
+    // default is underscore-separated to match the convention every built-in
+    // uses (`search_knowledge_base`). Hyphens are still accepted by the API.
     it('slug auto-populates from name on typing', async () => {
       const user = userEvent.setup();
       render(<CapabilityForm mode="create" availableCategories={['api']} />);
@@ -199,11 +202,11 @@ describe('CapabilityForm — Basic tab', () => {
 
       const slugInput = screen.getByRole('textbox', { name: /^slug/i });
       await waitFor(() => {
-        expect((slugInput as HTMLInputElement).value).toBe('my-knowledge-search');
+        expect((slugInput as HTMLInputElement).value).toBe('my_knowledge_search');
       });
     });
 
-    it('slug is lowercase with hyphens', async () => {
+    it('slug is lowercase with underscores', async () => {
       const user = userEvent.setup();
       render(<CapabilityForm mode="create" availableCategories={['api']} />);
 
@@ -212,8 +215,28 @@ describe('CapabilityForm — Basic tab', () => {
       const slugInput = screen.getByRole('textbox', { name: /^slug/i });
       await waitFor(() => {
         const val = (slugInput as HTMLInputElement).value;
-        expect(val).toMatch(/^[a-z0-9-]+$/);
+        expect(val).toMatch(/^[a-z0-9_]+$/);
         expect(val).toContain('hello');
+      });
+    });
+
+    // The whole point of #509: whatever the slug ends up as, the function name
+    // follows it. A divergent pair is rejected by the API, and the old form
+    // produced one from the default typing alone (`search-web` / `search_web`).
+    it('mirrors the slug into the function name', async () => {
+      const user = userEvent.setup();
+      render(<CapabilityForm mode="create" availableCategories={['api']} />);
+
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), 'My Knowledge Search');
+
+      await user.click(screen.getByRole('tab', { name: /function/i }));
+
+      await waitFor(() => {
+        const fnNameInput = screen.getByRole('textbox', { name: /function name/i });
+        expect((fnNameInput as HTMLInputElement).value).toBe('my_knowledge_search');
+        // Read-only: the invariant is enforced server-side, so the field must
+        // not offer a way to author a pair the API will reject.
+        expect(fnNameInput).toHaveAttribute('readonly');
       });
     });
 

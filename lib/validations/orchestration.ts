@@ -521,6 +521,37 @@ export const cloneAgentBodySchema = z.object({
 const executionTypeSchema = z.enum(['internal', 'api', 'webhook']);
 
 /**
+ * Capability slugs permit underscores as well as hyphens, unlike every other
+ * slug in the system.
+ *
+ * A capability slug is not only an identifier — it is the tool name advertised
+ * to the LLM (`getCapabilityDefinitions` sets `name` from it) and the key
+ * dispatch resolves. Every built-in uses the underscore convention LLM tool
+ * names conventionally take (`search_knowledge_base`, `estimate_workflow_cost`,
+ * …), but those rows are seeded straight through Prisma and never met the
+ * shared `slugSchema`, which is hyphen-only. Requiring
+ * `functionDefinition.name === slug` (#509) makes that gap bite: without this,
+ * a capability authored through the API could not carry an underscore tool name
+ * at all, so it could never match the convention its thirteen shipped siblings
+ * use.
+ *
+ * Strictly wider than `slugSchema` — every previously valid capability slug
+ * still validates. Both separators are legal in OpenAI and Anthropic tool
+ * names (`^[a-zA-Z0-9_-]{1,64}$`).
+ */
+export const capabilitySlugSchema = z
+  .string()
+  .regex(
+    /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
+    'Slug must be lowercase alphanumeric, separated by hyphens or underscores'
+  )
+  // 64, not the usual 100: the slug is the advertised tool name, and a longer
+  // one is rejected by the provider charset. Capping at the write boundary
+  // beats accepting it and having `getCapabilityDefinitions` drop the
+  // capability from every toolset with only a warn log to show for it.
+  .pipe(z.string().max(64, 'Slug must be at most 64 characters'));
+
+/**
  * Create capability schema (POST /api/v1/admin/orchestration/capabilities)
  */
 export const createCapabilitySchema = z
@@ -531,7 +562,7 @@ export const createCapabilitySchema = z
       .max(100, 'Name must be less than 100 characters')
       .trim(),
 
-    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')),
+    slug: capabilitySlugSchema,
 
     description: z
       .string()
@@ -545,11 +576,16 @@ export const createCapabilitySchema = z
       .max(50, 'Category must be less than 50 characters')
       .trim(),
 
+    // `description` and `parameters` are REQUIRED, matching the read validator
+    // (`capabilityFunctionDefinitionSchema`). A write replaces the whole JSON
+    // column, so accepting `{ name }` alone silently discarded the rest and
+    // left a row the runtime cannot parse — inert everywhere, and (on PATCH) a
+    // way to walk around the slug-agreement check in two steps (#509).
     functionDefinition: z
       .object({
         name: z.string().min(1),
-        description: z.string().optional(),
-        parameters: z.record(z.string(), z.unknown()).optional(),
+        description: z.string(),
+        parameters: z.record(z.string(), z.unknown()),
       })
       .passthrough(),
 
@@ -585,6 +621,20 @@ export const createCapabilitySchema = z
     metadata: metadataSchema,
   })
   .superRefine((data, ctx) => {
+    // The tool name advertised to a model and the slug that selects the
+    // handler must be the same string, because dispatch resolves the emitted
+    // name AS the slug. Divergence meant a capability was checked by the #476
+    // tool-call guard under one identity and executed under another (#509).
+    // The runtime backstop is in `getCapabilityDefinitions`, which advertises
+    // the slug regardless; this stops the divergence being authored at all.
+    if (data.functionDefinition.name !== data.slug) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'functionDefinition.name must equal slug',
+        path: ['functionDefinition', 'name'],
+      });
+    }
+
     if (
       (data.executionType === 'api' || data.executionType === 'webhook') &&
       data.executionHandler
@@ -613,7 +663,7 @@ export const updateCapabilitySchema = z
       .trim()
       .optional(),
 
-    slug: slugSchema.pipe(z.string().max(100, 'Slug must be less than 100 characters')).optional(),
+    slug: capabilitySlugSchema.optional(),
 
     description: z
       .string()
@@ -629,11 +679,14 @@ export const updateCapabilitySchema = z
       .trim()
       .optional(),
 
+    // Required within the object for the same reason as create: the column is
+    // replaced wholesale, so a partial write destroys the rest of the
+    // definition. The object itself stays optional — a PATCH need not touch it.
     functionDefinition: z
       .object({
         name: z.string().min(1),
-        description: z.string().optional(),
-        parameters: z.record(z.string(), z.unknown()).optional(),
+        description: z.string(),
+        parameters: z.record(z.string(), z.unknown()),
       })
       .passthrough()
       .optional(),
@@ -684,6 +737,18 @@ export const updateCapabilitySchema = z
           path: ['executionHandler'],
         });
       }
+    }
+
+    // A PATCH can move either half of the pair independently, so only the
+    // both-present case is decidable from the body alone. The partial cases
+    // need the stored row and are checked in the PATCH handler. See
+    // `createCapabilitySchema` for why they must agree (#509).
+    if (data.slug && data.functionDefinition && data.functionDefinition.name !== data.slug) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'functionDefinition.name must equal slug',
+        path: ['functionDefinition', 'name'],
+      });
     }
   });
 

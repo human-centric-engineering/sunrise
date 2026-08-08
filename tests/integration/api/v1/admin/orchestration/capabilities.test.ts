@@ -71,7 +71,7 @@ const CAPABILITY_ID = 'cmjbv4i3x00003wsloputgwul';
 
 const VALID_CAPABILITY = {
   name: 'Search Web',
-  slug: 'search-web',
+  slug: 'search_web',
   description: 'Searches the web for information',
   category: 'search',
   functionDefinition: { name: 'search_web', description: 'Search the web', parameters: {} },
@@ -85,7 +85,7 @@ function makeCapability(overrides: Record<string, unknown> = {}) {
   return {
     id: CAPABILITY_ID,
     name: 'Search Web',
-    slug: 'search-web',
+    slug: 'search_web',
     description: 'Searches the web for information',
     category: 'search',
     functionDefinition: { name: 'search_web', description: 'Search the web', parameters: {} },
@@ -335,7 +335,7 @@ describe('POST /api/v1/admin/orchestration/capabilities', () => {
       const data = await parseJson<{ success: boolean; data: { slug: string } }>(response);
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
-      expect(data.data.slug).toBe('search-web');
+      expect(data.data.slug).toBe('search_web');
     });
 
     it('calls capabilityDispatcher.clearCache after creation', async () => {
@@ -548,10 +548,11 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
 
       const fullPayload = {
         name: 'New Name',
-        slug: 'new-slug',
+        slug: 'new_slug',
         description: 'New description',
         category: 'new-category',
-        functionDefinition: { name: 'fn', description: 'd', parameters: {} },
+        // #509: a PATCH moving the slug must move functionDefinition.name with it.
+        functionDefinition: { name: 'new_slug', description: 'd', parameters: {} },
         executionType: 'api' as const,
         executionHandler: 'https://example.com/handler',
         executionConfig: { timeout: 5000 },
@@ -566,7 +567,7 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
       const updateCall = vi.mocked(prisma.aiCapability.update).mock.calls[0][0];
       expect(updateCall.data).toMatchObject({
         name: 'New Name',
-        slug: 'new-slug',
+        slug: 'new_slug',
         description: 'New description',
         category: 'new-category',
         executionType: 'api',
@@ -654,7 +655,12 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
       vi.mocked(prisma.aiCapability.update).mockRejectedValue(p2002);
 
       const response = await PATCH(
-        makeByIdRequest('PATCH', { slug: 'taken-slug' }),
+        // #509: both halves, so the request reaches the DB and fails on the
+        // unique constraint rather than on the agreement check.
+        makeByIdRequest('PATCH', {
+          slug: 'taken_slug',
+          functionDefinition: { name: 'taken_slug', description: 'd', parameters: {} },
+        }),
         makeParams(CAPABILITY_ID)
       );
 

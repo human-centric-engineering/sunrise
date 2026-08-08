@@ -338,9 +338,15 @@ describe('updateAgentSchema', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('createCapabilitySchema', () => {
+  // `slug` and `functionDefinition.name` must be the same string (#509) —
+  // dispatch resolves the name a model emits AS the slug. This fixture used to
+  // carry `slug: 'web-search'` / `name: 'web_search'`, a divergence that was
+  // broken at runtime long before it was a security concern: the tool was
+  // advertised as `web_search`, and dispatch then looked up a capability
+  // registered under `web-search` and found nothing.
   const VALID_CAPABILITY = {
     name: 'Web Search',
-    slug: 'web-search',
+    slug: 'web_search',
     description: 'Searches the web for information.',
     category: 'retrieval',
     functionDefinition: {
@@ -356,6 +362,150 @@ describe('createCapabilitySchema', () => {
     const result = createCapabilitySchema.safeParse(VALID_CAPABILITY);
     // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
+  });
+
+  // #509 — the tool name advertised to a model and the slug that selects the
+  // handler are the same string, because dispatch resolves the emitted name AS
+  // the slug. Divergence is never useful: it either breaks the tool (nothing
+  // registered under that name) or, when the name collides with another
+  // capability's slug, runs a capability the agent was never granted.
+  describe('slug / functionDefinition.name agreement', () => {
+    it('rejects a capability whose functionDefinition.name differs from its slug', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: 'estimate_workflow_cost',
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: 'apply_audit_changes' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'functionDefinition.name must equal slug'
+      );
+    });
+
+    it('points the error at functionDefinition.name so the form can render it', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: 'something_else' },
+      });
+
+      const issue = result.error?.issues.find(
+        (i) => i.message === 'functionDefinition.name must equal slug'
+      );
+      expect(issue?.path).toEqual(['functionDefinition', 'name']);
+    });
+
+    // The slug doubles as the LLM tool name, so it has to be able to carry the
+    // underscore convention all thirteen built-ins use. The shared
+    // `slugSchema` is hyphen-only; capabilities get a wider one.
+    it('accepts an underscore slug, matching the built-in naming convention', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: 'search_knowledge_base',
+        functionDefinition: {
+          ...VALID_CAPABILITY.functionDefinition,
+          name: 'search_knowledge_base',
+        },
+      });
+
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field
+      expect(result.success).toBe(true);
+    });
+
+    it('still accepts a hyphen slug, so nothing previously valid broke', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: 'web-search',
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: 'web-search' },
+      });
+
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a slug that is neither, so the widening did not become a free-for-all', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: 'Web Search',
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: 'Web Search' },
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects the divergence on update when both halves are in the body', () => {
+      const result = updateCapabilitySchema.safeParse({
+        slug: 'estimate_workflow_cost',
+        // Full shape: the object-level refinement only runs once every field
+        // parses, so a partial definition would fail for the other reason.
+        functionDefinition: { name: 'apply_audit_changes', description: 'd', parameters: {} },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'functionDefinition.name must equal slug'
+      );
+    });
+
+    // Only the both-present case is decidable from a PATCH body; the partial
+    // cases need the stored row and are checked in the route handler.
+    it('lets a partial update through the schema, for the handler to judge', () => {
+      const result = updateCapabilitySchema.safeParse({ slug: 'estimate_workflow_cost' });
+
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field
+      expect(result.success).toBe(true);
+    });
+
+    // Step one of a two-step walk around the agreement check: PATCH a
+    // functionDefinition that AGREES with the slug but omits the other fields.
+    // The column is replaced wholesale, so that stripped the row into a state
+    // `capabilityFunctionDefinitionSchema` cannot parse — after which a
+    // slug-only PATCH had nothing to compare against and the check was skipped.
+    it('refuses a functionDefinition missing description or parameters', () => {
+      const result = updateCapabilitySchema.safeParse({
+        functionDefinition: { name: 'estimate_workflow_cost' },
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    it('refuses the same partial shape on create', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        functionDefinition: { name: VALID_CAPABILITY.slug },
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    // The slug is the advertised tool name, and providers cap that at 64.
+    // Accepting a longer one would create a capability that silently vanishes
+    // from every agent's toolset, with only a warn log to explain it.
+    it('refuses a slug longer than the provider tool-name cap', () => {
+      const long = `a${'_b'.repeat(40)}`; // 81 chars, valid charset
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: long,
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: long },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'Slug must be at most 64 characters'
+      );
+    });
+
+    it('accepts a slug at exactly the cap', () => {
+      const exact = 'a'.repeat(64);
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: exact,
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: exact },
+      });
+
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field
+      expect(result.success).toBe(true);
+    });
   });
 
   it('should default requiresApproval=false and isActive=true', () => {
