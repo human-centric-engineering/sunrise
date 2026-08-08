@@ -31,6 +31,15 @@ import {
   buildApprovalUrls,
 } from '@/lib/orchestration/approval-tokens';
 
+const SECRET = 'test-secret-that-is-at-least-32-characters-long';
+
+/** Mint a token with an arbitrary payload, signed correctly. */
+function signPayload(payload: unknown): string {
+  const json = JSON.stringify(payload);
+  const signature = createHmac('sha256', SECRET).update(json, 'utf8').digest('base64url');
+  return `${Buffer.from(json, 'utf8').toString('base64url')}.${signature}`;
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('approval-tokens', () => {
@@ -125,20 +134,15 @@ describe('approval-tokens', () => {
 
     it('throws on validly-signed token with incomplete payload (missing fields)', () => {
       // Craft a token with valid HMAC but incomplete JSON payload
-      const secret = 'test-secret-that-is-at-least-32-characters-long';
-      const payload = JSON.stringify({ executionId: 'exec-1' }); // missing action + expiresAt
-      const encodedPayload = Buffer.from(payload, 'utf8').toString('base64url');
-      const sig = createHmac('sha256', secret).update(payload, 'utf8').digest('base64url');
-      const token = `${encodedPayload}.${sig}`;
+      const token = signPayload({ typ: 'workflow-approval', executionId: 'exec-1' }); // missing action + expiresAt
 
       expect(() => verifyApprovalToken(token)).toThrow('Incomplete approval token payload');
     });
 
     it('throws on validly-signed token with non-JSON payload', () => {
-      const secret = 'test-secret-that-is-at-least-32-characters-long';
       const payload = 'not-json-at-all';
       const encodedPayload = Buffer.from(payload, 'utf8').toString('base64url');
-      const sig = createHmac('sha256', secret).update(payload, 'utf8').digest('base64url');
+      const sig = createHmac('sha256', SECRET).update(payload, 'utf8').digest('base64url');
       const token = `${encodedPayload}.${sig}`;
 
       expect(() => verifyApprovalToken(token)).toThrow('Invalid approval token payload');
@@ -150,6 +154,70 @@ describe('approval-tokens', () => {
 
       expect(verifyApprovalToken(approveToken.token).action).toBe('approve');
       expect(verifyApprovalToken(rejectToken.token).action).toBe('reject');
+    });
+  });
+
+  // #507: this scheme and `lib/storage/access-tokens.ts` HMAC the same
+  // construction with the same secret, so the MAC cannot tell them apart —
+  // a signature minted there verifies structurally here. Before the `typ` tag,
+  // the only thing stopping a cross-scheme replay was that the two payload
+  // schemas happened to be disjoint on required fields, which is a property of
+  // today's shapes rather than a decision anyone made.
+  describe('domain separation from the storage-token scheme', () => {
+    it('rejects an authentically signed storage token', () => {
+      const token = signPayload({
+        typ: 'storage-read',
+        key: 'documents/user-1/contract.pdf',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      expect(() => verifyApprovalToken(token)).toThrow(
+        'Approval token payload is not a workflow-approval token'
+      );
+    });
+
+    it('rejects a payload that satisfies both schemas at once', () => {
+      // The failure the tag exists for, and the one the disjointness accident
+      // does not cover: a single payload carrying every field both verifiers
+      // require. Untagged, one signature over this is simultaneously a valid
+      // approval on exec-1 and a valid read grant for that storage key.
+      const token = signPayload({
+        key: 'documents/user-1/contract.pdf',
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      expect(() => verifyApprovalToken(token)).toThrow(
+        'Approval token payload is not a workflow-approval token'
+      );
+    });
+
+    it('covers the tag with the signature, so a token cannot be retagged', () => {
+      // Domain separation is only worth anything if the tag is inside the
+      // signed bytes. Same payload, same expiry, tag swapped, original
+      // signature — this must fail on the MAC, not on the tag check.
+      const expiresAt = '2099-01-01T00:00:00.000Z';
+      const signed = signPayload({
+        typ: 'workflow-approval',
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt,
+      });
+      const signature = signed.slice(signed.indexOf('.') + 1);
+      const retagged = Buffer.from(
+        JSON.stringify({
+          typ: 'storage-read',
+          executionId: 'exec-1',
+          action: 'approve',
+          expiresAt,
+        }),
+        'utf8'
+      ).toString('base64url');
+
+      expect(() => verifyApprovalToken(`${retagged}.${signature}`)).toThrow(
+        'Invalid approval token signature'
+      );
     });
   });
 

@@ -6,11 +6,21 @@
  * same shape of read path S3 gets from presigned URLs.
  *
  * Token format: `<base64url-payload>.<base64url-signature>`
- *   payload = JSON { key, expiresAt }
+ *   payload = JSON { typ: 'storage-read', key, expiresAt }
  *   signature = HMAC-SHA256(BETTER_AUTH_SECRET, payload-bytes)
  *
  * No database storage or migration required — verification is purely
  * cryptographic, mirroring `lib/orchestration/approval-tokens.ts`.
+ *
+ * **`typ` is what separates this scheme from that one.** Both sign the same
+ * construction with the same secret, so a MAC check alone cannot tell the two
+ * protocols apart: a signature minted there verifies structurally here. What
+ * kept cross-scheme replay closed before #507 was only that the two payload
+ * schemas happened to be disjoint on required fields (`key` vs
+ * `executionId`) — an accident of the current shapes that stops holding the
+ * day either side gains an optional field, with nothing in either file to
+ * flag that as security-relevant. The tag is inside the signed bytes and is
+ * asserted on verify, so the separation is now structural.
  *
  * **The token is scoped to a single key, and the read route must check it
  * against the key actually requested.** That binding is the entire access
@@ -25,9 +35,16 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import { env } from '@/lib/env';
+import { isRecord } from '@/lib/utils';
 
 /** Default token lifetime when the caller doesn't specify one. */
 const DEFAULT_EXPIRY_SECONDS = 3600; // 1 hour
+
+/**
+ * Scheme tag carried in the signed payload and asserted on verify — see the
+ * module header. Changing this string invalidates every outstanding token.
+ */
+const TOKEN_TYPE = 'storage-read';
 
 /**
  * Upper bound on a token's life. Matches the `signedUrlTtlSeconds` ceiling in
@@ -37,6 +54,7 @@ const DEFAULT_EXPIRY_SECONDS = 3600; // 1 hour
 export const MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 const tokenPayloadSchema = z.object({
+  typ: z.literal(TOKEN_TYPE),
   key: z.string().min(1),
   expiresAt: z.string().min(1),
 });
@@ -76,7 +94,7 @@ export function generateStorageAccessToken(
 
   const ttl = Math.min(Math.max(Math.floor(expiresInSeconds), 1), MAX_EXPIRY_SECONDS);
   const expiresAt = new Date(Date.now() + ttl * 1000);
-  const payload: TokenPayload = { key, expiresAt: expiresAt.toISOString() };
+  const payload: TokenPayload = { typ: TOKEN_TYPE, key, expiresAt: expiresAt.toISOString() };
 
   const payloadJson = JSON.stringify(payload);
 
@@ -88,7 +106,9 @@ export function generateStorageAccessToken(
 
 /**
  * Verify a signed storage token. Returns the decoded payload on success, or
- * throws on tampered / expired / malformed tokens.
+ * throws on tampered / expired / malformed tokens, and on an authentic token
+ * belonging to another scheme signed with the same secret (see `typ` in the
+ * module header).
  *
  * Verifying tells you the token is authentic — **not** that it grants access
  * to the object being requested. The caller must compare `payload.key`
@@ -119,18 +139,26 @@ export function verifyStorageAccessToken(token: string): TokenPayload {
     throw new Error('Invalid storage token signature');
   }
 
-  let payload: TokenPayload;
+  let raw: unknown;
   try {
-    const raw: unknown = JSON.parse(payloadJson);
-    const parsed = tokenPayloadSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new Error('Incomplete storage token payload');
-    }
-    payload = parsed.data;
-  } catch (err) {
-    if (err instanceof Error && err.message === 'Incomplete storage token payload') throw err;
+    raw = JSON.parse(payloadJson);
+  } catch {
     throw new Error('Invalid storage token payload');
   }
+
+  const parsed = tokenPayloadSchema.safeParse(raw);
+  if (!parsed.success) {
+    // A wrong `typ` gets its own message rather than being folded into
+    // "incomplete": a token from the approval scheme is authentically signed
+    // and complete, and whoever reads the rejection needs to see that it was
+    // the scheme that was wrong, not the signature or a missing field.
+    throw new Error(
+      isRecord(raw) && raw.typ !== TOKEN_TYPE
+        ? 'Storage token payload is not a storage-read token'
+        : 'Incomplete storage token payload'
+    );
+  }
+  const payload = parsed.data;
 
   const expiresAt = new Date(payload.expiresAt);
   if (isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {

@@ -105,6 +105,26 @@ release process.
   signal. That warning now names the underlying cause rather than reporting a
   bare `fetch failed` — without it the condition is effectively undiagnosable.
   If you route escalations through a redirecting endpoint, re-point it (#553).
+- **The two HMAC token schemes are domain-separated.** `lib/storage/access-tokens.ts`
+  (grants a read of one storage key) and `lib/orchestration/approval-tokens.ts`
+  (grants an approve/reject on one execution) sign the same
+  `base64url(payload).base64url(HMAC-SHA256(BETTER_AUTH_SECRET, payload))`
+  construction with nothing in the signed bytes saying which scheme a token
+  belongs to, so a signature minted by one verified structurally as the other.
+  Cross-scheme replay failed only at the next step, because the two payload
+  schemas happen to be disjoint on required fields (`key` vs `executionId`) —
+  a property of today's shapes, not a decision, and one that stops holding the
+  day either payload gains an optional field that satisfies the other's schema.
+  Both payloads now carry a `typ` tag (`storage-read` / `workflow-approval`)
+  that verification asserts. A third scheme on the same secret must declare its
+  own (#507).
+  **Breaking for outstanding tokens:** the tag is inside the signed bytes, so
+  every token minted before this release fails verification. In practice that
+  is unclicked approval links (default 7-day expiry) and signed storage URLs
+  (capped at 7 days) — the same blast radius as rotating `BETTER_AUTH_SECRET`.
+  A dead approval link is not a stuck execution: the admin approval queue acts
+  on the execution directly under a session and never touches these tokens.
+  A dead storage URL is re-minted by whatever issued it.
 
 ### Added
 

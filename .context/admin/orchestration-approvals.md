@@ -146,10 +146,12 @@ The approval system supports approvals from external channels (Slack, email, Wha
 Tokens are stateless HMAC-SHA256 signatures using `BETTER_AUTH_SECRET`:
 
 - Format: `base64url(payload).base64url(HMAC-SHA256(secret, payloadJSON))`
-- Payload: `{ executionId, action, expiresAt }`
+- Payload: `{ typ: 'workflow-approval', executionId, action, expiresAt }`
 - Default expiry: 7 days (overridden by step's `timeoutMinutes`)
 - Verified with constant-time comparison (`timingSafeEqual`)
 - No token table, no cleanup job, no migration
+
+`typ` is the domain separator against `lib/storage/access-tokens.ts`, which signs the same construction with the same secret: without a tag in the signed bytes the MAC cannot tell the two protocols apart, and the only thing preventing cross-scheme replay is that the two payload schemas happen to be disjoint on required fields. Verification asserts the tag. **Adding a third HMAC scheme on `BETTER_AUTH_SECRET` must give it its own `typ`** (#507).
 
 ### Step config for external channels
 

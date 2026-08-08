@@ -181,6 +181,8 @@ Provider-agnostic — it works with anything declaring the `download` capability
 
 Tokens are stateless HMAC-SHA256 over `BETTER_AUTH_SECRET` (`lib/storage/access-tokens.ts`, same shape as `lib/orchestration/approval-tokens.ts`) — no table, no migration. **Rotating `BETTER_AUTH_SECRET` invalidates every outstanding URL**, which is the intended lever if one leaks. Lifetime is capped at 7 days.
 
+The payload is `{ typ: 'storage-read', key, expiresAt }`. `typ` is the domain separator against the approval scheme, which signs the same construction with the same secret: without a tag in the signed bytes, the MAC cannot tell the two protocols apart, and the only thing preventing cross-scheme replay is that the two payload schemas happen to be disjoint on required fields. Verification asserts the tag. **Adding a third HMAC scheme on `BETTER_AUTH_SECRET` must give it its own `typ`** (#507).
+
 `generateStorageAccessToken()` signs whatever key it is given — only `getSignedUrl()` validates first. The route therefore re-runs `validateStorageKey()` after the token checks, so a token minted directly for a traversal key is rejected with `INVALID_KEY` rather than reaching the filesystem.
 
 | Status | Code                     | Meaning                                     |

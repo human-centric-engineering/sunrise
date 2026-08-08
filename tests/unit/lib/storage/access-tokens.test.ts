@@ -146,7 +146,7 @@ describe('storage access tokens', () => {
     });
 
     it('throws on a correctly signed token with an unparseable expiry', () => {
-      const token = signPayload({ key: KEY, expiresAt: 'not-a-date' });
+      const token = signPayload({ typ: 'storage-read', key: KEY, expiresAt: 'not-a-date' });
 
       expect(() => verifyStorageAccessToken(token)).toThrow(/expired/i);
     });
@@ -167,13 +167,62 @@ describe('storage access tokens', () => {
     });
 
     it('throws when the payload is missing the key', () => {
-      const token = signPayload({ expiresAt: '2099-01-01T00:00:00.000Z' });
+      const token = signPayload({ typ: 'storage-read', expiresAt: '2099-01-01T00:00:00.000Z' });
 
-      expect(() => verifyStorageAccessToken(token)).toThrow(/payload/i);
+      expect(() => verifyStorageAccessToken(token)).toThrow(/incomplete/i);
     });
 
     it('throws on an empty token', () => {
       expect(() => verifyStorageAccessToken('')).toThrow(/format/i);
+    });
+  });
+
+  // #507: this scheme and `lib/orchestration/approval-tokens.ts` HMAC the same
+  // construction with the same secret, so the MAC cannot tell them apart —
+  // a signature minted there verifies structurally here. Before the `typ` tag,
+  // the only thing stopping a cross-scheme replay was that the two payload
+  // schemas happened to be disjoint on required fields, which is a property of
+  // today's shapes rather than a decision anyone made.
+  describe('domain separation from the approval-token scheme', () => {
+    it('rejects an authentically signed approval token', () => {
+      const token = signPayload({
+        typ: 'workflow-approval',
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      expect(() => verifyStorageAccessToken(token)).toThrow(/not a storage-read token/i);
+    });
+
+    it('rejects a payload that satisfies both schemas at once', () => {
+      // The failure the tag exists for, and the one the disjointness accident
+      // does not cover: a single payload carrying every field both verifiers
+      // require. Untagged, one signature over this is simultaneously a valid
+      // storage-read grant and a valid approval on exec-1.
+      const token = signPayload({
+        key: KEY,
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      expect(() => verifyStorageAccessToken(token)).toThrow(/not a storage-read token/i);
+    });
+
+    it('covers the tag with the signature, so a token cannot be retagged', () => {
+      // Domain separation is only worth anything if the tag is inside the
+      // signed bytes. Same payload, same expiry, tag swapped, original
+      // signature — this must fail on the MAC, not on the tag check.
+      const expiresAt = '2026-07-30T12:05:00.000Z';
+      const signed = signPayload({ typ: 'storage-read', key: KEY, expiresAt });
+      const signature = signed.slice(signed.indexOf('.') + 1);
+      const retagged = Buffer.from(
+        JSON.stringify({ typ: 'workflow-approval', key: KEY, expiresAt }),
+        'utf8'
+      ).toString('base64url');
+
+      expect(() => verifyStorageAccessToken(`${retagged}.${signature}`)).toThrow(/signature/i);
     });
   });
 
