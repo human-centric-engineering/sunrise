@@ -159,7 +159,9 @@ const serverEnvSchema = z.object({
         'guard for that one target. Link-local (169.254.0.0/16, fe80::/10) stays blocked ' +
         'either way: it hosts credential-vending metadata services beyond the well-known ' +
         '169.254.169.254 — AWS ECS task metadata at 169.254.170.2, EKS Pod Identity at ' +
-        '169.254.170.23. Loopback is not permitted by this flag either.'
+        '169.254.170.23. CGNAT (100.64.0.0/10) stays blocked too — shared address space, ' +
+        "the default Tailscale range, and Alibaba's metadata host. Loopback IS permitted by " +
+        'this flag, so a same-pod relay sidecar on 127.0.0.1 works.'
     ),
 
   // Internal self-calls (optional)

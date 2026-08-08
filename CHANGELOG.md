@@ -113,13 +113,17 @@ release process.
   `"true"` or `"false"` so a typo fails startup rather than silently leaving it
   off. Backed by a new `allowPrivateNetwork` option on `checkSafeProviderUrl` /
   `isSafeProviderUrl`.
-  **It relaxes RFC1918 and IPv6 unique-local only.** Link-local
-  (`169.254.0.0/16`, `fe80::/10`) stays blocked however it is set: a denylist of
-  metadata *literals* is not enough, because `169.254.169.254` is only the
-  best-known one — AWS ECS task metadata vends IAM role credentials from
-  `169.254.170.2` and EKS Pod Identity from `169.254.170.23`. Cloud-metadata
-  hostnames, the unspecified address and the scheme check are untouched, and it
-  does not imply `allowLoopback` (#553).
+  **It relaxes RFC1918, IPv6 unique-local and loopback** — the last so a
+  same-pod relay sidecar on `127.0.0.1` works, matching what `isLocal` already
+  allows for LLM providers. It does **not** relax link-local
+  (`169.254.0.0/16`, `fe80::/10`) or CGNAT (`100.64.0.0/10`), and the reason is
+  the same for both: a denylist of metadata *literals* is not enough.
+  `169.254.169.254` is only the best-known one — AWS ECS task metadata vends IAM
+  role credentials from `169.254.170.2`, EKS Pod Identity from
+  `169.254.170.23` — and `100.64/10` is shared address space (the default
+  Tailscale range) containing Alibaba Cloud metadata at `100.100.100.200`.
+  Cloud-metadata hostnames, the unspecified address and the scheme allowlist are
+  untouched (#553).
 - **`describeFetchFailure(err)`** in `lib/errors/fetch-error.ts` — renders a
   thrown value for an operator, unwrapping undici's `cause`. Node's `fetch`
   reports nearly every network-layer failure as a bare

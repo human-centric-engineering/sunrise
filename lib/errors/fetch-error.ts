@@ -34,8 +34,45 @@
 export function describeFetchFailure(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
 
-  const { cause } = err;
-  const detail = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : null;
-
+  const detail = describeCause(err.cause);
   return detail ? `${err.message}: ${detail}` : err.message;
+}
+
+/**
+ * Pull a usable description out of undici's `cause`.
+ *
+ * Reading `cause.message` alone is not enough, and the case it misses is the
+ * common one: when a host resolves to more than one address — which any real
+ * hostname does, A plus AAAA — undici attempts each and reports an
+ * `AggregateError` whose own `message` is the empty string, with the per-address
+ * failures on `.errors` and the shared reason on `.code`. So a webhook endpoint
+ * simply being down produced exactly the bare `"fetch failed"` this module
+ * exists to prevent.
+ *
+ * Order: a real message, else the aggregated per-address messages, else the
+ * error code. Only shapes that stringify usefully are used — an arbitrary
+ * object would reach the operator's log as `"[object Object]"`.
+ */
+function describeCause(cause: unknown): string | null {
+  if (typeof cause === 'string') return cause || null;
+  if (!(cause instanceof Error)) return null;
+
+  if (cause.message) return cause.message;
+
+  // AggregateError.errors — one entry per address attempted. Duplicates are
+  // common (same refusal on v4 and v6), so collapse them.
+  const aggregated = (cause as AggregateError).errors;
+  if (Array.isArray(aggregated)) {
+    const messages = [
+      ...new Set(
+        aggregated
+          .map((inner) => (inner instanceof Error ? inner.message : null))
+          .filter((message): message is string => Boolean(message))
+      ),
+    ];
+    if (messages.length > 0) return messages.join('; ');
+  }
+
+  const code = (cause as NodeJS.ErrnoException).code;
+  return typeof code === 'string' && code ? code : null;
 }

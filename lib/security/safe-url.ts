@@ -118,7 +118,8 @@ export interface SafeUrlCheckOptions {
   allowLoopback?: boolean;
 
   /**
-   * When true, permit private **RFC1918** and **IPv6 unique-local** targets.
+   * When true, permit private **RFC1918** (10/8, 172.16/12, 192.168/16) and
+   * **IPv6 unique-local** (`fc00::/7`) targets.
    * For a service the deployment genuinely runs on its own private network —
    * an escalation relay inside a VPC, say — where the alternative is no
    * validation at all.
@@ -131,6 +132,12 @@ export interface SafeUrlCheckOptions {
    * is reserved for exactly this class of link-local service. Nothing an
    * operator would legitimately POST an escalation to lives there, so the
    * range stays refused however the flag is set.
+   *
+   * **CGNAT (`100.64.0.0/10`) is not relaxed either**, for the same reason: it
+   * is shared address space rather than a network the deployment owns, it is
+   * the default range for overlay VPNs such as Tailscale, and Alibaba Cloud's
+   * metadata service sits at `100.100.100.200`. Relaxing it would reduce
+   * protection in that range to a single denylisted literal.
    *
    * Cloud-metadata hostnames and the unspecified address also stay blocked —
    * `BLOCKED_HOSTNAMES` is checked before this flag is consulted.
@@ -219,7 +226,15 @@ export function checkSafeProviderUrl(
     };
   }
 
-  if (!options.allowPrivateNetwork && (isPrivateIp(host) || isUniqueLocalIpv6(host))) {
+  // The opt-in relaxes RFC1918 + IPv6 unique-local ONLY — deliberately not
+  // everything `isPrivateIp` matches. That predicate also covers CGNAT
+  // (100.64.0.0/10), which is shared address space rather than a network the
+  // deployment owns, is the default range for overlay VPNs like Tailscale, and
+  // contains Alibaba Cloud's metadata service at 100.100.100.200. Relaxing it
+  // would reduce protection there to the single denylisted literal — precisely
+  // the reasoning used above to keep link-local sealed.
+  const relaxable = options.allowPrivateNetwork && (isRfc1918(host) || isUniqueLocalIpv6(host));
+  if (!relaxable && (isPrivateIp(host) || isUniqueLocalIpv6(host))) {
     return {
       ok: false,
       reason: 'private_ip',
@@ -260,6 +275,22 @@ function isLoopbackIp(host: string): boolean {
   if (octets) return octets[0] === 127;
   // Unbracketed IPv6 loopback.
   return host === '::1';
+}
+
+/**
+ * RFC1918 only — the three ranges an organisation is actually allocated for its
+ * own network. Narrower than {@link isPrivateIp}, which additionally covers
+ * CGNAT shared address space; see the `allowPrivateNetwork` comment in
+ * `checkSafeProviderUrl` for why the opt-in uses this one.
+ */
+function isRfc1918(host: string): boolean {
+  const octets = parseIpv4(host);
+  if (!octets) return false;
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 172 && b !== undefined && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
 }
 
 function isPrivateIp(host: string): boolean {

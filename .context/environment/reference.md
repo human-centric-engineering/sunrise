@@ -58,11 +58,13 @@ Complete reference for all environment variables used in Sunrise.
 
 ³ **`ESCALATION_WEBHOOK_ALLOW_PRIVATE` widens the SSRF guard, narrowly.** `escalationConfig.webhookUrl` is
 validated against `isSafeProviderUrl` at the settings API boundary and re-checked at dispatch. Setting this to
-`"true"` permits **RFC1918 and IPv6 unique-local** targets, for a deployment whose escalation relay genuinely runs
-on its own private network. It does **not** permit link-local (`169.254.0.0/16`, `fe80::/10`) — that range hosts
-credential-vending metadata services beyond the well-known `169.254.169.254`, such as AWS ECS task metadata at
-`169.254.170.2` and EKS Pod Identity at `169.254.170.23` — nor cloud-metadata hostnames, nor loopback. See
-`lib/security/safe-url.ts` (`allowPrivateNetwork`).
+`"true"` permits **RFC1918**, **IPv6 unique-local** and **loopback** targets, for a deployment whose escalation relay
+genuinely runs on its own infrastructure (a VPC endpoint, or a same-pod sidecar on `127.0.0.1`). It does **not**
+permit **link-local** (`169.254.0.0/16`, `fe80::/10`) — that range hosts credential-vending metadata services beyond
+the well-known `169.254.169.254`, such as AWS ECS task metadata at `169.254.170.2` and EKS Pod Identity at
+`169.254.170.23` — nor **CGNAT** (`100.64.0.0/10`, shared address space, the default Tailscale range, and Alibaba
+Cloud metadata at `100.100.100.200`), nor cloud-metadata hostnames. See `lib/security/safe-url.ts`
+(`allowPrivateNetwork`).
 
 ² **Storage variables use graceful degradation.** Not included in `lib/env.ts` schema. See [storage-env.md](./storage-env.md) for details.
 

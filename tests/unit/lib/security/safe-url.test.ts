@@ -188,6 +188,14 @@ describe('checkSafeProviderUrl', () => {
       ['EKS Pod Identity credentials', 'http://169.254.170.23/v1/credentials'],
       ['any other link-local', 'http://169.254.10.10/'],
       ['IPv6 link-local', 'http://[fe80::1]/'],
+      // CGNAT is shared address space, not a network the deployment owns; it
+      // is also the default Tailscale range and contains Alibaba Cloud's
+      // metadata service at 100.100.100.200. Relaxing it would reduce
+      // protection there to that one denylisted literal — the same argument
+      // that keeps link-local sealed.
+      ['CGNAT 100.64/10', 'http://100.64.0.1/'],
+      ['CGNAT near Alibaba metadata', 'http://100.100.100.5/'],
+      ['Alibaba metadata itself', 'http://100.100.100.200/'],
       ['GCP metadata hostname', 'http://metadata.google.internal/'],
       ['unspecified address', 'http://0.0.0.0/'],
     ])('still blocks %s when opted in', (_label, url) => {

@@ -32,6 +32,51 @@ describe('describeFetchFailure', () => {
     expect(describeFetchFailure(new Error('boom'))).toBe('boom');
   });
 
+  // The shape that actually shows up. Any real hostname resolves to A AND
+  // AAAA, so undici tries both and reports an AggregateError whose own
+  // `message` is '' — reading `cause.message` alone returned the bare
+  // 'fetch failed' this module exists to prevent.
+  it('uses the aggregated per-address failures when the cause message is empty', () => {
+    const cause = Object.assign(
+      new AggregateError(
+        [
+          new Error('connect ECONNREFUSED ::1:49999'),
+          new Error('connect ECONNREFUSED 127.0.0.1:49999'),
+        ],
+        ''
+      ),
+      { code: 'ECONNREFUSED' }
+    );
+
+    expect(describeFetchFailure(Object.assign(new TypeError('fetch failed'), { cause }))).toBe(
+      'fetch failed: connect ECONNREFUSED ::1:49999; connect ECONNREFUSED 127.0.0.1:49999'
+    );
+  });
+
+  it('collapses identical per-address failures', () => {
+    const cause = new AggregateError([new Error('same reason'), new Error('same reason')], '');
+
+    expect(describeFetchFailure(Object.assign(new Error('fetch failed'), { cause }))).toBe(
+      'fetch failed: same reason'
+    );
+  });
+
+  it('falls back to the error code when there is nothing else', () => {
+    const cause = Object.assign(new Error(''), { code: 'ENOTFOUND' });
+
+    expect(describeFetchFailure(Object.assign(new Error('fetch failed'), { cause }))).toBe(
+      'fetch failed: ENOTFOUND'
+    );
+  });
+
+  it('prefers a real cause message over the code', () => {
+    const cause = Object.assign(new Error('unexpected redirect'), { code: 'UND_ERR_REDIRECT' });
+
+    expect(describeFetchFailure(Object.assign(new Error('fetch failed'), { cause }))).toBe(
+      'fetch failed: unexpected redirect'
+    );
+  });
+
   it.each([
     ['a plain object', { code: 'ENOTFOUND' }],
     ['an array', ['a']],

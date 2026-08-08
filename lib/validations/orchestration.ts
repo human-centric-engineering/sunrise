@@ -2735,7 +2735,11 @@ export const escalationConfigWriteSchema = escalationConfigSchema.extend({
       // undefined in the browser, so a client-side parse fails closed.
       (url) =>
         isSafeProviderUrl(url, {
+          // Both, and for the same reason the dispatch-time check passes both:
+          // the flag expresses "internal relay", which covers a loopback
+          // sidecar as well as a VPC address.
           allowPrivateNetwork: process.env.ESCALATION_WEBHOOK_ALLOW_PRIVATE === 'true',
+          allowLoopback: process.env.ESCALATION_WEBHOOK_ALLOW_PRIVATE === 'true',
         }),
       'URL is not allowed (private or internal address)'
     )

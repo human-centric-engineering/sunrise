@@ -190,31 +190,6 @@ export function SettingsForm({
   initialSettings,
   allowPrivateEscalationWebhook = false,
 }: SettingsFormProps) {
-  // Mirror the server's SSRF refine so an unsafe webhook is caught beside the
-  // field. Without it the PATCH 400s and, because this page saves every
-  // setting in one request, EVERY other edit on the page is silently lost with
-  // the reason in a page-level banner (#553).
-  const formSchema = React.useMemo(
-    () =>
-      settingsFormSchema.superRefine((values, ctx) => {
-        // `onSubmit` only sends webhookUrl when escalation is enabled and has
-        // recipients; otherwise it PATCHes `escalationConfig: null`. Validating
-        // regardless would stop an operator DISABLING escalation to get rid of
-        // a now-rejected legacy URL — and since this page saves every setting
-        // in one request, nothing else on it could be saved either.
-        if (!values.escalationEnabled) return;
-        const url = values.escalationWebhookUrl;
-        if (!url) return;
-        if (isSafeProviderUrl(url, { allowPrivateNetwork: allowPrivateEscalationWebhook })) return;
-        ctx.addIssue({
-          code: 'custom',
-          path: ['escalationWebhookUrl'],
-          message: 'URL is not allowed (private or internal address)',
-        });
-      }),
-    [allowPrivateEscalationWebhook]
-  );
-
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
@@ -222,6 +197,39 @@ export function SettingsForm({
   );
   const [escalationEmails, setEscalationEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
+  );
+
+  // Mirror the server's SSRF refine so an unsafe webhook is caught beside the
+  // field. Without it the PATCH 400s and, because this page saves every
+  // setting in one request, EVERY other edit on the page is silently lost with
+  // the reason in a page-level banner (#553).
+  const formSchema = React.useMemo(
+    () =>
+      settingsFormSchema.superRefine((values, ctx) => {
+        // Mirror `onSubmit`'s condition EXACTLY. It sends webhookUrl only when
+        // escalation is enabled AND has recipients; otherwise it PATCHes
+        // `escalationConfig: null` and the URL never leaves the browser.
+        // Validating more eagerly than that would block an operator turning the
+        // feature off — or removing its last recipient — to be rid of a
+        // now-rejected legacy URL, and since this page saves every setting in
+        // one request, nothing else on it could be saved either.
+        if (!values.escalationEnabled || escalationEmails.length === 0) return;
+        const url = values.escalationWebhookUrl;
+        if (!url) return;
+        if (
+          isSafeProviderUrl(url, {
+            allowPrivateNetwork: allowPrivateEscalationWebhook,
+            allowLoopback: allowPrivateEscalationWebhook,
+          })
+        )
+          return;
+        ctx.addIssue({
+          code: 'custom',
+          path: ['escalationWebhookUrl'],
+          message: 'URL is not allowed (private or internal address)',
+        });
+      }),
+    [allowPrivateEscalationWebhook, escalationEmails.length]
   );
   const [emailInput, setEmailInput] = React.useState('');
   const [emailError, setEmailError] = React.useState<string | null>(null);

@@ -107,8 +107,15 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
       // provider-manager applies to `baseUrl`. Skipping only the POST (rather
       // than failing the parse) keeps the emails flowing and leaves the URL
       // visible in the settings form so it can actually be corrected.
+      // The flag means "my relay is on infrastructure I control and it is not
+      // publicly routable". A same-pod sidecar on loopback fits that exactly —
+      // and is a pattern this codebase already supports for LLM providers via
+      // `isLocal` — so it opts into both. The guard keeps the two options
+      // orthogonal because they are different properties of an address; the
+      // product-level flag composes them because they are one operator intent.
       const targetCheck = checkSafeProviderUrl(config.webhookUrl, {
         allowPrivateNetwork: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
+        allowLoopback: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE,
       });
       if (!targetCheck.ok) {
         logger.warn('Escalation webhook target rejected; skipping the POST', {
