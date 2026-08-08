@@ -91,7 +91,7 @@ const capabilityFormSchema = z
     slug: z
       .string()
       .min(1, 'Slug is required')
-      .max(100)
+      .max(64, 'Slug must be at most 64 characters')
       .regex(
         /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
         'Lowercase letters and numbers, separated by underscores or hyphens'
@@ -153,13 +153,17 @@ export interface CapabilityFormProps {
  * accepts both — this only picks the default.
  */
 function toSlug(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s_-]/g, '')
-    .replace(/[\s-]+/g, '_')
-    .replace(/_+/g, '_')
-    .slice(0, 100);
+  return (
+    value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s_-]/g, '')
+      .replace(/[\s-]+/g, '_')
+      .replace(/_+/g, '_')
+      // 64, matching the provider tool-name cap the slug now has to satisfy.
+      .slice(0, 64)
+      .replace(/_$/, '')
+  );
 }
 
 interface CompiledFunctionDef {
@@ -518,7 +522,11 @@ export function CapabilityForm({
       return;
     }
     const fn = parsed as Record<string, unknown>;
-    setFnName(typeof fn.name === 'string' ? fn.name : '');
+    // `fnName` is NOT taken from the JSON. In Builder mode it mirrors the slug
+    // (#509), and the field is read-only under a hint that says so — adopting a
+    // hand-edited JSON `name` here would display a value the label denies and,
+    // in edit mode (slug disabled, name read-only), leave no way to correct it
+    // without going back to JSON.
     setFnDescription(typeof fn.description === 'string' ? fn.description : '');
     setRows(rev);
     setVisualDisabled(false);
@@ -550,6 +558,19 @@ export function CapabilityForm({
     }
     if (metadataError) {
       setError('Metadata is not valid JSON. Fix the editor first.');
+      return;
+    }
+    // The API refuses a definition whose `name` differs from the slug (#509).
+    // Builder mode cannot produce one — the field mirrors the slug — but the
+    // JSON editor can, and so can the reverse: authoring JSON and then editing
+    // the display name, which regenerates the slug underneath it. Say so here
+    // rather than letting a bare 400 come back from the server.
+    if (parsedFn.name !== data.slug) {
+      setError(
+        `The function name must match the slug. The Function tab says "${parsedFn.name}", ` +
+          `the slug is "${data.slug}" — a capability is looked up by the name the AI emits, ` +
+          `so the two cannot differ.`
+      );
       return;
     }
 
@@ -729,7 +750,7 @@ export function CapabilityForm({
               }}
               disabled={isEdit}
               className="font-mono"
-              placeholder="search-knowledge-base"
+              placeholder="search_knowledge_base"
             />
             {errors.slug && <p className="text-destructive text-xs">{errors.slug.message}</p>}
             {isEdit && (
@@ -935,7 +956,7 @@ export function CapabilityForm({
                   } catch {
                     // Fall through with empty
                   }
-                  setFnName(typeof parsed.name === 'string' ? parsed.name : '');
+                  // `fnName` keeps mirroring the slug — see switchToVisualMode.
                   setFnDescription(
                     typeof parsed.description === 'string' ? parsed.description : ''
                   );

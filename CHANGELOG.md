@@ -169,9 +169,20 @@ release process.
   slug, which is the escalation. The check is on the write path only; the read
   path repairs instead of rejecting, so an existing divergent row keeps working
   rather than vanishing from its agent's toolset (#509).
+- **A capability's `functionDefinition` must be written whole.** `description`
+  and `parameters` were optional on create and update while the read validator
+  requires both, and a write replaces the whole JSON column — so
+  `{ "name": … }` alone silently discarded the rest and left a row the runtime
+  cannot parse. That was also a two-step walk around the rule above: PATCH a
+  definition that *agrees* with the slug but is stripped, then PATCH the slug
+  alone, and with nothing left to compare against the check was skipped. Both
+  schemas now require the full shape (#509).
 - **Capability slugs may now contain underscores**
-  (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`), where the shared slug rule allows hyphens
-  only. Required by the rule above: the slug is the tool name, every built-in
+  (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`) and are capped at 64 characters rather than
+  100, matching the provider tool-name limit the slug now has to satisfy — a
+  longer one would create successfully and then be dropped from every agent's
+  toolset with only a warn log to explain it. The shared slug rule allows
+  hyphens only. Required by the rule above: the slug is the tool name, every built-in
   uses the underscore convention LLM tool names take, and those rows are seeded
   through Prisma without ever meeting the API schema — so without this a
   capability authored through the API could never match the convention its

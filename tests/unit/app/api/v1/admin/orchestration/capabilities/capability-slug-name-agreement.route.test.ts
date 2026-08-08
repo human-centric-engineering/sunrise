@@ -181,6 +181,26 @@ describe('PATCH capability — slug / functionDefinition.name agreement', () => 
     expect(mockUpdate).toHaveBeenCalled();
   });
 
+  it('cannot be walked around in two steps via a stripped definition', async () => {
+    // The escape route the schema tightening closes. Step one PATCHes a
+    // definition that AGREES with the slug but omits `description` and
+    // `parameters`; because the column is replaced wholesale, that would have
+    // left a row the read validator cannot parse. Step two then PATCHes the
+    // slug alone, and with nothing to compare against the check was skipped —
+    // divergence authored through the API despite the guard.
+    //
+    // Step one must now fail, so step two never gets its unparseable row.
+    mockFindUnique.mockResolvedValue(makeStoredCapability());
+
+    const response = await PATCH(
+      makePatchRequest({ functionDefinition: { name: 'estimate_workflow_cost' } }),
+      makeParams(CAP_ID)
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockUpdate).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the strip must not land
+  });
+
   it('allows a slug change when the stored definition is unparseable', async () => {
     // Nothing to compare against, and the row is already inert —
     // `getCapabilityDefinitions` skips it. Blocking here would trap an admin

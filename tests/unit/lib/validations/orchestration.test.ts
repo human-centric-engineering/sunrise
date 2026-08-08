@@ -436,7 +436,9 @@ describe('createCapabilitySchema', () => {
     it('rejects the divergence on update when both halves are in the body', () => {
       const result = updateCapabilitySchema.safeParse({
         slug: 'estimate_workflow_cost',
-        functionDefinition: { name: 'apply_audit_changes' },
+        // Full shape: the object-level refinement only runs once every field
+        // parses, so a partial definition would fail for the other reason.
+        functionDefinition: { name: 'apply_audit_changes', description: 'd', parameters: {} },
       });
 
       expect(result.success).toBe(false);
@@ -449,6 +451,57 @@ describe('createCapabilitySchema', () => {
     // cases need the stored row and are checked in the route handler.
     it('lets a partial update through the schema, for the handler to judge', () => {
       const result = updateCapabilitySchema.safeParse({ slug: 'estimate_workflow_cost' });
+
+      // test-review:accept tobe_true — structural assertion on Zod safeParse success field
+      expect(result.success).toBe(true);
+    });
+
+    // Step one of a two-step walk around the agreement check: PATCH a
+    // functionDefinition that AGREES with the slug but omits the other fields.
+    // The column is replaced wholesale, so that stripped the row into a state
+    // `capabilityFunctionDefinitionSchema` cannot parse — after which a
+    // slug-only PATCH had nothing to compare against and the check was skipped.
+    it('refuses a functionDefinition missing description or parameters', () => {
+      const result = updateCapabilitySchema.safeParse({
+        functionDefinition: { name: 'estimate_workflow_cost' },
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    it('refuses the same partial shape on create', () => {
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        functionDefinition: { name: VALID_CAPABILITY.slug },
+      });
+
+      expect(result.success).toBe(false);
+    });
+
+    // The slug is the advertised tool name, and providers cap that at 64.
+    // Accepting a longer one would create a capability that silently vanishes
+    // from every agent's toolset, with only a warn log to explain it.
+    it('refuses a slug longer than the provider tool-name cap', () => {
+      const long = `a${'_b'.repeat(40)}`; // 81 chars, valid charset
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: long,
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: long },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'Slug must be at most 64 characters'
+      );
+    });
+
+    it('accepts a slug at exactly the cap', () => {
+      const exact = 'a'.repeat(64);
+      const result = createCapabilitySchema.safeParse({
+        ...VALID_CAPABILITY,
+        slug: exact,
+        functionDefinition: { ...VALID_CAPABILITY.functionDefinition, name: exact },
+      });
 
       // test-review:accept tobe_true — structural assertion on Zod safeParse success field
       expect(result.success).toBe(true);

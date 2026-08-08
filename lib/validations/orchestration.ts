@@ -545,7 +545,11 @@ export const capabilitySlugSchema = z
     /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
     'Slug must be lowercase alphanumeric, separated by hyphens or underscores'
   )
-  .pipe(z.string().max(100, 'Slug must be less than 100 characters'));
+  // 64, not the usual 100: the slug is the advertised tool name, and a longer
+  // one is rejected by the provider charset. Capping at the write boundary
+  // beats accepting it and having `getCapabilityDefinitions` drop the
+  // capability from every toolset with only a warn log to show for it.
+  .pipe(z.string().max(64, 'Slug must be at most 64 characters'));
 
 /**
  * Create capability schema (POST /api/v1/admin/orchestration/capabilities)
@@ -572,11 +576,16 @@ export const createCapabilitySchema = z
       .max(50, 'Category must be less than 50 characters')
       .trim(),
 
+    // `description` and `parameters` are REQUIRED, matching the read validator
+    // (`capabilityFunctionDefinitionSchema`). A write replaces the whole JSON
+    // column, so accepting `{ name }` alone silently discarded the rest and
+    // left a row the runtime cannot parse — inert everywhere, and (on PATCH) a
+    // way to walk around the slug-agreement check in two steps (#509).
     functionDefinition: z
       .object({
         name: z.string().min(1),
-        description: z.string().optional(),
-        parameters: z.record(z.string(), z.unknown()).optional(),
+        description: z.string(),
+        parameters: z.record(z.string(), z.unknown()),
       })
       .passthrough(),
 
@@ -670,11 +679,14 @@ export const updateCapabilitySchema = z
       .trim()
       .optional(),
 
+    // Required within the object for the same reason as create: the column is
+    // replaced wholesale, so a partial write destroys the rest of the
+    // definition. The object itself stays optional — a PATCH need not touch it.
     functionDefinition: z
       .object({
         name: z.string().min(1),
-        description: z.string().optional(),
-        parameters: z.record(z.string(), z.unknown()).optional(),
+        description: z.string(),
+        parameters: z.record(z.string(), z.unknown()),
       })
       .passthrough()
       .optional(),
