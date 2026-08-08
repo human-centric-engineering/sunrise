@@ -85,11 +85,17 @@ type ParameterRow = z.infer<typeof parameterRowSchema>;
 const capabilityFormSchema = z
   .object({
     name: z.string().min(1, 'Name is required').max(100),
+    // Mirrors `capabilitySlugSchema` on the server. Underscores are allowed
+    // here and nowhere else, because a capability slug is also the LLM tool
+    // name (#509) — keep the two regexes identical.
     slug: z
       .string()
       .min(1, 'Slug is required')
       .max(100)
-      .regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers, and hyphens only'),
+      .regex(
+        /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
+        'Lowercase letters and numbers, separated by underscores or hyphens'
+      ),
     description: z.string().min(1, 'Description is required').max(5000),
     category: z.string().min(1, 'Category is required').max(50),
     executionType: z.enum(['internal', 'api', 'webhook']),
@@ -137,13 +143,22 @@ export interface CapabilityFormProps {
   availableCategories?: string[];
 }
 
+/**
+ * Derive a capability slug from a display name.
+ *
+ * Underscore-separated, unlike slugs elsewhere in the admin: a capability slug
+ * is also the tool name advertised to the LLM (#509), and every built-in uses
+ * the underscore convention tool names conventionally take
+ * (`search_knowledge_base`). Hyphens remain valid — `capabilitySlugSchema`
+ * accepts both — this only picks the default.
+ */
 function toSlug(value: string): string {
   return value
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
+    .replace(/[^a-z0-9\s_-]/g, '')
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_')
     .slice(0, 100);
 }
 
@@ -365,6 +380,7 @@ export function CapabilityForm({
   });
 
   const currentName = watch('name');
+  const currentSlug = watch('slug');
   const currentExecutionType = watch('executionType');
   const currentIsActive = watch('isActive');
   const currentRequiresApproval = watch('requiresApproval');
@@ -376,13 +392,16 @@ export function CapabilityForm({
     if (currentName) setValue('slug', toSlug(currentName), { shouldValidate: false });
   }, [currentName, slugTouched, isEdit, setValue]);
 
-  // Also feed the function-definition `name` from the capability slug
-  // while the admin hasn't explicitly touched it.
+  // Keep the function-definition `name` equal to the slug — the API rejects
+  // any capability where they differ (#509), because dispatch resolves the tool
+  // name a model emits AS the slug.
+  //
+  // This used to derive from the display NAME rather than the slug (despite a
+  // comment saying otherwise), which produced `search-web` / `search_web` from
+  // the same typing and made every default-valued create diverge.
   useEffect(() => {
-    if (!fnName && currentName) {
-      setFnName(toSlug(currentName).replace(/-/g, '_'));
-    }
-  }, [currentName, fnName]);
+    setFnName(currentSlug ?? '');
+  }, [currentSlug]);
 
   // Recompile the function definition whenever the visual builder inputs change.
   useEffect(() => {
@@ -929,18 +948,28 @@ export function CapabilityForm({
                 <Label htmlFor="fnName">
                   Function name{' '}
                   <FieldHelp title="Function name">
-                    A machine-readable identifier the AI uses to call this capability. Use lowercase
-                    with underscores (e.g. <code>search_knowledge_base</code>,{' '}
-                    <code>create_ticket</code>).
+                    <p>
+                      The machine-readable identifier the AI uses to call this capability.{' '}
+                      <strong>Always the same as the slug</strong>, so edit it on the Basics tab.
+                    </p>
+                    <p>
+                      It has to match: when a model calls a tool, the platform looks the capability
+                      up by the name it emitted. If the two could differ, a capability would be
+                      permission-checked as one tool and executed as another.
+                    </p>
                   </FieldHelp>
                 </Label>
                 <Input
                   id="fnName"
                   value={fnName}
-                  onChange={(e) => setFnName(e.target.value)}
+                  readOnly
+                  aria-describedby="fnName-hint"
                   placeholder="search_knowledge_base"
-                  className="font-mono"
+                  className="bg-muted font-mono"
                 />
+                <p id="fnName-hint" className="text-muted-foreground text-xs">
+                  Mirrors the slug.
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="fnDesc">
