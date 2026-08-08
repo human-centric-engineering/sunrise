@@ -212,11 +212,18 @@ export class LocalProvider implements StorageProvider {
    * clear a user's blobs. Sweeping only the public root would leave the
    * private copies on disk and turn GDPR erasure into a partial delete —
    * which is the bug, not a missing nice-to-have.
+   *
+   * A prefix that names the root itself is refused — see
+   * {@link resolvePrefixDir}. Both resolutions happen before any `rm`, so a
+   * refusal deletes nothing from either root.
    */
   async deletePrefix(prefix: string): Promise<DeleteResult> {
     validateStorageKey(prefix);
 
-    const dirs = [resolveWithin(this.privateDir, prefix), resolveWithin(this.baseDir, prefix)];
+    const dirs = [
+      resolvePrefixDir(this.privateDir, prefix),
+      resolvePrefixDir(this.baseDir, prefix),
+    ];
     let success = true;
 
     for (const dirPath of dirs) {
@@ -325,6 +332,33 @@ function resolveWithin(root: string, key: string): string {
 
   if (fullPath !== rootPath && !fullPath.startsWith(rootPath + sep)) {
     throw new Error('Storage key resolves outside the storage root');
+  }
+
+  return fullPath;
+}
+
+/**
+ * Resolve a `deletePrefix` target, refusing the storage root itself.
+ *
+ * `resolveWithin` permits `fullPath === rootPath`, which is harmless for its
+ * other callers — `upload`, `delete` and `download` given a root-resolving key
+ * all fail on `EISDIR` without touching anything — but the next statement here
+ * is a recursive delete. `validateStorageKey(".")` passes (no `..`, not
+ * absolute, no NUL, no backslash) and `resolve(root, ".")` is `root`, so
+ * without this a prefix of `"."` — or `"./"`, or any other spelling that
+ * normalises to nothing — would erase every object the provider holds (#508).
+ *
+ * Comparing resolved paths rather than screening the prefix string catches
+ * every spelling at once, including ones normalisation invents. No caller can
+ * reach it today: both pass a session-derived `avatars/${userId}/`, and no
+ * route accepts a caller-supplied prefix. It is here because the blast radius
+ * is total and the check is one comparison.
+ */
+function resolvePrefixDir(root: string, prefix: string): string {
+  const fullPath = resolveWithin(root, prefix);
+
+  if (fullPath === resolve(root)) {
+    throw new Error('Storage prefix must not resolve to the storage root');
   }
 
   return fullPath;

@@ -240,6 +240,79 @@ describe('lib/storage/providers/local', () => {
           expect.objectContaining({ prefix: 'avatars/user-123/' })
         );
       });
+
+      // #508: `validateStorageKey(".")` passes and `resolve(root, ".")` is
+      // `root`, which `resolveWithin` permits — so these spellings used to
+      // reach `rm(root, { recursive: true })` and erase every object the
+      // provider holds. `existsSync` returns true throughout so the delete is
+      // reached if the guard is absent.
+      describe('root-equivalent prefixes', () => {
+        it.each([['.'], ['./'], ['./.'], ['././']])(
+          'refuses %j without deleting anything',
+          async (prefix) => {
+            vi.mocked(existsSync).mockReturnValue(true);
+
+            const provider = new LocalProvider({
+              baseDir: '/srv/test-uploads',
+              privateDir: '/srv/test-private',
+            });
+
+            await expect(provider.deletePrefix(prefix)).rejects.toThrow(
+              'Storage prefix must not resolve to the storage root'
+            );
+            expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the whole point of the guard is that the recursive delete never runs
+          }
+        );
+
+        // The other root-adjacent spellings never reach the new guard —
+        // `validateStorageKey` stops them first. Pinned so a future
+        // relaxation of that validator shows up here rather than silently
+        // handing these to `resolveWithin`.
+        it.each([
+          ['', /must not be empty/i],
+          ['/', /must not be an absolute path/i],
+          ['..', /must not contain "\.\."/],
+          ['a/..', /must not contain "\.\."/],
+        ])('refuses %j earlier, in validateStorageKey', async (prefix, message) => {
+          vi.mocked(existsSync).mockReturnValue(true);
+
+          const provider = new LocalProvider({ baseDir: '/srv/test-uploads' });
+
+          await expect(provider.deletePrefix(prefix)).rejects.toThrow(message);
+          expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+        });
+
+        it('refuses before touching either root, not after clearing the first', async () => {
+          // Both prefixes resolve, then both are deleted. If the guard ran
+          // per-root inside the loop, the private root would already be gone
+          // by the time the public one was refused.
+          vi.mocked(existsSync).mockReturnValue(true);
+
+          const provider = new LocalProvider({
+            baseDir: '/srv/test-uploads',
+            privateDir: '/srv/test-private',
+          });
+
+          await expect(provider.deletePrefix('.')).rejects.toThrow(
+            'Storage prefix must not resolve to the storage root'
+          );
+          expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — asserts the private root survived too
+        });
+
+        it('still deletes a genuine prefix one level below the root', async () => {
+          // The guard rejects the root, not everything near it.
+          vi.mocked(existsSync).mockReturnValue(true);
+
+          const provider = new LocalProvider({ baseDir: '/srv/test-uploads' });
+
+          const result = await provider.deletePrefix('avatars/');
+
+          expect(rm).toHaveBeenCalledWith(expect.stringContaining('avatars'), {
+            recursive: true,
+          });
+          expect(result).toEqual({ success: true, key: 'avatars/' });
+        });
+      });
     });
 
     describe('private objects', () => {

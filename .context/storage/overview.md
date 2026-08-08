@@ -406,6 +406,8 @@ validateStorageKey(key); // Throws if invalid
 - Null byte injection (`file\0.jpg`)
 - Backslash attacks (`uploads\..\..\etc`)
 
+**What it does not prevent, and who covers the gap:** `validateStorageKey('.')` passes every rule above, and on the local provider `resolve(root, '.')` is the storage root — so a root-equivalent prefix handed to `deletePrefix()` would recursively delete everything the provider holds. `LocalProvider.deletePrefix()` therefore refuses a prefix that resolves to its own root, before either root is touched (#508). The object-store providers are unaffected: an S3 or Vercel Blob prefix of `.` is a literal string match, not a path. **A new caller passing a caller-supplied prefix is the case to watch** — today both callers pass a session-derived `avatars/${userId}/`.
+
 ### File Validation
 
 1. **Magic bytes**: Server-side MIME type verification (not trusting client)

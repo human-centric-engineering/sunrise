@@ -125,6 +125,16 @@ release process.
   A dead approval link is not a stuck execution: the admin approval queue acts
   on the execution directly under a session and never touches these tokens.
   A dead storage URL is re-minted by whatever issued it.
+- **`LocalProvider.deletePrefix()` refuses a prefix that resolves to the storage
+  root.** `validateStorageKey('.')` passes (no `..`, not absolute, no NUL, no
+  backslash) and `resolve(root, '.')` is `root`, which `resolveWithin()` permits
+  — so a prefix of `.`, `./` or any equivalent reached `rm(root, { recursive:
+  true })` and erased every object the provider held. Not reachable today: both
+  callers pass a session-derived `avatars/${userId}/`, and there is no route
+  taking a caller-supplied prefix. Fixed because the blast radius is total and
+  the guard is one comparison. The equality case stays legal in
+  `resolveWithin()` itself, which is correct for `upload`/`delete`/`download`
+  where a root-resolving key fails harmlessly on `EISDIR` (#508).
 
 ### Added
 
