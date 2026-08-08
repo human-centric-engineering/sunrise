@@ -314,6 +314,7 @@ describe('getCapabilityDefinitions', () => {
       expect.objectContaining({
         slug: 'search_knowledge_base',
         functionDefinitionName: 'custom_kb_search',
+        firstObservedOnAgentId: 'agent-1',
       })
     );
   });

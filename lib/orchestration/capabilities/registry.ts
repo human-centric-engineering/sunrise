@@ -214,14 +214,18 @@ function warnOnceForDivergence(
   slug: string,
   functionDefinitionName: string
 ): void {
-  const key = `${slug} ${functionDefinitionName}`;
+  const key = `${slug}=>${functionDefinitionName}`;
   if (warnedDivergentPairs.has(key)) return;
   warnedDivergentPairs.add(key);
 
   logger.warn('Capability functionDefinition.name differs from slug; advertising the slug', {
-    agentId,
     slug,
     functionDefinitionName,
+    // Named for what it is. Because the warning is emitted once per pair, this
+    // is whichever agent resolved the row first after boot — NOT the set of
+    // agents the capability is bound to. Reading it as the latter would send an
+    // operator to the wrong agent.
+    firstObservedOnAgentId: agentId,
   });
 }
 

@@ -466,7 +466,9 @@ describe('CapabilityForm — Function Definition tab', () => {
       } as unknown as AiCapability;
     }
 
-    it('keeps enum, items and length constraints through a save', async () => {
+    // This fixture contains `enum`/`items`, which force JSON mode — so on its
+    // own it does NOT cover the Builder path. The next case does; keep both.
+    it('keeps enum, items and length constraints through a save (JSON mode)', async () => {
       const user = userEvent.setup();
       render(
         <CapabilityForm
@@ -484,6 +486,54 @@ describe('CapabilityForm — Function Definition tab', () => {
           expect.any(String),
           expect.objectContaining({
             body: expect.objectContaining({ functionDefinition: RICH_DEFINITION }),
+          })
+        );
+      });
+    });
+
+    it('leaves a builder-representable definition alone until it is edited', async () => {
+      // The case the JSON-mode test above cannot reach. `get_pattern_detail`
+      // IS reverse-compilable — `tryReverseCompile` tolerates
+      // `minimum`/`maximum` and maps `integer` to `number` — so the form opens
+      // in Visual mode, and the recompile effect used to fire on MOUNT and
+      // overwrite the stored definition with the builder's lossy rendering.
+      // Pressing Save without touching anything rewrote the schema:
+      // `integer` became `number` (so a model may emit 1.5 for a pattern
+      // number) and the bounds vanished.
+      const BUILDER_REPRESENTABLE = {
+        name: 'get_pattern_detail',
+        description: 'Return every chunk for one pattern.',
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern_number: {
+              type: 'integer',
+              description: 'The pattern number (1-999).',
+              minimum: 1,
+              maximum: 999,
+            },
+          },
+          required: ['pattern_number'],
+        },
+      };
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeRichCapability(BUILDER_REPRESENTABLE)}
+          availableCategories={['support']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save|update/i }));
+
+      const { apiClient } = await import('@/lib/api/client');
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            body: expect.objectContaining({ functionDefinition: BUILDER_REPRESENTABLE }),
           })
         );
       });

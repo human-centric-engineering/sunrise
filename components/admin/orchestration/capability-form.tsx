@@ -82,64 +82,75 @@ const parameterRowSchema = z.object({
 
 type ParameterRow = z.infer<typeof parameterRowSchema>;
 
-const capabilityFormSchema = z
-  .object({
-    name: z.string().min(1, 'Name is required').max(100),
-    // Charset mirrors `capabilitySlugSchema` on the server — keep the two
-    // regexes identical. Underscores are allowed here and nowhere else,
-    // because a capability slug is also the LLM tool name (#509).
-    //
-    // The LENGTH deliberately differs. The server caps new slugs at 64 (the
-    // provider tool-name limit), but a capability created before that cap can
-    // be 65–100 chars, and its edit form still has to validate — the input is
-    // disabled in edit mode and the value is not submitted, so an over-length
-    // stored slug is not something the admin can act on.
-    //
-    // Known gap: a hand-typed 65+ char slug on CREATE passes here and is
-    // refused by the server. `toSlug` never generates one, so it takes
-    // deliberate typing; the cost is a server-side error instead of an inline
-    // one, not a silent failure.
-    slug: z
-      .string()
-      .min(1, 'Slug is required')
-      .max(100)
-      .regex(
-        /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
-        'Lowercase letters and numbers, separated by underscores or hyphens'
-      ),
-    description: z.string().min(1, 'Description is required').max(5000),
-    category: z.string().min(1, 'Category is required').max(50),
-    executionType: z.enum(['internal', 'api', 'webhook']),
-    executionHandler: z.string().min(1, 'Execution handler is required').max(500),
-    requiresApproval: z.boolean(),
-    approvalTimeoutMs: z
-      .number()
-      .int()
-      .positive()
-      .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
-      .nullable()
-      .optional(),
-    rateLimit: z.number().int().min(1).max(10000).optional(),
-    isActive: z.boolean(),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      (data.executionType === 'api' || data.executionType === 'webhook') &&
-      data.executionHandler
-    ) {
-      try {
-        new URL(data.executionHandler);
-      } catch {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Must be a valid URL for api and webhook types',
-          path: ['executionHandler'],
-        });
+/**
+ * Build the form schema for a mode.
+ *
+ * The only field that differs is `slug`, and it differs because **the slug is
+ * not editable or submitted in edit mode** — the input is `disabled` and the
+ * PATCH payload omits it. Validating it strictly there judges a stored value
+ * the admin cannot change, and refuses the whole save over it, with the error
+ * rendered under a disabled field on a tab they may not even be on.
+ *
+ * Two ways a stored slug fails the create rules: it can be 65–100 chars
+ * (creatable before the #509 cap), or it can use a charset the old
+ * `^[a-z0-9-]+$` allowed but the new one does not (`my--cap`, `-cap`, `cap-`)
+ * — reachable from a backup import, a `registerAppCapability(cap, { slug })`
+ * row, or a direct insert, none of which pass through these schemas.
+ *
+ * So: strict on create, presence-only on edit.
+ */
+function makeCapabilityFormSchema(mode: 'create' | 'edit') {
+  return z
+    .object({
+      name: z.string().min(1, 'Name is required').max(100),
+      // Mirrors `capabilitySlugSchema` on the server — keep the two identical.
+      // Underscores are allowed here and nowhere else, because a capability slug
+      // is also the LLM tool name (#509).
+      slug:
+        mode === 'edit'
+          ? z.string().min(1, 'Slug is required')
+          : z
+              .string()
+              .min(1, 'Slug is required')
+              .max(64, 'Slug must be at most 64 characters')
+              .regex(
+                /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
+                'Lowercase letters and numbers, separated by underscores or hyphens'
+              ),
+      description: z.string().min(1, 'Description is required').max(5000),
+      category: z.string().min(1, 'Category is required').max(50),
+      executionType: z.enum(['internal', 'api', 'webhook']),
+      executionHandler: z.string().min(1, 'Execution handler is required').max(500),
+      requiresApproval: z.boolean(),
+      approvalTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(3_600_000, 'Must be at most 3,600,000 ms (1 hour)')
+        .nullable()
+        .optional(),
+      rateLimit: z.number().int().min(1).max(10000).optional(),
+      isActive: z.boolean(),
+    })
+    .superRefine((data, ctx) => {
+      if (
+        (data.executionType === 'api' || data.executionType === 'webhook') &&
+        data.executionHandler
+      ) {
+        try {
+          new URL(data.executionHandler);
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Must be a valid URL for api and webhook types',
+            path: ['executionHandler'],
+          });
+        }
       }
-    }
-  });
+    });
+}
 
-type CapabilityFormData = z.infer<typeof capabilityFormSchema>;
+type CapabilityFormData = z.infer<ReturnType<typeof makeCapabilityFormSchema>>;
 
 export interface UsedByAgentSummary {
   id: string;
@@ -325,14 +336,20 @@ export function CapabilityForm({
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [parsedFn, setParsedFn] = useState<FunctionDefinitionState | null>(() => {
     if (Object.keys(initialFnDef).length === 0) return null;
-    const rev = tryReverseCompile(initialFnDef);
-    if (rev) {
-      return compileFunctionDefinition(
-        typeof initialFnDef.name === 'string' ? initialFnDef.name : '',
-        typeof initialFnDef.description === 'string' ? initialFnDef.description : '',
-        rev
-      );
-    }
+    // A reverse-compilable definition used to be run straight back through
+    // `compileFunctionDefinition` here, which is the builder's LOSSY
+    // rendering — `tryReverseCompile` tolerates `minimum`/`maxLength`/`format`
+    // and maps `integer` to `number`, none of which survive the round trip. So
+    // the stored definition was already replaced before the form even
+    // rendered, and an untouched Save wrote the degraded copy back: the seeded
+    // `get_pattern_detail` lost its 1–999 bounds and had `integer` widened to
+    // `number`, letting a model emit 1.5 for a pattern number.
+    //
+    // `rows` is still seeded from the reverse-compile — the builder UI needs
+    // it — but `parsedFn` holds what is stored until the admin actually edits
+    // something, at which point the recompile effect takes over and the loss
+    // is a choice they made.
+    //
     // Validate the stored JSON at the boundary — the backend schema is the
     // authoritative contract, but never ship a blind cast on API response
     // data. Malformed rows surface as `null` and leave the visual builder
@@ -352,7 +369,9 @@ export function CapabilityForm({
     // narrow shape. What the form holds for an arbitrary stored definition is
     // the wider validated one.
     const parsed = capabilityFunctionDefinitionSchema.safeParse(initialFnDef);
-    return parsed.success ? parsed.data : null;
+    // Spread for the same reason as the JSON path: keep top-level keys the
+    // schema doesn't name, since the API accepts them.
+    return parsed.success ? { ...initialFnDef, ...parsed.data } : null;
   });
 
   // --- executionConfig JSON textarea state --------------------------------
@@ -394,6 +413,10 @@ export function CapabilityForm({
       if (metadataTimerRef.current) clearTimeout(metadataTimerRef.current);
     };
   }, []);
+
+  // Mode never changes for a mounted form; memoised so the resolver identity
+  // is stable across renders.
+  const capabilityFormSchema = useMemo(() => makeCapabilityFormSchema(mode), [mode]);
 
   const {
     register,
@@ -442,9 +465,30 @@ export function CapabilityForm({
     setFnName(currentSlug ?? '');
   }, [currentSlug]);
 
-  // Recompile the function definition whenever the visual builder inputs change.
+  // Recompile the function definition whenever the visual builder inputs change
+  // — but NOT on mount.
+  //
+  // The builder is lossy by construction: `compileFunctionDefinition` emits
+  // `{ type, description }` per property, while `tryReverseCompile` deliberately
+  // tolerates `minimum`, `maxLength`, `format` and maps `integer` → `number`.
+  // That is a fair trade once an admin edits a parameter — they are choosing the
+  // builder's expressiveness. It is not a fair trade for merely OPENING the
+  // page: this effect used to fire on mount and overwrite `parsedFn`, so
+  // pressing Save without touching anything rewrote the stored schema. The
+  // seeded `get_pattern_detail` lost `minimum`/`maximum` and had `integer`
+  // degraded to `number` — which lets a model emit `1.5` for a pattern number.
+  //
+  // Skipping the first run is what makes an untouched save a no-op. #509 fixed
+  // the sibling case (definitions the builder cannot represent at all); this is
+  // the one it left behind, and both were only unreachable before because the
+  // hyphen-only slug regex blocked submit on every seeded capability.
+  const skipInitialCompile = useRef(true);
   useEffect(() => {
     if (fnMode !== 'visual') return;
+    if (skipInitialCompile.current) {
+      skipInitialCompile.current = false;
+      return;
+    }
     const compiled = compileFunctionDefinition(fnName, fnDescription, rows);
     setParsedFn(compiled);
     setJsonText(JSON.stringify(compiled, null, 2));
@@ -475,7 +519,15 @@ export function CapabilityForm({
         // Only write to form state on success — and write the VALIDATED
         // value, not a cast of the raw parse. The module header has always
         // claimed "no `as` casts" here; it is true now.
-        setParsedFn(shape.data);
+        //
+        // Spread the raw object under the validated fields so top-level keys
+        // the schema doesn't name survive. `capabilityFunctionDefinitionSchema`
+        // is a plain `z.object` and drops unknown keys, but the server's
+        // create/update schemas are `.passthrough()` — so narrowing here would
+        // make the client stricter than the API it defers to, silently deleting
+        // e.g. `strict: true` from a definition the admin pasted and can still
+        // see in the textarea.
+        setParsedFn({ ...asJsonRecord(parsed), ...shape.data });
         setJsonError(null);
         // Re-evaluate whether the Builder toggle should be enabled.
         setVisualDisabled(tryReverseCompile(parsed) === null);
