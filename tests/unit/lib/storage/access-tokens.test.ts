@@ -207,7 +207,37 @@ describe('storage access tokens', () => {
         expiresAt: '2099-01-01T00:00:00.000Z',
       });
 
+      // Rejected as untagged — which is what this payload is. The tagged
+      // version of the same shape is the next test.
+      expect(() => verifyStorageAccessToken(token)).toThrow(/missing its scheme tag/i);
+    });
+
+    it('rejects a both-schemas payload tagged for the other scheme', () => {
+      // Same superset shape, but tagged `workflow-approval`. This is the one
+      // the tag is really for: authentic, complete, satisfies every field
+      // this verifier requires, and belongs to the other protocol.
+      const token = signPayload({
+        typ: 'workflow-approval',
+        key: KEY,
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
       expect(() => verifyStorageAccessToken(token)).toThrow(/not a storage-read token/i);
+    });
+
+    it('tells a legacy untagged token apart from a wrong-scheme one', () => {
+      // The dominant shape for the first week after deploy: a token minted
+      // before the tag existed. The scheme was right and the token merely
+      // predates the check, so reporting "not a storage-read token" would
+      // send whoever is debugging the deploy hunting a cross-scheme bug that
+      // isn't there. The storage route echoes this message in its 401.
+      const token = signPayload({ key: KEY, expiresAt: '2099-01-01T00:00:00.000Z' });
+
+      expect(() => verifyStorageAccessToken(token)).toThrow(
+        'Storage token payload is missing its scheme tag'
+      );
     });
 
     it('covers the tag with the signature, so a token cannot be retagged', () => {

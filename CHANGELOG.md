@@ -124,7 +124,13 @@ release process.
   (capped at 7 days) — the same blast radius as rotating `BETTER_AUTH_SECRET`.
   A dead approval link is not a stuck execution: the admin approval queue acts
   on the execution directly under a session and never touches these tokens.
-  A dead storage URL is re-minted by whatever issued it.
+  A dead storage URL is re-minted by whatever issued it. The third surface is
+  an in-chat or embedded approval card held by a browser across the deploy —
+  `run_workflow` hands the tokens to the client and they are persisted on
+  `AiMessage.metadata.pendingApproval` — which reports "Invalid or expired
+  approval token" on click, and on the embed surface the end user has no admin
+  queue to fall back to. Narrow, because a history reload drops
+  `pendingApproval`: it affects only sessions already open when you deploy.
 - **The local storage provider refuses a key that resolves to its own root.**
   `validateStorageKey('.')` passes every rule it has (no `..`, not absolute, no
   NUL, no backslash) and `resolve(root, '.')` is `root`, which `resolveWithin()`

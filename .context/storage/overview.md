@@ -183,7 +183,9 @@ Tokens are stateless HMAC-SHA256 over `BETTER_AUTH_SECRET` (`lib/storage/access-
 
 The payload is `{ typ: 'storage-read', key, expiresAt }`. `typ` is the domain separator against the approval scheme, which signs the same construction with the same secret: without a tag in the signed bytes, the MAC cannot tell the two protocols apart, and the only thing preventing cross-scheme replay is that the two payload schemas happen to be disjoint on required fields. Verification asserts the tag (#507).
 
-**Adding another signed scheme? Derive a subkey, don't reuse the raw secret.** These two token modules HMAC `BETTER_AUTH_SECRET` directly, which is why they need `typ` at all. `lib/logging/visitor-id.ts` — the third scheme rooted in that secret — already does the stronger thing: HKDF to a subkey under a versioned label (`sunrise:visitor-id:v1`), so it shares no signing key with anything and cannot be confused with either token by construction. Prefer that for new schemes. If a scheme does sign with the raw secret, it **must** carry its own `typ`.
+**Adding another signed scheme? Derive a subkey, don't reuse the raw secret.** These two token modules HMAC `BETTER_AUTH_SECRET` directly, which is why they need `typ` at all — and they are not the only things rooted in that secret: better-auth signs its own sessions and JWTs with it (`lib/auth/config.ts`, `lib/auth/change-email.ts`), and `lib/logging/visitor-id.ts` signs the visitor cookie. Treat this as a non-exhaustive list and grep before assuming.
+
+`visitor-id.ts` does the stronger thing: HKDF to a subkey under a versioned label (`sunrise:visitor-id:v1`), so it shares no signing key with anything and cannot be confused with any other scheme by construction. Prefer that for new schemes. If a scheme does sign with the raw secret, it **must** carry its own `typ`.
 
 `generateStorageAccessToken()` signs whatever key it is given — only `getSignedUrl()` validates first. The route therefore re-runs `validateStorageKey()` after the token checks, so a token minted directly for a traversal key is rejected with `INVALID_KEY` rather than reaching the filesystem.
 
@@ -408,7 +410,7 @@ validateStorageKey(key); // Throws if invalid
 - Null byte injection (`file\0.jpg`)
 - Backslash attacks (`uploads\..\..\etc`)
 
-**What it does not prevent, and who covers the gap:** `validateStorageKey('.')` passes every rule above, and on the local provider `resolve(root, '.')` is the storage root — so a root-equivalent prefix handed to `deletePrefix()` would recursively delete everything the provider holds. `LocalProvider.deletePrefix()` therefore refuses a prefix that resolves to its own root, before either root is touched (#508). The object-store providers are unaffected: an S3 or Vercel Blob prefix of `.` is a literal string match, not a path. **A new caller passing a caller-supplied prefix is the case to watch** — today both callers pass a session-derived `avatars/${userId}/`.
+**What it does not prevent, and who covers the gap:** `validateStorageKey('.')` passes every rule above, and on the local provider `resolve(root, '.')` is the storage root. Handed to `deletePrefix()` that recursively deleted everything the provider held; handed to `upload()` with the root absent it created a directory _outside_ the root and wrote a regular file at the root path, breaking every later upload with `ENOTDIR`. `resolveWithin()` therefore rejects a key resolving to the root, which covers **all four** local operations — `upload`, `delete`, `deletePrefix`, `download` — not just the destructive one (#508). The object-store providers are unaffected: an S3 or Vercel Blob prefix of `.` is a literal string match, not a path. **A new caller passing a caller-supplied key or prefix is the case to watch** — today the keys are `avatars/${userId}/…` and `${keyPrefix}${randomUUID()}${ext}`.
 
 ### File Validation
 

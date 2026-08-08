@@ -188,8 +188,44 @@ describe('approval-tokens', () => {
         expiresAt: '2099-01-01T00:00:00.000Z',
       });
 
+      // Rejected as untagged — which is what this payload is. The tagged
+      // version of the same shape is the next test.
+      expect(() => verifyApprovalToken(token)).toThrow(
+        'Approval token payload is missing its scheme tag'
+      );
+    });
+
+    it('rejects a both-schemas payload tagged for the other scheme', () => {
+      // Same superset shape, but tagged `storage-read`. This is the one the
+      // tag is really for: authentic, complete, satisfies every field this
+      // verifier requires, and belongs to the other protocol.
+      const token = signPayload({
+        typ: 'storage-read',
+        key: 'documents/user-1/contract.pdf',
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
       expect(() => verifyApprovalToken(token)).toThrow(
         'Approval token payload is not a workflow-approval token'
+      );
+    });
+
+    it('tells a legacy untagged token apart from a wrong-scheme one', () => {
+      // The dominant shape for the first week after deploy: an approval link
+      // emailed before the tag existed. The scheme was right and the token
+      // merely predates the check, so reporting "not a workflow-approval
+      // token" would send whoever is debugging the deploy hunting a
+      // cross-scheme bug that isn't there.
+      const token = signPayload({
+        executionId: 'exec-1',
+        action: 'approve',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      });
+
+      expect(() => verifyApprovalToken(token)).toThrow(
+        'Approval token payload is missing its scheme tag'
       );
     });
 

@@ -105,6 +105,25 @@ export function generateStorageAccessToken(
 }
 
 /**
+ * Say which of the three schema failures happened, in the terms an operator
+ * reading a 401 needs.
+ *
+ * A missing tag and a wrong tag are different events and must not share a
+ * message. A *wrong* tag is a token from the approval scheme: authentically
+ * signed, complete, and presented at the wrong door. A *missing* tag is,
+ * during the upgrade window, almost always a token minted before the tag
+ * existed — the scheme was right and the token merely predates the check.
+ * Reporting that as "not a storage-read token" would send whoever is
+ * debugging the deploy looking for a cross-scheme bug that isn't there.
+ */
+function describePayloadFailure(raw: unknown): string {
+  if (!isRecord(raw)) return 'Incomplete storage token payload';
+  if (raw.typ === undefined) return 'Storage token payload is missing its scheme tag';
+  if (raw.typ !== TOKEN_TYPE) return 'Storage token payload is not a storage-read token';
+  return 'Incomplete storage token payload';
+}
+
+/**
  * Verify a signed storage token. Returns the decoded payload on success, or
  * throws on tampered / expired / malformed tokens, and on an authentic token
  * belonging to another scheme signed with the same secret (see `typ` in the
@@ -148,15 +167,7 @@ export function verifyStorageAccessToken(token: string): TokenPayload {
 
   const parsed = tokenPayloadSchema.safeParse(raw);
   if (!parsed.success) {
-    // A wrong `typ` gets its own message rather than being folded into
-    // "incomplete": a token from the approval scheme is authentically signed
-    // and complete, and whoever reads the rejection needs to see that it was
-    // the scheme that was wrong, not the signature or a missing field.
-    throw new Error(
-      isRecord(raw) && raw.typ !== TOKEN_TYPE
-        ? 'Storage token payload is not a storage-read token'
-        : 'Incomplete storage token payload'
-    );
+    throw new Error(describePayloadFailure(raw));
   }
   const payload = parsed.data;
 
