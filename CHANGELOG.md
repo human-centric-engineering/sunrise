@@ -125,16 +125,22 @@ release process.
   A dead approval link is not a stuck execution: the admin approval queue acts
   on the execution directly under a session and never touches these tokens.
   A dead storage URL is re-minted by whatever issued it.
-- **`LocalProvider.deletePrefix()` refuses a prefix that resolves to the storage
-  root.** `validateStorageKey('.')` passes (no `..`, not absolute, no NUL, no
-  backslash) and `resolve(root, '.')` is `root`, which `resolveWithin()` permits
-  — so a prefix of `.`, `./` or any equivalent reached `rm(root, { recursive:
-  true })` and erased every object the provider held. Not reachable today: both
-  callers pass a session-derived `avatars/${userId}/`, and there is no route
-  taking a caller-supplied prefix. Fixed because the blast radius is total and
-  the guard is one comparison. The equality case stays legal in
-  `resolveWithin()` itself, which is correct for `upload`/`delete`/`download`
-  where a root-resolving key fails harmlessly on `EISDIR` (#508).
+- **The local storage provider refuses a key that resolves to its own root.**
+  `validateStorageKey('.')` passes every rule it has (no `..`, not absolute, no
+  NUL, no backslash) and `resolve(root, '.')` is `root`, which `resolveWithin()`
+  used to permit — so a prefix of `.`, `./` or any equivalent reached
+  `rm(root, { recursive: true })` in `deletePrefix()` and erased every object
+  the provider held. The same key in `upload()` is not the harmless `EISDIR` it
+  looks like either: with the root absent (the default `.storage/private` on a
+  fresh checkout) it `mkdir`s **outside** the root and writes a regular file at
+  the root path, after which every upload fails `ENOTDIR`. The rejection
+  therefore lives in `resolveWithin()` and covers all four operations, rather
+  than only the destructive one. Not reachable today — object keys are
+  `avatars/${userId}/…` and `${keyPrefix}${randomUUID()}${ext}`, and no route
+  accepts a caller-supplied prefix — so this is defence in depth, taken because
+  the `deletePrefix` blast radius is total and the check is one comparison. S3
+  and Vercel Blob are unaffected: a prefix there is a literal string match
+  against keys, not a path (#508).
 
 ### Added
 

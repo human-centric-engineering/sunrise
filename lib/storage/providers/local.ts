@@ -213,17 +213,15 @@ export class LocalProvider implements StorageProvider {
    * private copies on disk and turn GDPR erasure into a partial delete —
    * which is the bug, not a missing nice-to-have.
    *
-   * A prefix that names the root itself is refused — see
-   * {@link resolvePrefixDir}. Both resolutions happen before any `rm`, so a
-   * refusal deletes nothing from either root.
+   * A prefix that names the root itself is refused by `resolveWithin` — this
+   * is the call site where that would have been catastrophic (#508). Both
+   * resolutions happen before any `rm`, so a refusal deletes nothing from
+   * either root.
    */
   async deletePrefix(prefix: string): Promise<DeleteResult> {
     validateStorageKey(prefix);
 
-    const dirs = [
-      resolvePrefixDir(this.privateDir, prefix),
-      resolvePrefixDir(this.baseDir, prefix),
-    ];
+    const dirs = [resolveWithin(this.privateDir, prefix), resolveWithin(this.baseDir, prefix)];
     let success = true;
 
     for (const dirPath of dirs) {
@@ -305,15 +303,6 @@ export class LocalProvider implements StorageProvider {
 }
 
 /**
- * Join `key` onto `root` and refuse anything that escapes it.
- *
- * `validateStorageKey` already rejects `..`, absolute paths, backslashes
- * and null bytes, so this is a backstop rather than the primary defence.
- * It earns its place because the private root is the first place in this
- * codebase where a traversal would *read a secret* rather than write a
- * junk file — worth not depending on a single validator staying strict.
- */
-/**
  * Read the `code` off a Node filesystem error without asserting a type onto
  * it — `catch` binds `unknown`, and the project forbids `as` on values that
  * did not come from a validated source.
@@ -326,39 +315,47 @@ function errnoCode(error: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Join `key` onto `root` and refuse anything that is not strictly inside it —
+ * including the root itself.
+ *
+ * `validateStorageKey` already rejects `..`, absolute paths, backslashes
+ * and null bytes, so this is a backstop rather than the primary defence.
+ * It earns its place because the private root is the first place in this
+ * codebase where a traversal would *read a secret* rather than write a
+ * junk file — worth not depending on a single validator staying strict.
+ *
+ * **The root itself is not a legal target (#508).** `validateStorageKey(".")`
+ * passes every rule it has — no `..`, not absolute, no NUL, no backslash — and
+ * `resolve(root, ".")` is `root`, so a key of `"."`, `"./"` or any other
+ * spelling that normalises to nothing used to resolve to the root and be handed
+ * to whatever the caller does next. `deletePrefix` is the destructive one: it
+ * `rm`s recursively, so that key erased every object the provider held. But
+ * `upload` is not the harmless `EISDIR` the first cut of this fix claimed —
+ * with the root absent (the default `.storage/private` on a fresh checkout) it
+ * `mkdir`s `dirname(root)`, *outside* the root this function exists to contain,
+ * then writes a regular **file** at the root path, after which every upload
+ * fails `ENOTDIR` until someone deletes it. `delete` and `download` genuinely do
+ * fail on `EISDIR`, but no caller has a use for a key naming the root, so the
+ * rule belongs here rather than at three of the four call sites.
+ *
+ * Comparing resolved paths rather than screening the key string catches every
+ * spelling at once, including ones normalisation invents. Nothing reaches this
+ * today — the object keys are `avatars/${userId}/…` and
+ * `${keyPrefix}${randomUUID()}${ext}`, and no route takes a caller-supplied
+ * prefix — so this is defence in depth, worth the one comparison because the
+ * `deletePrefix` blast radius is total.
+ */
 function resolveWithin(root: string, key: string): string {
   const rootPath = resolve(root);
   const fullPath = resolve(rootPath, key);
 
-  if (fullPath !== rootPath && !fullPath.startsWith(rootPath + sep)) {
-    throw new Error('Storage key resolves outside the storage root');
+  if (fullPath === rootPath) {
+    throw new Error('Storage key must not resolve to the storage root');
   }
 
-  return fullPath;
-}
-
-/**
- * Resolve a `deletePrefix` target, refusing the storage root itself.
- *
- * `resolveWithin` permits `fullPath === rootPath`, which is harmless for its
- * other callers — `upload`, `delete` and `download` given a root-resolving key
- * all fail on `EISDIR` without touching anything — but the next statement here
- * is a recursive delete. `validateStorageKey(".")` passes (no `..`, not
- * absolute, no NUL, no backslash) and `resolve(root, ".")` is `root`, so
- * without this a prefix of `"."` — or `"./"`, or any other spelling that
- * normalises to nothing — would erase every object the provider holds (#508).
- *
- * Comparing resolved paths rather than screening the prefix string catches
- * every spelling at once, including ones normalisation invents. No caller can
- * reach it today: both pass a session-derived `avatars/${userId}/`, and no
- * route accepts a caller-supplied prefix. It is here because the blast radius
- * is total and the check is one comparison.
- */
-function resolvePrefixDir(root: string, prefix: string): string {
-  const fullPath = resolveWithin(root, prefix);
-
-  if (fullPath === resolve(root)) {
-    throw new Error('Storage prefix must not resolve to the storage root');
+  if (!fullPath.startsWith(rootPath + sep)) {
+    throw new Error('Storage key resolves outside the storage root');
   }
 
   return fullPath;

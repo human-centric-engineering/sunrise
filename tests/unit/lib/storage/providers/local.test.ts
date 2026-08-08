@@ -258,7 +258,7 @@ describe('lib/storage/providers/local', () => {
             });
 
             await expect(provider.deletePrefix(prefix)).rejects.toThrow(
-              'Storage prefix must not resolve to the storage root'
+              'Storage key must not resolve to the storage root'
             );
             expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the whole point of the guard is that the recursive delete never runs
           }
@@ -294,7 +294,7 @@ describe('lib/storage/providers/local', () => {
           });
 
           await expect(provider.deletePrefix('.')).rejects.toThrow(
-            'Storage prefix must not resolve to the storage root'
+            'Storage key must not resolve to the storage root'
           );
           expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — asserts the private root survived too
         });
@@ -312,6 +312,38 @@ describe('lib/storage/providers/local', () => {
           });
           expect(result).toEqual({ success: true, key: 'avatars/' });
         });
+
+        // The guard lives in `resolveWithin`, so it covers every caller, not
+        // just the recursive delete. `upload` is the one where the first cut
+        // of #508 was wrong about the fallback: it does NOT fail on EISDIR
+        // when the root is absent (the default `.storage/private` on a fresh
+        // checkout). It mkdirs `dirname(root)` — outside the root this
+        // function exists to contain — then writes a regular file at the root
+        // path, after which every later upload fails ENOTDIR.
+        it('refuses a root-resolving key in upload(), before mkdir or writeFile', async () => {
+          vi.mocked(existsSync).mockReturnValue(false);
+
+          const provider = new LocalProvider({ baseDir: '/srv/test-uploads' });
+
+          await expect(
+            provider.upload(Buffer.from('x'), { key: '.', contentType: 'text/plain' })
+          ).rejects.toThrow('Storage key must not resolve to the storage root');
+          expect(mkdir).not.toHaveBeenCalled(); // test-review:accept no_arg_called — mkdir would create a directory OUTSIDE the storage root
+          expect(writeFile).not.toHaveBeenCalled(); // test-review:accept no_arg_called — writeFile would turn the storage root into a file
+        });
+
+        it.each([['delete'], ['download']] as const)(
+          'refuses a root-resolving key in %s()',
+          async (method) => {
+            vi.mocked(existsSync).mockReturnValue(true);
+
+            const provider = new LocalProvider({ baseDir: '/srv/test-uploads' });
+
+            await expect(provider[method]('.')).rejects.toThrow(
+              'Storage key must not resolve to the storage root'
+            );
+          }
+        );
       });
     });
 
