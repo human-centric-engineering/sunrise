@@ -296,7 +296,7 @@ Each item includes `_agents: Array<{ id, name, slug, isActive }>` — the agents
 
 ### `POST /capabilities`
 
-Create. Body validated by `createCapabilitySchema` — `functionDefinition` must be a JSON Schema compatible with the LLM tool-use format.
+Create. Body validated by `createCapabilitySchema` — `functionDefinition` must be a JSON Schema compatible with the LLM tool-use format, must carry `name`, `description` and `parameters`, and its `name` must equal the capability `slug` (#509 — the slug is the advertised tool name, so the two cannot diverge). Capability slugs accept underscores as well as hyphens and are capped at 64 characters. The same rules apply to `PATCH`; when a PATCH moves only one half of the pair, the route compares it against the stored row.
 
 ### `GET / PATCH / DELETE /capabilities/:id`
 

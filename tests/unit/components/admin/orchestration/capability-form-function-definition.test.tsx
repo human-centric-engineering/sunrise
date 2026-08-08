@@ -20,6 +20,7 @@ import { render, screen, waitFor, within, act, fireEvent } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 
 import { CapabilityForm } from '@/components/admin/orchestration/capability-form';
+import type { AiCapability } from '@/types/prisma';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -408,6 +409,118 @@ describe('CapabilityForm — Function Definition tab', () => {
                 }),
               }),
             }),
+          })
+        );
+      });
+    });
+  });
+  // ── Round-trip fidelity of a stored definition (#509) ───────────────────────
+  //
+  // The form used to re-narrow a loaded `functionDefinition` through the visual
+  // builder's own shape — `properties: record(object({ type, description }))`
+  // — and Zod strips unknown keys, so `enum`, `items`, `minLength` and every
+  // nested schema silently disappeared. An untouched Save then wrote the
+  // stripped copy back. Every seeded capability carries at least one of those.
+  //
+  // It was unreachable only by accident: the old client slug regex was
+  // hyphen-only, so a seeded underscore slug failed validation and blocked
+  // submit. #509 fixed the regex, which removed the brake — these two cases
+  // exist so the lossy narrow cannot come back with it.
+  describe('stored definitions survive an untouched save', () => {
+    const RICH_DEFINITION = {
+      name: 'escalate_to_human',
+      description: 'Escalate to a human.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string', description: 'Why.', minLength: 1, maxLength: 1000 },
+          priority: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Urgency.' },
+          tags: { type: 'array', items: { type: 'string' }, description: 'Tags.' },
+        },
+        required: ['reason'],
+      },
+    };
+
+    // The slug must equal `functionDefinition.name` (#509) or the form's own
+    // pre-submit check refuses the save — correctly, and for a different
+    // reason than the one under test here.
+    function makeRichCapability(functionDefinition: { name: string }): AiCapability {
+      return {
+        id: 'cap-rich',
+        name: 'Escalate To Human',
+        slug: functionDefinition.name,
+        description: 'Escalate to a human.',
+        category: 'support',
+        executionType: 'internal',
+        executionHandler: 'EscalateToHumanCapability',
+        executionConfig: null,
+        functionDefinition,
+        requiresApproval: false,
+        rateLimit: null,
+        isActive: true,
+        createdBy: 'system',
+        createdAt: new Date('2025-01-01'),
+        updatedAt: new Date('2025-01-01'),
+        deletedAt: null,
+        metadata: {},
+      } as unknown as AiCapability;
+    }
+
+    it('keeps enum, items and length constraints through a save', async () => {
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeRichCapability(RICH_DEFINITION)}
+          availableCategories={['support']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save|update/i }));
+
+      const { apiClient } = await import('@/lib/api/client');
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            body: expect.objectContaining({ functionDefinition: RICH_DEFINITION }),
+          })
+        );
+      });
+    });
+
+    it('can still save a definition the visual builder cannot represent', async () => {
+      // A property with no `type` fails the builder shape outright. That used
+      // to leave `parsedFn` null, so submit was refused with "Function
+      // definition requires at least a function name" — leaving the admin
+      // unable to edit the description, rate limit or active flag either.
+      const UNBUILDABLE = {
+        name: 'call_external_api',
+        description: 'Call an API.',
+        parameters: {
+          type: 'object',
+          properties: { body: { description: 'Request body, any shape.' } },
+          required: [],
+        },
+      };
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeRichCapability(UNBUILDABLE)}
+          availableCategories={['support']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save|update/i }));
+
+      const { apiClient } = await import('@/lib/api/client');
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            body: expect.objectContaining({ functionDefinition: UNBUILDABLE }),
           })
         );
       });

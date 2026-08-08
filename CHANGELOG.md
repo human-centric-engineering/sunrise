@@ -186,8 +186,12 @@ release process.
   uses the underscore convention LLM tool names take, and those rows are seeded
   through Prisma without ever meeting the API schema — so without this a
   capability authored through the API could never match the convention its
-  thirteen siblings use. Strictly wider, so no previously valid slug is
-  affected (#509).
+  thirteen siblings use. **The charset is wider; the length is narrower.** A
+  slug of 65–100 characters was creatable before and is now refused, on update
+  as well as create — so an API client doing a full-object PATCH that echoes a
+  legacy over-length slug gets a 400 on a field it did not change. Omit `slug`
+  from the PATCH body (it is immutable anyway) or recreate the capability. The
+  admin form already omits it (#509).
 - **A capability whose slug cannot be a tool name is dropped from an agent's
   toolset with a warning** rather than sent to the provider. Providers reject the
   *entire request* over a malformed tool name, so a namespaced fork slug from the

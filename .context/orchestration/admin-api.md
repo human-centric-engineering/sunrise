@@ -392,10 +392,14 @@ curl '/api/v1/admin/orchestration/capabilities?category=web&executionType=intern
 curl -X POST /api/v1/admin/orchestration/capabilities \
   -d '{
     "name": "Web Search",
-    "slug": "web-search",
+    "slug": "web_search",
     "description": "Search the web via DuckDuckGo",
     "category": "web",
-    "functionDefinition": { "name": "web_search", "parameters": {} },
+    "functionDefinition": {
+      "name": "web_search",
+      "description": "Search the web and return matching results",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
     "executionType": "internal",
     "executionHandler": "WebSearchCapability"
   }'
@@ -403,6 +407,8 @@ curl -X POST /api/v1/admin/orchestration/capabilities \
 # Soft delete (returns { id, isActive: false }) — blocked for system capabilities
 curl -X DELETE /api/v1/admin/orchestration/capabilities/<id>
 ```
+
+**`functionDefinition.name` must equal `slug`, and the definition must be complete.** The slug is the tool name advertised to the LLM, and dispatch resolves the name a model emits back as a slug — so a divergent pair would be permission-checked as one capability and executed as another (#509). `description` and `parameters` are required because a write replaces the whole JSON column; a partial definition discards the rest and leaves a row the runtime cannot parse. Capability slugs accept underscores as well as hyphens (unlike every other slug) and are capped at 64 characters, the provider tool-name limit.
 
 Slug collisions on create → 409 `ConflictError`. On PATCH slug collisions → 400 `ValidationError` with `{ slug: ['Slug is already in use'] }`.
 

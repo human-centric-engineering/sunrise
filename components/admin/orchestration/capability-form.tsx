@@ -85,16 +85,20 @@ type ParameterRow = z.infer<typeof parameterRowSchema>;
 const capabilityFormSchema = z
   .object({
     name: z.string().min(1, 'Name is required').max(100),
-    // Mirrors `capabilitySlugSchema` on the server. Underscores are allowed
-    // here and nowhere else, because a capability slug is also the LLM tool
-    // name (#509) — keep the two regexes identical.
-    // Charset mirrors `capabilitySlugSchema` on the server; the LENGTH is
-    // deliberately looser. The server caps new slugs at 64 (the provider
-    // tool-name limit), but a capability created before that cap can be
-    // 65–100 chars, and its edit form must still validate — the slug input is
-    // disabled in edit mode and the value is not submitted, so a stored
-    // over-length slug is not something the admin can act on. `toSlug` never
-    // generates past 64, so the create path effectively caps itself.
+    // Charset mirrors `capabilitySlugSchema` on the server — keep the two
+    // regexes identical. Underscores are allowed here and nowhere else,
+    // because a capability slug is also the LLM tool name (#509).
+    //
+    // The LENGTH deliberately differs. The server caps new slugs at 64 (the
+    // provider tool-name limit), but a capability created before that cap can
+    // be 65–100 chars, and its edit form still has to validate — the input is
+    // disabled in edit mode and the value is not submitted, so an over-length
+    // stored slug is not something the admin can act on.
+    //
+    // Known gap: a hand-typed 65+ char slug on CREATE passes here and is
+    // refused by the server. `toSlug` never generates one, so it takes
+    // deliberate typing; the cost is a server-side error instead of an inline
+    // one, not a silent failure.
     slug: z
       .string()
       .min(1, 'Slug is required')
@@ -177,6 +181,18 @@ function toSlug(value: string): string {
       .replace(/^[_-]+|[_-]+$/g, '')
   );
 }
+
+/**
+ * What the form holds for a function definition: the validated wire shape,
+ * with `parameters` left as stored.
+ *
+ * Deliberately wider than {@link CompiledFunctionDef}. A stored definition may
+ * use `enum`, `items`, nested objects — anything the JSON-Schema subset the
+ * providers accept allows — and narrowing it to the visual builder's shape
+ * strips those keys, because Zod drops unknown ones. `CompiledFunctionDef` is
+ * only the shape the builder *produces*, and it satisfies this type.
+ */
+type FunctionDefinitionState = z.infer<typeof capabilityFunctionDefinitionSchema>;
 
 interface CompiledFunctionDef {
   name: string;
@@ -307,7 +323,7 @@ export function CapabilityForm({
     Object.keys(initialFnDef).length > 0 ? JSON.stringify(initialFnDef, null, 2) : ''
   );
   const [jsonError, setJsonError] = useState<string | null>(null);
-  const [parsedFn, setParsedFn] = useState<CompiledFunctionDef | null>(() => {
+  const [parsedFn, setParsedFn] = useState<FunctionDefinitionState | null>(() => {
     if (Object.keys(initialFnDef).length === 0) return null;
     const rev = tryReverseCompile(initialFnDef);
     if (rev) {
@@ -321,25 +337,22 @@ export function CapabilityForm({
     // authoritative contract, but never ship a blind cast on API response
     // data. Malformed rows surface as `null` and leave the visual builder
     // disabled until the admin fixes the JSON.
+    //
+    // `parameters` is kept EXACTLY as stored. It used to be re-narrowed
+    // through the visual builder's shape
+    // (`properties: record(object({ type, description }))`), and Zod strips
+    // unknown keys — so `enum`, `items`, `minLength` and every nested schema
+    // silently vanished from `parsedFn`, and an untouched Save wrote the
+    // stripped copy back. Every seeded capability carries at least one of
+    // those. A definition the builder cannot represent also came back `null`,
+    // which in JSON mode meant the form refused to save at all, blaming a
+    // missing function name.
+    //
+    // Only `compileFunctionDefinition` — the builder's own output — needs the
+    // narrow shape. What the form holds for an arbitrary stored definition is
+    // the wider validated one.
     const parsed = capabilityFunctionDefinitionSchema.safeParse(initialFnDef);
-    if (!parsed.success) return null;
-    // `capabilityFunctionDefinitionSchema` only validates the outer keys;
-    // `parameters` is `Record<string, unknown>`. Re-narrow through
-    // `CompiledFunctionDef`'s required shape at the same boundary.
-    const params = parsed.data.parameters;
-    const paramShape = z
-      .object({
-        type: z.literal('object'),
-        properties: z.record(z.string(), z.object({ type: z.string(), description: z.string() })),
-        required: z.array(z.string()),
-      })
-      .safeParse(params);
-    if (!paramShape.success) return null;
-    return {
-      name: parsed.data.name,
-      description: parsed.data.description,
-      parameters: paramShape.data,
-    };
+    return parsed.success ? parsed.data : null;
   });
 
   // --- executionConfig JSON textarea state --------------------------------
@@ -459,9 +472,10 @@ export function CapabilityForm({
               .join('; ')})`
           );
         }
-        const fn = parsed as Record<string, unknown>;
-        // Only write to form state on success.
-        setParsedFn(fn as unknown as CompiledFunctionDef);
+        // Only write to form state on success — and write the VALIDATED
+        // value, not a cast of the raw parse. The module header has always
+        // claimed "no `as` casts" here; it is true now.
+        setParsedFn(shape.data);
         setJsonError(null);
         // Re-evaluate whether the Builder toggle should be enabled.
         setVisualDisabled(tryReverseCompile(parsed) === null);
