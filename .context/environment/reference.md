@@ -33,6 +33,7 @@ Complete reference for all environment variables used in Sunrise.
 | [`ALLOWED_DEV_ORIGINS`](./services-env.md#allowed_dev_origins) ¹ | ❌ No    | String       | App URL hosts       | Extra hosts allowed for dev HMR       |
 | [`INTERNAL_API_URL`](./services-env.md#internal_api_url)         | ❌ No    | URL          | Loopback / auth URL | Address for server-side self-calls    |
 | [`TENANCY_MODE`](../architecture/multi-tenancy.md)               | ❌ No    | Enum         | `single`            | Tenancy model (`multi` = opt-in RLS)  |
+| `ESCALATION_WEBHOOK_ALLOW_PRIVATE`                               | ❌ No    | Enum         | `false`             | Allow escalation POSTs to RFC1918 ³   |
 | [`NEXT_PUBLIC_APP_URL`](./services-env.md)                       | ✅ Yes   | URL          | -                   | Public app URL (client-side)          |
 | [`NEXT_PUBLIC_COOKIE_CONSENT_ENABLED`](./services-env.md)        | ❌ No    | Boolean      | `true`              | Enable cookie consent banner          |
 | [`LOG_LEVEL`](./services-env.md)                                 | ❌ No    | Enum         | Auto                | Minimum log level                     |
@@ -54,6 +55,14 @@ Complete reference for all environment variables used in Sunrise.
 | [`NEXT_TELEMETRY_DISABLED`](./services-env.md)                   | ❌ No    | Boolean      | -                   | Set to 1 to disable Next.js telemetry |
 
 ¹ **Not validated at startup.** These variables are accessed directly from `process.env` rather than through the validated `lib/env.ts` schema. Invalid values are handled at runtime.
+
+³ **`ESCALATION_WEBHOOK_ALLOW_PRIVATE` widens the SSRF guard, narrowly.** `escalationConfig.webhookUrl` is
+validated against `isSafeProviderUrl` at the settings API boundary and re-checked at dispatch. Setting this to
+`"true"` permits **RFC1918 and IPv6 unique-local** targets, for a deployment whose escalation relay genuinely runs
+on its own private network. It does **not** permit link-local (`169.254.0.0/16`, `fe80::/10`) — that range hosts
+credential-vending metadata services beyond the well-known `169.254.169.254`, such as AWS ECS task metadata at
+`169.254.170.2` and EKS Pod Identity at `169.254.170.23` — nor cloud-metadata hostnames, nor loopback. See
+`lib/security/safe-url.ts` (`allowPrivateNetwork`).
 
 ² **Storage variables use graceful degradation.** Not included in `lib/env.ts` schema. See [storage-env.md](./storage-env.md) for details.
 

@@ -166,7 +166,7 @@ describe('checkSafeProviderUrl', () => {
     it.each([
       ['RFC1918 10/8', 'http://10.0.1.5/hooks/escalate'],
       ['RFC1918 192.168/16', 'http://192.168.1.20/hooks'],
-      ['link-local', 'http://169.254.10.10/'],
+      ['RFC1918 172.16/12', 'http://172.20.1.1/hooks'],
       ['IPv6 unique local', 'http://[fd12:3456::1]/'],
     ])('permits %s when opted in', (_label, url) => {
       expect(checkSafeProviderUrl(url).ok).toBe(false);
@@ -175,9 +175,19 @@ describe('checkSafeProviderUrl', () => {
 
     // The whole point of the flag is that it does NOT reopen the target that
     // makes SSRF worth exploiting. BLOCKED_HOSTNAMES is checked first.
+    // The flag deliberately does NOT relax link-local. A denylist of metadata
+    // LITERALS is not enough: 169.254.169.254 is only the best-known one. AWS
+    // ECS task metadata vends IAM role credentials from 169.254.170.2 and EKS
+    // Pod Identity from 169.254.170.23, and 169.254.0.0/16 is reserved for
+    // exactly this class of service — nothing an operator would legitimately
+    // POST an escalation to lives there.
     it.each([
       ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
       ['metadata via IPv4-mapped IPv6', 'http://[::ffff:169.254.169.254]/'],
+      ['AWS ECS task credentials', 'http://169.254.170.2/v2/credentials/abc'],
+      ['EKS Pod Identity credentials', 'http://169.254.170.23/v1/credentials'],
+      ['any other link-local', 'http://169.254.10.10/'],
+      ['IPv6 link-local', 'http://[fe80::1]/'],
       ['GCP metadata hostname', 'http://metadata.google.internal/'],
       ['unspecified address', 'http://0.0.0.0/'],
     ])('still blocks %s when opted in', (_label, url) => {

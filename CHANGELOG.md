@@ -109,12 +109,17 @@ release process.
 
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation
   webhooks targeting its own private network (an in-VPC relay), for the case
-  where the alternative is no validation at all. Off by default.
-  **Cloud-metadata hosts stay blocked regardless**, and it does not permit
-  loopback. Backed by a new `allowPrivateNetwork` option on
-  `checkSafeProviderUrl` / `isSafeProviderUrl`, which relaxes RFC1918,
-  link-local and IPv6 unique-local while leaving `BLOCKED_HOSTNAMES` and the
-  scheme check untouched. Independent of the existing `allowLoopback` (#553).
+  where the alternative is no validation at all. Off by default; accepts exactly
+  `"true"` or `"false"` so a typo fails startup rather than silently leaving it
+  off. Backed by a new `allowPrivateNetwork` option on `checkSafeProviderUrl` /
+  `isSafeProviderUrl`.
+  **It relaxes RFC1918 and IPv6 unique-local only.** Link-local
+  (`169.254.0.0/16`, `fe80::/10`) stays blocked however it is set: a denylist of
+  metadata *literals* is not enough, because `169.254.169.254` is only the
+  best-known one — AWS ECS task metadata vends IAM role credentials from
+  `169.254.170.2` and EKS Pod Identity from `169.254.170.23`. Cloud-metadata
+  hostnames, the unspecified address and the scheme check are untouched, and it
+  does not imply `allowLoopback` (#553).
 - **`describeFetchFailure(err)`** in `lib/errors/fetch-error.ts` — renders a
   thrown value for an operator, unwrapping undici's `cause`. Node's `fetch`
   reports nearly every network-layer failure as a bare

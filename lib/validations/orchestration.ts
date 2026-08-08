@@ -16,7 +16,6 @@ import {
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
-import { env } from '@/lib/env';
 import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
@@ -2729,8 +2728,15 @@ export const escalationConfigWriteSchema = escalationConfigSchema.extend({
     .url('Must be a valid URL')
     .max(2000)
     .refine(
+      // Read straight off `process.env` rather than importing `@/lib/env`:
+      // twelve `'use client'` components import real values from this module
+      // (admin-sidebar among them), and `lib/env.ts` documents itself as never
+      // safe to pull into a client bundle. Non-`NEXT_PUBLIC_` vars resolve to
+      // undefined in the browser, so a client-side parse fails closed.
       (url) =>
-        isSafeProviderUrl(url, { allowPrivateNetwork: env.ESCALATION_WEBHOOK_ALLOW_PRIVATE }),
+        isSafeProviderUrl(url, {
+          allowPrivateNetwork: process.env.ESCALATION_WEBHOOK_ALLOW_PRIVATE === 'true',
+        }),
       'URL is not allowed (private or internal address)'
     )
     .optional(),

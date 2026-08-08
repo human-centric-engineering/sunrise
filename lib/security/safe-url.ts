@@ -118,19 +118,26 @@ export interface SafeUrlCheckOptions {
   allowLoopback?: boolean;
 
   /**
-   * When true, permit private RFC1918, link-local and IPv6 unique-local
-   * targets. For a service the deployment genuinely runs on its own private
-   * network — an escalation relay inside a VPC, say — where the alternative is
-   * no validation at all.
+   * When true, permit private **RFC1918** and **IPv6 unique-local** targets.
+   * For a service the deployment genuinely runs on its own private network —
+   * an escalation relay inside a VPC, say — where the alternative is no
+   * validation at all.
    *
-   * **Cloud-metadata hosts and the unspecified address stay blocked**
-   * (`BLOCKED_HOSTNAMES` is checked first and this flag does not reach it):
-   * `169.254.169.254` is never a legitimate relay, and it is the target that
-   * makes SSRF worth exploiting. Loopback is governed separately by
-   * `allowLoopback` — a VPC address is not a loopback address, and conflating
-   * them would widen two things when a caller asked for one.
+   * **Link-local (`169.254.0.0/16`, `fe80::/10`) is NOT relaxed**, and that is
+   * the whole reason this flag is narrower than "private". A denylist of
+   * metadata *literals* is not enough: `169.254.169.254` is only the
+   * best-known one. AWS ECS task metadata vends IAM role credentials from
+   * `169.254.170.2` and EKS Pod Identity from `169.254.170.23`, and the range
+   * is reserved for exactly this class of link-local service. Nothing an
+   * operator would legitimately POST an escalation to lives there, so the
+   * range stays refused however the flag is set.
    *
-   * Independent of `allowLoopback`; set both if you need both.
+   * Cloud-metadata hostnames and the unspecified address also stay blocked —
+   * `BLOCKED_HOSTNAMES` is checked before this flag is consulted.
+   *
+   * Loopback is governed separately by `allowLoopback`: a VPC address is not a
+   * loopback address, and conflating them would widen two things when a caller
+   * asked for one. Set both if you need both.
    */
   allowPrivateNetwork?: boolean;
 }
@@ -199,14 +206,24 @@ export function checkSafeProviderUrl(
     return { ok: true };
   }
 
-  if (
-    !options.allowPrivateNetwork &&
-    (isPrivateIp(host) || isLinkLocalIp(host) || isUniqueLocalIpv6(host))
-  ) {
+  // Link-local is checked unconditionally: `allowPrivateNetwork` relaxes RFC1918
+  // and IPv6 unique-local only. 169.254.0.0/16 hosts credential-vending
+  // metadata services beyond the single literal in BLOCKED_HOSTNAMES — AWS ECS
+  // task metadata at 169.254.170.2, EKS Pod Identity at 169.254.170.23 — and no
+  // legitimate outbound target lives in that range.
+  if (isLinkLocalIp(host)) {
     return {
       ok: false,
       reason: 'private_ip',
-      message: `Base URL host "${host}" resolves to a private or link-local address`,
+      message: `Base URL host "${host}" resolves to a link-local address`,
+    };
+  }
+
+  if (!options.allowPrivateNetwork && (isPrivateIp(host) || isUniqueLocalIpv6(host))) {
+    return {
+      ok: false,
+      reason: 'private_ip',
+      message: `Base URL host "${host}" resolves to a private address`,
     };
   }
 

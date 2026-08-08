@@ -197,6 +197,12 @@ export function SettingsForm({
   const formSchema = React.useMemo(
     () =>
       settingsFormSchema.superRefine((values, ctx) => {
+        // `onSubmit` only sends webhookUrl when escalation is enabled and has
+        // recipients; otherwise it PATCHes `escalationConfig: null`. Validating
+        // regardless would stop an operator DISABLING escalation to get rid of
+        // a now-rejected legacy URL — and since this page saves every setting
+        // in one request, nothing else on it could be saved either.
+        if (!values.escalationEnabled) return;
         const url = values.escalationWebhookUrl;
         if (!url) return;
         if (isSafeProviderUrl(url, { allowPrivateNetwork: allowPrivateEscalationWebhook })) return;
