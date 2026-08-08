@@ -31,6 +31,7 @@ const {
   registerAppCapability,
   registerAppCapabilities,
   __resetRegistrationForTests,
+  __resetDivergenceWarningsForTests,
 } = await import('@/lib/orchestration/capabilities/registry');
 const { BaseCapability } = await import('@/lib/orchestration/capabilities/base-capability');
 
@@ -129,6 +130,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   capabilityDispatcher.clearCache();
   __resetRegistrationForTests();
+  // The divergence warning is memoised for the life of the process, so without
+  // this a case that warns would silence the next one and the order of these
+  // tests would start to matter.
+  __resetDivergenceWarningsForTests();
   // Reinstall the default empty resolution (cleared by clearAllMocks).
   (prisma.aiCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 });
@@ -311,6 +316,43 @@ describe('getCapabilityDefinitions', () => {
         functionDefinitionName: 'custom_kb_search',
       })
     );
+  });
+
+  it('warns about a divergent row once, not on every turn', async () => {
+    // A divergent row keeps working indefinitely by design, and this function
+    // runs once per chat turn and once per agent_call step — so an
+    // un-memoised warning is one log line per request, forever.
+    (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: 'aac-dup',
+        agentId: 'agent-1',
+        capabilityId: 'cap-dup',
+        isEnabled: true,
+        customRateLimit: null,
+        capability: {
+          id: 'cap-dup',
+          slug: 'search_knowledge_base',
+          name: 'Custom KB Search',
+          category: 'knowledge',
+          isActive: true,
+          requiresApproval: false,
+          rateLimit: null,
+          functionDefinition: {
+            name: 'custom_kb_search',
+            description: 'Search with custom name',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      },
+    ]);
+
+    const { logger } = await import('@/lib/logging');
+
+    await getCapabilityDefinitions('agent-1');
+    await getCapabilityDefinitions('agent-1');
+    await getCapabilityDefinitions('agent-2');
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1);
   });
 
   it('drops a capability whose slug cannot be an LLM tool name', async () => {

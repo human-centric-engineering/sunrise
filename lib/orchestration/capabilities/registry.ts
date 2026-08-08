@@ -195,6 +195,42 @@ export function __resetRegistrationForTests(): void {
 const LLM_TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 
 /**
+ * Slug→name pairs already warned about, so a divergent row does not emit a
+ * warning on every chat turn and every `agent_call` step for the life of the
+ * process. The whole design is that such a row keeps working indefinitely, so
+ * without this the log fills with one line per request, forever.
+ *
+ * Keyed on the exact pair, which is what makes this dedupe safe where the one
+ * attempted in #553 was not: that key collapsed distinct values into a single
+ * rendered token and so could hide a *second*, different misconfiguration
+ * behind the first. Two different divergent rows produce two different keys
+ * here, and a row that changes produces a new key. Process-lifetime only, so a
+ * redeploy re-announces everything still outstanding.
+ */
+const warnedDivergentPairs = new Set<string>();
+
+function warnOnceForDivergence(
+  agentId: string,
+  slug: string,
+  functionDefinitionName: string
+): void {
+  const key = `${slug} ${functionDefinitionName}`;
+  if (warnedDivergentPairs.has(key)) return;
+  warnedDivergentPairs.add(key);
+
+  logger.warn('Capability functionDefinition.name differs from slug; advertising the slug', {
+    agentId,
+    slug,
+    functionDefinitionName,
+  });
+}
+
+/** Test seam: clears the warn-once memo so cases don't leak into each other. */
+export function __resetDivergenceWarningsForTests(): void {
+  warnedDivergentPairs.clear();
+}
+
+/**
  * Return the OpenAI-compatible function definitions an LLM should see
  * when talking to a given agent. Filters out any definition whose
  * slug isn't registered in the in-memory dispatcher (i.e. anything the
@@ -276,11 +312,7 @@ export async function getCapabilityDefinitions(
       // `chat/streaming-handler.ts` — which match a slug constant against a
       // tool *name* — correct by construction rather than by luck.
       if (parsed.data.name !== row.capability.slug) {
-        logger.warn('Capability functionDefinition.name differs from slug; advertising the slug', {
-          agentId,
-          slug: row.capability.slug,
-          functionDefinitionName: parsed.data.name,
-        });
+        warnOnceForDivergence(agentId, row.capability.slug, parsed.data.name);
       }
       definitions.push({ ...parsed.data, name: row.capability.slug });
     }

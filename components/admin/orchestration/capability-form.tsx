@@ -88,10 +88,17 @@ const capabilityFormSchema = z
     // Mirrors `capabilitySlugSchema` on the server. Underscores are allowed
     // here and nowhere else, because a capability slug is also the LLM tool
     // name (#509) — keep the two regexes identical.
+    // Charset mirrors `capabilitySlugSchema` on the server; the LENGTH is
+    // deliberately looser. The server caps new slugs at 64 (the provider
+    // tool-name limit), but a capability created before that cap can be
+    // 65–100 chars, and its edit form must still validate — the slug input is
+    // disabled in edit mode and the value is not submitted, so a stored
+    // over-length slug is not something the admin can act on. `toSlug` never
+    // generates past 64, so the create path effectively caps itself.
     slug: z
       .string()
       .min(1, 'Slug is required')
-      .max(64, 'Slug must be at most 64 characters')
+      .max(100)
       .regex(
         /^[a-z0-9]+(?:[_-][a-z0-9]+)*$/,
         'Lowercase letters and numbers, separated by underscores or hyphens'
@@ -162,7 +169,12 @@ function toSlug(value: string): string {
       .replace(/_+/g, '_')
       // 64, matching the provider tool-name cap the slug now has to satisfy.
       .slice(0, 64)
-      .replace(/_$/, '')
+      // Trim separators at BOTH ends. A leading one is reachable from a
+      // display name starting with `_`/`-`, or with punctuation that strips to
+      // nothing ("_Internal Ping" → `_internal_ping`), and the slug regex
+      // rejects it — invisibly, because the auto-slug effect sets the value
+      // with `shouldValidate: false`, so the admin only finds out at submit.
+      .replace(/^[_-]+|[_-]+$/g, '')
   );
 }
 
@@ -275,12 +287,22 @@ export function CapabilityForm({
     typeof initialFnDef.description === 'string' ? initialFnDef.description : ''
   );
   const [rows, setRows] = useState<ParameterRow[]>(initialRows);
-  const [fnMode, setFnMode] = useState<'visual' | 'json'>('visual');
-  const [visualDisabled, setVisualDisabled] = useState<boolean>(
+  // Pre-existing, fixed here because this PR narrowed its escape route: when
+  // the stored definition cannot be reverse-compiled, the form used to open in
+  // Visual mode anyway, and the recompile effect immediately overwrote
+  // `parsedFn` with empty `properties`/`required` — so opening the edit page
+  // for a capability with enums or nested objects (the seeded
+  // `call_external_api`, for one) and pressing Save silently destroyed its
+  // schema, while the banner told the admin to stay in a JSON mode the form
+  // was not in. Open in the mode that can actually represent the data.
+  const initialVisualDisabled =
     initialRows.length === 0 && Object.keys(initialFnDef).length > 0
       ? tryReverseCompile(initialFnDef) === null
-      : false
+      : false;
+  const [fnMode, setFnMode] = useState<'visual' | 'json'>(
+    initialVisualDisabled ? 'json' : 'visual'
   );
+  const [visualDisabled, setVisualDisabled] = useState<boolean>(initialVisualDisabled);
   const [jsonText, setJsonText] = useState<string>(() =>
     Object.keys(initialFnDef).length > 0 ? JSON.stringify(initialFnDef, null, 2) : ''
   );
@@ -424,10 +446,20 @@ export function CapabilityForm({
       try {
         const parsed: unknown = JSON.parse(value);
         if (!parsed || typeof parsed !== 'object') throw new Error('Not an object');
-        const fn = parsed as Record<string, unknown>;
-        if (typeof fn.name !== 'string') {
-          throw new Error('`name` must be a string');
+        // Check the whole shape, not just `name`. `description` and
+        // `parameters` are required by the API (#509) — a write replaces the
+        // JSON column wholesale, so a partial definition discards the rest —
+        // and checking only `name` here meant `{"name": "foo"}` sailed through
+        // every client check to come back as a bare 400.
+        const shape = capabilityFunctionDefinitionSchema.safeParse(parsed);
+        if (!shape.success) {
+          throw new Error(
+            `A function definition needs "name", "description" and "parameters" (${shape.error.issues
+              .map((i) => `${i.path.join('.') || 'root'}: ${i.message}`)
+              .join('; ')})`
+          );
         }
+        const fn = parsed as Record<string, unknown>;
         // Only write to form state on success.
         setParsedFn(fn as unknown as CompiledFunctionDef);
         setJsonError(null);
@@ -585,8 +617,14 @@ export function CapabilityForm({
         metadata: metadataParsed,
       };
       if (isEdit && capability) {
+        // The slug is immutable after creation — the input is disabled in edit
+        // mode — so sending it back is at best a no-op. It is dropped because
+        // it stopped being harmless: the server caps new slugs at 64, so
+        // echoing a longer legacy slug would fail validation and leave the
+        // capability uneditable through a field the admin cannot change.
+        const { slug: _unusedSlug, ...editPayload } = payload;
         await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
-          body: payload,
+          body: editPayload,
         });
         reset(data);
         // Reset non-RHF state to match what was saved
