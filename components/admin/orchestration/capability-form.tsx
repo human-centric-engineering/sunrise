@@ -208,32 +208,91 @@ type FunctionDefinitionState = z.infer<typeof capabilityFunctionDefinitionSchema
 interface CompiledFunctionDef {
   name: string;
   description: string;
-  parameters: {
+  parameters: Record<string, unknown> & {
     type: 'object';
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<string, unknown>;
     required: string[];
   };
 }
 
+/**
+ * The stored spec the builder is editing, so a compile can put back what it
+ * never showed. Keyed by parameter name; values are the raw property objects.
+ */
+export interface CompileBaseline {
+  /** Everything on `parameters` except `type`/`properties`/`required`. */
+  parametersExtras: Record<string, unknown>;
+  /** The original per-property objects, by parameter name. */
+  properties: Record<string, Record<string, unknown>>;
+}
+
+/**
+ * Should the stored property's extra keywords survive an edit to this row?
+ *
+ * Only when the row still describes the same kind of value. `minLength` on a
+ * field the admin just switched from string to number is not a constraint, it
+ * is nonsense — so a deliberate type change drops the extras, which is the one
+ * case where losing them is the admin's own visible choice.
+ *
+ * `integer` is the exception that makes the rule work: the builder has no such
+ * option, so `tryReverseCompile` shows integers as `number`. Treating that as
+ * "unchanged" is what stops a save silently widening
+ * `pattern_number: integer` to `number` — and it keeps the original `integer`
+ * rather than the row's approximation of it.
+ */
+function keepsStoredKeywords(storedType: unknown, rowType: string): boolean {
+  if (storedType === rowType) return true;
+  return storedType === 'integer' && rowType === 'number';
+}
+
+/**
+ * Build the wire shape from the builder's rows, preserving everything in the
+ * stored spec that the builder cannot represent.
+ *
+ * The builder's model is four fields per parameter — name, type, description,
+ * required — while a stored spec may carry bounds, formats, enums and nested
+ * shapes. Rebuilding each parameter from the row alone therefore deleted
+ * whatever had no slot in that model, which is how editing one description
+ * used to strip `minimum`/`maximum` off a neighbouring field. Merging over the
+ * stored property instead means an edit changes what was edited and nothing
+ * else.
+ */
 function compileFunctionDefinition(
   fnName: string,
   fnDescription: string,
-  rows: ParameterRow[]
+  rows: ParameterRow[],
+  baseline: CompileBaseline = { parametersExtras: {}, properties: {} }
 ): CompiledFunctionDef {
-  const properties: Record<string, { type: string; description: string }> = {};
+  const properties: Record<string, unknown> = {};
   for (const row of rows) {
     if (!row.name) continue;
-    properties[row.name] = {
-      type: row.type,
-      description: row.description,
-    };
+    const stored = baseline.properties[row.name];
+    properties[row.name] =
+      stored && keepsStoredKeywords(stored.type, row.type)
+        ? // Stored keywords ride along; the builder owns only these two, and
+          // `type` stays as stored so `integer` is not widened to `number`.
+          { ...stored, type: stored.type, description: row.description }
+        : { type: row.type, description: row.description };
   }
   const required = rows.filter((r) => r.required && r.name).map((r) => r.name);
   return {
     name: fnName,
     description: fnDescription,
-    parameters: { type: 'object', properties, required },
+    // Keywords on `parameters` itself — `additionalProperties`, `$schema` —
+    // are preserved for the same reason as the per-property ones.
+    parameters: { ...baseline.parametersExtras, type: 'object', properties, required },
   };
+}
+
+/** Pull the compile baseline out of a stored function definition. */
+function toCompileBaseline(fnDef: Record<string, unknown>): CompileBaseline {
+  const params = asJsonRecord(fnDef.parameters);
+  const { type: _type, properties: rawProps, required: _required, ...parametersExtras } = params;
+  const properties: Record<string, Record<string, unknown>> = {};
+  for (const [name, value] of Object.entries(asJsonRecord(rawProps))) {
+    properties[name] = asJsonRecord(value);
+  }
+  return { parametersExtras, properties };
 }
 
 /**
@@ -259,9 +318,14 @@ function tryReverseCompile(raw: unknown): ParameterRow[] | null {
   for (const [name, raw] of Object.entries(params.properties)) {
     if (!raw || typeof raw !== 'object') return null;
     const prop = raw as Record<string, unknown>;
-    // Reject truly incompatible shapes (oneOf, enum, nested $ref), but
-    // tolerate extra validation keys (minLength, minimum, etc.) that
-    // the builder strips on save — they're harmless to lose.
+    // Reject shapes the builder cannot show at all (oneOf, enum, nested $ref,
+    // items) — those open in JSON mode. Extra validation keywords
+    // (minLength, minimum, format, …) are tolerated here because they no
+    // longer have to be lost: `compileFunctionDefinition` merges over the
+    // stored property, so they survive an edit to the row's description. The
+    // comment that used to sit here called them "harmless to lose", which was
+    // never true — losing `minimum`/`maximum` on `pattern_number` widens what
+    // the model is allowed to send.
     const incompatible = new Set(['oneOf', 'anyOf', 'allOf', 'enum', '$ref', 'items']);
     const keys = Object.keys(prop);
     if (keys.some((k) => incompatible.has(k))) return null;
@@ -482,6 +546,11 @@ export function CapabilityForm({
   // the sibling case (definitions the builder cannot represent at all); this is
   // the one it left behind, and both were only unreachable before because the
   // hyphen-only slug regex blocked submit on every seeded capability.
+  // What the builder is editing ON TOP OF. Seeded from the stored definition
+  // and refreshed whenever the JSON editor supplies a new one, so a
+  // JSON → Builder → save round trip preserves the JSON's extras too.
+  const compileBaselineRef = useRef<CompileBaseline>(toCompileBaseline(initialFnDef));
+
   const skipInitialCompile = useRef(true);
   useEffect(() => {
     if (fnMode !== 'visual') return;
@@ -489,7 +558,12 @@ export function CapabilityForm({
       skipInitialCompile.current = false;
       return;
     }
-    const compiled = compileFunctionDefinition(fnName, fnDescription, rows);
+    const compiled = compileFunctionDefinition(
+      fnName,
+      fnDescription,
+      rows,
+      compileBaselineRef.current
+    );
     setParsedFn(compiled);
     setJsonText(JSON.stringify(compiled, null, 2));
     setJsonError(null);
@@ -527,7 +601,11 @@ export function CapabilityForm({
         // make the client stricter than the API it defers to, silently deleting
         // e.g. `strict: true` from a definition the admin pasted and can still
         // see in the textarea.
-        setParsedFn({ ...asJsonRecord(parsed), ...shape.data });
+        const next = { ...asJsonRecord(parsed), ...shape.data };
+        // The JSON the admin just wrote becomes what a later Builder edit
+        // merges over — otherwise switching to Builder would strip it again.
+        compileBaselineRef.current = toCompileBaseline(next);
+        setParsedFn(next);
         setJsonError(null);
         // Re-evaluate whether the Builder toggle should be enabled.
         setVisualDisabled(tryReverseCompile(parsed) === null);

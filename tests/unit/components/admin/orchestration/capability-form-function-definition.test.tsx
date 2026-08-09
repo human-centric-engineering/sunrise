@@ -539,6 +539,107 @@ describe('CapabilityForm — Function Definition tab', () => {
       });
     });
 
+    // The point of the merge: the builder owns four fields per parameter, and
+    // an edit to one of them must not delete the ones it cannot show.
+    it('keeps bounds and integer-ness when only a description is edited', async () => {
+      const STORED = {
+        name: 'get_pattern_detail',
+        description: 'Return every chunk for one pattern.',
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern_number: {
+              type: 'integer',
+              description: 'The pattern number (1-999).',
+              minimum: 1,
+              maximum: 999,
+            },
+          },
+          required: ['pattern_number'],
+        },
+      };
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeRichCapability(STORED)}
+          availableCategories={['support']}
+        />
+      );
+
+      // Edit through the BUILDER — the path that used to rebuild each
+      // parameter from scratch and drop everything it had no slot for.
+      await user.click(screen.getByRole('tab', { name: /function/i }));
+      const descInput = screen.getByDisplayValue('The pattern number (1-999).');
+      await user.clear(descInput);
+      await user.type(descInput, 'Which pattern to fetch.');
+
+      await user.click(screen.getByRole('button', { name: /save|update/i }));
+
+      const { apiClient } = await import('@/lib/api/client');
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalled();
+      });
+      const body = vi.mocked(apiClient.patch).mock.calls[0]?.[1] as {
+        body: { functionDefinition: { parameters: { properties: Record<string, unknown> } } };
+      };
+      expect(body.body.functionDefinition.parameters.properties.pattern_number).toEqual({
+        type: 'integer',
+        description: 'Which pattern to fetch.',
+        minimum: 1,
+        maximum: 999,
+      });
+    });
+
+    it('drops the stored keywords when the admin changes the parameter type', async () => {
+      // The one case where losing them is right: `minLength` on a field that
+      // just stopped being a string is nonsense, and the admin chose it.
+      const STORED = {
+        name: 'get_pattern_detail',
+        description: 'd',
+        parameters: {
+          type: 'object',
+          properties: {
+            label: { type: 'string', description: 'A label.', minLength: 1, maxLength: 40 },
+          },
+          required: [],
+        },
+      };
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeRichCapability(STORED)}
+          availableCategories={['support']}
+        />
+      );
+
+      await user.click(screen.getByRole('tab', { name: /function/i }));
+      // The parameter-row type select has no accessible name; it is the only
+      // combobox on this tab. Scope the option lookup to the Radix portal, as
+      // the category-select tests above do.
+      const combos = screen.getAllByRole('combobox');
+      await user.click(combos[combos.length - 1]);
+      const listbox = await screen.findByRole('listbox');
+      await user.click(within(listbox).getByRole('option', { name: /^number$/i }));
+
+      await user.click(screen.getByRole('button', { name: /save|update/i }));
+
+      const { apiClient } = await import('@/lib/api/client');
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalled();
+      });
+      const body = vi.mocked(apiClient.patch).mock.calls[0]?.[1] as {
+        body: { functionDefinition: { parameters: { properties: Record<string, unknown> } } };
+      };
+      expect(body.body.functionDefinition.parameters.properties.label).toEqual({
+        type: 'number',
+        description: 'A label.',
+      });
+    });
+
     it('can still save a definition the visual builder cannot represent', async () => {
       // A property with no `type` fails the builder shape outright. That used
       // to leave `parsedFn` null, so submit was refused with "Function
