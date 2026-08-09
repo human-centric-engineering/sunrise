@@ -748,6 +748,45 @@ describe('CapabilityForm — Function Definition tab', () => {
       });
     });
 
+    it('saves JSON edits made inside the debounce window', async () => {
+      // The JSON parse is debounced 200ms. Saving inside that window used to
+      // persist the PREVIOUS definition, report "Saved", and then let the
+      // stale timer write the unsaved JSON back into state — leaving the admin
+      // looking at edits marked as saved that never were. Submit now flushes
+      // the pending parse and uses its result.
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeRichCapability({ name: 'legacy_tool' })}
+          availableCategories={['support']}
+        />
+      );
+
+      await user.click(screen.getByRole('tab', { name: /function/i }));
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
+
+      const textarea = screen.getByRole('textbox', { name: /json editor/i });
+      const edited = JSON.stringify({
+        name: 'legacy_tool',
+        description: 'Edited inside the debounce.',
+        parameters: { type: 'object', properties: {}, required: [] },
+      });
+      fireEvent.change(textarea, { target: { value: edited } });
+
+      // No waiting — press Save while the 200ms timer is still pending.
+      await user.click(screen.getByRole('button', { name: /save|update/i }));
+
+      const { apiClient } = await import('@/lib/api/client');
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalled();
+      });
+      const body = vi.mocked(apiClient.patch).mock.calls[0]?.[1] as {
+        body: { functionDefinition: { description: string } };
+      };
+      expect(body.body.functionDefinition.description).toBe('Edited inside the debounce.');
+    });
+
     it('can still save a definition the visual builder cannot represent', async () => {
       // A property with no `type` fails the builder shape outright. That used
       // to leave `parsedFn` null, so submit was refused with "Function

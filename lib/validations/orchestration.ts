@@ -535,9 +535,13 @@ const executionTypeSchema = z.enum(['internal', 'api', 'webhook']);
  * at all, so it could never match the convention its thirteen shipped siblings
  * use.
  *
- * Strictly wider than `slugSchema` — every previously valid capability slug
- * still validates. Both separators are legal in OpenAI and Anthropic tool
- * names (`^[a-zA-Z0-9_-]{1,64}$`).
+ * **Wider in charset, NARROWER in length** — not "strictly wider", as this
+ * said until a review caught it sitting directly above the `.max(64)` that
+ * contradicts it. Both separators are legal in OpenAI and Anthropic tool names
+ * (`^[a-zA-Z0-9_-]{1,64}$`), but a slug of 65–100 characters was creatable
+ * before and is now refused on create *and* update — so a read-modify-write
+ * PATCH echoing a legacy slug 400s on a field it did not change. The admin
+ * form drops `slug` from its edit payload for exactly that reason.
  */
 export const capabilitySlugSchema = z
   .string()

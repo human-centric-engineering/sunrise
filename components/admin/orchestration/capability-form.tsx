@@ -620,6 +620,12 @@ export function CapabilityForm({
   // JSON → Builder → save round trip preserves the JSON's extras too.
   const compileBaselineRef = useRef<CompileBaseline>(toCompileBaseline(initialFnDef));
 
+  // Mirrors `jsonText` so `flushPendingJson` can read the latest editor
+  // contents synchronously, without depending on a state update.
+  const jsonTextRef = useRef<string>(
+    initialParsedFn ? JSON.stringify(initialParsedFn, null, 2) : ''
+  );
+
   const skipInitialCompile = useRef(true);
   useEffect(() => {
     // Consume the flag BEFORE the mode guard. It was consumed after, so a form
@@ -644,49 +650,83 @@ export function CapabilityForm({
     setJsonError(null);
   }, [fnName, fnDescription, rows, fnMode]);
 
+  /**
+   * Parse the JSON editor's contents into form state, synchronously.
+   *
+   * Returns the value written, or the error that stopped it, so a caller that
+   * needs the result NOW — submit — can use it without waiting for a state
+   * update it will not see in the same tick.
+   */
+  const applyJsonText = (
+    value: string
+  ): { ok: true; value: FunctionDefinitionState } | { ok: false; message: string } => {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (!parsed || typeof parsed !== 'object') throw new Error('Not an object');
+      // Check the whole shape, not just `name`. `description` and
+      // `parameters` are required by the API (#509) — a write replaces the
+      // JSON column wholesale, so a partial definition discards the rest —
+      // and checking only `name` here meant `{"name": "foo"}` sailed through
+      // every client check to come back as a bare 400.
+      const shape = capabilityFunctionDefinitionSchema.safeParse(parsed);
+      if (!shape.success) {
+        throw new Error(
+          `A function definition needs "name", "description" and "parameters" (${shape.error.issues
+            .map((i) => `${i.path.join('.') || 'root'}: ${i.message}`)
+            .join('; ')})`
+        );
+      }
+      // Spread the raw object under the validated fields so top-level keys
+      // the schema doesn't name survive. `capabilityFunctionDefinitionSchema`
+      // is a plain `z.object` and drops unknown keys, but the server's
+      // create/update schemas are `.passthrough()` — so narrowing here would
+      // make the client stricter than the API it defers to, silently deleting
+      // e.g. `strict: true` from a definition the admin pasted and can still
+      // see in the textarea.
+      const next = { ...asJsonRecord(parsed), ...shape.data };
+      // The JSON the admin just wrote becomes what a later Builder edit
+      // merges over — otherwise switching to Builder would strip it again.
+      compileBaselineRef.current = toCompileBaseline(next);
+      setParsedFn(next);
+      setJsonError(null);
+      // Re-evaluate whether the Builder toggle should be enabled.
+      setVisualDisabled(tryReverseCompile(parsed) === null);
+      return { ok: true, value: next };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid JSON';
+      setJsonError(message);
+      return { ok: false, message };
+    }
+  };
+
+  /**
+   * Run a pending JSON parse NOW instead of waiting out its debounce.
+   *
+   * Cancelling was the wrong remedy and shipped as one: a switch or a submit
+   * inside the 200 ms window threw away edits the admin could still see in the
+   * textarea. On submit that was worse than losing them — the save used the
+   * previous value, reported "Saved", and then the stale timer wrote the
+   * unsaved JSON back into state, leaving the admin looking at edits marked as
+   * persisted that never were.
+   *
+   * Returns `null` when nothing was pending.
+   */
+  const flushPendingJson = ():
+    { ok: true; value: FunctionDefinitionState } | { ok: false; message: string } | null => {
+    if (!jsonTimerRef.current) return null;
+    clearTimeout(jsonTimerRef.current);
+    jsonTimerRef.current = null;
+    return applyJsonText(jsonTextRef.current);
+  };
+
   // JSON editor → parsed state (debounced).
   const handleJsonChange = (value: string) => {
     setJsonText(value);
+    jsonTextRef.current = value;
     if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
     jsonTimerRef.current = setTimeout(() => {
-      try {
-        const parsed: unknown = JSON.parse(value);
-        if (!parsed || typeof parsed !== 'object') throw new Error('Not an object');
-        // Check the whole shape, not just `name`. `description` and
-        // `parameters` are required by the API (#509) — a write replaces the
-        // JSON column wholesale, so a partial definition discards the rest —
-        // and checking only `name` here meant `{"name": "foo"}` sailed through
-        // every client check to come back as a bare 400.
-        const shape = capabilityFunctionDefinitionSchema.safeParse(parsed);
-        if (!shape.success) {
-          throw new Error(
-            `A function definition needs "name", "description" and "parameters" (${shape.error.issues
-              .map((i) => `${i.path.join('.') || 'root'}: ${i.message}`)
-              .join('; ')})`
-          );
-        }
-        // Only write to form state on success — and write the VALIDATED
-        // value, not a cast of the raw parse. The module header has always
-        // claimed "no `as` casts" here; it is true now.
-        //
-        // Spread the raw object under the validated fields so top-level keys
-        // the schema doesn't name survive. `capabilityFunctionDefinitionSchema`
-        // is a plain `z.object` and drops unknown keys, but the server's
-        // create/update schemas are `.passthrough()` — so narrowing here would
-        // make the client stricter than the API it defers to, silently deleting
-        // e.g. `strict: true` from a definition the admin pasted and can still
-        // see in the textarea.
-        const next = { ...asJsonRecord(parsed), ...shape.data };
-        // The JSON the admin just wrote becomes what a later Builder edit
-        // merges over — otherwise switching to Builder would strip it again.
-        compileBaselineRef.current = toCompileBaseline(next);
-        setParsedFn(next);
-        setJsonError(null);
-        // Re-evaluate whether the Builder toggle should be enabled.
-        setVisualDisabled(tryReverseCompile(parsed) === null);
-      } catch (err) {
-        setJsonError(err instanceof Error ? err.message : 'Invalid JSON');
-      }
+      jsonTimerRef.current = null;
+      applyJsonText(value);
     }, 200);
   };
 
@@ -751,12 +791,11 @@ export function CapabilityForm({
   };
 
   const switchToJsonMode = () => {
-    // Cancel any pending JSON debounce. Neither switch used to, so typing in
-    // the editor and switching within 200 ms let the stale timer land AFTER
-    // the builder had recompiled — replacing `parsedFn` with the abandoned
-    // parse and resetting `compileBaselineRef` under it, so the table on
-    // screen and the submitted definition described different schemas.
-    if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+    // Land any pending JSON parse BEFORE switching. Cancelling (the first
+    // attempt at this) threw away edits still visible in the textarea; leaving
+    // it pending let the stale timer land after the builder had recompiled and
+    // reset the merge baseline under it. Flushing does neither.
+    flushPendingJson();
 
     // Serialize the current compiled JSON into the textarea.
     if (parsedFn) setJsonText(JSON.stringify(parsedFn, null, 2));
@@ -764,12 +803,11 @@ export function CapabilityForm({
   };
 
   const switchToVisualMode = () => {
-    // Cancel any pending JSON debounce. Neither switch used to, so typing in
-    // the editor and switching within 200 ms let the stale timer land AFTER
-    // the builder had recompiled — replacing `parsedFn` with the abandoned
-    // parse and resetting `compileBaselineRef` under it, so the table on
-    // screen and the submitted definition described different schemas.
-    if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+    // Land any pending JSON parse BEFORE switching. Cancelling (the first
+    // attempt at this) threw away edits still visible in the textarea; leaving
+    // it pending let the stale timer land after the builder had recompiled and
+    // reset the merge baseline under it. Flushing does neither.
+    flushPendingJson();
 
     // Try to reverse-compile the current JSON. If it fails because the
     // schema is too complex, show the banner. If JSON is simply invalid,
@@ -809,7 +847,18 @@ export function CapabilityForm({
   };
 
   const onSubmit = async (data: CapabilityFormData) => {
-    if (!parsedFn?.name) {
+    // Land a pending JSON parse first, and use its RESULT — `setParsedFn` will
+    // not have taken effect by the next line. Without this, saving inside the
+    // 200 ms window persisted the previous definition, said "Saved", and then
+    // let the timer write the unsaved JSON back into state.
+    const flushed = flushPendingJson();
+    if (flushed && !flushed.ok) {
+      setError(`Function definition JSON is not valid: ${flushed.message}`);
+      return;
+    }
+    const effectiveFn = flushed?.ok ? flushed.value : parsedFn;
+
+    if (!effectiveFn?.name) {
       setError('Function definition requires at least a function name.');
       return;
     }
@@ -830,9 +879,9 @@ export function CapabilityForm({
     // JSON editor can, and so can the reverse: authoring JSON and then editing
     // the display name, which regenerates the slug underneath it. Say so here
     // rather than letting a bare 400 come back from the server.
-    if (parsedFn.name !== data.slug) {
+    if (effectiveFn.name !== data.slug) {
       setError(
-        `The function name must match the slug. The Function tab says "${parsedFn.name}", ` +
+        `The function name must match the slug. The Function tab says "${effectiveFn.name}", ` +
           `the slug is "${data.slug}" — a capability is looked up by the name the AI emits, ` +
           `so the two cannot differ.`
       );
@@ -845,7 +894,7 @@ export function CapabilityForm({
     try {
       const payload = {
         ...data,
-        functionDefinition: parsedFn,
+        functionDefinition: effectiveFn,
         executionConfig: execConfigParsed,
         metadata: metadataParsed,
       };
@@ -863,7 +912,7 @@ export function CapabilityForm({
         // The saved definition becomes the new baseline. Without this, deleting
         // a parameter and re-adding one with the same name and type in the same
         // session silently re-attached the deleted one's keywords.
-        compileBaselineRef.current = toCompileBaseline(parsedFn);
+        compileBaselineRef.current = toCompileBaseline(effectiveFn);
         // Reset non-RHF state to match what was saved
         setMetadataText(metadataParsed ? JSON.stringify(metadataParsed, null, 2) : '');
         setMetadataError(null);

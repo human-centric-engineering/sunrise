@@ -134,17 +134,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // hyphens, must start with a letter) is deliberately NOT pinned: writing it
   // would satisfy this moment and then fail validation the next time an admin
   // touched the MCP row, on a field they had not changed. The rename still
-  // happens, so say so rather than leaving it to be discovered by an external
-  // caller.
+  // happens, so it is logged — but inside the transaction, below, because
+  // logging it here announced a broken tool name for writes that then got
+  // rejected by the system-capability guard or a slug collision, sending
+  // whoever investigated to a capability that was never modified.
   const renamedFrom =
     displacedName && mcpToolNameSchema.safeParse(displacedName).success ? displacedName : null;
-  if (displacedName && !renamedFrom) {
-    log.warn('Capability rename moves an MCP tool name that cannot be pinned', {
-      capabilityId: id,
-      displacedName,
-      newFunctionName: body.functionDefinition?.name,
-    });
-  }
+  const unpinnableName = displacedName && !renamedFrom ? displacedName : null;
 
   // System capabilities cannot be deactivated via PATCH (equivalent to deletion).
   if (current.isSystem && body.isActive === false) {
@@ -174,6 +170,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   try {
     const capability = await prisma.$transaction(async (tx) => {
+      if (unpinnableName) {
+        log.warn('Capability rename moves an MCP tool name that cannot be pinned', {
+          capabilityId: id,
+          displacedName: unpinnableName,
+          newFunctionName: body.functionDefinition?.name,
+        });
+      }
       if (renamedFrom) {
         // `customName` has no unique constraint, and `callMcpTool` resolves an
         // incoming call with `tools.find(t => t.name === toolName)` — first
@@ -189,7 +192,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         // the comparison happens here rather than in the query; the candidate
         // set is only the exposed tools, which is small by construction.
         const others = await tx.mcpExposedTool.findMany({
-          where: { capabilityId: { not: id } },
+          // Mirror `loadGlobalTools`: only rows that are enabled AND whose
+          // capability is active are ever advertised, so only those can be
+          // ambiguous. Without the filter a DISABLED row holding the same name
+          // blocked the pin — and the published name of the tool we were
+          // protecting moved anyway, which is the exact breakage this exists
+          // to prevent, reached by refusing to prevent it.
+          where: { capabilityId: { not: id }, isEnabled: true, capability: { isActive: true } },
           select: {
             id: true,
             customName: true,
@@ -285,6 +294,14 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   });
 
   capabilityDispatcher.clearCache();
+  // `isActive` is exactly what `loadGlobalTools` filters on, so a soft delete
+  // changes the MCP surface as surely as a PATCH does — and the identical
+  // state change sent as `PATCH { isActive: false }` (what the capabilities
+  // table sends) already clears it. Without this, `tools/list` advertises the
+  // deleted tool for up to five minutes and `tools/call` resolves it before
+  // failing at dispatch.
+  clearMcpToolCache();
+  broadcastMcpToolsChanged();
 
   log.info('Capability soft-deleted', {
     capabilityId: id,
