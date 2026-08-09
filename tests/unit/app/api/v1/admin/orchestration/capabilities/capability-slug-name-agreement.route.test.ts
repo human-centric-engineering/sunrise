@@ -36,6 +36,7 @@ const mockUpdate = vi.fn();
 
 const mockMcpUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
 const mockMcpFindMany = vi.fn().mockResolvedValue([]);
+const mockMcpFindUnique = vi.fn().mockResolvedValue({ id: 'mcp-self' });
 
 vi.mock('@/lib/orchestration/mcp', () => ({
   clearMcpToolCache: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock('@/lib/db/client', () => ({
     mcpExposedTool: {
       updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
       findMany: (...args: unknown[]) => mockMcpFindMany(...args),
+      findUnique: (...args: unknown[]) => mockMcpFindUnique(...args),
     },
     // PATCH pins the MCP tool name and updates the capability in one
     // transaction (#509); run the callback against the same doubles.
@@ -60,6 +62,7 @@ vi.mock('@/lib/db/client', () => ({
         mcpExposedTool: {
           updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
           findMany: (...args: unknown[]) => mockMcpFindMany(...args),
+          findUnique: (...args: unknown[]) => mockMcpFindUnique(...args),
         },
       }),
   },
@@ -247,6 +250,8 @@ describe('PATCH capability — pinning the MCP tool name before a rename', () =>
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     mockUpdate.mockResolvedValue(makeStoredCapability());
     mockMcpUpdateMany.mockResolvedValue({ count: 1 });
+    mockMcpFindUnique.mockResolvedValue({ id: 'mcp-self' });
+    mockMcpFindMany.mockResolvedValue([]);
   });
 
   /** A legacy row: hyphen slug, underscore function name — the pre-#509 default. */
@@ -357,6 +362,51 @@ describe('PATCH capability — pinning the MCP tool name before a rename', () =>
     );
 
     expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — same collision, reached via the other tool's function name
+  });
+
+  it('says nothing about MCP for a capability that was never exposed', async () => {
+    // Both warnings used to fire regardless of whether the capability had a
+    // tool at all, announcing a moved tool name for an integration that does
+    // not exist.
+    mockFindUnique.mockResolvedValue(makeDivergentCapability());
+    mockMcpFindUnique.mockResolvedValue(null);
+
+    const response = await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search-web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — no exposed row, nothing to pin
+  });
+
+  it('looks for clashes against explicit names on ANY row, derived names only on live ones', async () => {
+    // Asserting the QUERY, not the comparison. Which rows are considered is
+    // decided in the `where` clause, so a mocked client returns whatever it is
+    // told regardless — a test that fed it a disabled row and checked the
+    // outcome would pass with or without the filter, proving nothing.
+    //
+    // The rule: an explicit `customName` claims the name even while disabled
+    // (the row keeps it when re-enabled, and nothing enforces uniqueness at
+    // the enable path), while a DERIVED name only exists while advertised.
+    mockFindUnique.mockResolvedValue(makeDivergentCapability());
+
+    await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search-web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    const where = mockMcpFindMany.mock.calls[0]?.[0]?.where as {
+      OR: Array<Record<string, unknown>>;
+    };
+    expect(where.OR).toEqual([
+      { customName: { not: null } },
+      { customName: null, isEnabled: true, capability: { isActive: true } },
+    ]);
   });
 
   it('refuses to pin a name that could not legally live in customName', async () => {

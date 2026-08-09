@@ -49,6 +49,7 @@ vi.mock('@/lib/db/client', () => {
   const mcpExposedTool = {
     updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     findMany: vi.fn().mockResolvedValue([]),
+    findUnique: vi.fn().mockResolvedValue(null),
   };
   return {
     prisma: {

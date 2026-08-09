@@ -866,7 +866,13 @@ export function CapabilityForm({
       setError('Execution config is not valid JSON. Fix the editor first.');
       return;
     }
-    if (jsonError) {
+    // Gate on the FLUSH, not on `jsonError`. That state is a stale closure
+    // value here: fixing invalid JSON and saving within the debounce window
+    // flushed successfully and cleared the error, but this still read the old
+    // one and refused the save with a message the editor contradicted. A
+    // pending parse that failed already returned above; only a pre-existing
+    // error with nothing pending can still block.
+    if (!flushed && jsonError) {
       setError('Function definition JSON is not valid. Fix the editor first.');
       return;
     }
@@ -1274,6 +1280,13 @@ export function CapabilityForm({
                 variant="outline"
                 className="shrink-0"
                 onClick={() => {
+                  // Land any pending JSON parse first — this is a mode switch
+                  // like the other two, and was the only one still leaving the
+                  // timer armed. It would fire after the reset had emptied the
+                  // table, restoring the discarded definition into `parsedFn`
+                  // and the merge baseline while Builder mode stayed on screen
+                  // showing no parameters.
+                  flushPendingJson();
                   let parsed: Record<string, unknown> = {};
                   try {
                     parsed = JSON.parse(jsonText || '{}') as Record<string, unknown>;

@@ -170,14 +170,25 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   try {
     const capability = await prisma.$transaction(async (tx) => {
-      if (unpinnableName) {
+      // Nothing below concerns a capability that was never published over
+      // MCP. Both warnings used to fire regardless, announcing a moved tool
+      // name for a capability with no tool — sending whoever read the log to
+      // investigate an integration that does not exist.
+      const exposed = displacedName
+        ? await tx.mcpExposedTool.findUnique({
+            where: { capabilityId: id },
+            select: { id: true },
+          })
+        : null;
+
+      if (exposed && unpinnableName) {
         log.warn('Capability rename moves an MCP tool name that cannot be pinned', {
           capabilityId: id,
           displacedName: unpinnableName,
           newFunctionName: body.functionDefinition?.name,
         });
       }
-      if (renamedFrom) {
+      if (exposed && renamedFrom) {
         // `customName` has no unique constraint, and `callMcpTool` resolves an
         // incoming call with `tools.find(t => t.name === toolName)` — first
         // match wins. Pinning a name another exposed tool already advertises
@@ -191,14 +202,28 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
         // rows this pin exists for. `functionDefinition` is a JSON column, so
         // the comparison happens here rather than in the query; the candidate
         // set is only the exposed tools, which is small by construction.
+        // Two different questions, so two different filters.
+        //
+        // An explicit `customName` is a CLAIM on that name, live or not: the
+        // row keeps it when re-enabled, and nothing enforces uniqueness at the
+        // enable path or in the schema. Pinning the same string alongside it
+        // would leave a duplicate lying in wait, and `callMcpTool` resolves
+        // first-match-wins. So explicit names are checked across every row.
+        //
+        // A DERIVED name (null `customName`) only exists while the row is
+        // advertised, and is re-derived from whatever the capability says at
+        // the time — so only enabled rows with an active capability can
+        // collide on one. Checking derived names on disabled rows is what
+        // caused the previous over-refusal, where a tool advertising nothing
+        // blocked the pin and let the protected name move anyway.
         const others = await tx.mcpExposedTool.findMany({
-          // Mirror `loadGlobalTools`: only rows that are enabled AND whose
-          // capability is active are ever advertised, so only those can be
-          // ambiguous. Without the filter a DISABLED row holding the same name
-          // blocked the pin — and the published name of the tool we were
-          // protecting moved anyway, which is the exact breakage this exists
-          // to prevent, reached by refusing to prevent it.
-          where: { capabilityId: { not: id }, isEnabled: true, capability: { isActive: true } },
+          where: {
+            capabilityId: { not: id },
+            OR: [
+              { customName: { not: null } },
+              { customName: null, isEnabled: true, capability: { isActive: true } },
+            ],
+          },
           select: {
             id: true,
             customName: true,
