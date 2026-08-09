@@ -560,8 +560,11 @@ class CapabilityDispatcher {
    * build `advertisedToolNames` from `getCapabilityDefinitions`. The remaining
    * callers do not take a name from a model at all — `executors/tool-call.ts`
    * reads `capabilitySlug` from admin-authored step config, and
-   * `mcp/tool-registry.ts` resolves an advertised name back to its row before
-   * dispatching `tool.slug`, which is itself the membership check.
+   * `mcp/tool-registry.ts` resolves an incoming name against the EXPOSED-TOOL
+   * set before dispatching that row's `tool.slug`. Note what that is and is
+   * not: membership of the globally-exposed set, deliberately not of a scoped
+   * agent's grants (see the resolution note in `callMcpTool`), and its caller
+   * is an API-key-authenticated client rather than a model.
    *
    * This note used to say "the chat handler … closes the reachable path". That
    * was true of chat and false of `agent_call`, which had no such check until
