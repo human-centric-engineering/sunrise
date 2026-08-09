@@ -177,6 +177,21 @@ release process.
   definition that *agrees* with the slug but is stripped, then PATCH the slug
   alone, and with nothing left to compare against the check was skipped. Both
   schemas now require the full shape (#509).
+- **`agent_call` refuses a tool the agent was never advertised.** The #476
+  tool-call guard was added to the chat handler only; the workflow `agent_call`
+  executor dispatched whatever name the model emitted, and because a missing
+  `AiAgentCapability` row synthesizes a default-ALLOW binding, that capability
+  then ran unrestricted. The reachable route is injected content rather than an
+  admin — a knowledge document, a tool result, or an upstream step's output
+  naming any globally-registered slug. The executor now builds
+  `advertisedToolNames` from `getCapabilityDefinitions` and feeds a
+  `tool_not_advertised` result back to the model, keeping the assistant+tool
+  message pair intact so the next provider call stays well-formed. Swept the
+  other dispatch callers: `tool_call` reads its slug from admin-authored step
+  config and MCP resolves an advertised name to its row before dispatching, so
+  neither takes a name from a model. The dispatcher note claiming the chat
+  guard "closes the reachable path" is corrected — it was true of one of the
+  two surfaces (#559).
 ### Added
 
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation

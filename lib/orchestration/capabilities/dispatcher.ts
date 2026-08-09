@@ -554,9 +554,19 @@ class CapabilityDispatcher {
    * `mcp-system` agent, which dispatches built-ins with no pivot rows in a
    * default install. Audit your `AiAgentCapability` table before enabling it.
    *
-   * Independently of this setting, the chat handler refuses any tool name
-   * outside the agent's advertised set before dispatch, which closes the
-   * reachable path (see `advertisedToolNames` in `streaming-handler.ts`).
+   * Independently of this setting, every caller that dispatches a
+   * MODEL-EMITTED name checks it against the agent's advertised set first:
+   * `chat/streaming-handler.ts` and `engine/executors/agent-call.ts` both
+   * build `advertisedToolNames` from `getCapabilityDefinitions`. The remaining
+   * callers do not take a name from a model at all — `executors/tool-call.ts`
+   * reads `capabilitySlug` from admin-authored step config, and
+   * `mcp/tool-registry.ts` resolves an advertised name back to its row before
+   * dispatching `tool.slug`, which is itself the membership check.
+   *
+   * This note used to say "the chat handler … closes the reachable path". That
+   * was true of chat and false of `agent_call`, which had no such check until
+   * #559 — so a sentence intended to explain why the default is safe was, for
+   * anyone weighing `strict`, the reason not to look.
    */
   private async getAgentBinding(
     agentId: string,

@@ -38,6 +38,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import type { CapabilityResult } from '@/lib/orchestration/capabilities/types';
 import {
   getCapabilityDefinitions,
   registerBuiltInCapabilities,
@@ -318,15 +319,54 @@ async function runSingleTurn(
 
         const toolCall: LlmToolCall = response.toolCalls[0];
 
-        const capResult = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
-          userId: ctx.userId,
-          agentId: agent!.id,
-          // Forward the run's scope so tools an agent_call turn dispatches are
-          // scoped too — same as the tool_call executor. Without this an
-          // agent_call (and orchestrator, which delegates here) would run its
-          // capabilities unscoped, leaving a hole in the workflow scope path.
-          ...(ctx.scope ? { scope: ctx.scope } : {}),
-        });
+        /**
+         * The tools this agent is allowed to call — the same check the chat
+         * handler makes, which this surface never had (#559).
+         *
+         * `toolDefinitions` is what was advertised to the model, built by
+         * `getCapabilityDefinitions(agent.id)` from explicitly-enabled bindings.
+         * Dispatch, though, took the emitted name straight through, and a
+         * MISSING pivot row synthesizes a default-ALLOW binding — so a name the
+         * agent was never granted still ran, unrestricted. The reachable route
+         * is injected content rather than an admin: a knowledge document, a
+         * tool result, or an upstream step's output naming a globally
+         * registered slug.
+         *
+         * #476 closed this on chat and its dispatcher note claimed the path was
+         * closed generally. It was closed on one of the two surfaces.
+         */
+        const advertisedToolNames = new Set(toolDefinitions.map((t) => t.name));
+
+        let capResult: CapabilityResult;
+        if (!advertisedToolNames.has(toolCall.name)) {
+          logger.warn('Refusing tool not advertised to this agent', {
+            stepId: step.id,
+            agentId: agent!.id,
+            toolName: toolCall.name,
+            advertised: [...advertisedToolNames],
+          });
+          // Shaped like a dispatch result and fed back as one, so the loop
+          // continues with the assistant+tool message pair intact — an
+          // assistant toolCall with no matching tool result makes the NEXT
+          // provider call 400. The model gets to answer without the tool.
+          capResult = {
+            success: false,
+            error: {
+              code: 'tool_not_advertised',
+              message: `Tool '${toolCall.name}' is not available to this agent`,
+            },
+          };
+        } else {
+          capResult = await capabilityDispatcher.dispatch(toolCall.name, toolCall.arguments, {
+            userId: ctx.userId,
+            agentId: agent!.id,
+            // Forward the run's scope so tools an agent_call turn dispatches are
+            // scoped too — same as the tool_call executor. Without this an
+            // agent_call (and orchestrator, which delegates here) would run its
+            // capabilities unscoped, leaving a hole in the workflow scope path.
+            ...(ctx.scope ? { scope: ctx.scope } : {}),
+          });
+        }
 
         if (capResult.skipFollowup) {
           finalContent = JSON.stringify(capResult.data ?? capResult);
