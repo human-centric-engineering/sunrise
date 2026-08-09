@@ -78,11 +78,24 @@ This is the most involved tab — an admin can edit the OpenAI function-definiti
 
 Every keystroke recompiles the rows into the OpenAI shape via `compileFunctionDefinition()` and writes the result to `parsedFn` — the single source of truth passed into the submit payload.
 
+#### The builder is a lossy view, so a compile MERGES rather than replaces (#509)
+
+A row holds four things — name, type, description, required — while a stored spec can carry `minimum`, `maxLength`, `format`, `enum`, `items` and nested shapes. Rebuilding each parameter from its row therefore deleted everything the row had no slot for, so editing one description stripped the constraints off the parameter beside it. Not a validation problem: a lossy round-trip, the same shape as opening a formatted document in a plain-text editor and saving.
+
+`compileFunctionDefinition()` takes a **baseline** — the stored spec, refreshed whenever the JSON editor writes a new one — and merges each row over the stored property. The builder owns `type`, `description` and membership of `required`; everything else on the property is carried through, as are keywords on `parameters` itself (`additionalProperties`, `$schema`).
+
+Two rules make it work:
+
+- **A deliberate type change drops the stored keywords.** `minLength` on a field that just stopped being a string is nonsense. This is the one remaining loss, and it is visible and chosen.
+- **`integer` counts as unchanged against `number`.** The builder has no integer option, so `tryReverseCompile()` shows integers as `number`; without this exception every integer parameter would look like a deliberate type change and lose its bounds. The stored `integer` is kept rather than the row's approximation, which is what stops a save widening `pattern_number` so a model may send `1.5`.
+
+Two further guards keep an _untouched_ save byte-identical: the recompile effect does not run on mount, and the initial `parsedFn` is the stored definition rather than a compile of it. Both were regressions found in review — before them, merely opening a seeded capability and pressing Save rewrote its schema.
+
 ### JSON editor (escape hatch)
 
 - `<Textarea rows=20 class="font-mono">` with a **debounced 200 ms parse**. Valid JSON → writes to `parsedFn` and updates the live preview. Invalid JSON → inline red error, `parsedFn` is not touched, submit is blocked.
 - Switching Builder → JSON serializes the current compiled shape into the textarea.
-- Switching JSON → Builder attempts `tryReverseCompile()`. If the shape uses features the Builder can't represent (nested objects, `oneOf`, enums, etc.), the Builder toggle is **disabled** and an amber banner explains why. The banner includes a **"Reset to Builder"** button that discards advanced schema features and returns to visual mode with just the function name and description (parameters are cleared). If the admin simplifies the schema in JSON instead, the toggle re-enables automatically. If JSON is simply invalid (syntax error), the switch is blocked with an inline error instead of permanently disabling the toggle.
+- Switching JSON → Builder attempts `tryReverseCompile()`. If the shape uses features the Builder can't represent **at all** (nested objects, `oneOf`, enums, `items`), the Builder toggle is **disabled** and an amber banner explains why. Extra validation keywords (`minimum`, `format`, …) do _not_ disable it — they no longer have to, since a compile merges over them rather than dropping them. The banner includes a **"Reset to Builder"** button that discards advanced schema features and returns to visual mode with just the function name and description (parameters are cleared). If the admin simplifies the schema in JSON instead, the toggle re-enables automatically. If JSON is simply invalid (syntax error), the switch is blocked with an inline error instead of permanently disabling the toggle.
 
 Both modes parse through `capabilityFunctionDefinitionSchema` (defined in `lib/validations/orchestration.ts:31`) before touching form state — no `as` casts. The `visualDisabled` flag is re-evaluated on every successful JSON parse, so simplifying a complex schema back to a Builder-compatible shape re-enables the toggle without a page reload.
 

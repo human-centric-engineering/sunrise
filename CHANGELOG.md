@@ -200,6 +200,20 @@ release process.
   chat anyway; MCP remains its surface, and resolves custom names back to slugs
   explicitly (#509).
 
+- **The capability admin form no longer degrades a stored tool schema when you
+  edit it.** The visual builder holds four fields per parameter — name, type,
+  description, required — and rebuilt each parameter from those alone, so
+  saving deleted every keyword it had no slot for. Editing one description
+  stripped `minimum`/`maximum` from the parameter beside it, and `integer` was
+  silently widened to `number`, letting a model send `1.5` where a whole number
+  was required. Merely *opening* a seeded capability and pressing Save was
+  enough. A compile now merges over the stored spec: the builder owns type,
+  description and required-ness, and everything else is carried through. A
+  deliberate type change still drops the stored keywords, which is the one case
+  where losing them is correct. Not previously reachable through the UI — the
+  client slug rule rejected every seeded capability's underscore slug and
+  blocked the save — so this ships as a fix alongside the change that removed
+  that accidental brake (#509).
 ### Added
 
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation
