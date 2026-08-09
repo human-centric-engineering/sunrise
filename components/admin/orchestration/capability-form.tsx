@@ -350,6 +350,95 @@ function tryReverseCompile(raw: unknown): ParameterRow[] | null {
   return rows;
 }
 
+/**
+ * The function-definition state a mounted form starts from: the stored
+ * definition, validated, with its `name` normalised to the slug and nothing
+ * else touched. `null` only when there is genuinely nothing to edit.
+ *
+ * Module-level and pure so `parsedFn` and `jsonText` can be seeded from the
+ * SAME value — they were computed separately and disagreed on load.
+ */
+function initialFunctionState(
+  initialFnDef: Record<string, unknown>,
+  slugForName: string
+): FunctionDefinitionState | null {
+  if (Object.keys(initialFnDef).length === 0) return null;
+  // A reverse-compilable definition used to be run straight back through
+  // `compileFunctionDefinition` here, which is the builder's LOSSY
+  // rendering — `tryReverseCompile` tolerates `minimum`/`maxLength`/`format`
+  // and maps `integer` to `number`, none of which survive the round trip. So
+  // the stored definition was already replaced before the form even
+  // rendered, and an untouched Save wrote the degraded copy back: the seeded
+  // `get_pattern_detail` lost its 1–999 bounds and had `integer` widened to
+  // `number`, letting a model emit 1.5 for a pattern number.
+  //
+  // `rows` is still seeded from the reverse-compile — the builder UI needs
+  // it — but `parsedFn` holds what is stored until the admin actually edits
+  // something, at which point the recompile effect takes over and the loss
+  // is a choice they made.
+  //
+  // Validate the stored JSON at the boundary — the backend schema is the
+  // authoritative contract, but never ship a blind cast on API response
+  // data. Malformed rows surface as `null` and leave the visual builder
+  // disabled until the admin fixes the JSON.
+  //
+  // `parameters` is kept EXACTLY as stored. It used to be re-narrowed
+  // through the visual builder's shape
+  // (`properties: record(object({ type, description }))`), and Zod strips
+  // unknown keys — so `enum`, `items`, `minLength` and every nested schema
+  // silently vanished from `parsedFn`, and an untouched Save wrote the
+  // stripped copy back. Every seeded capability carries at least one of
+  // those. A definition the builder cannot represent also came back `null`,
+  // which in JSON mode meant the form refused to save at all, blaming a
+  // missing function name.
+  //
+  // Only `compileFunctionDefinition` — the builder's own output — needs the
+  // narrow shape. What the form holds for an arbitrary stored definition is
+  // the wider validated one.
+  const parsed = capabilityFunctionDefinitionSchema.safeParse(initialFnDef);
+  // Spread for the same reason as the JSON path: keep top-level keys the
+  // schema doesn't name, since the API accepts them.
+  if (parsed.success) {
+    // Normalise the NAME to the slug, and only the name. A stored row whose
+    // `functionDefinition.name` diverges from its slug is exactly what #509
+    // forbids going forward, and the form's Function-name field already
+    // claims to mirror the slug — so loading one and leaving the stale name
+    // in `parsedFn` made the save fail its own client check, locking the
+    // admin out of a row nothing else lets them repair.
+    //
+    // Repairing one field beats recompiling: everything else in the stored
+    // definition is carried through untouched, so an otherwise-unedited save
+    // fixes the divergence and changes nothing else.
+    return { ...initialFnDef, ...parsed.data, ...(slugForName ? { name: slugForName } : {}) };
+  }
+
+  // Not parseable as-is. Before the mount compile was removed, that compile
+  // repaired the state and the save went through; without it, `parsedFn`
+  // stayed null and the submit guard refused with "Function definition
+  // requires at least a function name" — blocking the admin from editing the
+  // description, rate limit or active flag either. `parameters` and
+  // `description` were optional on create until this release (the documented
+  // example omitted `parameters`), so rows in that shape exist.
+  //
+  // Fill in only what is missing. Anything already stored is kept, so this
+  // repairs without inventing.
+  // No usable stored name. `slugForName` is known in edit mode and is what
+  // the name must be anyway, so seed from it rather than returning null —
+  // null left the submit guard refusing with "requires at least a function
+  // name" while the read-only field on screen displayed that very name, and
+  // blocked the admin from touching the description, rate limit or active
+  // flag either. Reachable from a backup import or a direct insert, since
+  // the column is required but its contents are not validated on the way in.
+  const storedName = typeof initialFnDef.name === 'string' ? initialFnDef.name : '';
+  if (!storedName && !slugForName) return null;
+  return {
+    ...initialFnDef,
+    name: slugForName || storedName,
+    description: typeof initialFnDef.description === 'string' ? initialFnDef.description : '',
+    parameters: asJsonRecord(initialFnDef.parameters),
+  };
+}
+
 export function CapabilityForm({
   mode,
   capability,
@@ -398,82 +487,25 @@ export function CapabilityForm({
     initialVisualDisabled ? 'json' : 'visual'
   );
   const [visualDisabled, setVisualDisabled] = useState<boolean>(initialVisualDisabled);
-  const [jsonText, setJsonText] = useState<string>(() =>
-    Object.keys(initialFnDef).length > 0 ? JSON.stringify(initialFnDef, null, 2) : ''
-  );
-  const [jsonError, setJsonError] = useState<string | null>(null);
   // The slug a loaded definition's name is normalised to. Empty on create,
   // where there is no stored row and the mirror effect owns the name.
   const slugForName = capability?.slug ?? '';
-  const [parsedFn, setParsedFn] = useState<FunctionDefinitionState | null>(() => {
-    if (Object.keys(initialFnDef).length === 0) return null;
-    // A reverse-compilable definition used to be run straight back through
-    // `compileFunctionDefinition` here, which is the builder's LOSSY
-    // rendering — `tryReverseCompile` tolerates `minimum`/`maxLength`/`format`
-    // and maps `integer` to `number`, none of which survive the round trip. So
-    // the stored definition was already replaced before the form even
-    // rendered, and an untouched Save wrote the degraded copy back: the seeded
-    // `get_pattern_detail` lost its 1–999 bounds and had `integer` widened to
-    // `number`, letting a model emit 1.5 for a pattern number.
-    //
-    // `rows` is still seeded from the reverse-compile — the builder UI needs
-    // it — but `parsedFn` holds what is stored until the admin actually edits
-    // something, at which point the recompile effect takes over and the loss
-    // is a choice they made.
-    //
-    // Validate the stored JSON at the boundary — the backend schema is the
-    // authoritative contract, but never ship a blind cast on API response
-    // data. Malformed rows surface as `null` and leave the visual builder
-    // disabled until the admin fixes the JSON.
-    //
-    // `parameters` is kept EXACTLY as stored. It used to be re-narrowed
-    // through the visual builder's shape
-    // (`properties: record(object({ type, description }))`), and Zod strips
-    // unknown keys — so `enum`, `items`, `minLength` and every nested schema
-    // silently vanished from `parsedFn`, and an untouched Save wrote the
-    // stripped copy back. Every seeded capability carries at least one of
-    // those. A definition the builder cannot represent also came back `null`,
-    // which in JSON mode meant the form refused to save at all, blaming a
-    // missing function name.
-    //
-    // Only `compileFunctionDefinition` — the builder's own output — needs the
-    // narrow shape. What the form holds for an arbitrary stored definition is
-    // the wider validated one.
-    const parsed = capabilityFunctionDefinitionSchema.safeParse(initialFnDef);
-    // Spread for the same reason as the JSON path: keep top-level keys the
-    // schema doesn't name, since the API accepts them.
-    if (parsed.success) {
-      // Normalise the NAME to the slug, and only the name. A stored row whose
-      // `functionDefinition.name` diverges from its slug is exactly what #509
-      // forbids going forward, and the form's Function-name field already
-      // claims to mirror the slug — so loading one and leaving the stale name
-      // in `parsedFn` made the save fail its own client check, locking the
-      // admin out of a row nothing else lets them repair.
-      //
-      // Repairing one field beats recompiling: everything else in the stored
-      // definition is carried through untouched, so an otherwise-unedited save
-      // fixes the divergence and changes nothing else.
-      return { ...initialFnDef, ...parsed.data, ...(slugForName ? { name: slugForName } : {}) };
-    }
+  const initialParsedFn = useMemo(
+    () => initialFunctionState(initialFnDef, slugForName),
+    [initialFnDef, slugForName]
+  );
 
-    // Not parseable as-is. Before the mount compile was removed, that compile
-    // repaired the state and the save went through; without it, `parsedFn`
-    // stayed null and the submit guard refused with "Function definition
-    // requires at least a function name" — blocking the admin from editing the
-    // description, rate limit or active flag either. `parameters` and
-    // `description` were optional on create until this release (the documented
-    // example omitted `parameters`), so rows in that shape exist.
-    //
-    // Fill in only what is missing. Anything already stored is kept, so this
-    // repairs without inventing.
-    if (typeof initialFnDef.name !== 'string' || initialFnDef.name.length === 0) return null;
-    return {
-      ...initialFnDef,
-      name: slugForName || initialFnDef.name,
-      description: typeof initialFnDef.description === 'string' ? initialFnDef.description : '',
-      parameters: asJsonRecord(initialFnDef.parameters),
-    };
-  });
+  // Seeded from the SAME normalised value `parsedFn` holds, not the raw stored
+  // definition. They diverged for a legacy row opening in JSON mode: the
+  // textarea showed the old `functionDefinition.name` while the payload
+  // carried the slug, so the preview contradicted the editor — and touching
+  // the textarea reverted the normalisation and got the save refused for a
+  // field the admin never edited.
+  const [jsonText, setJsonText] = useState<string>(() =>
+    initialParsedFn ? JSON.stringify(initialParsedFn, null, 2) : ''
+  );
+  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [parsedFn, setParsedFn] = useState<FunctionDefinitionState | null>(() => initialParsedFn);
 
   // --- executionConfig JSON textarea state --------------------------------
   const [execConfigText, setExecConfigText] = useState<string>(() =>
@@ -719,12 +751,26 @@ export function CapabilityForm({
   };
 
   const switchToJsonMode = () => {
+    // Cancel any pending JSON debounce. Neither switch used to, so typing in
+    // the editor and switching within 200 ms let the stale timer land AFTER
+    // the builder had recompiled — replacing `parsedFn` with the abandoned
+    // parse and resetting `compileBaselineRef` under it, so the table on
+    // screen and the submitted definition described different schemas.
+    if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+
     // Serialize the current compiled JSON into the textarea.
     if (parsedFn) setJsonText(JSON.stringify(parsedFn, null, 2));
     setFnMode('json');
   };
 
   const switchToVisualMode = () => {
+    // Cancel any pending JSON debounce. Neither switch used to, so typing in
+    // the editor and switching within 200 ms let the stale timer land AFTER
+    // the builder had recompiled — replacing `parsedFn` with the abandoned
+    // parse and resetting `compileBaselineRef` under it, so the table on
+    // screen and the submitted definition described different schemas.
+    if (jsonTimerRef.current) clearTimeout(jsonTimerRef.current);
+
     // Try to reverse-compile the current JSON. If it fails because the
     // schema is too complex, show the banner. If JSON is simply invalid,
     // show a parse error — don't permanently disable the toggle.

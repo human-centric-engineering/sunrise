@@ -35,6 +35,12 @@ const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
 const mockMcpUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+const mockMcpFindMany = vi.fn().mockResolvedValue([]);
+
+vi.mock('@/lib/orchestration/mcp', () => ({
+  clearMcpToolCache: vi.fn(),
+  broadcastMcpToolsChanged: vi.fn(),
+}));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -44,13 +50,17 @@ vi.mock('@/lib/db/client', () => ({
     },
     mcpExposedTool: {
       updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
+      findMany: (...args: unknown[]) => mockMcpFindMany(...args),
     },
     // PATCH pins the MCP tool name and updates the capability in one
     // transaction (#509); run the callback against the same doubles.
     $transaction: (fn: (tx: unknown) => unknown) =>
       fn({
         aiCapability: { update: (...args: unknown[]) => mockUpdate(...args) },
-        mcpExposedTool: { updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args) },
+        mcpExposedTool: {
+          updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
+          findMany: (...args: unknown[]) => mockMcpFindMany(...args),
+        },
       }),
   },
 }));
@@ -296,6 +306,57 @@ describe('PATCH capability — pinning the MCP tool name before a rename', () =>
     await PATCH(makePatchRequest({ description: 'A clearer description.' }), makeParams(CAP_ID));
 
     expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — an unrelated edit must not rewrite MCP state
+  });
+
+  it('refuses to pin a name another exposed tool already advertises', async () => {
+    // `customName` has no unique constraint and `callMcpTool` resolves with
+    // `tools.find(t => t.name === toolName)` — first match wins. Pinning a
+    // name already in use would make every call to it dispatch to whichever
+    // row came back first, silently running the wrong capability. Breaking one
+    // tool name loudly beats misrouting two.
+    mockFindUnique.mockResolvedValue(makeDivergentCapability());
+    mockMcpFindMany.mockResolvedValue([
+      { id: 'mcp-other', customName: 'search_web', capability: { functionDefinition: {} } },
+    ]);
+
+    const response = await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search-web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — pinning here would misroute an existing tool
+  });
+
+  it('detects a clash against another tool with no override, by its real advertised name', async () => {
+    // A null `customName` advertises `functionDefinition.name`, which for a
+    // legacy row is NOT its slug — approximating with the slug would miss
+    // precisely the rows this pin exists for.
+    mockFindUnique.mockResolvedValue(makeDivergentCapability());
+    mockMcpFindMany.mockResolvedValue([
+      {
+        id: 'mcp-other',
+        customName: null,
+        capability: {
+          functionDefinition: {
+            name: 'search_web',
+            description: 'd',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      },
+    ]);
+
+    await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search-web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — same collision, reached via the other tool's function name
   });
 
   it('refuses to pin a name that could not legally live in customName', async () => {

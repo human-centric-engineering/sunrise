@@ -177,59 +177,8 @@ release process.
   definition that *agrees* with the slug but is stripped, then PATCH the slug
   alone, and with nothing left to compare against the check was skipped. Both
   schemas now require the full shape (#509).
-- **Capability slugs may now contain underscores**
-  (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`) and are capped at 64 characters rather than
-  100, matching the provider tool-name limit the slug now has to satisfy — a
-  longer one would create successfully and then be dropped from every agent's
-  toolset with only a warn log to explain it. The shared slug rule allows
-  hyphens only. Required by the rule above: the slug is the tool name, every built-in
-  uses the underscore convention LLM tool names take, and those rows are seeded
-  through Prisma without ever meeting the API schema — so without this a
-  capability authored through the API could never match the convention its
-  thirteen siblings use. **The charset is wider; the length is narrower.** A
-  slug of 65–100 characters was creatable before and is now refused, on update
-  as well as create — so an API client doing a full-object PATCH that echoes a
-  legacy over-length slug gets a 400 on a field it did not change. Omit `slug`
-  from the PATCH body (it is immutable anyway) or recreate the capability. The
-  admin form already omits it (#509).
-- **A capability whose slug cannot be a tool name is dropped from an agent's
-  toolset with a warning** rather than sent to the provider. Providers reject the
-  *entire request* over a malformed tool name, so a namespaced fork slug from the
-  `register(cap, { slug })` seam — `billing:lookup_order` — would have killed the
-  conversation rather than one call. Such a capability was never reachable from
-  chat anyway; MCP remains its surface, and resolves custom names back to slugs
-  explicitly (#509).
+### Added
 
-- **The capability admin form no longer degrades a stored tool schema when you
-  edit it.** The visual builder holds four fields per parameter — name, type,
-  description, required — and rebuilt each parameter from those alone, so
-  saving deleted every keyword it had no slot for. Editing one description
-  stripped `minimum`/`maximum` from the parameter beside it, and `integer` was
-  silently widened to `number`, letting a model send `1.5` where a whole number
-  was required. Merely *opening* a seeded capability and pressing Save was
-  enough. A compile now merges over the stored spec: the builder owns type,
-  description and required-ness, and everything else is carried through. A
-  deliberate type change still drops the stored keywords, which is the one case
-  where losing them is correct. Not previously reachable through the UI — the
-  client slug rule rejected every seeded capability's underscore slug and
-  blocked the save — so this ships as a fix alongside the change that removed
-  that accidental brake (#509).
-- **A capability rename now pins its MCP tool name instead of moving it.**
-  `tools/list` advertises `customName ?? functionDefinition.name` and
-  `tools/call` resolves an incoming call by whatever was advertised — so
-  forcing the name to equal the slug would have renamed the published tool,
-  and an external client calling the old name would get `Unknown tool`. Every
-  capability created through the admin UI before this release diverged by
-  default (`search-web` slug, `search_web` function name), so an ordinary save
-  — reword a description, change a rate limit — was enough to break someone
-  else's integration, silently and from a form that never mentions MCP.
-  A write that displaces the function name now copies the old one into
-  `customName` first, in the same transaction, so the external contract stays
-  where it was while the internal invariant is repaired. Rows that already set
-  `customName` are untouched, and a displaced name that could not legally live
-  in `customName` (`^[a-z][a-z0-9_]*$`) is not written — that rename proceeds
-  and is logged, because writing it would fail validation the next time
-  anyone edited the MCP row (#509).
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation
   webhooks targeting its own private network (an in-VPC relay), for the case
   where the alternative is no validation at all. Off by default; accepts exactly
@@ -264,6 +213,64 @@ release process.
   value gets navigated to: returning the normalized form is what stops a caller
   validating one string and using another. `isRootRelativePath()` is unchanged
   in signature and now delegates to it (#506).
+
+### Changed
+
+- **Capability slugs may now contain underscores**
+  (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`) and are capped at 64 characters rather than
+  100, matching the provider tool-name limit the slug now has to satisfy — a
+  longer one would create successfully and then be dropped from every agent's
+  toolset with only a warn log to explain it. The shared slug rule allows
+  hyphens only. Required by the rule above: the slug is the tool name, every built-in
+  uses the underscore convention LLM tool names take, and those rows are seeded
+  through Prisma without ever meeting the API schema — so without this a
+  capability authored through the API could never match the convention its
+  thirteen siblings use. **The charset is wider; the length is narrower.** A
+  slug of 65–100 characters was creatable before and is now refused, on update
+  as well as create — so an API client doing a full-object PATCH that echoes a
+  legacy over-length slug gets a 400 on a field it did not change. Omit `slug`
+  from the PATCH body (it is immutable anyway) or recreate the capability. The
+  admin form already omits it (#509).
+- **A capability whose slug cannot be a tool name is dropped from an agent's
+  toolset with a warning** rather than sent to the provider. Providers reject the
+  *entire request* over a malformed tool name, so a namespaced fork slug from the
+  `register(cap, { slug })` seam — `billing:lookup_order` — would have killed the
+  conversation rather than one call. Such a capability was never reachable from
+  chat anyway; MCP remains its surface, and resolves custom names back to slugs
+  explicitly (#509).
+
+### Fixed
+
+- **The capability admin form no longer degrades a stored tool schema when you
+  edit it.** The visual builder holds four fields per parameter — name, type,
+  description, required — and rebuilt each parameter from those alone, so
+  saving deleted every keyword it had no slot for. Editing one description
+  stripped `minimum`/`maximum` from the parameter beside it, and `integer` was
+  silently widened to `number`, letting a model send `1.5` where a whole number
+  was required. Merely *opening* a seeded capability and pressing Save was
+  enough. A compile now merges over the stored spec: the builder owns type,
+  description and required-ness, and everything else is carried through. A
+  deliberate type change still drops the stored keywords, which is the one case
+  where losing them is correct. Not previously reachable through the UI — the
+  client slug rule rejected every seeded capability's underscore slug and
+  blocked the save — so this ships as a fix alongside the change that removed
+  that accidental brake (#509).
+- **A capability rename now pins its MCP tool name instead of moving it.**
+  `tools/list` advertises `customName ?? functionDefinition.name` and
+  `tools/call` resolves an incoming call by whatever was advertised — so
+  forcing the name to equal the slug would have renamed the published tool,
+  and an external client calling the old name would get `Unknown tool`. Every
+  capability created through the admin UI before this release diverged by
+  default (`search-web` slug, `search_web` function name), so an ordinary save
+  — reword a description, change a rate limit — was enough to break someone
+  else's integration, silently and from a form that never mentions MCP.
+  A write that displaces the function name now copies the old one into
+  `customName` first, in the same transaction, so the external contract stays
+  where it was while the internal invariant is repaired. Rows that already set
+  `customName` are untouched, and a displaced name that could not legally live
+  in `customName` (`^[a-z][a-z0-9_]*$`) is not written — that rename proceeds
+  and is logged, because writing it would fail validation the next time
+  anyone edited the MCP row (#509).
 
 ## [0.8.1] — 2026-08-06
 

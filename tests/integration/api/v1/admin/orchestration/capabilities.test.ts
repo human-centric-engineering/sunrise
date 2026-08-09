@@ -46,7 +46,10 @@ vi.mock('@/lib/db/client', () => {
     create: vi.fn(),
     update: vi.fn(),
   };
-  const mcpExposedTool = { updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
+  const mcpExposedTool = {
+    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+    findMany: vi.fn().mockResolvedValue([]),
+  };
   return {
     prisma: {
       aiCapability,
@@ -60,6 +63,11 @@ vi.mock('@/lib/db/client', () => {
 
 vi.mock('@/lib/orchestration/capabilities', () => ({
   capabilityDispatcher: { clearCache: vi.fn() },
+}));
+
+vi.mock('@/lib/orchestration/mcp', () => ({
+  clearMcpToolCache: vi.fn(),
+  broadcastMcpToolsChanged: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({

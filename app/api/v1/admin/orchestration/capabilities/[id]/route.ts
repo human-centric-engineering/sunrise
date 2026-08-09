@@ -28,6 +28,7 @@ import {
   updateCapabilitySchema,
 } from '@/lib/validations/orchestration';
 import { mcpToolNameSchema } from '@/lib/validations/mcp';
+import { clearMcpToolCache, broadcastMcpToolsChanged } from '@/lib/orchestration/mcp';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
@@ -174,6 +175,43 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   try {
     const capability = await prisma.$transaction(async (tx) => {
       if (renamedFrom) {
+        // `customName` has no unique constraint, and `callMcpTool` resolves an
+        // incoming call with `tools.find(t => t.name === toolName)` — first
+        // match wins. Pinning a name another exposed tool already advertises
+        // would therefore make every call to it dispatch to whichever row the
+        // query returned first, silently running the wrong capability. Refuse
+        // rather than create that: the rename proceeds unpinned and is logged,
+        // which breaks one client's tool name loudly instead of misrouting two.
+        // Compare against what each other tool ACTUALLY advertises, which is
+        // `customName ?? functionDefinition.name`. Approximating the null case
+        // with the capability's slug would miss precisely the legacy divergent
+        // rows this pin exists for. `functionDefinition` is a JSON column, so
+        // the comparison happens here rather than in the query; the candidate
+        // set is only the exposed tools, which is small by construction.
+        const others = await tx.mcpExposedTool.findMany({
+          where: { capabilityId: { not: id } },
+          select: {
+            id: true,
+            customName: true,
+            capability: { select: { functionDefinition: true } },
+          },
+        });
+        const clash = others.find((tool) => {
+          if (tool.customName !== null) return tool.customName === renamedFrom;
+          const parsedOther = capabilityFunctionDefinitionSchema.safeParse(
+            tool.capability.functionDefinition
+          );
+          return parsedOther.success && parsedOther.data.name === renamedFrom;
+        });
+        if (clash) {
+          log.warn('Not pinning an MCP tool name that another exposed tool already advertises', {
+            capabilityId: id,
+            displacedName: renamedFrom,
+            conflictingToolId: clash.id,
+          });
+          return tx.aiCapability.update({ where: { id }, data });
+        }
+
         const pinned = await tx.mcpExposedTool.updateMany({
           where: { capabilityId: id, customName: null },
           data: { customName: renamedFrom },
@@ -190,6 +228,15 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     });
 
     capabilityDispatcher.clearCache();
+    // The MCP tool list caches for 5 minutes and serves both `tools/list` and
+    // `tools/call`. A capability PATCH rewrites `functionDefinition.parameters`,
+    // which IS the advertised `inputSchema` — so without this an admin who
+    // tightens a parameter leaves MCP clients fetching the old schema for up to
+    // five minutes, sending args the live dispatcher then rejects. Every writer
+    // under `/mcp/tools` already pairs its write with this; this route became a
+    // writer of MCP state when it started pinning `customName` (#509).
+    clearMcpToolCache();
+    broadcastMcpToolsChanged();
 
     log.info('Capability updated', {
       capabilityId: id,

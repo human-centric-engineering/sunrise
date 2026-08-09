@@ -32,6 +32,12 @@ const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
 const mockMcpUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+const mockMcpFindMany = vi.fn().mockResolvedValue([]);
+
+vi.mock('@/lib/orchestration/mcp', () => ({
+  clearMcpToolCache: vi.fn(),
+  broadcastMcpToolsChanged: vi.fn(),
+}));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -41,13 +47,17 @@ vi.mock('@/lib/db/client', () => ({
     },
     mcpExposedTool: {
       updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
+      findMany: (...args: unknown[]) => mockMcpFindMany(...args),
     },
     // PATCH pins the MCP tool name and updates the capability in one
     // transaction (#509); run the callback against the same doubles.
     $transaction: (fn: (tx: unknown) => unknown) =>
       fn({
         aiCapability: { update: (...args: unknown[]) => mockUpdate(...args) },
-        mcpExposedTool: { updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args) },
+        mcpExposedTool: {
+          updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
+          findMany: (...args: unknown[]) => mockMcpFindMany(...args),
+        },
       }),
   },
 }));
