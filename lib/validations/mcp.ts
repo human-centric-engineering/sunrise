@@ -19,7 +19,12 @@ import { McpScope, ALL_MCP_SCOPES, McpResourceType } from '@/types/mcp';
 // ============================================================================
 
 /** MCP tool name: lowercase letters, digits, underscores, starting with a letter */
-const mcpToolNameSchema = z
+/**
+ * The charset an MCP tool name must satisfy. Exported so the capability PATCH
+ * route can check whether a name it is about to displace is even legal to pin
+ * into `customName` (#509).
+ */
+export const mcpToolNameSchema = z
   .string()
   .min(1)
   .max(64)

@@ -31,12 +31,24 @@ vi.mock('next/headers', () => ({
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
+const mockMcpUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiCapability: {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
     },
+    mcpExposedTool: {
+      updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
+    },
+    // PATCH pins the MCP tool name and updates the capability in one
+    // transaction (#509); run the callback against the same doubles.
+    $transaction: (fn: (tx: unknown) => unknown) =>
+      fn({
+        aiCapability: { update: (...args: unknown[]) => mockUpdate(...args) },
+        mcpExposedTool: { updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args) },
+      }),
   },
 }));
 

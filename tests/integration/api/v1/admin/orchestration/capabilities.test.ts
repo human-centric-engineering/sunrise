@@ -38,17 +38,25 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiCapability: {
-      findMany: vi.fn(),
-      count: vi.fn(),
-      findUnique: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
+vi.mock('@/lib/db/client', () => {
+  const aiCapability = {
+    findMany: vi.fn(),
+    count: vi.fn(),
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  };
+  const mcpExposedTool = { updateMany: vi.fn().mockResolvedValue({ count: 0 }) };
+  return {
+    prisma: {
+      aiCapability,
+      mcpExposedTool,
+      // PATCH pins the MCP tool name and updates the capability in one
+      // transaction (#509); run the callback against the same doubles.
+      $transaction: (fn: (tx: unknown) => unknown) => fn({ aiCapability, mcpExposedTool }),
     },
-  },
-}));
+  };
+});
 
 vi.mock('@/lib/orchestration/capabilities', () => ({
   capabilityDispatcher: { clearCache: vi.fn() },

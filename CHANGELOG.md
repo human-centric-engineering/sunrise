@@ -214,20 +214,22 @@ release process.
   client slug rule rejected every seeded capability's underscore slug and
   blocked the save — so this ships as a fix alongside the change that removed
   that accidental brake (#509).
-- **Forcing `functionDefinition.name` to equal the slug can rename an
-  MCP-advertised tool.** `mcp/tool-registry.ts` advertises
-  `customName ?? functionDefinition.name` and resolves an incoming call by that
-  advertised name. A capability created through the admin UI before this
-  release diverged by default (`search-web` slug, `search_web` function name),
-  so if such a capability is exposed over MCP **without** a `customName`, the
-  first write that normalises its name also renames the tool — and an external
-  MCP client calling the old name gets `Unknown tool`. **Set `customName` on
-  the `McpExposedTool` row to the old function name before saving such a
-  capability**, which pins the external contract independently of the
-  invariant. Capabilities not exposed over MCP, and those that already carry a
-  `customName`, are unaffected (#509).
-### Added
-
+- **A capability rename now pins its MCP tool name instead of moving it.**
+  `tools/list` advertises `customName ?? functionDefinition.name` and
+  `tools/call` resolves an incoming call by whatever was advertised — so
+  forcing the name to equal the slug would have renamed the published tool,
+  and an external client calling the old name would get `Unknown tool`. Every
+  capability created through the admin UI before this release diverged by
+  default (`search-web` slug, `search_web` function name), so an ordinary save
+  — reword a description, change a rate limit — was enough to break someone
+  else's integration, silently and from a form that never mentions MCP.
+  A write that displaces the function name now copies the old one into
+  `customName` first, in the same transaction, so the external contract stays
+  where it was while the internal invariant is repaired. Rows that already set
+  `customName` are untouched, and a displaced name that could not legally live
+  in `customName` (`^[a-z][a-z0-9_]*$`) is not written — that rename proceeds
+  and is logged, because writing it would fail validation the next time
+  anyone edited the MCP row (#509).
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation
   webhooks targeting its own private network (an in-VPC relay), for the case
   where the alternative is no validation at all. Off by default; accepts exactly

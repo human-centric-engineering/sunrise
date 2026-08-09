@@ -34,12 +34,24 @@ vi.mock('next/headers', () => ({
 const mockFindUnique = vi.fn();
 const mockUpdate = vi.fn();
 
+const mockMcpUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiCapability: {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
     },
+    mcpExposedTool: {
+      updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args),
+    },
+    // PATCH pins the MCP tool name and updates the capability in one
+    // transaction (#509); run the callback against the same doubles.
+    $transaction: (fn: (tx: unknown) => unknown) =>
+      fn({
+        aiCapability: { update: (...args: unknown[]) => mockUpdate(...args) },
+        mcpExposedTool: { updateMany: (...args: unknown[]) => mockMcpUpdateMany(...args) },
+      }),
   },
 }));
 
@@ -214,5 +226,102 @@ describe('PATCH capability — slug / functionDefinition.name agreement', () => 
 
     expect(response.status).toBe(200);
     expect(mockUpdate).toHaveBeenCalled();
+  });
+});
+
+// ─── MCP tool-name pinning (#509) ────────────────────────────────────────────
+
+describe('PATCH capability — pinning the MCP tool name before a rename', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    mockUpdate.mockResolvedValue(makeStoredCapability());
+    mockMcpUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  /** A legacy row: hyphen slug, underscore function name — the pre-#509 default. */
+  function makeDivergentCapability() {
+    return makeStoredCapability({
+      slug: 'search-web',
+      functionDefinition: {
+        name: 'search_web',
+        description: 'Search the web.',
+        parameters: { type: 'object', properties: {} },
+      },
+    });
+  }
+
+  it('pins the displaced name so an external MCP client keeps working', async () => {
+    // `tools/list` advertises `customName ?? functionDefinition.name`, so
+    // forcing the name to the slug renames the published tool. Anything
+    // calling `search_web` would start getting "Unknown tool".
+    mockFindUnique.mockResolvedValue(makeDivergentCapability());
+
+    // What the form now sends: the name normalised onto the existing slug.
+    const response = await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search-web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockMcpUpdateMany).toHaveBeenCalledWith({
+      where: { capabilityId: CAP_ID, customName: null },
+      data: { customName: 'search_web' },
+    });
+  });
+
+  it('leaves an existing override alone', async () => {
+    // The `customName: null` filter is what protects an operator's own choice
+    // — pinning over it would silently retarget the published tool.
+    mockFindUnique.mockResolvedValue(makeDivergentCapability());
+
+    await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search-web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    const where = mockMcpUpdateMany.mock.calls[0]?.[0]?.where as { customName: null };
+    expect(where.customName).toBeNull();
+  });
+
+  it('does not touch MCP when the name is unchanged', async () => {
+    // The overwhelmingly common save: nothing about the name moves, so nothing
+    // about the published tool should either.
+    mockFindUnique.mockResolvedValue(makeStoredCapability());
+
+    await PATCH(makePatchRequest({ description: 'A clearer description.' }), makeParams(CAP_ID));
+
+    expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — an unrelated edit must not rewrite MCP state
+  });
+
+  it('refuses to pin a name that could not legally live in customName', async () => {
+    // `customName` is `^[a-z][a-z0-9_]*$`. Writing a hyphenated name would
+    // satisfy this moment and then fail validation the next time an admin
+    // edited the MCP row, on a field they had not touched — the same trap
+    // #509 fixed in the capability form. The rename proceeds and is logged.
+    mockFindUnique.mockResolvedValue(
+      makeStoredCapability({
+        slug: 'search_web',
+        functionDefinition: {
+          name: 'search-web',
+          description: 'd',
+          parameters: { type: 'object', properties: {} },
+        },
+      })
+    );
+
+    const response = await PATCH(
+      makePatchRequest({
+        functionDefinition: { name: 'search_web', description: 'd', parameters: {} },
+      }),
+      makeParams(CAP_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockMcpUpdateMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — an illegal customName must not be written
   });
 });
