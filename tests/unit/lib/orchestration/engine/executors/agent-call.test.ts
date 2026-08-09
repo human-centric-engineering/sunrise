@@ -476,11 +476,19 @@ describe('executeAgentCall', () => {
 
     await executeAgentCall(makeStep(), makeCtx());
 
+    // Assert the WHOLE payload, including the two workflow-side correlation
+    // ids this PR documents in `hooks.md` and `hooks/types.ts`. Checking only
+    // toolName/agentId/advertised left them free to be dropped, which would
+    // make both of those documents wrong with the suite still green.
     expect(vi.mocked(emitHookEvent)).toHaveBeenCalledWith(
       'capability.refused_not_advertised',
       expect.objectContaining({
-        toolName: 'apply_audit_changes',
+        executionId: 'exec_1',
+        stepId: 'step1',
         agentId: 'agent_1',
+        agentSlug: 'summarizer',
+        userId: 'user_1',
+        toolName: 'apply_audit_changes',
         advertised: ['search'],
       })
     );

@@ -561,10 +561,14 @@ class CapabilityDispatcher {
    * callers do not take a name from a model at all — `executors/tool-call.ts`
    * reads `capabilitySlug` from admin-authored step config, and
    * `mcp/tool-registry.ts` resolves an incoming name against the EXPOSED-TOOL
-   * set before dispatching that row's `tool.slug`. Note what that is and is
-   * not: membership of the globally-exposed set, deliberately not of a scoped
-   * agent's grants (see the resolution note in `callMcpTool`), and its caller
-   * is an API-key-authenticated client rather than a model.
+   * set before dispatching that row's `tool.slug`. MCP IS a model-driven
+   * surface — the host behind the key is an LLM — so be exact: what is checked
+   * is membership of the globally exposed set (publishing an `McpExposedTool`
+   * row is the grant), NOT the calling key's scoped agent. With no pivot row
+   * for that agent this method default-allows, so a scoped key can reach an
+   * exposed tool its agent was never granted. That is deliberate opt-out
+   * scoping, documented in `.context/orchestration/mcp.md` along with the open
+   * question of whether scoped should mean allow-list-only.
    *
    * This note used to say "the chat handler … closes the reachable path". That
    * was true of chat and false of `agent_call`, which had no such check until

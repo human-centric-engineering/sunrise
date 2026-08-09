@@ -65,12 +65,13 @@ was not in the set advertised to it for that turn. The caller refuses the call
 
 **Both model-driven surfaces emit it:** the chat handler and the workflow
 `agent_call` executor. A subscriber keying on `conversationId` sees only the
-chat half and is blind to the workflow one, which is the more reachable of the
-two — a workflow tool name can arrive in injected content (a knowledge
-document, a tool result, an upstream step's output) rather than from an admin.
-Key on `toolName` + `agentId` and treat the correlation id as surface-specific.
-`agent_call` had no guard at all until #559, so this event did not exist for
-workflows before then. It is
+chat half and is silently blind to the workflow one. Treat neither surface as
+the riskier: both take a tool name from a model, and both read content an
+attacker may have planted (a knowledge document, a tool result, an upstream
+step's output), while chat additionally takes end-user text straight into the
+model context. Key on `toolName` + `agentId` and treat the correlation id as
+surface-specific. `agent_call` had no guard at all until #559, so this event
+did not exist for workflows before then. It is
 a security signal rather than an operational one: a name outside the advertised
 set is either a hallucination or an injected tool call, and it fires whether or
 not the capability exists elsewhere in the registry. `advertised` carries the

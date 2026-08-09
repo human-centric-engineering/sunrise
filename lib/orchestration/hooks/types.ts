@@ -62,9 +62,10 @@ export const HOOK_EVENT_TYPES = [
   // from a workflow `agent_call` step (#559). `advertised` is the tool set the
   // model actually had, so a reviewer can see what it invented the name from.
   //
-  // Both surfaces emit it: a subscriber keying only on `conversationId` would
-  // otherwise miss the workflow one, which is the MORE reachable of the two
-  // (the name can arrive in injected content rather than from an admin).
+  // Both surfaces emit it, and a subscriber keying only on `conversationId`
+  // silently misses the workflow half. Treat neither as the riskier one: both
+  // take a tool name from a model, and both read content an attacker may have
+  // planted (chat additionally takes end-user text directly).
   'capability.refused_not_advertised',
 ] as const;
 

@@ -335,12 +335,25 @@ async function runSingleTurn(
          *
          * #476 closed this on chat and its dispatcher note claimed the path was
          * closed generally. It was closed on one of the two surfaces.
+         *
+         * Trace caveat: in MULTI-TURN mode the executor deliberately passes no
+         * `recordTurn` (see the note at the multi-turn branch), so a refusal
+         * there leaves no trace entry — the step still returns whatever the
+         * model said next, and the only durable evidence is this log line and
+         * the hook below. Single-turn mode records it as a `continuing` turn
+         * carrying the `tool_not_advertised` result. Worth knowing before
+         * relying on the trace alone to spot injected tool calls.
          */
         const advertisedToolNames = new Set(toolDefinitions.map((t) => t.name));
 
         let capResult: CapabilityResult;
         if (!advertisedToolNames.has(toolCall.name)) {
           logger.warn('Refusing tool not advertised to this agent', {
+            // Every other log line in this executor carries `executionId`, and
+            // `step.id` is unique only within a workflow definition — so
+            // without it an operator grepping for this security event cannot
+            // tie a refusal to the run it came from.
+            executionId: ctx.executionId,
             stepId: step.id,
             agentId: agent!.id,
             toolName: toolCall.name,
@@ -348,9 +361,11 @@ async function runSingleTurn(
           });
           // The chat handler emits this too, describing it as "a security
           // signal worth a subscribable event". A fork monitoring the hook
-          // would otherwise see chat refusals and be blind to workflow ones —
-          // and this surface is the more reachable of the two, since the name
-          // can come from injected content rather than an admin. No
+          // would otherwise see chat refusals and be blind to workflow ones.
+          // Neither surface is the riskier one — both take a name from a
+          // model, and both read content an attacker may have planted; chat
+          // additionally takes end-user text directly. They need equal
+          // coverage, which is the whole point of emitting from both. No
           // `conversationId` here: the workflow equivalents are the execution
           // and step, so they take its place.
           emitHookEvent('capability.refused_not_advertised', {
