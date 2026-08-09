@@ -371,9 +371,13 @@ export function CapabilityForm({
   const initialFnDef = asJsonRecord(capability?.functionDefinition);
   const initialRows = useMemo(() => tryReverseCompile(initialFnDef) ?? [], [initialFnDef]);
 
-  const [fnName, setFnName] = useState<string>(
-    typeof initialFnDef.name === 'string' ? initialFnDef.name : (capability?.slug ?? '')
-  );
+  // Seeded from the SLUG, not the stored `functionDefinition.name`. The two must
+  // be equal (#509), and seeding from the stored name meant that on a legacy
+  // divergent row the mirror effect changed `fnName` on mount — which
+  // re-triggered the recompile the mount-skip exists to prevent, and rewrote
+  // the definition on a save the admin had not touched. Precisely the rows the
+  // runtime backstop exists for.
+  const [fnName, setFnName] = useState<string>(capability?.slug ?? '');
   const [fnDescription, setFnDescription] = useState<string>(
     typeof initialFnDef.description === 'string' ? initialFnDef.description : ''
   );
@@ -398,6 +402,9 @@ export function CapabilityForm({
     Object.keys(initialFnDef).length > 0 ? JSON.stringify(initialFnDef, null, 2) : ''
   );
   const [jsonError, setJsonError] = useState<string | null>(null);
+  // The slug a loaded definition's name is normalised to. Empty on create,
+  // where there is no stored row and the mirror effect owns the name.
+  const slugForName = capability?.slug ?? '';
   const [parsedFn, setParsedFn] = useState<FunctionDefinitionState | null>(() => {
     if (Object.keys(initialFnDef).length === 0) return null;
     // A reverse-compilable definition used to be run straight back through
@@ -435,7 +442,37 @@ export function CapabilityForm({
     const parsed = capabilityFunctionDefinitionSchema.safeParse(initialFnDef);
     // Spread for the same reason as the JSON path: keep top-level keys the
     // schema doesn't name, since the API accepts them.
-    return parsed.success ? { ...initialFnDef, ...parsed.data } : null;
+    if (parsed.success) {
+      // Normalise the NAME to the slug, and only the name. A stored row whose
+      // `functionDefinition.name` diverges from its slug is exactly what #509
+      // forbids going forward, and the form's Function-name field already
+      // claims to mirror the slug — so loading one and leaving the stale name
+      // in `parsedFn` made the save fail its own client check, locking the
+      // admin out of a row nothing else lets them repair.
+      //
+      // Repairing one field beats recompiling: everything else in the stored
+      // definition is carried through untouched, so an otherwise-unedited save
+      // fixes the divergence and changes nothing else.
+      return { ...initialFnDef, ...parsed.data, ...(slugForName ? { name: slugForName } : {}) };
+    }
+
+    // Not parseable as-is. Before the mount compile was removed, that compile
+    // repaired the state and the save went through; without it, `parsedFn`
+    // stayed null and the submit guard refused with "Function definition
+    // requires at least a function name" — blocking the admin from editing the
+    // description, rate limit or active flag either. `parameters` and
+    // `description` were optional on create until this release (the documented
+    // example omitted `parameters`), so rows in that shape exist.
+    //
+    // Fill in only what is missing. Anything already stored is kept, so this
+    // repairs without inventing.
+    if (typeof initialFnDef.name !== 'string' || initialFnDef.name.length === 0) return null;
+    return {
+      ...initialFnDef,
+      name: slugForName || initialFnDef.name,
+      description: typeof initialFnDef.description === 'string' ? initialFnDef.description : '',
+      parameters: asJsonRecord(initialFnDef.parameters),
+    };
   });
 
   // --- executionConfig JSON textarea state --------------------------------
@@ -553,11 +590,17 @@ export function CapabilityForm({
 
   const skipInitialCompile = useRef(true);
   useEffect(() => {
+    // Consume the flag BEFORE the mode guard. It was consumed after, so a form
+    // opening in JSON mode (any definition with an `enum`/`items`) returned
+    // early with the flag still armed — and then swallowed the first compile
+    // after the admin entered Builder mode. "Reset to Builder" emptied the
+    // parameters table on screen while the save still carried the original
+    // definition: the UI and the payload disagreed, and the button appeared to
+    // do nothing.
+    const isFirstRun = skipInitialCompile.current;
+    skipInitialCompile.current = false;
     if (fnMode !== 'visual') return;
-    if (skipInitialCompile.current) {
-      skipInitialCompile.current = false;
-      return;
-    }
+    if (isFirstRun) return;
     const compiled = compileFunctionDefinition(
       fnName,
       fnDescription,
@@ -771,6 +814,10 @@ export function CapabilityForm({
           body: editPayload,
         });
         reset(data);
+        // The saved definition becomes the new baseline. Without this, deleting
+        // a parameter and re-adding one with the same name and type in the same
+        // session silently re-attached the deleted one's keywords.
+        compileBaselineRef.current = toCompileBaseline(parsedFn);
         // Reset non-RHF state to match what was saved
         setMetadataText(metadataParsed ? JSON.stringify(metadataParsed, null, 2) : '');
         setMetadataError(null);

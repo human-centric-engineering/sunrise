@@ -214,6 +214,18 @@ release process.
   client slug rule rejected every seeded capability's underscore slug and
   blocked the save — so this ships as a fix alongside the change that removed
   that accidental brake (#509).
+- **Forcing `functionDefinition.name` to equal the slug can rename an
+  MCP-advertised tool.** `mcp/tool-registry.ts` advertises
+  `customName ?? functionDefinition.name` and resolves an incoming call by that
+  advertised name. A capability created through the admin UI before this
+  release diverged by default (`search-web` slug, `search_web` function name),
+  so if such a capability is exposed over MCP **without** a `customName`, the
+  first write that normalises its name also renames the tool — and an external
+  MCP client calling the old name gets `Unknown tool`. **Set `customName` on
+  the `McpExposedTool` row to the old function name before saving such a
+  capability**, which pins the external contract independently of the
+  invariant. Capabilities not exposed over MCP, and those that already carry a
+  `customName`, are unaffected (#509).
 ### Added
 
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation
