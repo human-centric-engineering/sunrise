@@ -61,6 +61,10 @@ vi.mock('@/lib/orchestration/capabilities/registry', () => ({
   getCapabilityDefinitions: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/hooks/registry', () => ({
+  emitHookEvent: vi.fn(),
+}));
+
 vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
   capabilityDispatcher: { dispatch: vi.fn() },
 }));
@@ -441,6 +445,45 @@ describe('executeAgentCall', () => {
     await executeAgentCall(makeStep(), makeCtx());
 
     expect(capabilityDispatcher.dispatch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the whole point is that the un-granted capability never runs
+  });
+
+  it('emits the security hook so a fork sees workflow refusals too', async () => {
+    // The chat handler emits this and the docs call it a security signal. A
+    // subscriber would otherwise see chat refusals and be blind to workflow
+    // ones — the more reachable surface, since the name can arrive in injected
+    // content rather than from an admin.
+    const { emitHookEvent } = await import('@/lib/orchestration/hooks/registry');
+    vi.mocked(getCapabilityDefinitions).mockResolvedValue([
+      {
+        name: 'search',
+        description: 'search tool',
+        parameters: { type: 'object', properties: {} },
+      },
+    ]);
+    mockChat.mockResolvedValueOnce({
+      content: 'Let me use that...',
+      toolCalls: [{ id: 'tc_1', name: 'apply_audit_changes', arguments: {} }],
+      usage: { inputTokens: 10, outputTokens: 5 },
+      finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
+    });
+    mockChat.mockResolvedValueOnce({
+      content: 'Done.',
+      usage: { inputTokens: 10, outputTokens: 5 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    expect(vi.mocked(emitHookEvent)).toHaveBeenCalledWith(
+      'capability.refused_not_advertised',
+      expect.objectContaining({
+        toolName: 'apply_audit_changes',
+        agentId: 'agent_1',
+        advertised: ['search'],
+      })
+    );
   });
 
   it('feeds the refusal back as a tool result so the next turn is well-formed', async () => {

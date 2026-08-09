@@ -191,7 +191,11 @@ release process.
   config and MCP resolves an advertised name to its row before dispatching, so
   neither takes a name from a model. The dispatcher note claiming the chat
   guard "closes the reachable path" is corrected — it was true of one of the
-  two surfaces (#559).
+  two surfaces. The refusal also emits `capability.refused_not_advertised`, the
+  hook the chat handler already fires and the docs describe as a security
+  signal: a subscriber keying on `conversationId` would otherwise have seen
+  chat refusals and been blind to workflow ones. The workflow payload carries
+  `executionId` + `stepId` in its place (#559).
 ### Added
 
 - **`ESCALATION_WEBHOOK_ALLOW_PRIVATE`** — opt a deployment into escalation

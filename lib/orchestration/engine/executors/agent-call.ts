@@ -39,6 +39,7 @@ import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import type { CapabilityResult } from '@/lib/orchestration/capabilities/types';
+import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import {
   getCapabilityDefinitions,
   registerBuiltInCapabilities,
@@ -342,6 +343,22 @@ async function runSingleTurn(
           logger.warn('Refusing tool not advertised to this agent', {
             stepId: step.id,
             agentId: agent!.id,
+            toolName: toolCall.name,
+            advertised: [...advertisedToolNames],
+          });
+          // The chat handler emits this too, describing it as "a security
+          // signal worth a subscribable event". A fork monitoring the hook
+          // would otherwise see chat refusals and be blind to workflow ones —
+          // and this surface is the more reachable of the two, since the name
+          // can come from injected content rather than an admin. No
+          // `conversationId` here: the workflow equivalents are the execution
+          // and step, so they take its place.
+          emitHookEvent('capability.refused_not_advertised', {
+            executionId: ctx.executionId,
+            stepId: step.id,
+            agentId: agent!.id,
+            agentSlug: agent!.slug,
+            userId: ctx.userId,
             toolName: toolCall.name,
             advertised: [...advertisedToolNames],
           });

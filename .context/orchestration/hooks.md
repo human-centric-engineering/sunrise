@@ -56,12 +56,21 @@ Defined in `HOOK_EVENT_TYPES` in `lib/orchestration/hooks/types.ts`:
 | `agent.updated`                     | `app/api/v1/admin/orchestration/agents/[id]/route.ts` (also dual-dispatched as `agent_updated` to webhook subscriptions; payload: `{ agentId, agentSlug, agentName, actorUserId, actorUserName, agentVersion, changes: { field: { from, to } } }` — slug + name are post-update; `agentVersion` is the new snapshot number when this PATCH bumped the version (most cases) or null when it only touched unversioned fields; values >500 chars truncated; suppressed when the PATCH produced no actual change) |
 | `execution.force_failed`            | `app/api/v1/admin/orchestration/executions/[id]/force-fail/route.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `workflow_budget_exceeded`          | `lib/orchestration/engine/events.ts` (improvement #39 — webhook system only)                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `capability.refused_not_advertised` | `lib/orchestration/chat/streaming-handler.ts` (#488 — the model asked for a tool the agent was never offered this turn; payload: `{ conversationId, agentId, agentSlug, userId, toolName, advertised }`)                                                                                                                                                                                                                                                                                                      |
+| `capability.refused_not_advertised` | `lib/orchestration/chat/streaming-handler.ts` (#488) and `lib/orchestration/engine/executors/agent-call.ts` (#559) — the model asked for a tool the agent was never offered this turn; payload: `{ agentId, agentSlug, userId, toolName, advertised }` plus `conversationId` (chat) or `executionId` + `stepId` (workflow)                                                                                                                                                                                    |
 | `chat_budget_exceeded_per_turn`     | `lib/orchestration/chat/streaming-handler.ts` (improvement #39 — webhook system only)                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 `capability.refused_not_advertised` fires when the model emits a tool name that
-was not in the set advertised to it for that turn. The handler refuses the call
-— it never reaches the dispatcher — and this event is how a fork notices. It is
+was not in the set advertised to it for that turn. The caller refuses the call
+— it never reaches the dispatcher — and this event is how a fork notices.
+
+**Both model-driven surfaces emit it:** the chat handler and the workflow
+`agent_call` executor. A subscriber keying on `conversationId` sees only the
+chat half and is blind to the workflow one, which is the more reachable of the
+two — a workflow tool name can arrive in injected content (a knowledge
+document, a tool result, an upstream step's output) rather than from an admin.
+Key on `toolName` + `agentId` and treat the correlation id as surface-specific.
+`agent_call` had no guard at all until #559, so this event did not exist for
+workflows before then. It is
 a security signal rather than an operational one: a name outside the advertised
 set is either a hallucination or an injected tool call, and it fires whether or
 not the capability exists elsewhere in the registry. `advertised` carries the
