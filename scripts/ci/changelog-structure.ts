@@ -95,14 +95,24 @@ const LABELLED_RE = /^\[([^\]]*)\](.*)$/;
  * dash, Keep a Changelog's own examples use a hyphen, and a fork that picks
  * either is not making the mistake this file exists to catch. The date itself
  * is not lenient.
+ *
+ * The optional trailing `[YANKED]` is Keep a Changelog 1.1.0's own marker for a
+ * pulled release. Nothing here reads it, but rejecting it would mean this file
+ * blocks the one edit it most exists to support: recording that a release went
+ * out wrong. We enforce the spec's category set, so we accept the spec's
+ * heading forms.
  */
-const DATE_SUFFIX_RE = /^\s*[—–-]\s*(.+?)\s*$/;
+const DATE_SUFFIX_RE = /^\s*[—–-]\s*(.+?)(?:\s+\[YANKED\])?\s*$/;
 
 /** `x.y.z`, numeric only. No prerelease suffixes — Sunrise has never cut one. */
 const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 
-/** Opening or closing fence of a fenced code block (CommonMark: ≤3 spaces). */
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+/**
+ * A fenced-code-block delimiter (CommonMark: indented ≤3 spaces). Captures the
+ * full run of markers and whatever trails it, because both matter when deciding
+ * whether a delimiter *closes* the open block — see {@link parseChangelog}.
+ */
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
 function isValidIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -138,32 +148,49 @@ export function parseChangelog(source: string): ParsedChangelog {
   const categories: CategoryHeading[] = [];
   const violations: ChangelogViolation[] = [];
 
+  /** The opening delimiter of the block we are inside, or null. */
   let fence: string | null = null;
+  let fenceLine = 0;
   let sectionLine = 0;
 
-  source.split('\n').forEach((text, index) => {
+  // A plain loop, not `forEach`: the fence state is mutated on almost every
+  // iteration and read again after the loop, and a closure defeats the
+  // control-flow narrowing that read depends on.
+  const lines = source.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const text = lines[index];
     const line = index + 1;
 
     const fenceMatch = FENCE_RE.exec(text);
     if (fenceMatch) {
-      const marker = fenceMatch[1];
+      const [, marker, trailing] = fenceMatch;
       if (fence === null) {
-        fence = marker[0];
-      } else if (marker[0] === fence) {
+        fence = marker;
+        fenceLine = line;
+      } else if (
+        marker[0] === fence[0] &&
+        marker.length >= fence.length &&
+        trailing.trim() === ''
+      ) {
+        // CommonMark closes a block only on the same character, at least as
+        // long as the opening run, and with no info string. Comparing the
+        // character alone would let an inner ``` close an outer ````, which is
+        // precisely how one code block gets nested inside another — and the
+        // headings in between would then be read as real.
         fence = null;
       }
-      return;
+      continue;
     }
-    if (fence !== null) return;
+    if (fence !== null) continue;
 
     const category = CATEGORY_RE.exec(text);
     if (category) {
       categories.push({ line, label: category[1], sectionLine });
-      return;
+      continue;
     }
 
     const heading = HEADING_RE.exec(text);
-    if (!heading) return;
+    if (!heading) continue;
     const content = heading[1];
     sectionLine = line;
 
@@ -173,7 +200,7 @@ export function parseChangelog(source: string): ParsedChangelog {
         line,
         message: `Level-2 heading "${content}" is neither ${SHAPE_HINT}. Every \`## \` heading in this file is a version boundary; use \`### \` for sections within a release.`,
       });
-      return;
+      continue;
     }
 
     const [, label, rest] = labelled;
@@ -186,7 +213,7 @@ export function parseChangelog(source: string): ParsedChangelog {
         });
       }
       unreleased.push(line);
-      return;
+      continue;
     }
 
     if (!VERSION_RE.test(label)) {
@@ -194,7 +221,7 @@ export function parseChangelog(source: string): ParsedChangelog {
         line,
         message: `Heading label "[${label}]" is not a version. Expected ${SHAPE_HINT}.`,
       });
-      return;
+      continue;
     }
 
     const dateSuffix = DATE_SUFFIX_RE.exec(rest);
@@ -203,18 +230,30 @@ export function parseChangelog(source: string): ParsedChangelog {
         line,
         message: `Release heading \`## [${label}]\` is missing its date. Expected \`## [${label}] — YYYY-MM-DD\`.`,
       });
-      return;
+      continue;
     }
     if (!isValidIsoDate(dateSuffix[1])) {
       violations.push({
         line,
         message: `Release heading \`## [${label}]\` has an invalid date "${dateSuffix[1]}". Expected \`YYYY-MM-DD\`.`,
       });
-      return;
+      continue;
     }
 
     releases.push({ line, version: label, date: dateSuffix[1] });
-  });
+  }
+
+  // An unclosed fence swallows the rest of the file, and silence is the worst
+  // possible response: every heading below it goes unread, and the static rules
+  // then report a clean file. (The history rule, meanwhile, reports every
+  // swallowed release as deleted — telling the author to re-add headings that
+  // are still there.) Name the real cause instead.
+  if (fence !== null) {
+    violations.push({
+      line: fenceLine,
+      message: `Unclosed code fence — everything below line ${fenceLine} was skipped, so no heading after it was checked. Close it with a matching \`${fence}\`.`,
+    });
+  }
 
   return { unreleased, releases, categories, violations };
 }

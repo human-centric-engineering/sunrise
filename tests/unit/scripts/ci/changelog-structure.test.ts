@@ -97,6 +97,63 @@ Quoting the release instructions:
     expect(parseChangelog(source).releases.map((r) => r.version)).toEqual(['0.2.0']);
   });
 
+  it('does not let a shorter inner fence close a longer outer one', () => {
+    // CommonMark closes only on a run at least as long as the opening one, so
+    // a ``` block nested inside a ```` block is content. Comparing the fence
+    // *character* alone reopened parsing at the inner close and read the
+    // headings between them as real — two bogus violations on a correct file.
+    const source = `## [Unreleased]
+
+\`\`\`\`md
+\`\`\`
+## [Unreleased]
+## [9.9.9] — 2026-09-01
+\`\`\`
+\`\`\`\`
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.unreleased).toEqual([1]);
+    expect(check(source)).toEqual([]);
+  });
+
+  it('does not let a fence carrying an info string close an open block', () => {
+    // A closing fence may not have an info string, so ```ts inside a ``` block
+    // is content — otherwise a changelog entry showing two adjacent code
+    // samples would reopen parsing between them.
+    const source = `## [Unreleased]
+
+\`\`\`
+\`\`\`ts
+## [9.9.9] — 2026-09-01
+\`\`\`
+
+## [0.2.0] — 2026-06-25
+`;
+
+    expect(parseChangelog(source).releases.map((r) => r.version)).toEqual(['0.2.0']);
+  });
+
+  it('reports an unclosed fence rather than silently skipping the rest', () => {
+    // Silence is the worst response here: everything below goes unread and the
+    // static rules then call the file clean. Before this, the fixture below
+    // returned zero violations while 0.1.0 was never parsed at all.
+    const source = `## [Unreleased]
+
+## [0.2.0] — 2026-06-25
+
+\`\`\`md
+## [0.1.0] — 2026-06-24
+`;
+
+    expect(check(source)).toEqual([
+      expect.stringContaining('Unclosed code fence — everything below line 5 was skipped'),
+    ]);
+  });
+
   it('does not let a different fence character close an open fence', () => {
     // A `~~~` line inside a ``` block is content, not a closing fence — which
     // is exactly why one gets nested inside the other in the first place.
@@ -196,6 +253,33 @@ describe('checkChangelogStructure', () => {
       const source = VALID.replace('— 2026-06-24', `— ${date}`);
 
       expect(check(source)).toEqual([expect.stringContaining(`invalid date "${date}"`)]);
+    });
+
+    it('accepts the Keep a Changelog [YANKED] marker', () => {
+      // Rejecting it would mean this check blocks the one edit it most exists
+      // to support: recording that a release went out wrong.
+      const source = VALID.replace('## [0.2.0] — 2026-06-25', '## [0.2.0] — 2026-06-25 [YANKED]');
+
+      expect(check(source)).toEqual([]);
+      expect(parseChangelog(source).releases[0]).toEqual({
+        line: 7,
+        version: '0.2.0',
+        date: '2026-06-25',
+      });
+    });
+
+    it('still rejects trailing junk that is not [YANKED]', () => {
+      // Guard against the [YANKED] relaxation over-widening, not a regression
+      // test — this passed before that change too, and is here so it keeps
+      // passing after it.
+      const source = VALID.replace(
+        '## [0.1.0] — 2026-06-24',
+        '## [0.1.0] — 2026-06-24 [WITHDRAWN]'
+      );
+
+      expect(check(source)).toEqual([
+        expect.stringContaining('invalid date "2026-06-24 [WITHDRAWN]"'),
+      ]);
     });
 
     it.each(['—', '–', '-'])('accepts "%s" as the date separator', (separator) => {

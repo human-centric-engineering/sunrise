@@ -48,12 +48,22 @@ function git(args: string[]): string | null {
   }
 }
 
-/** `--base <ref>` or `--base=<ref>`; `undefined` when the flag is absent. */
-function parseBaseRef(argv: string[]): string | undefined {
+/**
+ * `--base <ref>` or `--base=<ref>`.
+ *
+ * `present` is tracked separately from the value because the two carry
+ * different contracts: an absent flag means "compare if you can", while a
+ * present one means "compare, and fail if you cannot". Collapsing them onto
+ * truthiness turns `--base ""` — a wrapper interpolating an unset variable —
+ * into a silent skip that still exits 0, which is the one outcome a check
+ * against silent damage must never produce.
+ */
+function parseBaseRef(argv: string[]): { present: boolean; ref: string } {
   const index = argv.indexOf('--base');
-  if (index !== -1) return argv[index + 1];
+  if (index !== -1) return { present: true, ref: argv[index + 1] ?? '' };
   const inline = argv.find((arg) => arg.startsWith('--base='));
-  return inline?.slice('--base='.length);
+  if (inline !== undefined) return { present: true, ref: inline.slice('--base='.length) };
+  return { present: false, ref: '' };
 }
 
 function printViolations(violations: ChangelogViolation[]): void {
@@ -63,23 +73,32 @@ function printViolations(violations: ChangelogViolation[]): void {
   }
 }
 
-function main(): void {
+/** Returns the process exit code so every failure path is a plain `return`. */
+function main(): number {
+  const requested = parseBaseRef(process.argv.slice(2));
+  if (requested.present && requested.ref === '') {
+    console.error('`--base` needs a revision — got an empty value.');
+    console.error('Omit the flag entirely to fall back to the merge base with origin/main.');
+    return 1;
+  }
+
   const changelog = readFileSync(resolve(process.cwd(), CHANGELOG), 'utf8');
   const violations = checkChangelogStructure(changelog, { sunriseVersion: SUNRISE_VERSION });
 
-  const requestedBase = parseBaseRef(process.argv.slice(2));
   // No explicit base: the merge base is the right comparison locally, because
   // `origin/main` on its own may carry a release the branch simply has not
   // merged yet — which is not a deletion.
-  const base = requestedBase ?? git(['merge-base', 'origin/main', 'HEAD'])?.trim();
+  const base = requested.present
+    ? requested.ref
+    : git(['merge-base', 'origin/main', 'HEAD'])?.trim();
   const baseChangelog = base ? git(['show', `${base}:${CHANGELOG}`]) : null;
 
   if (baseChangelog !== null) {
     violations.push(...checkReleaseHistoryPreserved(baseChangelog, changelog));
-  } else if (requestedBase) {
-    console.error(`Could not read ${CHANGELOG} at "${requestedBase}".`);
+  } else if (requested.present) {
+    console.error(`Could not read ${CHANGELOG} at "${requested.ref}".`);
     console.error('Fetch the base revision before running this check.');
-    process.exit(1);
+    return 1;
   }
 
   if (violations.length > 0) {
@@ -89,11 +108,13 @@ function main(): void {
     printViolations(violations);
     console.error('');
     console.error('See CONTRIBUTING.md "Cutting a release" for the heading conventions.');
-    process.exit(1);
+    return 1;
   }
 
   const scope = baseChangelog !== null ? `structure + history vs ${base}` : 'structure';
   console.log(`${CHANGELOG} OK (${scope}).`);
+  return 0;
 }
 
-main();
+const exitCode = main();
+if (exitCode !== 0) process.exit(exitCode);

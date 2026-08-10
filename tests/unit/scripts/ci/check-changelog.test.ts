@@ -153,6 +153,28 @@ describe('scripts/ci/check-changelog', () => {
     });
   });
 
+  describe('when --base is present but has no value', () => {
+    it.each([['--base', ''], ['--base='], ['--base']])(
+      'fails loudly rather than skipping (%j)',
+      async (...args) => {
+        // A wrapper interpolating an unset variable produces exactly this. The
+        // flag's contract is "compare, and fail if you cannot"; degrading to a
+        // quiet skip that still exits 0 is the one outcome a check against
+        // silent damage must never produce.
+        mockExecFileSync.mockImplementation((_cmd: string, gitArgs: string[]) =>
+          gitArgs[0] === 'merge-base' ? 'abc123\n' : VALID
+        );
+
+        await run(args);
+
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(stderr()).toContain('`--base` needs a revision — got an empty value');
+        // Specifically: it must not fall through to the merge-base fallback.
+        expect(mockExecFileSync).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   describe('when the base revision is unreadable', () => {
     it('skips the history rule quietly if no ref was requested', async () => {
       // `npm run validate` has to work in a fresh clone with no remote, on a

@@ -191,7 +191,12 @@ jobs:
             BASE=FETCH_HEAD
           else
             # Deepen to two so HEAD^ — the previous commit on main — exists.
-            git fetch --no-tags --depth=2 origin "${{ github.ref_name }}"
+            # By SHA, not by branch name: --depth counts from the tip of what
+            # is fetched, so if another merge lands while this run is queued,
+            # `origin main` would deepen around the NEW tip and leave this
+            # commit's parent unfetched. HEAD^ would then be unreadable and the
+            # run would fail red on main for a PR that never touched the file.
+            git fetch --no-tags --depth=2 origin "${{ github.sha }}"
             BASE='HEAD^'
           fi
           npx tsx scripts/ci/check-changelog.ts --base "$BASE"

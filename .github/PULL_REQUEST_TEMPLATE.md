@@ -38,7 +38,7 @@ Closes #
 - [ ] Added new tests for new functionality
 - [ ] Tested locally with `npm run dev`
 - [ ] Tested production build with `npm run build && npm start`
-- [ ] Validated with `npm run validate` (type-check, lint, format)
+- [ ] Validated with `npm run validate` (CHANGELOG structure, type-check, lint, format)
 
 ### Test Coverage
 
