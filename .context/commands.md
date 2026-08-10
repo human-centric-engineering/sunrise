@@ -14,7 +14,8 @@ npm run lint:fix         # Fix linting issues
 npm run format           # Format code with Prettier
 npm run format:check     # Check formatting
 npm run type-check       # Run TypeScript compiler
-npm run validate         # Run type-check + lint + format check (use before commits)
+npm run validate         # Run changelog + type-check + lint + format check (use before commits)
+npm run check:changelog  # CHANGELOG.md structure only (also runs inside validate)
 ```
 
 ## Database (Prisma)

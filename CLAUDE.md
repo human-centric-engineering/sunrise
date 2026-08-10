@@ -61,7 +61,7 @@ Use for external library docs: `resolve-library-id` → `query-docs`. Essential 
 ```bash
 # Development
 npm run dev                    # Start dev server
-npm run validate               # Type-check + lint + format
+npm run validate               # Changelog structure + type-check + lint + format
 
 # Database
 npm run db:migrate:dev         # Create and apply migration (dev only)

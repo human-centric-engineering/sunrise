@@ -161,6 +161,40 @@ jobs:
         if: needs.config.outputs.code == 'true'
         run: npm run lint
       - run: npm run format:check
+      # CHANGELOG.md is the one file a fork reads before deciding what an
+      # upgrade will cost it, and the release process edits it by text
+      # replacement every single time (CONTRIBUTING step 4). Cutting 0.8.1
+      # replaced a block that included the previous release's heading,
+      # `## [0.8.0]` was never re-added, and 962 lines of 0.8.0 content — two
+      # migrations, two breaking changes — re-attributed themselves to a patch
+      # release. It merged and was tagged; Prettier saw well-formed markdown
+      # and nothing else looked (#550).
+      #
+      # Ungated like format:check above, and for the same reason: a
+      # CHANGELOG-only PR is docs-only, so a code-gated check would skip
+      # exactly the change most able to break this file.
+      #
+      # The append-only rule needs the base revision — a deleted heading leaves
+      # a file that is still valid in every static sense. Fetched shallowly
+      # here rather than raising the job to `fetch-depth: 0`, which would pull
+      # the whole history on every docs-only PR to read one file. The script
+      # treats an unreadable `--base` as a hard failure, so a broken fetch
+      # surfaces instead of silently downgrading to the static rules.
+      - name: CHANGELOG structure
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # The base SHA the merge ref was computed against, not the branch
+            # tip: if main gains a release while the PR sits, the tip carries a
+            # heading this checkout legitimately does not have, and comparing
+            # against it would report that heading as deleted.
+            git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+            BASE=FETCH_HEAD
+          else
+            # Deepen to two so HEAD^ — the previous commit on main — exists.
+            git fetch --no-tags --depth=2 origin "${{ github.ref_name }}"
+            BASE='HEAD^'
+          fi
+          npx tsx scripts/ci/check-changelog.ts --base "$BASE"
       # Prettier does not format .prisma files, so drift from the pinned Prisma's
       # own formatter is invisible to format:check. Without this, an unformatted
       # schema lands on main and every fork's next `prisma format` — which

@@ -41,7 +41,45 @@ If it skipped on docs-only PRs, an unformatted `.md` could land on `main`
 unchecked and then fail the _next_ code PR's whole-repo `format:check`, misattributed
 to an unrelated author (issue #314). ESLint has nothing to check in docs, so it
 stays gated at the **step** level (`ESLint (code changes only)`) — docs-only PRs
-run only the Prettier check and stay cheap (~1m35s vs ~8m for a cold code PR).
+run only the Prettier check and the CHANGELOG check below, and stay cheap
+(~1m35s vs ~8m for a cold code PR).
+
+### The `CHANGELOG structure` step
+
+Ungated for the same reason as `format:check`: a CHANGELOG-only PR is
+docs-only, so a code-gated check would skip the change most able to break the
+file. It runs `scripts/ci/check-changelog.ts`, which is also the **first** link
+in `npm run validate` — a check that only exists in CI is one people discover by
+having a PR rejected, and this one takes milliseconds, so it fails ahead of the
+thirty-second type-check rather than behind it.
+
+The rules and the reasoning behind each live in
+`scripts/ci/changelog-structure.ts`. Two are worth knowing here:
+
+- **Static rules** need nothing but the file and `SUNRISE_VERSION`: headings
+  unique, in descending SemVer order, dated, `## [Unreleased]` present and
+  first, `### ` categories canonical and not repeated within a section, and the
+  topmost release equal to `SUNRISE_VERSION`.
+- **Released headings are append-only.** A heading present on the base revision
+  must still be present here. This is the rule that catches the incident behind
+  #550, and the only one that can — a deleted heading leaves a file that is
+  valid in every static sense. Because it needs the previous revision, the step
+  shallow-fetches the PR's base SHA (not the base branch tip, which may carry a
+  release the PR has legitimately not merged) and passes it as `--base`. An
+  unreadable `--base` is a hard failure, so a broken fetch surfaces rather than
+  silently downgrading to the static rules.
+
+Locally, `npm run check:changelog` takes no arguments: it falls back to the
+merge base with `origin/main`, and **skips the history rule quietly** when that
+is unavailable — a fresh clone with no remote, a detached HEAD, or a fork whose
+upstream is named something else. CI is where that rule is enforced.
+
+> **Fork note.** The check assumes the CHANGELOG carries Sunrise's release
+> history. A fork that empties the file, or renumbers it to its own app
+> versions, will fail both the append-only rule and the `SUNRISE_VERSION`
+> agreement rule. Keep Sunrise's history in `CHANGELOG.md` and put your app's
+> release notes in a file of your own; all four current forks already do the
+> former by default, simply by merging upstream.
 
 ### Universal speedups (on for everyone)
 

@@ -108,7 +108,7 @@ All `/test-*` commands default to branch diff mode. Pass folder paths to scope (
 Run these checks **after** test coverage is adequate:
 
 ```bash
-# 1. Run all validation (type-check + lint + format)
+# 1. Run all validation (changelog structure + type-check + lint + format)
 npm run validate
 
 # 2. Ensure production build succeeds

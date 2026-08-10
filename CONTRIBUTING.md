@@ -77,7 +77,7 @@ docker-compose exec web npm run db:seed        # Seed test data
 4. **Test your changes**:
    ```bash
    npm run test
-   npm run validate  # type-check + lint + format
+   npm run validate  # changelog structure + type-check + lint + format
    npm run build     # ensure it builds
    ```
 5. **Commit** using [Conventional Commits](https://www.conventionalcommits.org/):
@@ -174,6 +174,18 @@ public-surface contract behind the bump decision lives in
    `CHANGELOG.md` to a new dated heading: `## [X.Y.Z] — YYYY-MM-DD`. During
    `0.x`, mark the entry **alpha**. Leave `## [Unreleased]` in place (empty,
    for the next release).
+
+   > **Anchor the insertion on `## [Unreleased]` alone** — never on a block
+   > that includes the previous release's heading. Cutting 0.8.1 replaced
+   > `## [Unreleased]\n\n## [0.8.0] — 2026-08-04`, never re-added the second
+   > line, and 962 lines of 0.8.0 content — its release blockquote, two
+   > migrations and two breaking changes — read as part of a patch release. It
+   > merged and was tagged before anyone noticed (#544, repaired in #546).
+   >
+   > `npm run validate` now runs `npm run check:changelog`, which fails on that
+   > shape and on the other ways this file can go wrong. CI runs it too, on
+   > every PR including docs-only ones.
+
 5. **Run the gates locally.** `npm run validate`, full test suite, then
    `/pre-pr` and `/security-review`.
 6. **Open the release PR.** Push the branch, run `/code-review` on the PR,

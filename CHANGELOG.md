@@ -236,6 +236,24 @@ release process.
   value gets navigated to: returning the normalized form is what stops a caller
   validating one string and using another. `isRootRelativePath()` is unchanged
   in signature and now delegates to it (#506).
+- **`npm run check:changelog`** — a structure check on `CHANGELOG.md`, wired
+  into `npm run validate` (first, so it fails in milliseconds rather than
+  behind the type-check) and into the CI `lint & format` job, which is ungated
+  and so runs on docs-only PRs too. Nothing checked this file before: Prettier
+  saw well-formed markdown, `/security-review` correctly skips markdown, and
+  `/pre-pr` step 5d only checks the CHANGELOG is *present* in a public-surface
+  diff. It enforces unique version headings in descending SemVer order, real
+  dates, `## [Unreleased]` present, first and undated, Keep-a-Changelog `### `
+  categories that do not repeat within a section, agreement between the topmost
+  release and `SUNRISE_VERSION` — and, comparing against the base revision,
+  that a released heading is never deleted. That last rule is the one that
+  catches the incident behind it: cutting 0.8.1 replaced a block that included
+  `## [0.8.0]`, never re-added the heading, and 962 lines of 0.8.0 content —
+  two migrations, two breaking changes — re-attributed themselves to a patch
+  release, merged, and were tagged. **Forks:** the check assumes
+  `CHANGELOG.md` carries Sunrise's release history, which it does by default
+  after any upstream merge; keep your own app's release notes in a separate
+  file. See `.context/architecture/ci.md` (#550).
 
 ### Changed
 
