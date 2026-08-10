@@ -93,6 +93,22 @@ describe('scripts/ci/check-exports', () => {
       expect(readBarrelsFromDisk(dir)[0].symbols).toEqual(['brandNew']);
     });
 
+    it('does not follow a star out of the root', () => {
+      // `posix.normalize` collapses `..` but does not stop it. Only symbol
+      // names ever reach the output, so no file content leaks — but /pre-pr
+      // asks for that output to be recorded in a PR summary, and identifier
+      // names from a private sibling checkout are not ours to print.
+      mkdirSync(join(dir, 'repo', 'lib', 'x'), { recursive: true });
+      mkdirSync(join(dir, 'outside'), { recursive: true });
+      writeFileSync(join(dir, 'outside', 'secret.ts'), `export const LEAKED = 1;`);
+      writeFileSync(
+        join(dir, 'repo', 'lib', 'x', 'index.ts'),
+        `export * from '../../../outside/secret';\nexport const legit = 1;`
+      );
+
+      expect(readBarrelsFromDisk(join(dir, 'repo'))[0].symbols).toEqual(['legit']);
+    });
+
     it('returns nothing when there is no lib directory', () => {
       expect(readBarrelsFromDisk(dir)).toEqual([]);
     });
@@ -139,6 +155,10 @@ describe('scripts/ci/check-exports', () => {
         .join('\n');
 
     beforeEach(() => {
+      // Before the spies: this file shares one git mock across describes, and
+      // an assertion that it was never called would otherwise see the previous
+      // test's calls.
+      vi.clearAllMocks();
       logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     });
@@ -146,6 +166,15 @@ describe('scripts/ci/check-exports', () => {
     it('rejects an empty --base rather than silently falling back', () => {
       expect(main(['--base', ''])).toBe(1);
       expect(out()).toContain('needs a revision');
+    });
+
+    it('rejects a --base that would be read as a git option', () => {
+      // A `--` separator cannot fix this: `git show <rev>:<path>` reads the
+      // spec after `--` as a pathspec, not a revision, which silently breaks
+      // the whole check. Validating the ref is the working guard.
+      expect(main(['--base', '--output=/tmp/x'])).toBe(1);
+      expect(out()).toContain('must be a revision, not an option');
+      expect(mockExecFileSync).not.toHaveBeenCalled();
     });
 
     it('skips when there is no base revision to compare against', () => {

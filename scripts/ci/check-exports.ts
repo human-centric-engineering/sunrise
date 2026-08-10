@@ -24,7 +24,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
-import { posix, sep } from 'node:path';
+import { posix, resolve, sep } from 'node:path';
 
 import { diffExports, readBarrelExports, type BarrelExports } from '@/scripts/ci/exports-diff';
 
@@ -85,9 +85,19 @@ export function readBarrelsFromDisk(root = process.cwd()): BarrelExports[] {
     .map((entry) => posix.join('lib', entry))
     .sort();
 
+  // Clamped to the root. `posix.normalize` collapses `..` but does not stop it,
+  // so `export * from '../../../elsewhere/x'` in a barrel resolved above the
+  // repo and was read. Only symbol names ever reach the output, so nothing
+  // leaks a file's contents — but `/pre-pr` asks for that output to be recorded
+  // in a PR summary, and identifier names from a private sibling checkout are
+  // not ours to print. The sibling scripts read fixed paths and never had this
+  // surface; this one should not either.
+  const rootPrefix = resolve(root) + sep;
   const read = (path: string): string | null => {
+    const full = resolve(root, path);
+    if (full !== resolve(root) && !full.startsWith(rootPrefix)) return null;
     try {
-      return readFileSync(posix.join(root, path), 'utf8');
+      return readFileSync(full, 'utf8');
     } catch {
       return null;
     }
@@ -134,6 +144,15 @@ export function main(argv: string[]): number {
   const requested = parseBaseRef(argv);
   if (requested.present && requested.ref === '') {
     console.error('`--base` needs a revision — got an empty value.');
+    return 1;
+  }
+
+  if (requested.present && requested.ref.startsWith('-')) {
+    // `git show <rev>:<path>` cannot take a `--` separator — the spec after it
+    // is read as a pathspec, not a revision (tried it; both checks returned
+    // nothing). So the ref is validated instead: a leading dash would be
+    // parsed as a git option.
+    console.error(`\`--base\` must be a revision, not an option: "${requested.ref}".`);
     return 1;
   }
 

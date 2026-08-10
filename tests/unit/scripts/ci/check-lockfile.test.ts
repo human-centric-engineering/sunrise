@@ -132,6 +132,14 @@ describe('scripts/ci/check-lockfile', () => {
     expect(mockExecFileSync).not.toHaveBeenCalled();
   });
 
+  it('rejects a --base that would be read as a git option', async () => {
+    await run(['--base', '--output=/tmp/x']);
+
+    expect(process.exitCode).toBe(1);
+    expect(out()).toContain('must be a revision, not an option');
+    expect(mockExecFileSync).not.toHaveBeenCalled();
+  });
+
   it('reports a malformed lockfile instead of throwing', async () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : '{ not json'

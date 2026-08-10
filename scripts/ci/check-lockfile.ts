@@ -94,6 +94,15 @@ export function main(argv: string[]): number {
     return 1;
   }
 
+  if (requested.present && requested.ref.startsWith('-')) {
+    // `git show <rev>:<path>` cannot take a `--` separator — the spec after it
+    // is read as a pathspec, not a revision (tried it; both checks returned
+    // nothing). So the ref is validated instead: a leading dash would be
+    // parsed as a git option.
+    console.error(`\`--base\` must be a revision, not an option: "${requested.ref}".`);
+    return 1;
+  }
+
   let headSource: string;
   try {
     headSource = readFileSync(resolve(process.cwd(), LOCKFILE), 'utf8');
