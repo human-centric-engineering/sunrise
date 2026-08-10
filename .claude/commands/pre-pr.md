@@ -11,7 +11,7 @@ Follow these steps precisely, in order:
 
 ### Step 1: Run automated checks
 
-Run `npm run validate` (CHANGELOG structure + type-check + lint + format check). Capture and report any failures.
+Run `npm run validate` (CHANGELOG structure + type-check + lint + format (Prettier + Prisma)). Capture and report any failures.
 
 `validate` runs the CHANGELOG check **first** and short-circuits on failure, so a structural problem in `CHANGELOG.md` will report as a failure with nothing after it — that is the check working, not the type-check being skipped. Fix it and re-run rather than working around it; the rules and their reasoning are in `scripts/ci/changelog-structure.ts`. Note the history rule needs `origin/main`, so run `git fetch origin main` first if the local ref is stale.
 

@@ -77,7 +77,7 @@ docker-compose exec web npm run db:seed        # Seed test data
 4. **Test your changes**:
    ```bash
    npm run test
-   npm run validate  # changelog structure + type-check + lint + format
+   npm run validate  # CHANGELOG structure + type-check + lint + format (Prettier + Prisma)
    npm run build     # ensure it builds
    ```
 5. **Commit** using [Conventional Commits](https://www.conventionalcommits.org/):
@@ -166,10 +166,22 @@ public-surface contract behind the bump decision lives in
    commit). Then hand-edit the two top-of-file `"version"` keys in
    `package-lock.json` — the root object and `packages[""]` — to match. Edit
    them by hand; do **not** run `npm install` / `npm version` to do it, because
-   on macOS that recomputes the tree and strips the `libc` metadata on the
-   native Linux packages (`@img/sharp-*`, `@next/swc-*`, `@rolldown/binding-*`)
-   that Linux CI and production installs rely on. Hand-editing `package.json`
-   alone leaves the lockfile root stale (it was missed for 0.1.0 and 0.2.0).
+   on macOS that recomputes the tree and strips the `libc` metadata from the
+   native Linux packages that Linux CI and production installs rely on.
+   Hand-editing `package.json` alone leaves the lockfile root stale (it was
+   missed for 0.1.0 and 0.2.0).
+
+   Which packages carry `libc` **moves with the dependency graph**, so list them
+   rather than trusting a list in a doc — this one named three families that
+   carry none of it today:
+
+   ```bash
+   node -e "const l=require('./package-lock.json');console.log(Object.entries(l.packages).filter(([,v])=>v.libc).map(([k])=>k).join('\n'))"
+   ```
+
+   **If the release changes dependencies, this step does not apply as written —
+   see the subsection below.**
+
 4. **Update the changelog.** Move the entries under `## [Unreleased]` in
    `CHANGELOG.md` to a new dated heading: `## [X.Y.Z] — YYYY-MM-DD`. During
    `0.x`, mark the entry **alpha**. Leave `## [Unreleased]` in place (empty,
@@ -208,6 +220,53 @@ public-surface contract behind the bump decision lives in
 
 The tag is what the eventual HCE Hub will discover; the CHANGELOG entry (and the
 mirrored Release notes) is what fork authors will read before merging the upgrade.
+
+### Cutting a release that changes dependencies
+
+Step 3 says never to let npm recompute the tree. For a **dependency fix**,
+recomputing it is the entire point, so that rule cannot be followed — 0.8.1 was
+exactly this case (a security patch needing `npm update engine.io
+socket.io-adapter`) and the steps above offered no path for it.
+
+The problem is real: on macOS the recompute strips `libc` from the native Linux
+packages. During the 0.8.1 cut it dropped the key from all five carriers, and
+the obvious repair was worse than the damage — a line-scanning script to put it
+back ran away and modified **181 packages**, producing a lockfile that looked
+plausible and was wrong. It was caught only by diffing package-by-package
+against a snapshot taken beforehand.
+
+So the answer is not more care. It is a flow where each step is **verified
+rather than trusted**:
+
+1. **Snapshot first.** `cp package-lock.json /tmp/lock.before.json`
+2. **Run the update.** `npm update <the specific packages>` — never a bare
+   `npm install`.
+3. **Prove the writer is faithful before you use it.** A Python round-trip is
+   byte-identical to npm's own writer on this lockfile, which is what makes
+   JSON-level editing safe. Check it rather than assuming — it is one line, and
+   if it ever stops being true this whole approach is invalid:
+
+   ```python
+   import json
+   raw = open('package-lock.json','rb').read()
+   out = (json.dumps(json.load(open('package-lock.json')), indent=2, ensure_ascii=False) + '\n').encode()
+   assert out == raw
+   ```
+
+4. **Re-insert `libc` at the JSON level**, never with text munging, immediately
+   after `cpu` so npm's key order is preserved.
+5. **Verify the net diff, not the intent.** Assert both that only the packages
+   you meant to move changed, and that the `libc` carrier set is unchanged:
+
+   ```python
+   changed = [k for k in set(a) & set(b) if a[k] != b[k]]
+   assert {k for k, v in a.items() if 'libc' in v} == {k for k, v in b.items() if 'libc' in v}
+   ```
+
+6. **`npm ci --dry-run`** to confirm the lockfile is still coherent.
+
+For 0.8.1 this turned a "221 packages changed" install into a verified **3
+changed packages plus one dedupe**, with the carrier set provably untouched.
 
 ## Project Structure
 

@@ -368,5 +368,5 @@ npm run validate
 - [ ] Rate limits set on all capabilities
 - [ ] Approval gates on sensitive operations
 - [ ] Tests written and passing for all custom capabilities and workflows
-- [ ] `npm run validate` passes (CHANGELOG structure + type-check + lint + format)
+- [ ] `npm run validate` passes
 - [ ] Run `/pre-pr` before merging the feature branch

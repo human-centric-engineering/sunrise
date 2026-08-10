@@ -9,7 +9,7 @@ npm test                 # Run all tests
 npm run test:watch       # Watch mode (recommended during development)
 npm run test:coverage    # Generate coverage report
 npm run test:ui          # Run with Vitest UI
-npm run validate         # CHANGELOG structure + type-check + lint + format (before committing)
+npm run validate         # all local gates (before committing)
 ```
 
 ## Directory Structure

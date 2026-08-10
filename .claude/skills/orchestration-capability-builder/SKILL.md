@@ -361,5 +361,5 @@ npm run test -- tests/unit/lib/orchestration/capabilities/my-capability.test.ts
 - [ ] `this.success()` / `this.error()` used (never hand-built result objects)
 - [ ] `processesPii` declared explicitly (`true` requires a `redactProvenance` override; the registry will refuse to load otherwise)
 - [ ] Tests written and passing under `tests/unit/lib/orchestration/capabilities/`
-- [ ] `npm run validate` passes (CHANGELOG structure + type-check + lint + format)
+- [ ] `npm run validate` passes
 - [ ] Run `/pre-pr` before merging the feature branch

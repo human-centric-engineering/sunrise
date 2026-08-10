@@ -208,7 +208,7 @@ A test isn't done until all four pass:
 
 ```bash
 npm test               # tests pass
-npm run validate       # CHANGELOG structure + lint + type-check + format
+npm run validate       # all local gates
 npm run test:coverage  # coverage targets met (see .context/testing/overview.md)
 ```
 

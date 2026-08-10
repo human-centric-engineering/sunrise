@@ -209,15 +209,19 @@ jobs:
       # own formatter is invisible to format:check. Without this, an unformatted
       # schema lands on main and every fork's next `prisma format` — which
       # `migrate dev` runs implicitly — dirties a core file it never edited (#482).
+      #
+      # This runs the same npm script `npm run validate` does, rather than its
+      # own copy of the logic: a check that exists only here is one contributors
+      # discover by having a PR rejected for a file they never touched, and it
+      # is worse downstream — the fork tiers own `framework-*.prisma` and
+      # `app.prisma`, exactly the files core never reformats (#510).
       - name: Prisma schema format check
         if: needs.config.outputs.code == 'true'
         run: |
-          npx prisma format --schema prisma/schema
-          if ! git diff --exit-code -- prisma/schema; then
+          npm run format:prisma:check || {
             echo "::error::prisma/schema is not formatted per the pinned Prisma."
-            echo "Run 'npx prisma format --schema prisma/schema' and commit the result."
             exit 1
-          fi
+          }
       # Fork-owned CI checks seam. A fork adds an `app:ci-checks` script to
       # package.json (a boundary check, migration-hygiene lint, etc.); vanilla
       # Sunrise ships no such script, so `--if-present` makes this a no-op here
