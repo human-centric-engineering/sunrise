@@ -277,6 +277,25 @@ release process.
   rewritten to name the real schema path: Prisma reports against the copy, and
   the copy is deleted before the message prints. `format:prisma` is the
   mutating fixer, mirroring `format` / `format:check` (#510).
+- **`npm run check:lockfile` and `npm run check:exports`**, both wired into
+  `/pre-pr`, which was silent on two classes of change it should never have
+  been. A PR whose entire substance is `package-lock.json` got a clean bill
+  from a gate that builds its file set from `*.ts` — which is what happened to
+  0.8.1, where `npm update` had silently stripped `libc` from five native Linux
+  packages. `check:lockfile` compares the parsed trees and fails on the things
+  that need a decision: platform metadata (`libc`/`os`/`cpu`) lost, a **direct**
+  dependency moved backwards, or `overrides` changed. Transitive downgrades are
+  listed but do not gate — measured over all 134 lockfile commits in this
+  repo's history, there are 45 of them against 2 direct, and they cluster in
+  commits like "pin Prisma to ~7.1.0" where one intended pin drags its subtree
+  back. Running it over that history flags 5 commits, every one a real event.
+  `check:exports` answers step 5d's question — *did the set of importable
+  symbols change?* — from the surface rather than a hardcoded path list, by
+  diffing what every `lib/**/index.ts` barrel exports. It uses the TypeScript
+  compiler rather than a regex because three barrels use `export *`, which a
+  regex cannot follow. It reports and never gates. Over the last 60 commits it
+  fires once: on #506's `normalizeRootRelativePath`, the export the path list
+  missed (#552).
 
 ### Changed
 

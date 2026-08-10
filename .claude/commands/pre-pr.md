@@ -32,6 +32,39 @@ If `SKIP`, record "Migration drift: N/A (no prisma/ changes)" and move on. If `R
 - **1** — FAIL: a migration on this branch dropped one of these objects. This is the `prisma migrate dev` footgun — it diffs the schema against the shadow DB and silently emits `DROP INDEX`/`DROP CONSTRAINT` for anything it can't represent, and `migrate dev` already applied that DROP to your local DB. **Stop and report.** Fix: edit the offending migration to remove the spurious `DROP` (re-add a `CREATE … IF NOT EXISTS` if needed), and re-author migrations on these tables with `prisma migrate dev --create-only` so the DROP is reviewed before it's ever applied.
 - **2** — SKIPPED (local DB unreachable). Record "Migration drift: SKIPPED (start your dev DB to enable)" — do **not** fail the run on this.
 
+### Step 1b: Lockfile and public-surface inspection
+
+Two checks that exist because `/pre-pr` used to be silent on both (#552). Run
+them; do not eyeball the underlying diffs.
+
+**Lockfile** — only if `package-lock.json` is in the branch diff:
+
+```bash
+npm run check:lockfile
+```
+
+Exit 1 means something needs a decision: platform metadata (`libc`/`os`/`cpu`)
+lost, a **direct** dependency moved backwards, or `overrides` changed. Lost
+metadata is the one that has actually bitten — see #571 and CONTRIBUTING's
+"Cutting a release that changes dependencies" for the repair. Transitive
+downgrades are listed but do not fail; they are usually one intended pin
+propagating.
+
+**Public surface** — always:
+
+```bash
+npm run check:exports
+```
+
+This reports symbols added, removed or renamed on any `lib/**/index.ts` barrel.
+It never fails the run: adding an export is normal. It exists so step 5d's
+question gets asked from the surface rather than from a path list — the list
+missed `normalizeRootRelativePath` on `@/lib/security` in #506. **Anything it
+prints should have a CHANGELOG entry, and a removal or rename is breaking for
+any fork importing it.**
+
+Record both outputs in the summary.
+
 ### Step 2: Identify changed files
 
 First, resolve the correct base ref. The local `main` branch may be stale or polluted with feature-branch commits, so **always use the remote tracking ref**:
@@ -153,7 +186,9 @@ For each changed file from Step 2, decide whether it touches the public surface 
 - **Published Prisma model interfaces** — flag if `prisma/schema/` files change models the orchestration admin API exposes (`User`, `Ai*` models — see `.context/orchestration/admin-api.md`). Do NOT flag if only an `app.prisma` model changes — that file is fork-reserved and ships empty upstream, so a core PR touching it is itself worth questioning.
 - **The CHANGELOG / VERSIONING contract itself** — flag if `VERSIONING.md` or `CHANGELOG.md` is removed or has its `[Unreleased]` section deleted without a release-rename.
 
-If ANY public-surface path above is in the diff AND `CHANGELOG.md` is NOT in the diff, flag it as: `Public-surface change without CHANGELOG entry — intentional? See VERSIONING.md "Covered" list.` Include the specific files that triggered the flag.
+**The path list is a floor, not the answer.** `npm run check:exports` from Step 1b answers the real question — _did the set of importable symbols change?_ — and it catches seams the list has never heard of. Treat any barrel change it reported as a public-surface change here, whether or not the file appears above.
+
+If ANY public-surface path above is in the diff, OR Step 1b reported a barrel export change, AND `CHANGELOG.md` is NOT in the diff, flag it as: `Public-surface change without CHANGELOG entry — intentional? See VERSIONING.md "Covered" list.` Include the specific files that triggered the flag.
 
 If `CHANGELOG.md` IS in the diff, the check passes regardless of what was added (the agent has already made the call; trust it).
 
@@ -175,6 +210,8 @@ Output a clear summary in this format:
 - [ ] Format: PASS / FAIL
 - [ ] Tests: PASS / FAIL (X passed, Y failed)
 - [ ] Migration drift (Prisma-unmodelled objects): PASS / FAIL / SKIPPED / N/A
+- [ ] Lockfile: PASS / FAIL / N/A (no `package-lock.json` change)
+- [ ] Public surface (barrel exports): {symbols added/removed, or NO CHANGE}
 
 ### Coverage (changed files — threshold 80%)
 | File | Lines | Branches | Functions | Stmts | Status |

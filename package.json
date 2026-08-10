@@ -16,6 +16,8 @@
     "format:prisma": "prisma format --schema prisma/schema",
     "format:prisma:check": "tsx scripts/ci/check-prisma-format.ts",
     "check:changelog": "tsx scripts/ci/check-changelog.ts",
+    "check:lockfile": "tsx scripts/ci/check-lockfile.ts",
+    "check:exports": "tsx scripts/ci/check-exports.ts",
     "validate": "npm run check:changelog && npm run type-check && npm run lint && npm run format:check && npm run format:prisma:check",
     "test": "vitest",
     "test:watch": "vitest --watch",
