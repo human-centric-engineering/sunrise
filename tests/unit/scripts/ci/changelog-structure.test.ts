@@ -47,6 +47,11 @@ function check(source: string, sunriseVersion = '0.2.0'): string[] {
   return messages(checkChangelogStructure(source, { sunriseVersion }));
 }
 
+/** Asserts the comparison actually RAN and found nothing — not that it skipped. */
+function expectCleanHistory(base: string, head: string): void {
+  expect(checkReleaseHistoryPreserved(base, head)).toEqual({ violations: [], skipped: null });
+}
+
 describe('parseChangelog', () => {
   it('classifies Unreleased, releases and categories', () => {
     const parsed = parseChangelog(VALID);
@@ -152,6 +157,56 @@ Quoting the release instructions:
     expect(check(source)).toEqual([
       expect.stringContaining('Unclosed code fence — everything below line 5 was skipped'),
     ]);
+    expect(parseChangelog(source).unclosedFenceLine).toBe(5);
+  });
+
+  it('reports ONLY the fence when the parse is truncated', () => {
+    // Naming the fence is half the job. The heading lists are truncated, so
+    // every cross-heading rule below is reasoning about a file nobody finished
+    // reading — and would here add a confident, wrong "no release headings
+    // found, but SUNRISE_VERSION is 0.2.0" on top.
+    const source = `## [Unreleased]
+
+\`\`\`
+
+## [0.2.0] — 2026-06-25
+
+## [0.1.0] — 2026-06-24
+`;
+
+    expect(check(source)).toEqual([expect.stringContaining('Unclosed code fence')]);
+  });
+
+  it('still reports per-heading problems found above the fence', () => {
+    // Those were read before parsing stopped, so they are sound and worth
+    // having — suppressing everything would trade one blind spot for another.
+    const source = `## [Unreleased]
+
+## [Next] — 2026-06-25
+
+\`\`\`
+`;
+
+    expect(check(source)).toEqual([
+      expect.stringContaining('Heading label "[Next]" is not a version'),
+      expect.stringContaining('Unclosed code fence'),
+    ]);
+  });
+
+  it('sees a heading indented up to three spaces', () => {
+    // Markdown renders it as a heading, so the parser has to see it as one.
+    // Otherwise the append-only rule reports it DELETED — a true failure
+    // carrying a message that names the wrong cause.
+    const source = `## [Unreleased]
+
+  ## [0.2.0] — 2026-06-25
+
+   ### Added
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.categories.map((category) => category.label)).toEqual(['Added']);
   });
 
   it('does not let a different fence character close an open fence', () => {
@@ -203,11 +258,12 @@ describe('checkChangelogStructure', () => {
     it('rejects a duplicated version', () => {
       const source = VALID.replace('## [0.1.0] — 2026-06-24', '## [0.2.0] — 2026-06-24');
 
-      // The order rule fires as well — 0.2.0 is not below 0.2.0 — which is
-      // correct and not worth suppressing.
-      expect(check(source)).toContainEqual(
-        expect.stringContaining('Duplicate heading for 0.2.0 (first is at line 7)')
-      );
+      // Exactly one message. The order rule uses a strict comparison so
+      // equality belongs to the duplicate rule alone; firing both turned one
+      // bad edit into a summary line reading "2 structural problems".
+      expect(check(source)).toEqual([
+        expect.stringContaining('Duplicate heading for 0.2.0 (first is at line 7)'),
+      ]);
     });
 
     it('rejects ascending order', () => {
@@ -437,7 +493,7 @@ describe('checkChangelogStructure', () => {
 
 describe('checkReleaseHistoryPreserved', () => {
   it('accepts an unchanged file', () => {
-    expect(checkReleaseHistoryPreserved(VALID, VALID)).toEqual([]);
+    expectCleanHistory(VALID, VALID);
   });
 
   it('accepts a new release on top', () => {
@@ -446,7 +502,7 @@ describe('checkReleaseHistoryPreserved', () => {
       '## [Unreleased]\n\n## [0.3.0] — 2026-06-26\n\n### Added\n\n- New.'
     );
 
-    expect(checkReleaseHistoryPreserved(VALID, next)).toEqual([]);
+    expectCleanHistory(VALID, next);
   });
 
   it('accepts entries being moved out of Unreleased', () => {
@@ -469,13 +525,13 @@ describe('checkReleaseHistoryPreserved', () => {
 ## [0.2.0] — 2026-06-25
 `;
 
-    expect(checkReleaseHistoryPreserved(base, released)).toEqual([]);
+    expectCleanHistory(base, released);
   });
 
   it('rejects a deleted release heading', () => {
     const damaged = VALID.replace('## [0.1.0] — 2026-06-24\n\n', '');
 
-    expect(messages(checkReleaseHistoryPreserved(VALID, damaged))).toEqual([
+    expect(messages(checkReleaseHistoryPreserved(VALID, damaged).violations)).toEqual([
       expect.stringContaining('`## [0.1.0] — 2026-06-24` was deleted (it was at line 13'),
     ]);
   });
@@ -485,7 +541,7 @@ describe('checkReleaseHistoryPreserved', () => {
     // the replacement rather than left in place.
     const damaged = VALID.replace('## [0.1.0] — 2026-06-24', '## [0.2.1] — 2026-06-26');
 
-    expect(messages(checkReleaseHistoryPreserved(VALID, damaged))).toEqual([
+    expect(messages(checkReleaseHistoryPreserved(VALID, damaged).violations)).toEqual([
       expect.stringContaining('`## [0.1.0] — 2026-06-24` was deleted'),
     ]);
   });
@@ -496,7 +552,7 @@ describe('checkReleaseHistoryPreserved', () => {
     // than a block of entries changing which release it belongs to.
     const corrected = VALID.replace('## [0.1.0] — 2026-06-24', '## [0.1.0] — 2026-06-23');
 
-    expect(checkReleaseHistoryPreserved(VALID, corrected)).toEqual([]);
+    expectCleanHistory(VALID, corrected);
   });
 
   it('ignores malformed headings in the base revision', () => {
@@ -509,7 +565,58 @@ describe('checkReleaseHistoryPreserved', () => {
 ## [0.1.0] — 2026-06-24
 `;
 
-    expect(checkReleaseHistoryPreserved(base, VALID)).toEqual([]);
+    expectCleanHistory(base, VALID);
+  });
+
+  describe('when a parse is truncated by an unclosed fence', () => {
+    const base = `## [Unreleased]
+
+## [0.2.0] — 2026-06-25
+
+## [0.1.0] — 2026-06-24
+`;
+
+    it('makes no comparison at all when HEAD is truncated', () => {
+      // Every swallowed release looks deleted. Reporting that told the author
+      // to re-add two headings sitting right there in the file, and buried the
+      // one message naming the real defect.
+      const head = `## [Unreleased]
+
+\`\`\`
+
+## [0.2.0] — 2026-06-25
+
+## [0.1.0] — 2026-06-24
+`;
+
+      expect(checkReleaseHistoryPreserved(base, head)).toEqual({
+        violations: [],
+        skipped: 'head-unclosed-fence',
+      });
+    });
+
+    it('makes no comparison at all when the BASE is truncated', () => {
+      // The opposite failure and the worse one: releases we never read cannot
+      // be missed, so this genuine deletion of 0.1.0 would otherwise pass as a
+      // clean comparison. `skipped` is what stops that reading as a pass.
+      const truncatedBase = `## [Unreleased]
+
+\`\`\`
+
+## [0.2.0] — 2026-06-25
+
+## [0.1.0] — 2026-06-24
+`;
+      const reallyDeleted = `## [Unreleased]
+
+## [0.2.0] — 2026-06-25
+`;
+
+      expect(checkReleaseHistoryPreserved(truncatedBase, reallyDeleted)).toEqual({
+        violations: [],
+        skipped: 'base-unclosed-fence',
+      });
+    });
   });
 
   describe('the 0.8.1 incident', () => {
@@ -568,7 +675,7 @@ describe('checkReleaseHistoryPreserved', () => {
     });
 
     it('is caught by the history rule', () => {
-      expect(messages(checkReleaseHistoryPreserved(before, shipped))).toEqual([
+      expect(messages(checkReleaseHistoryPreserved(before, shipped).violations)).toEqual([
         expect.stringContaining('`## [0.8.0] — 2026-08-04` was deleted'),
       ]);
     });

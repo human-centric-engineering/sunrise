@@ -40,6 +40,19 @@ export interface ChangelogViolation {
   message: string;
 }
 
+/**
+ * The result of the append-only comparison.
+ *
+ * `skipped` is not a softer kind of pass. It says the comparison was not made,
+ * and it exists because the alternative — returning `[]` — is indistinguishable
+ * from "checked, nothing deleted", which is the precise failure this whole file
+ * exists to prevent. Callers are expected to surface it.
+ */
+export interface HistoryCheck {
+  violations: ChangelogViolation[];
+  skipped: 'head-unclosed-fence' | 'base-unclosed-fence' | null;
+}
+
 /** A well-formed `## [x.y.z] — YYYY-MM-DD` heading. */
 export interface ReleaseHeading {
   line: number;
@@ -65,6 +78,16 @@ export interface ParsedChangelog {
   categories: CategoryHeading[];
   /** Headings that are not one of the two recognized shapes. */
   violations: ChangelogViolation[];
+  /**
+   * Opening line of a code fence that was never closed, or 0.
+   *
+   * When this is set the heading lists above are **truncated** — everything
+   * below that line went unread — so any rule that reasons across headings
+   * (uniqueness, ordering, `SUNRISE_VERSION` agreement, the history
+   * comparison) would be drawing conclusions from a partial file. Callers must
+   * check it before trusting those lists.
+   */
+  unclosedFenceLine: number;
 }
 
 /**
@@ -81,11 +104,19 @@ const CATEGORIES = ['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Secur
  */
 const SHAPE_HINT = '`## [Unreleased]` or `## [x.y.z] — YYYY-MM-DD`';
 
-/** `## anything` — level 2 exactly; `### ` is matched separately below. */
-const HEADING_RE = /^## +(.*?)\s*$/;
+/**
+ * `## anything` — level 2 exactly; `### ` is matched separately below.
+ *
+ * Leading spaces are allowed to the same depth as a fence, because Markdown
+ * allows them: a heading indented one to three spaces still renders as a
+ * heading, and one this parser could not see would be reported as *deleted*
+ * rather than as indented — a true failure with a message naming the wrong
+ * cause.
+ */
+const HEADING_RE = /^ {0,3}## +(.*?)\s*$/;
 
 /** `### anything` — level 3 exactly, so `####` and deeper are left alone. */
-const CATEGORY_RE = /^### +(.*?)\s*$/;
+const CATEGORY_RE = /^ {0,3}### +(.*?)\s*$/;
 
 /** `[label]rest` — the bracketed label plus whatever trails it. */
 const LABELLED_RE = /^\[([^\]]*)\](.*)$/;
@@ -245,9 +276,11 @@ export function parseChangelog(source: string): ParsedChangelog {
 
   // An unclosed fence swallows the rest of the file, and silence is the worst
   // possible response: every heading below it goes unread, and the static rules
-  // then report a clean file. (The history rule, meanwhile, reports every
-  // swallowed release as deleted — telling the author to re-add headings that
-  // are still there.) Name the real cause instead.
+  // would then report a clean file. Naming it is only half the job, though —
+  // the truncated heading lists must not be reasoned over either, or the output
+  // fills with confident nonsense about a file nobody finished reading. That
+  // suppression lives in the two check functions below; `unclosedFenceLine` is
+  // how they know.
   if (fence !== null) {
     violations.push({
       line: fenceLine,
@@ -255,7 +288,13 @@ export function parseChangelog(source: string): ParsedChangelog {
     });
   }
 
-  return { unreleased, releases, categories, violations };
+  return {
+    unreleased,
+    releases,
+    categories,
+    violations,
+    unclosedFenceLine: fence !== null ? fenceLine : 0,
+  };
 }
 
 /**
@@ -271,6 +310,14 @@ export function checkChangelogStructure(
 ): ChangelogViolation[] {
   const parsed = parseChangelog(source);
   const violations = [...parsed.violations];
+
+  // Everything below reasons across the full set of headings, and an unclosed
+  // fence means we do not have one. Reporting "no release headings found" or
+  // "duplicate Unreleased" against a file we stopped reading a third of the way
+  // in sends the author chasing the wrong defect. The per-heading violations
+  // above are still sound — they were found before the fence — and the fence
+  // violation among them says exactly what to fix.
+  if (parsed.unclosedFenceLine > 0) return violations;
 
   // ── `## [Unreleased]`: present, once, and before every release ──────────
   if (parsed.unreleased.length === 0) {
@@ -317,7 +364,9 @@ export function checkChangelogStructure(
   parsed.releases.forEach((release, index) => {
     const previous = parsed.releases[index - 1];
     if (!previous) return;
-    if (compareVersions(previous.version, release.version) <= 0) {
+    // Strictly less-than, so equality belongs to the duplicate rule alone.
+    // Firing both turned one bad edit into "2 structural problems".
+    if (compareVersions(previous.version, release.version) < 0) {
       violations.push({
         line: release.line,
         message: `${release.version} is not below ${previous.version} in descending order (line ${previous.line}). Newest release first.`,
@@ -383,19 +432,37 @@ export function checkChangelogStructure(
  *
  * Violations in the base revision are ignored: the base may predate this check,
  * and a contributor cannot fix history from their branch anyway.
+ *
+ * Either side may be **untrustworthy** rather than merely wrong, though, and
+ * the comparison is then not made at all — see {@link HistoryCheck.skipped}.
+ * "Absent from the parsed list" and "absent from the file" are the same value
+ * here, so a truncated parse turns this rule into a liar in one direction and a
+ * no-op in the other.
  */
-export function checkReleaseHistoryPreserved(
-  baseSource: string,
-  headSource: string
-): ChangelogViolation[] {
-  const base = parseChangelog(baseSource);
+export function checkReleaseHistoryPreserved(baseSource: string, headSource: string): HistoryCheck {
   const head = parseChangelog(headSource);
+  // Head truncated: every swallowed release looks deleted. Reporting that would
+  // tell the author to re-add headings that are sitting right there, and bury
+  // the one message that names the real defect. The static rules already
+  // surfaced the fence.
+  if (head.unclosedFenceLine > 0) return { violations: [], skipped: 'head-unclosed-fence' };
+
+  const base = parseChangelog(baseSource);
+  // Base truncated: the opposite failure, and the worse one — releases we never
+  // read cannot be missed, so a genuine deletion passes. Say so rather than
+  // report a clean comparison. Not a violation: the damage is on a revision the
+  // contributor did not write and cannot fix from their branch.
+  if (base.unclosedFenceLine > 0) return { violations: [], skipped: 'base-unclosed-fence' };
+
   const present = new Set(head.releases.map((release) => release.version));
 
-  return base.releases
-    .filter((release) => !present.has(release.version))
-    .map((release) => ({
-      line: 0,
-      message: `Released heading \`## [${release.version}] — ${release.date}\` was deleted (it was at line ${release.line} on the base revision). Its entries now read as part of whichever release precedes them. Re-add the heading; anchor a new release entry on \`## [Unreleased]\` alone, never on a block that includes the previous release's heading.`,
-    }));
+  return {
+    violations: base.releases
+      .filter((release) => !present.has(release.version))
+      .map((release) => ({
+        line: 0,
+        message: `Released heading \`## [${release.version}] — ${release.date}\` was deleted (it was at line ${release.line} on the base revision). Its entries now read as part of whichever release precedes them. Re-add the heading; anchor a new release entry on \`## [Unreleased]\` alone, never on a block that includes the previous release's heading.`,
+      })),
+    skipped: null,
+  };
 }

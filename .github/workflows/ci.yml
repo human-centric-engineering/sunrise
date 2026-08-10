@@ -180,26 +180,23 @@ jobs:
       # the whole history on every docs-only PR to read one file. The script
       # treats an unreadable `--base` as a hard failure, so a broken fetch
       # surfaces instead of silently downgrading to the static rules.
+      #
+      # `HEAD^` is the right base for BOTH events, and for the same structural
+      # reason. On a PR, checkout gives us `refs/pull/N/merge`, whose first
+      # parent IS the base commit it was merged against — that is what the merge
+      # ref is made of, so there is no assumption to get wrong. On push, HEAD is
+      # the commit that just landed and `HEAD^` is the one before it.
+      #
+      # Deepening by `github.sha` and not by branch name matters: `--depth`
+      # counts from the tip of whatever is fetched, so `origin main` would
+      # deepen around the CURRENT tip. Another merge landing while this run sits
+      # in the queue would leave this commit's parent unfetched, `HEAD^` would
+      # be unreadable, and main would go red for a PR that never touched the
+      # file.
       - name: CHANGELOG structure
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # The base SHA the merge ref was computed against, not the branch
-            # tip: if main gains a release while the PR sits, the tip carries a
-            # heading this checkout legitimately does not have, and comparing
-            # against it would report that heading as deleted.
-            git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-            BASE=FETCH_HEAD
-          else
-            # Deepen to two so HEAD^ — the previous commit on main — exists.
-            # By SHA, not by branch name: --depth counts from the tip of what
-            # is fetched, so if another merge lands while this run is queued,
-            # `origin main` would deepen around the NEW tip and leave this
-            # commit's parent unfetched. HEAD^ would then be unreadable and the
-            # run would fail red on main for a PR that never touched the file.
-            git fetch --no-tags --depth=2 origin "${{ github.sha }}"
-            BASE='HEAD^'
-          fi
-          npx tsx scripts/ci/check-changelog.ts --base "$BASE"
+          git fetch --no-tags --depth=2 origin "${{ github.sha }}"
+          npx tsx scripts/ci/check-changelog.ts --base 'HEAD^'
       # Prettier does not format .prisma files, so drift from the pinned Prisma's
       # own formatter is invisible to format:check. Without this, an unformatted
       # schema lands on main and every fork's next `prisma format` — which

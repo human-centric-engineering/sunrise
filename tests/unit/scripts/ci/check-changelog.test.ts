@@ -190,9 +190,30 @@ describe('scripts/ci/check-changelog', () => {
       expect(stderr()).toBe('');
     });
 
-    it('fails if a ref was requested explicitly', async () => {
+    it('fails if a ref was requested explicitly, and says what git said', async () => {
       // CI passes a ref it has already fetched, so a failure to read it there
-      // means the wiring is broken, not that the check is inapplicable.
+      // means the wiring is broken, not that the check is inapplicable. The
+      // git message is forwarded because "no such ref", "git not installed"
+      // and "output exceeded maxBuffer" are otherwise one indistinguishable
+      // "fetch the base revision" — advice that is right for one of the three.
+      mockExecFileSync.mockImplementation(() => {
+        throw Object.assign(new Error('Command failed'), {
+          stderr: "fatal: invalid object name 'origin/main'.\n",
+        });
+      });
+
+      await run(['--base', 'origin/main']);
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(stderr()).toContain('Could not read CHANGELOG.md at "origin/main"');
+      expect(stderr()).toContain("git: fatal: invalid object name 'origin/main'.");
+    });
+
+    it('still prints the structural findings it already has', async () => {
+      // A base-fetch problem and a broken CHANGELOG can arrive together.
+      // Discarding the actionable half costs the contributor a whole round
+      // trip to learn something the script had already computed.
+      mockReadFileSync.mockReturnValue(VALID.replace('## [0.2.0]', '## [0.3.0]'));
       mockExecFileSync.mockImplementation(() => {
         throw new Error('fatal: bad revision');
       });
@@ -200,7 +221,92 @@ describe('scripts/ci/check-changelog', () => {
       await run(['--base', 'origin/main']);
 
       expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(stderr()).toContain('CHANGELOG.md has 1 structural problem:');
+      expect(stderr()).toContain('SUNRISE_VERSION');
       expect(stderr()).toContain('Could not read CHANGELOG.md at "origin/main"');
+    });
+  });
+
+  describe('when a parse is truncated by an unclosed fence', () => {
+    it('says the append-only comparison was skipped rather than reporting a pass', async () => {
+      // The base is damaged, not this contributor's branch — so it is not a
+      // violation and does not fail the PR. But the rule did not run, and
+      // "CHANGELOG.md OK (structure + history vs …)" would be a claim the
+      // script cannot make.
+      mockExecFileSync.mockImplementation((_cmd: string, gitArgs: string[]) =>
+        gitArgs[0] === 'merge-base' ? 'abc123\n' : `## [Unreleased]\n\n\`\`\`\n\n${VALID}`
+      );
+
+      await run();
+
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(stderr()).toContain('skipped the append-only comparison');
+      expect(logSpy).toHaveBeenCalledWith(
+        'CHANGELOG.md OK (structure (history vs abc123 skipped)).'
+      );
+    });
+
+    it('fails on the fence, without claiming a history comparison, when HEAD is truncated', async () => {
+      // The comparison is skipped because it could only produce nonsense, so
+      // the summary must not say "structure + history vs …". The run still
+      // fails — on the fence, which is the actual defect.
+      mockReadFileSync.mockReturnValue(`## [Unreleased]\n\n\`\`\`\n\n${VALID}`);
+      mockExecFileSync.mockImplementation((_cmd: string, gitArgs: string[]) =>
+        gitArgs[0] === 'merge-base' ? 'abc123\n' : VALID
+      );
+
+      await run();
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(stderr()).toContain('Unclosed code fence');
+      expect(stderr()).not.toContain('was deleted');
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when something throws a non-Error', () => {
+    it('still reports the git failure readably', async () => {
+      mockExecFileSync.mockImplementation(() => {
+        // Simulating a non-Error throw is the whole point here: the handler
+        // must not assume `.message` exists.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'git: command not found';
+      });
+
+      await run(['--base', 'origin/main']);
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(stderr()).toContain('git: git: command not found');
+    });
+
+    it('still reports the read failure readably', async () => {
+      mockReadFileSync.mockImplementation(() => {
+        // Simulating a non-Error throw is the whole point here: the handler
+        // must not assume `.message` exists.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'permission denied';
+      });
+
+      await run();
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(stderr()).toContain('permission denied');
+    });
+  });
+
+  describe('when CHANGELOG.md cannot be read', () => {
+    it('reports it instead of throwing a stack trace', async () => {
+      // This is the first link in `npm run validate`, so an unhandled throw
+      // aborts the whole chain before type-check even starts.
+      mockReadFileSync.mockImplementation(() => {
+        throw new Error("ENOENT: no such file or directory, open 'CHANGELOG.md'");
+      });
+
+      await expect(run()).resolves.toBeUndefined();
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(stderr()).toContain('Could not read');
+      expect(stderr()).toContain('ENOENT');
     });
   });
 
