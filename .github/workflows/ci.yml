@@ -219,7 +219,12 @@ jobs:
         if: needs.config.outputs.code == 'true'
         run: |
           npm run format:prisma:check || {
-            echo "::error::prisma/schema is not formatted per the pinned Prisma."
+            # Deliberately neutral. The script already prints the actionable
+            # message and distinguishes "not formatted" from "could not check"
+            # — an annotation that always says "not formatted" is wrong exactly
+            # when the cause is something else, and the annotation is what
+            # GitHub surfaces above the log.
+            echo "::error::Prisma schema format check failed — see the step log."
             exit 1
           }
       # Fork-owned CI checks seam. A fork adds an `app:ci-checks` script to

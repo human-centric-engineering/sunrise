@@ -86,9 +86,11 @@ upstream is named something else. CI is where that rule is enforced.
 
 ### The `Prisma schema format check` step
 
-Also ungated at the step level, and — since #510 — it runs the same
-`npm run format:prisma:check` that `npm run validate` does, rather than keeping
-its own copy of the logic. Prettier has no `.prisma` parser, so this drift is
+Unlike the CHANGELOG step above, this one **is** gated on the code filter
+(`if: needs.config.outputs.code == 'true'`) — correct, because editing a
+`.prisma` file sets `code=true`, and a docs-only PR cannot change schema
+formatting. Since #510 it runs the same `npm run format:prisma:check` that
+`npm run validate` does, rather than keeping its own copy of the logic. Prettier has no `.prisma` parser, so this drift is
 invisible to `format:check`, and while the check lived only in CI the first
 signal was a red job named "Lint & format" on a branch about something else.
 
