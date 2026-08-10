@@ -355,7 +355,7 @@ The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test
 npm test                  # Run all tests
 npm run test:watch        # Watch mode for development
 npm run test:coverage     # Run with coverage report
-npm run validate          # Type-check + lint + format check
+npm run validate          # CHANGELOG structure + type-check + lint + format check
 ```
 
 **Directories**:

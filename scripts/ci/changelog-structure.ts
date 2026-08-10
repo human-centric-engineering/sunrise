@@ -50,7 +50,7 @@ export interface ChangelogViolation {
  */
 export interface HistoryCheck {
   violations: ChangelogViolation[];
-  skipped: 'head-unclosed-fence' | 'base-unclosed-fence' | null;
+  skipped: 'head-truncated' | 'base-truncated' | null;
 }
 
 /** A well-formed `## [x.y.z] — YYYY-MM-DD` heading. */
@@ -79,15 +79,15 @@ export interface ParsedChangelog {
   /** Headings that are not one of the two recognized shapes. */
   violations: ChangelogViolation[];
   /**
-   * Opening line of a code fence that was never closed, or 0.
+   * Where reading stopped early, and what stopped it — or `null`.
    *
-   * When this is set the heading lists above are **truncated** — everything
-   * below that line went unread — so any rule that reasons across headings
+   * When this is set the heading lists above are **truncated**: everything
+   * below that line went unread, so any rule that reasons across headings
    * (uniqueness, ordering, `SUNRISE_VERSION` agreement, the history
    * comparison) would be drawing conclusions from a partial file. Callers must
    * check it before trusting those lists.
    */
-  unclosedFenceLine: number;
+  truncation: { line: number; kind: 'fence' | 'comment' } | null;
 }
 
 /**
@@ -179,12 +179,14 @@ export function parseChangelog(source: string): ParsedChangelog {
   const categories: CategoryHeading[] = [];
   const violations: ChangelogViolation[] = [];
 
-  /** The opening delimiter of the block we are inside, or null. */
+  /** The opening delimiter of the fenced block we are inside, or null. */
   let fence: string | null = null;
   let fenceLine = 0;
+  /** Opening line of the HTML comment we are inside, or 0. */
+  let commentLine = 0;
   let sectionLine = 0;
 
-  // A plain loop, not `forEach`: the fence state is mutated on almost every
+  // A plain loop, not `forEach`: the skip state is mutated on almost every
   // iteration and read again after the loop, and a closure defeats the
   // control-flow narrowing that read depends on.
   const lines = source.split('\n');
@@ -192,27 +194,51 @@ export function parseChangelog(source: string): ParsedChangelog {
     const text = lines[index];
     const line = index + 1;
 
-    const fenceMatch = FENCE_RE.exec(text);
-    if (fenceMatch) {
-      const [, marker, trailing] = fenceMatch;
-      if (fence === null) {
-        fence = marker;
-        fenceLine = line;
-      } else if (
-        marker[0] === fence[0] &&
-        marker.length >= fence.length &&
-        trailing.trim() === ''
+    // Whichever construct opened first stays in charge until it closes. A
+    // `<!--` inside a code block is sample text; a ``` inside a comment is
+    // commented out. Checking either unconditionally would let one end the
+    // other.
+    if (fence !== null) {
+      const closing = FENCE_RE.exec(text);
+      // CommonMark closes a block only on the same character, at least as long
+      // as the opening run, and with no info string. Comparing the character
+      // alone would let an inner ``` close an outer ````, which is precisely
+      // how one code block gets nested inside another — and the headings in
+      // between would then be read as real.
+      if (
+        closing &&
+        closing[1][0] === fence[0] &&
+        closing[1].length >= fence.length &&
+        closing[2].trim() === ''
       ) {
-        // CommonMark closes a block only on the same character, at least as
-        // long as the opening run, and with no info string. Comparing the
-        // character alone would let an inner ``` close an outer ````, which is
-        // precisely how one code block gets nested inside another — and the
-        // headings in between would then be read as real.
         fence = null;
       }
       continue;
     }
-    if (fence !== null) continue;
+
+    if (commentLine > 0) {
+      // Content after `-->` on the closing line is skipped too. A heading
+      // sharing a line with the end of a comment is not a thing anyone writes,
+      // and guessing at it would cost more than it could ever return.
+      if (text.includes('-->')) commentLine = 0;
+      continue;
+    }
+
+    const fenceMatch = FENCE_RE.exec(text);
+    // A backtick fence may not carry backticks in its info string, so a line
+    // like ```` ```npm run validate``` is now first ```` is a paragraph with
+    // code spans, not an opening fence. Reading it as one swallowed the rest of
+    // the file.
+    if (fenceMatch && !(fenceMatch[1][0] === '`' && fenceMatch[2].includes('`'))) {
+      fence = fenceMatch[1];
+      fenceLine = line;
+      continue;
+    }
+
+    if (text.includes('<!--') && !text.includes('-->')) {
+      commentLine = line;
+      continue;
+    }
 
     const category = CATEGORY_RE.exec(text);
     if (category) {
@@ -274,27 +300,29 @@ export function parseChangelog(source: string): ParsedChangelog {
     releases.push({ line, version: label, date: dateSuffix[1] });
   }
 
-  // An unclosed fence swallows the rest of the file, and silence is the worst
-  // possible response: every heading below it goes unread, and the static rules
-  // would then report a clean file. Naming it is only half the job, though —
-  // the truncated heading lists must not be reasoned over either, or the output
-  // fills with confident nonsense about a file nobody finished reading. That
-  // suppression lives in the two check functions below; `unclosedFenceLine` is
+  // An unclosed fence or comment swallows the rest of the file, and silence is
+  // the worst possible response: every heading below it goes unread, and the
+  // static rules would then report a clean file. Naming it is only half the job
+  // — the truncated heading lists must not be reasoned over either, or the
+  // output fills with confident nonsense about a file nobody finished reading.
+  // That suppression lives in the two check functions below; `truncation` is
   // how they know.
+  let truncation: ParsedChangelog['truncation'] = null;
   if (fence !== null) {
+    truncation = { line: fenceLine, kind: 'fence' };
     violations.push({
       line: fenceLine,
       message: `Unclosed code fence — everything below line ${fenceLine} was skipped, so no heading after it was checked. Close it with a matching \`${fence}\`.`,
     });
+  } else if (commentLine > 0) {
+    truncation = { line: commentLine, kind: 'comment' };
+    violations.push({
+      line: commentLine,
+      message: `Unclosed HTML comment — everything below line ${commentLine} was skipped, so no heading after it was checked. Close it with \`-->\`.`,
+    });
   }
 
-  return {
-    unreleased,
-    releases,
-    categories,
-    violations,
-    unclosedFenceLine: fence !== null ? fenceLine : 0,
-  };
+  return { unreleased, releases, categories, violations, truncation };
 }
 
 /**
@@ -311,13 +339,13 @@ export function checkChangelogStructure(
   const parsed = parseChangelog(source);
   const violations = [...parsed.violations];
 
-  // Everything below reasons across the full set of headings, and an unclosed
-  // fence means we do not have one. Reporting "no release headings found" or
+  // Everything below reasons across the full set of headings, and a truncated
+  // parse means we do not have one. Reporting "no release headings found" or
   // "duplicate Unreleased" against a file we stopped reading a third of the way
   // in sends the author chasing the wrong defect. The per-heading violations
   // above are still sound — they were found before the fence — and the fence
   // violation among them says exactly what to fix.
-  if (parsed.unclosedFenceLine > 0) return violations;
+  if (parsed.truncation) return violations;
 
   // ── `## [Unreleased]`: present, once, and before every release ──────────
   if (parsed.unreleased.length === 0) {
@@ -444,15 +472,15 @@ export function checkReleaseHistoryPreserved(baseSource: string, headSource: str
   // Head truncated: every swallowed release looks deleted. Reporting that would
   // tell the author to re-add headings that are sitting right there, and bury
   // the one message that names the real defect. The static rules already
-  // surfaced the fence.
-  if (head.unclosedFenceLine > 0) return { violations: [], skipped: 'head-unclosed-fence' };
+  // surfaced the unclosed fence or comment.
+  if (head.truncation) return { violations: [], skipped: 'head-truncated' };
 
   const base = parseChangelog(baseSource);
   // Base truncated: the opposite failure, and the worse one — releases we never
   // read cannot be missed, so a genuine deletion passes. Say so rather than
   // report a clean comparison. Not a violation: the damage is on a revision the
   // contributor did not write and cannot fix from their branch.
-  if (base.unclosedFenceLine > 0) return { violations: [], skipped: 'base-unclosed-fence' };
+  if (base.truncation) return { violations: [], skipped: 'base-truncated' };
 
   const present = new Set(head.releases.map((release) => release.version));
 

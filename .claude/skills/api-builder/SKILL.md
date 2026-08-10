@@ -275,7 +275,7 @@ Before declaring the endpoint done:
 - [ ] `successResponse` / `paginatedResponse` for happy path; throw typed errors otherwise
 - [ ] No `try/catch` in the handler (wrappers handle errors)
 - [ ] Tests handed off to the testing skill / `/test-write`
-- [ ] `npm run validate` passes (lint + type-check + format)
+- [ ] `npm run validate` passes (CHANGELOG structure + lint + type-check + format)
 
 ---
 

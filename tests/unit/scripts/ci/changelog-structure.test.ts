@@ -157,7 +157,7 @@ Quoting the release instructions:
     expect(check(source)).toEqual([
       expect.stringContaining('Unclosed code fence — everything below line 5 was skipped'),
     ]);
-    expect(parseChangelog(source).unclosedFenceLine).toBe(5);
+    expect(parseChangelog(source).truncation).toEqual({ line: 5, kind: 'fence' });
   });
 
   it('reports ONLY the fence when the parse is truncated', () => {
@@ -227,6 +227,118 @@ Quoting the release instructions:
 
     expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
     expect(parsed.violations).toEqual([]);
+  });
+
+  it('does not read a heading inside an HTML comment as live', () => {
+    // Commenting a heading out rather than deleting it satisfied the
+    // append-only rule while the heading was invisible in the rendered file —
+    // a clean bypass of the one rule this whole check exists for.
+    const source = `## [Unreleased]
+
+<!--
+## [9.9.9] — 2026-09-01
+### Draft
+-->
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.categories).toEqual([]);
+    expect(parsed.violations).toEqual([]);
+  });
+
+  it('does not let a comment marker inside a fence start a comment', () => {
+    // Whichever construct opened first stays in charge. A `<!--` in a code
+    // sample is sample text, and treating it as a comment opener would swallow
+    // everything after the fence closed.
+    const source = `## [Unreleased]
+
+\`\`\`html
+<!--
+\`\`\`
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.truncation).toBeNull();
+  });
+
+  it('does not let a fence inside a comment start a code block', () => {
+    // The mirror of the case above.
+    const source = `## [Unreleased]
+
+<!--
+\`\`\`
+-->
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.truncation).toBeNull();
+  });
+
+  it('reports an unclosed HTML comment', () => {
+    const source = `## [Unreleased]
+
+## [0.2.0] — 2026-06-25
+
+<!--
+## [0.1.0] — 2026-06-24
+`;
+
+    expect(check(source)).toEqual([
+      expect.stringContaining('Unclosed HTML comment — everything below line 5 was skipped'),
+    ]);
+    expect(parseChangelog(source).truncation).toEqual({ line: 5, kind: 'comment' });
+  });
+
+  it('treats a single-line comment as closed', () => {
+    const source = `## [Unreleased]
+
+<!-- a note -->
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.truncation).toBeNull();
+  });
+
+  it('does not open a fence on a line of inline code spans', () => {
+    // CommonMark forbids backticks in a backtick fence's info string, so this
+    // is a paragraph. Reading it as a fence swallowed the rest of the file and
+    // failed the run with "Unclosed code fence" on a correct changelog.
+    const source = `## [Unreleased]
+
+\`\`\`npm run validate\`\`\` is now first in the chain.
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.truncation).toBeNull();
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+  });
+
+  it('still opens a tilde fence whose info string contains backticks', () => {
+    // The backtick restriction is specific to backtick fences.
+    const source = `## [Unreleased]
+
+~~~\`js\`
+## [9.9.9] — 2026-09-01
+~~~
+
+## [0.2.0] — 2026-06-25
+`;
+
+    expect(parseChangelog(source).releases.map((r) => r.version)).toEqual(['0.2.0']);
   });
 
   it('leaves #### and deeper headings alone', () => {
@@ -591,8 +703,26 @@ describe('checkReleaseHistoryPreserved', () => {
 
       expect(checkReleaseHistoryPreserved(base, head)).toEqual({
         violations: [],
-        skipped: 'head-unclosed-fence',
+        skipped: 'head-truncated',
       });
+    });
+
+    it('makes no comparison when HEAD hides a heading in a comment', () => {
+      // Commenting out `## [0.1.0]` used to pass the append-only rule outright:
+      // the parser read it as live while the rendered file no longer showed it.
+      // Now the comment is honoured, so 0.1.0 is genuinely absent and reported.
+      const head = `## [Unreleased]
+
+## [0.2.0] — 2026-06-25
+
+<!--
+## [0.1.0] — 2026-06-24
+-->
+`;
+
+      expect(messages(checkReleaseHistoryPreserved(base, head).violations)).toEqual([
+        expect.stringContaining('`## [0.1.0] — 2026-06-24` was deleted'),
+      ]);
     });
 
     it('makes no comparison at all when the BASE is truncated', () => {
@@ -614,7 +744,7 @@ describe('checkReleaseHistoryPreserved', () => {
 
       expect(checkReleaseHistoryPreserved(truncatedBase, reallyDeleted)).toEqual({
         violations: [],
-        skipped: 'base-unclosed-fence',
+        skipped: 'base-truncated',
       });
     });
   });

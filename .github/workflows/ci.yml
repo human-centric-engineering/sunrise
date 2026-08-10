@@ -193,9 +193,17 @@ jobs:
       # in the queue would leave this commit's parent unfetched, `HEAD^` would
       # be unreadable, and main would go red for a PR that never touched the
       # file.
+      #
+      # Guarded, because `--depth` TRUNCATES a complete clone as readily as it
+      # deepens a shallow one: on a full checkout this fetch takes the repo from
+      # its whole history down to two commits. Vanilla Sunrise checks out at
+      # depth 1 so it would be a no-op here — but the two fork-seam steps below
+      # run later in this same job, and a fork that raised the job to
+      # `fetch-depth: 0` so its `app:ci-checks` could look at history would find
+      # the history gone by the time its own check ran.
       - name: CHANGELOG structure
         run: |
-          git fetch --no-tags --depth=2 origin "${{ github.sha }}"
+          git cat-file -e 'HEAD^' 2>/dev/null || git fetch --no-tags --depth=2 origin "${{ github.sha }}"
           npx tsx scripts/ci/check-changelog.ts --base 'HEAD^'
       # Prettier does not format .prisma files, so drift from the pinned Prisma's
       # own formatter is invisible to format:check. Without this, an unformatted

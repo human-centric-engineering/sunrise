@@ -341,5 +341,5 @@ npm run test -- tests/unit/lib/orchestration/knowledge/
 - [ ] Test search returns relevant results
 - [ ] PDF documents went through preview → confirm flow
 - [ ] Tests written and passing under `tests/unit/lib/orchestration/knowledge/`
-- [ ] `npm run validate` passes (type-check + lint + format)
+- [ ] `npm run validate` passes (CHANGELOG structure + type-check + lint + format)
 - [ ] Run `/pre-pr` before merging the feature branch

@@ -859,7 +859,7 @@ The `flatMap` form survives refactors that move the schema deeper (e.g. wrap it 
 3. Run `npm run type-check` - Zero type errors
 4. Run `npm run format:check` - Clean (if it fails, `npx prettier --write` the edited paths and re-verify)
 5. Check coverage with `npm run test:coverage`
-6. Run `npm run validate` - Runs type-check + lint + format:check in one command
+6. Run `npm run validate` - Runs the CHANGELOG check + type-check + lint + format:check in one command
 
 ---
 

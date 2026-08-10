@@ -414,5 +414,5 @@ npm run test -- tests/unit/lib/orchestration/engine/executors/
 - [ ] Budget limit set for production workflows
 - [ ] Error strategies chosen per-step for critical paths
 - [ ] Tests written and passing under `tests/unit/lib/orchestration/workflows/`
-- [ ] `npm run validate` passes (type-check + lint + format)
+- [ ] `npm run validate` passes (CHANGELOG structure + type-check + lint + format)
 - [ ] Run `/pre-pr` before merging the feature branch

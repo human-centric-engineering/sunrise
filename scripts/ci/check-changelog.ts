@@ -154,19 +154,23 @@ function main(): number {
   if (baseChangelog !== null) {
     const history = checkReleaseHistoryPreserved(baseChangelog, changelog);
     violations.push(...history.violations);
-    if (history.skipped === 'base-unclosed-fence') {
+    if (history.skipped === 'base-truncated') {
       // Not a violation — the damage is on a revision this contributor did not
       // write. But the rule did not run, and reporting a clean comparison it
-      // never made is the exact failure this check exists to prevent.
+      // never made is the exact failure this check exists to prevent. Under
+      // Actions a plain stderr line would sit unread inside a green step, so
+      // it goes out as a warning annotation.
+      const prefix = process.env.GITHUB_ACTIONS === 'true' ? '::warning::' : 'Note: ';
       console.error(
-        `Note: skipped the append-only comparison — ${CHANGELOG} at ${base} has an unclosed code fence, so its release list cannot be read in full.`
+        `${prefix}skipped the append-only comparison — ${CHANGELOG} at ${base} has an unclosed code fence or HTML comment, so its release list cannot be read in full.`
       );
       historyScope = `structure (history vs ${base} skipped)`;
     } else if (history.skipped === null) {
       historyScope = `structure + history vs ${base}`;
     }
-    // 'head-unclosed-fence' leaves the scope at 'structure': the fence is
-    // already among the violations below, so the run fails and says why.
+    // 'head-truncated' leaves the scope at 'structure': the unclosed fence or
+    // comment is already among the violations below, so the run fails and says
+    // why.
   } else if (requested.present) {
     // Print what we already found first. A base-fetch problem and a broken
     // CHANGELOG can arrive together, and throwing away the actionable half
@@ -187,5 +191,9 @@ function main(): number {
   return 0;
 }
 
-const exitCode = main();
-if (exitCode !== 0) process.exit(exitCode);
+// `process.exitCode`, not `process.exit()`. stderr is asynchronous when it is a
+// pipe — which it is under both `npm run` and GitHub Actions — and
+// `process.exit()` discards whatever is still queued. A check whose failure
+// message can vanish is worse than no check. Nothing keeps the loop alive after
+// `main()` returns, so setting the code is equivalent and safe.
+process.exitCode = main();

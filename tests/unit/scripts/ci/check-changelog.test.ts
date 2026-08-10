@@ -46,9 +46,18 @@ const HEADING_DELETED = VALID.replace('## [0.1.0] — 2026-06-24\n', '');
 
 describe('scripts/ci/check-changelog', () => {
   let originalArgv: string[];
-  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let originalExitCode: typeof process.exitCode;
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
+
+  /**
+   * The script sets `process.exitCode` rather than calling `process.exit()`, so
+   * every case has to restore it — otherwise a test asserting a failure would
+   * hand vitest's own process a non-zero code and fail the whole run.
+   */
+  function exitCode(): typeof process.exitCode {
+    return process.exitCode;
+  }
 
   /** Every message the script wrote to stderr, joined for substring matching. */
   function stderr(): string {
@@ -64,11 +73,8 @@ describe('scripts/ci/check-changelog', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     originalArgv = [...process.argv];
-    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      // Deliberately does not throw: the script's control flow after a
-      // process.exit() is unreachable in production, and letting it continue
-      // here would assert on states that cannot occur.
-    }) as never);
+    originalExitCode = process.exitCode;
+    process.exitCode = 0;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     mockReadFileSync.mockReturnValue(VALID);
@@ -76,6 +82,7 @@ describe('scripts/ci/check-changelog', () => {
 
   afterEach(() => {
     process.argv = originalArgv;
+    process.exitCode = originalExitCode;
     vi.restoreAllMocks();
   });
 
@@ -101,7 +108,7 @@ describe('scripts/ci/check-changelog', () => {
         ['show', 'abc123:CHANGELOG.md'],
         expect.anything()
       );
-      expect(exitSpy).not.toHaveBeenCalled();
+      expect(exitCode()).toBe(0);
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('history vs abc123'));
     });
 
@@ -120,7 +127,7 @@ describe('scripts/ci/check-changelog', () => {
         expect.arrayContaining(['merge-base']),
         expect.anything()
       );
-      expect(exitSpy).not.toHaveBeenCalled();
+      expect(exitCode()).toBe(0);
     });
 
     it('accepts the --base=<ref> form', async () => {
@@ -167,7 +174,7 @@ describe('scripts/ci/check-changelog', () => {
 
         await run(args);
 
-        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(exitCode()).toBe(1);
         expect(stderr()).toContain('`--base` needs a revision — got an empty value');
         // Specifically: it must not fall through to the merge-base fallback.
         expect(mockExecFileSync).not.toHaveBeenCalled();
@@ -185,7 +192,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run();
 
-      expect(exitSpy).not.toHaveBeenCalled();
+      expect(exitCode()).toBe(0);
       expect(logSpy).toHaveBeenCalledWith('CHANGELOG.md OK (structure).');
       expect(stderr()).toBe('');
     });
@@ -204,7 +211,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run(['--base', 'origin/main']);
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('Could not read CHANGELOG.md at "origin/main"');
       expect(stderr()).toContain("git: fatal: invalid object name 'origin/main'.");
     });
@@ -220,7 +227,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run(['--base', 'origin/main']);
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('CHANGELOG.md has 1 structural problem:');
       expect(stderr()).toContain('SUNRISE_VERSION');
       expect(stderr()).toContain('Could not read CHANGELOG.md at "origin/main"');
@@ -239,7 +246,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run();
 
-      expect(exitSpy).not.toHaveBeenCalled();
+      expect(exitCode()).toBe(0);
       expect(stderr()).toContain('skipped the append-only comparison');
       expect(logSpy).toHaveBeenCalledWith(
         'CHANGELOG.md OK (structure (history vs abc123 skipped)).'
@@ -257,10 +264,26 @@ describe('scripts/ci/check-changelog', () => {
 
       await run();
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('Unclosed code fence');
       expect(stderr()).not.toContain('was deleted');
       expect(logSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when running under GitHub Actions', () => {
+    it('raises the skipped comparison as a warning annotation', async () => {
+      // A plain stderr line sits unread inside a green step. `::warning::` is
+      // what actually surfaces it, which the module doc says callers must do.
+      vi.stubEnv('GITHUB_ACTIONS', 'true');
+      mockExecFileSync.mockImplementation((_cmd: string, gitArgs: string[]) =>
+        gitArgs[0] === 'merge-base' ? 'abc123\n' : `## [Unreleased]\n\n\`\`\`\n\n${VALID}`
+      );
+
+      await run();
+
+      expect(stderr()).toContain('::warning::skipped the append-only comparison');
+      vi.unstubAllEnvs();
     });
   });
 
@@ -275,7 +298,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run(['--base', 'origin/main']);
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('git: git: command not found');
     });
 
@@ -289,7 +312,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run();
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('permission denied');
     });
   });
@@ -304,7 +327,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await expect(run()).resolves.toBeUndefined();
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('Could not read');
       expect(stderr()).toContain('ENOENT');
     });
@@ -316,7 +339,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run(['--base', 'main']);
 
-      expect(exitSpy).not.toHaveBeenCalled();
+      expect(exitCode()).toBe(0);
       expect(logSpy).toHaveBeenCalledWith('CHANGELOG.md OK (structure + history vs main).');
     });
 
@@ -328,7 +351,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run();
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('CHANGELOG.md has 1 structural problem:');
       expect(stderr()).toContain('CHANGELOG.md:3');
       expect(stderr()).toContain('SUNRISE_VERSION');
@@ -343,7 +366,7 @@ describe('scripts/ci/check-changelog', () => {
 
       await run();
 
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitCode()).toBe(1);
       expect(stderr()).toContain('`## [0.1.0] — 2026-06-24` was deleted');
     });
 
