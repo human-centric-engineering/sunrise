@@ -74,12 +74,15 @@ merge base with `origin/main`, and **skips the history rule quietly** when that
 is unavailable — a fresh clone with no remote, a detached HEAD, or a fork whose
 upstream is named something else. CI is where that rule is enforced.
 
-> **Fork note.** The check assumes the CHANGELOG carries Sunrise's release
+> **Fork note.** The check assumes `CHANGELOG.md` carries Sunrise's release
 > history. A fork that empties the file, or renumbers it to its own app
-> versions, will fail both the append-only rule and the `SUNRISE_VERSION`
-> agreement rule. Keep Sunrise's history in `CHANGELOG.md` and put your app's
-> release notes in a file of your own; all four current forks already do the
-> former by default, simply by merging upstream.
+> versions, fails the `SUNRISE_VERSION` agreement rule on **every** PR
+> thereafter, since the topmost heading no longer names the platform release
+> the fork is on. The append-only rule is the milder half: it fails on the PR
+> that does the emptying and then goes quiet, because from the next PR onward
+> the emptied file is the base. Keep Sunrise's history in `CHANGELOG.md` and
+> put your app's release notes in a file of your own; all four current forks
+> already do the former by default, simply by merging upstream.
 
 ### Universal speedups (on for everyone)
 

@@ -97,6 +97,26 @@ Quoting the release instructions:
     expect(parseChangelog(source).releases.map((r) => r.version)).toEqual(['0.2.0']);
   });
 
+  it('does not let a different fence character close an open fence', () => {
+    // A `~~~` line inside a ``` block is content, not a closing fence — which
+    // is exactly why one gets nested inside the other in the first place.
+    // Treating it as a close would reopen parsing mid-block and read the
+    // headings after it as real.
+    const source = `## [Unreleased]
+
+\`\`\`
+~~~
+## [9.9.9] — 2026-01-01
+\`\`\`
+
+## [0.2.0] — 2026-06-25
+`;
+    const parsed = parseChangelog(source);
+
+    expect(parsed.releases.map((release) => release.version)).toEqual(['0.2.0']);
+    expect(parsed.violations).toEqual([]);
+  });
+
   it('leaves #### and deeper headings alone', () => {
     const parsed = parseChangelog(`## [Unreleased]
 
