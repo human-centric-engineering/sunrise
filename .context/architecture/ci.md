@@ -100,8 +100,12 @@ never reformats, because core never edits them. A Prisma bump upstream
 therefore invalidates the formatting of files only the fork owns, and until now
 no fork could catch it before pushing.
 
-The check formats a **copy** in a temp directory and compares, rather than
-running the formatter over `prisma/schema` and diffing against git. The git
+The check walks `prisma/schema` recursively (so does `prisma format`), runs
+Prisma's declared entry point under `node` rather than `npx` or the `.bin`
+shim — neither of which can be spawned on Windows without a shell, and a shell
+concatenates argv without escaping — and formats a **copy** in a temp directory
+and compares, rather than running the formatter over `prisma/schema` and
+diffing against git. The git
 form is correct only on a clean tree: run it while editing a schema and it
 reports your own well-formatted uncommitted work as drift. `npm run
 format:prisma` is the mutating fixer; `format:prisma:check` never writes, which

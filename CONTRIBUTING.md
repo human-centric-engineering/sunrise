@@ -255,13 +255,28 @@ rather than trusted**:
 
 4. **Re-insert `libc` at the JSON level**, never with text munging, immediately
    after `cpu` so npm's key order is preserved.
-5. **Verify the net diff, not the intent.** Assert both that only the packages
-   you meant to move changed, and that the `libc` carrier set is unchanged:
+5. **Verify the net diff, not the intent.** Three assertions, all of which have
+   to be assertions — a bare expression that computes a diff and never checks it
+   is how a 181-package change looks fine:
 
    ```python
-   changed = [k for k in set(a) & set(b) if a[k] != b[k]]
+   import json
+   a = json.load(open('/tmp/lock.before.json'))['packages']
+   b = json.load(open('package-lock.json'))['packages']
+
+   EXPECTED = {'node_modules/engine.io', 'node_modules/socket.io-adapter', ...}
+
+   # Nothing appeared or vanished that you did not intend.
+   assert set(a) ^ set(b) <= EXPECTED, set(a) ^ set(b)
+   # Nothing else moved.
+   changed = {k for k in set(a) & set(b) if a[k] != b[k]}
+   assert changed <= EXPECTED, changed - EXPECTED
+   # And the native-metadata carriers are exactly as they were.
    assert {k for k, v in a.items() if 'libc' in v} == {k for k, v in b.items() if 'libc' in v}
    ```
+
+   The symmetric difference matters as much as the intersection: comparing only
+   `set(a) & set(b)` cannot see a package that was added or dropped outright.
 
 6. **`npm ci --dry-run`** to confirm the lockfile is still coherent.
 

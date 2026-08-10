@@ -10,7 +10,15 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,8 +29,7 @@ import {
   describeError,
   findUnformatted,
   listSchemaFiles,
-  prismaBin,
-  prismaSpawnOptions,
+  prismaEntry,
   rewriteScratchPaths,
 } from '@/scripts/ci/prisma-format';
 
@@ -138,8 +145,12 @@ describe('scripts/ci/prisma-format', () => {
 
       expect(findUnformatted(dir)).toEqual([]);
 
-      // …while the git-based form calls the same tree dirty.
-      execFileSync('npx', ['prisma', 'format', '--schema', dir], { stdio: 'ignore' });
+      // …while the git-based form calls the same tree dirty. Spawned the same
+      // way the code under test does — `npx` here would ENOENT on Windows, in
+      // the very PR that makes `validate` work there.
+      execFileSync(process.execPath, [prismaEntry(), 'format', '--schema', dir], {
+        stdio: 'ignore',
+      });
       let gitSaysDirty = false;
       try {
         execFileSync('git', ['diff', '--exit-code'], { cwd: dir, stdio: 'ignore' });
@@ -158,55 +169,70 @@ describe('scripts/ci/prisma-format', () => {
     });
   });
 
-  describe('prismaBin', () => {
-    it('uses the local POSIX bin, unquoted', () => {
-      // Unquoted because there is no shell to split it; quoting here would
-      // become part of the filename.
-      expect(prismaBin('darwin', '/repo')).toBe('prisma');
-      expect(prismaBin('darwin', process.cwd())).toBe(
-        join(process.cwd(), 'node_modules', '.bin', 'prisma')
+  describe('prismaEntry', () => {
+    it("resolves a real file from Prisma's own bin declaration", () => {
+      const entry = prismaEntry();
+
+      expect(existsSync(entry)).toBe(true);
+      // Not a hardcoded guess at the layout: it comes from `bin.prisma` in
+      // prisma/package.json, so it survives the package rearranging itself.
+      const manifest: { bin: { prisma: string } } = JSON.parse(
+        readFileSync(join(process.cwd(), 'node_modules', 'prisma', 'package.json'), 'utf8')
       );
+      expect(entry.endsWith(manifest.bin.prisma)).toBe(true);
     });
 
-    it('uses the .cmd shim, quoted, on Windows', () => {
-      // Node refuses to spawn a .cmd without a shell (CVE-2024-27980), so the
-      // call passes `shell: true` there — and a shell splits on the spaces a
-      // Windows checkout path contains, hence the quotes. Same reasoning as
-      // `resolveBin` in scripts/dev-server.mjs.
-      //
-      // The shim has to EXIST for the name to matter: with no local install
-      // both platforms fall back to the bare `prisma`, so asserting against a
-      // nonexistent root would pass with the `.cmd` branch deleted.
-      mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
-      writeFileSync(join(dir, 'node_modules', '.bin', 'prisma.cmd'), '');
+    it('follows the bin field wherever it points, not a hardcoded layout', () => {
+      // The whole reason for reading the manifest. A fixture declaring a
+      // different path proves the value is read rather than guessed — asserting
+      // against the real prisma cannot, since the guess happens to be right
+      // today.
+      const fake = join(dir, 'node_modules', 'prisma');
+      mkdirSync(fake, { recursive: true });
+      writeFileSync(
+        join(fake, 'package.json'),
+        JSON.stringify({ name: 'prisma', version: '0.0.0', bin: { prisma: 'somewhere/else.js' } })
+      );
 
-      expect(prismaBin('win32', dir)).toBe(`"${join(dir, 'node_modules', '.bin', 'prisma.cmd')}"`);
+      // `realpathSync` because Node's resolver returns the resolved path, and
+      // on macOS `/var` is a symlink to `/private/var`.
+      expect(prismaEntry(dir)).toBe(join(realpathSync(fake), 'somewhere', 'else.js'));
     });
 
-    it('falls back to the bare name when no local bin is installed', () => {
-      expect(prismaBin('linux', '/definitely/not/a/repo')).toBe('prisma');
+    it('names the manifest when it declares no bin.prisma', () => {
+      const fake = join(dir, 'node_modules', 'prisma');
+      mkdirSync(fake, { recursive: true });
+      writeFileSync(join(fake, 'package.json'), JSON.stringify({ name: 'prisma' }));
+
+      expect(() => prismaEntry(dir)).toThrow(/declares no "bin\.prisma"/);
+    });
+
+    it('throws when prisma is not installed at all', () => {
+      expect(() => prismaEntry('/definitely/not/a/repo')).toThrow();
     });
   });
 
-  describe('prismaSpawnOptions', () => {
-    it.each([
-      ['win32', true],
-      ['darwin', false],
-      ['linux', false],
-    ])('uses shell=%s on %s only where the bin needs one', (platform, expected) => {
-      expect(prismaSpawnOptions(platform as NodeJS.Platform).shell).toBe(expected);
-    });
+  describe('a temp directory containing a space', () => {
+    it('still formats, because nothing goes through a shell', () => {
+      // The argument at risk is the SCRATCH path, not the schema path — that
+      // is the one handed to `--schema`. `os.tmpdir()` on Windows sits under
+      // `%USERPROFILE%`, so a contributor called "John Smith" gets a space in
+      // it; with `shell: true` Node concatenates argv without escaping (it
+      // emits DEP0190 saying exactly that) and Prisma receives a truncated
+      // `--schema`.
+      //
+      // Reproduced on POSIX by pointing TMPDIR at a directory with a space,
+      // which is what `mkdtempSync` builds the scratch path from. An earlier
+      // version of this test put the space in the SOURCE directory, which is
+      // never passed to Prisma — it passed with or without a shell.
+      const spacedTmp = join(dir, 'tmp with space');
+      mkdirSync(spacedTmp);
+      vi.stubEnv('TMPDIR', spacedTmp);
 
-    it('agrees with the binary prismaBin hands back', () => {
-      // The invariant, stated once: a `.cmd` requires a shell, anything else
-      // must not have one. Asserted together so neither can drift alone.
-      mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true });
-      writeFileSync(join(dir, 'node_modules', '.bin', 'prisma.cmd'), '');
+      writeFileSync(join(dir, 'widget.prisma'), UNTIDY_MODEL);
 
-      for (const platform of ['win32', 'darwin', 'linux'] as NodeJS.Platform[]) {
-        const bin = prismaBin(platform, dir);
-        expect(prismaSpawnOptions(platform).shell).toBe(bin.includes('.cmd'));
-      }
+      expect(findUnformatted(dir)).toEqual(['widget.prisma']);
+      vi.unstubAllEnvs();
     });
   });
 
@@ -307,8 +333,9 @@ describe('scripts/ci/prisma-format', () => {
     });
 
     it('exits 1 with the reason when the schema cannot be parsed', () => {
-      // Not a silent pass, and not a raw stack trace out of the first link in
-      // `npm run validate`.
+      // Not a silent pass, and not a raw stack trace out of `npm run validate`
+      // — this check is its last link, so a throw here would land after four
+      // other gates had already passed and read as if one of them broke.
       writeFileSync(join(dir, 'widget.prisma'), 'model Widget { id String @id');
       const { out } = capture();
 

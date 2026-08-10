@@ -42,15 +42,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-} from 'node:fs';
+import { createRequire } from 'node:module';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -76,47 +69,41 @@ export function listSchemaFiles(dir: string): string[] {
 }
 
 /**
- * The local Prisma binary.
+ * Prisma's own declared entry point, to be run with `process.execPath`.
  *
- * Not `npx`: Node cannot spawn `npx`/`prisma.cmd` on Windows without a shell,
- * and this now runs inside `npm run validate`, so getting it wrong breaks the
- * documented pre-commit command rather than just a CI step. Mirrors
- * `resolveBin` in `scripts/dev-server.mjs`, including the quoting — a shell
- * splits on the spaces a Windows checkout path contains.
+ * Deliberately not `npx`, and deliberately not the `node_modules/.bin` shim.
+ * Both force a shell on Windows — Node refuses to spawn a `.cmd` without one
+ * (CVE-2024-27980) — and `shell: true` concatenates argv without escaping it.
+ * Node says so itself: passing args alongside it emits DEP0190, "the arguments
+ * are not escaped, only concatenated". An earlier draft of this file quoted the
+ * binary and missed the one argument that can contain a space, the scratch
+ * path: `os.tmpdir()` on Windows sits under `%USERPROFILE%`, so every
+ * contributor called "John Smith" would have got `Could not check
+ * prisma/schema` on a perfectly formatted schema.
  *
- * `platform` and `root` are parameters so the Windows path can be asserted from
- * a POSIX machine. Nobody here runs Windows, which is exactly why the branch
- * needs a test rather than a comment.
+ * Spawning `node <entry>` uses no shell, so nothing needs quoting and there is
+ * no platform branch left to get wrong. The path comes from the `bin` field of
+ * Prisma's own `package.json` rather than a hardcoded guess, so it survives the
+ * package rearranging itself.
  */
-export function prismaBin(
-  platform: NodeJS.Platform = process.platform,
-  root = process.cwd()
-): string {
-  const isWindows = platform === 'win32';
-  const local = join(root, 'node_modules', '.bin', isWindows ? 'prisma.cmd' : 'prisma');
-  const command = existsSync(local) ? local : 'prisma';
-  return isWindows ? `"${command}"` : command;
-}
+export function prismaEntry(root = process.cwd()): string {
+  const requireFrom = createRequire(join(root, 'noop.js'));
+  const manifestPath = requireFrom.resolve('prisma/package.json');
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const bin =
+    typeof manifest === 'object' &&
+    manifest !== null &&
+    'bin' in manifest &&
+    typeof manifest.bin === 'object' &&
+    manifest.bin !== null &&
+    'prisma' in manifest.bin
+      ? (manifest.bin as Record<string, unknown>).prisma
+      : undefined;
 
-/**
- * Spawn options paired with {@link prismaBin}.
- *
- * The pairing is the invariant, not the flag: `prismaBin` hands back a `.cmd`
- * on Windows, and Node refuses to spawn one without a shell
- * (CVE-2024-27980). Deleting `shell` would leave macOS and Linux CI perfectly
- * green while breaking every Windows contributor's `npm run validate`, so it
- * is a parameter and a test asserts the two agree.
- */
-export function prismaSpawnOptions(platform: NodeJS.Platform = process.platform): {
-  encoding: 'utf8';
-  stdio: ['ignore', 'pipe', 'pipe'];
-  shell: boolean;
-} {
-  return {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: platform === 'win32',
-  };
+  if (typeof bin !== 'string') {
+    throw new Error(`prisma/package.json declares no "bin.prisma" (looked in ${manifestPath})`);
+  }
+  return join(dirname(manifestPath), bin);
 }
 
 /** The message from a thrown value, whatever it turned out to be. */
@@ -135,7 +122,7 @@ export function describeError(error: unknown): string {
  * A plain substitution of the scratch path is enough, and that is deliberate.
  * An earlier draft also rewrote the realpath and cwd-relative spellings —
  * Prisma emits a `../../..` form when invoked through `npx`. Invoking the local
- * binary directly (see {@link prismaBin}) it prints absolute paths only, so
+ * binary directly (see {@link prismaEntry}) it prints absolute paths only, so
  * that machinery was unreachable and no test could exercise it. If a future
  * Prisma emits another spelling, the end-to-end assertion that no
  * `sunrise-prisma-fmt-` path survives will say so, and it can be added back
@@ -163,7 +150,10 @@ export function findUnformatted(schemaDir: string): string[] {
     // The pinned Prisma's own formatter, run over the copy. `--schema` wins
     // over any path in prisma.config.ts, which is what makes the copy work.
     try {
-      execFileSync(prismaBin(), ['format', '--schema', scratch], prismaSpawnOptions());
+      execFileSync(process.execPath, [prismaEntry(), 'format', '--schema', scratch], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     } catch (error) {
       throw new Error(rewriteScratchPaths(describeError(error), scratch, schemaDir));
     }

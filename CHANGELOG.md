@@ -269,9 +269,11 @@ release process.
   as drift — the exact situation a local check exists for. It walks
   `prisma/schema` **recursively**, because `prisma format` does, and a flat
   listing would silently skip a fork's nested schema files while failing P1012
-  on any relation that crossed into them. It invokes the local Prisma binary
-  rather than `npx`, since Node cannot spawn `npx` or a `.cmd` shim on Windows
-  without a shell and this now runs inside `validate`. Formatter errors are
+  on any relation that crossed into them. It runs Prisma's own declared entry
+  point under `process.execPath` rather than `npx` or the `.bin` shim: both
+  force a shell on Windows, and `shell: true` concatenates argv without
+  escaping it (Node emits DEP0190 saying so), which would split any temp path
+  containing a space — `os.tmpdir()` there sits under `%USERPROFILE%`. Formatter errors are
   rewritten to name the real schema path: Prisma reports against the copy, and
   the copy is deleted before the message prints. `format:prisma` is the
   mutating fixer, mirroring `format` / `format:check` (#510).
