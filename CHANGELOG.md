@@ -187,12 +187,12 @@ release process.
   `advertisedToolNames` from `getCapabilityDefinitions` and feeds a
   `tool_not_advertised` result back to the model, keeping the assistant+tool
   message pair intact so the next provider call stays well-formed. Swept the
-  other dispatch callers: `tool_call` reads its slug from admin-authored step
-  config and MCP resolves an advertised name to its row before dispatching, so
-  neither takes a name from a model. MCP does — the host behind an MCP key is
-  an LLM — and it resolves against the globally exposed tool set, which is the
-  grant; it does **not** check the calling key's scoped agent, which is
-  deliberate opt-out scoping documented in `.context/orchestration/mcp.md`. The
+  other dispatch callers: three of the four take a name from a model. Chat is
+  guarded (#476); MCP is too — the host behind an MCP key is an LLM — and it
+  checks the globally exposed tool set, which is the grant, though **not** the
+  calling key's scoped agent, that being deliberate opt-out scoping documented
+  in `.context/orchestration/mcp.md`. Only `tool_call` is not model-driven at
+  all: its slug comes from Zod-parsed, admin-authored step config. The
   dispatcher note claiming the chat guard "closes the reachable path" is
   corrected: it was true of one of the two model-driven surfaces. The refusal
   also emits `capability.refused_not_advertised`, the hook the chat handler

@@ -565,6 +565,62 @@ describe('executeAgentCall', () => {
     );
   });
 
+  it('emits the hook once per name, not once per iteration', async () => {
+    // The model is free to re-emit a refused name every iteration, and each
+    // emission writes a delivery row plus an outbound POST per subscription.
+    // Through an orchestrator (rounds x delegations x iterations) one poisoned
+    // document would otherwise fan out to dozens.
+    const { emitHookEvent } = await import('@/lib/orchestration/hooks/registry');
+    vi.mocked(getCapabilityDefinitions).mockResolvedValue([
+      {
+        name: 'search',
+        description: 'search tool',
+        parameters: { type: 'object', properties: {} },
+      },
+    ]);
+    for (let i = 0; i < 3; i++) {
+      mockChat.mockResolvedValueOnce({
+        content: 'Trying again...',
+        toolCalls: [{ id: `tc_${i}`, name: 'apply_audit_changes', arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+        finishReason: 'tool_use',
+        model: 'claude-sonnet-4-20250514',
+      });
+    }
+    mockChat.mockResolvedValueOnce({
+      content: 'Gave up on it.',
+      usage: { inputTokens: 10, outputTokens: 5 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    const refusalEmissions = vi
+      .mocked(emitHookEvent)
+      .mock.calls.filter(([type]) => type === 'capability.refused_not_advertised');
+    expect(refusalEmissions).toHaveLength(1);
+  });
+
+  it('passes no tools to the provider when the agent has none', async () => {
+    // The default fixture advertises four tools since #559, which removed the
+    // only coverage of the empty case. A regression always sending `tools`
+    // (and always stamping `toolCount` into the trace snapshot) would
+    // otherwise stay green.
+    vi.mocked(getCapabilityDefinitions).mockResolvedValue([]);
+    mockChat.mockResolvedValueOnce({
+      content: 'No tools needed.',
+      usage: { inputTokens: 10, outputTokens: 5 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    const options = mockChat.mock.calls[0][1] as Record<string, unknown>;
+    expect(options.tools).toBeUndefined();
+  });
+
   it('handles tool call loop: dispatches capability and loops back', async () => {
     // First call: model wants a tool
     mockChat.mockResolvedValueOnce({

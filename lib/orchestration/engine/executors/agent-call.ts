@@ -157,6 +157,9 @@ async function runSingleTurn(
   let totalCostUsd = startCost;
   let finalContent = startContent;
   let currentMessages = startMessages ? [...startMessages] : [...initialMessages];
+  // Names already refused this turn, so the hook fires once per distinct name
+  // rather than once per iteration — see the emission site for why.
+  const refusedToolNames = new Set<string>();
 
   for (let iteration = startIteration; iteration < maxIterations; iteration++) {
     const turnOutcome = await withSpan(
@@ -336,13 +339,21 @@ async function runSingleTurn(
          * #476 closed this on chat and its dispatcher note claimed the path was
          * closed generally. It was closed on one of the two surfaces.
          *
-         * Trace caveat: in MULTI-TURN mode the executor deliberately passes no
-         * `recordTurn` (see the note at the multi-turn branch), so a refusal
-         * there leaves no trace entry — the step still returns whatever the
-         * model said next, and the only durable evidence is this log line and
-         * the hook below. Single-turn mode records it as a `continuing` turn
-         * carrying the `tool_not_advertised` result. Worth knowing before
-         * relying on the trace alone to spot injected tool calls.
+         * Trace caveat: a refusal reaches the trace only when `recordTurn` was
+         * passed down, and it often is not — multi-turn mode deliberately
+         * omits it, and `orchestrator.ts` sets `recordTurn: undefined` on
+         * every delegated context. Delegations run single-turn, so an earlier
+         * version of this note claiming "single-turn mode records it" was
+         * wrong about the highest-risk path of all: planner output choosing a
+         * delegate whose injected content then names an un-granted tool.
+         *
+         * Where `recordTurn` IS present, the refusal is recorded as a
+         * `continuing` turn carrying the `tool_not_advertised` result.
+         * Everywhere else the durable evidence is this log line and the hook
+         * below — so do not rely on the trace alone to spot injected tool
+         * calls. Note also that a delegation's `stepId` is the synthetic
+         * `${step.id}_delegate_${agentSlug}`, which matches no step in the
+         * workflow definition; correlate on `executionId`.
          */
         const advertisedToolNames = new Set(toolDefinitions.map((t) => t.name));
 
@@ -368,15 +379,25 @@ async function runSingleTurn(
           // coverage, which is the whole point of emitting from both. No
           // `conversationId` here: the workflow equivalents are the execution
           // and step, so they take its place.
-          emitHookEvent('capability.refused_not_advertised', {
-            executionId: ctx.executionId,
-            stepId: step.id,
-            agentId: agent!.id,
-            agentSlug: agent!.slug,
-            userId: ctx.userId,
-            toolName: toolCall.name,
-            advertised: [...advertisedToolNames],
-          });
+          // Once per distinct name per turn. The model is free to re-emit a
+          // refused name every iteration, and each emission creates an
+          // `AiEventHookDelivery` row plus an outbound POST per subscription —
+          // through an orchestrator (rounds x delegations x iterations) one
+          // poisoned document could otherwise fan out to dozens of deliveries.
+          // The security signal is "this name was attempted", which the first
+          // emission carries; the per-iteration detail stays in the log above.
+          if (!refusedToolNames.has(toolCall.name)) {
+            refusedToolNames.add(toolCall.name);
+            emitHookEvent('capability.refused_not_advertised', {
+              executionId: ctx.executionId,
+              stepId: step.id,
+              agentId: agent!.id,
+              agentSlug: agent!.slug,
+              userId: ctx.userId,
+              toolName: toolCall.name,
+              advertised: [...advertisedToolNames],
+            });
+          }
           // Shaped like a dispatch result and fed back as one, so the loop
           // continues with the assistant+tool message pair intact — an
           // assistant toolCall with no matching tool result makes the NEXT
