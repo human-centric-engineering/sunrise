@@ -176,7 +176,8 @@ describe('scripts/ci/check-prisma-format', () => {
       const { out } = capture();
 
       expect(checkPrismaFormat(dir)).toBe(0);
-      expect(out()).toContain('prisma/schema OK (2 files).');
+      // Names the directory it was ACTUALLY given, not the module constant.
+      expect(out()).toContain(`${dir} OK (2 files).`);
     });
 
     it('exits 1, names each file, and says how to fix it', () => {
@@ -185,7 +186,7 @@ describe('scripts/ci/check-prisma-format', () => {
 
       expect(checkPrismaFormat(dir)).toBe(1);
       expect(out()).toContain('1 schema file not formatted');
-      expect(out()).toContain('prisma/schema/widget.prisma');
+      expect(out()).toContain(join(dir, 'widget.prisma'));
       expect(out()).toContain("Run 'npm run format:prisma'");
       // The fork case is the one most likely to hit this and least likely to
       // guess why, so the message has to name it.

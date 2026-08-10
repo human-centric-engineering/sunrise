@@ -39,7 +39,7 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 const SCHEMA_DIR = 'prisma/schema';
 
@@ -87,7 +87,9 @@ export function describeError(error: unknown): string {
  * Takes the directory rather than resolving it, so the failure paths can be
  * exercised against real files in a temp dir instead of a mocked filesystem —
  * a mock here would only assert that this file's author guessed right about
- * how `prisma format` behaves.
+ * how `prisma format` behaves. Every message therefore names `schemaDir`, not
+ * the module constant: a function that accepts a directory and then reports a
+ * different one is the kind of small lie that costs someone an afternoon.
  */
 export function checkPrismaFormat(schemaDir: string): number {
   let unformatted: string[];
@@ -103,7 +105,7 @@ export function checkPrismaFormat(schemaDir: string): number {
     console.error(
       `${unformatted.length} schema file${unformatted.length === 1 ? '' : 's'} not formatted per the pinned Prisma:`
     );
-    for (const name of unformatted) console.error(`  ${join(SCHEMA_DIR, name)}`);
+    for (const name of unformatted) console.error(`  ${join(schemaDir, name)}`);
     console.error('');
     console.error("Run 'npm run format:prisma' and commit the result.");
     console.error(
@@ -113,11 +115,13 @@ export function checkPrismaFormat(schemaDir: string): number {
     return 1;
   }
 
-  console.log(`${SCHEMA_DIR} OK (${listSchemaFiles(schemaDir).length} files).`);
+  console.log(`${schemaDir} OK (${listSchemaFiles(schemaDir).length} files).`);
   return 0;
 }
 
 // `process.exitCode`, not `process.exit()` — stderr is asynchronous when it is
 // a pipe, which it is under both `npm run` and GitHub Actions, and exiting
 // discards whatever is still queued.
-process.exitCode = checkPrismaFormat(resolve(process.cwd(), SCHEMA_DIR));
+// The relative constant, not an absolute path: `readdirSync` resolves it
+// against cwd either way, and it is what the messages should show.
+process.exitCode = checkPrismaFormat(SCHEMA_DIR);
