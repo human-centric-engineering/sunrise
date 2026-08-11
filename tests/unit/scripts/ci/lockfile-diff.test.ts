@@ -92,6 +92,7 @@ describe('diffLockfiles', () => {
       removed: [],
       changed: [],
       lostNativeMetadata: [],
+      gainedNativeMetadata: [],
       overridesChanged: false,
     });
     expect(hasRisk(diff)).toBe(false);
@@ -199,6 +200,40 @@ describe('diffLockfiles', () => {
 
     expect(diff.lostNativeMetadata).toEqual([]);
     expect(hasRisk(diff)).toBe(false);
+    // Reported, though — the #571 repair was 101 packages gaining `libc` and
+    // nothing else, and this tool called that "no platform-metadata change".
+    expect(diff.gainedNativeMetadata).toEqual([
+      { name: 'node_modules/@napi-rs/canvas-linux-x64-gnu', keys: ['libc'] },
+    ]);
+  });
+
+  it('reports every gained key, not just the first', () => {
+    const base = clone(BASE);
+    const entry = base.packages!['node_modules/@napi-rs/canvas-linux-x64-gnu'];
+    delete entry.libc;
+    delete entry.cpu;
+
+    expect(diffLockfiles(base, BASE).gainedNativeMetadata[0].keys).toEqual(['cpu', 'libc']);
+  });
+
+  it('does not report a gain for a brand-new package', () => {
+    // Every added native package would otherwise read as "gained metadata",
+    // which is noise on any ordinary dependency addition.
+    const head = clone(BASE);
+    head.packages!['node_modules/brand-new'] = {
+      version: '1.0.0',
+      os: ['linux'],
+      libc: ['musl'],
+    };
+
+    expect(diffLockfiles(BASE, head).gainedNativeMetadata).toEqual([]);
+  });
+
+  it('does not gate on a gain', () => {
+    const base = clone(BASE);
+    delete base.packages!['node_modules/@napi-rs/canvas-linux-x64-gnu'].libc;
+
+    expect(hasRisk(diffLockfiles(base, BASE))).toBe(false);
   });
 
   it('reports every lost key, not just the first', () => {

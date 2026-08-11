@@ -228,33 +228,49 @@ recomputing it is the entire point, so that rule cannot be followed — 0.8.1 wa
 exactly this case (a security patch needing `npm update engine.io
 socket.io-adapter`) and the steps above offered no path for it.
 
-The problem is real: on macOS the recompute strips `libc` from the native Linux
-packages. During the 0.8.1 cut it dropped the key from all five carriers, and
-the obvious repair was worse than the damage — a line-scanning script to put it
-back ran away and modified **181 packages**, producing a lockfile that looked
-plausible and was wrong. It was caught only by diffing package-by-package
-against a snapshot taken beforehand.
+The problem is real, and it is **your npm version, not your operating system**.
+`@npmcli/arborist` did not list `libc` among the fields it serialises until
+9.4.0, first shipped in **npm 11.11.0**. Below that, every lockfile write
+deletes the key — on macOS, Linux and Alpine alike. Measured here: `npm install
+--package-lock-only` under npm 11.6.0 is a no-op that still removes 15 lines and
+adds none. Newer npm _preserves_ `libc` but never _restores_ it, because once
+the field is gone the tree is "up to date" and nothing recomputes the metadata.
+
+That is why the key kept reappearing and vanishing: dependabot's runner uses a
+current npm and writes it back; a local `npm install` strips it again. During
+the 0.8.1 cut it dropped all five carriers, and the obvious repair was worse
+than the damage — a line-scanning script to put it back ran away and modified
+**181 packages**, producing a lockfile that looked plausible and was wrong. It
+was caught only by diffing package-by-package against a snapshot.
+
+`libc` matters because it is the only field separating a musl build from a glibc
+one, and production is `node:20-alpine`. With it missing, a musl install pulls
+in **both** variants: measured on this lockfile, 2.4 GB of `node_modules`
+against 2.0 GB, including `sharp-linux-x64` and `swc-linux-x64-gnu` landing in a
+musl image. Nothing errors, which is why it went unnoticed for a release.
 
 So the answer is not more care. It is a flow where each step is **verified
 rather than trusted**:
 
-1. **Snapshot first.** `cp package-lock.json /tmp/lock.before.json`
-2. **Run the update.** `npm update <the specific packages>` — never a bare
+1. **Check `npm -v` first.** Below 11.11.0, expect the loss and plan on step 4.
+2. **Snapshot.** `cp package-lock.json /tmp/lock.before.json`
+3. **Run the update.** `npm update <the specific packages>` — never a bare
    `npm install`.
-3. **Prove the writer is faithful before you use it.** A Python round-trip is
-   byte-identical to npm's own writer on this lockfile, which is what makes
-   JSON-level editing safe. Check it rather than assuming — it is one line, and
-   if it ever stops being true this whole approach is invalid:
+4. **Restore `libc` from the registry:**
 
-   ```python
-   import json
-   raw = open('package-lock.json','rb').read()
-   out = (json.dumps(json.load(open('package-lock.json')), indent=2, ensure_ascii=False) + '\n').encode()
-   assert out == raw
+   ```bash
+   npm run fix:lockfile-libc -- --check   # what is missing
+   npm run fix:lockfile-libc              # put it back
    ```
 
-4. **Re-insert `libc` at the JSON level**, never with text munging, immediately
-   after `cpu` so npm's key order is preserved.
+   This reads each package's full packument at its exact locked version, so it
+   cannot move a version by construction, and it inserts the key where npm's
+   serialiser would. It refuses to write if the lockfile does not survive a JSON
+   round-trip, or if an existing value disagrees with the registry. Validated by
+   strip-and-restore against `d5b913fb^` — the last lockfile a modern npm wrote
+   — which comes back byte-identical. Never hand-edit the field; that is the
+   181-package mistake.
+
 5. **Verify the net diff, not the intent.** Three assertions, all of which have
    to be assertions — a bare expression that computes a diff and never checks it
    is how a 181-package change looks fine:
@@ -271,14 +287,19 @@ rather than trusted**:
    # Nothing else moved.
    changed = {k for k in set(a) & set(b) if a[k] != b[k]}
    assert changed <= EXPECTED, changed - EXPECTED
-   # And the native-metadata carriers are exactly as they were.
-   assert {k for k, v in a.items() if 'libc' in v} == {k for k, v in b.items() if 'libc' in v}
+   # And no carrier was lost. Gaining one is the repair working; losing one is
+   # the bug. An equality assertion here would fail the fix and pass the fault.
+   carriers = lambda p: {k for k, v in p.items() if 'libc' in v}
+   assert carriers(a) - carriers(b) <= EXPECTED, carriers(a) - carriers(b)
    ```
 
    The symmetric difference matters as much as the intersection: comparing only
    `set(a) & set(b)` cannot see a package that was added or dropped outright.
 
-6. **`npm ci --dry-run`** to confirm the lockfile is still coherent.
+6. **`npm run check:lockfile`** — the same rules `/pre-pr` runs, against the
+   merge base. It gates on lost metadata, a direct downgrade, or an `overrides`
+   change, and reports restored metadata without gating.
+7. **`npm ci --dry-run`** to confirm the lockfile is still coherent.
 
 For 0.8.1 this turned a "221 packages changed" install into a verified **3
 changed packages plus one dedupe**, with the carrier set provably untouched.

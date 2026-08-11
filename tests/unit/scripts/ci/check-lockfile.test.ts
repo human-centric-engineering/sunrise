@@ -98,7 +98,11 @@ describe('scripts/ci/check-lockfile', () => {
 
     expect(process.exitCode).toBe(1);
     expect(out()).toContain('node_modules/native lost libc');
-    expect(out()).toContain('recomputed on macOS');
+    // The message used to blame macOS. It is the npm version — arborist below
+    // 9.4.0 omits `libc` from the fields it serialises, on every platform —
+    // and the version is the part a reader can act on.
+    expect(out()).toContain('npm below 11.11.0');
+    expect(out()).toContain('npm run fix:lockfile-libc');
   });
 
   it('skips quietly with no base and no flag', async () => {

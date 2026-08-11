@@ -277,6 +277,20 @@ release process.
   rewritten to name the real schema path: Prisma reports against the copy, and
   the copy is deleted before the message prints. `format:prisma` is the
   mutating fixer, mirroring `format` / `format:check` (#510).
+- **`npm run fix:lockfile-libc`** restores `libc` to `package-lock.json` from
+  the registry, with `--check` to report without writing. Needed because npm
+  below 11.11.0 deletes the field on every write and no npm puts it back — once
+  it is gone the tree reads as up to date, so nothing recomputes the metadata.
+  It reads each package's full packument at its exact locked version, so a
+  version cannot move by construction, and inserts the key where npm's
+  serialiser would put it (alphabetically among the scalar keys, which is after
+  `dev`, not immediately after `cpu`). It refuses to write when the lockfile
+  does not survive a JSON round-trip, when the registry is unreachable, or when
+  an existing value disagrees. Validated by strip-and-restore against
+  `d5b913fb^`, the last lockfile a modern npm wrote: delete all 77 `libc`
+  fields, rebuild from the registry, and the file comes back byte-identical.
+  Deliberately not in `validate` or CI — it needs the network, and the
+  automated guard is `check:lockfile` (#571).
 - **`npm run check:lockfile` and `npm run check:exports`**, both wired into
   `/pre-pr`, which was silent on two classes of change it should never have
   been. A PR whose entire substance is `package-lock.json` got a clean bill
@@ -284,9 +298,10 @@ release process.
   during the 0.8.1 cut, where `npm update` stripped `libc` from five native
   Linux packages. That one was caught by hand before it was committed, so
   0.8.1 shipped clean; an earlier dependabot merge was not, and **v0.8.0
-  shipped with 72 packages already missing `libc`**, which is still the state
-  of `main`. Every fork inherited it by taking 0.8.0 — nothing to do with the
-  0.8.1 upgrade. See #571. `check:lockfile` compares the parsed trees and fails on the things
+  shipped with 72 packages already missing `libc`**. Every fork inherited it by
+  taking 0.8.0 — nothing to do with the 0.8.1 upgrade. Repaired in the same
+  release; see the Fixed entry for #571. `check:lockfile` compares the parsed
+  trees and fails on the things
   that need a decision: platform metadata (`libc`/`os`/`cpu`) lost, a **direct**
   dependency moved backwards, or `overrides` changed. Transitive downgrades are
   listed but do not gate — measured over all 134 lockfile commits in this
@@ -333,6 +348,21 @@ release process.
 
 ### Fixed
 
+- **`package-lock.json` declares `libc` again on 101 native Linux packages.**
+  Production is `node:20-alpine` (musl) and `libc` is the only field separating
+  `@img/sharp-linux-x64` from `@img/sharp-linuxmusl-x64` — both are otherwise
+  just `os: linux, cpu: x64`. Without it a musl install resolves **both**
+  variants: measured, `node_modules` went 2.4 GB → 2.0 GB once the field was
+  restored, with `sharp-linux-x64`, `sharp-libvips-linux-x64`,
+  `swc-linux-x64-gnu` and `oxide-linux-x64-gnu` no longer landing in a musl
+  image. Nothing errored, which is why it survived a release. The cause is
+  **npm below 11.11.0**, not macOS as previously documented: `@npmcli/arborist`
+  omitted `libc` from its serialised field list until 9.4.0, so every write
+  deleted the key on every platform, while dependabot's newer npm kept adding
+  it back. Restored from each package's registry manifest at its exact locked
+  version — no version moved, nothing added or removed, 303 insertions and zero
+  deletions. Forks on 0.8.0 or later inherit the fault and should take this
+  merge (#571).
 - **The capability admin form no longer degrades a stored tool schema when you
   edit it.** The visual builder holds four fields per parameter — name, type,
   description, required — and rebuilt each parameter from those alone, so

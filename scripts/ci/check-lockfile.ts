@@ -187,6 +187,7 @@ export function main(argv: string[]): number {
     diff.removed.length === 0 &&
     diff.changed.length === 0 &&
     diff.lostNativeMetadata.length === 0 &&
+    diff.gainedNativeMetadata.length === 0 &&
     !diff.overridesChanged;
 
   if (nothingMoved) {
@@ -218,6 +219,13 @@ export function main(argv: string[]): number {
     console.log(`  ~ ${label} ${change.from} → ${change.to}${note}`);
   }
 
+  if (diff.gainedNativeMetadata.length > 0) {
+    const keys = [...new Set(diff.gainedNativeMetadata.flatMap((entry) => entry.keys))].sort();
+    console.log(
+      `  ${diff.gainedNativeMetadata.length} package(s) gained ${keys.join(', ')} — platform metadata restored.`
+    );
+  }
+
   if (!hasRisk(diff)) {
     const transitive = diff.changed.filter((c) => c.downgrade).length;
     console.log('');
@@ -235,13 +243,10 @@ export function main(argv: string[]): number {
     console.error(`  ${lost.name} lost ${lost.keys.join(', ')}`);
   }
   if (diff.lostNativeMetadata.length > 0) {
-    console.error(
-      '  → npm dropped platform metadata, which happens when the tree is recomputed on macOS.'
-    );
-    console.error(
-      '    The lockfile will install fine locally and wrong on Linux. See CONTRIBUTING.md,'
-    );
-    console.error('    "Cutting a release that changes dependencies".');
+    console.error('  → npm below 11.11.0 deletes `libc` from every entry it writes, on every');
+    console.error('    platform — check `npm -v`. The lockfile will install fine locally and');
+    console.error('    wrong on Alpine. Repair with `npm run fix:lockfile-libc`; background in');
+    console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
   }
 
   for (const change of diff.changed.filter((entry) => entry.downgrade && entry.direct)) {

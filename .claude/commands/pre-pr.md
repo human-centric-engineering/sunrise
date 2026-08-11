@@ -61,13 +61,20 @@ npm run check:lockfile -- --base "$BASE"
 
 Exit 1 means something needs a decision: platform metadata (`libc`/`os`/`cpu`)
 lost — including across a hoist — a **direct** dependency moved backwards, or
-`overrides` changed. Lost metadata is the one that has actually bitten; see
-#571 and CONTRIBUTING's "Cutting a release that changes dependencies" for the
-repair. Transitive downgrades are listed but do not fail.
+`overrides` changed. Lost metadata is the one that has actually bitten (#571).
+The cause is almost always **npm below 11.11.0**, which deletes `libc` from
+every entry it writes on every platform; check `npm -v`, then repair with `npm
+run fix:lockfile-libc` and re-run this. Transitive downgrades are listed but do
+not fail.
 
 Note the all-clear says "no version or platform-metadata change", not
 "unchanged": these rules do not read `dev`, `resolved`, `integrity` or `link`,
 so a `dependencies` ↔ `devDependencies` move is not something they can see.
+
+Metadata _gained_ is reported and never gates — a package becoming more precise
+is not a risk. It is printed because the #571 repair changed nothing but `libc`
+on 101 packages, and a check that called that "no platform-metadata change"
+would be describing the one thing the PR did as nothing at all.
 
 **Public surface** — always:
 

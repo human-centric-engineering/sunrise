@@ -13,17 +13,21 @@
  *
  * The one that was NOT caught is `d5b913fb` (2026-07-29), a dependabot merge
  * that took 77 packages' `libc` to zero. Five were restored before v0.8.0, so
- * that release shipped with 72 missing and every fork inherited them; `main`
- * is still in that state. Nothing was lost between 0.8.0 and 0.8.1 (#571).
+ * that release shipped with 72 missing and every fork inherited them. Nothing
+ * was lost between 0.8.0 and 0.8.1. Repaired in #571, which restored 101
+ * fields — more than the 77 lost, because dependabot's surgical updates had
+ * only ever written the field for entries in the subtrees they touched.
  *
  * Line counts are useless here: a lockfile diff is thousands of lines and says
  * nothing about which packages actually moved. These rules compare the parsed
  * trees instead, and report the four things that carry real risk:
  *
  * 1. **Lost native metadata.** `libc` / `os` / `cpu` tell npm which platform a
- *    binary is for. Recomputing the tree on macOS drops them from Linux
- *    packages, and the resulting lockfile installs fine locally and wrong in
- *    production. This is the one that actually happened.
+ *    binary is for. **npm below 11.11.0 deletes `libc` from every entry it
+ *    writes** — not a macOS quirk, as an earlier version of this comment said,
+ *    but `@npmcli/arborist` omitting the key from its serialised field list
+ *    until 9.4.0. The resulting lockfile installs fine locally and wrong in
+ *    production. This is the one that actually happened (#571).
  * 2. **Downgrades of a direct dependency.** A version going backwards is how a
  *    patched dependency quietly returns to a vulnerable one. Only *direct*
  *    ones gate, which is a measured decision rather than a taste — see
@@ -103,17 +107,28 @@ export interface VersionChange {
   direct: boolean;
 }
 
-/** A package that lost one or more platform-metadata keys. */
-export interface LostNativeMetadata {
+/** A package whose platform-metadata keys changed in one direction. */
+export interface NativeMetadataChange {
   name: string;
   keys: string[];
 }
+
+/** @deprecated Kept as the original name for {@link NativeMetadataChange}. */
+export type LostNativeMetadata = NativeMetadataChange;
 
 export interface LockfileDiff {
   added: string[];
   removed: string[];
   changed: VersionChange[];
-  lostNativeMetadata: LostNativeMetadata[];
+  lostNativeMetadata: NativeMetadataChange[];
+  /**
+   * Packages that gained `libc`/`os`/`cpu` at the same tree path.
+   *
+   * Informational — {@link hasRisk} ignores it. Same-path only: a gain across
+   * a hoist is indistinguishable from a brand-new package, and reporting every
+   * newly-added native package as "gained metadata" would be noise.
+   */
+  gainedNativeMetadata: NativeMetadataChange[];
   overridesChanged: boolean;
 }
 
@@ -182,7 +197,8 @@ export function diffLockfiles(
   const removed = baseNames.filter((name) => !headNames.has(name)).sort();
 
   const changed: VersionChange[] = [];
-  const lostNativeMetadata: LostNativeMetadata[] = [];
+  const lostNativeMetadata: NativeMetadataChange[] = [];
+  const gainedNativeMetadata: NativeMetadataChange[] = [];
 
   for (const name of baseNames) {
     const before = basePackages[name];
@@ -201,14 +217,23 @@ export function diffLockfiles(
       }
     }
 
-    // Only *losses* count. A package gaining `os`/`cpu` is the ecosystem
-    // getting more precise, which is never the failure being guarded against.
+    // Only losses can *gate* — a package gaining `os`/`cpu`/`libc` is the
+    // ecosystem getting more precise, never the failure being guarded against.
     // Sorted, not in declaration order: this text is read by a human comparing
     // one run to another.
     const lost: string[] = nativeKeysOf(before)
       .filter((key) => after[key] === undefined)
       .sort();
     if (lost.length > 0) lostNativeMetadata.push({ name, keys: lost });
+
+    // Gains are still *reported*. Without this the #571 repair — 101 packages
+    // regaining `libc`, no version moving — was described by this very tool as
+    // "no version or platform-metadata change", which is a plain false
+    // statement about the one thing the PR did.
+    const gained: string[] = nativeKeysOf(after)
+      .filter((key) => before[key] === undefined)
+      .sort();
+    if (gained.length > 0) gainedNativeMetadata.push({ name, keys: gained });
   }
 
   // The same check across a HOIST. `npm update` — the operation this rule
@@ -243,12 +268,14 @@ export function diffLockfiles(
 
   changed.sort((a, b) => a.name.localeCompare(b.name));
   lostNativeMetadata.sort((a, b) => a.name.localeCompare(b.name));
+  gainedNativeMetadata.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     added,
     removed,
     changed,
     lostNativeMetadata,
+    gainedNativeMetadata,
     // Sorted, so alphabetising or reformatting `overrides` is not reported as
     // a semantic change and answered with "Intentional?".
     overridesChanged:
