@@ -277,6 +277,27 @@ release process.
   rewritten to name the real schema path: Prisma reports against the copy, and
   the copy is deleted before the message prints. `format:prisma` is the
   mutating fixer, mirroring `format` / `format:check` (#510).
+- **Scheduled `Dependency Audit` workflow** (Mondays, plus `workflow_dispatch`)
+  asking whether the tree is clean **as it stands** — the question
+  `dependency-review` cannot answer, because it diffs a PR and so goes green
+  forever once a vulnerable version is on `main`. Dependabot does watch the
+  tree and does work here, but has no package to bump when the fix lives in a
+  **grandparent**: `ws@8.20.1` sat behind `engine.io` and `socket.io-adapter`,
+  both declaring `ws: ~8.20.1` and neither vulnerable, so no PR was raised and
+  the alert stayed open seven weeks (#538). `adm-zip` is in that state today.
+  Two independent jobs: `npm run check:audit`, and the absolute counterpart to
+  `check:lockfile` via `fix:lockfile-libc --check`, which catches `libc`
+  missing since before the base commit — the state `main` was in for two
+  releases (#571) and which no diff check can see. **Forks inherit both**, and
+  neither needs Advanced Security, so unlike CodeQL and dependency-review they
+  run on private forks too. `check:audit` fails only on findings actionable
+  today (at or above the floor with a non-major fix) and reports the rest to
+  the job summary: measured against this repo, two of eight high advisories had
+  no fix at all, so a plain `npm audit --audit-level=high` would have failed
+  every week from day one for something nobody could clear. Gating on
+  fixability is self-clearing — the day `epub2` accepts a patched `adm-zip`,
+  the job goes red on its own, with no allowlist to curate. `--floor=` raises
+  the bar, `--report` never fails (#549).
 - **`npm run fix:lockfile-libc`** restores `libc` to `package-lock.json` from
   the registry, with `--check` to report without writing. Needed because npm
   below 11.11.0 deletes the field on every write and no npm puts it back — once

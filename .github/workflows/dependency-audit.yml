@@ -1,0 +1,84 @@
+name: Dependency Audit
+
+# Asks whether the tree is clean **as it stands**. Nothing else here can.
+#
+# `dependency-review` runs on `pull_request` and diffs base against head, so it
+# gates what a PR *adds*; once a vulnerable version is on `main`, no later PR
+# introduces it and that check stays green forever. Dependabot does watch the
+# tree, and on this repo it works — but it has no package to bump when the fix
+# lives in a **grandparent**. `ws@8.20.1` (#538) sat behind `engine.io` and
+# `socket.io-adapter`, both declaring `ws: ~8.20.1` and neither vulnerable, so
+# no PR was ever raised and the alert stayed open for seven weeks (#549).
+#
+# The stronger reason is forks. A fork inherits this file for free; it does not
+# inherit anyone watching a Security tab, and a private fork must enable alerts
+# explicitly. Unlike CodeQL and dependency-review, nothing here needs Advanced
+# Security, so there is no visibility guard — this runs on private forks too.
+#
+# Scheduled rather than per-PR on purpose: both jobs depend on third-party
+# feeds (the advisory database, the npm registry), and a PR gate that fails
+# because an advisory was published overnight fails for reasons that have
+# nothing to do with the PR.
+
+on:
+  schedule:
+    - cron: '41 4 * * 1' # Mondays 04:41 UTC — after the 03:27 CodeQL/secret sweeps
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Two jobs rather than two steps, so one failing does not hide the other.
+  # They answer unrelated questions and a maintainer needs both signals.
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20' # matches ci.yml; this repo has no .nvmrc
+          cache: npm
+
+      # Needed for `tsx`, not for the audit itself — `npm audit` reads the
+      # lockfile. Plain `npm ci`, matching every other job in this repo.
+      - name: Install dependencies
+        run: npm ci
+
+      # Fails only on findings that are actionable today: high+ with a
+      # non-major fix published. Everything else is printed and written to the
+      # job summary without failing — see scripts/ci/audit-advisories.ts for
+      # why, measured against this repo's real advisory set.
+      - name: Audit dependencies
+        run: npm run check:audit
+
+  lockfile-libc:
+    name: Lockfile platform metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The absolute counterpart to `check:lockfile`, which is a *diff* check
+      # and so cannot see metadata that was already missing before the base
+      # commit — exactly the state `main` was in for two releases (#571).
+      #
+      # This asks the registry what each locked version actually declares. It
+      # has to: there is no offline rule that works. "A linux package with a
+      # musl sibling must declare libc" looks right and is wrong —
+      # `@unrs/resolver-binding-linux-arm-musleabihf` is musl-specific and
+      # declares none upstream, so the heuristic false-positives. Needing the
+      # network is the reason this lives on a schedule and not in `validate`.
+      - name: Check libc metadata is complete
+        run: npm run fix:lockfile-libc -- --check
