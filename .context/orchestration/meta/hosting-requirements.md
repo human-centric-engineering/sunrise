@@ -2,7 +2,7 @@
 
 What it takes to run Sunrise in production with the agentic layer enabled, the gotchas that bite first, and how the realistic deployment targets compare. Written for engineers picking a platform **and** for smart readers who haven't deployed much before.
 
-**Last updated:** 2026-05-06
+**Last updated:** 2026-08-11
 
 ---
 
@@ -64,17 +64,19 @@ Sunrise runs as a **single long-lived Node 20+ process** built from `next build`
 
 ### 1.2 Native dependencies
 
-In plain terms: a few of the libraries Sunrise uses are not pure JavaScript — they include compiled binaries. Most platforms handle this transparently; the only platform-level catch is that very stripped-down Linux images (Alpine) need an extra package.
+In plain terms: a few of the libraries Sunrise uses are not pure JavaScript — they include compiled binaries. Most platforms handle this transparently; the platform-level catch is that Alpine uses **musl** rather than glibc, so it needs the musl build of anything compiled.
 
-| Dependency      | Purpose                                  | Host implication                                          |
-| --------------- | ---------------------------------------- | --------------------------------------------------------- |
-| `sharp`         | Image transforms (Next.js + uploads)     | Pre-built binaries for glibc; Alpine needs `libc6-compat` |
-| `pdf-parse`     | Knowledge base PDF ingestion             | Pure JS, but heap-heavy on large PDFs                     |
-| `mammoth`       | DOCX ingestion                           | Pure JS                                                   |
-| `epub2`         | EPUB ingestion                           | Pure JS                                                   |
-| `gpt-tokenizer` | Token counting for cost / context limits | Pure JS                                                   |
+| Dependency      | Purpose                                  | Host implication                                                   |
+| --------------- | ---------------------------------------- | ------------------------------------------------------------------ |
+| `sharp`         | Image transforms (Next.js + uploads)     | Pre-built binaries for **both** glibc and musl; selected by `libc` |
+| `pdf-parse`     | Knowledge base PDF ingestion             | Pure JS, but heap-heavy on large PDFs                              |
+| `mammoth`       | DOCX ingestion                           | Pure JS                                                            |
+| `epub2`         | EPUB ingestion                           | Pure JS                                                            |
+| `gpt-tokenizer` | Token counting for cost / context limits | Pure JS                                                            |
 
-The `Dockerfile` already handles `libc6-compat` and the standalone trace; non-Docker hosts must ensure equivalent base packages.
+`sharp` publishes musl-native builds (`@img/sharp-linuxmusl-*`), and npm chooses between those and the glibc ones using the **`libc`** field in `package-lock.json` — the only field that distinguishes them, since both declare `os: linux, cpu: x64`. With `libc` present, Alpine gets a binary linking `libc.musl-x86_64.so.1` and needing no glibc shim; with it missing, npm installs both variants and glibc-linked binaries end up in a musl image without any error (#571). npm below 11.11.0 strips the field on every write — see CONTRIBUTING, "Cutting a release that changes dependencies", and `npm run fix:lockfile-libc`.
+
+The `Dockerfile` already handles the standalone trace and installs `libc6-compat` — glibc compatibility shims inherited from the upstream Next.js template, insurance for any dependency that only ever ships a glibc build, rather than something Node or `sharp` requires. Non-Docker hosts must ensure equivalent base packages.
 
 ### 1.3 Database — PostgreSQL with `pgvector`
 

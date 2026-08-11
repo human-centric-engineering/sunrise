@@ -355,8 +355,36 @@ The multi-stage Dockerfile is optimized for minimal image size and security.
 
 ### Base Image
 
-- **`node:20-alpine`**: Alpine Linux base (~150-200MB final image)
-- **`libc6-compat`**: Required for Node.js compatibility on Alpine Linux
+- **`node:20-alpine`**: Alpine Linux base (~150-200MB final image). Alpine uses
+  **musl**, not glibc — which is the thing to keep in mind whenever a dependency
+  ships a compiled binary.
+- **`libc6-compat`**: glibc compatibility shims, carried over from the upstream
+  Next.js Dockerfile. Not needed by Node itself — the `node:*-alpine` images are
+  built against musl — it is insurance for third-party native binaries that were
+  only ever compiled for glibc.
+
+### Native binaries and the `libc` lockfile field
+
+Packages with compiled binaries publish one build per platform, and npm picks
+between them using the `os`, `cpu` and **`libc`** fields in
+`package-lock.json`. `libc` is the only one that separates a musl build from a
+glibc build: `@img/sharp-linux-x64` and `@img/sharp-linuxmusl-x64` are both
+just `os: linux, cpu: x64`.
+
+If `libc` goes missing from the lockfile, npm cannot tell them apart and
+installs **both** — measured on this repo, that was 2.4 GB of `node_modules`
+against 2.0 GB, with `sharp-linux-x64`, `sharp-libvips-linux-x64`,
+`swc-linux-x64-gnu` and `oxide-linux-x64-gnu` all landing in a musl image.
+Nothing errors, which is why it went unnoticed for a release (#571).
+
+**npm below 11.11.0 deletes `libc` on every lockfile write**, on every platform
+— see CONTRIBUTING, "Cutting a release that changes dependencies". Check
+`npm -v` before committing a lockfile change, and repair with
+`npm run fix:lockfile-libc`.
+
+With the field intact, Alpine gets musl-native builds: `sharp-linuxmusl-x64`
+links `libc.musl-x86_64.so.1` and carries no glibc references at all, where the
+glibc build links `libc.so.6` and `libm.so.6`.
 
 ### Build Stages
 
