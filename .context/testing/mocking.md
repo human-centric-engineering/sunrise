@@ -316,40 +316,6 @@ expect(mockContextLogger.info).toHaveBeenCalledWith('Request processed');
 
 ---
 
-## Best Practices
-
-1. **Use shared mock factories**: Import from `tests/types/mocks.ts` instead of inline mocks
-2. **Mock at module level**: Use `vi.mock()` at top of test file before imports
-3. **Reset mocks**: Use `beforeEach(() => vi.clearAllMocks())` for test isolation
-4. **Verify calls**: Always verify mocks were called with correct arguments
-5. **Type safety**: Use `vi.mocked()` helper for type-safe mock access
-6. **Complete types**: Use factory functions to avoid incomplete type errors
-
-## Quick Reference
-
-**Shared mock factories**:
-
-```typescript
-import {
-  createMockHeaders, // Complete Headers interface
-  createMockSession, // Complete better-auth session
-  createMockRouter, // Complete next/navigation App Router
-  delayed, // PrismaPromise timing helper
-} from '@/tests/types/mocks';
-```
-
-**Type-safe assertions**:
-
-```typescript
-import {
-  assertDefined, // Type guard for optional properties
-  assertHasProperty, // Type guard for property existence
-  parseJSON, // Type-safe response parsing
-} from '@/tests/helpers/assertions';
-```
-
----
-
 ## Environment Variables
 
 **When to use**: Tests that behave differently based on environment.
@@ -729,6 +695,8 @@ Complete list of available mock factories with their types.
 | `delayed(value, ms)`            | Function | PrismaPromise-compatible async helper for timing tests |
 | `MockLogger`                    | Type     | Logger interface for testing                           |
 | `createMockLogger()`            | Function | Create mock logger instance                            |
+| `MockRouter`                    | Type     | Complete `next/navigation` App Router interface        |
+| `createMockRouter(overrides?)`  | Function | Create mock router with all members spied              |
 
 **Related Documentation**:
 
