@@ -28,18 +28,14 @@ import { VerifyCallbackClientContent } from '@/app/(auth)/verify-email/callback/
 import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock next/navigation
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/verify-email/callback'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter()),
+    usePathname: vi.fn(() => '/verify-email/callback'),
+    useSearchParams: vi.fn(() => new URLSearchParams()),
+  };
+});
 
 /**
  * Test Suite: Email Verification Callback Page

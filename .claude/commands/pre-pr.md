@@ -169,6 +169,24 @@ Flag server components (files under `app/` without `'use client'`) and server-si
 **4l. Direct Prisma usage outside API routes**
 Flag imports of `@/lib/prisma`, `@/lib/db`, or `@prisma/client` — and any usage of the `prisma` client (e.g., `prisma.`, `PrismaClient`) — in files outside of `app/api/`, `lib/`, `prisma/`, and `scripts/`. Pages, layouts, components, and other non-API app code must call the API (via `serverFetch()` or client fetch) rather than accessing the database directly. This enforces API-first separation of concerns so the API can be split out of the monolith in the future. Note: this check catches direct imports only, not transitive dependencies (e.g., a page importing a lib helper that internally uses Prisma). Full import-chain analysis is out of scope for this check.
 
+**4m. Hand-rolled `next/navigation` router mocks**
+In changed test files, flag any router object written out by hand instead of built with `createMockRouter()` from `@/tests/types/mocks`. Two forms to catch:
+
+```bash
+git diff "$BASE"...HEAD -- 'tests/**' ':!tests/types/mocks.ts' \
+  | grep -nE "^\+[^*/]*as unknown as ReturnType<typeof useRouter>"
+git diff "$BASE"...HEAD -- 'tests/**' ':!tests/types/mocks.ts' \
+  | grep -nE "^\+[[:space:]]*(prefetch|forward): vi\.fn\(\),?$"
+```
+
+The factory's own file is excluded (it legitimately contains both shapes), and `[^*/]*` skips comment lines — without those two exclusions the check fires on the very commit that introduced it.
+
+The first is always wrong: `AppRouterInstance` gains required members between Next minors, and a double cast doesn't satisfy the new member, it hides that the mock is missing it — the literal keeps compiling while the component receives an incomplete router. Zero of these exist today; the count should stay zero.
+
+The second is a heuristic for "this literal is trying to be a _complete_ router" — if it bothers to stub `prefetch`/`forward`, it wants the full interface and should use the factory. A minimal stub (`push`/`replace` only, for a component that reads nothing else) is fine and should not be flagged.
+
+Nothing type-checks a `vi.mock` factory, so neither form fails the build; this scan is the only thing that catches them. See `.context/testing/mocking.md`.
+
 ### Step 5: Check .context/ documentation
 
 This step always runs. It checks documentation that was changed on this branch AND documentation that should have been updated to reflect code changes.
@@ -262,6 +280,7 @@ Output a clear summary in this format:
 - [ ] Unvalidated request bodies: {count found or CLEAN}
 - [ ] Bare fetch() instead of serverFetch(): {count found or CLEAN}
 - [ ] Direct Prisma outside API routes: {count found or CLEAN}
+- [ ] Hand-rolled router mocks: {count found or CLEAN}
 
 ### Documentation Check
 - [ ] Stale content in changed docs: {CLEAN or issues found}

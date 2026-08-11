@@ -230,12 +230,26 @@ export type MockRouter = ReturnType<typeof useRouter> & {
  * one factory makes the next such addition a one-line change here instead of
  * another sweep, and spares forks repeating it.
  *
- * Two things defeat that, so neither is used anywhere in the suite: an
- * `as unknown as ReturnType<typeof useRouter>` cast (which suppresses the
- * error rather than fixing it, so the literal silently rots), and an
- * incomplete literal inside a `vi.mock` factory (which nothing type-checks).
- * `tests/setup.ts` builds the suite-wide default from this factory for that
- * reason; `tests/unit/types/mocks.test.ts` asserts it still does.
+ * Two things defeat that. An `as unknown as ReturnType<typeof useRouter>`
+ * cast suppresses the error rather than fixing it, so the literal rots in
+ * silence — there are none left in the suite, and none should be added. An
+ * incomplete literal inside a `vi.mock` factory has the same effect, because
+ * nothing type-checks a mock factory; `tests/setup.ts` builds the suite-wide
+ * default from this factory for that reason, and
+ * `tests/unit/types/mocks.test.ts` asserts it still does.
+ *
+ * Scope, stated plainly: every type-checked call site and every per-file
+ * factory that tried to supply a *complete* router now comes through here.
+ * Around 49 per-file factories still stub two or three members inline. That
+ * is deliberate — a component that only ever calls `push` does not need the
+ * rest — but it does mean "the suite uses the factory everywhere" would be
+ * false. Convert one the moment its component might read more of the router
+ * than the stub provides.
+ *
+ * `bfcacheId` is a fixed string, not a spy. Its real semantics are that it
+ * *changes* on a fresh push/replace navigation, so a test asserting that a
+ * `key={router.bfcacheId}` subtree remounts must pass a different value
+ * itself — a constant makes the remount never fire.
  *
  * @param overrides - Replace individual members (usually a shared `push` or
  *                    `replace` spy the test asserts against)

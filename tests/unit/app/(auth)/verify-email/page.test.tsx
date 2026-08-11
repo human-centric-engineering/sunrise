@@ -27,18 +27,14 @@ import userEvent from '@testing-library/user-event';
 import { VerifyEmailClientContent } from '@/app/(auth)/verify-email/verify-email-content';
 
 // Mock next/navigation
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/verify-email'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter()),
+    usePathname: vi.fn(() => '/verify-email'),
+    useSearchParams: vi.fn(() => new URLSearchParams()),
+  };
+});
 
 /**
  * Test Suite: Email Verification Pending Page

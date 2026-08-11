@@ -127,18 +127,17 @@ vi.mock('@/lib/logging', () => ({
 const routerPushMock = vi.fn();
 const routerRefreshMock = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: routerPushMock,
-    replace: vi.fn(),
-    refresh: routerRefreshMock,
-  })),
-  notFound: vi.fn(),
-  usePathname: vi.fn(() => '/'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-  useParams: vi.fn(() => ({})),
-  redirect: vi.fn(),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter({ push: routerPushMock, refresh: routerRefreshMock })),
+    notFound: vi.fn(),
+    usePathname: vi.fn(() => '/'),
+    useSearchParams: vi.fn(() => new URLSearchParams()),
+    useParams: vi.fn(() => ({})),
+    redirect: vi.fn(),
+  };
+});
 
 vi.mock('@/hooks/use-theme', () => ({
   useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),

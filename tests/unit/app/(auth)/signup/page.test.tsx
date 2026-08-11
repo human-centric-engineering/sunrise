@@ -26,18 +26,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import SignupPage, { metadata } from '@/app/(auth)/signup/page';
 
 // Mock next/navigation (required by SignupForm component)
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/signup'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter()),
+    usePathname: vi.fn(() => '/signup'),
+    useSearchParams: vi.fn(() => new URLSearchParams()),
+  };
+});
 
 // Mock better-auth client (required by SignupForm component)
 vi.mock('@/lib/auth/client', () => ({

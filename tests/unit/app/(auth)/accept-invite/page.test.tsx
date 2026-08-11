@@ -24,18 +24,14 @@ import { render, screen, waitFor } from '@testing-library/react';
 import AcceptInvitePage from '@/app/(auth)/accept-invite/page';
 
 // Mock next/navigation
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/accept-invite'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter()),
+    usePathname: vi.fn(() => '/accept-invite'),
+    useSearchParams: vi.fn(() => new URLSearchParams()),
+  };
+});
 
 // Mock the AcceptInviteForm component to avoid complexity
 vi.mock('@/components/forms/accept-invite-form', () => ({

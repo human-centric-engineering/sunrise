@@ -215,21 +215,20 @@ expect(() => redirect('/dashboard')).toThrow('NEXT_REDIRECT: /dashboard');
 ```typescript
 const mockPush = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: mockPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-  }),
-  usePathname: () => '/current-path',
-  useSearchParams: () => new URLSearchParams('?page=1'),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: () => createMockRouter({ push: mockPush }),
+    usePathname: () => '/current-path',
+    useSearchParams: () => new URLSearchParams('?page=1'),
+  };
+});
 
 // Verify navigation
 expect(mockPush).toHaveBeenCalledWith('/dashboard');
 ```
 
-**Never hand-roll the router object.** Use `createMockRouter()`:
+Where TypeScript checks the shape, the same factory goes straight in:
 
 ```typescript
 import { createMockRouter } from '@/tests/types/mocks';
@@ -239,6 +238,8 @@ vi.mocked(useRouter).mockReturnValue(createMockRouter({ push }));
 ```
 
 Pass only the members the test asserts on; the rest are `vi.fn()`.
+
+**Build the router with `createMockRouter()` rather than writing it out.**
 
 `AppRouterInstance` gains required members between Next minors — 16.3.0 added
 `bfcacheId` — and every hand-rolled literal is wrong the moment it does. There
@@ -256,9 +257,33 @@ are two ways that goes unnoticed, and both have bitten:
   `createMockRouter()`, and `tests/unit/types/mocks.test.ts` asserts it keeps
   doing so — that test is the only guard, since the compiler cannot be.
 
-A per-file `vi.mock` factory that stubs only `push`/`replace` for a component
-that reads nothing else is still fine. Reach for the factory as soon as the
-component under test might touch more of the router than the stub provides.
+To use the factory inside a per-file mock, make the factory `async` and import
+it there. `vi.mock` is hoisted above the import block, so a top-level import
+risks a use-before-initialization error:
+
+```typescript
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter({ push: mockPush })),
+    usePathname: vi.fn(() => '/current-path'),
+  };
+});
+```
+
+**What is and isn't converted.** Every type-checked call site, and every
+per-file factory that tried to supply a _complete_ router, goes through the
+factory. Roughly 49 per-file factories still stub two or three members inline
+— that is deliberate, since a component that only calls `push` needs nothing
+else, and it is why "the whole suite uses the factory" would be an overstatement.
+Convert one as soon as its component might read more of the router than the
+stub provides.
+
+**`bfcacheId` is a fixed string, not a spy.** Its real behaviour is to _change_
+on a fresh push/replace navigation. A test asserting that a
+`key={router.bfcacheId}` subtree remounts has to supply a different value
+itself — with the constant, the remount never fires and the test will happily
+assert that state was preserved when production resets it.
 
 **See** `tests/types/mocks.ts` for `createMockHeaders()` factory with complete Headers interface.
 
@@ -696,21 +721,21 @@ it('should log with timestamp', () => {
 
 Complete list of available mock factories with their types.
 
-| Export                          | Type     | Description                                            |
-| ------------------------------- | -------- | ------------------------------------------------------ |
-| `MockHeaders`                   | Type     | Complete Headers interface for testing                 |
-| `createMockHeaders(headers?)`   | Function | Create mock Headers with specified values              |
-| `MockSession`                   | Type     | Complete better-auth session structure                 |
-| `createMockSession(overrides?)` | Function | Create mock session with user and session data         |
-| `MockUser`                      | Type     | Database user type for testing                         |
-| `createMockUser(overrides?)`    | Function | Create mock user with all required fields              |
-| `MockPrismaClient`              | Type     | Type-safe Prisma mock client                           |
-| `createMockPrisma()`            | Function | Create properly typed Prisma mock with all methods     |
-| `delayed(value, ms)`            | Function | PrismaPromise-compatible async helper for timing tests |
-| `MockLogger`                    | Type     | Logger interface for testing                           |
-| `createMockLogger()`            | Function | Create mock logger instance                            |
-| `MockRouter`                    | Type     | Complete `next/navigation` App Router interface        |
-| `createMockRouter(overrides?)`  | Function | Create mock router with all members spied              |
+| Export                          | Type     | Description                                                   |
+| ------------------------------- | -------- | ------------------------------------------------------------- |
+| `MockHeaders`                   | Type     | Complete Headers interface for testing                        |
+| `createMockHeaders(headers?)`   | Function | Create mock Headers with specified values                     |
+| `MockSession`                   | Type     | Complete better-auth session structure                        |
+| `createMockSession(overrides?)` | Function | Create mock session with user and session data                |
+| `MockUser`                      | Type     | Database user type for testing                                |
+| `createMockUser(overrides?)`    | Function | Create mock user with all required fields                     |
+| `MockPrismaClient`              | Type     | Type-safe Prisma mock client                                  |
+| `createMockPrisma()`            | Function | Create properly typed Prisma mock with all methods            |
+| `delayed(value, ms)`            | Function | PrismaPromise-compatible async helper for timing tests        |
+| `MockLogger`                    | Type     | Logger interface for testing                                  |
+| `createMockLogger()`            | Function | Create mock logger instance                                   |
+| `MockRouter`                    | Type     | Complete `next/navigation` App Router interface               |
+| `createMockRouter(overrides?)`  | Function | Create mock router; methods spied, `bfcacheId` a fixed string |
 
 **Related Documentation**:
 

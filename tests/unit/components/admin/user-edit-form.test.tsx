@@ -25,19 +25,15 @@ import type { AdminUser } from '@/types/admin';
 const mockPush = vi.fn();
 const mockRefresh = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: mockPush,
-    replace: vi.fn(),
-    refresh: mockRefresh,
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/admin/users/user-1/edit'),
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter({ push: mockPush, refresh: mockRefresh })),
+    usePathname: vi.fn(() => '/admin/users/user-1/edit'),
 
-  useSearchParams: () => ({ get: () => null }),
-}));
+    useSearchParams: () => ({ get: () => null }),
+  };
+});
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
