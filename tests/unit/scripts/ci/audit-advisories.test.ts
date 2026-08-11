@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   atLeast,
+  auditError,
   auditIsUsable,
   formatSummary,
   parseAuditReport,
@@ -34,6 +35,7 @@ const advisory = (over: Partial<Advisory> = {}): Advisory => ({
   fix: 'available',
   fixTarget: null,
   titles: [],
+  via: [],
   ...over,
 });
 
@@ -103,6 +105,7 @@ describe('parseAuditReport', () => {
         fix: 'available',
         fixTarget: 'next@16.3.0',
         titles: ['Next.js SSRF'],
+        via: [],
       },
     ]);
   });
@@ -132,12 +135,15 @@ describe('parseAuditReport', () => {
     expect(parsed[0].titles).toEqual(['Same', 'Other']);
   });
 
-  it('ignores the string entries npm mixes into via', () => {
-    // `via` holds advisory objects AND bare package names for chained deps.
+  it('separates the bare package names npm mixes into via', () => {
+    // `via` holds advisory objects AND bare package names for a package that
+    // inherits the problem. Both halves are kept — the names are the only
+    // thing there is to say about a row with no advisory of its own.
     const parsed = parseAuditReport(
       report({ pkg: { severity: 'high', fixAvailable: true, via: ['other-package'] } })
     );
     expect(parsed[0].titles).toEqual([]);
+    expect(parsed[0].via).toEqual(['other-package']);
   });
 
   it('falls back to the map key when the entry omits a name', () => {
@@ -173,6 +179,26 @@ describe('auditIsUsable', () => {
     // like a clean tree. Green-because-blind is the worst failure available to
     // a security check, so the shape is checked rather than the count.
     expect(auditIsUsable(input)).toBe(false);
+  });
+});
+
+describe('auditError', () => {
+  it('reads npm’s registry-failure payload', () => {
+    expect(
+      auditError({ error: { code: 'ENETUNREACH', summary: 'request to registry failed' } })
+    ).toBe('ENETUNREACH — request to registry failed');
+  });
+
+  it('says something even when the payload carries no detail', () => {
+    expect(auditError({ error: {} })).toBe('npm reported an error with no detail');
+  });
+
+  it.each([
+    ['a real report', { auditReportVersion: 2, vulnerabilities: {} }],
+    ['a non-object', 'nope'],
+    ['null', null],
+  ])('returns null for %s', (_label, input) => {
+    expect(auditError(input)).toBeNull();
   });
 });
 
@@ -313,6 +339,29 @@ describe('formatSummary', () => {
     const rows = lines.filter((line) => line.includes('`evil`'));
     expect(rows).toHaveLength(1);
     expect(rows[0].split('|')).toHaveLength(7); // 5 cells + leading/trailing
+  });
+
+  it('names what a package is vulnerable through when it has no advisory of its own', () => {
+    // Two of the eight real high findings were in this shape and rendered an
+    // empty Advisory cell: @react-email/ui via next, epub2 via adm-zip.
+    const markdown = formatSummary(
+      triage([advisory({ name: '@react-email/ui', titles: [], via: ['next'] })]),
+      'high'
+    );
+    const row = markdown.split('\n').find((line) => line.includes('`@react-email/ui`'));
+    expect(row).toContain('via next');
+    // And no empty trailing cell.
+    expect(row).not.toMatch(/\|\s*\|\s*$/);
+  });
+
+  it('prefers a real advisory title over the via fallback', () => {
+    const markdown = formatSummary(
+      triage([advisory({ name: 'next', titles: ['Next.js SSRF'], via: ['something'] })]),
+      'high'
+    );
+    const row = markdown.split('\n').find((line) => line.includes('`next`'));
+    expect(row).toContain('Next.js SSRF');
+    expect(row).not.toContain('via something');
   });
 
   it('flags the extra advisories behind a package with several', () => {

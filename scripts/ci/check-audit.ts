@@ -10,7 +10,8 @@
  * Usage:
  *   npm run check:audit                # fail on fixable high+ findings
  *   npm run check:audit -- --floor=critical
- *   npm run check:audit -- --report    # never fail; print and exit 0
+ *   npm run check:audit -- --report    # do not fail on findings (still
+ *                                      # fails if the audit cannot be run)
  *
  * Needs the network. Run from CI on a schedule, not from `validate` or the PR
  * pipeline — a PR gate that depends on a third-party advisory feed fails for
@@ -24,6 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 
 import {
+  auditError,
   auditIsUsable,
   formatSummary,
   parseAuditReport,
@@ -79,17 +81,25 @@ export function parseFloor(
     : { ok: false, bad: value };
 }
 
-/** Runs `npm audit --json` and returns its stdout. */
-export type AuditRunner = () => string;
+/**
+ * Runs `npm audit --json` and returns its stdout.
+ *
+ * Takes the environment for the same reason `main` does: without it the real
+ * `process.env` leaks into tests, and three of them passed only because npm
+ * had set `npm_execpath`. Running the suite through anything else — an IDE
+ * runner, `./node_modules/.bin/vitest` — failed on an error about
+ * `npm_execpath` rather than the thing under test.
+ */
+export type AuditRunner = (env?: Env) => string;
 
 /**
  * `npm audit` exits **1** when it finds anything, so a non-zero exit is not an
  * error here — the JSON still comes back on stdout and is the thing we want.
  * Only an empty stdout means the command genuinely failed.
  */
-export const runNpmAudit: AuditRunner = () => {
+export const runNpmAudit: AuditRunner = (env: Env = process.env) => {
   try {
-    return execFileSync(process.execPath, [npmEntry(), 'audit', '--json'], {
+    return execFileSync(process.execPath, [npmEntry(env), 'audit', '--json'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 64 * 1024 * 1024,
@@ -135,7 +145,7 @@ export function main(
 
   let stdout: string;
   try {
-    stdout = run();
+    stdout = run(env);
   } catch (error) {
     console.error('Could not run `npm audit`.');
     console.error(error instanceof Error ? error.message : String(error));
@@ -155,8 +165,20 @@ export function main(
   // zero advisories, which is indistinguishable from a clean tree — and
   // "green because we went blind" is the worst outcome for a security check.
   if (!auditIsUsable(raw)) {
+    // npm reports a registry failure as well-formed JSON: `{"error":{...}}`.
+    // That parses, then fails the shape check, so lumping the two together
+    // told an operator whose network was down that npm had changed its output
+    // format — and printed none of the payload to contradict it.
+    const failure = auditError(raw);
+    if (failure !== null) {
+      console.error('`npm audit` could not complete:');
+      console.error(`  ${failure}`);
+      console.error('Nothing was checked, so this is not a clean tree.');
+      return 1;
+    }
     console.error('`npm audit --json` returned an unrecognised report shape.');
     console.error('Refusing to report a clean tree from output this could not read.');
+    console.error(stdout.slice(0, 400));
     return 1;
   }
 

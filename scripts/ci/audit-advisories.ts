@@ -82,6 +82,16 @@ export interface Advisory {
   fixTarget: string | null;
   /** Advisory titles, deduped — `via` repeats them across paths. */
   titles: string[];
+  /**
+   * Packages this one is vulnerable *through*, when npm names no advisory.
+   *
+   * `via` holds advisory objects for a directly-vulnerable package and bare
+   * package names for one that inherits the problem. Without this, those rows
+   * render with an empty Advisory column — measured on the real tree, that was
+   * two of the eight high findings (`@react-email/ui` via `next`, `epub2` via
+   * `adm-zip`), i.e. a quarter of the rows a maintainer reads said nothing.
+   */
+  via: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,14 +117,21 @@ export function readFix(value: unknown): { fix: FixKind; fixTarget: string | nul
   };
 }
 
-/** Advisory titles out of a `via` array, which mixes strings and objects. */
-function readTitles(via: unknown): string[] {
-  if (!Array.isArray(via)) return [];
+/**
+ * Splits a `via` array, which mixes advisory objects with bare package names.
+ *
+ * Both halves are kept: the objects carry the advisory title, and the strings
+ * name the package this one is vulnerable through — the only thing there is to
+ * say about a row that has no advisory of its own.
+ */
+function readVia(via: unknown): { titles: string[]; names: string[] } {
+  if (!Array.isArray(via)) return { titles: [], names: [] };
   const titles = via
     .filter(isRecord)
     .map((entry) => entry.title)
     .filter((title): title is string => typeof title === 'string' && title !== '');
-  return [...new Set(titles)];
+  const names = via.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
+  return { titles: [...new Set(titles)], names: [...new Set(names)] };
 }
 
 /**
@@ -136,13 +153,15 @@ export function parseAuditReport(raw: unknown): Advisory[] {
     if (severity === null) continue;
 
     const { fix, fixTarget } = readFix(value.fixAvailable);
+    const { titles, names } = readVia(value.via);
     out.push({
       name: typeof value.name === 'string' && value.name !== '' ? value.name : key,
       severity,
       direct: value.isDirect === true,
       fix,
       fixTarget,
-      titles: readTitles(value.via),
+      titles,
+      via: names,
     });
   }
 
@@ -164,6 +183,22 @@ export function parseAuditReport(raw: unknown): Advisory[] {
  */
 export function auditIsUsable(raw: unknown): boolean {
   return isRecord(raw) && isRecord(raw.vulnerabilities) && raw.auditReportVersion === 2;
+}
+
+/**
+ * npm's own failure message, when the report is an error rather than a result.
+ *
+ * A registry failure comes back as well-formed JSON — `{"error": {"code":
+ * "ENETUNREACH", "summary": "..."}}` — which parses cleanly and then fails
+ * {@link auditIsUsable}. Without telling the two apart, an operator whose
+ * network was down was informed that npm had changed its output format.
+ */
+export function auditError(raw: unknown): string | null {
+  if (!isRecord(raw) || !isRecord(raw.error)) return null;
+  const parts = [raw.error.code, raw.error.summary, raw.error.detail].filter(
+    (part): part is string => typeof part === 'string' && part !== ''
+  );
+  return parts.length > 0 ? parts.join(' — ') : 'npm reported an error with no detail';
 }
 
 /** The buckets the job reports on and decides by. */
@@ -226,7 +261,14 @@ function table(advisories: Advisory[]): string[] {
         a.fix === 'none'
           ? 'none published'
           : (a.fixTarget ?? (a.fix === 'major' ? 'major' : 'yes'));
-      const title = cell(a.titles[0] ?? '');
+      // Fall back to what it is vulnerable *through*, so the cell is never
+      // blank — and so the row says why fixing the named package clears it.
+      const title =
+        a.titles.length > 0
+          ? cell(a.titles[0])
+          : a.via.length > 0
+            ? `via ${a.via.map(cell).join(', ')}`
+            : '';
       const extra = a.titles.length > 1 ? ` (+${a.titles.length - 1} more)` : '';
       return `| \`${cell(a.name)}\` | ${a.severity} | ${a.direct ? 'direct' : 'transitive'} | ${cell(fix)} | ${title}${extra} |`;
     }),

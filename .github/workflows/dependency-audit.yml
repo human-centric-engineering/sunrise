@@ -19,6 +19,23 @@ name: Dependency Audit
 # feeds (the advisory database, the npm registry), and a PR gate that fails
 # because an advisory was published overnight fails for reasons that have
 # nothing to do with the PR.
+#
+# Two honest caveats, so nobody reads more into a green board than is there:
+#
+#   1. `schedule` is the only automatic trigger, and GitHub disables scheduled
+#      workflows after 60 days without repository activity. A dormant fork
+#      therefore stops auditing itself silently — the very case this exists
+#      for. Adding `push` would turn an advisory report into a `main` gate,
+#      which is the wrong trade for findings nobody can act on; a fork that
+#      wants the stronger guarantee can add
+#      `push: paths: ['package-lock.json']`. See .context/architecture/ci.md.
+#   2. The libc job makes ~1,400 registry requests, and one name exhausting its
+#      retries fails the whole run. That is deliberate — a partial answer about
+#      missing platform metadata is worse than none — but it means an occasional
+#      red here is infrastructural, not a lockfile problem. The message says
+#      which. The known heavy failure mode is fixed: the tool fetches
+#      per-version manifests (~2 KB) rather than whole packuments, one of which
+#      was 37 MB (#571).
 
 on:
   schedule:

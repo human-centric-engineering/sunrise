@@ -297,7 +297,8 @@ release process.
   every week from day one for something nobody could clear. Gating on
   fixability is self-clearing — the day `epub2` accepts a patched `adm-zip`,
   the job goes red on its own, with no allowlist to curate. `--floor=` raises
-  the bar, `--report` never fails (#549).
+  the bar; `--report` downgrades findings to advisory, though the job still
+  fails if the audit could not be run at all (#549).
 - **`npm run fix:lockfile-libc`** restores `libc` to `package-lock.json` from
   the registry, with `--check` to report without writing. Needed because npm
   below 11.11.0 deletes the field on every write and no npm puts it back — once

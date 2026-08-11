@@ -10,9 +10,14 @@
  *   npm run fix:lockfile-libc -- --check # report only; exit 1 if repair needed
  *
  * This talks to the network, so it is deliberately NOT part of `validate` or
- * CI. It is a repair tool run by a human after a dependency change. The
- * automated guard is `npm run check:lockfile`, which catches a *fresh* loss
- * against the base revision.
+ * the PR pipeline — a gate that depends on the registry fails for reasons that
+ * have nothing to do with the change under review.
+ *
+ * It runs in CI in exactly one place: the **weekly** `dependency-audit`
+ * workflow invokes `--check`, which reports and never writes. That is the
+ * absolute counterpart to `npm run check:lockfile`, which is a diff check and
+ * so cannot see metadata that was already missing before the base revision
+ * (#549, #571).
  *
  * Printing goes through `console`, not `logger` — see the `scripts/**` override
  * in `eslint.config.mjs`.

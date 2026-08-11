@@ -219,8 +219,30 @@ fail (`Advanced Security must be enabled…`). Both skip automatically on privat
   every event. Result: the public scheduled scan keeps running, and private forks
   skip cleanly across **all** events.
 
-Dependabot (existing deps) and TruffleHog (secret scanning) are unaffected — they
-work on private repos regardless.
+Dependabot (existing deps), TruffleHog (secret scanning) and `dependency-audit`
+(`npm audit` + the `libc` completeness check) are unaffected — they work on
+private repos regardless, needing no Advanced Security.
+
+### One caveat on the scheduled audit
+
+`dependency-audit.yml` has **`schedule` as its only automatic trigger**, and
+GitHub disables scheduled workflows in a repository after **60 days without
+repository activity**. A dormant fork therefore stops auditing itself silently
+— the one case the workflow was written for. `codeql.yml` and `secret-scan.yml`
+degrade better here because they also trigger on push and PR.
+
+This is a known trade-off rather than an oversight: adding a `push` trigger
+would turn an advisory report into a `main`-branch gate, and the job is
+deliberately non-gating for findings nobody can act on. If a fork wants the
+stronger guarantee, add `workflow_dispatch` to a release checklist or give the
+workflow a `push: paths: ['package-lock.json']` trigger — the answer only
+changes when the lockfile does.
+
+Note this concerns _dormancy_, not forking as such: Sunrise's downstream repos
+are **separate repositories** sharing history via an `upstream` remote, not
+GitHub forks, so the "Actions is disabled by default in a fork" rule does not
+apply to them. It would apply to a true GitHub fork, which must enable Actions
+before any of this runs.
 
 ## Two gotchas worth knowing
 

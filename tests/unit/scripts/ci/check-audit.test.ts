@@ -202,6 +202,48 @@ describe('scripts/ci/check-audit', () => {
       expect(out()).toContain('unrecognised report shape');
     });
 
+    it('reports a registry failure as such, not as an npm format change', async () => {
+      // npm emits {"error":{...}} as valid JSON when it cannot reach the
+      // registry. That parses, then fails the shape check — so lumping the two
+      // together told an operator whose network was down that npm had changed
+      // its output format, and printed none of the payload to contradict it.
+      const { main } = await load();
+      const networkError = JSON.stringify({
+        error: { code: 'ENETUNREACH', summary: 'request to registry failed' },
+      });
+
+      expect(main([], () => networkError, {})).toBe(1);
+      expect(out()).toContain('could not complete');
+      expect(out()).toContain('ENETUNREACH');
+      expect(out()).toContain('not a clean tree');
+      expect(out()).not.toContain('unrecognised report shape');
+    });
+
+    it('prints the payload when the shape really is unrecognised', async () => {
+      const { main } = await load();
+      expect(main([], () => JSON.stringify({ auditReportVersion: 1, somethingElse: {} }), {})).toBe(
+        1
+      );
+      expect(out()).toContain('unrecognised report shape');
+      expect(out()).toContain('auditReportVersion');
+    });
+
+    it('--report still fails when the audit could not be run at all', async () => {
+      // "never fail" was the documented claim and it was wrong: --report is
+      // only consulted after the early returns. A fork wiring this into an
+      // informational job would get a red on the first registry blip.
+      const { main } = await load();
+      expect(
+        main(
+          ['--report'],
+          () => {
+            throw new Error('spawn ENOENT');
+          },
+          {}
+        )
+      ).toBe(1);
+    });
+
     it('fails when npm returns something that is not JSON', async () => {
       const { main } = await load();
       expect(main([], () => 'npm ERR! code ENETUNREACH', {})).toBe(1);
@@ -270,6 +312,8 @@ describe('scripts/ci/check-audit', () => {
   });
 
   describe('runNpmAudit', () => {
+    const ENV = { npm_execpath: '/usr/lib/node_modules/npm/bin/npm-cli.js' };
+
     it('keeps the JSON npm prints when it exits 1 for finding something', async () => {
       // `npm audit` exits non-zero whenever it finds anything, so treating a
       // non-zero exit as failure would discard the report on exactly the runs
@@ -279,7 +323,7 @@ describe('scripts/ci/check-audit', () => {
         throw err;
       });
       const { runNpmAudit } = await load();
-      expect(runNpmAudit()).toBe(FIXABLE_HIGH);
+      expect(runNpmAudit(ENV)).toBe(FIXABLE_HIGH);
     });
 
     it('rethrows when npm produced no output at all', async () => {
@@ -287,13 +331,13 @@ describe('scripts/ci/check-audit', () => {
         throw Object.assign(new Error('spawn ENOENT'), { stdout: '' });
       });
       const { runNpmAudit } = await load();
-      expect(() => runNpmAudit()).toThrow('spawn ENOENT');
+      expect(() => runNpmAudit(ENV)).toThrow('spawn ENOENT');
     });
 
     it('returns stdout on a clean exit', async () => {
       mockExecFileSync.mockReturnValue(report());
       const { runNpmAudit } = await load();
-      expect(runNpmAudit()).toBe(report());
+      expect(runNpmAudit(ENV)).toBe(report());
     });
   });
 });
