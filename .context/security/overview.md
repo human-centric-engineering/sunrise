@@ -440,6 +440,40 @@ CI scans dependencies, code, and git history on every push and PR to `main` (plu
 | Secret scanning    | `.github/workflows/secret-scan.yml`       | TruffleHog scans the diff (PR) and full history (cron); fails on a committed credential      |
 | Standing audit     | `.github/workflows/dependency-audit.yml`  | Weekly: `npm audit` on the tree as it stands, plus an absolute `libc` completeness check     |
 
+#### Responding to a finding you cannot simply fix
+
+The audit job fails only on advisories with a fix published, so a red job means
+_something is installable today_. When that fix cannot be taken — it breaks a
+feature, or the parent declared its range for a reason — work down this ladder
+rather than reaching for the off switch:
+
+1. **Check the incompatibility is real.** npm reports a "fix available" for
+   patch bumps too; confirm before designing around it.
+2. **Add a `package.json` `overrides` entry.** This is the primary remedy for
+   the grandparent-pin shape the job exists to catch, and it is a _fix_, not a
+   suppression: it forces the patched transitive past the parent's declared
+   range, so the tree genuinely changes and the finding clears honestly. It
+   would have resolved the `ws@8.20.1` case, where `engine.io` and
+   `socket.io-adapter` both declared `ws: ~8.20.1`. Sunrise carries two
+   overrides today (`hono`, `valibot`).
+
+   Adding one is deliberately not quiet: `hasRisk()` in
+   `scripts/ci/lockfile-diff.ts` fails `check:lockfile` on any `overrides`
+   change, so it arrives as a reviewed decision on a PR. That gate exists
+   because an override forces a package past a range its dependents declared,
+   which can break the dependent — test the affected path before merging one.
+
+3. **If overriding genuinely breaks things**, there is no good option today.
+   `--report` drops gating entirely and `--floor` drops a whole severity; both
+   throw away the whole signal to silence one finding. The intended answer is a
+   suppression keyed on advisory id, package, version, reason and an **expiry
+   date**, and it is deliberately unbuilt until the first time a fixable
+   finding is consciously declined — see the "case this does NOT cover" section
+   in `scripts/ci/audit-advisories.ts`.
+
+What not to do is leave it red indefinitely. The job's whole design rests on a
+red meaning something, and a standing red trains people to stop looking.
+
 **Why a standing audit as well as the dependency gate:** `dependency-review` diffs a PR, so it gates what a PR _adds_ and goes green forever once a vulnerable version is on `main`. Dependabot does watch the tree, but has no package to bump when the fix lives in a **grandparent** — `ws@8.20.1` sat behind two packages declaring `ws: ~8.20.1`, neither vulnerable, so no PR was ever raised and the alert stayed open for seven weeks (#538, #549). The audit job fails only on findings that are actionable today (high+ with a non-major fix) and reports the rest, so an advisory nobody can clear does not red-line the board permanently. Unlike CodeQL and dependency-review it needs no Advanced Security, so it runs on private forks too.
 
 **TruffleHog over gitleaks-action:** gitleaks-action requires a paid licence for org-owned repos; TruffleHog is free for everyone, so forks inherit it unchanged.

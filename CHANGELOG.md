@@ -295,8 +295,11 @@ release process.
   the job summary: measured against this repo, two of eight high advisories had
   no fix at all, so a plain `npm audit --audit-level=high` would have failed
   every week from day one for something nobody could clear. Gating on
-  fixability is self-clearing — the day `epub2` accepts a patched `adm-zip`,
-  the job goes red on its own, with no allowlist to curate. `--floor=` raises
+  fixability is self-clearing for the no-fix case — the day `epub2` accepts a
+  patched `adm-zip`, the job goes red on its own, with no allowlist to curate.
+  A fix that exists but cannot be taken is not covered; the remedy there is
+  usually a `package.json` `overrides` entry, which `check:lockfile` gates as a
+  reviewed decision. `--floor=` raises
   the bar; `--report` downgrades findings to advisory, though the job still
   fails if the audit could not be run at all (#549).
 - **`npm run fix:lockfile-libc`** restores `libc` to `package-lock.json` from

@@ -36,6 +36,33 @@
  * the job goes red on its own. No allowlist file to curate, no expiry dates to
  * forget, nothing for a fork to inherit and misconfigure.
  *
+ * ### The case this does NOT cover
+ *
+ * Self-clearing answers "no fix published". It does **not** answer "a fix
+ * exists, we assessed it, and we cannot take it" — a bump that breaks a
+ * feature, say. That finding is `blocking` by definition and stays red every
+ * week, which is the exact failure this design was meant to avoid. The
+ * argument above only ever covered half the space; saying so here so the next
+ * reader does not conclude otherwise.
+ *
+ * The first answer is usually **not** a suppression. For the grandparent-pin
+ * shape this job exists for, a `package.json` `overrides` entry forces the
+ * patched transitive past the parent's declared range and clears the finding
+ * *legitimately*, because the tree actually changes. It is not a back door
+ * either: `hasRisk` in `lockfile-diff.ts` gates on any `overrides` change, so
+ * it lands as a reviewed decision. It can break the parent that declared the
+ * range, which is precisely why it is gated rather than quiet.
+ *
+ * If overriding genuinely breaks things, there is no good option today —
+ * `--report` drops gating entirely and `--floor` drops a whole severity. The
+ * trigger for building something better is the **first consciously declined
+ * fixable finding**, and the shape should be a suppression keyed on advisory
+ * id + package + version + reason + **expiry**. The expiry is what answers the
+ * objection above: an entry that lapses forces re-examination instead of
+ * rotting, and the version key stops it applying once the dependency moves.
+ * Not built pre-emptively, because a file every fork inherits and must curate
+ * should not exist before the situation it serves.
+ *
  * A fix needing a **major** bump is reported separately rather than gated. It
  * is actionable in principle, but a cron job cannot decide that a fork should
  * take a breaking upgrade this week.
