@@ -13,10 +13,14 @@ import { describe, it, expect } from 'vitest';
 import { diffExports, readBarrelExports, type BarrelExports } from '@/scripts/ci/exports-diff';
 
 /** No sibling is resolvable — the default for tests that use no `export *`. */
-const noSiblings = (): string | null => null;
+const noSiblings = (): null => null;
 
+/** Serves sibling sources by specifier, all pretending to sit in the same dir. */
 function symbolsOf(source: string, siblings: Record<string, string> = {}): string[] {
-  return readBarrelExports(source, (specifier) => siblings[specifier] ?? null).symbols;
+  return readBarrelExports(source, (specifier) => {
+    const text = siblings[specifier];
+    return text === undefined ? null : { text, dir: '' };
+  }).symbols;
 }
 
 describe('readBarrelExports', () => {
@@ -84,7 +88,7 @@ describe('readBarrelExports', () => {
       const seen: string[] = [];
       readBarrelExports(`export * from '@/lib/orchestration/llm/types';`, (specifier) => {
         seen.push(specifier);
-        return `export type LlmMessage = string;`;
+        return { text: `export type LlmMessage = string;`, dir: '' };
       });
 
       expect(seen).toEqual(['@/lib/orchestration/llm/types']);

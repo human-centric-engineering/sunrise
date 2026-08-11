@@ -165,7 +165,7 @@ describe('scripts/ci/check-lockfile', () => {
     it('names each added, removed and changed package', async () => {
       serve({
         packages: {
-          '': { version: '0.8.1' },
+          '': { version: '0.9.0' },
           'node_modules/native': { version: '1.1.0', os: ['linux'], libc: ['glibc'] },
           'node_modules/brand-new': { version: '1.0.0' },
         },
@@ -174,6 +174,10 @@ describe('scripts/ci/check-lockfile', () => {
       await run();
       expect(out()).toContain('+ node_modules/brand-new');
       expect(out()).toContain('~ node_modules/native 1.0.0 → 1.1.0');
+      // `packages[""]` is the project itself; it printed as a nameless
+      // `~  0.8.0 → 0.8.1` line on every release PR.
+      expect(out()).toContain('~ (this project) 0.8.1 → 0.9.0');
+      expect(out()).not.toMatch(/~ {2}\d/);
     });
 
     it('counts transitive downgrades in the all-clear rather than hiding them', async () => {
@@ -234,6 +238,27 @@ describe('scripts/ci/check-lockfile', () => {
       await run();
       expect(process.exitCode).toBe(1);
       expect(out()).toContain('"overrides" changed');
+    });
+
+    it('skips the overrides comparison when a manifest is unreadable, rather than blaming it', async () => {
+      // With the head manifest missing, head overrides were `undefined` against
+      // the base's two real ones, so the run exited 1 saying `"overrides"
+      // changed` — a true failure with an entirely invented cause.
+      mockExecFileSync.mockImplementation((_c: string, a: string[]) => {
+        if (a[0] === 'merge-base') return 'abc123\n';
+        if (String(a[1]).endsWith(':package.json')) return '{"overrides":{"hono":"^4"}}';
+        return LOCK;
+      });
+      mockReadFileSync.mockImplementation((path: string) => {
+        if (String(path).endsWith('package.json')) throw new Error('ENOENT');
+        return LOCK;
+      });
+
+      await run();
+
+      expect(process.exitCode).toBe(0);
+      expect(out()).toContain('skipping the overrides comparison');
+      expect(out()).not.toContain('"overrides" changed');
     });
 
     it('says so when package.json cannot be read, rather than quietly mis-classifying', async () => {

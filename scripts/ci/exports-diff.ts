@@ -50,8 +50,10 @@ export interface ExportChange {
 /**
  * Reads the exported symbol names of a barrel from source text.
  *
- * `resolveSibling` returns the source of an imported module so `export *` can
- * be followed, or `null` when it cannot be read. **Resolving the specifier is
+ * `resolveSibling` takes a specifier and the directory to resolve it *from*,
+ * and returns the imported module's source together with its own directory —
+ * so a nested star resolves relative to the file that wrote it. It returns
+ * `null` when the module cannot be read. **Resolving the specifier is
  * the caller's job, and in this repo that means handling `@/`** — CLAUDE.md
  * mandates the alias and ESLint forbids relative paths, so every one of the six
  * stars in `lib/` is an `@/` specifier. A resolver that only understood `./`
@@ -73,7 +75,8 @@ function parseSource(text: string): ts.SourceFile {
 /** Collects the names a single file exports, following `export *` via `readFile`. */
 export function readBarrelExports(
   text: string,
-  resolveSibling: (specifier: string) => string | null,
+  resolveSibling: (specifier: string, fromDir: string) => { text: string; dir: string } | null,
+  fromDir = '',
   depth = 0
 ): BarrelParse {
   const symbols = new Set<string>();
@@ -106,12 +109,17 @@ export function readBarrelExports(
             ? statement.moduleSpecifier.text
             : null;
         // Depth cap: a cycle between two barrels would otherwise not terminate.
-        const target = specifier !== null && depth < 8 ? resolveSibling(specifier) : null;
+        const target = specifier !== null && depth < 8 ? resolveSibling(specifier, fromDir) : null;
         if (target === null) {
           if (specifier !== null) unresolvedStars.push(specifier);
           continue;
         }
-        const nested = readBarrelExports(target, resolveSibling, depth + 1);
+        // The resolved file's OWN directory, not the outer barrel's. Reusing
+        // the top-level one made `./deep` inside `sub/mod.ts` resolve against
+        // `lib/x/` rather than `lib/x/sub/` — a confidently wrong symbol set
+        // with no warning, which is worse than the unresolved-star case this
+        // module is built around.
+        const nested = readBarrelExports(target.text, resolveSibling, target.dir, depth + 1);
         for (const name of nested.symbols) symbols.add(name);
         unresolvedStars.push(...nested.unresolvedStars);
       }

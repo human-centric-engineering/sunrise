@@ -135,31 +135,47 @@ export function main(argv: string[]): number {
 
   // The head manifest comes from the working tree, not the base: a dependency
   // added in this very PR is direct here even though the base never named it.
-  let headManifest: Manifest = {};
+  let headManifest: Manifest | null = null;
   try {
     headManifest = JSON.parse(readFileSync(resolve(process.cwd(), MANIFEST), 'utf8')) as Manifest;
   } catch {
-    // No manifest, or unreadable: every downgrade then reads as transitive,
-    // which under-reports rather than over-reports. Said out loud.
-    console.error(`Note: could not read ${MANIFEST} — treating every downgrade as transitive.`);
+    // Every downgrade then reads as transitive, which under-reports. Said out
+    // loud — and, critically, the overrides comparison is DISABLED rather than
+    // run against `undefined`: leaving it on made a missing manifest exit 1
+    // claiming `"overrides" changed`, which is a true failure with an entirely
+    // invented cause.
+    console.error(
+      `Note: could not read ${MANIFEST} — treating every downgrade as transitive, and skipping the overrides comparison.`
+    );
   }
 
   // `overrides` lives here, not in the lockfile — npm never writes the key
   // there. Comparing the lockfile's made the rule unfireable.
-  let baseManifest: Manifest = {};
+  let baseManifest: Manifest | null = null;
   const baseManifestSource = base ? git(['show', `${base}:${MANIFEST}`]) : null;
-  if (baseManifestSource !== null) {
+  if (baseManifestSource === null) {
+    console.error(
+      `Note: could not read ${MANIFEST} at ${base} — skipping the overrides comparison.`
+    );
+  } else {
     try {
       baseManifest = JSON.parse(baseManifestSource) as Manifest;
     } catch {
-      console.error(`Note: could not parse ${MANIFEST} at ${base} — overrides not compared.`);
+      console.error(
+        `Note: could not parse ${MANIFEST} at ${base} — skipping the overrides comparison.`
+      );
     }
   }
 
+  // Only compare when BOTH sides were read. One side missing is not evidence
+  // that overrides changed; it is evidence that we cannot tell.
+  const canCompareOverrides = headManifest !== null && baseManifest !== null;
+
   const diff = diffLockfiles(baseLock, head, {
-    directDependencies: directDependencyKeys(headManifest),
-    baseOverrides: baseManifest.overrides,
-    headOverrides: headManifest.overrides,
+    directDependencies: directDependencyKeys(headManifest ?? {}),
+    ...(canCompareOverrides
+      ? { baseOverrides: baseManifest?.overrides, headOverrides: headManifest?.overrides }
+      : {}),
   });
 
   // Every field, including lost metadata. Leaving that one out made the
@@ -184,12 +200,15 @@ export function main(argv: string[]): number {
   for (const name of diff.added) console.log(`  + ${name}`);
   for (const name of diff.removed) console.log(`  - ${name}`);
   for (const change of diff.changed) {
+    // `packages[""]` is the project itself; printing `~  0.8.0 → 0.8.1` with a
+    // blank name shows up on every release PR.
+    const label = change.name === '' ? '(this project)' : change.name;
     const note = change.downgrade
       ? change.direct
         ? '  ← DOWNGRADE (direct)'
         : '  ← downgrade'
       : '';
-    console.log(`  ~ ${change.name} ${change.from} → ${change.to}${note}`);
+    console.log(`  ~ ${label} ${change.from} → ${change.to}${note}`);
   }
 
   if (!hasRisk(diff)) {

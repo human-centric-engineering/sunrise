@@ -4,10 +4,16 @@
  * `/pre-pr` builds its file set from `*.ts` / `*.tsx` and scans for TypeScript
  * anti-patterns, so a PR whose entire substance is the lockfile gets a clean
  * bill from a gate that never looked at it. That is not hypothetical: 0.8.1
- * (#538) was exactly such a PR, and `npm update` had silently stripped `libc`
- * from five native Linux packages — which would have broken Linux CI and
- * production installs. It was caught by hand. The irony is pointed, because
- * #538 exists *because* a lockfile problem went unnoticed (#552).
+ * (#538) was exactly such a PR, and `npm update` stripped `libc` from five
+ * native Linux packages during the cut. That one was caught by hand before it
+ * was committed — measured, `v0.8.0 → v0.8.1` loses metadata on zero packages
+ * — but the near-miss is the point: nothing in the pipeline was looking. The
+ * irony is pointed, because #538 exists *because* a lockfile problem went
+ * unnoticed (#552).
+ *
+ * The one that was NOT caught is `d5b913fb`, a dependabot merge that took 77
+ * packages' `libc` to zero and shipped; 72 still lack it, on `main` and on
+ * every fork (#571).
  *
  * Line counts are useless here: a lockfile diff is thousands of lines and says
  * nothing about which packages actually moved. These rules compare the parsed
@@ -52,7 +58,19 @@ export interface Lockfile {
 export interface Manifest {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
   overrides?: Record<string, unknown>;
+}
+
+/** Stable text for an overrides block, so key order is not a change. */
+function canonicalOverrides(overrides: Manifest['overrides']): string {
+  if (overrides === undefined) return 'none';
+  return JSON.stringify(
+    Object.keys(overrides)
+      .sort()
+      .map((key) => [key, overrides[key]])
+  );
 }
 
 /** A package whose version changed, with the direction resolved. */
@@ -193,9 +211,10 @@ export function diffLockfiles(
     removed,
     changed,
     lostNativeMetadata,
+    // Sorted, so alphabetising or reformatting `overrides` is not reported as
+    // a semantic change and answered with "Intentional?".
     overridesChanged:
-      JSON.stringify(options.baseOverrides ?? null) !==
-      JSON.stringify(options.headOverrides ?? null),
+      canonicalOverrides(options.baseOverrides) !== canonicalOverrides(options.headOverrides),
   };
 }
 
@@ -218,11 +237,21 @@ export function hasRisk(diff: LockfileDiff): boolean {
   );
 }
 
-/** The `node_modules/<name>` keys `package.json` names directly. */
+/**
+ * The `node_modules/<name>` keys `package.json` names directly.
+ *
+ * All four kinds. Sunrise has no `optionalDependencies` or `peerDependencies`
+ * today, but a fork that does would have had a downgrade there classified
+ * transitive and never gated — the exact "patched package returns to a
+ * vulnerable one" case the rule exists for.
+ */
 export function directDependencyKeys(manifest: Manifest): Set<string> {
   return new Set(
-    Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }).map(
-      (name) => `node_modules/${name}`
-    )
+    Object.keys({
+      ...manifest.dependencies,
+      ...manifest.devDependencies,
+      ...manifest.optionalDependencies,
+      ...manifest.peerDependencies,
+    }).map((name) => `node_modules/${name}`)
   );
 }

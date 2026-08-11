@@ -111,6 +111,23 @@ describe('scripts/ci/check-exports', () => {
       expect(barrels.flatMap((barrel) => barrel.unresolvedStars)).toEqual([]);
     });
 
+    it("resolves a nested star against ITS OWN directory, not the outer barrel's", () => {
+      // The decoy is the point: `lib/x/deep.ts` also exists, so resolving
+      // `./deep` from the outer barrel's directory returns a real file and a
+      // confidently wrong answer with no unresolved-star warning — worse than
+      // failing to resolve at all. Both single-level tests passed against that.
+      mkdirSync(join(dir, 'lib', 'x', 'sub'), { recursive: true });
+      writeFileSync(join(dir, 'lib', 'x', 'index.ts'), `export * from './sub/mod';`);
+      writeFileSync(join(dir, 'lib', 'x', 'sub', 'mod.ts'), `export * from './deep';`);
+      writeFileSync(join(dir, 'lib', 'x', 'sub', 'deep.ts'), `export const correct = 1;`);
+      writeFileSync(join(dir, 'lib', 'x', 'deep.ts'), `export const decoy = 1;`);
+
+      const barrel = readBarrelsFromDisk(dir).find((b) => b.file === 'lib/x/index.ts');
+
+      expect(barrel?.symbols).toEqual(['correct']);
+      expect(barrel?.unresolvedStars).toEqual([]);
+    });
+
     it('does not follow a star out of the root', () => {
       // `posix.normalize` collapses `..` but does not stop it. Only symbol
       // names ever reach the output, so no file content leaks — but /pre-pr
@@ -125,6 +142,19 @@ describe('scripts/ci/check-exports', () => {
       );
 
       expect(readBarrelsFromDisk(join(dir, 'repo'))[0].symbols).toEqual(['legit']);
+    });
+
+    it('flags an unreadable barrel rather than calling it empty', () => {
+      // "Exports nothing" and "could not be read" are different answers; the
+      // second read as a wholesale removal with no warning.
+      mkdirSync(join(dir, 'lib', 'x'), { recursive: true });
+      // A directory where a file is expected: listed, but unreadable.
+      mkdirSync(join(dir, 'lib', 'x', 'index.ts'));
+
+      const barrel = readBarrelsFromDisk(dir).find((b) => b.file === 'lib/x/index.ts');
+
+      expect(barrel?.symbols).toEqual([]);
+      expect(barrel?.unresolvedStars).toEqual(['lib/x/index.ts']);
     });
 
     it('returns nothing when there is no lib directory', () => {
@@ -181,6 +211,21 @@ describe('scripts/ci/check-exports', () => {
       errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     });
 
+    it('fails rather than reporting a clean bill when it found no barrels at all', () => {
+      // Run from a subdirectory, both sides come back empty and the old code
+      // printed "No barrel exports changed … (0 barrels)" and exited 0.
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'merge-base') return 'abc123\n';
+        if (args[0] === 'ls-tree') return '';
+        throw new Error('unexpected');
+      });
+      const cwd = vi.spyOn(process, 'cwd').mockReturnValue(join(dir, 'empty'));
+
+      expect(main([])).toBe(1);
+      expect(out()).toContain('Found no barrels on either revision');
+      cwd.mockRestore();
+    });
+
     it('rejects an empty --base rather than silently falling back', () => {
       expect(main(['--base', ''])).toBe(1);
       expect(out()).toContain('needs a revision');
@@ -221,8 +266,14 @@ describe('scripts/ci/check-exports', () => {
       mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
         if (args[0] === 'merge-base') return 'abc123\n';
         if (args[0] === 'ls-tree') return 'lib/x/index.ts\n';
-        if (args[0] === 'show') return `export * from '@/lib/nowhere';`;
-        throw new Error('unexpected');
+        // ONLY the barrel. An earlier version answered every `show`, so
+        // `@/lib/nowhere` resolved, the parser recursed to the depth cap, and
+        // the specifier was pushed by that path instead of the
+        // resolver-returned-null branch this test names.
+        if (args[0] === 'show' && String(args[1]).endsWith('lib/x/index.ts')) {
+          return `export * from '@/lib/nowhere';`;
+        }
+        throw new Error('fatal: path does not exist');
       });
 
       main([]);

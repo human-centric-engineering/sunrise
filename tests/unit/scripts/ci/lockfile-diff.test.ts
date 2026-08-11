@@ -70,6 +70,17 @@ describe('directDependencyKeys', () => {
   it('is empty for a manifest with neither', () => {
     expect(directDependencyKeys({})).toEqual(new Set());
   });
+
+  it('counts optional and peer dependencies too', () => {
+    // A fork with either would have had a downgrade there classified
+    // transitive and never gated — the case the rule exists for.
+    expect(
+      directDependencyKeys({
+        optionalDependencies: { sharp: '^0.34' },
+        peerDependencies: { react: '^19' },
+      })
+    ).toEqual(new Set(['node_modules/sharp', 'node_modules/react']));
+  });
 });
 
 describe('diffLockfiles', () => {
@@ -219,6 +230,17 @@ describe('diffLockfiles', () => {
       expect(
         hasRisk(diffLockfiles(BASE, clone(BASE), { baseOverrides: both, headOverrides: both }))
       ).toBe(false);
+    });
+
+    it('is not fooled by key order', () => {
+      // Alphabetising `overrides` in package.json is not a semantic change and
+      // must not be answered with "Intentional?".
+      const diff = diffLockfiles(BASE, clone(BASE), {
+        baseOverrides: { hono: '^4.11.7', valibot: '^1.2.0' },
+        headOverrides: { valibot: '^1.2.0', hono: '^4.11.7' },
+      });
+
+      expect(hasRisk(diff)).toBe(false);
     });
 
     it('ignores `overrides` sitting on the lockfile, where npm never puts it', () => {

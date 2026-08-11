@@ -280,9 +280,12 @@ release process.
 - **`npm run check:lockfile` and `npm run check:exports`**, both wired into
   `/pre-pr`, which was silent on two classes of change it should never have
   been. A PR whose entire substance is `package-lock.json` got a clean bill
-  from a gate that builds its file set from `*.ts` — which is what happened to
-  0.8.1, where `npm update` had silently stripped `libc` from five native Linux
-  packages. `check:lockfile` compares the parsed trees and fails on the things
+  from a gate that builds its file set from `*.ts` — which is what happened
+  during the 0.8.1 cut, where `npm update` stripped `libc` from five native
+  Linux packages. That one was caught by hand before it was committed, so
+  0.8.1 shipped clean; an earlier dependabot merge was not, and **72 packages
+  on `main` still have no `libc` today** — see #571, which affects every fork
+  and three of them completely. `check:lockfile` compares the parsed trees and fails on the things
   that need a decision: platform metadata (`libc`/`os`/`cpu`) lost, a **direct**
   dependency moved backwards, or `overrides` changed. Transitive downgrades are
   listed but do not gate — measured over all 134 lockfile commits in this

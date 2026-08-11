@@ -70,7 +70,7 @@ export function resolveSpecifier(
   specifier: string,
   fromDir: string,
   read: (path: string) => string | null
-): string | null {
+): { text: string; dir: string } | null {
   let base: string;
   if (specifier.startsWith('@/')) {
     base = posix.normalize(specifier.slice('@/'.length));
@@ -80,8 +80,17 @@ export function resolveSpecifier(
     // A bare specifier is a node_modules package; not our surface.
     return null;
   }
-  // `x` may be `x.ts` or `x/index.ts`; try both, as the compiler would.
-  return read(`${base}.ts`) ?? read(posix.join(base, 'index.ts'));
+
+  // `x` may be `x.ts` or `x/index.ts`; try both, as the compiler would. The
+  // directory returned is the one the resolved FILE sits in, so a star it
+  // writes resolves relative to itself rather than to whoever imported it.
+  const asFile = read(`${base}.ts`);
+  if (asFile !== null) return { text: asFile, dir: posix.dirname(`${base}.ts`) };
+
+  const asIndex = read(posix.join(base, 'index.ts'));
+  if (asIndex !== null) return { text: asIndex, dir: base };
+
+  return null;
 }
 
 /** `--base <ref>` or `--base=<ref>`; presence tracked so an empty value fails. */
@@ -134,8 +143,16 @@ export function readBarrelsFromDisk(root = process.cwd()): BarrelExports[] {
 
   return files.map((file) => {
     const dir = posix.dirname(file);
-    const { symbols, unresolvedStars } = readBarrelExports(read(file) ?? '', (specifier) =>
-      resolveSpecifier(specifier, dir, read)
+    const source = read(file);
+    // An unreadable barrel is not an empty one. `?? ''` made it read as a
+    // wholesale removal (or addition) with no warning — the same "no symbols
+    // vs could not look" conflation this module rejects for stars, one level
+    // up. Recorded as an unresolved star against itself so it is reported.
+    if (source === null) return { file, symbols: [], unresolvedStars: [file] };
+    const { symbols, unresolvedStars } = readBarrelExports(
+      source,
+      (specifier, from) => resolveSpecifier(specifier, from, read),
+      dir
     );
     return { file, symbols, unresolvedStars };
   });
@@ -154,10 +171,13 @@ export function readBarrelsAt(ref: string): BarrelExports[] | null {
   const sourceOf = (path: string): string | null => git(['show', `${ref}:${path}`]);
 
   return files.map((file) => {
-    const text = sourceOf(file) ?? '';
+    const text = sourceOf(file);
     const dir = posix.dirname(file);
-    const { symbols, unresolvedStars } = readBarrelExports(text, (specifier) =>
-      resolveSpecifier(specifier, dir, (path) => sourceOf(path))
+    if (text === null) return { file, symbols: [], unresolvedStars: [file] };
+    const { symbols, unresolvedStars } = readBarrelExports(
+      text,
+      (specifier, from) => resolveSpecifier(specifier, from, (path) => sourceOf(path)),
+      dir
     );
     return { file, symbols, unresolvedStars };
   });
@@ -201,6 +221,17 @@ export function main(argv: string[]): number {
   }
 
   const headBarrels = readBarrelsFromDisk();
+
+  // Both sides empty means the check did not look, not that nothing changed.
+  // Run from `app/` rather than the repo root, `git ls-tree -- lib` matches
+  // nothing and `readdirSync(cwd/lib)` throws, so this printed a clean bill and
+  // exited 0 with `(0 barrels)` as the only tell. The sibling lockfile check
+  // fails loudly in the same situation; so should this one.
+  if (baseBarrels.length === 0 && headBarrels.length === 0) {
+    console.error('Found no barrels on either revision — is this the repo root?');
+    console.error(`Looked for \`lib/**/index.ts\` under ${process.cwd()}.`);
+    return 1;
+  }
   // "No symbols" and "could not look" must not arrive as the same answer —
   // `exports-diff.ts` says so, and then both call sites here destructured only
   // `symbols` and threw this away. That silence is what let a resolver which
