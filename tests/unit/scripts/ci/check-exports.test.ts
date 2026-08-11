@@ -60,8 +60,8 @@ describe('scripts/ci/check-exports', () => {
       writeFileSync(join(dir, 'lib', 'security', 'sanitize.ts'), `export const hidden = 1;`);
 
       expect(readBarrelsFromDisk(dir)).toEqual([
-        { file: 'lib/orchestration/llm/index.ts', symbols: ['P'] },
-        { file: 'lib/security/index.ts', symbols: ['escapeHtml'] },
+        { file: 'lib/orchestration/llm/index.ts', symbols: ['P'], unresolvedStars: [] },
+        { file: 'lib/security/index.ts', symbols: ['escapeHtml'], unresolvedStars: [] },
       ]);
     });
 
@@ -91,6 +91,24 @@ describe('scripts/ci/check-exports', () => {
       writeFileSync(join(dir, 'lib', 'x', 'index.ts'), `export const brandNew = 1;`);
 
       expect(readBarrelsFromDisk(dir)[0].symbols).toEqual(['brandNew']);
+    });
+
+    it("sees through the real repo's barrels, not just synthetic fixtures", () => {
+      // The test that would have caught the shipped defect. Every fixture in
+      // this file used `./inner` — a form ESLint forbids this codebase from
+      // producing — so they all passed against a resolver that followed none
+      // of the six `@/` stars actually in `lib/`.
+      const barrels = readBarrelsFromDisk();
+      const byFile = (file: string): string[] =>
+        barrels.find((barrel) => barrel.file === file)?.symbols ?? [];
+
+      // Behind `export * from '@/lib/orchestration/capabilities/types'` — and
+      // a Daybreak fork seam, so exactly the surface this check exists for.
+      expect(byFile('lib/orchestration/capabilities/index.ts')).toContain('CapabilityContext');
+      // Behind `export * as costTracker from '…'`.
+      expect(byFile('lib/orchestration/llm/index.ts')).toContain('costTracker');
+      // And nothing was left unfollowed.
+      expect(barrels.flatMap((barrel) => barrel.unresolvedStars)).toEqual([]);
     });
 
     it('does not follow a star out of the root', () => {
@@ -133,7 +151,7 @@ describe('scripts/ci/check-exports', () => {
       serveTree();
 
       expect(readBarrelsAt('abc123')).toEqual([
-        { file: 'lib/x/index.ts', symbols: ['inherited', 'own'] },
+        { file: 'lib/x/index.ts', symbols: ['inherited', 'own'], unresolvedStars: [] },
       ]);
     });
 
@@ -194,6 +212,23 @@ describe('scripts/ci/check-exports', () => {
 
       expect(main(['--base', 'nope'])).toBe(1);
       expect(out()).toContain('git: fatal: bad revision');
+    });
+
+    it('says when a star could not be followed, instead of reporting a clean comparison', () => {
+      // The mechanism that makes an incomplete read loud. Without it, a
+      // resolver that followed NONE of this repo's stars printed "no barrel
+      // exports changed" and looked healthy — which is how that shipped.
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'merge-base') return 'abc123\n';
+        if (args[0] === 'ls-tree') return 'lib/x/index.ts\n';
+        if (args[0] === 'show') return `export * from '@/lib/nowhere';`;
+        throw new Error('unexpected');
+      });
+
+      main([]);
+
+      expect(out()).toContain('Could not follow every `export *`');
+      expect(out()).toContain('@/lib/nowhere');
     });
 
     it('reports what changed, and asks the CHANGELOG question, without gating', () => {

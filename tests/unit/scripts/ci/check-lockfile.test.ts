@@ -217,8 +217,19 @@ describe('scripts/ci/check-lockfile', () => {
       expect(out()).toContain('went BACKWARDS');
     });
 
-    it('gates a change to overrides', async () => {
-      serve({ ...JSON.parse(LOCK), overrides: { hono: '^4' } });
+    it('gates a change to overrides, read from package.json', async () => {
+      // Not the lockfile: npm never writes the key there, which is why the
+      // rule was previously unfireable — undefined against undefined forever.
+      mockExecFileSync.mockImplementation((_c: string, a: string[]) => {
+        if (a[0] === 'merge-base') return 'abc123\n';
+        if (String(a[1]).endsWith(':package.json')) return '{"overrides":{"hono":"^4"}}';
+        return LOCK;
+      });
+      mockReadFileSync.mockImplementation((path: string) =>
+        String(path).endsWith('package.json')
+          ? '{"dependencies":{"native":"^1"},"overrides":{"hono":"^5"}}'
+          : LOCK
+      );
 
       await run();
       expect(process.exitCode).toBe(1);

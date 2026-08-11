@@ -76,6 +76,27 @@ describe('readBarrelExports', () => {
       expect(symbols).toEqual(['deep']);
     });
 
+    it('follows an `@/` specifier, which is the only form this repo produces', () => {
+      // CLAUDE.md mandates the alias and ESLint forbids relative paths, so all
+      // six stars in `lib/` are `@/`. Resolution is the caller's job — see
+      // `resolveSpecifier` — but the parser must hand the specifier over
+      // unchanged rather than pre-filtering it.
+      const seen: string[] = [];
+      readBarrelExports(`export * from '@/lib/orchestration/llm/types';`, (specifier) => {
+        seen.push(specifier);
+        return `export type LlmMessage = string;`;
+      });
+
+      expect(seen).toEqual(['@/lib/orchestration/llm/types']);
+    });
+
+    it('records a namespace re-export as the one symbol it is', () => {
+      // `export * as costTracker from '…'` is a NamespaceExport: not a named
+      // export, and not a bare star. It fell through both branches and was
+      // recorded nowhere, so deleting one read as no change.
+      expect(symbolsOf(`export * as costTracker from '@/lib/x';`)).toEqual(['costTracker']);
+    });
+
     it('reports a star it could not follow rather than counting it as nothing', () => {
       // "no symbols" and "could not look" must not arrive as the same answer,
       // or an unreadable module reads as a surface that shrank to zero.
@@ -111,7 +132,11 @@ describe('readBarrelExports', () => {
 });
 
 describe('diffExports', () => {
-  const barrel = (file: string, symbols: string[]): BarrelExports => ({ file, symbols });
+  const barrel = (file: string, symbols: string[]): BarrelExports => ({
+    file,
+    symbols,
+    unresolvedStars: [],
+  });
 
   it('reports nothing when the surface is unchanged', () => {
     const before = [barrel('lib/security/index.ts', ['escapeHtml', 'sanitizeUrl'])];

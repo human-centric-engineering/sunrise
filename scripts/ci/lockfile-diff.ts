@@ -21,9 +21,10 @@
  *    patched dependency quietly returns to a vulnerable one. Only *direct*
  *    ones gate, which is a measured decision rather than a taste — see
  *    {@link VersionChange.direct}.
- * 3. **`overrides` changes.** An override forces a package past a range its
- *    dependents declared. Sunrise carries two deliberately; a third appearing
- *    in a diff is a decision, not a detail.
+ * 3. **`overrides` changes**, read from `package.json` at both revisions —
+ *    npm does not write them into the lockfile. An override forces a package
+ *    past a range its dependents declared. Sunrise carries two deliberately; a
+ *    third appearing in a diff is a decision, not a detail.
  * 4. **What moved at all** — added, removed, changed — so a "3 packages plus a
  *    dedupe" claim can be checked rather than believed.
  *
@@ -45,7 +46,13 @@ export interface LockPackage {
 /** The parts of a lockfile these rules read. */
 export interface Lockfile {
   packages?: Record<string, LockPackage>;
-  overrides?: Record<string, string>;
+}
+
+/** The parts of `package.json` these rules read. */
+export interface Manifest {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  overrides?: Record<string, unknown>;
 }
 
 /** A package whose version changed, with the direction resolved. */
@@ -120,8 +127,24 @@ function nativeKeysOf(entry: LockPackage): (typeof NATIVE_KEYS)[number][] {
 export function diffLockfiles(
   base: Lockfile,
   head: Lockfile,
-  directDependencies: ReadonlySet<string> = new Set()
+  options: {
+    directDependencies?: ReadonlySet<string>;
+    /**
+     * `overrides` from `package.json` at each revision.
+     *
+     * **Not from the lockfile.** npm records overrides in the manifest; the
+     * word does not appear in `package-lock.json` at all — verified, zero
+     * occurrences, and nothing under `packages[""]` either. An earlier version
+     * compared `lockfile.overrides` on both sides, which is `undefined` against
+     * `undefined` forever, so one of the three gating rules could never fire.
+     * The CLI's own message said "package.json overrides changed", which was
+     * the tell.
+     */
+    baseOverrides?: Manifest['overrides'];
+    headOverrides?: Manifest['overrides'];
+  } = {}
 ): LockfileDiff {
+  const directDependencies = options.directDependencies ?? new Set<string>();
   const basePackages = base.packages ?? {};
   const headPackages = head.packages ?? {};
   const baseNames = Object.keys(basePackages);
@@ -171,7 +194,8 @@ export function diffLockfiles(
     changed,
     lostNativeMetadata,
     overridesChanged:
-      JSON.stringify(base.overrides ?? null) !== JSON.stringify(head.overrides ?? null),
+      JSON.stringify(options.baseOverrides ?? null) !==
+      JSON.stringify(options.headOverrides ?? null),
   };
 }
 
@@ -195,10 +219,7 @@ export function hasRisk(diff: LockfileDiff): boolean {
 }
 
 /** The `node_modules/<name>` keys `package.json` names directly. */
-export function directDependencyKeys(manifest: {
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-}): Set<string> {
+export function directDependencyKeys(manifest: Manifest): Set<string> {
   return new Set(
     Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }).map(
       (name) => `node_modules/${name}`

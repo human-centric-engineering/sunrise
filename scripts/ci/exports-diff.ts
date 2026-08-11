@@ -36,6 +36,8 @@ export interface BarrelExports {
   file: string;
   /** Exported symbol names, sorted. Types and values alike — forks import both. */
   symbols: string[];
+  /** Specifiers of `export *` statements that could not be followed. */
+  unresolvedStars: string[];
 }
 
 /** A barrel whose exported set moved. */
@@ -48,8 +50,13 @@ export interface ExportChange {
 /**
  * Reads the exported symbol names of a barrel from source text.
  *
- * `resolveSibling` returns the source of a relative import so `export *` can be
- * followed, or `null` when it cannot be read. A star that cannot be followed is
+ * `resolveSibling` returns the source of an imported module so `export *` can
+ * be followed, or `null` when it cannot be read. **Resolving the specifier is
+ * the caller's job, and in this repo that means handling `@/`** — CLAUDE.md
+ * mandates the alias and ESLint forbids relative paths, so every one of the six
+ * stars in `lib/` is an `@/` specifier. A resolver that only understood `./`
+ * returned `null` for all of them, which is how this file shipped claiming to
+ * follow stars while following none. A star that cannot be followed is
  * reported through {@link BarrelParse.unresolvedStars} rather than silently
  * contributing nothing, because "no symbols" and "could not look" must not
  * arrive as the same answer.
@@ -82,6 +89,14 @@ export function readBarrelExports(
       if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
         // `export { a, b as c }` and `export type { … }`
         for (const element of statement.exportClause.elements) symbols.add(element.name.text);
+        continue;
+      }
+      if (statement.exportClause && ts.isNamespaceExport(statement.exportClause)) {
+        // `export * as costTracker from '…'` — one importable symbol, the
+        // namespace itself. This fell through both branches and was recorded
+        // nowhere, so deleting `export * as costTracker` from
+        // `lib/orchestration/llm/index.ts` read as no change at all.
+        symbols.add(statement.exportClause.name.text);
         continue;
       }
       if (!statement.exportClause) {

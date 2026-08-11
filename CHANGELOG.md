@@ -292,10 +292,15 @@ release process.
   `check:exports` answers step 5d's question — *did the set of importable
   symbols change?* — from the surface rather than a hardcoded path list, by
   diffing what every `lib/**/index.ts` barrel exports. It uses the TypeScript
-  compiler rather than a regex because three barrels use `export *`, which a
-  regex cannot follow. It reports and never gates. Over the last 60 commits it
-  fires once: on #506's `normalizeRootRelativePath`, the export the path list
-  missed (#552).
+  compiler rather than a regex because six of those exports are `export *`
+  (three of them `export * as ns`), which a regex cannot follow; specifiers
+  resolve through the `@/` alias, since CLAUDE.md mandates it and ESLint
+  forbids relative paths, so `@/` is the only form this codebase produces. A
+  star it cannot follow is reported, on both revisions, rather than counted as
+  zero symbols — "nothing exported" and "could not look" are not the same
+  answer. It reports and never gates. Over the last 60 commits it fires once:
+  on #506's `normalizeRootRelativePath`, the export the path list missed
+  (#552).
 
 ### Changed
 

@@ -55,6 +55,35 @@ function git(args: string[]): string | null {
   }
 }
 
+/**
+ * Turns an import specifier into repo-relative candidate paths and reads the
+ * first that exists.
+ *
+ * **`@/` is not optional here.** CLAUDE.md mandates the alias and ESLint's
+ * `no-restricted-imports` forbids relative paths, so every `export *` in `lib/`
+ * is an `@/` specifier — all six of them. An earlier version accepted only
+ * `./`, which meant it followed no stars at all in the one codebase it runs on,
+ * while its own header claimed following them was the reason it used the
+ * TypeScript compiler.
+ */
+export function resolveSpecifier(
+  specifier: string,
+  fromDir: string,
+  read: (path: string) => string | null
+): string | null {
+  let base: string;
+  if (specifier.startsWith('@/')) {
+    base = posix.normalize(specifier.slice('@/'.length));
+  } else if (specifier.startsWith('.')) {
+    base = posix.normalize(posix.join(fromDir, specifier));
+  } else {
+    // A bare specifier is a node_modules package; not our surface.
+    return null;
+  }
+  // `x` may be `x.ts` or `x/index.ts`; try both, as the compiler would.
+  return read(`${base}.ts`) ?? read(posix.join(base, 'index.ts'));
+}
+
 /** `--base <ref>` or `--base=<ref>`; presence tracked so an empty value fails. */
 export function parseBaseRef(argv: string[]): { present: boolean; ref: string } {
   const index = argv.indexOf('--base');
@@ -105,12 +134,10 @@ export function readBarrelsFromDisk(root = process.cwd()): BarrelExports[] {
 
   return files.map((file) => {
     const dir = posix.dirname(file);
-    const { symbols } = readBarrelExports(read(file) ?? '', (specifier) => {
-      if (!specifier.startsWith('.')) return null;
-      const base = posix.normalize(posix.join(dir, specifier));
-      return read(`${base}.ts`) ?? read(posix.join(base, 'index.ts'));
-    });
-    return { file, symbols };
+    const { symbols, unresolvedStars } = readBarrelExports(read(file) ?? '', (specifier) =>
+      resolveSpecifier(specifier, dir, read)
+    );
+    return { file, symbols, unresolvedStars };
   });
 }
 
@@ -129,13 +156,10 @@ export function readBarrelsAt(ref: string): BarrelExports[] | null {
   return files.map((file) => {
     const text = sourceOf(file) ?? '';
     const dir = posix.dirname(file);
-    const { symbols } = readBarrelExports(text, (specifier) => {
-      if (!specifier.startsWith('.')) return null;
-      const base = posix.normalize(posix.join(dir, specifier));
-      // `./x` may be `x.ts` or `x/index.ts`; try both, as the compiler would.
-      return sourceOf(`${base}.ts`) ?? sourceOf(posix.join(base, 'index.ts'));
-    });
-    return { file, symbols };
+    const { symbols, unresolvedStars } = readBarrelExports(text, (specifier) =>
+      resolveSpecifier(specifier, dir, (path) => sourceOf(path))
+    );
+    return { file, symbols, unresolvedStars };
   });
 }
 
@@ -177,6 +201,29 @@ export function main(argv: string[]): number {
   }
 
   const headBarrels = readBarrelsFromDisk();
+  // "No symbols" and "could not look" must not arrive as the same answer —
+  // `exports-diff.ts` says so, and then both call sites here destructured only
+  // `symbols` and threw this away. That silence is what let a resolver which
+  // followed none of this repo's stars look like a clean report.
+  // BOTH sides. A star unfollowed on the base makes the comparison just as
+  // incomplete as one unfollowed here — every symbol behind it reads as newly
+  // added. Checking only head was the first version, and the test written for
+  // this very message is what caught it.
+  const unresolved = [
+    ...baseBarrels.map((barrel) => ({ side: base, barrel })),
+    ...headBarrels.map((barrel) => ({ side: 'working tree', barrel })),
+  ].filter((entry) => entry.barrel.unresolvedStars.length > 0);
+
+  if (unresolved.length > 0) {
+    console.error('Could not follow every `export *`, so this comparison is incomplete:');
+    for (const { side, barrel } of unresolved) {
+      for (const specifier of barrel.unresolvedStars) {
+        console.error(`  ${barrel.file} → ${specifier}  (at ${side})`);
+      }
+    }
+    console.error('');
+  }
+
   const changes = diffExports(baseBarrels, headBarrels);
 
   if (changes.length === 0) {

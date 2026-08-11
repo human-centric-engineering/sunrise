@@ -29,9 +29,11 @@ import {
   directDependencyKeys,
   hasRisk,
   type Lockfile,
+  type Manifest,
 } from '@/scripts/ci/lockfile-diff';
 
 const LOCKFILE = 'package-lock.json';
+const MANIFEST = 'package.json';
 
 /** git's own first line of complaint, falling back to the thrown message. */
 function describeGitFailure(error: unknown): string {
@@ -131,22 +133,34 @@ export function main(argv: string[]): number {
   const baseLock = parseLockfile(baseSource, base ?? 'the base revision');
   if (!head || !baseLock) return 1;
 
-  // Read from the working tree, not the base: a dependency added in this very
-  // PR is direct here even though the base never named it.
-  let direct = new Set<string>();
+  // The head manifest comes from the working tree, not the base: a dependency
+  // added in this very PR is direct here even though the base never named it.
+  let headManifest: Manifest = {};
   try {
-    direct = directDependencyKeys(
-      JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as {
-        dependencies?: Record<string, string>;
-      }
-    );
+    headManifest = JSON.parse(readFileSync(resolve(process.cwd(), MANIFEST), 'utf8')) as Manifest;
   } catch {
     // No manifest, or unreadable: every downgrade then reads as transitive,
-    // which under-reports rather than over-reports. Said out loud below.
-    console.error('Note: could not read package.json — treating every downgrade as transitive.');
+    // which under-reports rather than over-reports. Said out loud.
+    console.error(`Note: could not read ${MANIFEST} — treating every downgrade as transitive.`);
   }
 
-  const diff = diffLockfiles(baseLock, head, direct);
+  // `overrides` lives here, not in the lockfile — npm never writes the key
+  // there. Comparing the lockfile's made the rule unfireable.
+  let baseManifest: Manifest = {};
+  const baseManifestSource = base ? git(['show', `${base}:${MANIFEST}`]) : null;
+  if (baseManifestSource !== null) {
+    try {
+      baseManifest = JSON.parse(baseManifestSource) as Manifest;
+    } catch {
+      console.error(`Note: could not parse ${MANIFEST} at ${base} — overrides not compared.`);
+    }
+  }
+
+  const diff = diffLockfiles(baseLock, head, {
+    directDependencies: directDependencyKeys(headManifest),
+    baseOverrides: baseManifest.overrides,
+    headOverrides: headManifest.overrides,
+  });
 
   // Every field, including lost metadata. Leaving that one out made the
   // headline case — d5b913fb, where 77 packages lost `libc` and not one
@@ -210,7 +224,7 @@ export function main(argv: string[]): number {
     console.error('    vulnerable one. Intentional pin, or an accident of recomputing the tree?');
   }
   if (diff.overridesChanged) {
-    console.error('  package.json "overrides" changed — that forces a package past a range its');
+    console.error(`  ${MANIFEST} "overrides" changed — that forces a package past a range its`);
     console.error('    dependents declared. Intentional?');
   }
 

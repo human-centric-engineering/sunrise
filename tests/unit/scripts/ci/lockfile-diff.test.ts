@@ -154,11 +154,9 @@ describe('diffLockfiles', () => {
     };
 
     it('gates a DIRECT dependency going backwards', () => {
-      const diff = diffLockfiles(
-        BASE,
-        downgraded('node_modules/left-pad'),
-        new Set(['node_modules/left-pad'])
-      );
+      const diff = diffLockfiles(BASE, downgraded('node_modules/left-pad'), {
+        directDependencies: new Set(['node_modules/left-pad']),
+      });
 
       expect(diff.changed).toEqual([
         {
@@ -176,7 +174,7 @@ describe('diffLockfiles', () => {
       // Measured: 45 transitive downgrades against 2 direct across this repo's
       // history, clustering in commits like "pin Prisma to ~7.1.0" where one
       // intended pin drags its subtree back. Gating would cry wolf.
-      const diff = diffLockfiles(BASE, downgraded('node_modules/left-pad'), new Set());
+      const diff = diffLockfiles(BASE, downgraded('node_modules/left-pad'), {});
 
       expect(diff.changed[0]).toMatchObject({ downgrade: true, direct: false });
       expect(hasRisk(diff)).toBe(false);
@@ -186,7 +184,9 @@ describe('diffLockfiles', () => {
       const head = clone(BASE);
       head.packages!['node_modules/left-pad'] = { version: '1.4.0' };
 
-      const diff = diffLockfiles(BASE, head, new Set(['node_modules/left-pad']));
+      const diff = diffLockfiles(BASE, head, {
+        directDependencies: new Set(['node_modules/left-pad']),
+      });
 
       expect(diff.changed[0]).toMatchObject({ downgrade: false });
       expect(hasRisk(diff)).toBe(false);
@@ -194,17 +194,38 @@ describe('diffLockfiles', () => {
   });
 
   describe('overrides', () => {
-    it('gates any change to the set', () => {
-      const head: Lockfile = { ...clone(BASE), overrides: { hono: '^4.11.7' } };
+    // Read from `package.json`, never the lockfile: the word does not appear in
+    // `package-lock.json` at all. The earlier fixtures put it at the lockfile
+    // root, so they were green against a rule that could never fire.
+    it('gates a changed value', () => {
+      const diff = diffLockfiles(BASE, clone(BASE), {
+        baseOverrides: { hono: '^4.11.7' },
+        headOverrides: { hono: '^5.0.0' },
+      });
 
-      expect(hasRisk(diffLockfiles(BASE, head))).toBe(true);
+      expect(hasRisk(diff)).toBe(true);
+    });
+
+    it('gates a newly added override', () => {
+      expect(
+        hasRisk(diffLockfiles(BASE, clone(BASE), { headOverrides: { valibot: '^1.2.0' } }))
+      ).toBe(true);
     });
 
     it('does not fire when they are merely present and unchanged', () => {
       // Sunrise carries two deliberately; their existence is not a finding.
-      const withOverrides: Lockfile = { ...clone(BASE), overrides: { hono: '^4.11.7' } };
+      const both = { hono: '^4.11.7', valibot: '^1.2.0' };
 
-      expect(hasRisk(diffLockfiles(withOverrides, clone(withOverrides)))).toBe(false);
+      expect(
+        hasRisk(diffLockfiles(BASE, clone(BASE), { baseOverrides: both, headOverrides: both }))
+      ).toBe(false);
+    });
+
+    it('ignores `overrides` sitting on the lockfile, where npm never puts it', () => {
+      // Guards the old bug from coming back by the same route.
+      const withStray = { ...clone(BASE), overrides: { hono: '^9' } } as typeof BASE;
+
+      expect(hasRisk(diffLockfiles(BASE, withStray))).toBe(false);
     });
   });
 
