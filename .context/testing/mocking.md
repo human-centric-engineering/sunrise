@@ -229,6 +229,23 @@ vi.mock('next/navigation', () => ({
 expect(mockPush).toHaveBeenCalledWith('/dashboard');
 ```
 
+The factory above is untyped, so a partial router is fine there. **Anywhere
+TypeScript checks the shape — `vi.mocked(useRouter).mockReturnValue(...)`, or a
+variable annotated as the router — use `createMockRouter()` instead of writing
+the object literal out:**
+
+```typescript
+import { createMockRouter } from '@/tests/types/mocks';
+
+const push = vi.fn();
+vi.mocked(useRouter).mockReturnValue(createMockRouter({ push }));
+```
+
+`AppRouterInstance` gains required members between Next minors — 16.3.0 added
+`bfcacheId` — and every hand-rolled literal breaks at once when it does. One
+factory means one place to update. Pass only the members the test asserts on;
+the rest are `vi.fn()`.
+
 **See** `tests/types/mocks.ts` for `createMockHeaders()` factory with complete Headers interface.
 
 ---
@@ -316,6 +333,7 @@ expect(mockContextLogger.info).toHaveBeenCalledWith('Request processed');
 import {
   createMockHeaders, // Complete Headers interface
   createMockSession, // Complete better-auth session
+  createMockRouter, // Complete next/navigation App Router
   delayed, // PrismaPromise timing helper
 } from '@/tests/types/mocks';
 ```
@@ -551,6 +569,7 @@ expect(apiClient.post).toHaveBeenCalledWith('/api/v1/users', {
 import {
   createMockHeaders, // Complete Headers interface
   createMockSession, // Complete better-auth session
+  createMockRouter, // Complete next/navigation App Router
   delayed, // PrismaPromise timing helper
 } from '@/tests/types/mocks';
 ```
