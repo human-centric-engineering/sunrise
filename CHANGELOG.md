@@ -283,9 +283,10 @@ release process.
   from a gate that builds its file set from `*.ts` — which is what happened
   during the 0.8.1 cut, where `npm update` stripped `libc` from five native
   Linux packages. That one was caught by hand before it was committed, so
-  0.8.1 shipped clean; an earlier dependabot merge was not, and **72 packages
-  on `main` still have no `libc` today** — see #571, which affects every fork
-  and three of them completely. `check:lockfile` compares the parsed trees and fails on the things
+  0.8.1 shipped clean; an earlier dependabot merge was not, and **v0.8.0
+  shipped with 72 packages already missing `libc`**, which is still the state
+  of `main`. Every fork inherited it by taking 0.8.0 — nothing to do with the
+  0.8.1 upgrade. See #571. `check:lockfile` compares the parsed trees and fails on the things
   that need a decision: platform metadata (`libc`/`os`/`cpu`) lost, a **direct**
   dependency moved backwards, or `overrides` changed. Transitive downgrades are
   listed but do not gate — measured over all 134 lockfile commits in this

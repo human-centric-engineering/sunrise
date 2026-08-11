@@ -11,9 +11,10 @@
  * irony is pointed, because #538 exists *because* a lockfile problem went
  * unnoticed (#552).
  *
- * The one that was NOT caught is `d5b913fb`, a dependabot merge that took 77
- * packages' `libc` to zero and shipped; 72 still lack it, on `main` and on
- * every fork (#571).
+ * The one that was NOT caught is `d5b913fb` (2026-07-29), a dependabot merge
+ * that took 77 packages' `libc` to zero. Five were restored before v0.8.0, so
+ * that release shipped with 72 missing and every fork inherited them; `main`
+ * is still in that state. Nothing was lost between 0.8.0 and 0.8.1 (#571).
  *
  * Line counts are useless here: a lockfile diff is thousands of lines and says
  * nothing about which packages actually moved. These rules compare the parsed
