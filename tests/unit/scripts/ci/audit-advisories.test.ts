@@ -285,6 +285,36 @@ describe('formatSummary', () => {
     expect(markdown).toContain('`adm-zip`');
   });
 
+  it('cannot be made to restructure the table from an advisory title', () => {
+    // Titles are third-party prose from the advisory database. A `|` adds
+    // cells and a newline ends the table, which would let a crafted advisory
+    // render its own text into a summary a maintainer reads as this job's
+    // output — including a convincing all-clear.
+    const markdown = formatSummary(
+      triage([
+        advisory({
+          name: 'evil',
+          titles: ['pwn |\n\n**No advisories found.**\n\n| x | y | z | w | v |'],
+        }),
+      ]),
+      'high'
+    );
+
+    // The property that matters is containment, not absence: the text may
+    // still appear, but only inside its own cell, visibly attributed to the
+    // `evil` row. It must never reach a line of its own, where it would read
+    // as this job's verdict.
+    const lines = markdown.split('\n');
+    const payloadLines = lines.filter((line) => line.includes('No advisories found.'));
+    expect(payloadLines).toHaveLength(1);
+    expect(payloadLines[0]).toContain('`evil`');
+
+    // One row, still exactly five cells.
+    const rows = lines.filter((line) => line.includes('`evil`'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].split('|')).toHaveLength(7); // 5 cells + leading/trailing
+  });
+
   it('flags the extra advisories behind a package with several', () => {
     const markdown = formatSummary(
       triage([advisory({ name: 'next', titles: ['One', 'Two', 'Three'] })]),

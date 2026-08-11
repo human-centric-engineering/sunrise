@@ -438,6 +438,9 @@ CI scans dependencies, code, and git history on every push and PR to `main` (plu
 | Dependency gate    | `.github/workflows/dependency-review.yml` | Fails a PR that adds a dependency with a known **high+** vulnerability; license advisory     |
 | SAST               | `.github/workflows/codeql.yml`            | CodeQL static analysis (JS/TS, `build-mode: none`); findings in **Security → Code scanning** |
 | Secret scanning    | `.github/workflows/secret-scan.yml`       | TruffleHog scans the diff (PR) and full history (cron); fails on a committed credential      |
+| Standing audit     | `.github/workflows/dependency-audit.yml`  | Weekly: `npm audit` on the tree as it stands, plus an absolute `libc` completeness check     |
+
+**Why a standing audit as well as the dependency gate:** `dependency-review` diffs a PR, so it gates what a PR _adds_ and goes green forever once a vulnerable version is on `main`. Dependabot does watch the tree, but has no package to bump when the fix lives in a **grandparent** — `ws@8.20.1` sat behind two packages declaring `ws: ~8.20.1`, neither vulnerable, so no PR was ever raised and the alert stayed open for seven weeks (#538, #549). The audit job fails only on findings that are actionable today (high+ with a non-major fix) and reports the rest, so an advisory nobody can clear does not red-line the board permanently. Unlike CodeQL and dependency-review it needs no Advanced Security, so it runs on private forks too.
 
 **TruffleHog over gitleaks-action:** gitleaks-action requires a paid licence for org-owned repos; TruffleHog is free for everyone, so forks inherit it unchanged.
 

@@ -12,6 +12,8 @@ repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 | `.github/workflows/ci.yml`                | push to `main`, PR to `main` | Type-check, lint/format, build, tests, erasure smoke, Docker build |
 | `.github/workflows/codeql.yml`            | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)      |
 | `.github/workflows/dependency-review.yml` | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)    |
+| `.github/workflows/secret-scan.yml`       | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                       |
+| `.github/workflows/dependency-audit.yml`  | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness |
 
 ## `ci.yml` shape
 

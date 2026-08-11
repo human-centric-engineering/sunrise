@@ -200,6 +200,22 @@ export function summarise(result: Triage, floor: Severity): string {
   );
 }
 
+/**
+ * Neutralises the two characters that can restructure a markdown table.
+ *
+ * Advisory titles come from the GitHub Advisory Database, so they are prose
+ * written by a third party. A `|` splits a row into extra cells and a newline
+ * ends the table outright, which would let a crafted advisory render arbitrary
+ * text — a plausible-looking "no advisories found" line, say — into a summary
+ * a maintainer reads as this job's output. The exit code and console output
+ * are the authoritative signals and neither is affected, so this is belt and
+ * braces; it is cheap, and a report that can be made to lie about itself is
+ * precisely what this job exists to avoid.
+ */
+function cell(text: string): string {
+  return text.replace(/[|\r\n]/g, ' ').trim();
+}
+
 function table(advisories: Advisory[]): string[] {
   if (advisories.length === 0) return ['_None._', ''];
   return [
@@ -210,9 +226,9 @@ function table(advisories: Advisory[]): string[] {
         a.fix === 'none'
           ? 'none published'
           : (a.fixTarget ?? (a.fix === 'major' ? 'major' : 'yes'));
-      const title = a.titles[0] ?? '';
+      const title = cell(a.titles[0] ?? '');
       const extra = a.titles.length > 1 ? ` (+${a.titles.length - 1} more)` : '';
-      return `| \`${a.name}\` | ${a.severity} | ${a.direct ? 'direct' : 'transitive'} | ${fix} | ${title}${extra} |`;
+      return `| \`${cell(a.name)}\` | ${a.severity} | ${a.direct ? 'direct' : 'transitive'} | ${cell(fix)} | ${title}${extra} |`;
     }),
     '',
   ];
