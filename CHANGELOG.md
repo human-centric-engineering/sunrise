@@ -424,6 +424,19 @@ release process.
   and is logged, because writing it would fail validation the next time
   anyone edited the MCP row (#509).
 
+- **Vercel builds no longer fail with `ENOENT: .next/next-server.js.nft.json`.**
+  `next.config.js` set `output: 'standalone'` unconditionally, for Docker
+  self-hosting. From Next 16.3.0, Turbopack stops emitting
+  `next-server.js.nft.json` when a deployment adapter drives the build
+  ([vercel/next.js#93684](https://github.com/vercel/next.js/pull/93684)) — but
+  standalone output reads that file, so the two together break the build at
+  `onBuildComplete`. `output` is now `undefined` when `VERCEL` is set; Vercel
+  never used standalone, and Docker is unaffected. Forks that hardcode
+  `output: 'standalone'` back will hit this on Vercel while Docker keeps
+  working, and the local build will not reproduce it — with no adapter present,
+  Next still generates the file. See
+  [`.context/deployment/platforms/vercel.md`](.context/deployment/platforms/vercel.md).
+
 ## [0.8.1] — 2026-08-06
 
 > **Alpha release.** Eleventh tagged Sunrise release. **PATCH bump** — one

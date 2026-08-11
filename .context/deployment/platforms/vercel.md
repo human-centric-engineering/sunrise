@@ -163,8 +163,27 @@ Vercel handles infrastructure health monitoring automatically. The `/api/health`
 ### Build Timeout
 
 - Free tier has 45s timeout; Pro has 5 minutes
-- Optimize build by ensuring `output: 'standalone'` in `next.config.js`
 - Check for slow dependencies
+- **Do not enable `output: 'standalone'` for Vercel.** Vercel builds its own
+  serverless output and does not use it; `next.config.js` deliberately switches
+  it off when `process.env.VERCEL` is set (see below)
+
+### Build Fails With `ENOENT: .next/next-server.js.nft.json`
+
+Caused by `output: 'standalone'` being active on Vercel. From Next 16.3.0,
+Turbopack stops emitting `next-server.js.nft.json` when a deployment adapter is
+driving the build, on the grounds that adapters do not read it
+([vercel/next.js#93684](https://github.com/vercel/next.js/pull/93684)).
+Standalone output _does_ read it, so the combination fails at
+`onBuildComplete` ([#93915](https://github.com/vercel/next.js/pull/93915)).
+
+The build succeeds locally, which makes this confusing to diagnose: with no
+adapter present, Next still generates the file, so `npm run build` on a laptop
+never reproduces it.
+
+`next.config.js` already handles this by setting `output` to `undefined` when
+`VERCEL` is set. If you fork and hardcode `output: 'standalone'` back, expect
+this error on Vercel while Docker keeps working.
 
 ### Environment Variables Not Loading
 

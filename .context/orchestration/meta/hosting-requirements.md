@@ -40,7 +40,7 @@ If any of the words below are new, this section is the floor. None of these are 
 | **Function timeout**   | On serverless platforms, each request runs inside a "function" with a maximum duration (e.g. 60 s). Long agent runs and SSE streams can hit this ceiling.                                           |
 | **Cron / cron tick**   | A scheduler that runs a command on a schedule (e.g. every minute). Sunrise expects something external to "tick" one URL every minute.                                                               |
 | **Migration**          | A change to the database schema. `prisma migrate deploy` applies any new migrations to the production DB. Must run before the new app starts.                                                       |
-| **Standalone build**   | A flag (`output: 'standalone'`) that makes Next.js bundle a small, self-contained Node server. Already enabled in `next.config.js`.                                                                 |
+| **Standalone build**   | A flag (`output: 'standalone'`) that makes Next.js bundle a small, self-contained Node server. Enabled in `next.config.js` for every target except Vercel, which supplies its own build adapter.    |
 
 If you remember one thing: **pick a platform, give it your repo, set the environment variables, point a cron at one URL.** Everything below is the detail behind that sentence.
 
@@ -52,12 +52,12 @@ If you remember one thing: **pick a platform, give it your repo, set the environ
 
 In plain terms: Sunrise is a normal long-running web server (Node.js). Some platforms (Vercel) run web apps as short-lived "functions" instead, which is great for short requests but creates friction for the agentic layer's long streams.
 
-Sunrise runs as a **single long-lived Node 20+ process** built from `next build` with `output: 'standalone'` (`next.config.js:4`). The orchestration layer assumes a real, persistent Node runtime — it is not designed for an Edge runtime, and several pieces (native modules, long SSE streams, in-process scheduling assumptions) preclude purely serverless execution models that hard-cap function duration at 60 seconds.
+Sunrise runs as a **single long-lived Node 20+ process** built from `next build` with `output: 'standalone'` (set in `next.config.js`, and deliberately disabled when `VERCEL` is set — see [`.context/deployment/platforms/vercel.md`](../../deployment/platforms/vercel.md)). The orchestration layer assumes a real, persistent Node runtime — it is not designed for an Edge runtime, and several pieces (native modules, long SSE streams, in-process scheduling assumptions) preclude purely serverless execution models that hard-cap function duration at 60 seconds.
 
 | Requirement                           | Why it matters                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Node 20+                              | Required by Prisma 7's client and the Next.js 16 / React 19 toolchain                                   |
-| `output: 'standalone'`                | Produces `.next/standalone/server.js` so the runtime image carries only what it needs                   |
+| `output: 'standalone'`                | Produces `.next/standalone/server.js` so the runtime image carries only what it needs (off on Vercel)   |
 | `serverExternalPackages`              | `@prisma/client`, `@prisma/adapter-pg`, `ioredis` are excluded from the bundler — must exist at runtime |
 | `.npmrc` with `legacy-peer-deps=true` | Required by `better-auth` + Prisma 7 — must be present at install time, not just dev                    |
 | Build memory ≥ 2 GB                   | `next build` + Prisma generate + type-check peaks high; tiny VMs OOM mid-build                          |

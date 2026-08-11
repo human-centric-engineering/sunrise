@@ -41,8 +41,20 @@ function allowedDevOrigins() {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Enable standalone output for Docker deployments
-  output: 'standalone',
+  // Standalone output for Docker deployments — but NOT when a deployment
+  // adapter is driving the build (Vercel).
+  //
+  // Next 16.3.0 stopped emitting `next-server.js.nft.json` under Turbopack when
+  // an adapter is present, on the grounds that "adapters don't read these
+  // files" (vercel/next.js#93684). `output: 'standalone'` does read it —
+  // `writeStandaloneDirectory` opens it — so the two together fail the build
+  // with `ENOENT: .next/next-server.js.nft.json` (vercel/next.js#93915).
+  //
+  // Vercel never needed standalone: it builds its own serverless output and
+  // the setting was only ever here for `docker-compose`/self-hosting, where no
+  // adapter exists and the file is still generated. Keying on VERCEL keeps
+  // both paths working. Revisit once the upstream interaction is fixed.
+  output: process.env.VERCEL ? undefined : 'standalone',
 
   // Strict mode for React
   reactStrictMode: true,
