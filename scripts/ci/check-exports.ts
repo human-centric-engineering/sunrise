@@ -255,7 +255,20 @@ export function main(argv: string[]): number {
     console.error('');
   }
 
-  const changes = diffExports(baseBarrels, headBarrels);
+  // A barrel we could not read is excluded from the comparison entirely. Left
+  // in, it carries `symbols: []`, so `diffExports` reports everything it used
+  // to export as removed — a confident, fabricated breaking-change list under
+  // the "removals are breaking for anyone importing them" footer. The warning
+  // above already says we could not look.
+  const unreadable = new Set(
+    unresolved
+      .filter(({ barrel }) => barrel.unresolvedStars.includes(barrel.file))
+      .map(({ barrel }) => barrel.file)
+  );
+  const changes = diffExports(
+    baseBarrels.filter((barrel) => !unreadable.has(barrel.file)),
+    headBarrels.filter((barrel) => !unreadable.has(barrel.file))
+  );
 
   if (changes.length === 0) {
     console.log(`No barrel exports changed vs ${base} (${headBarrels.length} barrels).`);

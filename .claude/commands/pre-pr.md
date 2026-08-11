@@ -32,46 +32,68 @@ If `SKIP`, record "Migration drift: N/A (no prisma/ changes)" and move on. If `R
 - **1** — FAIL: a migration on this branch dropped one of these objects. This is the `prisma migrate dev` footgun — it diffs the schema against the shadow DB and silently emits `DROP INDEX`/`DROP CONSTRAINT` for anything it can't represent, and `migrate dev` already applied that DROP to your local DB. **Stop and report.** Fix: edit the offending migration to remove the spurious `DROP` (re-add a `CREATE … IF NOT EXISTS` if needed), and re-author migrations on these tables with `prisma migrate dev --create-only` so the DROP is reviewed before it's ever applied.
 - **2** — SKIPPED (local DB unreachable). Record "Migration drift: SKIPPED (start your dev DB to enable)" — do **not** fail the run on this.
 
-### Step 1b: Lockfile and public-surface inspection
+### Step 1b: Resolve the base, then inspect the lockfile and public surface
 
-Two checks that exist because `/pre-pr` used to be silent on both (#552). Run
-them; do not eyeball the underlying diffs.
-
-**Lockfile** — only if `package-lock.json` is in the branch diff:
+**Resolve the base ref here, before either check.** Both default to the merge
+base with `origin/main`, and neither fetches — so on a stale ref they compare
+against history that has moved on: `check:exports` attributes other people's
+new symbols to this branch, and `check:lockfile` can exit 1 on a metadata loss
+`main` already carries. The repo rule is "always use the remote tracking ref";
+this is where it has to happen, because Step 2's early exit ("no TypeScript
+files → stop") would skip a lockfile-only PR entirely.
 
 ```bash
-npm run check:lockfile
+git fetch origin main --quiet
+BASE=$(git merge-base origin/main HEAD)
+```
+
+Reuse `$BASE` in Step 2 rather than resolving it twice.
+
+**Lockfile** — if `package-lock.json` **or `package.json`** is in the diff
+(`git diff --name-only $BASE...HEAD`). `package.json` matters because the
+`overrides` rule reads that file at both revisions: an override that tightens a
+range npm already satisfied changes nothing in the lockfile, so keying on the
+lockfile alone would skip it.
+
+```bash
+npm run check:lockfile -- --base "$BASE"
 ```
 
 Exit 1 means something needs a decision: platform metadata (`libc`/`os`/`cpu`)
-lost, a **direct** dependency moved backwards, or `overrides` changed. Lost
-metadata is the one that has actually bitten — see #571 and CONTRIBUTING's
-"Cutting a release that changes dependencies" for the repair. Transitive
-downgrades are listed but do not fail; they are usually one intended pin
-propagating.
+lost — including across a hoist — a **direct** dependency moved backwards, or
+`overrides` changed. Lost metadata is the one that has actually bitten; see
+#571 and CONTRIBUTING's "Cutting a release that changes dependencies" for the
+repair. Transitive downgrades are listed but do not fail.
+
+Note the all-clear says "no version or platform-metadata change", not
+"unchanged": these rules do not read `dev`, `resolved`, `integrity` or `link`,
+so a `dependencies` ↔ `devDependencies` move is not something they can see.
 
 **Public surface** — always:
 
 ```bash
-npm run check:exports
+npm run check:exports -- --base "$BASE"
 ```
 
-This reports symbols added, removed or renamed on any `lib/**/index.ts` barrel.
-It never fails the run: adding an export is normal. It exists so step 5d's
-question gets asked from the surface rather than from a path list — the list
-missed `normalizeRootRelativePath` on `@/lib/security` in #506. **Anything it
-prints should have a CHANGELOG entry, and a removal or rename is breaking for
-any fork importing it.**
+Reports symbols added, removed or renamed on any `lib/**/index.ts` barrel.
+Adding an export is normal, so a change here is **not** a failure — but it
+exits 1 for an unusable `--base` or when it finds no barrels at all (which is
+what happens if it is run from anywhere but the repo root). Treat exit 1 as a
+wiring problem to fix, not as a finding about the branch.
+
+It exists so step 5d's question gets asked from the surface rather than from a
+path list — the list missed `normalizeRootRelativePath` on `@/lib/security` in
+#506. **Anything it prints should have a CHANGELOG entry, and a removal or
+rename is breaking for any fork importing it.**
 
 Record both outputs in the summary.
 
 ### Step 2: Identify changed files
 
-First, resolve the correct base ref. The local `main` branch may be stale or polluted with feature-branch commits, so **always use the remote tracking ref**:
+`$BASE` was already resolved in Step 1b, from the remote tracking ref — the local `main` branch may be stale or polluted with feature-branch commits. Reuse it; do not re-resolve:
 
 ```bash
-git fetch origin main --quiet
-BASE=$(git merge-base origin/main HEAD)
+echo "$BASE"   # resolved in Step 1b
 ```
 
 Use `$BASE` as the comparison point for all git diff commands in subsequent steps. Report the resolved base commit (short hash) in the output so reviewers can verify.
@@ -211,7 +233,7 @@ Output a clear summary in this format:
 - [ ] Tests: PASS / FAIL (X passed, Y failed)
 - [ ] Migration drift (Prisma-unmodelled objects): PASS / FAIL / SKIPPED / N/A
 - [ ] Lockfile: PASS / FAIL / N/A (no `package-lock.json` change)
-- [ ] Public surface (barrel exports): {symbols added/removed, or NO CHANGE}
+- [ ] Public surface (barrel exports): {symbols added/removed, NO CHANGE, or FAIL (wiring — see Step 1b)}
 
 ### Coverage (changed files — threshold 80%)
 | File | Lines | Branches | Functions | Stmts | Status |

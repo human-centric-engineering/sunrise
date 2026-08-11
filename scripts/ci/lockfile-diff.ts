@@ -138,6 +138,13 @@ export function isDowngrade(from: string, to: string): boolean {
   return false;
 }
 
+/** The package name a lockfile key refers to, e.g. `@img/sharp-linux-x64`. */
+function packageNameOf(key: string): string | null {
+  const marker = 'node_modules/';
+  const at = key.lastIndexOf(marker);
+  return at === -1 ? null : key.slice(at + marker.length);
+}
+
 function nativeKeysOf(entry: LockPackage): (typeof NATIVE_KEYS)[number][] {
   return NATIVE_KEYS.filter((key) => entry[key] !== undefined);
 }
@@ -200,6 +207,36 @@ export function diffLockfiles(
     // one run to another.
     const lost: string[] = nativeKeysOf(before)
       .filter((key) => after[key] === undefined)
+      .sort();
+    if (lost.length > 0) lostNativeMetadata.push({ name, keys: lost });
+  }
+
+  // The same check across a HOIST. `npm update` — the operation this rule
+  // exists to catch — both restructures the tree and strips metadata, and a
+  // package moving from `node_modules/a/node_modules/foo` to
+  // `node_modules/foo` is a remove plus an add, so the loop above never
+  // compares it. This lockfile has 77 native-metadata entries at nested paths,
+  // so the hole covered precisely the packages most likely to move.
+  const headByPackageName = new Map<string, LockPackage[]>();
+  for (const [key, entry] of Object.entries(headPackages)) {
+    const short = packageNameOf(key);
+    if (short === null) continue;
+    const bucket = headByPackageName.get(short);
+    if (bucket) bucket.push(entry);
+    else headByPackageName.set(short, [entry]);
+  }
+
+  for (const name of baseNames) {
+    if (name in headPackages) continue; // same-path case, handled above
+    const short = packageNameOf(name);
+    if (short === null) continue;
+    const moved = headByPackageName.get(short);
+    if (moved === undefined) continue; // genuinely removed, not moved
+
+    // Lost only if EVERY surviving copy lacks the key — one intact copy means
+    // the metadata is still in the tree.
+    const lost = nativeKeysOf(basePackages[name])
+      .filter((key) => moved.every((entry) => entry[key] === undefined))
       .sort();
     if (lost.length > 0) lostNativeMetadata.push({ name, keys: lost });
   }

@@ -190,7 +190,14 @@ export function main(argv: string[]): number {
     !diff.overridesChanged;
 
   if (nothingMoved) {
-    console.log(`${LOCKFILE} unchanged vs ${base}.`);
+    // Not "unchanged": these rules read the package key set, `version`, and
+    // `libc`/`os`/`cpu`. They do not read `dev`, `resolved`, `integrity` or
+    // `link` — this lockfile carries 460 `dev` flags and 1531 integrity
+    // hashes. Moving a package between `dependencies` and `devDependencies`
+    // flips `dev` across a whole subtree with no version change, which is a
+    // real change to the production graph and invisible here. Say what was
+    // actually compared.
+    console.log(`${LOCKFILE}: no version or platform-metadata change vs ${base}.`);
     return 0;
   }
 

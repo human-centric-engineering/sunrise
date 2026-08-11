@@ -136,6 +136,59 @@ describe('diffLockfiles', () => {
     });
   });
 
+  describe('across a hoist', () => {
+    // `npm update` — the operation this rule exists to catch — both
+    // restructures the tree and strips metadata. A package moving from
+    // `node_modules/a/node_modules/foo` to `node_modules/foo` is a remove plus
+    // an add, so a same-key comparison never sees it. This lockfile has 77
+    // native-metadata entries at nested paths.
+    const nested: Lockfile = {
+      packages: {
+        'node_modules/pdf/node_modules/canvas-linux-x64': { ...NATIVE },
+      },
+    };
+
+    it('catches metadata lost while the package moved', () => {
+      const hoistedAndStripped: Lockfile = {
+        packages: {
+          'node_modules/canvas-linux-x64': { version: '1.0.3', os: ['linux'], cpu: ['x64'] },
+        },
+      };
+
+      const diff = diffLockfiles(nested, hoistedAndStripped);
+
+      expect(diff.lostNativeMetadata).toEqual([
+        { name: 'node_modules/pdf/node_modules/canvas-linux-x64', keys: ['libc'] },
+      ]);
+      expect(hasRisk(diff)).toBe(true);
+    });
+
+    it('does not fire when the moved copy kept its metadata', () => {
+      const hoistedIntact: Lockfile = {
+        packages: { 'node_modules/canvas-linux-x64': { ...NATIVE } },
+      };
+
+      expect(diffLockfiles(nested, hoistedIntact).lostNativeMetadata).toEqual([]);
+    });
+
+    it('does not fire when the package was genuinely removed', () => {
+      // Nothing by that name survives, so there is no loss to report — the
+      // dependency simply went away.
+      expect(diffLockfiles(nested, { packages: {} }).lostNativeMetadata).toEqual([]);
+    });
+
+    it('does not fire when any surviving copy still has the key', () => {
+      const twoCopies: Lockfile = {
+        packages: {
+          'node_modules/canvas-linux-x64': { version: '1.0.3', os: ['linux'] },
+          'node_modules/other/node_modules/canvas-linux-x64': { ...NATIVE },
+        },
+      };
+
+      expect(diffLockfiles(nested, twoCopies).lostNativeMetadata).toEqual([]);
+    });
+  });
+
   it('ignores metadata being gained', () => {
     // The ecosystem getting more precise is not the failure being guarded
     // against, and flagging it would fire on unrelated upgrades.

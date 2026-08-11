@@ -83,7 +83,7 @@ describe('scripts/ci/check-lockfile', () => {
       expect.anything()
     );
     expect(process.exitCode).toBe(0);
-    expect(out()).toContain('unchanged');
+    expect(out()).toContain('no version or platform-metadata change');
   });
 
   it('exits 1 and explains when platform metadata was lost', async () => {

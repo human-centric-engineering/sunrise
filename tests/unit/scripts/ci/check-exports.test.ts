@@ -226,6 +226,30 @@ describe('scripts/ci/check-exports', () => {
       cwd.mockRestore();
     });
 
+    it('does not invent a change list for a barrel it could not read', () => {
+      // Left in the diff with `symbols: []`, an unreadable barrel makes every
+      // symbol on the other side look added or removed. Excluded instead; the
+      // warning above already says we could not look.
+      mkdirSync(join(dir, 'lib', 'gone'), { recursive: true });
+      writeFileSync(join(dir, 'lib', 'gone', 'index.ts'), `export const kept = 1;`);
+      const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+
+      mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
+        if (args[0] === 'merge-base') return 'abc123\n';
+        if (args[0] === 'ls-tree') return 'lib/gone/index.ts\n';
+        // The base listing offers it; `show` cannot produce it.
+        throw new Error('fatal: path does not exist');
+      });
+
+      expect(main([])).toBe(0);
+      expect(out()).toContain('Could not follow every `export *`');
+      // The tell: without the exclusion this prints `+ kept` under
+      // "Public surface changed".
+      expect(out()).not.toContain('+ kept');
+      expect(out()).toContain('No barrel exports changed');
+      cwd.mockRestore();
+    });
+
     it('rejects an empty --base rather than silently falling back', () => {
       expect(main(['--base', ''])).toBe(1);
       expect(out()).toContain('needs a revision');
