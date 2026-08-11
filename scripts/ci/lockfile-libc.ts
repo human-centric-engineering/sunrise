@@ -23,10 +23,15 @@
  *
  * ## Why the registry is the source
  *
- * The full packument already stores `libc` in the array form the lockfile
- * wants (`["musl"]`), and it is keyed by exact version — so a backfill cannot
- * move a version by construction. That matters: the 0.8.1 near-miss came from
- * lifting values out of *git history*, where a package may since have moved.
+ * The registry's per-version manifest (`/<name>/<version>`) already stores
+ * `libc` in the array form the lockfile wants (`["musl"]`), and asking for the
+ * exact locked version means a backfill cannot move a version by construction.
+ * That matters: the 0.8.1 near-miss came from lifting values out of *git
+ * history*, where a package may since have moved.
+ *
+ * Per-version rather than the whole packument because a packument is a
+ * package's entire publish history — `vite`'s is 37 MB — and only one version
+ * of it is ever wanted. See `manifestUrl`.
  *
  * Validated by strip-and-restore against `d5b913fb^`, the last lockfile a
  * modern npm wrote: delete all 77 `libc` fields, rebuild them from the
@@ -41,11 +46,22 @@
 export const REGISTRY = 'https://registry.npmjs.org/';
 
 /**
- * npm serialises the lockfile with `json-stringify-nice`: these keys first, in
- * this order, then every other key alphabetically — with object-valued keys
- * sorted after scalar ones. Arrays count as scalars. `libc` is not in this
- * list, so it lands alphabetically among the scalars, which is why it appears
- * after `dev` but before `license`.
+ * npm serialises the lockfile with `json-stringify-nice`, whose comparator
+ * checks **object-ness first** and only then consults this preferred-key list:
+ *
+ * ```js
+ * isObj(av) === isObj(bv) ? compare(ak, bk, prefKeys) : isObj(av) ? 1 : -1
+ * ```
+ *
+ * So every scalar precedes every object, *including* a preferred key that
+ * happens to be one. Proof from this repo's own npm-written lockfile:
+ * `@apm-js-collab/code-transformer-bundler-plugins` is ordered
+ * `version, resolved, integrity, license, dependencies, engines` — `license`,
+ * a non-preferred scalar, sorts before `dependencies`, which is preferred
+ * (index 7) but an object.
+ *
+ * Arrays count as scalars. `libc` is not in this list, so among the scalars it
+ * lands alphabetically — after `dev`, before `license`.
  */
 const SW_KEY_ORDER: ReadonlySet<string> = new Set([
   'name',
@@ -105,10 +121,53 @@ export function entryName(key: string, entry: LibcLockPackage): string | null {
 }
 
 /**
+ * npm's package-name grammar: an optional `@scope/` prefix and a name, where
+ * neither part may start with `.` or `_`.
+ *
+ * Uppercase is allowed on purpose. It is invalid for *new* packages but legal
+ * for legacy ones still on the registry (`JSONStream`), and rejecting it would
+ * make this tool refuse to run for a fork that depends on one. This repo has
+ * none — all 1,252 names are lowercase — so the looser rule costs nothing here
+ * and avoids a failure a fork could not diagnose.
+ *
+ * What it does reject is everything with URL structure: a second `/`, `?`,
+ * `#`, `%`, `@` past the scope, whitespace, control characters, and `.` / `..`
+ * segments.
+ */
+const PACKAGE_NAME = /^(?:@[A-Za-z0-9\-~][A-Za-z0-9\-._~]*\/)?[A-Za-z0-9\-~][A-Za-z0-9\-._~]*$/;
+
+/**
+ * Whether a name is one the registry could actually have published.
+ *
+ * `entryName` reads from lockfile keys, so its output is only as well-formed
+ * as the file: `node_modules/a/node_modules/x/y/z` yields `x/y/z`, and an
+ * aliased entry's `name` is whatever the file says. Callers building a URL
+ * must check this first — see `manifestUrl`, where CodeQL caught the earlier
+ * version encoding only the first `/` (js/incomplete-sanitization).
+ */
+export function isValidPackageName(name: string): boolean {
+  // npm's own cap. Length is checked separately so the regex stays readable.
+  return name.length > 0 && name.length <= 214 && PACKAGE_NAME.test(name);
+}
+
+/**
+ * A lockfile `version` — semver, optionally with prerelease and build parts.
+ *
+ * Checked for the same reason as the name: it becomes a URL path segment, and
+ * it is read from a file rather than produced by this code.
+ */
+const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** Whether a version is one the registry could resolve. */
+export function isValidVersion(version: string): boolean {
+  return version.length > 0 && version.length <= 256 && VERSION.test(version);
+}
+
+/**
  * Entries worth asking the registry about.
  *
  * Skips the root (`""`), workspace links, and anything not resolved to the
- * public registry — a git or `file:` dependency has no packument, and a
+ * public registry — a git or `file:` dependency has no registry manifest, and a
  * private registry is not ours to query.
  */
 export function libcCandidates(lock: LibcLockfile): LibcCandidate[] {
@@ -151,11 +210,15 @@ export function withLibc(entry: LibcLockPackage, libc: string[]): LibcLockPackag
   const rebuilt: LibcLockPackage = {};
   let placed = false;
   for (const [key, value] of Object.entries(entry)) {
-    if (
-      !placed &&
-      !SW_KEY_ORDER.has(key) &&
-      (isPlainObject(value) || key.localeCompare('libc', 'en') > 0)
-    ) {
+    // Object-ness is checked BEFORE the preferred-key list, mirroring npm's
+    // comparator. Gating it on `!SW_KEY_ORDER.has(key)` put `libc` *after*
+    // `dependencies` — a preferred key that is an object — for any entry with
+    // no later-sorting scalar to stop at. Only two non-root entries in this
+    // lockfile lack `license`, so it was latent, but it would have produced
+    // exactly the reorder-churn this function exists to prevent, and
+    // `check:lockfile` cannot see key order.
+    const sortsAfterLibc = !SW_KEY_ORDER.has(key) && key.localeCompare('libc', 'en') > 0;
+    if (!placed && (isPlainObject(value) || sortsAfterLibc)) {
       rebuilt.libc = libc;
       placed = true;
     }
@@ -223,22 +286,35 @@ export function applyLibc(lock: LibcLockfile, lookup: LibcLookup): LibcRepair {
   return { lockfile: { ...lock, packages }, added, alreadyCorrect, mismatched };
 }
 
+/** A Linux entry carrying no `libc`. */
+export interface BareLinuxEntry {
+  /** The `packages` key, so callers can tell whether it was queried. */
+  key: string;
+  /** `name@version`, for printing. */
+  label: string;
+}
+
 /**
- * Linux entries with no `libc`, as `name@version`.
+ * Linux entries with no `libc`.
  *
  * Not all of them are faults — `@esbuild/linux-*` and `@sentry/cli-linux-*`
  * genuinely declare none upstream, and so does
  * `@unrs/resolver-binding-linux-arm-musleabihf`, which is musl-specific and
  * still says nothing. That last one is why "has a musl sibling, therefore must
  * declare `libc`" is not a safe absolute rule (#549).
+ *
+ * This walks **every** entry, including ones `libcCandidates` skips. The `key`
+ * is returned so a caller can separate "the registry declares none" from
+ * "never asked" — conflating them told a fork with a private native package
+ * that its lockfile was complete.
  */
-export function linuxWithoutLibc(lock: LibcLockfile): string[] {
-  const out: string[] = [];
+export function linuxWithoutLibc(lock: LibcLockfile): BareLinuxEntry[] {
+  const out: BareLinuxEntry[] = [];
   for (const [key, entry] of Object.entries(lock.packages ?? {})) {
     if (key === '') continue;
     if (!Array.isArray(entry.os) || !entry.os.includes('linux')) continue;
     if (Array.isArray(entry.libc) && entry.libc.length > 0) continue;
-    out.push(`${entryName(key, entry) ?? key}@${entry.version ?? '?'}`);
+    out.push({ key, label: `${entryName(key, entry) ?? key}@${entry.version ?? '?'}` });
   }
   return out;
 }

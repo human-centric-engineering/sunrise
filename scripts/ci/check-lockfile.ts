@@ -219,11 +219,18 @@ export function main(argv: string[]): number {
     console.log(`  ~ ${label} ${change.from} → ${change.to}${note}`);
   }
 
-  if (diff.gainedNativeMetadata.length > 0) {
-    const keys = [...new Set(diff.gainedNativeMetadata.flatMap((entry) => entry.keys))].sort();
-    console.log(
-      `  ${diff.gainedNativeMetadata.length} package(s) gained ${keys.join(', ')} — platform metadata restored.`
-    );
+  // Grouped by the exact key set, not a union across all of them. Pairing one
+  // count with the union reads as "all N gained all of these": 100 packages
+  // gaining `libc` and one gaining `cpu` printed "101 package(s) gained cpu,
+  // libc". This hunk exists because the previous output made a true statement
+  // misleading; the replacement should not do the same thing.
+  const gainedByKeys = new Map<string, number>();
+  for (const entry of diff.gainedNativeMetadata) {
+    const label = entry.keys.join(', ');
+    gainedByKeys.set(label, (gainedByKeys.get(label) ?? 0) + 1);
+  }
+  for (const [label, count] of [...gainedByKeys].sort(([a], [b]) => a.localeCompare(b))) {
+    console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
   }
 
   if (!hasRisk(diff)) {

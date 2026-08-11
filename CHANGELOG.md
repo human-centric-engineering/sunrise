@@ -281,12 +281,17 @@ release process.
   the registry, with `--check` to report without writing. Needed because npm
   below 11.11.0 deletes the field on every write and no npm puts it back — once
   it is gone the tree reads as up to date, so nothing recomputes the metadata.
-  It reads each package's full packument at its exact locked version, so a
-  version cannot move by construction, and inserts the key where npm's
-  serialiser would put it (alphabetically among the scalar keys, which is after
-  `dev`, not immediately after `cpu`). It refuses to write when the lockfile
-  does not survive a JSON round-trip, when the registry is unreachable, or when
-  an existing value disagrees. Validated by strip-and-restore against
+  It reads each package's registry manifest at its exact locked version
+  (`/<name>/<version>`, ~2 KB — not the whole packument, which for `vite` is
+  37 MB of publish history), so a version cannot move by construction, and it
+  inserts the key where npm's serialiser would put it — alphabetically among
+  the scalar keys, which is after `dev` and before any object-valued key,
+  `dependencies` included. Package names and versions are validated against
+  npm's grammar before becoming URL path segments, and every request is bounded
+  by a timeout and retried with exponential backoff. It refuses to write when
+  the lockfile does not survive a JSON round-trip, when the registry is
+  unreachable, or when an existing value disagrees. Validated by
+  strip-and-restore against
   `d5b913fb^`, the last lockfile a modern npm wrote: delete all 77 `libc`
   fields, rebuild from the registry, and the file comes back byte-identical.
   Deliberately not in `validate` or CI — it needs the network, and the

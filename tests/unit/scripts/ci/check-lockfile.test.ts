@@ -123,6 +123,40 @@ describe('scripts/ci/check-lockfile', () => {
     expect(out()).not.toContain('no version or platform-metadata change');
   });
 
+  it('groups gains by key set instead of pairing a count with a union', async () => {
+    // 100 packages gaining `libc` and one gaining `cpu` printed "101
+    // package(s) gained cpu, libc", which reads as all 101 gaining both. This
+    // block exists because the old output made a true statement misleading.
+    const base = JSON.stringify({
+      packages: {
+        '': { version: '0.8.1' },
+        'node_modules/a': { version: '1.0.0', os: ['linux'] },
+        'node_modules/b': { version: '1.0.0', os: ['linux'] },
+        'node_modules/c': { version: '1.0.0', os: ['linux'], libc: ['musl'] },
+      },
+    });
+    const head = JSON.stringify({
+      packages: {
+        '': { version: '0.8.1' },
+        'node_modules/a': { version: '1.0.0', os: ['linux'], libc: ['musl'] },
+        'node_modules/b': { version: '1.0.0', os: ['linux'], libc: ['glibc'] },
+        'node_modules/c': { version: '1.0.0', os: ['linux'], libc: ['musl'], cpu: ['x64'] },
+      },
+    });
+    mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
+      a[0] === 'merge-base' ? 'abc123\n' : base
+    );
+    mockReadFileSync.mockImplementation((path: string) =>
+      String(path).endsWith('package.json') ? MANIFEST : head
+    );
+
+    await run();
+
+    expect(out()).toContain('2 package(s) gained libc — platform metadata restored.');
+    expect(out()).toContain('1 package(s) gained cpu — platform metadata restored.');
+    expect(out()).not.toContain('3 package(s) gained cpu, libc');
+  });
+
   it('skips quietly with no base and no flag', async () => {
     // `npm run check:lockfile` must work in a fresh clone with no remote.
     mockExecFileSync.mockImplementation(() => {

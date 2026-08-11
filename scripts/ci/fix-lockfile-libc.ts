@@ -23,6 +23,8 @@ import { resolve } from 'node:path';
 
 import {
   applyLibc,
+  isValidPackageName,
+  isValidVersion,
   libcCandidates,
   linuxWithoutLibc,
   REGISTRY,
@@ -32,77 +34,143 @@ import {
 
 const LOCKFILE = 'package-lock.json';
 
-/** Fetches a full packument. `null` means "no such package", not "failed". */
-export type PackumentFetcher = (name: string) => Promise<unknown>;
+/**
+ * Fetches one version's manifest. `null` means "no such version", not
+ * "failed".
+ */
+export type ManifestFetcher = (name: string, version: string) => Promise<unknown>;
 
-/** Registry URL for a package name; the scope slash must stay encoded. */
-export function packumentUrl(name: string): string {
-  return REGISTRY + name.replace('/', '%2F');
+/**
+ * Registry URL for one exact version of a package.
+ *
+ * **Per-version, not the whole packument.** The first version of this tool
+ * fetched `registry.npmjs.org/<name>` and picked the version out of it, which
+ * downloads a package's entire publish history to read one field: `vite`'s
+ * packument is **37 MB** and takes 11.5 s by itself, `better-auth` 8.8 MB.
+ * At 16-way concurrency that reliably blew past the request timeout, and two
+ * full sweeps died on `vite` specifically. `<name>/<version>` returns **2 KB**
+ * and carries `libc` in the same array form — verified against the live
+ * endpoint. It is also simply more correct: the version cannot be mis-selected
+ * from a history because it is the thing being asked for.
+ *
+ * Validates before encoding rather than trying to sanitise. The name arm was
+ * `name.replace('/', '%2F')`, which encodes only the *first* slash — CodeQL
+ * flagged it as `js/incomplete-sanitization`, correctly: the name comes out of
+ * a lockfile key, so `node_modules/a/node_modules/x/y/z` hands it `x/y/z`, and
+ * nothing enforced the one-slash assumption the line was written on.
+ *
+ * Throws rather than skipping: a malformed name or version means the lockfile
+ * is not what this tool assumes, and quietly omitting that package would leave
+ * it bare — the exact fault being repaired. `main` turns this into "nothing
+ * written".
+ */
+export function manifestUrl(name: string, version: string): string {
+  if (!isValidPackageName(name)) {
+    throw new Error(`refusing to build a registry URL for a malformed package name: ${name}`);
+  }
+  if (!isValidVersion(version)) {
+    throw new Error(`refusing to build a registry URL for a malformed version: ${version}`);
+  }
+  return `${REGISTRY}${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
 }
 
 /**
- * The abbreviated packument omits `libc`, so this asks for the full document.
+ * How long one registry request may take before it is abandoned and retried.
+ *
+ * Node's `fetch` has **no** default request timeout, so without this a single
+ * stalled socket parks one of the concurrent workers forever, `Promise.all`
+ * never settles, and the tool hangs after printing its first line — with the
+ * retry loop, added for exactly this failure, never getting a turn. Observed:
+ * one run of this script sat past ten minutes and had to be killed.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The abbreviated packument omits `libc`, so this asks for the full manifest.
  * Retries because a single dropped response would otherwise silently leave a
  * package bare — the exact failure this tool exists to fix.
  */
-export async function fetchPackument(name: string, attempts = 3): Promise<unknown> {
+export async function fetchManifest(
+  name: string,
+  version: string,
+  attempts = 5,
+  baseDelayMs = 500
+): Promise<unknown> {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const response = await fetch(packumentUrl(name));
+      const response = await fetch(manifestUrl(name, version), {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
       if (response.ok) return await response.json();
       if (response.status === 404) return null;
       lastError = new Error(`HTTP ${response.status}`);
     } catch (error) {
+      // A malformed name is a fact about the lockfile, not a flaky network —
+      // retrying it just delays the same failure.
+      if (error instanceof Error && error.message.startsWith('refusing to build')) throw error;
       lastError = error;
     }
-    await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+    // Exponential with jitter, not linear. One failed name aborts the whole
+    // repair, and a sweep is ~1,250 requests at 16-way concurrency, so a rare
+    // connection blip is near-certain to hit *some* name. The previous
+    // 250/500/750ms schedule put all three attempts inside the same ~1.5s
+    // window and lost two runs in a row to it, on different packages each
+    // time. This spans ~15s instead, and the jitter stops 16 workers
+    // retrying in lockstep.
+    const backoff = baseDelayMs * 2 ** attempt;
+    await new Promise((r) => setTimeout(r, backoff + Math.floor(backoff * 0.25 * Math.random())));
   }
   throw new Error(
-    `registry fetch failed for ${name}: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+    `registry fetch failed for ${name}@${version}: ${lastError instanceof Error ? lastError.message : String(lastError)}`
   );
 }
 
-/** `versions[v].libc` out of a packument, tolerant of any shape. */
-export function libcByVersion(packument: unknown): Map<string, unknown> {
-  const out = new Map<string, unknown>();
-  if (packument === null || typeof packument !== 'object') return out;
-  const versions = (packument as { versions?: unknown }).versions;
-  if (versions === null || typeof versions !== 'object') return out;
-  for (const [version, manifest] of Object.entries(versions as Record<string, unknown>)) {
-    if (manifest === null || typeof manifest !== 'object') continue;
-    const libc = (manifest as { libc?: unknown }).libc;
-    if (libc !== undefined) out.set(version, libc);
-  }
-  return out;
+/** `libc` out of one version's manifest, tolerant of any shape. */
+export function libcOf(manifest: unknown): unknown {
+  if (manifest === null || typeof manifest !== 'object') return undefined;
+  return (manifest as { libc?: unknown }).libc;
 }
 
 /**
- * Fetches every distinct name and returns a lookup over the results.
+ * Fetches every distinct name@version and returns a lookup over the results.
  *
- * A shared cursor rather than chunking: package counts per name are wildly
- * uneven, and chunking would idle most workers waiting on the slowest batch.
+ * Keyed by name **and** version because the same package can sit at two
+ * versions in one tree (`@napi-rs/canvas` is here at 0.1.80 and 1.0.3) and
+ * `libc` is a per-version fact.
+ *
+ * A shared cursor rather than chunking: response times are uneven, and
+ * chunking would idle most workers waiting on the slowest batch.
  */
 export async function buildLookup(
-  names: string[],
-  fetcher: PackumentFetcher = fetchPackument,
+  pairs: { name: string; version: string }[],
+  fetcher: ManifestFetcher = fetchManifest,
   concurrency = 16
 ): Promise<LibcLookup> {
-  const index = new Map<string, Map<string, unknown>>();
-  const queue = [...names];
+  const index = new Map<string, unknown>();
+  const seen = new Set<string>();
+  const queue: { name: string; version: string }[] = [];
+  for (const pair of pairs) {
+    const key = `${pair.name}@${pair.version}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    queue.push(pair);
+  }
+
   const worker = async (): Promise<void> => {
-    for (let name = queue.pop(); name !== undefined; name = queue.pop()) {
-      index.set(name, libcByVersion(await fetcher(name)));
+    for (let pair = queue.pop(); pair !== undefined; pair = queue.pop()) {
+      const libc = libcOf(await fetcher(pair.name, pair.version));
+      if (libc !== undefined) index.set(`${pair.name}@${pair.version}`, libc);
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
-  return (name, version) => index.get(name)?.get(version);
+  return (name, version) => index.get(`${name}@${version}`);
 }
 
 /** Returns the process exit code so every path out is a plain `return`. */
 export async function main(
   argv: string[],
-  fetcher: PackumentFetcher = fetchPackument
+  fetcher: ManifestFetcher = fetchManifest
 ): Promise<number> {
   const checkOnly = argv.includes('--check');
   const path = resolve(process.cwd(), LOCKFILE);
@@ -135,14 +203,14 @@ export async function main(
   }
 
   const candidates = libcCandidates(lock);
-  const names = [...new Set(candidates.map((c) => c.name))];
+  const distinct = new Set(candidates.map((c) => `${c.name}@${c.version}`)).size;
   console.log(
-    `${LOCKFILE}: ${candidates.length} registry entries, ${names.length} distinct names.`
+    `${LOCKFILE}: ${candidates.length} registry entries, ${distinct} distinct name@version.`
   );
 
   let lookup: LibcLookup;
   try {
-    lookup = await buildLookup(names, fetcher);
+    lookup = await buildLookup(candidates, fetcher);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     console.error('Nothing written — a partial index would leave packages bare.');
@@ -161,14 +229,38 @@ export async function main(
     return 1;
   }
 
-  const bare = linuxWithoutLibc(repair.lockfile);
   console.log(
     `libc: ${repair.alreadyCorrect.length} already correct, ${repair.added.length} to restore.`
   );
-  console.log(`Linux packages still declaring no libc: ${bare.length} (upstream declares none).`);
+
+  // Split by whether the registry was actually consulted. `linuxWithoutLibc`
+  // walks the whole lockfile, but `libcCandidates` skips git, `file:` and
+  // private-registry entries — calling those "upstream declares none" asserts
+  // an answer to a question never asked. A fork with a private native package
+  // would have been told its lockfile was complete.
+  const asked = new Set(candidates.map((c) => c.key));
+  const bare = linuxWithoutLibc(repair.lockfile);
+  const checked = bare.filter((entry) => asked.has(entry.key));
+  const unchecked = bare.filter((entry) => !asked.has(entry.key));
+
+  console.log(
+    `Linux packages still declaring no libc: ${checked.length} (registry declares none).`
+  );
+  if (unchecked.length > 0) {
+    console.log(
+      `  plus ${unchecked.length} not resolved from ${REGISTRY} — not checked, so unknown:`
+    );
+    for (const entry of unchecked) console.log(`    ? ${entry.label}`);
+  }
 
   if (repair.added.length === 0) {
-    console.log(`${LOCKFILE} is complete — every registry-declared libc is present.`);
+    // "Complete" only covers what was asked about. Saying it flatly while
+    // holding unchecked entries is the same overclaim as the line above.
+    console.log(
+      unchecked.length === 0
+        ? `${LOCKFILE} is complete — every registry-declared libc is present.`
+        : `${LOCKFILE} is complete for everything checked; the ${unchecked.length} above are unknown.`
+    );
     return 0;
   }
 
@@ -187,14 +279,32 @@ export async function main(
   return 0;
 }
 
-// Module scope, matching `check-lockfile.ts`: the tests drive this by setting
-// `process.argv` and re-importing. `.catch` is not decoration — an unhandled
-// rejection here would exit 0 and report success for a repair that never ran.
-main(process.argv.slice(2))
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
+/**
+ * Whether this file is the script being run, rather than one being imported.
+ *
+ * `check-lockfile.ts` runs at module scope unguarded and that is fine there —
+ * it is synchronous, read-only, and re-importing it costs nothing. This module
+ * is neither: importing it would fire 1,252 registry requests and a
+ * `writeFileSync` over a tracked file, using the *importer's* argv and cwd.
+ * Every helper here is exported, which invites exactly that import.
+ *
+ * Exported so the guard itself is testable rather than a line nothing covers.
+ */
+export function isDirectRun(scriptPath: string | undefined): boolean {
+  return (
+    scriptPath !== undefined && /(?:^|[\\/])fix-lockfile-libc\.(?:ts|js|mjs|cjs)$/.test(scriptPath)
+  );
+}
+
+if (isDirectRun(process.argv[1])) {
+  // `.catch` is not decoration — an unhandled rejection here would exit 0 and
+  // report success for a repair that never ran.
+  main(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    });
+}

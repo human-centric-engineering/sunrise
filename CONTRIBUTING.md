@@ -166,8 +166,10 @@ public-surface contract behind the bump decision lives in
    commit). Then hand-edit the two top-of-file `"version"` keys in
    `package-lock.json` — the root object and `packages[""]` — to match. Edit
    them by hand; do **not** run `npm install` / `npm version` to do it, because
-   on macOS that recomputes the tree and strips the `libc` metadata from the
-   native Linux packages that Linux CI and production installs rely on.
+   under **npm below 11.11.0** any lockfile write strips the `libc` metadata
+   from the native Linux packages that Linux CI and production installs rely on
+   — on every platform, not just macOS as this step used to claim (#571). Check
+   `npm -v`; if you do trip it, `npm run fix:lockfile-libc` puts it back.
    Hand-editing `package.json` alone leaves the lockfile root stale (it was
    missed for 0.1.0 and 0.2.0).
 
@@ -263,8 +265,8 @@ rather than trusted**:
    npm run fix:lockfile-libc              # put it back
    ```
 
-   This reads each package's full packument at its exact locked version, so it
-   cannot move a version by construction, and it inserts the key where npm's
+   This reads each package's registry manifest at its exact locked version, so
+   it cannot move a version by construction, and it inserts the key where npm's
    serialiser would. It refuses to write if the lockfile does not survive a JSON
    round-trip, or if an existing value disagrees with the registry. Validated by
    strip-and-restore against `d5b913fb^` — the last lockfile a modern npm wrote
@@ -284,9 +286,23 @@ rather than trusted**:
 
    # Nothing appeared or vanished that you did not intend.
    assert set(a) ^ set(b) <= EXPECTED, set(a) ^ set(b)
-   # Nothing else moved.
-   changed = {k for k in set(a) & set(b) if a[k] != b[k]}
+
+   # Nothing else moved. Step 4's own additions are exempt: if you snapshotted
+   # while `libc` was missing — which is the state every fork inherited from
+   # 0.8.0 — then restoring it legitimately changes ~100 entries that are not
+   # in EXPECTED. Exempt the entries whose ONLY difference is a gained `libc`,
+   # so the assertion still catches a version or integrity move on those very
+   # same packages rather than waving the whole set through.
+   def only_gained_libc(before, after):
+       return 'libc' not in before and 'libc' in after \
+           and {k: v for k, v in after.items() if k != 'libc'} == before
+
+   changed = {
+       k for k in set(a) & set(b)
+       if a[k] != b[k] and not only_gained_libc(a[k], b[k])
+   }
    assert changed <= EXPECTED, changed - EXPECTED
+
    # And no carrier was lost. Gaining one is the repair working; losing one is
    # the bug. An equality assertion here would fail the fix and pass the fault.
    carriers = lambda p: {k for k, v in p.items() if 'libc' in v}

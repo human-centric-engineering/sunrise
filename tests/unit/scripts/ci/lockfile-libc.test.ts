@@ -11,11 +11,15 @@
  * @see scripts/ci/lockfile-libc.ts
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 
 import {
   applyLibc,
   entryName,
+  isValidPackageName,
   libcCandidates,
   linuxWithoutLibc,
   normaliseLibc,
@@ -144,6 +148,28 @@ describe('withLibc placement', () => {
     const entry = { version: '1.0.0', os: ['linux'] };
     withLibc(entry, ['musl']);
     expect(entry).not.toHaveProperty('libc');
+  });
+
+  it('places libc before dependencies — a preferred key that is an object', () => {
+    // npm's comparator checks object-ness BEFORE the preferred-key list, so
+    // every scalar precedes every object including `dependencies` (preferred,
+    // index 7). Gating the object test on `!SW_KEY_ORDER.has(key)` skipped
+    // `dependencies` as an insertion point and appended libc after it.
+    const entry = {
+      version: '1.0.0',
+      resolved: `${REG}x/-/x.tgz`,
+      integrity: 'sha512-x',
+      cpu: ['x64'],
+      dependencies: { foo: '^1' },
+    };
+    expect(Object.keys(withLibc(entry, ['musl']))).toEqual([
+      'version',
+      'resolved',
+      'integrity',
+      'cpu',
+      'libc',
+      'dependencies',
+    ]);
   });
 
   it('ignores preferred keys when choosing a position', () => {
@@ -306,10 +332,70 @@ describe('linuxWithoutLibc', () => {
   };
 
   it('lists linux packages declaring no libc', () => {
-    expect(linuxWithoutLibc(lock)).toEqual(['bare@1.0.0', 'empty-libc@1.0.0']);
+    expect(linuxWithoutLibc(lock)).toEqual([
+      { key: 'node_modules/bare', label: 'bare@1.0.0' },
+      { key: 'node_modules/empty-libc', label: 'empty-libc@1.0.0' },
+    ]);
+  });
+
+  it('returns the key so callers can tell queried from never-asked', () => {
+    // Without this the CLI labelled private-registry packages "upstream
+    // declares none" without ever having made a request about them.
+    expect(linuxWithoutLibc(lock).map((e) => e.key)).toEqual([
+      'node_modules/bare',
+      'node_modules/empty-libc',
+    ]);
   });
 
   it('skips the root entry, which is not a package', () => {
-    expect(linuxWithoutLibc(lock)).not.toContain('@0.9.0');
+    expect(linuxWithoutLibc(lock).map((e) => e.key)).not.toContain('');
+  });
+});
+
+describe('isValidPackageName', () => {
+  it.each([
+    ['unscoped', 'lightningcss'],
+    ['scoped', '@img/sharp-linux-x64'],
+    ['dots and underscores past the first character', 'a.b_c-d~e'],
+    ['legacy uppercase, still resolvable on the registry', 'JSONStream'],
+    ['at the 214-character cap', 'a'.repeat(214)],
+  ])('accepts %s', (_label, name) => {
+    expect(isValidPackageName(name)).toBe(true);
+  });
+
+  it.each([
+    ['a second slash', '@scope/a/b'],
+    ['an unscoped slash', 'a/b'],
+    ['parent traversal', '../../etc/passwd'],
+    ['a bare dot segment', '.'],
+    ['an absolute URL', 'https://evil.com/x'],
+    ['a protocol-relative host', '//evil.com/x'],
+    ['a query string', 'pkg?x=1'],
+    ['a fragment', 'pkg#frag'],
+    ['a percent escape', 'pkg%2Fevil'],
+    ['CRLF', 'pkg\r\nHost: evil.com'],
+    ['whitespace', 'pkg name'],
+    ['a leading dot', '.hidden'],
+    ['a leading underscore', '_private'],
+    ['an empty string', ''],
+    ['over the 214-character cap', 'a'.repeat(215)],
+    ['a scope with no name', '@scope/'],
+    ['a scope marker alone', '@'],
+  ])('rejects %s', (_label, name) => {
+    expect(isValidPackageName(name)).toBe(false);
+  });
+
+  it('accepts every name in this repo’s real lockfile', () => {
+    // The validator gates a network call for every dependency, so a rule that
+    // is merely plausible against invented fixtures is not good enough — one
+    // false rejection aborts the whole repair. Asserted against the real file
+    // with a real count, not a shape.
+    const lock = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'package-lock.json'), 'utf8')
+    ) as LibcLockfile;
+
+    const names = new Set(libcCandidates(lock).map((c) => c.name));
+    expect(names.size).toBeGreaterThan(1000);
+    expect([...names].filter((name) => !isValidPackageName(name))).toEqual([]);
   });
 });
