@@ -30,17 +30,13 @@ import { WebhookForm } from '@/components/admin/orchestration/webhook-form';
 // Hoist a stable pushMock so assertions can observe router.push calls.
 const pushMock = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: pushMock,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  useSearchParams: () => ({ get: () => null }),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: () => createMockRouter({ push: pushMock }),
+    useSearchParams: () => ({ get: () => null }),
+  };
+});
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {

@@ -170,22 +170,32 @@ Flag server components (files under `app/` without `'use client'`) and server-si
 Flag imports of `@/lib/prisma`, `@/lib/db`, or `@prisma/client` — and any usage of the `prisma` client (e.g., `prisma.`, `PrismaClient`) — in files outside of `app/api/`, `lib/`, `prisma/`, and `scripts/`. Pages, layouts, components, and other non-API app code must call the API (via `serverFetch()` or client fetch) rather than accessing the database directly. This enforces API-first separation of concerns so the API can be split out of the monolith in the future. Note: this check catches direct imports only, not transitive dependencies (e.g., a page importing a lib helper that internally uses Prisma). Full import-chain analysis is out of scope for this check.
 
 **4m. Hand-rolled `next/navigation` router mocks**
-In changed test files, flag any router object written out by hand instead of built with `createMockRouter()` from `@/tests/types/mocks`. Two forms to catch:
+Flag any router object written out by hand instead of built with `createMockRouter()` from `@/tests/types/mocks`. **Run these repo-wide, not over the diff** — both invariants are currently zero, so a whole-repo count is the check, and a diff-scoped one would be blind to every pre-existing violation until someone happened to re-touch those exact lines. That blindness is not hypothetical: the first version of this check was diff-scoped and could not see the 23 files it was written to catch.
 
 ```bash
-git diff "$BASE"...HEAD -- 'tests/**' ':!tests/types/mocks.ts' \
-  | grep -nE "^\+[^*/]*as unknown as ReturnType<typeof useRouter>"
-git diff "$BASE"...HEAD -- 'tests/**' ':!tests/types/mocks.ts' \
-  | grep -nE "^\+[[:space:]]*(prefetch|forward): vi\.fn\(\),?$"
+grep -rnE "as unknown as ReturnType<typeof useRouter>" tests/ --include='*.ts' --include='*.tsx' \
+  | grep -v '^tests/types/mocks.ts' | grep -vE ':[[:space:]]*\*'
+python3 - <<'EOF'
+import re, pathlib, sys
+PAT = re.compile(r"useRouter:\s*(?:vi\.fn\()?\(\)\s*=>\s*\(\{(.*?)\}\)", re.S)
+MEM = re.compile(r"^\s*(\w+):", re.M)
+SIX = {"push", "replace", "refresh", "back", "forward", "prefetch"}
+hits = [str(p) for p in pathlib.Path("tests").rglob("*.test.ts*")
+        for m in PAT.finditer(p.read_text()) if set(MEM.findall(m.group(1))) >= SIX]
+print("\n".join(sorted(set(hits))) or "CLEAN")
+sys.exit(1 if hits else 0)
+EOF
 ```
 
-The factory's own file is excluded (it legitimately contains both shapes), and `[^*/]*` skips comment lines — without those two exclusions the check fires on the very commit that introduced it.
+Both must return nothing. Any output is a finding.
 
-The first is always wrong: `AppRouterInstance` gains required members between Next minors, and a double cast doesn't satisfy the new member, it hides that the mock is missing it — the literal keeps compiling while the component receives an incomplete router. Zero of these exist today; the count should stay zero.
+The **cast** is always wrong: `AppRouterInstance` gains required members between Next minors, and a double cast does not satisfy the new member — it hides that the mock is missing it, so the literal keeps compiling while the component receives an incomplete router.
 
-The second is a heuristic for "this literal is trying to be a _complete_ router" — if it bothers to stub `prefetch`/`forward`, it wants the full interface and should use the factory. A minimal stub (`push`/`replace` only, for a component that reads nothing else) is fine and should not be flagged.
+The **six-member literal** means the author intended a complete router, so it should use the factory. A minimal stub (`push`/`replace` only, for a component that reads nothing else) is fine and deliberately not flagged — there are ~67 of those and converting them would be churn.
 
-Nothing type-checks a `vi.mock` factory, so neither form fails the build; this scan is the only thing that catches them. See `.context/testing/mocking.md`.
+Use the Python form rather than a `grep` for `prefetch: vi.fn()`: a line-based grep matches only anonymous spies, so a complete literal written as `prefetch: mockPrefetch` slips straight through. It also has to span both `useRouter: () => ({…})` and `useRouter: vi.fn(() => ({…}))`; a grep covering only one form is what produced a confidently wrong count here in the first place.
+
+Nothing type-checks a `vi.mock` factory, so neither form fails the build — this scan is the only thing that catches them. See `.context/testing/mocking.md`.
 
 ### Step 5: Check .context/ documentation
 

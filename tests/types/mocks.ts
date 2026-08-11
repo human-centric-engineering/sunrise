@@ -238,13 +238,17 @@ export type MockRouter = ReturnType<typeof useRouter> & {
  * default from this factory for that reason, and
  * `tests/unit/types/mocks.test.ts` asserts it still does.
  *
- * Scope, stated plainly: every type-checked call site and every per-file
- * factory that tried to supply a *complete* router now comes through here.
- * Around 49 per-file factories still stub two or three members inline. That
- * is deliberate — a component that only ever calls `push` does not need the
- * rest — but it does mean "the suite uses the factory everywhere" would be
- * false. Convert one the moment its component might read more of the router
- * than the stub provides.
+ * Scope is an enforced invariant, not a claim: `/pre-pr` check 4m scans the
+ * whole repo for both shapes and must return nothing. Minimal stubs that
+ * supply two or three members for a component reading nothing else are
+ * deliberately allowed and not counted — convert one the moment its component
+ * might read more of the router than the stub provides.
+ *
+ * The invariant is worded that way because prose kept getting it wrong. Three
+ * review rounds running, a comment here asserted a completeness the code had
+ * not reached, the last time because the grep behind the number matched
+ * `useRouter: vi.fn(() => ({…}))` and silently missed
+ * `useRouter: () => ({…})`. Trust 4m's output; do not restate a count here.
  *
  * `bfcacheId` is a fixed string, not a spy. Its real semantics are that it
  * *changes* on a fresh push/replace navigation, so a test asserting that a
@@ -256,6 +260,15 @@ export type MockRouter = ReturnType<typeof useRouter> & {
  * @returns Complete MockRouter instance
  */
 export function createMockRouter(overrides?: Partial<MockRouter>): MockRouter {
+  // `undefined` values are dropped rather than spread. `Partial<MockRouter>`
+  // with `exactOptionalPropertyTypes` off accepts `{ push: maybeSpy }` where
+  // `maybeSpy` is `Mock | undefined`, and a plain spread would then overwrite
+  // the default with `undefined` — producing a router that type-checks as
+  // complete and throws "router.push is not a function" at render. That is the
+  // exact failure this factory exists to prevent, so it must not be reachable
+  // through the factory itself.
+  const supplied = Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined);
+
   return {
     push: vi.fn(),
     replace: vi.fn(),
@@ -264,7 +277,7 @@ export function createMockRouter(overrides?: Partial<MockRouter>): MockRouter {
     forward: vi.fn(),
     prefetch: vi.fn(),
     bfcacheId: 'test-bfcache-id',
-    ...overrides,
+    ...Object.fromEntries(supplied),
   };
 }
 

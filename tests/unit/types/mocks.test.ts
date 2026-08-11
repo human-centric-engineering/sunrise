@@ -13,7 +13,7 @@
  * @see tests/setup.ts
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import { useRouter } from 'next/navigation';
 import { createMockRouter } from '@/tests/types/mocks';
 
@@ -54,6 +54,17 @@ describe('createMockRouter', () => {
 
     expect(router.replace).toHaveBeenCalledWith('/elsewhere');
     expect(push).not.toHaveBeenCalled(); // test-review:accept no_arg_called — isolation guard: the override must not absorb other calls
+  });
+
+  it('ignores an undefined override rather than punching a hole in the default', () => {
+    // `Partial<MockRouter>` accepts `Mock | undefined` (exactOptionalPropertyTypes
+    // is off), so a plain spread would leave `push` undefined — type-checking as
+    // a complete router and throwing at render.
+    const maybeSpy: Mock | undefined = undefined;
+    const router = createMockRouter({ push: maybeSpy });
+
+    expect(typeof router.push).toBe('function');
+    expect(() => router.push('/somewhere')).not.toThrow();
   });
 
   it('returns a fresh set of spies per call, so tests cannot leak into each other', () => {

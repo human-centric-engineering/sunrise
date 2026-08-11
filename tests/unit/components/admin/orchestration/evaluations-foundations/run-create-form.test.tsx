@@ -25,17 +25,13 @@ const mockPush = vi.fn();
 const mockBack = vi.fn();
 const mockSearchParamsGet = vi.fn<(k: string) => string | null>(() => null);
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: mockPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: mockBack,
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  useSearchParams: () => ({ get: mockSearchParamsGet }),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: () => createMockRouter({ push: mockPush, back: mockBack }),
+    useSearchParams: () => ({ get: mockSearchParamsGet }),
+  };
+});
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 

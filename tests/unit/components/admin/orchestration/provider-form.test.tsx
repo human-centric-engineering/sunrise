@@ -27,17 +27,13 @@ import type { ProviderRowWithStatus } from '@/components/admin/orchestration/pro
 
 const mockPush = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: mockPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  useSearchParams: () => ({ get: () => null }),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: () => createMockRouter({ push: mockPush }),
+    useSearchParams: () => ({ get: () => null }),
+  };
+});
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {

@@ -19,17 +19,13 @@ import type { AiCapability } from '@/types/prisma';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  useSearchParams: () => ({ get: () => null }),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: () => createMockRouter(),
+    useSearchParams: () => ({ get: () => null }),
+  };
+});
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {

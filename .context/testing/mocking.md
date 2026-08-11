@@ -271,13 +271,14 @@ vi.mock('next/navigation', async () => {
 });
 ```
 
-**What is and isn't converted.** Every type-checked call site, and every
-per-file factory that tried to supply a _complete_ router, goes through the
-factory. Roughly 49 per-file factories still stub two or three members inline
-— that is deliberate, since a component that only calls `push` needs nothing
-else, and it is why "the whole suite uses the factory" would be an overstatement.
-Convert one as soon as its component might read more of the router than the
-stub provides.
+**What is and isn't converted.** Two invariants, both enforced repo-wide by
+`/pre-pr` check 4m rather than asserted here: no
+`as unknown as ReturnType<typeof useRouter>` cast anywhere, and no `vi.mock`
+literal that stubs all six router methods. Minimal stubs supplying two or three
+members for a component that reads nothing else are deliberately allowed —
+convert one as soon as its component might read more of the router than the
+stub provides. Run 4m for the current state; do not trust a count written down
+here, including this one.
 
 **`bfcacheId` is a fixed string, not a spy.** Its real behaviour is to _change_
 on a fresh push/replace navigation. A test asserting that a

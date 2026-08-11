@@ -24,17 +24,13 @@ import userEvent from '@testing-library/user-event';
 const mockPush = vi.fn();
 const mockBack = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({
-    push: mockPush,
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: mockBack,
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  }),
-  useSearchParams: () => ({ get: () => null }),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: () => createMockRouter({ push: mockPush, back: mockBack }),
+    useSearchParams: () => ({ get: () => null }),
+  };
+});
 
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
