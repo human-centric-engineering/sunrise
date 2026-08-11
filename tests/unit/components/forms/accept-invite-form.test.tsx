@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AcceptInviteForm } from '@/components/forms/accept-invite-form';
+import { createMockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('@/lib/api/client', () => ({
@@ -115,14 +116,9 @@ describe('components/forms/accept-invite-form', () => {
 
     // Default router mock
     const { useRouter } = await import('next/navigation');
-    vi.mocked(useRouter).mockReturnValue({
-      push: mockPush,
-      replace: vi.fn(),
-      refresh: mockRefresh,
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    });
+    vi.mocked(useRouter).mockReturnValue(
+      createMockRouter({ push: mockPush, refresh: mockRefresh })
+    );
   });
 
   afterEach(() => {

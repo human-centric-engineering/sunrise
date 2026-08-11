@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { TestingTabs } from '@/components/admin/orchestration/testing-tabs';
+import { createMockRouter } from '@/tests/types/mocks';
 
 describe('TestingTabs', () => {
   const evalContent = <div>Evaluations Content</div>;
@@ -26,14 +27,7 @@ describe('TestingTabs', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useRouter).mockReturnValue({
-      push: vi.fn(),
-      replace: replaceMock,
-      refresh: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    });
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: replaceMock }));
     vi.mocked(useSearchParams).mockReturnValue(
       new URLSearchParams() as ReturnType<typeof useSearchParams>
     );

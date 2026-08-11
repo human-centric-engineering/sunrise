@@ -10,6 +10,7 @@
  */
 
 import { vi, type Mock } from 'vitest';
+import type { useRouter } from 'next/navigation';
 import type { Logger } from '@/lib/logging';
 
 /**
@@ -197,6 +198,53 @@ export function createMockPrisma(): MockPrismaClient {
 export async function delayed<T>(value: T, ms: number): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, ms));
   return value;
+}
+
+/**
+ * Mock App Router type for testing components that call `useRouter()`.
+ *
+ * Intersects with the real return type of `useRouter` so the mock is
+ * assignable wherever the router is expected, while typing each method as
+ * `Mock` so `.toHaveBeenCalledWith(...)` works at the call site without a
+ * `vi.mocked(...)` wrapper — the same shape as `MockLogger` below.
+ *
+ * `ReturnType<typeof useRouter>` is deliberately used in place of importing
+ * `AppRouterInstance`, which lives under `next/dist/shared/lib/...` and is not
+ * part of Next's public surface.
+ */
+export type MockRouter = ReturnType<typeof useRouter> & {
+  push: Mock;
+  replace: Mock;
+  refresh: Mock;
+  back: Mock;
+  forward: Mock;
+  prefetch: Mock;
+};
+
+/**
+ * Create a complete mock App Router.
+ *
+ * WHY THIS EXISTS: `AppRouterInstance` gains required members between Next
+ * minors — 16.3.0 added `bfcacheId`, which broke every hand-rolled router
+ * literal in the suite at once. Routing every call site through one factory
+ * makes the next such addition a one-line change here instead of another
+ * sweep, and spares forks repeating it.
+ *
+ * @param overrides - Replace individual members (usually a shared `push` or
+ *                    `replace` spy the test asserts against)
+ * @returns Complete MockRouter instance
+ */
+export function createMockRouter(overrides?: Partial<MockRouter>): MockRouter {
+  return {
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+    bfcacheId: 'test-bfcache-id',
+    ...overrides,
+  };
 }
 
 /**

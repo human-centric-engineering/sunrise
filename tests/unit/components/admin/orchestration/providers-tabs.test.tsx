@@ -35,6 +35,7 @@ vi.mock('@/components/admin/orchestration/provider-models-matrix', () => ({
 }));
 
 import { ProvidersTabs } from '@/components/admin/orchestration/providers-tabs';
+import { createMockRouter } from '@/tests/types/mocks';
 import type { ProviderRow } from '@/components/admin/orchestration/providers-list';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
 
@@ -190,14 +191,7 @@ describe('ProvidersTabs', () => {
       const user = userEvent.setup();
       const { useRouter } = await import('next/navigation');
       const replaceMock = vi.fn();
-      vi.mocked(useRouter).mockReturnValue({
-        push: vi.fn(),
-        replace: replaceMock,
-        refresh: vi.fn(),
-        back: vi.fn(),
-        forward: vi.fn(),
-        prefetch: vi.fn(),
-      });
+      vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: replaceMock }));
       vi.mocked(useSearchParams).mockReturnValue(
         new URLSearchParams() as ReturnType<typeof useSearchParams>
       );
@@ -222,14 +216,7 @@ describe('ProvidersTabs', () => {
       const user = userEvent.setup();
       const { useRouter } = await import('next/navigation');
       const replaceMock = vi.fn();
-      vi.mocked(useRouter).mockReturnValue({
-        push: vi.fn(),
-        replace: replaceMock,
-        refresh: vi.fn(),
-        back: vi.fn(),
-        forward: vi.fn(),
-        prefetch: vi.fn(),
-      });
+      vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: replaceMock }));
       vi.mocked(useSearchParams).mockReturnValue(
         new URLSearchParams('tab=models') as ReturnType<typeof useSearchParams>
       );
@@ -250,14 +237,7 @@ describe('ProvidersTabs', () => {
       const user = userEvent.setup();
       const { useRouter } = await import('next/navigation');
       const mockPush = vi.fn();
-      vi.mocked(useRouter).mockReturnValue({
-        push: mockPush,
-        replace: vi.fn(),
-        refresh: vi.fn(),
-        back: vi.fn(),
-        forward: vi.fn(),
-        prefetch: vi.fn(),
-      });
+      vi.mocked(useRouter).mockReturnValue(createMockRouter({ push: mockPush }));
       vi.mocked(useSearchParams).mockReturnValue(
         new URLSearchParams() as ReturnType<typeof useSearchParams>
       );

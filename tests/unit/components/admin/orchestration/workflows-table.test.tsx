@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event';
 import { WorkflowsTable } from '@/components/admin/orchestration/workflows-table';
 import type { PaginationMeta } from '@/types/api';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
+import { createMockRouter } from '@/tests/types/mocks';
 import type { AiWorkflowListItem } from '@/types/orchestration';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -317,14 +318,7 @@ describe('WorkflowsTable', () => {
       const { apiClient } = await import('@/lib/api/client');
       const { useRouter } = await import('next/navigation');
       const push = vi.fn();
-      vi.mocked(useRouter).mockReturnValue({
-        push,
-        replace: vi.fn(),
-        refresh: vi.fn(),
-        back: vi.fn(),
-        forward: vi.fn(),
-        prefetch: vi.fn(),
-      });
+      vi.mocked(useRouter).mockReturnValue(createMockRouter({ push }));
 
       vi.mocked(apiClient.get).mockResolvedValue({
         // GET /workflows/:id now returns the published version on a relation;

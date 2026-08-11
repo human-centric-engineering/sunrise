@@ -23,6 +23,7 @@ import userEvent from '@testing-library/user-event';
 
 import { ExecutionsTable } from '@/components/admin/orchestration/executions-table';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
+import { createMockRouter } from '@/tests/types/mocks';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
 
@@ -227,14 +228,7 @@ describe('ExecutionsTable', () => {
     it('updates URL when status filter changes', async () => {
       const { useRouter } = await import('next/navigation');
       const mockReplace = vi.fn();
-      vi.mocked(useRouter).mockReturnValue({
-        replace: mockReplace,
-        push: vi.fn(),
-        back: vi.fn(),
-        forward: vi.fn(),
-        refresh: vi.fn(),
-        prefetch: vi.fn(),
-      });
+      vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: mockReplace }));
 
       const user = userEvent.setup();
       render(<ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />);
@@ -252,14 +246,7 @@ describe('ExecutionsTable', () => {
     it('removes status from URL when filter reset to "all"', async () => {
       const { useRouter } = await import('next/navigation');
       const mockReplace = vi.fn();
-      vi.mocked(useRouter).mockReturnValue({
-        replace: mockReplace,
-        push: vi.fn(),
-        back: vi.fn(),
-        forward: vi.fn(),
-        refresh: vi.fn(),
-        prefetch: vi.fn(),
-      });
+      vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: mockReplace }));
 
       const user = userEvent.setup();
       render(
