@@ -226,9 +226,16 @@ export type MockRouter = ReturnType<typeof useRouter> & {
  *
  * WHY THIS EXISTS: `AppRouterInstance` gains required members between Next
  * minors — 16.3.0 added `bfcacheId`, which broke every hand-rolled router
- * literal in the suite at once. Routing every call site through one factory
- * makes the next such addition a one-line change here instead of another
- * sweep, and spares forks repeating it.
+ * literal in the suite at once. Routing every type-checked call site through
+ * one factory makes the next such addition a one-line change here instead of
+ * another sweep, and spares forks repeating it.
+ *
+ * Two things defeat that, so neither is used anywhere in the suite: an
+ * `as unknown as ReturnType<typeof useRouter>` cast (which suppresses the
+ * error rather than fixing it, so the literal silently rots), and an
+ * incomplete literal inside a `vi.mock` factory (which nothing type-checks).
+ * `tests/setup.ts` builds the suite-wide default from this factory for that
+ * reason; `tests/unit/types/mocks.test.ts` asserts it still does.
  *
  * @param overrides - Replace individual members (usually a shared `push` or
  *                    `replace` spy the test asserts against)

@@ -28,6 +28,7 @@ import { UserTable } from '@/components/admin/user-table';
 import type { UserListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('next/navigation', () => ({
@@ -60,7 +61,7 @@ vi.mock('@/lib/api/client', () => ({
  * Test Suite: UserTable Component
  */
 describe('components/admin/user-table', () => {
-  let mockRouter: { push: ReturnType<typeof vi.fn> };
+  let mockRouter: Pick<MockRouter, 'push'>;
   let mockFetch: ReturnType<typeof vi.fn<typeof fetch>>;
 
   // Sample test data
@@ -109,14 +110,7 @@ describe('components/admin/user-table', () => {
     mockRouter = {
       push: vi.fn(),
     };
-    vi.mocked(useRouter).mockReturnValue({
-      ...mockRouter,
-      replace: vi.fn(),
-      refresh: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ ...mockRouter }));
 
     // Mock fetch
     mockFetch = vi.fn<typeof fetch>();

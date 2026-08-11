@@ -16,6 +16,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
 import type { UserPreferences } from '@/types';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
@@ -95,7 +96,7 @@ const defaultProps = {
  * Test Suite: SettingsTabs Component
  */
 describe('components/settings/settings-tabs', () => {
-  let mockRouter: { replace: ReturnType<typeof vi.fn> };
+  let mockRouter: Pick<MockRouter, 'replace'>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -103,14 +104,7 @@ describe('components/settings/settings-tabs', () => {
     // Setup mock router
     const { useRouter } = await import('next/navigation');
     mockRouter = { replace: vi.fn() };
-    vi.mocked(useRouter).mockReturnValue({
-      push: vi.fn(),
-      replace: mockRouter.replace,
-      refresh: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: mockRouter.replace }));
 
     // Default: no URL params (profile tab)
     const { useSearchParams, usePathname } = await import('next/navigation');

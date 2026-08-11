@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event';
 import { ProfileForm } from '@/components/forms/profile-form';
 import { apiClient } from '@/lib/api/client';
 import type { PublicUser } from '@/types';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('@/lib/api/client', () => ({
@@ -60,7 +61,7 @@ vi.mock('@/lib/analytics', () => ({
  * Test Suite: ProfileForm Component
  */
 describe('components/forms/profile-form', () => {
-  let mockRouter: { refresh: ReturnType<typeof vi.fn> };
+  let mockRouter: Pick<MockRouter, 'refresh'>;
   let mockTrack: ReturnType<typeof vi.fn>;
 
   const mockUser: PublicUser = {
@@ -94,14 +95,7 @@ describe('components/forms/profile-form', () => {
     mockRouter = {
       refresh: vi.fn(),
     };
-    vi.mocked(useRouter).mockReturnValue({
-      ...mockRouter,
-      push: vi.fn(),
-      replace: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ ...mockRouter }));
 
     // Setup mock analytics
     const { useAnalytics } = await import('@/lib/analytics');

@@ -229,10 +229,7 @@ vi.mock('next/navigation', () => ({
 expect(mockPush).toHaveBeenCalledWith('/dashboard');
 ```
 
-The factory above is untyped, so a partial router is fine there. **Anywhere
-TypeScript checks the shape — `vi.mocked(useRouter).mockReturnValue(...)`, or a
-variable annotated as the router — use `createMockRouter()` instead of writing
-the object literal out:**
+**Never hand-roll the router object.** Use `createMockRouter()`:
 
 ```typescript
 import { createMockRouter } from '@/tests/types/mocks';
@@ -241,10 +238,27 @@ const push = vi.fn();
 vi.mocked(useRouter).mockReturnValue(createMockRouter({ push }));
 ```
 
+Pass only the members the test asserts on; the rest are `vi.fn()`.
+
 `AppRouterInstance` gains required members between Next minors — 16.3.0 added
-`bfcacheId` — and every hand-rolled literal breaks at once when it does. One
-factory means one place to update. Pass only the members the test asserts on;
-the rest are `vi.fn()`.
+`bfcacheId` — and every hand-rolled literal is wrong the moment it does. There
+are two ways that goes unnoticed, and both have bitten:
+
+- **A `as unknown as ReturnType<typeof useRouter>` cast.** This looks like it
+  satisfies the compiler; what it actually does is switch the check off
+  permanently. The literal keeps type-checking after the interface grows, and
+  the component quietly receives a router missing the new member. A cast is
+  not a lighter-weight alternative to the factory — it is strictly worse than
+  the uncast literal, which at least fails loudly.
+- **A `vi.mock('next/navigation', …)` factory.** Nothing type-checks a mock
+  factory, so an incomplete literal there has the same silent outcome. The
+  suite-wide default in `tests/setup.ts` therefore builds its router from
+  `createMockRouter()`, and `tests/unit/types/mocks.test.ts` asserts it keeps
+  doing so — that test is the only guard, since the compiler cannot be.
+
+A per-file `vi.mock` factory that stubs only `push`/`replace` for a component
+that reads nothing else is still fine. Reach for the factory as soon as the
+component under test might touch more of the router than the stub provides.
 
 **See** `tests/types/mocks.ts` for `createMockHeaders()` factory with complete Headers interface.
 

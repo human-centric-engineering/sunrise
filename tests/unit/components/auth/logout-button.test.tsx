@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LogoutButton } from '@/components/auth/logout-button';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('@/lib/auth/client', () => ({
@@ -56,7 +57,7 @@ vi.mock('@/lib/logging', () => ({
  * Test Suite: LogoutButton Component
  */
 describe('components/auth/logout-button', () => {
-  let mockRouter: { push: ReturnType<typeof vi.fn>; refresh: ReturnType<typeof vi.fn> };
+  let mockRouter: Pick<MockRouter, 'push' | 'refresh'>;
   let mockAnalytics: { track: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
@@ -68,13 +69,7 @@ describe('components/auth/logout-button', () => {
       push: vi.fn(),
       refresh: vi.fn(),
     };
-    vi.mocked(useRouter).mockReturnValue({
-      ...mockRouter,
-      replace: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ ...mockRouter }));
 
     // Setup mock analytics
     const { useAnalytics } = await import('@/lib/analytics');

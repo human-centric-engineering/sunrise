@@ -18,6 +18,7 @@ import type { ExecutionListItem } from '@/types/orchestration';
 // no-op router + empty search params. We retrieve the mock to assert
 // `router.replace` was called with the right URL by the card click.
 import { useRouter, useSearchParams } from 'next/navigation';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 const SNAPSHOT: LiveEngineSnapshotView = {
   running: { count: 3, p95AgeMs: 90_000, maxAgeMs: 180_000 },
@@ -46,7 +47,7 @@ function makeExecution(overrides: Partial<ExecutionListItem> = {}): ExecutionLis
 }
 
 describe('ExecutionsListView', () => {
-  let mockReplace: ReturnType<typeof vi.fn>;
+  let mockReplace: MockRouter['replace'];
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -59,14 +60,7 @@ describe('ExecutionsListView', () => {
         new Response(JSON.stringify({ success: true, data: [], meta: META }))
       ) as typeof fetch;
     mockReplace = vi.fn();
-    vi.mocked(useRouter).mockReturnValue({
-      push: vi.fn(),
-      replace: mockReplace,
-      back: vi.fn(),
-      forward: vi.fn(),
-      refresh: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ replace: mockReplace }));
     vi.mocked(useSearchParams).mockReturnValue(
       new URLSearchParams() as unknown as ReturnType<typeof useSearchParams>
     );

@@ -16,6 +16,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { PreferencesForm } from '@/components/forms/preferences-form';
 import type { UserPreferences } from '@/types';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('@/lib/api/client', () => ({
@@ -58,7 +59,7 @@ vi.mock('@/lib/analytics', () => ({
  * Test Suite: PreferencesForm Component
  */
 describe('components/forms/preferences-form', () => {
-  let mockRouter: { push: ReturnType<typeof vi.fn>; refresh: ReturnType<typeof vi.fn> };
+  let mockRouter: Pick<MockRouter, 'push' | 'refresh'>;
   let mockTrack: ReturnType<typeof vi.fn>;
 
   const mockPreferences: UserPreferences = {
@@ -78,13 +79,7 @@ describe('components/forms/preferences-form', () => {
       push: vi.fn(),
       refresh: vi.fn(),
     };
-    vi.mocked(useRouter).mockReturnValue({
-      ...mockRouter,
-      replace: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ ...mockRouter }));
 
     // Setup mock analytics
     const { useAnalytics } = await import('@/lib/analytics');

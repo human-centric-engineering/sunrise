@@ -43,22 +43,29 @@ import { expect, vi, afterEach } from 'vitest';
  * Mock Next.js navigation hooks
  *
  * These are used frequently in components but need to be mocked for testing.
+ *
+ * The router comes from `createMockRouter()` rather than a literal so this
+ * default stays complete as `AppRouterInstance` grows. Nothing type-checks a
+ * `vi.mock` factory, so an incomplete literal here would not fail the build —
+ * it would just hand every component that relies on this default a router
+ * missing the new member, silently. That is the majority of the suite.
+ *
+ * The factory is imported *inside* an async mock factory on purpose:
+ * `vi.mock` is hoisted above the import block, so referencing a top-level
+ * import here risks a use-before-initialization error. A dynamic import runs
+ * when the factory does, which is after module init.
  */
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-    back: vi.fn(),
-    forward: vi.fn(),
-    prefetch: vi.fn(),
-  })),
-  usePathname: vi.fn(() => '/'),
-  useSearchParams: vi.fn(() => new URLSearchParams()),
-  useParams: vi.fn(() => ({})),
-  redirect: vi.fn(),
-  notFound: vi.fn(),
-}));
+vi.mock('next/navigation', async () => {
+  const { createMockRouter } = await import('@/tests/types/mocks');
+  return {
+    useRouter: vi.fn(() => createMockRouter()),
+    usePathname: vi.fn(() => '/'),
+    useSearchParams: vi.fn(() => new URLSearchParams()),
+    useParams: vi.fn(() => ({})),
+    redirect: vi.fn(),
+    notFound: vi.fn(),
+  };
+});
 
 /**
  * Mock Next.js headers

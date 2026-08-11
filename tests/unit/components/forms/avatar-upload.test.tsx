@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AvatarUpload } from '@/components/forms/avatar-upload';
+import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('@/lib/auth/client', () => ({
@@ -127,9 +128,7 @@ function selectFile(fileInput: HTMLInputElement, file: File) {
  * Test Suite: AvatarUpload Component
  */
 describe('components/forms/avatar-upload', () => {
-  let mockRouter: {
-    refresh: ReturnType<typeof vi.fn>;
-  };
+  let mockRouter: Pick<MockRouter, 'refresh'>;
   let mockTrack: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -140,14 +139,7 @@ describe('components/forms/avatar-upload', () => {
     mockRouter = {
       refresh: vi.fn(),
     };
-    vi.mocked(useRouter).mockReturnValue({
-      ...mockRouter,
-      push: vi.fn(),
-      replace: vi.fn(),
-      back: vi.fn(),
-      forward: vi.fn(),
-      prefetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRouter>);
+    vi.mocked(useRouter).mockReturnValue(createMockRouter({ ...mockRouter }));
 
     // Setup mock analytics
     const { useAnalytics } = await import('@/lib/analytics');
