@@ -271,12 +271,13 @@ vi.mock('next/navigation', async () => {
 });
 ```
 
-**What is and isn't converted.** Two invariants, both enforced repo-wide by
-`/pre-pr` check 4m rather than asserted here: no
-`as unknown as ReturnType<typeof useRouter>` cast anywhere, and no `vi.mock`
-literal that stubs all six router methods. Minimal stubs supplying two or three
-members for a component that reads nothing else are deliberately allowed —
-convert one as soon as its component might read more of the router than the
+**What is and isn't converted.** Two invariants, both enforced by `/pre-pr`
+check 4m across every `.ts`/`.tsx` under `tests/` — `setup.ts`, `helpers/` and
+`mocks/` included, not only `*.test.ts` — rather than asserted here: no
+`as unknown as ReturnType<typeof useRouter>` cast anywhere, and no object
+literal that supplies all six router methods. Minimal stubs supplying two or
+three members for a component that reads nothing else are deliberately allowed
+— convert one as soon as its component might read more of the router than the
 stub provides. Run 4m for the current state; do not trust a count written down
 here, including this one.
 

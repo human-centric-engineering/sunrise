@@ -238,17 +238,19 @@ export type MockRouter = ReturnType<typeof useRouter> & {
  * default from this factory for that reason, and
  * `tests/unit/types/mocks.test.ts` asserts it still does.
  *
- * Scope is an enforced invariant, not a claim: `/pre-pr` check 4m scans the
- * whole repo for both shapes and must return nothing. Minimal stubs that
- * supply two or three members for a component reading nothing else are
- * deliberately allowed and not counted — convert one the moment its component
- * might read more of the router than the stub provides.
+ * Scope is an enforced invariant, not a claim: `/pre-pr` check 4m scans every
+ * `.ts`/`.tsx` under `tests/` — including `setup.ts`, `helpers/` and `mocks/`,
+ * not just `*.test.ts` — for both shapes, and must come back clean. Minimal
+ * stubs that supply two or three members for a component reading nothing else
+ * are deliberately allowed and not counted; convert one the moment its
+ * component might read more of the router than the stub provides.
  *
- * The invariant is worded that way because prose kept getting it wrong. Three
+ * It is worded as "run the check" because prose kept getting it wrong. Four
  * review rounds running, a comment here asserted a completeness the code had
- * not reached, the last time because the grep behind the number matched
- * `useRouter: vi.fn(() => ({…}))` and silently missed
- * `useRouter: () => ({…})`. Trust 4m's output; do not restate a count here.
+ * not reached — the scanner behind the last number matched
+ * `useRouter: vi.fn(() => ({…}))` and silently missed `useRouter: () => ({…})`,
+ * then its replacement missed single-line literals and every file outside
+ * `*.test.ts`. Run 4m; do not restate a count here.
  *
  * `bfcacheId` is a fixed string, not a spy. Its real semantics are that it
  * *changes* on a fresh push/replace navigation, so a test asserting that a
