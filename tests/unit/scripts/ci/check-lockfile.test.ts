@@ -105,6 +105,24 @@ describe('scripts/ci/check-lockfile', () => {
     expect(out()).toContain('npm run fix:lockfile-libc');
   });
 
+  it('reports restored metadata without failing', async () => {
+    // The #571 repair: 101 packages gained `libc`, nothing else moved. Before
+    // this the all-clear read "no version or platform-metadata change", which
+    // described the only thing that PR did as nothing at all.
+    mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
+      a[0] === 'merge-base' ? 'abc123\n' : LOCK_NO_LIBC
+    );
+    mockReadFileSync.mockImplementation((path: string) =>
+      String(path).endsWith('package.json') ? MANIFEST : LOCK
+    );
+
+    await run();
+
+    expect(process.exitCode).toBe(0);
+    expect(out()).toContain('1 package(s) gained libc — platform metadata restored.');
+    expect(out()).not.toContain('no version or platform-metadata change');
+  });
+
   it('skips quietly with no base and no flag', async () => {
     // `npm run check:lockfile` must work in a fresh clone with no remote.
     mockExecFileSync.mockImplementation(() => {
