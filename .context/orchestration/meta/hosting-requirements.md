@@ -52,11 +52,11 @@ If you remember one thing: **pick a platform, give it your repo, set the environ
 
 In plain terms: Sunrise is a normal long-running web server (Node.js). Some platforms (Vercel) run web apps as short-lived "functions" instead, which is great for short requests but creates friction for the agentic layer's long streams.
 
-Sunrise runs as a **single long-lived Node 20+ process** built from `next build` with `output: 'standalone'` (set in `next.config.js`, and deliberately disabled when `VERCEL` is set — see [`.context/deployment/platforms/vercel.md`](../../deployment/platforms/vercel.md)). The orchestration layer assumes a real, persistent Node runtime — it is not designed for an Edge runtime, and several pieces (native modules, long SSE streams, in-process scheduling assumptions) preclude purely serverless execution models that hard-cap function duration at 60 seconds.
+Sunrise runs as a **single long-lived Node 24+ process** built from `next build` with `output: 'standalone'` (set in `next.config.js`, and deliberately disabled when `VERCEL` is set — see [`.context/deployment/platforms/vercel.md`](../../deployment/platforms/vercel.md)). The orchestration layer assumes a real, persistent Node runtime — it is not designed for an Edge runtime, and several pieces (native modules, long SSE streams, in-process scheduling assumptions) preclude purely serverless execution models that hard-cap function duration at 60 seconds.
 
 | Requirement                           | Why it matters                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Node 20+                              | Required by Prisma 7's client and the Next.js 16 / React 19 toolchain                                   |
+| Node 24+                              | Node 20 went EOL 2026-03-24; also the floor for `openai` v7 and other current deps                      |
 | `output: 'standalone'`                | Produces `.next/standalone/server.js` so the runtime image carries only what it needs (off on Vercel)   |
 | `serverExternalPackages`              | `@prisma/client`, `@prisma/adapter-pg`, `ioredis` are excluded from the bundler — must exist at runtime |
 | `.npmrc` with `legacy-peer-deps=true` | Required by `better-auth` + Prisma 7 — must be present at install time, not just dev                    |
@@ -313,7 +313,7 @@ The table scores each option against the requirements above. "OK" means supporte
 **Trade-offs.** This is the option with the most moving parts to understand. You will be:
 
 - Picking and creating a VPS (DigitalOcean / Hetzner / Linode / Vultr)
-- Editing Forge's deploy script to install Node 20, run `npm ci`, build, and run migrations
+- Editing Forge's deploy script to install Node 24, run `npm ci`, build, and run migrations
 - Editing the nginx vhost so SSE streams aren't buffered (`proxy_buffering off`, raised `proxy_read_timeout`)
 - Installing the `pgvector` extension on the system Postgres (`apt install postgresql-XX-pgvector`, then `CREATE EXTENSION vector` in the DB)
 - Wiring a Forge Scheduled Job to `curl` the maintenance tick endpoint
@@ -364,7 +364,7 @@ You'll learn the CLI but you don't need to manage a server.
 1. Pick a VPS provider (DigitalOcean is the gentlest first time). Create an account.
 2. Sign up for Forge and connect it to your VPS provider's API. Click "Create Server".
 3. Once provisioned, create a "Site" pointed at your domain.
-4. **Install Node 20** on the server (Forge defaults are older). Either pick the Node version in Forge's UI or SSH in and use `nvm`.
+4. **Install Node 24** on the server (Forge defaults are older). Either pick the Node version in Forge's UI or SSH in and use `nvm`.
 5. **Install pgvector** on the Postgres Forge installed: SSH in, `sudo apt install postgresql-15-pgvector`, then connect to the DB and `CREATE EXTENSION vector`.
 6. Edit Forge's **deploy script** so it pulls Git, runs `npm ci`, builds, runs `npm run db:migrate:deploy`, and signals the daemon to restart.
 7. Add a Forge **Daemon** running `node .next/standalone/server.js` from the deploy directory.
@@ -379,7 +379,7 @@ This is the most rewarding path if you want to learn how a server actually works
 
 If you're new to deployment, the realistic pattern is "pick a platform, then ask Claude to generate the platform-specific bits". Concrete things that work well:
 
-- **"Generate the Forge deploy script for this repo, including Node 20 install via nvm, npm ci, build, prisma migrate deploy, and a graceful daemon restart."** Claude can read the `package.json`, `Dockerfile`, and existing scripts and produce a script you paste into Forge's UI.
+- **"Generate the Forge deploy script for this repo, including Node 24 install via nvm, npm ci, build, prisma migrate deploy, and a graceful daemon restart."** Claude can read the `package.json`, `Dockerfile`, and existing scripts and produce a script you paste into Forge's UI.
 - **"Write the nginx vhost block for this app, with SSE-safe settings."** Output you paste into Forge's Edit Files / nginx UI.
 - **"Generate a `fly.toml` for this repo with sensible defaults for a small Machine, plus the `fly secrets set` commands I need to run."**
 - **"Walk me through enabling `pgvector` on Render Postgres / Fly Postgres / a Forge-managed Postgres."**

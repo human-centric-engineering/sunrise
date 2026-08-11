@@ -353,7 +353,16 @@ release process.
 
 ### Changed
 
-- **Capability slugs may now contain underscores**
+- **The minimum supported Node version is now 24.** Node 20 reached end-of-life
+  on 2026-03-24 and receives no security patches; the runtime is also the floor
+  for current dependencies (`openai` v7 and `@testing-library/jest-dom` v7 both
+  require ≥22). `Dockerfile` and `Dockerfile.dev` build on `node:24-alpine`,
+  `package.json` declares `engines.node: ">=24"`, and a new `.nvmrc` is the
+  single source the CI workflows read via `node-version-file` — previously the
+  version was hardcoded in eight separate places with nothing keeping them in
+  step. **A fork on Node 20 or 22 must upgrade its runtime**; `npm install` will
+  warn rather than fail, because `.npmrc` does not set `engine-strict`, so the
+  mismatch will otherwise surface late rather than at install (#581).
   (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`) and are capped at 64 characters rather than
   100, matching the provider tool-name limit the slug now has to satisfy — a
   longer one would create successfully and then be dropped from every agent's
@@ -379,7 +388,7 @@ release process.
 ### Fixed
 
 - **`package-lock.json` declares `libc` again on 101 native Linux packages.**
-  Production is `node:20-alpine` (musl) and `libc` is the only field separating
+  Production is `node:24-alpine` (musl) and `libc` is the only field separating
   `@img/sharp-linux-x64` from `@img/sharp-linuxmusl-x64` — both are otherwise
   just `os: linux, cpu: x64`. Without it a musl install resolves **both**
   variants: measured, `node_modules` went 2.4 GB → 2.0 GB once the field was

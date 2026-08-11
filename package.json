@@ -3,6 +3,9 @@
   "version": "0.8.1",
   "description": "A production-ready Next.js starter template designed for rapid application development with AI assistance.",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "node scripts/dev-server.mjs next-dev",
     "build": "next build",

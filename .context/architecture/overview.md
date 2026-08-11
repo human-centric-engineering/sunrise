@@ -296,7 +296,7 @@ graph LR
 **Container Details**:
 
 - **Nginx**: Reverse proxy, SSL termination, static asset serving
-- **Next.js**: Standalone build (~100MB image), Node.js 20 Alpine, non-root user
+- **Next.js**: Standalone build (~100MB image), Node.js 24 Alpine, non-root user
 - **PostgreSQL**: Persistent volume, automated backups, connection pooling
 
 ### Scaling Strategy

@@ -57,7 +57,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20' # matches ci.yml; this repo has no .nvmrc
+          node-version-file: '.nvmrc'
           cache: npm
 
       # Needed for `tsx`, not for the audit itself — `npm audit` reads the
@@ -81,7 +81,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           cache: npm
 
       - name: Install dependencies

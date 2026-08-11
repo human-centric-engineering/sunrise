@@ -15,7 +15,7 @@ Be respectful and constructive. We're all here to build something useful togethe
 
 ### Prerequisites
 
-- Node.js 20.19+ (or 22.12+, 24+)
+- Node.js 24+ (see `.nvmrc`; enforced by `engines` in `package.json`)
 - PostgreSQL 15+ (local, Docker, or hosted)
 - Git
 
@@ -246,7 +246,7 @@ than the damage — a line-scanning script to put it back ran away and modified
 was caught only by diffing package-by-package against a snapshot.
 
 `libc` matters because it is the only field separating a musl build from a glibc
-one, and production is `node:20-alpine`. With it missing, a musl install pulls
+one, and production is `node:24-alpine`. With it missing, a musl install pulls
 in **both** variants: measured on this lockfile, 2.4 GB of `node_modules`
 against 2.0 GB, including `sharp-linux-x64` and `swc-linux-x64-gnu` landing in a
 musl image. Nothing errors, which is why it went unnoticed for a release.

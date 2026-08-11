@@ -2,7 +2,7 @@
 # Production-ready Dockerfile for Next.js 16 with standalone output
 # Expected final image size: ~150-200MB
 
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps

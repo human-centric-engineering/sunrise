@@ -355,7 +355,7 @@ The multi-stage Dockerfile is optimized for minimal image size and security.
 
 ### Base Image
 
-- **`node:20-alpine`**: Alpine Linux base (~150-200MB final image). Alpine uses
+- **`node:24-alpine`**: Alpine Linux base (~150-200MB final image). Alpine uses
   **musl**, not glibc — which is the thing to keep in mind whenever a dependency
   ships a compiled binary.
 - **`libc6-compat`**: glibc compatibility shims, carried over from the upstream

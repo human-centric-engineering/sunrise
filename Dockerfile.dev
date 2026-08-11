@@ -1,7 +1,7 @@
 # Development Dockerfile with hot-reload support
 # This Dockerfile is optimized for local development with Docker Compose
 
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Install dependencies for node-gyp and native modules
 # python3, make, g++ needed for packages with native bindings
