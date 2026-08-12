@@ -360,6 +360,22 @@ release process.
 
 ### Changed
 
+- **`.env.production` is no longer baked into the production image.**
+  **Action required if you keep runtime configuration there.** `.dockerignore`
+  excluded `.env` and the four `.env.*.local` names but nothing matched
+  `.env.production` or `.env.staging`, so those files entered the build context
+  — and Next's standalone output copies `.env` and `.env.production` into
+  `.next/standalone` (`next/dist/build/index.js:325-337`), where the server
+  loads them at boot. The result was a secrets file shipped inside the runtime
+  image *and* silently supplying `process.env`. Both now stop: a `.dockerignore`
+  rule of `.env.*` keeps them out of the context entirely (`.env.example` is
+  still re-included). A fork that relied on `.env.production` for runtime
+  configuration must supply those values another way — compose `env_file`,
+  `docker run --env-file`, or the platform's environment settings — or they
+  will read as `undefined` in a container that otherwise starts cleanly.
+  Note `.env.production` is **not** in `.gitignore` either, so check you have
+  not committed one (#583).
+
 - **The production runtime image no longer contains the Prisma CLI** — nor the
   schema, the migrations, or `prisma.config.ts`. **Action required if you run Prisma inside
   the app container.** `npx prisma …` and `npm run db:migrate:deploy` now fail

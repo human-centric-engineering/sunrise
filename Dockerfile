@@ -139,7 +139,12 @@ ENV npm_config_cache=/home/node/.npm
 # whole ~2 GB node_modules tree into a new layer to buy nothing.
 USER node
 
-CMD ["sh", "-c", ": \"${DATABASE_URL:?is empty or unset. Supply it at run time (compose env_file, docker run -e, or --env-file). A mounted /app/.env is NOT read: this image ships DATABASE_URL empty so it can never inherit a build-time DSN, and dotenv does not overwrite a set variable.}\"; exec npm run db:migrate:deploy"]
+# The guard is an ENTRYPOINT, not part of the CMD, so it also covers overridden
+# commands — `compose run --rm migrator prisma migrate status`, which this
+# repo documents in three places, replaces CMD and would otherwise skip it and
+# hit exactly the confusing failure described above.
+ENTRYPOINT ["sh", "-c", ": \"${DATABASE_URL:?is empty or unset. Supply it at run time (compose env_file, docker run -e, or --env-file). A mounted /app/.env is NOT read: this image ships DATABASE_URL empty so it can never inherit a build-time DSN, and dotenv does not overwrite a set variable.}\"; exec \"$@\"", "sunrise-migrator"]
+CMD ["npm", "run", "db:migrate:deploy"]
 
 # One-shot database seeder.
 #
@@ -156,7 +161,7 @@ CMD ["sh", "-c", ": \"${DATABASE_URL:?is empty or unset. Supply it at run time (
 # to a registry — it contains the full source tree.
 FROM migrator AS seeder
 COPY . .
-CMD ["sh", "-c", ": \"${DATABASE_URL:?is empty or unset. Supply it at run time (compose env_file, docker run -e, or --env-file). A mounted /app/.env is NOT read: this image ships DATABASE_URL empty so it can never inherit a build-time DSN, and dotenv does not overwrite a set variable.}\"; exec npm run db:seed"]
+CMD ["npm", "run", "db:seed"]
 
 # Production image, copy all the files and run next
 FROM base AS runner

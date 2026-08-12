@@ -182,9 +182,18 @@ These help both repo types and cost nothing, so they're always on:
   `runner`, `migrator` and `seeder` targets with `load: true`, asserts image
   invariants (musl-only `sharp` per #571; no Prisma CLI in the runtime image per
   #583), brings up `db` + `migrator` + `web` from `docker-compose.prod.yml`, and
-  asserts the migrator exited 0, `web` reached healthy, `/api/health` reports
-  `database: operational`, a Prisma **model** query succeeds over HTTP, and the
-  seeder completes. `nginx` is never started (it binds :80/:443).
+  asserts the migrator exited 0, `web` reached healthy, `/api/health` reports a
+  connected database, a Prisma **model** query succeeds, and the seeder
+  completes. `nginx` is never started (it binds :80/:443).
+
+  Two details of those assertions are deliberate and easy to "tidy" into
+  uselessness. The health check asserts `connected == true` and accepts
+  `operational` **or** `degraded`, because `determineServiceStatus` downgrades
+  above 500 ms latency while still returning 200 — asserting `operational`
+  would red-X a merely contended runner. And the model query runs **in the
+  container, not over HTTP**: the obvious HTTP probe went through a route whose
+  handler catches every error and returns the same 404 a successful lookup
+  returns, so it passed against an image with the Prisma wasm compiler deleted.
 
   This exists because the previous version used `push: false` with no `load`,
   so nothing ever ran the image. #583 — the production stack could not start at

@@ -375,9 +375,11 @@ The multi-stage Dockerfile is optimized for minimal image size and security.
 
 ### Measured image sizes
 
-This is the **only** place in the repo that states image sizes. Four mutually
-inconsistent figures used to be scattered across the docs, none of them close
-to reality, so everywhere else links here instead of restating a number.
+This is the **only** place in the repo that states **production** image sizes.
+Four mutually inconsistent figures used to be scattered across the docs, none of
+them close to reality, so everywhere else links here instead of restating a
+number. (`DOCKER-TESTING.md` still quotes a dev-image figure; that image is
+built from `Dockerfile.dev` and is not what ships.)
 
 **amd64 — what production actually ships.** Taken from the `Docker Build +
 Stack Smoke` CI job, which logs `docker image inspect --format '{{.Size}}'` for
