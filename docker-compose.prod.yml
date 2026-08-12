@@ -5,11 +5,13 @@
 services:
   # Next.js application (production build)
   web:
-    # Named explicitly so the tag does not depend on Compose's implicit
-    # "<project>-<service>" naming. CI builds these tags with buildx (for the
-    # layer cache) and then brings the stack up with --no-build; the value here
-    # is the same name Compose would have chosen, so nothing changes locally.
-    image: sunrise-web:latest
+    # Pinned so CI can build these tags with buildx (for the layer cache) and
+    # then bring the stack up with --no-build. Interpolated rather than
+    # hardcoded: it reproduces Compose's implicit "<project>-<service>" naming
+    # exactly, so a fork checked out as daybreak/ still gets daybreak-web and
+    # two stacks started with different -p values cannot overwrite each other's
+    # images.
+    image: ${COMPOSE_PROJECT_NAME:-sunrise}-web:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -71,7 +73,7 @@ services:
   # passing the real DSN would record it in the image's `docker history`. The
   # DSN it actually migrates with comes from .env at run time.
   migrator:
-    image: sunrise-migrator:latest
+    image: ${COMPOSE_PROJECT_NAME:-sunrise}-migrator:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -104,7 +106,7 @@ services:
   # No container_name — `compose run` warns and ignores it.
   seeder:
     profiles: ['seed']
-    image: sunrise-seeder:latest
+    image: ${COMPOSE_PROJECT_NAME:-sunrise}-seeder:latest
     build:
       context: .
       dockerfile: Dockerfile

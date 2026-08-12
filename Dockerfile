@@ -116,9 +116,17 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # and never falls back to a registry fetch (#583).
 ENV PATH="/app/node_modules/.bin:$PATH"
 
-# Never inherit a build-time DSN. If the runtime environment forgets to supply
-# DATABASE_URL, prisma.config.ts's env('DATABASE_URL') must fail loudly rather
-# than quietly migrating whichever database the image was built against.
+# Never inherit a build-time DSN: without this the stage would carry the deps
+# placeholder, and a missing runtime value would silently migrate whatever that
+# happens to point at.
+#
+# The trade-off is that an empty string still counts as *set*, so dotenv (which
+# prisma.config.ts and prisma/seed.ts both call) will not populate it from a
+# mounted /app/.env — and the resulting failures are unhelpful: the migrator
+# says "Cannot resolve environment variable: DATABASE_URL" even with a perfectly
+# good .env mounted, and the seeder gets as far as ECONNREFUSED on
+# 127.0.0.1:5432 because `new Pool({connectionString: ''})` falls back to libpq
+# defaults. Both CMDs below therefore guard explicitly and say what to do.
 ENV DATABASE_URL=""
 
 # node:*-alpine ships uid 1000 `node`, but USER does not update HOME — it would
@@ -131,7 +139,7 @@ ENV npm_config_cache=/home/node/.npm
 # whole ~2 GB node_modules tree into a new layer to buy nothing.
 USER node
 
-CMD ["npm", "run", "db:migrate:deploy"]
+CMD ["sh", "-c", ": \"${DATABASE_URL:?is empty or unset. Supply it at run time (compose env_file, docker run -e, or --env-file). A mounted /app/.env is NOT read: this image ships DATABASE_URL empty so it can never inherit a build-time DSN, and dotenv does not overwrite a set variable.}\"; exec npm run db:migrate:deploy"]
 
 # One-shot database seeder.
 #
@@ -148,7 +156,7 @@ CMD ["npm", "run", "db:migrate:deploy"]
 # to a registry — it contains the full source tree.
 FROM migrator AS seeder
 COPY . .
-CMD ["npm", "run", "db:seed"]
+CMD ["sh", "-c", ": \"${DATABASE_URL:?is empty or unset. Supply it at run time (compose env_file, docker run -e, or --env-file). A mounted /app/.env is NOT read: this image ships DATABASE_URL empty so it can never inherit a build-time DSN, and dotenv does not overwrite a set variable.}\"; exec npm run db:seed"]
 
 # Production image, copy all the files and run next
 FROM base AS runner

@@ -450,6 +450,11 @@ jobs:
       (github.event_name == 'push' || needs.config.outputs.docker == 'true')
     env:
       COMPOSE_FILE: docker-compose.prod.yml
+      # Pinned so the compose services' interpolated image names resolve to the
+      # exact tags the buildx steps below produce. Without it the project name
+      # comes from the checkout directory, and `up --no-build` would look for a
+      # tag nothing built.
+      COMPOSE_PROJECT_NAME: sunrise
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -612,21 +617,39 @@ jobs:
           test "$(jq -r '.services.database.status' <<<"$BODY")" = "operational"
 
       # /api/health only runs `$queryRaw SELECT 1` (lib/db/utils.ts), which goes
-      # straight through the pg adapter. This endpoint reaches
-      # `prisma.verification.findFirst` (lib/utils/invitation-token.ts) with
-      # nothing but Zod validation ahead of it, so it exercises the generated
-      # client and the wasm query compiler — the part of the image that arrives
-      # via Next's standalone trace rather than an explicit COPY, and therefore
-      # the part that slimming the runner in #583 could actually have broken.
-      # An unknown token is a 404; a client that failed to load would be a 500.
+      # straight through the pg adapter and never touches the generated client.
+      # The client and its wasm query compiler reach this image through Next's
+      # standalone trace rather than an explicit COPY, so they are exactly what
+      # slimming the runner in #583 could have broken — and nothing above would
+      # notice.
+      #
+      # This runs a real model query using only the image's own modules, and
+      # fails on a non-zero exit. It does NOT go through an HTTP route on
+      # purpose: the obvious candidate
+      # (`/api/v1/invitations/metadata`, which reaches
+      # `prisma.verification.findFirst`) is useless as a probe, because
+      # `getInvitationMetadata` catches every error and returns
+      # `reason: 'not_found'` (lib/utils/invitation-token.ts:360-363), which the
+      # route maps to 404 — the same 404 a working lookup returns. Verified by
+      # deleting `query_compiler_fast_bg.wasm-base64.js` from the image: the
+      # endpoint still answered 404, while this step exits 1.
+      #
+      # `@prisma/adapter-pg` must be `import`ed, not `require`d: the trace
+      # carries its ESM entry only, because that is how the server loads it.
       - name: Assert a Prisma model query works in the runtime image
         run: |
           set -euo pipefail
-          CODE=$(curl -s -o /tmp/probe.json -w '%{http_code}' \
-            'http://localhost:3000/api/v1/invitations/metadata?token=ci-probe&email=ci-probe@example.com')
-          cat /tmp/probe.json
-          echo "http status: $CODE"
-          test "$CODE" = "404"
+          docker compose exec -T web node --input-type=module -e "
+            import { createRequire } from 'node:module';
+            const require = createRequire('/app/');
+            const { PrismaClient } = require('@prisma/client');
+            const { Pool } = require('pg');
+            const { PrismaPg } = await import('@prisma/adapter-pg');
+            const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+            const rows = await new PrismaClient({ adapter: new PrismaPg(pool) }).user.count();
+            console.log('model query ok, user rows:', rows);
+            await pool.end();
+          "
 
       # The step docker-compose.prod.yml calls REQUIRED on first install, and
       # which silently could not work before #583. --no-deps because db and

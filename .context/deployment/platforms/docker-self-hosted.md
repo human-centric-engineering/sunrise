@@ -518,7 +518,7 @@ depends_on:
     condition: service_completed_successfully
 ```
 
-`web` starts only after (1) `db` passes its health check and (2) the run-once `migrator` service exits successfully. The `migrator` service builds the same image as `web`, runs `npx prisma migrate deploy`, and exits — so `web` never serves traffic against a stale schema. If migrations fail, `web` does not start.
+`web` starts only after (1) `db` passes its health check and (2) the run-once `migrator` service exits successfully. The `migrator` service builds the **`migrator` target** — a different image from `web`, carrying the Prisma CLI that the runtime image deliberately does not (#583) — runs `prisma migrate deploy`, and exits, so `web` never serves traffic against a stale schema. If migrations fail, `web` does not start.
 
 **Environment variables:**
 

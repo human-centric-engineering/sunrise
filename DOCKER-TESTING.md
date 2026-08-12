@@ -422,11 +422,11 @@ docker-compose build --no-cache
 | Hot reload time           | 1-2 seconds    |
 | Production image size     | see docs\*     |
 | Dev image size            | 800MB-1GB      |
+| Memory usage (dev)        | ~500MB         |
+| Memory usage (prod)       | ~200MB         |
 
 \* Measured per release in
 [docker-self-hosted.md](.context/deployment/platforms/docker-self-hosted.md#measured-image-sizes).
-| Memory usage (dev) | ~500MB |
-| Memory usage (prod) | ~200MB |
 
 ---
 

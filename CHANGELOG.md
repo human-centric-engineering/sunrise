@@ -362,9 +362,10 @@ release process.
 
 - **The production runtime image no longer contains the Prisma CLI** — nor the
   schema, the migrations, or `prisma.config.ts`. **Action required if you run Prisma inside
-  the app container.** `npx prisma …`, `npm run db:migrate:deploy` and
-  `npm run db:seed` now fail there (with a message pointing at the replacement,
-  rather than a bare `command not found`). Migrations run from a new `migrator`
+  the app container.** `npx prisma …` and `npm run db:migrate:deploy` now fail
+  there with a message naming the replacement rather than a bare
+  `command not found`; `npm run db:seed` fails with `sh: tsx: not found`, since
+  `tsx` was never in that image either. Migrations run from a new `migrator`
   image built from the same `Dockerfile`; seeding from a new `seeder` image.
   The reason is that completing the CLI's dependency closure would have meant
   shipping 133 packages / ~240 MB of deploy-time tooling — Prisma Studio, a WASM
