@@ -83,7 +83,7 @@ interface SystemStats {
     };
   };
   system: {
-    nodeVersion: string; // e.g., "v20.10.0"
+    nodeVersion: string; // e.g., "v24.9.0"
     appVersion: string; // From package.json
     environment: string; // "development" | "production"
     uptime: number; // Seconds since start
@@ -116,7 +116,7 @@ Returns system statistics for the admin dashboard.
       }
     },
     "system": {
-      "nodeVersion": "v20.10.0",
+      "nodeVersion": "v24.9.0",
       "appVersion": "1.0.0",
       "environment": "production",
       "uptime": 86400,

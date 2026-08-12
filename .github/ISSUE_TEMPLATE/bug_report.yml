@@ -70,7 +70,7 @@ body:
     attributes:
       label: Node.js Version
       description: Run `node --version` to check
-      placeholder: v20.19.0
+      placeholder: v24.9.0
     validations:
       required: true
 

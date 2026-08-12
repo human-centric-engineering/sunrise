@@ -32,7 +32,7 @@ GET /api/v1/admin/stats
       }
     },
     "system": {
-      "nodeVersion": "v20.10.0",
+      "nodeVersion": "v24.9.0",
       "appVersion": "1.0.0",
       "environment": "production",
       "uptime": 86400,
