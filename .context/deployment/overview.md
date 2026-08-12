@@ -90,6 +90,12 @@ files as the self-hosted path:
 If you would rather not run Docker in CI, `npm ci && npx prisma migrate deploy`
 on the runner with `DATABASE_URL` pointed at production does the same job.
 
+**Gate this on `push` to a protected branch, or a protected environment — never
+`pull_request_target`.** Either form hands the production `DATABASE_URL` to
+whatever code is in the checkout, and a migration file (or an `npm ci`
+postinstall) can run arbitrary SQL. That is inherent to migrating from CI on
+any platform; the protection is controlling which commits can reach the job.
+
 Authoring discipline lives in [`database/migrations.md`](../database/migrations.md) — always write backward-compatible migrations so a deploy that fails partway leaves the old code compatible with the new schema.
 
 ## CI/CD Integration

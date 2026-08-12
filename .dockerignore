@@ -18,13 +18,17 @@ dist
 .swc
 
 # Environment variables (NEVER copy to Docker image)
+# `.env.*` is the load-bearing line: the enumerated names below missed
+# `.env.production` / `.env.staging`, which matter now that the `seeder` stage
+# does `COPY . .` and is a runnable image rather than an intermediate one.
 .env
+.env.*
 .env*.local
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-# Keep .env.example for reference
+# Keep .env.example for reference — must stay after the .env.* rule
 !.env.example
 
 # Testing
