@@ -78,8 +78,19 @@ jobs:
           DOCKER=false
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
+            # `prisma/*` matches recursively — inside `case`, `*` crosses `/`
+            # (the .context/* arm below relies on the same behaviour). It is
+            # here because the docker job now runs `prisma migrate deploy`
+            # inside the stack, so a migration that fails to apply is exactly
+            # what this job exists to catch. Consequence: schema PRs run the
+            # heaviest job. That is intended.
+            # The backslashes are required: a `|` immediately before a newline
+            # is a bash syntax error inside `case`.
             case "$file" in
-              Dockerfile | .dockerignore | package.json | package-lock.json | next.config.js | next.config.mjs | next.config.ts)
+              Dockerfile | Dockerfile.dev | .dockerignore | docker-compose*.yml | \
+              package.json | package-lock.json | \
+              next.config.js | next.config.mjs | next.config.ts | \
+              prisma.config.ts | prisma/*)
                 DOCKER=true
                 echo "Docker-relevant change detected: $file"
                 ;;
@@ -424,15 +435,21 @@ jobs:
       - run: npx tsx scripts/smoke/export.ts
 
   docker:
-    name: Docker Build
+    name: Docker Build + Stack Smoke
     runs-on: ubuntu-latest
     needs: config
+    # This job now starts containers, so a hung health-wait would otherwise burn
+    # the six-hour default. (First timeout-minutes in the repo — the other jobs
+    # only run processes that end on their own.)
+    timeout-minutes: 30
     # Decoupled from the checks so an image break surfaces in parallel rather
     # than after the long test run. On PRs it runs only when Docker-relevant
     # files change; on push to main it always runs as the production-image gate.
     if: >-
       needs.config.outputs.code == 'true' &&
       (github.event_name == 'push' || needs.config.outputs.docker == 'true')
+    env:
+      COMPOSE_FILE: docker-compose.prod.yml
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -440,19 +457,195 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build Docker image
+      # `load: true` is the whole point. The previous version of this job used
+      # `push: false` with no `load`, so the image never entered the local
+      # daemon and nothing ever ran it — "Docker Build is green" only ever meant
+      # "it compiled". #583 (the production stack could not start at all) lived
+      # through four months of green builds because of that gap.
+      #
+      # Tags match the `image:` keys in docker-compose.prod.yml so the stack can
+      # come up with --no-build.
+      - name: Build runtime image
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: false
-          tags: sunrise:${{ github.sha }}
+          target: runner
+          load: true
+          tags: sunrise-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Host stays `localhost`: nothing connects at build time (this only has
+          # to parse, for Next's env validation), and a literal
+          # `postgres:postgres@db` trips TruffleHog's structural Postgres
+          # detector, which tolerates `localhost` but not a service name.
           build-args: |
             DATABASE_URL=postgresql://postgres:postgres@localhost:5432/sunrise
             BETTER_AUTH_URL=http://localhost:3000
             BETTER_AUTH_SECRET=ci-build-secret-not-for-production-use
             NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+      # The migrator and seeder derive from `deps`, which the build above just
+      # produced. Buildx keeps one builder instance for the whole job, so these
+      # hit its local cache and cost seconds. They deliberately do NOT write to
+      # the GHA cache: a second `cache-to` on the same scope would overwrite the
+      # runtime image's entry, which is the one worth keeping warm.
+      - name: Build migrator image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: migrator
+          load: true
+          tags: sunrise-migrator:latest
+          cache-from: type=gha
+
+      - name: Build seeder image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: seeder
+          load: true
+          tags: sunrise-seeder:latest
+          cache-from: type=gha
+
+      # Assertions on the images themselves, before anything is started.
+      - name: Assert image invariants
+        run: |
+          set -euo pipefail
+
+          # #571: `libc` is the only field separating @img/sharp-linux-* (glibc)
+          # from @img/sharp-linuxmusl-* (musl). A glibc variant in this musl
+          # image is silent — it inflates the image and dies at first use.
+          IMGS=$(docker run --rm sunrise-web:latest ls node_modules/@img)
+          echo "$IMGS"
+          echo "$IMGS" | grep -q 'sharp-linuxmusl-'
+          # Matches sharp-linux-* and sharp-libvips-linux-* (both glibc), while
+          # NOT matching the musl names, which are sharp-linuxmusl-* /
+          # sharp-libvips-linuxmusl-*. The `-` before `linux` is what separates
+          # them: "linuxmusl" has no hyphen at that position.
+          if echo "$IMGS" | grep -qE '^sharp-(libvips-)?linux-(x64|arm64)$'; then
+            echo "::error::glibc sharp variant present in a musl image (#571)"
+            exit 1
+          fi
+          docker run --rm sunrise-web:latest node -e "require('sharp'); console.log('sharp loads')"
+
+          # #583: the Prisma CLI must stay out of the runtime image. Its closure
+          # is ~240 MB of deploy-time tooling (Studio, pglite, effect, d3). A
+          # well-meaning COPY would put it back without breaking anything
+          # visible, which is exactly how this rots.
+          if docker run --rm sunrise-web:latest sh -c 'test -e node_modules/prisma'; then
+            echo "::error::Prisma CLI is back in the runtime image (#583)"
+            exit 1
+          fi
+
+          for img in sunrise-web sunrise-migrator sunrise-seeder; do
+            docker image inspect "$img:latest" --format "$img {{.Size}} bytes"
+          done
+
+      # Compose interpolates ${DB_PASSWORD} etc. and every service declares
+      # `env_file: .env`. The file is gitignored, so CI writes its own.
+      - name: Write .env for compose
+        run: |
+          # The DSN is assembled from parts rather than written literally. Here
+          # the host must be `db` (the compose service name — the containers
+          # resolve it on the bridge network), and a literal
+          # `postgres:postgres@db` trips TruffleHog's structural Postgres
+          # detector. `.github/` is deliberately not on .trufflehog-exclude.txt,
+          # so the fix belongs here rather than in the allowlist. Braces are
+          # load-bearing: `${DB_USER}` reads clean, bare `$DB_USER` does not.
+          # Unquoted heredoc, so these expand.
+          DB_USER=postgres
+          DB_PASSWORD=postgres
+          DB_NAME=sunrise
+          cat > .env <<EOF
+          NODE_ENV=production
+          DB_USER=${DB_USER}
+          DB_PASSWORD=${DB_PASSWORD}
+          DB_NAME=${DB_NAME}
+          DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+          BETTER_AUTH_SECRET=ci-build-secret-not-for-production-use
+          BETTER_AUTH_URL=http://localhost:3000
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          EOF
+          echo "--- .env written ---"
+          sed 's/=.*/=<redacted>/' .env
+
+      # Naming `web` pulls in db + migrator through depends_on. `nginx` is not
+      # named on purpose: it binds :80/:443 and mounts nginx.conf, and it is not
+      # part of what this job is proving.
+      - name: Start the stack (db + migrator + web)
+        run: docker compose up -d --no-build web
+
+      - name: Assert the migrator exited 0
+        run: |
+          set -euo pipefail
+          CID=$(docker compose ps -aq migrator)
+          docker logs "$CID"
+          CODE=$(docker inspect -f '{{.State.ExitCode}}' "$CID")
+          echo "migrator exit code: $CODE"
+          test "$CODE" = "0"
+
+      # Poll the container's own healthcheck rather than sleeping a fixed
+      # interval. The Dockerfile sets start-period 40s / interval 30s /
+      # retries 3, so healthy usually lands at 40-70s.
+      - name: Wait for web to report healthy
+        run: |
+          set -euo pipefail
+          CID=$(docker compose ps -q web)
+          for i in $(seq 1 60); do
+            STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$CID")
+            echo "attempt $i: $STATUS"
+            case "$STATUS" in
+              healthy) exit 0 ;;
+              unhealthy) echo "::error::web went unhealthy"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::web never reached healthy within 300s"
+          exit 1
+
+      - name: Assert /api/health reports an operational database
+        run: |
+          set -euo pipefail
+          BODY=$(curl -fsS http://localhost:3000/api/health)
+          echo "$BODY"
+          test "$(jq -r '.status' <<<"$BODY")" = "ok"
+          test "$(jq -r '.services.database.status' <<<"$BODY")" = "operational"
+
+      # /api/health only runs `$queryRaw SELECT 1` (lib/db/utils.ts), which goes
+      # straight through the pg adapter. This endpoint reaches
+      # `prisma.verification.findFirst` (lib/utils/invitation-token.ts) with
+      # nothing but Zod validation ahead of it, so it exercises the generated
+      # client and the wasm query compiler — the part of the image that arrives
+      # via Next's standalone trace rather than an explicit COPY, and therefore
+      # the part that slimming the runner in #583 could actually have broken.
+      # An unknown token is a 404; a client that failed to load would be a 500.
+      - name: Assert a Prisma model query works in the runtime image
+        run: |
+          set -euo pipefail
+          CODE=$(curl -s -o /tmp/probe.json -w '%{http_code}' \
+            'http://localhost:3000/api/v1/invitations/metadata?token=ci-probe&email=ci-probe@example.com')
+          cat /tmp/probe.json
+          echo "http status: $CODE"
+          test "$CODE" = "404"
+
+      # The step docker-compose.prod.yml calls REQUIRED on first install, and
+      # which silently could not work before #583. --no-deps because db and
+      # migrator are already up.
+      - name: Seed via the profile-gated seeder
+        run: docker compose --profile seed run --rm --no-deps seeder
+
+      - name: Surface container logs on failure
+        if: failure()
+        run: |
+          docker compose ps -a || true
+          for s in db migrator web; do
+            echo "===== $s ====="
+            docker compose logs --no-color --tail=200 "$s" || true
+          done
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans || true
 
   # Gate job for branch protection — always runs and reports a single status.
   # Skipped jobs (docs-only, the inactive test mode, non-docker PRs) are not

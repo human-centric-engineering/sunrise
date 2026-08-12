@@ -71,12 +71,18 @@ See templates below for each platform.
 **After deployment, run migrations:**
 
 ```bash
-# For container platforms with shell access
-npx prisma migrate deploy
+# From a checkout / CI runner with full node_modules
+npm run db:migrate:deploy
 
 # For Vercel (use build command)
-# Add to build: "prisma generate && prisma migrate deploy && next build"
+# Add to build: "npm run build && npm run db:migrate:deploy"
 ```
+
+Do **not** plan on running the CLI inside the deployed container: the Sunrise
+runtime image contains no Prisma CLI (#583). Render/Railway Pre-Deploy commands
+and Fly `release_command` all run there and will fail. Migrate from CI or a
+checkout, or use the `migrator` image — see
+[.context/deployment/overview.md](../../../.context/deployment/overview.md#migration-strategy).
 
 ### Step 4: Verification
 
@@ -278,8 +284,9 @@ primary_region = "iad"
 # Build and start
 docker-compose -f docker-compose.prod.yml up -d --build
 
-# Run migrations
-docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+# Migrations run automatically via the `migrator` service before `web` starts.
+# Seed once on first install:
+docker-compose -f docker-compose.prod.yml --profile seed run --rm seeder
 
 # View logs
 docker-compose -f docker-compose.prod.yml logs -f web

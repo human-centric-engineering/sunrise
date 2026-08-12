@@ -79,14 +79,17 @@ docker-compose restart web           # Restart app without rebuilding
 ```bash
 # Build
 docker build -t sunrise:latest .     # Build production image
-docker images sunrise:latest         # Check image size (should be ~150-200MB)
+docker images sunrise:latest         # Check image size (see docker-self-hosted.md)
 
 # Lifecycle
 docker-compose -f docker-compose.prod.yml up -d --build  # Build and start
 docker-compose -f docker-compose.prod.yml down            # Stop stack
 
 # Operations
-docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy  # Run migrations
+# Migrations apply automatically via the `migrator` service on `up`. The
+# runtime image has no Prisma CLI, so ad-hoc Prisma work goes through it:
+docker-compose -f docker-compose.prod.yml run --rm migrator prisma migrate status
+docker-compose -f docker-compose.prod.yml --profile seed run --rm seeder  # Seed (first install)
 docker-compose -f docker-compose.prod.yml logs -f web     # View logs
 docker-compose -f docker-compose.prod.yml ps              # Check service health
 

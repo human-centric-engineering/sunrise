@@ -212,7 +212,9 @@ The scheduler does **not** require a singleton instance — the optimistic-lock 
 
 In plain terms: when the database schema changes, you must apply that change to the production database before the new code starts serving traffic. The command is `prisma migrate deploy`. Where you put it differs per platform, but the rule is the same.
 
-`prisma migrate deploy` must run **after `next build`, before traffic shifts**. The runtime image ships the Prisma CLI and `prisma/migrations/` so the same artifact serves both roles. See `.context/deployment/overview.md` for the per-platform mapping. Migrations are written to be backward-compatible so a partial rollout is safe.
+`prisma migrate deploy` must run **after `next build`, before traffic shifts**. The **`migrator`** image — a separate target of the same `Dockerfile` — ships the Prisma CLI and `prisma/migrations/`; the runtime image ships neither, so a migration hook that runs _inside the deployed container_ (Render's and Railway's Pre-Deploy Command, Fly's `release_command`) will fail. That rules out the most obvious option on three of the platforms below; see `.context/deployment/overview.md` for what to do on each. Migrations are written to be backward-compatible so a partial rollout is safe.
+
+This is also the only thing keeping `@prisma/client` in the runtime image: it arrives through Next's standalone trace (`serverExternalPackages` in `next.config.js`), not through an explicit `COPY` (#583).
 
 ### 4.2 Build-time environment variables
 
@@ -343,7 +345,7 @@ You do not need to know what nginx, Docker, or supervisord are.
 1. Push the repo to GitHub.
 2. Sign up at render.com, create a "Web Service" pointed at the repo. Render auto-detects Next.js.
 3. Create a managed Postgres from Render's dashboard, copy the internal connection string into `DATABASE_URL`.
-4. Set the pre-deploy command to `npm run db:migrate:deploy`.
+4. **Leave the Pre-Deploy Command empty** — it runs inside the deployed image, which has no Prisma CLI. Turn Auto-Deploy off, add a Deploy Hook, and migrate from CI against the _external_ connection string before firing it. Full recipe in [`deployment/platforms/render.md`](../../deployment/platforms/render.md).
 5. Add env vars.
 6. Create one "Cron Job" hitting `/api/v1/admin/orchestration/maintenance/tick` every minute.
 7. Push to `main`. It deploys.
@@ -354,8 +356,9 @@ You do not need to know what nginx, Docker, or supervisord are.
 2. Run `fly launch` in the repo. It reads the `Dockerfile`, asks a few questions, generates a `fly.toml`.
 3. Run `fly postgres create` to provision a Postgres app; attach it. Enable `pgvector` (`fly pg connect`, then `CREATE EXTENSION vector`).
 4. Set env vars with `fly secrets set KEY=value`.
-5. Run `fly deploy`.
-6. For cron, the simplest path is an external pinger (cron-job.org) hitting `/api/v1/admin/orchestration/maintenance/tick` every minute. Or schedule a small machine.
+5. Apply migrations before deploying — **not** via `release_command`, which runs in the app image and has no Prisma CLI. Simplest: `fly proxy 5432 -a <your-pg-app>` in one terminal, then `DATABASE_URL=postgres://…@localhost:5432/<db> npm run db:migrate:deploy` in another. In CI, use the `migrator`-image recipe from [`deployment/overview.md`](../../deployment/overview.md#migration-strategy). Fly _does_ support `fly deploy --build-target migrator`, so a second migrator-only app is possible if you already run several.
+6. Run `fly deploy`.
+7. For cron, the simplest path is an external pinger (cron-job.org) hitting `/api/v1/admin/orchestration/maintenance/tick` every minute. Or schedule a small machine.
 
 You'll learn the CLI but you don't need to manage a server.
 

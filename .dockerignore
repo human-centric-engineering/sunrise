@@ -72,11 +72,15 @@ yarn-error.log*
 next-env.d.ts
 
 # Prisma
+# Note: migration SQL is NOT excluded. It lives at
+# prisma/migrations/<timestamp>_<name>/migration.sql, and the `migrator` stage
+# needs it. (A `prisma/migrations/*.sql` rule used to sit here; `*` does not
+# cross `/`, so it matched nothing — but it read as though migrations were
+# excluded, which is worth not implying.)
 prisma/dev.db
 prisma/dev.db-journal
 *.db
 *.db-journal
-prisma/migrations/*.sql
 
 # Docker (don't copy Docker files into Docker)
 Dockerfile*

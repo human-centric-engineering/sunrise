@@ -202,10 +202,12 @@ docker build -t sunrise:latest \
 **Expected output (final lines):**
 
 ```
- => [runner 6/6] COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
  => exporting to image
  => => naming to docker.io/library/sunrise:latest
 ```
+
+(Step numbers like `[runner 6/6]` shift whenever a stage gains or loses an
+instruction, so don't match on them.)
 
 ### 2.2 Check Image Size
 
@@ -215,8 +217,12 @@ docker images sunrise:latest
 
 **Expected:**
 
-- Image size should be **~150-200MB**
-- If it's over 500MB, something went wrong (likely .dockerignore issue)
+- Compare against the measured figures in
+  [docker-self-hosted.md](.context/deployment/platforms/docker-self-hosted.md#measured-image-sizes).
+  `node:24-alpine` alone is ~230 MB, so anything claiming a ~150 MB final image
+  is wrong on arithmetic alone.
+- A sudden jump of several hundred MB usually means either a `.dockerignore`
+  regression or deploy-time tooling leaking into the `runner` stage (#583).
 
 ### 2.3 Test Production Container
 
@@ -270,16 +276,33 @@ docker-compose -f docker-compose.prod.yml ps
 **Expected:**
 
 ```
-NAME            STATUS
-sunrise-web     Up (healthy)
-sunrise-db      Up (healthy)
-sunrise-nginx   Up
+NAME               STATUS
+sunrise-web        Up (healthy)
+sunrise-db         Up (healthy)
+sunrise-migrator   Exited (0)
+sunrise-nginx      Up
 ```
 
-**Run migrations:**
+Use `ps -a`: `sunrise-migrator` runs once and exits, so a plain `ps` hides it.
+**`Exited (0)` is the assertion** — this listing used to omit the migrator
+entirely, which is precisely why it went unnoticed that it was exiting 127 and
+no migrations were being applied at all (#583).
+
+**Migrations:** already applied. The `migrator` service ran before `web`
+started, and `web` cannot start unless it exited 0. Confirm with:
 
 ```bash
-docker-compose -f docker-compose.prod.yml exec web npx prisma migrate deploy
+docker-compose -f docker-compose.prod.yml logs migrator
+docker-compose -f docker-compose.prod.yml run --rm migrator prisma migrate status
+```
+
+There is no Prisma CLI in the `web` image, so `exec web npx prisma …` will not
+work — it prints a pointer to the migrator service and exits 1.
+
+**Seed (required on first install):**
+
+```bash
+docker-compose -f docker-compose.prod.yml --profile seed run --rm seeder
 ```
 
 **Test health endpoint:**
@@ -319,15 +342,19 @@ After completing the tests above, verify:
 ### Production Build ✓
 
 - [ ] Production image builds successfully
-- [ ] Image size is ~150-200MB
+- [ ] Image size in line with the measured figures in
+      [docker-self-hosted.md](.context/deployment/platforms/docker-self-hosted.md#measured-image-sizes)
 - [ ] No .env files copied to image (security check)
+- [ ] `node_modules/prisma` absent from the runtime image (#583)
 - [ ] Standalone output created correctly
 
 ### Production Stack ✓
 
 - [ ] All services start and show (healthy) status
-- [ ] Migrations run successfully
-- [ ] Health endpoint returns 200 OK
+- [ ] `sunrise-migrator` shows `Exited (0)` in `ps -a` (#583)
+- [ ] Migrator logs end with "All migrations have been successfully applied"
+- [ ] Health endpoint returns 200 OK with `services.database.status: operational`
+- [ ] `--profile seed run --rm seeder` completes, and a second run skips unchanged units
 - [ ] App accessible via nginx (if enabled)
 
 ---
@@ -393,10 +420,13 @@ docker-compose build --no-cache
 | Rebuild time (with cache) | 30-60 seconds  |
 | Container startup         | 10-20 seconds  |
 | Hot reload time           | 1-2 seconds    |
-| Production image size     | 150-200MB      |
+| Production image size     | see docs\*     |
 | Dev image size            | 800MB-1GB      |
-| Memory usage (dev)        | ~500MB         |
-| Memory usage (prod)       | ~200MB         |
+
+\* Measured per release in
+[docker-self-hosted.md](.context/deployment/platforms/docker-self-hosted.md#measured-image-sizes).
+| Memory usage (dev) | ~500MB |
+| Memory usage (prod) | ~200MB |
 
 ---
 

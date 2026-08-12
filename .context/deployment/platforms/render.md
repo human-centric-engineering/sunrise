@@ -82,13 +82,41 @@ Render checks for HTTP 200 OK response. The app returns 503 if the database is d
 
 ### 5. Run Database Migrations
 
-In Web Service > Settings > **Pre-Deploy Command**:
+**Do not use Render's Pre-Deploy Command.** It runs inside the deployed image,
+and the Sunrise runtime image contains no Prisma CLI — it ships only Next's
+standalone trace (#583). The hook would fail and abort the deploy. That is at
+least a loud failure rather than a silent unmigrated schema, but it is not a
+migration strategy. Render also cannot build a specific Dockerfile stage — there
+is no `--target` equivalent — so pointing a second Render service at the
+`migrator` stage is not a way out either.
 
-```bash
-npm run db:migrate:deploy
+Two supported options:
+
+**Option 1 (recommended) — migrate from CI, then trigger the deploy.**
+Turn **Auto-Deploy off** and create a **Deploy Hook** (Settings → Deploy Hook).
+In your deploy workflow, apply migrations against the database's **External
+Connection String** — the internal one is only reachable from inside Render's
+network — then `POST` the hook:
+
+```yaml
+- name: Apply migrations
+  run: |
+    docker build --target migrator -t sunrise-migrator:deploy .
+    docker run --rm -e DATABASE_URL="${{ secrets.RENDER_DATABASE_EXTERNAL_URL }}" \
+      sunrise-migrator:deploy
+- name: Trigger Render deploy
+  run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
 ```
 
-Render runs this against the built image before switching traffic, so schema changes land before code that depends on them. The runtime image bundles the Prisma CLI + `prisma/migrations/`, so no extra setup is needed.
+Migrations land before the new code, which is the ordering the Pre-Deploy hook
+was giving you. Simpler variant, if you would rather not run Docker in CI:
+`npm ci && npx prisma migrate deploy` with `DATABASE_URL` set to the same value.
+
+**Option 2 — run the service on Render's Node environment instead of Docker.**
+Set Environment to **Node**, Build Command `npm ci && npm run build`, Start
+Command `npm run start`, Pre-Deploy Command `npm run db:migrate:deploy`.
+Render's build workspace has the full `node_modules`, so the hook works. The
+trade-off is losing Dockerfile parity with your self-hosted stack.
 
 Write backward-compatible migrations (see [database/migrations.md](../../database/migrations.md)) so a failed deploy between migration and promotion is safe.
 

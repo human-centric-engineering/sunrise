@@ -55,10 +55,10 @@ npm run db:migrate:dev -- --name add_user_role
 
 ### Production Commands
 
-| Command                     | Purpose                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------ |
-| `npm run db:migrate:deploy` | Apply all pending migrations (runs in CI, compose migrator, Vercel, Render, Railway) |
-| `npm run db:migrate:status` | Report pending / applied migrations without making changes                           |
+| Command                     | Purpose                                                                                                                                                                                                                                                        |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run db:migrate:deploy` | Apply all pending migrations. Runs on CI's runner, inside the compose `migrator` image, and in Vercel's build. **Not** inside the deployed container — the runtime image has no Prisma CLI (#583), so Render/Railway/Fly migrate from CI or a checkout instead |
+| `npm run db:migrate:status` | Report pending / applied migrations without making changes                                                                                                                                                                                                     |
 
 ```bash
 # Resolve a failed migration (rare — only needed if a deploy died partway)

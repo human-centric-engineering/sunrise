@@ -60,17 +60,25 @@ STORAGE_PROVIDER=s3  # Options: s3, vercel-blob, local
 
 ### 4. Run Database Migrations
 
-In Railway dashboard > Service > Settings > Deploy > **Pre-Deploy Command**:
+**Leave the Pre-Deploy Command empty.** It runs inside the deployed image, and
+the Sunrise runtime image contains no Prisma CLI — it ships only Next's
+standalone trace (#583), so the hook would fail and abort the deploy.
+
+Railway's own CLI is the easy path, because `railway run` executes the command
+**on your machine** with Railway's environment injected — so it uses your
+checkout's `node_modules`, which do have the CLI:
 
 ```bash
-npm run db:migrate:deploy
+railway run npm run db:migrate:deploy   # before `railway up` / before pushing
 ```
 
-Railway runs this against the built image before routing traffic, so schema changes land before dependent code. The runtime image bundles the Prisma CLI + `prisma/migrations/`, so no extra setup is needed. Leave the Start Command at the Dockerfile default (`node server.js`).
+In CI, either install the Railway CLI and run the same command, or use the
+portable migrator-image recipe from
+[deployment/overview.md](../overview.md#migration-strategy) against the Railway
+Postgres public URL. Leave the Start Command at the Dockerfile default
+(`node server.js`).
 
 Write backward-compatible migrations (see [database/migrations.md](../../database/migrations.md)) so a deploy failure between migration and promotion is safe.
-
-Ad-hoc from a workstation: `railway run npm run db:migrate:deploy`.
 
 ### 5. Generate Domain
 
@@ -188,9 +196,11 @@ railway login
 # Link to project
 railway link
 
-# Run commands in Railway environment
-railway run npx prisma migrate deploy
-railway run npx prisma db seed
+# Run commands in Railway environment.
+# These execute on YOUR machine with Railway's env injected, so they use your
+# checkout's node_modules — not the deployed image, which has no Prisma CLI.
+railway run npm run db:migrate:deploy
+railway run npm run db:seed
 
 # View logs
 railway logs

@@ -99,11 +99,29 @@ docker compose -f docker-compose.prod.yml logs -f web
 
 Migrations apply automatically via the `migrator` service: it runs `prisma migrate deploy` once against the healthy `db`, exits, and the `web` service waits on `service_completed_successfully` before starting. No manual migration step is needed.
 
+The `migrator` service builds the **`migrator` target** — a different image from
+`web`. The runtime image carries no Prisma CLI, so anything Prisma-CLI-shaped
+runs here rather than via `exec web` (#583).
+
 Inspect migration status without applying:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm migrator npx prisma migrate status
+docker compose -f docker-compose.prod.yml run --rm migrator prisma migrate status
 ```
+
+### First install: seed the database
+
+Required once, after the first `up`. It creates the default knowledge base row
+that runtime code FK-references, plus the built-in agents, capabilities,
+templates and provider models:
+
+```bash
+docker compose -f docker-compose.prod.yml --profile seed run --rm seeder
+```
+
+The `seed` profile means a plain `up` never builds or starts it. Seeding needs
+`tsx` and the application source — neither is in the runtime image — so it gets
+its own target. Re-running is safe: unchanged seed units are skipped.
 
 ### 5. Verify Deployment
 
@@ -353,9 +371,40 @@ Before going live:
 
 The multi-stage Dockerfile is optimized for minimal image size and security.
 
+### Measured image sizes
+
+This is the **only** place in the repo that states image sizes. Four mutually
+inconsistent figures used to be scattered across the docs, none of them close
+to reality, so everywhere else links here instead of restating a number.
+
+Measured 2026-08-12 on **arm64** (`docker image inspect --format '{{.Size}}'`).
+CI and most production hosts are amd64, where the figures differ somewhat; the
+`docker` CI job logs the amd64 sizes on every run, which is the authoritative
+source.
+
+| Image                          | Size    | Notes                                                              |
+| ------------------------------ | ------- | ------------------------------------------------------------------ |
+| `node:24-alpine` (base)        | 230 MB  | The floor — no "~100 MB final image" was ever achievable           |
+| `runner` (what serves traffic) | 402 MB  | `/app` is 133 MB of it: 75 MB `.next`, 58 MB traced `node_modules` |
+| `migrator`                     | 3.84 GB | Deploy-time only, never pushed                                     |
+| `seeder`                       | 3.88 GB | `migrator` plus the source tree                                    |
+
+The runtime image was **739 MB** before #583 (`/app` alone was 372 MB), because
+it carried a partial copy of the Prisma CLI: 171.6 MB of `@prisma/*` plus
+41.9 MB of `prisma/` — none of which worked. What the app actually needs is
+**376 KB** of `@prisma` and 5.3 MB of `.prisma`, both supplied by the standalone
+trace.
+
+Sizes settle a minute or two after a build finishes; read them once unpacking
+has completed, or `docker images` will under-report.
+
+The `migrator` and `seeder` images look alarming but cost almost nothing on
+disk: they derive from `deps`, whose layers the build already materialises, and
+`seeder` adds only the source tree on top of `migrator`.
+
 ### Base Image
 
-- **`node:24-alpine`**: Alpine Linux base (~150-200MB final image). Alpine uses
+- **`node:24-alpine`**: Alpine Linux base. Alpine uses
   **musl**, not glibc — which is the thing to keep in mind whenever a dependency
   ships a compiled binary.
 - **`libc6-compat`**: glibc compatibility shims, carried over from the upstream
@@ -388,11 +437,17 @@ glibc build links `libc.so.6` and `libm.so.6`.
 
 ### Build Stages
 
-| Stage     | Purpose                                           |
-| --------- | ------------------------------------------------- |
-| `deps`    | Install dependencies with `.npmrc` configuration  |
-| `builder` | Build Next.js application with standalone output  |
-| `runner`  | Minimal production image with only required files |
+| Stage      | Purpose                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------- |
+| `deps`     | Install dependencies with `.npmrc` configuration                                            |
+| `builder`  | Build Next.js application with standalone output                                            |
+| `migrator` | Prisma CLI + schema + migrations; run-once at deploy time (`FROM deps`, so no extra layers) |
+| `seeder`   | `migrator` plus the application source, for `tsx prisma/seed.ts`                            |
+| `runner`   | Standalone output only — **no Prisma CLI**, no schema, no migrations, no `prisma.config.ts` |
+
+`runner` is deliberately the **last** stage: `docker build .` with no `--target`
+builds the last stage, and that has to keep producing the runtime image. Adding
+a stage after it would silently change what a bare build returns.
 
 ### Key Configuration
 

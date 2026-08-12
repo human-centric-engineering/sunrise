@@ -158,7 +158,9 @@ Key architectural decisions and their rationale. Reference this when making simi
 - Consistent environment across dev/staging/prod
 - Platform-agnostic (works anywhere Docker runs)
 - Reproducible builds
-- Small production images (~150MB)
+- Production image carries only the standalone trace; deploy-time tooling
+  lives in separate stages (measured sizes:
+  [docker-self-hosted.md](../deployment/platforms/docker-self-hosted.md#measured-image-sizes))
 
 **Trade-offs:**
 

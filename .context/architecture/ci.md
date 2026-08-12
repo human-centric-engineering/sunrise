@@ -27,7 +27,7 @@ config ──┬─ typecheck
          ├─ test-full   (4-way shard matrix)   ┐ exactly one test
          ├─ test-changed (single, PR only)     ┘ job runs (see below)
          ├─ smoke — account erasure (real DB)
-         └─ docker  (parallel; gated on PRs)
+         └─ docker — build + prod-stack smoke  (parallel; gated on PRs)
                                    └─ ci-status (branch-protection gate)
 ```
 
@@ -171,8 +171,32 @@ These help both repo types and cost nothing, so they're always on:
   per-shard overhead (each shard re-pays checkout + `npm ci` + DB setup).
 - **Decoupled, gated Docker** — the `docker` job no longer waits on the checks
   (an image break surfaces in parallel). On PRs it runs only when Docker-relevant
-  files change (`Dockerfile`, `package.json`, `next.config.*`, …); on push to
-  `main` it always runs as the production-image gate.
+  files change; on push to `main` it always runs as the production-image gate.
+  The path filter covers `Dockerfile`, `Dockerfile.dev`, `.dockerignore`,
+  `docker-compose*.yml`, `package.json`, `package-lock.json`, `next.config.*`,
+  `prisma.config.ts` and **`prisma/**`**. The last one means every schema or
+  migration PR runs the heaviest job — deliberate, because the job now applies
+  those migrations for real.
+
+- **The docker job runs the stack, it does not just build it.** It builds the
+  `runner`, `migrator` and `seeder` targets with `load: true`, asserts image
+  invariants (musl-only `sharp` per #571; no Prisma CLI in the runtime image per
+  #583), brings up `db` + `migrator` + `web` from `docker-compose.prod.yml`, and
+  asserts the migrator exited 0, `web` reached healthy, `/api/health` reports
+  `database: operational`, a Prisma **model** query succeeds over HTTP, and the
+  seeder completes. `nginx` is never started (it binds :80/:443).
+
+  This exists because the previous version used `push: false` with no `load`,
+  so nothing ever ran the image. #583 — the production stack could not start at
+  all — survived four months of green Docker builds. A build-only check cannot
+  catch a runtime-only fault.
+
+  Cost on a private fork (2-core/7GB): roughly +3–5 minutes, no extra `npm ci`
+  and no extra `next build`, inside a `timeout-minutes: 30` cap. There is no
+  opt-out variable — unlike `CI_TEST_SCOPE` and `CI_NODE_HEAP_MB`, whose failure
+  modes are opaque, this job's cost is visible and already path-gated. A fork
+  that must drop it edits the one `if:` line, and accepts that the compose stack
+  is then unverified. Watch disk rather than minutes: three loaded images.
 
 ### Knob 1: `CI_TEST_SCOPE`
 

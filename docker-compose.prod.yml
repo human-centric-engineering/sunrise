@@ -5,9 +5,17 @@
 services:
   # Next.js application (production build)
   web:
+    # Named explicitly so the tag does not depend on Compose's implicit
+    # "<project>-<service>" naming. CI builds these tags with buildx (for the
+    # layer cache) and then brings the stack up with --no-build; the value here
+    # is the same name Compose would have chosen, so nothing changes locally.
+    image: sunrise-web:latest
     build:
       context: .
       dockerfile: Dockerfile
+      # Explicit now that the Dockerfile has five stages. `runner` is still last,
+      # so this is belt-and-braces rather than load-bearing.
+      target: runner
       # Pass build-time environment variables required by Dockerfile ARGs
       # These must match what CI passes in .github/workflows/ci.yml
       # NEXT_PUBLIC_* vars are embedded into the JavaScript bundle during build
@@ -50,24 +58,64 @@ services:
   # Run-once migration service.
   # Applies pending Prisma migrations against `db` and exits. `web` waits
   # for this to complete successfully before starting, so the app never
-  # serves traffic against a stale schema. Builds the same image as `web`
-  # — the Dockerfile ships the Prisma CLI + migration files in the runner.
+  # serves traffic against a stale schema, and a failed migration keeps
+  # `web` down.
+  #
+  # It builds the `migrator` TARGET — a different image from `web`. The Prisma
+  # CLI's dependency closure is ~240 MB and was removed from the runtime image
+  # in #583, so `exec web npx prisma …` no longer works; everything
+  # Prisma-CLI-shaped goes through this service.
+  #
+  # The command comes from the stage's CMD (`npm run db:migrate:deploy`) so
+  # there is one source of truth. No build args: this target needs none, and
+  # passing the real DSN would record it in the image's `docker history`. The
+  # DSN it actually migrates with comes from .env at run time.
   migrator:
+    image: sunrise-migrator:latest
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        - DATABASE_URL=${DATABASE_URL}
-        - BETTER_AUTH_URL=${BETTER_AUTH_URL}
-        - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-        - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+      target: migrator
     container_name: sunrise-migrator
-    command: ['npx', 'prisma', 'migrate', 'deploy']
     env_file:
       - .env
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - sunrise-network
+    restart: 'no'
+
+  # One-shot database seeder — profile-gated, so a plain `up` never builds or
+  # starts it:
+  #
+  #   docker compose -f docker-compose.prod.yml --profile seed run --rm seeder
+  #
+  # REQUIRED on first install: creates the default knowledge base row that
+  # runtime code FK-references, plus built-in agents, capabilities, templates
+  # and provider models. Re-running is safe — each seed unit is content-hashed
+  # and skipped when unchanged.
+  #
+  # A separate image because `npm run db:seed` is `tsx prisma/seed.ts`: tsx is a
+  # devDependency and the seed units import from lib/. Neither is in the runtime
+  # image, which is why the previously documented `exec web npm run db:seed`
+  # never worked.
+  #
+  # No container_name — `compose run` warns and ignores it.
+  seeder:
+    profiles: ['seed']
+    image: sunrise-seeder:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: seeder
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     networks:
       - sunrise-network
     restart: 'no'
@@ -149,11 +197,14 @@ networks:
 # 3. Seed the database (REQUIRED on first install — creates the default
 #    knowledge base row that runtime code FK-references; also seeds
 #    built-in agents, capabilities, and templates):
-#    docker-compose -f docker-compose.prod.yml exec web npm run db:seed
+#    docker-compose -f docker-compose.prod.yml --profile seed run --rm seeder
 #
-# 4. Verify deployment:
+#    Runs in its own image: seeding needs tsx and the application source,
+#    neither of which is in the runtime image.
+#
+# 4. Verify deployment (from the host — the runtime image has no curl):
 #    curl http://localhost:3000/api/health
-#    # Should return: {"status":"ok","database":{"connected":true}}
+#    # Should return: {"status":"ok","services":{"database":{"status":"operational",...}}}
 #
 # ONGOING OPERATIONS:
 # ------------------
@@ -172,7 +223,11 @@ networks:
 #    # The `migrator` service re-runs automatically on each `up --build`.
 #
 # Check migration status without applying:
-#    docker-compose -f docker-compose.prod.yml run --rm migrator npx prisma migrate status
+#    docker-compose -f docker-compose.prod.yml run --rm migrator prisma migrate status
+#
+# Re-seed after a release that adds seed units (safe to repeat — unchanged
+# units are skipped):
+#    docker-compose -f docker-compose.prod.yml --profile seed run --rm seeder
 #
 # Stop all services:
 #    docker-compose -f docker-compose.prod.yml down
@@ -185,7 +240,10 @@ networks:
 # For automated deployments, include these steps in your deployment script:
 #
 #   docker-compose -f docker-compose.prod.yml up -d --build
-#   # Migrations apply automatically via the `migrator` service before `web` starts.
-#   docker-compose -f docker-compose.prod.yml exec -T web curl -f http://localhost:3000/api/health
+#   # Migrations apply automatically via the `migrator` service before `web`
+#   # starts; a non-zero migrator exit is the gate — `web` never comes up.
+#   curl -fsS http://localhost:3000/api/health
 #
-# The -T flag is needed for non-interactive environments (CI/CD pipelines)
+# Run the health check from the host, not `exec -T web curl …`: node:24-alpine
+# ships no curl. Inside the container the equivalent is
+# `wget -qO- http://localhost:3000/api/health`.

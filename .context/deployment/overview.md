@@ -53,14 +53,44 @@ Internet → HTTPS → [Reverse Proxy] → Next.js Container → PostgreSQL
 
 Single production command: `prisma migrate deploy` (exposed as `npm run db:migrate:deploy`). It runs **before traffic shifts**, never during Docker build (no DB exists) and never concurrent with app startup (replica race).
 
-| Platform             | How migrations run                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------ |
-| Docker (self-hosted) | `migrator` compose service runs once; `web` waits via `service_completed_successfully`     |
-| Vercel               | Build command: `npm run build && npm run db:migrate:deploy`                                |
-| Render / Railway     | Platform **Pre-Deploy Command**: `npm run db:migrate:deploy`                               |
-| CI                   | `.github/workflows/ci.yml` runs `db:migrate:deploy` + `db:seed` against a Postgres service |
+| Platform             | How migrations run                                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Docker (self-hosted) | `migrator` compose service (build target `migrator`) runs once; `web` waits via `service_completed_successfully`                                                                                 |
+| Vercel               | Build command: `npm run build && npm run db:migrate:deploy`                                                                                                                                      |
+| Render               | **Not** the Pre-Deploy Command — migrate from CI, then fire a Deploy Hook. See [render.md](platforms/render.md)                                                                                  |
+| Railway              | **Not** the Pre-Deploy Command — `railway run npm run db:migrate:deploy`. See [railway.md](platforms/railway.md)                                                                                 |
+| Fly.io               | **Not** `release_command` — `fly proxy` + migrate, or from CI                                                                                                                                    |
+| CI                   | `.github/workflows/ci.yml` runs `db:migrate:deploy` + `db:seed` against a Postgres service; the `docker` job additionally proves the real `migrator` image applies them inside the compose stack |
 
-The runtime image ships the Prisma CLI and `prisma/migrations/` so `prisma migrate deploy` works anywhere the image runs. Authoring discipline lives in [`database/migrations.md`](../database/migrations.md) — always write backward-compatible migrations so a deploy that fails partway leaves the old code compatible with the new schema.
+**The runtime image does not contain the Prisma CLI.** It carries only Next's
+standalone trace, so the CLI, the schema, the migrations and `prisma.config.ts`
+are all absent, and `npx prisma …` / `npm run db:migrate:deploy` fail inside the
+`web` container (with a message pointing at the migrator, not a bare
+`command not found`).
+Migrations run from a separate deploy-time image built from the `migrator`
+target of the same `Dockerfile`. The CLI's dependency closure is 133 packages /
+~240 MB — Prisma Studio, a WASM Postgres, a charting stack — none of which
+belongs in a process serving HTTP, and the hand-maintained partial copy that
+used to approximate it never actually worked (#583).
+
+**Any platform whose migration hook runs _inside_ the deployed container must
+therefore migrate from somewhere else.** The portable recipe, which is faithful
+because it runs the same image, the same CLI version and the same migration
+files as the self-hosted path:
+
+```yaml
+- name: Apply migrations
+  run: |
+    docker build --target migrator -t sunrise-migrator:deploy .
+    docker run --rm -e DATABASE_URL="${{ secrets.PROD_DATABASE_URL }}" sunrise-migrator:deploy
+- name: Trigger deploy
+  run: curl -fsS -X POST "${{ secrets.PLATFORM_DEPLOY_HOOK }}"
+```
+
+If you would rather not run Docker in CI, `npm ci && npx prisma migrate deploy`
+on the runner with `DATABASE_URL` pointed at production does the same job.
+
+Authoring discipline lives in [`database/migrations.md`](../database/migrations.md) — always write backward-compatible migrations so a deploy that fails partway leaves the old code compatible with the new schema.
 
 ## CI/CD Integration
 
@@ -70,12 +100,16 @@ For self-hosted Docker deploys, the compose file handles migrations automaticall
 - name: Deploy
   run: |
     docker compose -f docker-compose.prod.yml up -d --build
-    # migrator service runs `prisma migrate deploy` and exits before web starts
-    docker compose -f docker-compose.prod.yml exec -T web \
-      curl -f http://localhost:3000/api/health
+    # migrator service runs `prisma migrate deploy` and exits before web starts;
+    # a non-zero exit there keeps web down, so it is the gate
+    curl -fsS http://localhost:3000/api/health
 ```
 
-For Vercel / Render / Railway, migrations run via the platform's build or pre-deploy hook — see each platform guide.
+Run the health check from the host. `node:24-alpine` ships no `curl`, so
+`exec -T web curl …` fails whatever the app is doing; inside the container the
+equivalent is `wget -qO- http://localhost:3000/api/health`.
+
+Vercel migrates in its build command. Render, Railway and Fly.io **cannot** use their pre-deploy / release hooks — those run inside the deployed image — so each platform guide documents the alternative.
 
 ## Health Checks
 
