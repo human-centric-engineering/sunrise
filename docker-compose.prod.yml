@@ -27,6 +27,10 @@ services:
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
         - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+        # Raise if `next build` OOMs here (FATAL ERROR: Reached heap limit).
+        # Same wall CI hits at 4096 (#543); only raise it if the build host has
+        # the memory, or a clean heap error becomes an OS-level kill.
+        - NODE_HEAP_MB=${NODE_HEAP_MB:-4096}
     container_name: sunrise-web
     restart: unless-stopped
     ports:

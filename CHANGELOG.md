@@ -451,6 +451,19 @@ release process.
 
 ### Fixed
 
+- **`CI_NODE_HEAP_MB` now reaches the Docker build.** A workflow-level `env:`
+  does not cross into a container build, so raising the variable moved
+  `typecheck`, `lint` and `build` while the `docker` job stayed pinned at the
+  `builder` stage's hardcoded 4096 — a fork that outgrew the default got a green
+  board with one permanently red job, OOMing at exactly 4128 MB, and a knob that
+  appeared to do nothing. The cap is now a `NODE_HEAP_MB` build arg (default
+  unchanged at 4096, so builds outside CI behave as before); the `docker` job
+  forwards `CI_NODE_HEAP_MB`, and `docker-compose.prod.yml` exposes
+  `NODE_HEAP_MB` so a self-hosted build has the same lever. Base Sunrise never
+  hit this — 4096 is enough for the template — so it only affected forks, which
+  is the population the variable exists for. Reported and verified in a fork by
+  @JohnD-EE (#543).
+
 - **The production Docker stack could not start at all.**
   `docker compose -f docker-compose.prod.yml up` never reached the app: the
   `migrator` service exited **127** (`sh: prisma: not found`), and `web` waits

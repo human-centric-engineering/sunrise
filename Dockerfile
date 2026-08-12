@@ -78,8 +78,23 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # small dev/build boxes) `next build` hits Node's default ~2GB heap cap and OOMs
 # (FATAL ERROR: Reached heap limit). This ENV lives in the `builder` stage only
 # — the `runner` stage below is a fresh `FROM base` and does not inherit it, so
-# production runtime memory is unchanged. Mirrors the ci.yml heap cap.
-ENV NODE_OPTIONS=--max-old-space-size=4096
+# production runtime memory is unchanged.
+#
+# Overridable, because a workflow-level `env:` does NOT cross into a container
+# build: `ci.yml` raising NODE_OPTIONS moved `typecheck`/`lint`/`build` but left
+# this stage pinned at 4096, so a fork that outgrew the default got a green
+# board with one permanently red job and a variable that appeared to do nothing
+# (#543). CI and `docker-compose.prod.yml` both forward their own value.
+#
+# The default stays 4096 deliberately: this stage is sized for ~7GB hosts, where
+# a larger cap trades a clean V8 heap error for an OS-level kill — a worse
+# failure to debug. Only a caller that knows its runner is bigger asks for more.
+#
+# Declared inside this stage on purpose. An ARG is scoped to the stage that
+# declares it (plus stages derived from it), so a top-level one would not reach
+# here.
+ARG NODE_HEAP_MB=4096
+ENV NODE_OPTIONS=--max-old-space-size=${NODE_HEAP_MB}
 
 # Build the application
 # Next.js 16 standalone output creates a minimal production server at .next/standalone/

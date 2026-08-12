@@ -483,11 +483,16 @@ jobs:
           # to parse, for Next's env validation), and a literal
           # `postgres:postgres@db` trips TruffleHog's structural Postgres
           # detector, which tolerates `localhost` but not a service name.
+          # NODE_HEAP_MB is the whole point of #543: the workflow-level
+          # NODE_OPTIONS above does not cross into a container build, so
+          # without this the builder stage stays pinned at its 4096 default
+          # while every runner-side job honours the variable.
           build-args: |
             DATABASE_URL=postgresql://postgres:postgres@localhost:5432/sunrise
             BETTER_AUTH_URL=http://localhost:3000
             BETTER_AUTH_SECRET=ci-build-secret-not-for-production-use
             NEXT_PUBLIC_APP_URL=http://localhost:3000
+            NODE_HEAP_MB=${{ vars.CI_NODE_HEAP_MB || 5120 }}
 
       # The migrator and seeder derive from `deps`, which the build above just
       # produced. Buildx keeps one builder instance for the whole job, so these

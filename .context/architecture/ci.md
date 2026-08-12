@@ -159,13 +159,13 @@ These help both repo types and cost nothing, so they're always on:
   strategy keys on mtime, which a fresh CI checkout resets — so the restored
   cache never hit and lint re-ran fully every time (~220s). Content hashing fixes
   that (lint ~220s→~2s, format ~62s→~8s warm).
-- **Raised Node heap** — `NODE_OPTIONS=--max-old-space-size=5120` (workflow-level)
-  and `--max-old-space-size=4096` in the Dockerfile `builder` stage. It's a
-  **cap, not an allocation**: never approached on a 16GB runner, but it stops
-  `tsc`/`next build` OOMing (exit 134) on a 7GB runner where Node's default heap
-  caps near ~2GB. The Dockerfile cap lives in the `builder` stage only — the
-  `runner` stage is a fresh `FROM base` and doesn't inherit it, so production
-  runtime memory is unchanged.
+- **Raised Node heap** — `NODE_OPTIONS=--max-old-space-size=5120`
+  (workflow-level) and a `NODE_HEAP_MB` build arg defaulting to 4096 in the
+  Dockerfile `builder` stage. It's a **cap, not an allocation**: never
+  approached on a 16GB runner, but it stops `tsc`/`next build` OOMing (exit 134)
+  on a 7GB runner where Node's default heap caps near ~2GB. The Dockerfile cap
+  lives in the `builder` stage only — the `runner` stage is a fresh `FROM base`
+  and doesn't inherit it, so production runtime memory is unchanged.
 - **Sharded tests** — the full suite runs as a 4-way `vitest --shard` matrix
   (~3.3× faster wall-clock). N=4 was the sweet spot in benchmarking; N=8 hit
   per-shard overhead (each shard re-pays checkout + `npm ci` + DB setup).
@@ -265,6 +265,19 @@ the workflow file is reverted by every upstream sync, so the fork rediscovers th
 same opaque failure each time. Keep the value at or below the runner's physical
 memory — a cap above available RAM just moves the failure from a clean abort to
 the OOM killer.
+
+**A workflow-level `env:` does not cross into a container build.** This is the
+non-obvious part, and it produced a distinctive symptom: raising the variable
+fixed `typecheck`, `lint` and `build` while `docker` kept OOMing at exactly
+4128 MB, so the knob appeared to do nothing and the one job still failing was
+the one it had never been wired to. The `docker` job therefore forwards the same
+value explicitly as a `NODE_HEAP_MB` build arg, and `docker-compose.prod.yml`
+exposes it too (`NODE_HEAP_MB=${NODE_HEAP_MB:-4096}`) so a self-hosted build
+hits the same wall with the same lever (#543).
+
+The Dockerfile default stays **4096**, not the workflow's 5120: that stage is
+sized for ~7GB hosts, where a bigger cap trades a clean V8 heap error for an
+OS-level kill. Only a caller that knows its runner is larger asks for more.
 
 ## Private-fork correctness (GHAS-dependent jobs)
 
