@@ -377,26 +377,37 @@ This is the **only** place in the repo that states image sizes. Four mutually
 inconsistent figures used to be scattered across the docs, none of them close
 to reality, so everywhere else links here instead of restating a number.
 
-Measured 2026-08-12 on **arm64** (`docker image inspect --format '{{.Size}}'`).
-CI and most production hosts are amd64, where the figures differ somewhat; the
-`docker` CI job logs the amd64 sizes on every run, which is the authoritative
-source.
+**amd64 — what production actually ships.** Taken from the `Docker Build +
+Stack Smoke` CI job, which logs `docker image inspect --format '{{.Size}}'` for
+all three images on every run. That job is the authoritative source; the figures
+below are from 2026-08-12.
 
-| Image                          | Size    | Notes                                                              |
-| ------------------------------ | ------- | ------------------------------------------------------------------ |
-| `node:24-alpine` (base)        | 230 MB  | The floor — no "~100 MB final image" was ever achievable           |
-| `runner` (what serves traffic) | 402 MB  | `/app` is 133 MB of it: 75 MB `.next`, 58 MB traced `node_modules` |
-| `migrator`                     | 3.84 GB | Deploy-time only, never pushed                                     |
-| `seeder`                       | 3.88 GB | `migrator` plus the source tree                                    |
+| Image                          | Size    | Notes                           |
+| ------------------------------ | ------- | ------------------------------- |
+| `runner` (what serves traffic) | 298 MB  | 312,535,891 bytes               |
+| `migrator`                     | 2.36 GB | Deploy-time only, never pushed  |
+| `seeder`                       | 2.44 GB | `migrator` plus the source tree |
 
-The runtime image was **739 MB** before #583 (`/app` alone was 372 MB), because
-it carried a partial copy of the Prisma CLI: 171.6 MB of `@prisma/*` plus
-41.9 MB of `prisma/` — none of which worked. What the app actually needs is
+For scale: `node:24-alpine` on its own measures 230 MB (arm64, `docker images`),
+so the "~100 MB final image" the docs used to claim was never achievable — the
+base alone exceeds it.
+
+**The improvement, measured like-for-like.** On the same machine with the same
+command (`docker images`, arm64), the runtime image went from **739 MB to
+402 MB** — a 46% cut. Inside the container, `/app` went from **372 MB to
+133 MB** (75 MB `.next`, 58 MB traced `node_modules`).
+
+The old image carried a partial copy of the Prisma CLI: 171.6 MB of `@prisma/*`
+plus 41.9 MB of `prisma/`, none of which worked. What the app actually needs is
 **376 KB** of `@prisma` and 5.3 MB of `.prisma`, both supplied by the standalone
 trace.
 
-Sizes settle a minute or two after a build finishes; read them once unpacking
-has completed, or `docker images` will under-report.
+**Do not compare the two blocks above.** `docker images` on Docker Desktop's
+containerd store and `docker image inspect .Size` on Linux Docker report
+different things for the same image — on one arm64 build they disagreed by 4×.
+Compare before-and-after from the same tool on the same host, and take absolute
+production figures from CI. Sizes also settle a minute or two after a build
+finishes; read them once unpacking has completed.
 
 The `migrator` and `seeder` images look alarming but cost almost nothing on
 disk: they derive from `deps`, whose layers the build already materialises, and

@@ -369,7 +369,8 @@ release process.
   The reason is that completing the CLI's dependency closure would have meant
   shipping 133 packages / ~240 MB of deploy-time tooling — Prisma Studio, a WASM
   Postgres, a charting stack — inside the process that serves traffic. Removing
-  it instead took the image from **739 MB to ~400 MB**. What the app needs
+  it instead took the image from **739 MB to 402 MB** (arm64, like-for-like;
+  the amd64 image CI builds measures 298 MB). What the app needs
   (`@prisma/client`, `.prisma/client`, `@prisma/adapter-pg`) arrives through
   Next's standalone trace.
   **Render, Railway and Fly.io users must change how migrations run**: all three
