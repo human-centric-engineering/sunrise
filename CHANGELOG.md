@@ -353,16 +353,7 @@ release process.
 
 ### Changed
 
-- **The minimum supported Node version is now 24.** Node 20 reached end-of-life
-  on 2026-03-24 and receives no security patches; the runtime is also the floor
-  for current dependencies (`openai` v7 and `@testing-library/jest-dom` v7 both
-  require ≥22). `Dockerfile` and `Dockerfile.dev` build on `node:24-alpine`,
-  `package.json` declares `engines.node: ">=24"`, and a new `.nvmrc` is the
-  single source the CI workflows read via `node-version-file` — previously the
-  version was hardcoded in eight separate places with nothing keeping them in
-  step. **A fork on Node 20 or 22 must upgrade its runtime**; `npm install` will
-  warn rather than fail, because `.npmrc` does not set `engine-strict`, so the
-  mismatch will otherwise surface late rather than at install (#581).
+- **Capability slugs may now contain underscores**
   (`^[a-z0-9]+(?:[_-][a-z0-9]+)*$`) and are capped at 64 characters rather than
   100, matching the provider tool-name limit the slug now has to satisfy — a
   longer one would create successfully and then be dropped from every agent's
@@ -377,6 +368,16 @@ release process.
   legacy over-length slug gets a 400 on a field it did not change. Omit `slug`
   from the PATCH body (it is immutable anyway) or recreate the capability. The
   admin form already omits it (#509).
+- **The minimum supported Node version is now 24.** Node 20 reached end-of-life
+  on 2026-03-24 and receives no security patches; the runtime is also the floor
+  for current dependencies (`openai` v7 and `@testing-library/jest-dom` v7 both
+  require ≥22). `Dockerfile` and `Dockerfile.dev` build on `node:24-alpine`,
+  `package.json` declares `engines.node: ">=24"`, and a new `.nvmrc` is the
+  single source the CI workflows read via `node-version-file` — previously the
+  version was hardcoded in eight separate places with nothing keeping them in
+  step. **A fork on Node 20 or 22 must upgrade its runtime**; `npm install` will
+  warn rather than fail, because `.npmrc` does not set `engine-strict`, so the
+  mismatch will otherwise surface late rather than at install (#581).
 - **A capability whose slug cannot be a tool name is dropped from an agent's
   toolset with a warning** rather than sent to the provider. Providers reject the
   *entire request* over a malformed tool name, so a namespaced fork slug from the

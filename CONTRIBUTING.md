@@ -15,7 +15,9 @@ Be respectful and constructive. We're all here to build something useful togethe
 
 ### Prerequisites
 
-- Node.js 24+ (see `.nvmrc`; enforced by `engines` in `package.json`)
+- Node.js 24+ (see `.nvmrc`). `package.json` **declares** this via `engines`,
+  but `.npmrc` does not set `engine-strict`, so a wrong major produces an
+  `EBADENGINE` warning and installs anyway — it will not stop you
 - PostgreSQL 15+ (local, Docker, or hosted)
 - Git
 

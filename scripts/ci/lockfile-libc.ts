@@ -5,7 +5,7 @@
  *
  * `libc` is the only field distinguishing a musl build from a glibc one:
  * `@img/sharp-linux-x64` and `@img/sharp-linuxmusl-x64` are otherwise both just
- * `os: ["linux"], cpu: ["x64"]`. Production here is `node:20-alpine` — musl.
+ * `os: ["linux"], cpu: ["x64"]`. Production here is `node:24-alpine` — musl.
  *
  * **npm below 11.11.0 deletes every `libc` field it writes past.** Not a
  * platform quirk: `@npmcli/arborist` gained `libc` in its `pkgMetaKeys` list

@@ -110,6 +110,21 @@ Vercel automatically builds and deploys.
 - **Output Directory:** `.next`
 - **Install Command:** `npm install`
 
+### Node.js Version (not auto-detected — set this)
+
+Set **Project Settings → General → Node.js Version** to **24.x**.
+
+Vercel is the one deployment target that does not build from this repo's
+`Dockerfile`, so it does not inherit the runtime from `node:24-alpine`. It
+resolves the version from project settings, falling back to `engines.node` in
+`package.json` (`>=24`). A project created before this floor was raised keeps
+whatever default it was created with, and neither `.nvmrc` nor the Dockerfile
+will move it.
+
+Getting this wrong is quiet rather than loud: `.npmrc` does not set
+`engine-strict`, so an older major installs with an `EBADENGINE` warning and
+then runs an application the repo declares unsupported.
+
 ### Function Configuration (vercel.json)
 
 Create `vercel.json` in your project root only if you need custom function configuration (e.g., longer timeouts). This file is **not included** in the starter template — Vercel auto-detects Next.js settings by default.
