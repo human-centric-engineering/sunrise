@@ -252,7 +252,9 @@ git pull origin main
 
 # Rebuild and restart — the migrator service re-runs `prisma migrate deploy`
 # automatically before `web` starts, so new migrations apply without extra steps.
-docker compose -f docker-compose.prod.yml up -d --build
+# --wait blocks until `web` is healthy; without it the verify step below races
+# Next's boot and fails on a good deploy.
+docker compose -f docker-compose.prod.yml up -d --build --wait
 
 # Verify
 curl http://localhost:3000/api/health

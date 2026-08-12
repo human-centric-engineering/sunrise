@@ -241,9 +241,11 @@ networks:
 # -----------------------------
 # For automated deployments, include these steps in your deployment script:
 #
-#   docker-compose -f docker-compose.prod.yml up -d --build
+#   docker-compose -f docker-compose.prod.yml up -d --build --wait
 #   # Migrations apply automatically via the `migrator` service before `web`
 #   # starts; a non-zero migrator exit is the gate — `web` never comes up.
+#   # --wait blocks until `web` is healthy. Without it, `up -d` returns as soon
+#   # as containers start and the health check below races Next's boot.
 #   curl -fsS http://localhost:3000/api/health
 #
 # Run the health check from the host, not `exec -T web curl …`: node:24-alpine

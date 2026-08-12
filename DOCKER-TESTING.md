@@ -270,7 +270,7 @@ docker-compose -f docker-compose.prod.yml up -d --build
 **Check service health:**
 
 ```bash
-docker-compose -f docker-compose.prod.yml ps
+docker-compose -f docker-compose.prod.yml ps -a
 ```
 
 **Expected:**

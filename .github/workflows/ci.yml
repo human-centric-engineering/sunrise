@@ -87,7 +87,7 @@ jobs:
             # The backslashes are required: a `|` immediately before a newline
             # is a bash syntax error inside `case`.
             case "$file" in
-              Dockerfile | Dockerfile.dev | .dockerignore | docker-compose*.yml | \
+              Dockerfile | Dockerfile.dev | .dockerignore | docker-compose*.yml | .npmrc | \
               package.json | package-lock.json | \
               next.config.js | next.config.mjs | next.config.ts | \
               prisma.config.ts | prisma/*)
@@ -542,6 +542,16 @@ jobs:
             exit 1
           fi
 
+          # The admin knowledge-seed route reads this at
+          # `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')`.
+          # Dropping the wholesale `COPY /app/prisma` left it in the image only
+          # because nft statically evaluated that join — there is no
+          # `outputFileTracingIncludes` backing it up, and the stack smoke never
+          # hits that admin-authed route. So assert it directly: an nft upgrade
+          # or a refactor that puts the path in a variable would otherwise ship
+          # an image that 500s with ENOENT while this job stays green.
+          docker run --rm sunrise-web:latest test -f prisma/seeds/data/chunks/chunks.json
+
           for img in sunrise-web sunrise-migrator sunrise-seeder; do
             docker image inspect "$img:latest" --format "$img {{.Size}} bytes"
           done
@@ -614,7 +624,15 @@ jobs:
           BODY=$(curl -fsS http://localhost:3000/api/health)
           echo "$BODY"
           test "$(jq -r '.status' <<<"$BODY")" = "ok"
-          test "$(jq -r '.services.database.status' <<<"$BODY")" = "operational"
+          # `connected`, not `status`: determineServiceStatus() downgrades to
+          # `degraded` above 500 ms latency while still returning 200/ok
+          # (app/api/health/route.ts:19-31), so asserting `operational` would
+          # turn a merely contended runner into a red X that means nothing.
+          test "$(jq -r '.services.database.connected' <<<"$BODY")" = "true"
+          case "$(jq -r '.services.database.status' <<<"$BODY")" in
+            operational | degraded) ;;
+            *) echo "::error::unexpected database status"; exit 1 ;;
+          esac
 
       # /api/health only runs `$queryRaw SELECT 1` (lib/db/utils.ts), which goes
       # straight through the pg adapter and never touches the generated client.

@@ -105,9 +105,11 @@ For self-hosted Docker deploys, the compose file handles migrations automaticall
 ```yaml
 - name: Deploy
   run: |
-    docker compose -f docker-compose.prod.yml up -d --build
-    # migrator service runs `prisma migrate deploy` and exits before web starts;
-    # a non-zero exit there keeps web down, so it is the gate
+    # --wait is load-bearing: plain `up -d` returns as soon as the containers
+    # are started, so a health check on the next line races Next's boot and
+    # fails on a perfectly good deploy. --wait blocks until web reports healthy
+    # (or the migrator fails, which keeps web down and fails the step).
+    docker compose -f docker-compose.prod.yml up -d --build --wait
     curl -fsS http://localhost:3000/api/health
 ```
 
