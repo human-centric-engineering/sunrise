@@ -110,20 +110,31 @@ Vercel automatically builds and deploys.
 - **Output Directory:** `.next`
 - **Install Command:** `npm install`
 
-### Node.js Version (not auto-detected — set this)
-
-Set **Project Settings → General → Node.js Version** to **24.x**.
+### Node.js Version (handled by `engines`, no dashboard change needed)
 
 Vercel is the one deployment target that does not build from this repo's
-`Dockerfile`, so it does not inherit the runtime from `node:24-alpine`. It
-resolves the version from project settings, falling back to `engines.node` in
-`package.json` (`>=24`). A project created before this floor was raised keeps
-whatever default it was created with, and neither `.nvmrc` nor the Dockerfile
-will move it.
+`Dockerfile`, so it never sees `node:24-alpine` and does not read `.nvmrc`.
 
-Getting this wrong is quiet rather than loud: `.npmrc` does not set
-`engine-strict`, so an older major installs with an `EBADENGINE` warning and
-then runs an application the repo declares unsupported.
+It does read `engines.node`, and that **overrides** the dashboard:
+
+> "You can define the major Node.js version in the `engines#node` section of the
+> `package.json` to override the one you have selected in the Project Settings"
+> — [Vercel: supported Node.js versions](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions)
+
+`package.json` declares `>=24`, which Vercel resolves to the **latest 24.x**.
+So a project whose dashboard still says 20.x deploys on 24 anyway, and there is
+nothing to change after syncing this repo.
+
+The corollary is the part worth knowing: **the dashboard value is not the truth
+on this platform.** Pinning 20.x under Settings → Build and Deployment →
+Node.js Version will not give you 20.x while `engines.node` says `>=24` — it
+will quietly keep deploying 24, and the setting will read back as though it took
+effect. If you genuinely need a different major, change `engines.node`; the
+version-consistency check (`npm run check:node-version`) will then require the
+Dockerfiles and `.nvmrc` to move with it.
+
+To confirm what a deployment actually ran, log `process.version` or run
+`node -v` in the build command.
 
 ### Function Configuration (vercel.json)
 

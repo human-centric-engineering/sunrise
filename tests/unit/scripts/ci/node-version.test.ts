@@ -4,10 +4,11 @@
  * @see scripts/ci/node-version.ts
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 import {
   checkNodeVersion,
+  formatResult,
   parseDockerfileMajor,
   parseEnginesMajor,
   parseNvmrc,
@@ -129,5 +130,45 @@ describe('checkNodeVersion', () => {
 
   it('does not flag a single source as disagreeing with itself', () => {
     expect(checkNodeVersion([source('.nvmrc', 24)]).ok).toBe(true);
+  });
+});
+
+describe('formatResult', () => {
+  // This is the function that becomes the gate's exit code. Without these,
+  // `checkNodeVersion` could keep returning `ok: false` on drift while an edit
+  // here returned 0 — the CI step would go green and all the tests above would
+  // stay green with it.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns a NON-ZERO exit code when the check failed', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(formatResult({ ok: false, problems: ['Dockerfile=24, .nvmrc=26'] }, null)).not.toBe(0);
+  });
+
+  it('returns 0 when the check passed', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    expect(formatResult({ ok: true, problems: [] }, 24)).toBe(0);
+  });
+
+  it('prints every problem, so a second disagreement is not hidden by the first', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    formatResult({ ok: false, problems: ['first problem', 'second problem'] }, null);
+
+    const printed = error.mock.calls.flat().join('\n');
+    expect(printed).toContain('first problem');
+    expect(printed).toContain('second problem');
+  });
+
+  it('reports the agreed major on success so the log says what it agreed on', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    formatResult({ ok: true, problems: [] }, 24);
+
+    expect(log.mock.calls.flat().join('\n')).toContain('24');
   });
 });

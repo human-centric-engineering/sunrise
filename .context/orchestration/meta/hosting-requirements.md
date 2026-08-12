@@ -56,7 +56,7 @@ Sunrise runs as a **single long-lived Node 24+ process** built from `next build`
 
 | Requirement                           | Why it matters                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Node 24+                              | Node 20 went EOL 2026-03-24; also the floor for `openai` v7 and other current deps                      |
+| Node 24+                              | Node 20 went EOL 2026-03-24 and gets no security patches; 24 is the current LTS                         |
 | `output: 'standalone'`                | Produces `.next/standalone/server.js` so the runtime image carries only what it needs (off on Vercel)   |
 | `serverExternalPackages`              | `@prisma/client`, `@prisma/adapter-pg`, `ioredis` are excluded from the bundler — must exist at runtime |
 | `.npmrc` with `legacy-peer-deps=true` | Required by `better-auth` + Prisma 7 — must be present at install time, not just dev                    |

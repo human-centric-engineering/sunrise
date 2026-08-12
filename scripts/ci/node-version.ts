@@ -3,8 +3,9 @@
  *
  * WHY THIS EXISTS: the Node major is stated in four places that no tool
  * reconciles — `.nvmrc` (what CI installs), `Dockerfile` and `Dockerfile.dev`
- * (what ships), and `engines.node` (what forks are told). #581 collapsed ten
- * hardcoded CI pins down to `.nvmrc`, but the remaining four are structurally
+ * (what ships), and `engines.node` (what forks are told). #581 collapsed eight
+ * hardcoded CI pins (six in `ci.yml`, two in `dependency-audit.yml`) down to
+ * `.nvmrc`, but the remaining four are structurally
  * unavoidable: a `FROM` line cannot read `.nvmrc`, and npm cannot read a
  * Dockerfile.
  *
@@ -14,6 +15,13 @@
  * they are no longer testing what ships. That is the same shape as the drift
  * this check's own PR set out to remove, so leaving it unguarded would have
  * been the change congratulating itself.
+ *
+ * NOT checked: `@types/node`. It is a fifth declaration of the Node version and
+ * it currently disagrees — `^26` against a `>=24` runtime — so `tsc` will
+ * accept APIs that throw in the production image. That is a real gap, but it is
+ * pre-existing and fixing it means moving a types major, which can surface
+ * unrelated errors; folding it in here would have turned a consistency check
+ * into a dependency change. Tracked separately rather than silently omitted.
  *
  * Parsers take file *contents*, not paths, so the rules stay testable without
  * touching the repo's real files.

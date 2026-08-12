@@ -20,18 +20,38 @@ import {
   type NodeVersionSource,
 } from '@/scripts/ci/node-version';
 
-function read(path: string): string {
+/**
+ * Reads a file, distinguishing "absent" from "present but unreadable".
+ *
+ * The distinction reaches the operator: collapsing a missing file into `''`
+ * makes it parse as unparseable, and the failure then points at a `FROM` line
+ * in a file that does not exist. A fork that drops `Dockerfile.dev` or renames
+ * either Dockerfile hits exactly that, and cannot run `npm run validate` until
+ * it works out the message is lying.
+ */
+function read(path: string): { text: string; missing: boolean } {
   try {
-    return readFileSync(path, 'utf8');
+    return { text: readFileSync(path, 'utf8'), missing: false };
   } catch {
-    return '';
+    return { text: '', missing: true };
   }
 }
 
-const pkgRaw = read('package.json');
+/** The `raw` evidence string for a Dockerfile source. */
+function dockerfileEvidence(file: { text: string; missing: boolean }, path: string): string {
+  if (file.missing) return `(${path} not found)`;
+  return (
+    file.text
+      .split('\n')
+      .find((l) => /^\s*FROM\s+node:/i.test(l))
+      ?.trim() ?? '(no FROM node: line)'
+  );
+}
+
+const pkg = read('package.json');
 let enginesNode: string | undefined;
 try {
-  enginesNode = (JSON.parse(pkgRaw) as { engines?: { node?: string } }).engines?.node;
+  enginesNode = (JSON.parse(pkg.text) as { engines?: { node?: string } }).engines?.node;
 } catch {
   enginesNode = undefined;
 }
@@ -41,29 +61,25 @@ const dockerfile = read('Dockerfile');
 const dockerfileDev = read('Dockerfile.dev');
 
 const sources: NodeVersionSource[] = [
-  { label: '.nvmrc', major: parseNvmrc(nvmrc), raw: nvmrc.trim() },
+  {
+    label: '.nvmrc',
+    major: parseNvmrc(nvmrc.text),
+    raw: nvmrc.missing ? '(.nvmrc not found)' : nvmrc.text.trim(),
+  },
   {
     label: 'Dockerfile',
-    major: parseDockerfileMajor(dockerfile),
-    raw:
-      dockerfile
-        .split('\n')
-        .find((l) => /^\s*FROM\s+node:/i.test(l))
-        ?.trim() ?? '(no FROM node: line)',
+    major: parseDockerfileMajor(dockerfile.text),
+    raw: dockerfileEvidence(dockerfile, 'Dockerfile'),
   },
   {
     label: 'Dockerfile.dev',
-    major: parseDockerfileMajor(dockerfileDev),
-    raw:
-      dockerfileDev
-        .split('\n')
-        .find((l) => /^\s*FROM\s+node:/i.test(l))
-        ?.trim() ?? '(no FROM node: line)',
+    major: parseDockerfileMajor(dockerfileDev.text),
+    raw: dockerfileEvidence(dockerfileDev, 'Dockerfile.dev'),
   },
   {
     label: 'package.json engines.node',
     major: parseEnginesMajor(enginesNode),
-    raw: enginesNode ?? '(absent)',
+    raw: pkg.missing ? '(package.json not found)' : (enginesNode ?? '(engines.node absent)'),
   },
 ];
 

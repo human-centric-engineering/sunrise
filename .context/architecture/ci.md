@@ -113,6 +113,37 @@ reports your own well-formatted uncommitted work as drift. `npm run
 format:prisma` is the mutating fixer; `format:prisma:check` never writes, which
 is what makes it safe inside `validate`.
 
+### The `Node version consistency` step
+
+**`.nvmrc` is load-bearing.** Every `actions/setup-node` in both `ci.yml` and
+`dependency-audit.yml` resolves its version with `node-version-file: '.nvmrc'`
+rather than a literal. Delete or rename that file and every job that installs
+Node fails — which is the intended trade: before #581 the major was hardcoded
+in eight places and nothing kept them in step.
+
+Consolidating the CI pins left four declarations that no tool can merge:
+`.nvmrc` (what CI installs), `Dockerfile` and `Dockerfile.dev` (what ships),
+and `engines.node` in `package.json` (what forks are told, and what **Vercel**
+resolves its runtime from — see
+[`vercel.md`](../deployment/platforms/vercel.md)). A `FROM` line cannot read
+`.nvmrc` and npm cannot read a Dockerfile, so this step reconciles them
+instead.
+
+The drift it exists for is silent and asymmetric: bump `.nvmrc` alone and every
+job here goes green on the new major while the image serving traffic still
+builds the old one — the suite passes _because_ it stopped testing what ships.
+Gated on the code filter, like the Prisma step; `.nvmrc`, both Dockerfiles and
+`package.json` all set `code=true`.
+
+An unparseable source fails rather than being skipped. When nobody is watching
+four files, "cannot read it" and "it disagrees" have the same consequence.
+
+**Forks:** if you retarget the base image (a different distro, or a pinned
+digest), keep the `FROM node:<major>` shape or this check cannot read it. If
+you drop `Dockerfile.dev` entirely, remove it from
+`scripts/ci/check-node-version.ts` rather than leaving the check unable to
+find it.
+
 ### Universal speedups (on for everyone)
 
 These help both repo types and cost nothing, so they're always on:

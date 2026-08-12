@@ -14,7 +14,7 @@ npm run lint:fix         # Fix linting issues
 npm run format           # Format code with Prettier
 npm run format:check     # Check formatting
 npm run type-check       # Run TypeScript compiler
-npm run validate         # CHANGELOG structure + type-check + lint + format (Prettier + Prisma) — use before commits
+npm run validate         # CHANGELOG + Node version + type-check + lint + format (Prettier + Prisma) — use before commits
 npm run check:changelog  # CHANGELOG.md structure only (also runs inside validate)
 npm run format:prisma:check  # Prisma schema formatting only (also runs inside validate)
 npm run format:prisma    # rewrite prisma/schema with the pinned Prisma formatter

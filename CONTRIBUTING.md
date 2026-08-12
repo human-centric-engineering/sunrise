@@ -79,7 +79,7 @@ docker-compose exec web npm run db:seed        # Seed test data
 4. **Test your changes**:
    ```bash
    npm run test
-   npm run validate  # CHANGELOG structure + type-check + lint + format (Prettier + Prisma)
+   npm run validate  # CHANGELOG + Node version + type-check + lint + format (Prettier + Prisma)
    npm run build     # ensure it builds
    ```
 5. **Commit** using [Conventional Commits](https://www.conventionalcommits.org/):

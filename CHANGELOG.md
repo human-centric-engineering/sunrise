@@ -369,9 +369,10 @@ release process.
   from the PATCH body (it is immutable anyway) or recreate the capability. The
   admin form already omits it (#509).
 - **The minimum supported Node version is now 24.** Node 20 reached end-of-life
-  on 2026-03-24 and receives no security patches; the runtime is also the floor
-  for current dependencies (`openai` v7 and `@testing-library/jest-dom` v7 both
-  require ≥22). `Dockerfile` and `Dockerfile.dev` build on `node:24-alpine`,
+  on 2026-03-24 and receives no security patches — that alone is the reason.
+  It additionally unblocks two pending major upgrades (`openai` v7,
+  `@testing-library/jest-dom` v7) whose floor is ≥22; neither is a dependency
+  yet. `Dockerfile` and `Dockerfile.dev` build on `node:24-alpine`,
   `package.json` declares `engines.node: ">=24"`, and a new `.nvmrc` is the
   single source the CI workflows read via `node-version-file` — previously the
   version was hardcoded in eight separate places with nothing keeping them in
