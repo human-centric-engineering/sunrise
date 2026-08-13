@@ -201,6 +201,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
     const content = choice.message.content ?? '';
     const reasoningTokens = completion.usage?.completion_tokens_details?.reasoning_tokens;
+    const isStructuredExtraction =
+      options.responseFormat?.type === 'json_schema' && !options.tools?.length;
 
     // Truncation guard. For reasoning models (o-series, gpt-5) the
     // `max_completion_tokens` cap covers reasoning tokens AND visible
@@ -211,7 +213,19 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     // workflow in production. Raise it as a retriable provider error
     // so the operator sees a clear "raise maxTokens" message in the
     // step trace instead of a mysterious downstream validation loop.
-    if (choice.finish_reason === 'length' && content.length === 0 && toolCalls.length === 0) {
+    //
+    // A structured extraction needs the wider rule (matching the Anthropic
+    // adapter, which has always had it): reasoning usually eats *most* of the
+    // budget rather than all of it, leaving a few hundred tokens of an object
+    // cut off mid-string. Content is non-empty, so the empty-content test
+    // above cannot see it, and the partial JSON then fails to parse and reads
+    // as a schema violation — sending the operator to fix a schema that was
+    // never wrong (#587). Truncated JSON is never usable, so any `length`
+    // stop during extraction is a truncation.
+    if (
+      choice.finish_reason === 'length' &&
+      (isStructuredExtraction || (content.length === 0 && toolCalls.length === 0))
+    ) {
       const cap =
         (params as { max_completion_tokens?: number; max_tokens?: number }).max_completion_tokens ??
         (params as { max_tokens?: number }).max_tokens;
@@ -220,7 +234,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           ? ` Reasoning consumed ${reasoningTokens} tokens of the ${cap ?? 'configured'} budget.`
           : '';
       throw new ProviderError(
-        `Model "${options.model}" hit max_completion_tokens before producing visible output.${reasoningNote} Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        `Model "${options.model}" hit max_completion_tokens before producing ${
+          isStructuredExtraction ? 'a complete structured response' : 'visible output'
+        }.${reasoningNote} Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
         { code: 'truncated_no_output', retriable: false }
       );
     }
@@ -314,6 +330,27 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           arguments: safeParseJson(buf.arguments),
         },
       };
+    }
+
+    // Mirror the non-streaming extraction guard (and the Anthropic streaming
+    // one): a `length` stop during structured extraction means the JSON
+    // already yielded as text chunks is incomplete, and incomplete JSON is
+    // not usable at any cap. Surface it before the `done` chunk rather than
+    // letting the consumer treat partial JSON as a finished answer (#587).
+    // `streaming-handler.ts` forwards an agent's configured responseFormat on
+    // this path whenever the turn has no tools, so this is a live route.
+    if (
+      finishReason === 'length' &&
+      options.responseFormat?.type === 'json_schema' &&
+      !options.tools?.length
+    ) {
+      const cap =
+        (params as { max_completion_tokens?: number; max_tokens?: number }).max_completion_tokens ??
+        (params as { max_tokens?: number }).max_tokens;
+      throw new ProviderError(
+        `Model "${options.model}" hit max_completion_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
+        { code: 'truncated_no_output', retriable: false }
+      );
     }
 
     yield {

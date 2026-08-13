@@ -48,7 +48,8 @@
  */
 
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
-import type { LlmMessage, LlmResponseFormat } from '@/lib/orchestration/llm/types';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
+import type { LlmFinishReason, LlmMessage, LlmResponseFormat } from '@/lib/orchestration/llm/types';
 import type { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import {
   GEN_AI_OPERATION_NAME,
@@ -117,7 +118,17 @@ export interface StructuredCompletionOptions<T> {
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
-  /** Optional caller-supplied error to throw when both attempts fail. */
+  /**
+   * Optional caller-supplied error to throw when both attempts fail.
+   *
+   * **Not consulted when the failure is a truncation** (`finishReason:
+   * 'length'`). This hook exists to phrase "the model broke my contract",
+   * and on a truncation that premise is false — the response was cut off at
+   * the token cap, so there was never a complete answer to check against the
+   * schema. The runner throws its own `ProviderError('truncated_no_output')`
+   * instead, so every caller gets the real cause without having to
+   * rediscover this one (#587).
+   */
   onFinalFailure?: () => Error;
   /**
    * Phase tag for OTEL spans and cost logs — an open string set by the
@@ -134,11 +145,42 @@ export interface StructuredCompletionResult<T> {
   value: T;
   tokenUsage: { input: number; output: number };
   costUsd: number;
+  /**
+   * Finish reason of the attempt that produced `value` (the retry's, when
+   * there was one).
+   *
+   * Worth checking for `'length'` even on success: a lenient `parse` can
+   * accept content that happened to be well-formed at the point it was cut
+   * off — a truncated array of results reads as a complete short one. The
+   * failure path throws, so this field is the only place a caller can see
+   * that case.
+   */
+  finishReason: LlmFinishReason;
 }
 
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_TOKENS = 1500;
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * The response ran out of token budget before it could be parsed.
+ *
+ * Reported as `truncated_no_output` — the same code both providers already
+ * raise for the cases they can detect themselves (see the truncation guards
+ * in `anthropic.ts` and `openai-compatible.ts`), so a caller has one code to
+ * catch whichever layer noticed. This layer catches what they cannot: a
+ * provider that ignores `responseSchema` altogether, or a caller relying on
+ * the prompt's prose contract rather than native structured output.
+ */
+function truncationError(model: string, maxTokens: number): ProviderError {
+  return new ProviderError(
+    `Structured completion for model "${model}" was truncated at maxTokens (${maxTokens}) ` +
+      `before it could be parsed — the response is incomplete, not schema-invalid. Raise ` +
+      `maxTokens: on OpenAI reasoning models this cap is sent as max_completion_tokens and ` +
+      `covers hidden reasoning tokens as well as visible output.`,
+    { code: 'truncated_no_output', retriable: false }
+  );
+}
 
 export async function runStructuredCompletion<T>(
   opts: StructuredCompletionOptions<T>
@@ -206,8 +248,22 @@ export async function runStructuredCompletion<T>(
       value: firstParsed,
       tokenUsage: { input: inputTokens, output: outputTokens },
       costUsd: calculateCost(opts.model, inputTokens, outputTokens).totalCostUsd,
+      finishReason: first.finishReason,
     };
   }
+
+  // Truncation, not a contract violation — and the retry cannot fix it.
+  // Nothing in the content distinguishes "cut off mid-object" from "the model
+  // ignored the schema": both arrive as text that `parse` rejects. Only
+  // `finishReason` tells them apart, and the retry would run the same cap
+  // against a *longer* prompt (the retry message is appended), so it is a
+  // second paid call whose failure is already knowable from data we hold.
+  //
+  // Both providers catch what they can see themselves, but neither covers
+  // every route here: a provider may ignore `responseSchema` entirely, and a
+  // caller may be relying on the prompt's prose contract instead. This is the
+  // provider-agnostic backstop (#587).
+  if (first.finishReason === 'length') throw truncationError(opts.model, maxTokens);
 
   // Retry with a stricter prompt at temperature 0. We do NOT include
   // the malformed prior response — never trust output that just
@@ -244,6 +300,9 @@ export async function runStructuredCompletion<T>(
 
   const retryParsed = opts.parse(retry.content);
   if (retryParsed === null) {
+    // The first attempt failed for some other reason and this one ran out of
+    // budget — same misdiagnosis, so the same error.
+    if (retry.finishReason === 'length') throw truncationError(opts.model, maxTokens);
     if (opts.onFinalFailure) throw opts.onFinalFailure();
     throw new Error('Structured completion response was not valid JSON after retry');
   }
@@ -254,5 +313,6 @@ export async function runStructuredCompletion<T>(
     value: retryParsed,
     tokenUsage: { input: inputTokens, output: outputTokens },
     costUsd: calculateCost(opts.model, inputTokens, outputTokens).totalCostUsd,
+    finishReason: retry.finishReason,
   };
 }

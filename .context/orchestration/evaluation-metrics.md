@@ -173,6 +173,10 @@ Both attempts going through `runStructuredCompletion`
 machinery the summary call uses. The retry never includes the
 malformed prior response in the prompt.
 
+A response that failed to parse because it was **truncated** is the
+exception: there is no retry, and the error says so. See
+[Truncation](./llm-providers.md#truncation-guard-truncated_no_output).
+
 `runStructuredCompletion` also accepts an optional `responseSchema`
 (plus `responseSchemaName` / `responseSchemaStrict`). When supplied it is
 forwarded as a `json_schema` `responseFormat` on both attempts, so

@@ -9,9 +9,13 @@
  *  - responseSchema forwarding (absent / empty / named / strict on-off)
  *  - malformed first AND retry → throws (with caller's onFinalFailure if
  *    supplied, otherwise default error)
+ *  - truncation (`finishReason: 'length'`) is reported as truncation rather
+ *    than as a schema failure, and does not buy a second doomed attempt (#587)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+import type { LlmFinishReason } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   calculateCost: vi.fn(() => ({
@@ -28,7 +32,11 @@ interface DummyShape {
 }
 
 function makeProvider(
-  scripts: Array<{ content: string; usage?: { inputTokens: number; outputTokens: number } }>
+  scripts: Array<{
+    content: string;
+    usage?: { inputTokens: number; outputTokens: number };
+    finishReason?: LlmFinishReason;
+  }>
 ) {
   let turn = 0;
   return {
@@ -38,6 +46,7 @@ function makeProvider(
       return {
         content: s.content,
         usage: s.usage ?? { inputTokens: 10, outputTokens: 5 },
+        finishReason: s.finishReason ?? 'stop',
       };
     }),
   } as unknown as Parameters<typeof runStructuredCompletion>[0]['provider'];
@@ -251,5 +260,134 @@ describe('runStructuredCompletion', () => {
         retryUserMessage: 'STRICT',
       })
     ).rejects.toThrow('Structured completion response was not valid JSON after retry');
+  });
+
+  describe('truncation (#587)', () => {
+    // Partial JSON: the model started the object and was cut off mid-string.
+    // `dummyParse` returns null on it, exactly as it would on genuine
+    // rubbish — which is the whole problem. The two are indistinguishable
+    // from the content alone, and only `finishReason` tells them apart.
+    const CUT_OFF = '{"ok":tr';
+
+    it('reports truncation instead of buying a second attempt at the same cap', async () => {
+      const provider = makeProvider([
+        {
+          content: CUT_OFF,
+          usage: { inputTokens: 40, outputTokens: 2048 },
+          finishReason: 'length',
+        },
+        { content: '{"ok":true}' },
+      ]);
+
+      let caught: unknown;
+      try {
+        await runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+          maxTokens: 2048,
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      // The message has to name the real fault. "not valid against the
+      // schema" sends the operator to edit a schema that was never wrong.
+      expect((caught as Error).message).toMatch(/truncat/i);
+      expect((caught as Error).message).toMatch(/2048/);
+      expect((caught as { code?: string }).code).toBe('truncated_no_output');
+      // And no second call: the retry runs the same cap against a LONGER
+      // prompt, so its outcome is knowable from data we already hold.
+      expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    });
+
+    it("does not defer to the caller's onFinalFailure, whose premise is false here", async () => {
+      // `onFinalFailure` exists to phrase "the model broke my contract". On a
+      // truncation that premise is wrong, and every caller that supplies one
+      // would otherwise have to rediscover this and duplicate the check.
+      const provider = makeProvider([
+        { content: CUT_OFF, finishReason: 'length' },
+        { content: CUT_OFF, finishReason: 'length' },
+      ]);
+
+      await expect(
+        runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+          onFinalFailure: () => new Error('Judge response was not valid against the schema'),
+        })
+      ).rejects.toThrow(/truncat/i);
+    });
+
+    it('reports truncation when the retry is the attempt that gets cut off', async () => {
+      const provider = makeProvider([
+        // A genuine malformed response — finished cleanly, just not JSON. The
+        // retry is warranted here.
+        { content: 'here is your answer:', finishReason: 'stop' },
+        { content: CUT_OFF, finishReason: 'length' },
+      ]);
+
+      let caught: unknown;
+      try {
+        await runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+          maxTokens: 512,
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect((caught as Error).message).toMatch(/truncat/i);
+      expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    });
+
+    it('still reports a schema failure when both attempts finished cleanly', async () => {
+      // The guard against over-correcting: a response that ran to `stop` and
+      // still did not parse IS a contract violation, and the caller's error
+      // is the right one.
+      const provider = makeProvider([
+        { content: 'no', finishReason: 'stop' },
+        { content: 'still no', finishReason: 'stop' },
+      ]);
+
+      await expect(
+        runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'claude-sonnet-4-6',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+          onFinalFailure: () => new Error('caller-supplied error'),
+        })
+      ).rejects.toThrow('caller-supplied error');
+    });
+
+    it('surfaces finishReason on a successful result so a truncated-but-parseable response is visible', async () => {
+      // A lenient parse can accept content that was cut off at a point where
+      // it happened to be well-formed — a truncated array of results reads as
+      // a complete short one. Nothing throws, so the result field is the only
+      // place a caller can see it.
+      const provider = makeProvider([{ content: '{"ok":true}', finishReason: 'length' }]);
+
+      const result = await runStructuredCompletion<DummyShape>({
+        provider,
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'go' }],
+        parse: dummyParse,
+        retryUserMessage: 'STRICT',
+      });
+
+      expect(result.value).toEqual({ ok: true });
+      expect(result.finishReason).toBe('length');
+    });
   });
 });

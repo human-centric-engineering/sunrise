@@ -202,6 +202,13 @@ release process.
   in its place (#559).
 ### Added
 
+- **`StructuredCompletionResult.finishReason`** — the finish reason of the
+  attempt that produced the value. Worth checking for `'length'` even on
+  success: a lenient `parse` can accept content that happened to be well-formed
+  where it was cut off, and a truncated array of results reads as a complete
+  short one. The failure path throws, so this field is the only place that case
+  is visible (#587).
+
 - **`migrator` and `seeder` Dockerfile stages**, and a profile-gated `seeder`
   compose service. Both derive from `deps`, so they duplicate no layers and cost
   a normal `docker build` nothing — BuildKit only materialises the stages the
@@ -360,6 +367,21 @@ release process.
 
 ### Changed
 
+- **A structured extraction cut off at the token cap is now an error on the
+  OpenAI-compatible adapter, not partial JSON.** It already was on Anthropic
+  and on the empty-content case; what changes is `finish_reason: 'length'` with
+  **non-empty** content when `responseFormat` is a `json_schema` and the turn
+  has no tools — on both the streaming and non-streaming paths. Such a call
+  previously returned (or streamed) a fragment of an object; it now raises
+  `ProviderError('truncated_no_output')`. **Fork-facing:** any caller that was
+  salvaging partial JSON from a truncated extraction will now see a thrown
+  error instead — raise `maxTokens`. A turn that carries tools is unaffected:
+  a `length` stop there is the ordinary partial-output case. `runStructuredCompletion`
+  correspondingly **skips its retry** on a truncation (the retry runs the same
+  cap against a longer prompt, so it cannot succeed) and does **not** consult
+  the caller's `onFinalFailure` hook, which exists to phrase "the model broke
+  my contract" — a premise that is false here (#587).
+
 - **`.gitignore` now denies `.env*` by default** and allowlists only
   `.env.example` and `.env.development`. The previous form enumerated names, so
   `.env.production`, `.env.staging` and `.env.test` were all freely
@@ -462,6 +484,19 @@ release process.
   explicitly (#509).
 
 ### Fixed
+
+- **A truncated LLM response is no longer reported as a schema failure.**
+  `runStructuredCompletion` never read `finishReason`, so a response cut off at
+  the token cap arrived as text its `parse` rejected — indistinguishable, from
+  the content alone, from a model that ignored the schema. Both attempts burned
+  and the caller was told the contract was broken, which sent operators to edit
+  a schema that was never wrong. Reported from a fork whose production judge
+  failed with `"Judge response was not valid against the schema after one
+  retry"` and an empty issue list — reading as "no schema problems found"
+  rather than "we never got JSON" — when the real fault was a 2048-token cap on
+  a reasoning model, where the cap covers hidden reasoning tokens as well as
+  visible output. The error now names the truncation and the cap on all three
+  routes that can detect it (both provider adapters and the runner) (#587).
 
 - **`CI_NODE_HEAP_MB` now reaches the Docker build.** A workflow-level `env:`
   does not cross into a container build, so raising the variable moved

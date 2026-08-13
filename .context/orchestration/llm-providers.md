@@ -103,7 +103,9 @@ type LlmResponseFormat =
 **Provider implementations:**
 
 - **OpenAI-compatible**: passes `response_format` directly to the API (native support)
-- **Anthropic**: uses a tool-based extraction pattern — defines a single tool with the schema, forces tool use, and extracts the result from the tool call arguments. Anthropic-specific constraints handled by the adapter: the tool name derived from `responseFormat.name` is slugified + length-capped to fit `^[a-zA-Z0-9_-]{1,64}$`; the schema must be **object-rooted** (a non-object root is rejected with `invalid_schema` rather than silently coerced); and a `max_tokens` truncation during extraction surfaces `truncated_no_output` (the partial tool input would otherwise look like non-empty content and degrade into a parse failure).
+- **Anthropic**: uses a tool-based extraction pattern — defines a single tool with the schema, forces tool use, and extracts the result from the tool call arguments. Anthropic-specific constraints handled by the adapter: the tool name derived from `responseFormat.name` is slugified + length-capped to fit `^[a-zA-Z0-9_-]{1,64}$`; and the schema must be **object-rooted** (a non-object root is rejected with `invalid_schema` rather than silently coerced).
+
+Both adapters treat a token-cap stop during extraction as `truncated_no_output` — the partial output would otherwise look like ordinary non-empty content and degrade into a parse failure. See [Truncation guard](#truncation-guard-truncated_no_output).
 
 **Usage in agents:** Set `responseFormat` on `AiAgent` config for agents that always return structured data. In workflows, the `llm_call` step config supports `responseFormat` for structured extraction steps.
 
@@ -366,16 +368,32 @@ Every long-running call accepts an `AbortSignal` via `LlmOptions.signal`. Aborts
 
 ### Truncation guard (`truncated_no_output`)
 
-Both providers fail loudly when the model hits its token cap **without producing visible text**:
+Both providers fail loudly when the model hits its token cap **without producing usable output**. Two rules, because what counts as usable differs:
 
-- OpenAI-compatible: `finish_reason: 'length'` + empty content + no tool calls → `ProviderError('truncated_no_output')`.
-- Anthropic: `stop_reason: 'max_tokens'` + empty content + no tool calls → `ProviderError('truncated_no_output')`.
+| Call shape                                                            | Fires when                                                                 | Where                           |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------- |
+| Ordinary completion                                                   | cap hit **and** content empty **and** no tool calls                        | `chat()` only                   |
+| **Structured extraction** (`responseFormat: 'json_schema'`, no tools) | cap hit — **any** `length` / `max_tokens` stop, whatever content came back | `chat()` **and** `chatStream()` |
 
-This catches a class of silent corruption unique to reasoning models (gpt-5, o-series, Claude with extended thinking). For these models the `max_completion_tokens` / `max_tokens` cap is shared between **reasoning tokens** and **visible output tokens**; when reasoning consumes the whole budget the SDK returns an empty `content` string. Without this guard the engine would happily store `""` as a "successful" step output and downstream guards/validators would invent confused failures. The error message includes the model id, the current cap, and (for OpenAI) the reasoning-token count, so the operator's first move ("raise maxTokens") is obvious from the trace.
+Both adapters implement both rules (`finish_reason: 'length'` on OpenAI-compatible, `stop_reason: 'max_tokens'` on Anthropic) and raise `ProviderError('truncated_no_output')`. Note the asymmetry in the last column: `chatStream()` carries only the extraction rule, so an ordinary streaming turn that produces nothing before hitting the cap still ends with an empty `done` chunk rather than an error.
+
+The first rule catches a class of silent corruption unique to reasoning models (gpt-5, o-series, Claude with extended thinking). For these models the `max_completion_tokens` / `max_tokens` cap is shared between **reasoning tokens** and **visible output tokens**; when reasoning consumes the whole budget the SDK returns an empty `content` string. Without this guard the engine would happily store `""` as a "successful" step output and downstream guards/validators would invent confused failures.
+
+The second rule exists because the far more common shape is reasoning eating _most_ of the budget, not all of it: a few hundred tokens of an object arrive, cut off mid-string. Content is non-empty, so the first rule cannot see it — but truncated JSON is not usable at any cap, and left alone it fails the caller's parse and reads as a **schema** violation, sending the operator to fix a schema that was never wrong (#587).
+
+The error message includes the model id, the current cap, and (for OpenAI) the reasoning-token count, so the operator's first move ("raise maxTokens") is obvious from the trace.
 
 The error is **non-retriable** — retrying with the same cap will hit the same wall. Bump the agent's or step's `maxTokens` to address it (16384 is a reasonable headroom for reasoning-heavy workloads producing structured JSON).
 
-Short-but-non-empty responses that hit the cap are **not** flagged — the visible content is meaningful, and we surface `finishReason: 'length'` so callers that care (e.g. continuation flows) can detect it.
+Short-but-non-empty responses that hit the cap are **not** flagged **outside** structured extraction — the visible content is meaningful, and we surface `finishReason: 'length'` so callers that care (e.g. continuation flows) can detect it. A turn that carries tools is treated as ordinary even with a `responseFormat` set: a `length` stop there is the normal partial-output case for the tool loop to handle.
+
+### The runner-level backstop
+
+`runStructuredCompletion` (`lib/orchestration/llm/structured-completion.ts`) repeats the check on the response it gets back, and throws the same `truncated_no_output` code. It is not redundant with the adapters: they can only act on structured extraction they know about, and a caller may be relying on the prompt's prose contract with no `responseSchema` at all, or talking to a provider that ignores one.
+
+It also **skips the retry** in this case. The retry would run the same cap against a _longer_ prompt (the stricter retry message is appended), so its failure is already knowable — a second paid call for nothing. And the caller's `onFinalFailure` hook is deliberately **not** consulted, because that hook exists to phrase "the model broke my contract" and on a truncation that premise is false.
+
+`StructuredCompletionResult.finishReason` carries the finish reason of the attempt that produced the value. Check it for `'length'` even on success: a lenient `parse` can accept content that happened to be well-formed where it was cut — a truncated array of results reads as a complete short one.
 
 ### Reasoning-token observability
 

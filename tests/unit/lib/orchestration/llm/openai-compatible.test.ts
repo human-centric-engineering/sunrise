@@ -390,6 +390,61 @@ describe('chat', () => {
     expect(response.finishReason).toBe('length');
   });
 
+  it('throws truncated_no_output when a structured extraction is cut off mid-JSON (#587)', async () => {
+    // Arrange — the far more common shape than the empty-content case above:
+    // reasoning ate most of the budget, the model emitted a few hundred
+    // tokens of the object, and got cut off mid-string. The content is
+    // non-empty, so the empty-content guard cannot see it, and the partial
+    // JSON reaches the caller's parser and reads as a schema violation.
+    // Anthropic already treats ANY max_tokens stop during extraction as a
+    // truncation (anthropic.ts); this is that same rule.
+    chatCreateMock.mockResolvedValue(makeChatCompletion('{"dimension":"clar', 'length'));
+
+    // Act
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'gpt-5',
+        maxTokens: 2048,
+        responseFormat: { type: 'json_schema', name: 'judgement', schema: { type: 'object' } },
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    // Assert
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+    expect((caught as Error).message).toMatch(/structured/i);
+    expect((caught as Error).message).toMatch(/2048/);
+  });
+
+  it('does not flag a truncated tool-calling turn that also carries a responseFormat', async () => {
+    // Arrange — with tools in play a `length` stop is the ordinary
+    // partial-output case, not a broken extraction: the model may be
+    // mid-tool-call, and the tool loop handles that. Mirrors the
+    // `!options.tools?.length` half of the Anthropic guard.
+    chatCreateMock.mockResolvedValue(makeChatCompletion('thinking about it', 'length'));
+
+    // Act
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+      responseFormat: { type: 'json_schema', name: 'judgement', schema: { type: 'object' } },
+      tools: [
+        {
+          name: 'lookup',
+          description: 'look something up',
+          parameters: { type: 'object', properties: {} },
+        },
+      ],
+    });
+
+    // Assert
+    expect(response.content).toBe('thinking about it');
+    expect(response.finishReason).toBe('length');
+  });
+
   it('surfaces reasoning_tokens in usage when the SDK reports it', async () => {
     // Arrange
     chatCreateMock.mockResolvedValue({
@@ -569,6 +624,38 @@ describe('chatStream', () => {
     // Assert
     const done = collected.find((c) => (c as { type: string }).type === 'done');
     expect(done).toMatchObject({ type: 'done', finishReason: 'length' });
+  });
+
+  it('throws truncated_no_output when a streaming structured extraction is cut off (#587)', async () => {
+    // Arrange — mirrors the non-streaming guard and the Anthropic streaming
+    // one. `streaming-handler.ts` forwards an agent's configured
+    // responseFormat on the streaming path whenever it has no tools, so this
+    // is a live combination, and the partial JSON already yielded as text is
+    // not usable JSON.
+    const chunks = [
+      makeChunk({ content: '{"verdict":"pa' }),
+      makeChunk({ finishReason: 'length' }),
+    ];
+    chatCreateMock.mockResolvedValue(toAsyncIterable(chunks));
+
+    // Act
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+        model: 'gpt-5',
+        maxTokens: 512,
+        responseFormat: { type: 'json_schema', name: 'verdict', schema: { type: 'object' } },
+      })) {
+        // drain
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    // Assert — surfaced before the `done` chunk, as on Anthropic.
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+    expect((caught as Error).message).toMatch(/structured/i);
   });
 
   it('throws ProviderError with code aborted when signal is already aborted at chunk boundary', async () => {
