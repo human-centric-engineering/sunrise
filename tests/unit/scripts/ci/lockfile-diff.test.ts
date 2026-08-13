@@ -188,6 +188,57 @@ describe('diffLockfiles', () => {
 
       expect(diffLockfiles(nested, twoCopies).lostNativeMetadata).toEqual([]);
     });
+
+    it('does not fire when a duplicate is deduped away and the survivor predates it', () => {
+      // The false positive this guard exists for, taken from a real run: a
+      // `react-email` bump deleted the whole nested `@react-email/ui` subtree,
+      // including a copy of `@img/sharp-wasm32` that declared `cpu`. A
+      // top-level copy of the same package survived — but it was already there
+      // before, unchanged, and had never declared `cpu`.
+      //
+      // Nothing moved and nothing was stripped: a duplicate went away. Matching
+      // the removed path against a pre-existing survivor reported it as a
+      // hoist-with-loss and sent two people reading lockfile diffs (#583/#589).
+      // A hoist means the surviving path is NEW; if every survivor predates the
+      // removal, this is a deduplication.
+      const bothCopies: Lockfile = {
+        packages: {
+          'node_modules/sharp-wasm32': { version: '0.35.3' },
+          'node_modules/ui/node_modules/sharp-wasm32': { version: '0.34.5', cpu: ['wasm32'] },
+        },
+      };
+      const dedupedToTheExistingCopy: Lockfile = {
+        packages: { 'node_modules/sharp-wasm32': { version: '0.35.3' } },
+      };
+
+      const diff = diffLockfiles(bothCopies, dedupedToTheExistingCopy);
+
+      expect(diff.lostNativeMetadata).toEqual([]);
+      expect(hasRisk(diff)).toBe(false);
+      // Still reported as removed — the tree did change, it just lost nothing.
+      expect(diff.removed).toContain('node_modules/ui/node_modules/sharp-wasm32');
+    });
+
+    it('still fires when the survivor is new, even alongside an untouched copy', () => {
+      // Guards the fix from over-correcting: one survivor predates the move and
+      // one is new. A genuine hoist is hiding in here and must still be caught.
+      const before: Lockfile = {
+        packages: {
+          'node_modules/keeper/node_modules/canvas-linux-x64': { version: '1.0.3' },
+          'node_modules/pdf/node_modules/canvas-linux-x64': { ...NATIVE },
+        },
+      };
+      const after: Lockfile = {
+        packages: {
+          'node_modules/keeper/node_modules/canvas-linux-x64': { version: '1.0.3' },
+          'node_modules/canvas-linux-x64': { version: '1.0.3', os: ['linux'], cpu: ['x64'] },
+        },
+      };
+
+      expect(diffLockfiles(before, after).lostNativeMetadata).toEqual([
+        { name: 'node_modules/pdf/node_modules/canvas-linux-x64', keys: ['libc'] },
+      ]);
+    });
   });
 
   it('ignores metadata being gained', () => {

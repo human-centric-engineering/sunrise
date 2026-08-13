@@ -204,6 +204,22 @@ public-surface contract behind the bump decision lives in
 
 5. **Run the gates locally.** `npm run validate`, full test suite, then
    `/pre-pr` and `/security-review`.
+
+   **Also trigger the dependency audit**, which is otherwise weekly and so can
+   be up to seven days stale at the moment you cut:
+
+   ```bash
+   gh workflow run dependency-audit.yml && gh run watch
+   ```
+
+   Its `lockfile-libc` job is the **absolute** platform-metadata check — it asks
+   the registry what each locked version actually declares, so unlike the diff
+   check in `/pre-pr` it catches metadata that was already missing before this
+   branch. That is precisely the state `main` sat in for two releases (#571).
+   The `audit` job reports advisories at the same time. Both depend on
+   third-party feeds, so an occasional red here is infrastructural rather than a
+   lockfile problem — the message says which.
+
 6. **Open the release PR.** Push the branch, run `/code-review` on the PR,
    then merge.
 7. **Tag the merge commit.**

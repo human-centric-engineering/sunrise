@@ -242,26 +242,41 @@ export function diffLockfiles(
   // `node_modules/foo` is a remove plus an add, so the loop above never
   // compares it. This lockfile has 77 native-metadata entries at nested paths,
   // so the hole covered precisely the packages most likely to move.
-  const headByPackageName = new Map<string, LockPackage[]>();
-  for (const [key, entry] of Object.entries(headPackages)) {
-    const short = packageNameOf(key);
+  const headByPackageName = new Map<string, { path: string; entry: LockPackage }[]>();
+  for (const [path, entry] of Object.entries(headPackages)) {
+    const short = packageNameOf(path);
     if (short === null) continue;
     const bucket = headByPackageName.get(short);
-    if (bucket) bucket.push(entry);
-    else headByPackageName.set(short, [entry]);
+    if (bucket) bucket.push({ path, entry });
+    else headByPackageName.set(short, [{ path, entry }]);
   }
 
   for (const name of baseNames) {
     if (name in headPackages) continue; // same-path case, handled above
     const short = packageNameOf(name);
     if (short === null) continue;
-    const moved = headByPackageName.get(short);
-    if (moved === undefined) continue; // genuinely removed, not moved
+    const survivors = headByPackageName.get(short);
+    if (survivors === undefined) continue; // genuinely removed, not moved
+
+    // A hoist puts the package somewhere NEW. If every surviving copy was
+    // already in the base tree, nothing moved: a duplicate was deduped away,
+    // and whatever metadata the untouched survivor does or does not declare is
+    // unchanged by this diff.
+    //
+    // Without this, a `react-email` bump that deleted a nested
+    // `@react-email/ui` subtree got matched against a top-level copy of
+    // `@img/sharp-wasm32` that had predated it and had never declared `cpu`,
+    // and the removal was reported as "lost cpu". A check that cries wolf on a
+    // dependency simply going away is worse than no check, because the next
+    // real loss reads the same (#589).
+    if (survivors.every(({ path }) => path in basePackages)) continue;
 
     // Lost only if EVERY surviving copy lacks the key — one intact copy means
-    // the metadata is still in the tree.
+    // the metadata is still in the tree. Deliberately still spans *all*
+    // survivors, not just the new ones: an old copy that kept the key is proof
+    // the tree did not lose it.
     const lost = nativeKeysOf(basePackages[name])
-      .filter((key) => moved.every((entry) => entry[key] === undefined))
+      .filter((key) => survivors.every(({ entry }) => entry[key] === undefined))
       .sort();
     if (lost.length > 0) lostNativeMetadata.push({ name, keys: lost });
   }

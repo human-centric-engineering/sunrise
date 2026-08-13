@@ -61,6 +61,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       docker: ${{ steps.filter.outputs.docker }}
+      deps: ${{ steps.filter.outputs.deps }}
       test_scope: ${{ steps.filter.outputs.test_scope }}
     steps:
       - name: Detect change scope + resolve test mode
@@ -82,6 +83,12 @@ jobs:
           #          job on PRs; on push to main docker always runs as a gate)
           CODE=false
           DOCKER=false
+          # DEPS — the manifest or the lockfile moved, so the `lockfile` job
+          # below has something to diff. package.json matters as well as the
+          # lockfile: the `overrides` rule reads that file at both revisions,
+          # and an override that tightens a range npm already satisfied changes
+          # nothing in the lockfile.
+          DEPS=false
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
             # `prisma/*` matches recursively — inside `case`, `*` crosses `/`
@@ -101,6 +108,12 @@ jobs:
                 echo "Docker-relevant change detected: $file"
                 ;;
             esac
+            case "$file" in
+              package.json | package-lock.json)
+                DEPS=true
+                echo "Dependency manifest change detected: $file"
+                ;;
+            esac
             [[ "$file" == *.md ]] && continue
             [[ "$file" == .context/* ]] && continue
             [[ "$file" == .instructions/* ]] && continue
@@ -111,6 +124,7 @@ jobs:
 
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
           echo "docker=$DOCKER" >> "$GITHUB_OUTPUT"
+          echo "deps=$DEPS" >> "$GITHUB_OUTPUT"
           # Resolve the test mode here so every downstream job reads one value.
           echo "test_scope=${{ vars.CI_TEST_SCOPE || 'full' }}" >> "$GITHUB_OUTPUT"
 
@@ -699,13 +713,56 @@ jobs:
         if: always()
         run: docker compose down -v --remove-orphans || true
 
+  # Only fires when the manifest or lockfile moved. Offline by design: this is
+  # the *diff* check, which compares the two revisions' own contents and makes
+  # no registry calls, so it is safe as a PR gate. Its absolute counterpart
+  # (`fix:lockfile-libc --check`, ~1,400 registry requests) stays on the weekly
+  # schedule in dependency-audit.yml for exactly that reason.
+  #
+  # It exists here because `/pre-pr` runs this check locally and Dependabot PRs
+  # never run `/pre-pr`. npm below 11.11.0 deletes `libc` from every entry it
+  # writes, on every platform, and the result installs fine locally and wrong on
+  # Alpine — #571 shipped that way for two releases. Whatever npm a contributor
+  # or a bot happens to have, the loss now surfaces on the PR that causes it.
+  lockfile:
+    name: Lockfile metadata
+    runs-on: ubuntu-latest
+    needs: config
+    # Pull requests only. This is a diff against the merge base, and on a push
+    # to main HEAD *is* the merge base — the job would compare the tree with
+    # itself and pass on anything.
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.config.outputs.deps == 'true'
+    # prisma generate (postinstall) needs DATABASE_URL defined; it does not
+    # connect, so a placeholder is fine — no Postgres service on this job.
+    env:
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The check diffs against the merge base, which needs real history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - name: Check lockfile platform metadata
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          BASE=$(git merge-base origin/main HEAD)
+          echo "diffing against $BASE"
+          npm run check:lockfile -- --base "$BASE"
+
   # Gate job for branch protection — always runs and reports a single status.
   # Skipped jobs (docs-only, the inactive test mode, non-docker PRs) are not
   # failures, so the gate passes as long as nothing that ran failed.
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [typecheck, lint, build, test-full, test-changed, smoke, docker]
+    needs: [typecheck, lint, build, test-full, test-changed, smoke, docker, lockfile]
     if: always()
     steps:
       - name: Check CI result
@@ -717,7 +774,8 @@ jobs:
             "${{ needs.test-full.result }}" \
             "${{ needs.test-changed.result }}" \
             "${{ needs.smoke.result }}" \
-            "${{ needs.docker.result }}"; do
+            "${{ needs.docker.result }}" \
+            "${{ needs.lockfile.result }}"; do
             if [[ "$result" == "failure" ]]; then
               echo "CI failed"
               exit 1

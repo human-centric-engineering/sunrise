@@ -14,13 +14,18 @@ dist/
 .vercel
 .swc/
 
-# Environment Variables
-.env
-.env*.local
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# Environment Variables — deny by default, then allowlist the two we commit.
+#
+# The previous form enumerated names (.env, .env*.local, and the four
+# .env.*.local variants) and so left `.env.production`, `.env.staging` and
+# `.env.test` freely committable. That is worse than it sounds: Next's
+# standalone build copies `.env` and `.env.production` into the build output
+# (next/dist/build/index.js) and the server loads them at boot, so a committed
+# `.env.production` would ship its contents inside the production image as well
+# as into git. `.dockerignore` gained the matching `.env.*` rule in #583.
+.env*
+!.env.example
+!.env.development
 
 # IMPORTANT: never commit a file containing secrets — those belong in
 # .env.local, which is ignored above.
