@@ -60,35 +60,6 @@ function displacedFunctionName(
   return stored.data.name === nextName ? null : stored.data.name;
 }
 
-/**
- * JSON with object keys sorted at every level.
- *
- * `functionDefinition` is a `JSONB` column, and Postgres canonicalises jsonb
- * key order (by key length, then bytewise) rather than preserving insertion
- * order. Zod rebuilds the parsed body in SCHEMA order. So the same definition
- * read from the database and echoed back by a client serialises to two
- * different strings, and a plain `JSON.stringify` comparison calls a
- * byte-identical value "changed" — which would 403 every save of a system
- * capability, the very thing the change-not-presence check exists to avoid.
- *
- * Verified rather than reasoned: parsing `{name, parameters, description}`
- * through `updateCapabilitySchema` yields `{name, description, parameters}`.
- */
-function canonicalJson(value: unknown): string {
-  const sortKeys = (v: unknown): unknown => {
-    if (Array.isArray(v)) return v.map(sortKeys);
-    if (v !== null && typeof v === 'object') {
-      return Object.fromEntries(
-        Object.entries(v as Record<string, unknown>)
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-          .map(([k, val]) => [k, sortKeys(val)])
-      );
-    }
-    return v;
-  };
-  return JSON.stringify(sortKeys(value));
-}
-
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
 
@@ -174,50 +145,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // System capabilities cannot be deactivated via PATCH (equivalent to deletion).
   if (current.isSystem && body.isActive === false) {
     throw new ForbiddenError('System capabilities cannot be deactivated');
-  }
-
-  // Code-owned fields on a system capability are re-applied by the seed on
-  // every deploy whose seed-file hash changed (#545). Accepting a CHANGE here
-  // would write it, log a `capability.update` audit entry, show the operator
-  // success — and then silently revert it later with no audit entry and no
-  // signal. Refusing is the honest failure: the edit never had a chance of
-  // being durable, so say so now rather than appear to work.
-  //
-  // Keyed on the value actually DIFFERING, not on the field being present.
-  // `capability-form.tsx` sends the whole form on every save — all three of
-  // these are defaulted in `useForm` and `functionDefinition` is always
-  // attached — so a presence check rejected every save of a system capability,
-  // including one that only touched the description. That made `name`,
-  // `description`, `category`, `rateLimit` and the safety settings uneditable
-  // through the only UI that edits capabilities, which is the opposite of the
-  // ownership split this enforces.
-  //
-  // `slug` is in the list because it is the seed's `where` key: renaming it
-  // makes the next upsert match nothing and CREATE A SECOND ROW for one
-  // built-in. That was only incidentally blocked, via the name/slug agreement
-  // check above, and only when the stored definition parses.
-  if (current.isSystem) {
-    const storedFn = canonicalJson(current.functionDefinition ?? null);
-    const changed = [
-      body.functionDefinition !== undefined && canonicalJson(body.functionDefinition) !== storedFn
-        ? 'functionDefinition'
-        : null,
-      body.executionType !== undefined && body.executionType !== current.executionType
-        ? 'executionType'
-        : null,
-      body.executionHandler !== undefined && body.executionHandler !== current.executionHandler
-        ? 'executionHandler'
-        : null,
-      body.slug !== undefined && body.slug !== current.slug ? 'slug' : null,
-    ].filter((f): f is string => f !== null);
-
-    if (changed.length > 0) {
-      throw new ForbiddenError(
-        `System capabilities own ${changed.join(', ')} in code — an edit here would be reverted ` +
-          `by the next re-seed. Change the capability class and its seed, or clone this capability ` +
-          `into a non-system one you own.`
-      );
-    }
   }
 
   const data: Prisma.AiCapabilityUpdateInput = {};

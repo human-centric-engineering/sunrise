@@ -966,11 +966,9 @@ export function CapabilityForm({
                 <Shield className="h-3 w-3" />
                 System
                 <FieldHelp title="System capability">
-                  System capabilities are implemented in code and seeded from it, so the slug,
-                  function definition and execution handler are re-applied on every deploy — the API
-                  rejects a change to those rather than accepting one it would silently revert.
-                  Name, description, category, safety settings, execution config and rate limit
-                  remain editable. To own the schema, clone this into a capability of your own.
+                  System capabilities are managed by seed data and cannot be deleted or deactivated.
+                  Their core configuration is restored on each deployment. You can still edit
+                  non-protected fields like description and safety settings.
                 </FieldHelp>
               </Badge>
             )}
@@ -1014,10 +1012,8 @@ export function CapabilityForm({
       {isEdit && capability?.isSystem && (
         <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-950/20 dark:text-blue-300">
           <Info className="h-4 w-4 shrink-0" />
-          This is a system capability. Its slug, function definition and execution handler are owned
-          by the code that implements it and are re-applied on every deploy, so changing them here
-          is rejected. Everything else — name, description, category, safety settings, execution
-          config and rate limit — is yours to edit. It cannot be deleted or deactivated.
+          This is a system capability managed by seed data. It cannot be deleted or deactivated. You
+          can edit its description, safety settings, and execution config.
         </div>
       )}
 

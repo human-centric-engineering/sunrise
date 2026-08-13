@@ -139,7 +139,7 @@ await prisma.aiCapability.upsert({
 });
 ```
 
-The admin API enforces the same split: `PATCH /capabilities/{id}` **rejects** an edit to a code-owned field on an `isSystem` row. Accepting it would write the change, log a `capability.update` audit entry and report success — then the next re-seed would silently revert it, with no audit entry and no signal. The operator-owned fields stay editable.
+The write paths do **not** enforce this split yet: `PATCH /capabilities/{id}` and the config importer will both happily write a code-owned field onto a system row, report success, and let the next re-seed revert it with no audit entry. Tracked separately — until then, treat an edit to a built-in's schema as temporary.
 
 Two caveats when seeding a live box:
 

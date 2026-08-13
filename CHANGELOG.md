@@ -580,24 +580,6 @@ release process.
   missed the descriptions, and a description is how the model picks a
   parameter (#545).
 
-- **`PATCH /api/v1/admin/orchestration/capabilities/{id}` now rejects edits to
-  `functionDefinition`, `executionType` and `executionHandler` on a system
-  capability.** Those are re-applied by the seed on every deploy whose
-  seed-file hash changed, so accepting the write logged a `capability.update`
-  audit entry and reported success, then silently reverted later with no audit
-  entry and no signal. It returns 403 with the field named. `name`,
-  `description`, `category`, `isActive` and `rateLimit` stay editable — the
-  seed deliberately leaves those alone. **Fork-facing:** a workflow that edited
-  a built-in capability's schema through the admin API now fails loudly instead
-  of silently; clone the capability into a non-system one to own it. `slug` is
-  covered too — it is the seed's `where` key, so a rename would make the next
-  upsert match nothing and create a **second** row for one built-in. The check
-  compares against the stored value, so a client echoing unchanged fields (the
-  admin form sends the whole form on every save) is unaffected. Config
-  **import** applies the same split: restoring a bundle no longer writes those
-  fields onto a system capability, and the in-app copy now names what is
-  protected instead of describing it as merely "managed by seed data" (#545).
-
 - **A truncated response is no longer reported as a schema failure on the
   `runStructuredCompletion` and provider-adapter paths.**
   `runStructuredCompletion` never read `finishReason`, so a response cut off at

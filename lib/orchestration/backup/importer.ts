@@ -267,36 +267,19 @@ export async function importOrchestrationConfig(
     for (const cap of parsed.data.capabilities) {
       const existing = await tx.aiCapability.findUnique({ where: { slug: cap.slug } });
       if (existing) {
-        // A system capability's `functionDefinition`, `executionType` and
-        // `executionHandler` are owned by the seed and re-applied on every
-        // deploy whose seed-file hash changed (#545), so writing them here
-        // would report `updated++`, look successful, and then silently revert
-        // with no audit entry — the same dishonest write the PATCH route now
-        // refuses. `isActive` is excluded for the same reason PATCH forbids
-        // deactivating a system capability.
-        //
-        // Skipped rather than refused: an import bundle is a whole-config
-        // restore, and failing the transaction because it happens to carry the
-        // shipped definition of a built-in would make routine restores
-        // unusable. Everything the operator does own still applies.
-        const codeOwned = existing.isSystem
-          ? {}
-          : {
-              functionDefinition: cap.functionDefinition as Prisma.InputJsonValue,
-              executionType: cap.executionType,
-              executionHandler: cap.executionHandler,
-              isActive: cap.isActive,
-            };
         await tx.aiCapability.update({
           where: { slug: cap.slug },
           data: {
             name: cap.name,
             description: cap.description,
             category: cap.category,
+            functionDefinition: cap.functionDefinition as Prisma.InputJsonValue,
+            executionType: cap.executionType,
+            executionHandler: cap.executionHandler,
             executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
             requiresApproval: cap.requiresApproval,
             rateLimit: cap.rateLimit,
-            ...codeOwned,
+            isActive: cap.isActive,
           },
         });
         result.capabilities.updated++;
