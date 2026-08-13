@@ -421,6 +421,14 @@ release process.
   release persists a marker for every `ProviderError` reaching the outer catch,
   where previously an exhausted 429/503 left no row at all (#587).
 
+- **A workflow step's failed LLM attempt now reports what it cost.** `llm_call`,
+  `chat_turn` and `agent_call` wrapped a `provider.chat()` throw with
+  `tokensUsed`/`costUsd` left at 0 — the very fields the engine's retry
+  accumulator folds into the step trace and the execution total. A truncation
+  is a full cap's worth of billed output, so the priciest attempt a step made
+  was the one missing from its totals. They now carry `ProviderError.usage`
+  when the provider reported it (#587).
+
 - **A request-fault provider failure is no longer retried by workflow steps.**
   `ExecutorError` defaults to `retriable: true`, and `llm_call`, `chat_turn`
   and `agent_call` all wrapped a `provider.chat()` throw at that default — so a

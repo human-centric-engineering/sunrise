@@ -46,7 +46,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { chatTurnConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
-import { isRequestFault } from '@/lib/orchestration/llm/provider';
+import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import {
   composeSystemPromptString,
@@ -204,12 +204,19 @@ export async function executeChatTurn(
       signal: ctx.signal,
     });
   } catch (err) {
+    const billedOnFailure = err instanceof ProviderError ? err.usage : undefined;
     throw new ExecutorError(
       step.id,
       'chat_turn_failed',
       err instanceof Error ? err.message : 'Provider chat() call failed',
       err,
-      !isRequestFault(err)
+      !isRequestFault(err),
+      // See the note in `llm-runner.ts`: the vendor billed this attempt.
+      billedOnFailure ? billedOnFailure.inputTokens + billedOnFailure.outputTokens : 0,
+      billedOnFailure
+        ? calculateCost(model, billedOnFailure.inputTokens, billedOnFailure.outputTokens)
+            .totalCostUsd
+        : 0
     );
   }
   const latencyMs = Date.now() - started;

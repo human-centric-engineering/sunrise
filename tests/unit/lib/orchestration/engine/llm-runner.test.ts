@@ -216,6 +216,37 @@ describe('runLlmCall', () => {
     });
   });
 
+  it("carries the vendor's billed tokens through to the ExecutorError", async () => {
+    // The engine accumulates `err.tokensUsed`/`costUsd` into the step trace
+    // and the execution total. A truncation is a full cap of billed output —
+    // the priciest attempt a step makes — so leaving these 0 under-reports
+    // exactly the call that cost the most (#587).
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(calculateCost).mockReturnValue({
+      inputCostUsd: 0.001,
+      outputCostUsd: 0.05,
+      totalCostUsd: 0.051,
+    } as never);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockRejectedValue(
+        new ProviderError('hit max_completion_tokens', {
+          code: 'truncated_no_output',
+          retriable: false,
+          usage: { inputTokens: 300, outputTokens: 2048 },
+        })
+      ),
+    } as any);
+
+    const ctx = makeCtx();
+    await expect(
+      runLlmCall(ctx, { stepId: 's7', prompt: 'test', modelOverride: 'gpt-5' })
+    ).rejects.toMatchObject({
+      name: 'ExecutorError',
+      tokensUsed: 2348,
+      costUsd: 0.051,
+    });
+  });
+
   it('leaves a status-less transport failure retriable', async () => {
     // The regression guard. A dropped connection or read timeout reaches
     // `toProviderError` with no HTTP status, so it becomes `provider_error`

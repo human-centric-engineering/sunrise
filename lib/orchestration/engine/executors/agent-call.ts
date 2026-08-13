@@ -47,7 +47,7 @@ import {
 import { agentCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
-import { isRequestFault } from '@/lib/orchestration/llm/provider';
+import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import {
   composeSystemPromptString,
@@ -193,6 +193,7 @@ async function runSingleTurn(
             signal: ctx.signal,
           });
         } catch (err) {
+          const billedOnFailure = err instanceof ProviderError ? err.usage : undefined;
           // Carry partial cost from earlier successful turns through the error
           // so the engine's retry/fallback accumulator can surface it on the
           // trace entry. Without this, prior turns' tokens are billed via
@@ -203,8 +204,15 @@ async function runSingleTurn(
             err instanceof Error ? err.message : 'Agent LLM call failed',
             err,
             !isRequestFault(err),
-            totalTokensUsed,
-            totalCostUsd
+            // Prior turns' totals PLUS what the vendor billed for the attempt
+            // that failed — see the note in `llm-runner.ts`.
+            totalTokensUsed +
+              (billedOnFailure ? billedOnFailure.inputTokens + billedOnFailure.outputTokens : 0),
+            totalCostUsd +
+              (billedOnFailure
+                ? calculateCost(model, billedOnFailure.inputTokens, billedOnFailure.outputTokens)
+                    .totalCostUsd
+                : 0)
           );
         }
         const turnDurationMs = Date.now() - turnStarted;
