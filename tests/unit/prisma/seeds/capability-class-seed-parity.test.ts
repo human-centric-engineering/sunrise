@@ -28,6 +28,8 @@
 
 import { describe, it, expect } from 'vitest';
 
+import { scanCapabilitySeeds } from '@/tests/helpers/seed-capabilities';
+
 import { CAPABILITY_DEFINITIONS } from '@/prisma/seeds/005-pattern-advisor';
 import {
   ADD_PROVIDER_MODELS_DEFINITION,
@@ -113,13 +115,26 @@ const PAIRS: {
 ];
 
 describe('built-in capabilities — seed definition matches the class (#545)', () => {
-  it('covers every capability the seeds upsert', () => {
-    // If a new built-in capability gains a seed without a pair here, this file
-    // would still pass while the new one drifted unwatched. The companion
-    // check (`capability-code-owned-fields.test.ts`) counts upsert statements;
-    // this counts the capabilities they write.
-    expect(PAIRS).toHaveLength(10);
-    expect(new Set(PAIRS.map((p) => p.slug)).size).toBe(10);
+  it('covers every capability the seeds define', () => {
+    // Derived from the seeds, not asserted against a literal. The first version
+    // hardcoded `toHaveLength(10)` and deferred coverage to the companion
+    // check, which counts upsert STATEMENTS with a `>=` floor — so a review
+    // added an 11th capability in a fresh seed file and both suites stayed
+    // green while its class↔seed parity went unwatched. That is the exact
+    // failure this pair exists to close.
+    //
+    // Keyed on `functionDefinition.name`, not the `where:` slug: only four of
+    // the eight upserts pass a literal slug (005 loops, 010 reads `def.slug`),
+    // so slugs would have covered under half of them.
+    const { definedNames } = scanCapabilitySeeds();
+    const paired = new Set(PAIRS.map((p) => p.slug));
+
+    // Floor first. An earlier version read zero slugs through a regex bug, so
+    // `[].filter(unpaired)` was `[]` and the assertion passed while covering
+    // nothing. A derived expectation needs its own non-emptiness check.
+    expect(definedNames.length).toBeGreaterThanOrEqual(10);
+    expect(definedNames.filter((n) => !paired.has(n))).toEqual([]);
+    expect(new Set(PAIRS.map((p) => p.slug)).size).toBe(PAIRS.length);
   });
 
   it.each(PAIRS)('$slug', ({ seeded, instance }) => {

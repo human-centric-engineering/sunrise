@@ -147,6 +147,29 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     throw new ForbiddenError('System capabilities cannot be deactivated');
   }
 
+  // Code-owned fields on a system capability are re-applied by the seed on
+  // every deploy whose seed-file hash changed (#545). Accepting an edit here
+  // would write it, log a `capability.update` audit entry, show the operator
+  // success — and then silently revert it later with no audit entry and no
+  // signal. Refusing is the honest failure: the edit never had a chance of
+  // being durable, so say so now rather than appear to work.
+  //
+  // `name`, `description`, `category`, `isActive` and `rateLimit` stay
+  // editable: the seed deliberately leaves those alone. See
+  // `.context/database/seeding.md` for the ownership split.
+  if (current.isSystem) {
+    const codeOwned = (['functionDefinition', 'executionType', 'executionHandler'] as const).filter(
+      (field) => body[field] !== undefined
+    );
+    if (codeOwned.length > 0) {
+      throw new ForbiddenError(
+        `System capabilities own ${codeOwned.join(', ')} in code — an edit here would be reverted ` +
+          `by the next re-seed. Change the capability class and its seed, or clone this capability ` +
+          `into a non-system one you own.`
+      );
+    }
+  }
+
   const data: Prisma.AiCapabilityUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
   if (body.slug !== undefined) data.slug = body.slug;

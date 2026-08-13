@@ -2,6 +2,7 @@ import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/pro
 import { Prisma } from '@prisma/client';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
+import { CAPABILITIES } from '@/lib/orchestration/model-audit/enums';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
 const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the Sunrise AI orchestration platform. Your role is to evaluate provider model entries for accuracy and freshness, proposing corrections where data is stale or incorrect.
@@ -206,16 +207,13 @@ export const ADD_PROVIDER_MODELS_DEFINITION = {
                 type: 'array',
                 items: {
                   type: 'string',
-                  enum: [
-                    'chat',
-                    'reasoning',
-                    'embedding',
-                    'audio',
-                    'image',
-                    'moderation',
-                    'vision',
-                    'documents',
-                  ],
+                  // Sourced, not spelled out: a hard-coded literal here drifted
+                  // in the past and made `validate_proposals` reject any
+                  // proposal containing 'vision' or 'documents'. This is the
+                  // constant the capability CLASS reads — note that is
+                  // `model-audit/enums`, not the same-valued `MODEL_CAPABILITIES`
+                  // in `types/orchestration` that this seed used to import.
+                  enum: [...CAPABILITIES],
                 },
                 description: 'Model capabilities.',
               },

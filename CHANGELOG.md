@@ -580,6 +580,17 @@ release process.
   missed the descriptions, and a description is how the model picks a
   parameter (#545).
 
+- **`PATCH /api/v1/admin/orchestration/capabilities/{id}` now rejects edits to
+  `functionDefinition`, `executionType` and `executionHandler` on a system
+  capability.** Those are re-applied by the seed on every deploy whose
+  seed-file hash changed, so accepting the write logged a `capability.update`
+  audit entry and reported success, then silently reverted later with no audit
+  entry and no signal. It returns 403 with the field named. `name`,
+  `description`, `category`, `isActive` and `rateLimit` stay editable — the
+  seed deliberately leaves those alone. **Fork-facing:** a workflow that edited
+  a built-in capability's schema through the admin API now fails loudly instead
+  of silently; clone the capability into a non-system one to own it (#545).
+
 - **A truncated response is no longer reported as a schema failure on the
   `runStructuredCompletion` and provider-adapter paths.**
   `runStructuredCompletion` never read `finishReason`, so a response cut off at

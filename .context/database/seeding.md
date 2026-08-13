@@ -139,6 +139,13 @@ await prisma.aiCapability.upsert({
 });
 ```
 
+The admin API enforces the same split: `PATCH /capabilities/{id}` **rejects** an edit to a code-owned field on an `isSystem` row. Accepting it would write the change, log a `capability.update` audit entry and report success — then the next re-seed would silently revert it, with no audit entry and no signal. The operator-owned fields stay editable.
+
+Two caveats when seeding a live box:
+
+- **Caches do not clear across processes.** The PATCH route pairs every `functionDefinition` write with `capabilityDispatcher.clearCache()`, `clearMcpToolCache()` and `broadcastMcpToolsChanged()`. `db:seed` runs in a different process and cannot, so a running app keeps serving the previous MCP `inputSchema` on `tools/list` for up to the dispatcher's 5-minute TTL. Restart the app after a seed that changes a capability, or wait it out.
+- **A re-seed only happens when the seed FILE hash changes** (plus any `hashInputs`). Editing a capability class alone will not trigger one — which is why the parity test below matters: it forces the seed constant to change whenever the class does, which is what moves the hash.
+
 Enforced by `tests/unit/prisma/seeds/capability-code-owned-fields.test.ts`, which parses every `aiCapability.upsert` in this directory and checks both directions. **The same shape applies to any seeded row with code-owned fields** — built-in agents' `systemInstructions` are the obvious next case, and the agent seeds are currently inconsistent about it (`008`/`016`/`017`/`018` re-apply them; `005`/`006`/`010` do not).
 
 **Self-contained.** Look up dependencies from the DB, don't pass them between units. For config ownership — `001-system-owner` seeds a non-login `system@sunrise.local` user (`role: ADMIN`, `accountType: SERVICE`, no credential) precisely so config-owning seeds always have a deterministic owner. Resolve it via the SERVICE predicate (not "first ADMIN", which is non-deterministic once humans exist):

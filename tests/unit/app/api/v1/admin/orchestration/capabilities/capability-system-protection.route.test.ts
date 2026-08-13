@@ -178,6 +178,49 @@ describe('System capability protection', () => {
       expect(mockUpdate).not.toHaveBeenCalled();
     });
 
+    it.each([
+      [
+        'functionDefinition',
+        { functionDefinition: { name: 'search_knowledge_base', description: 'd', parameters: {} } },
+      ],
+      ['executionType', { executionType: 'api' as const }],
+      ['executionHandler', { executionHandler: 'SomethingElse' }],
+    ])('refuses to edit %s on a system capability', async (field, body) => {
+      // Since #545 the seed re-applies these on every deploy whose seed-file
+      // hash changed. Accepting the write would log a `capability.update`
+      // audit entry, show the operator success, then silently revert it later
+      // with no audit entry at all. A 403 now beats a disappearing edit.
+      //
+      // The payloads are deliberately VALID — `functionDefinition.name` must
+      // equal the slug, `executionType` is an enum — so the request reaches
+      // the ownership guard rather than stopping at a 400, which would have
+      // made this test pass without ever exercising it.
+      mockFindUnique.mockResolvedValue(makeSystemCapability());
+
+      const response = await PATCH(makePatchRequest(body), makeParams(CAP_ID));
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.message).toContain(field);
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('still allows the operator-owned fields on a system capability', async () => {
+      // The other half of the ownership split: the seed leaves these alone, so
+      // the API must not lock them. Over-correcting here would make built-in
+      // capabilities unrenameable and untunable.
+      const cap = makeSystemCapability();
+      mockFindUnique.mockResolvedValue(cap);
+      mockUpdate.mockResolvedValue({ ...cap, name: 'Renamed' });
+
+      const response = await PATCH(
+        makePatchRequest({ name: 'Renamed', description: 'ours', rateLimit: 5 }),
+        makeParams(CAP_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+
     it('allows isActive: false on non-system capabilities', async () => {
       const cap = makeCustomCapability();
       mockFindUnique.mockResolvedValue(cap);
