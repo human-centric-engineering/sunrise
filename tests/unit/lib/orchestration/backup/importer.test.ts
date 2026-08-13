@@ -906,4 +906,54 @@ describe('importOrchestrationConfig — capability update', () => {
     expect(result.capabilities.updated).toBe(1);
     expect(result.capabilities.created).toBe(0);
   });
+
+  it('does not restore code-owned fields onto a SYSTEM capability', async () => {
+    // Those are seed-owned and re-applied on every deploy whose seed-file hash
+    // changed (#545), so writing them here would report `updated++`, look
+    // successful, and silently revert later with no audit entry — the same
+    // dishonest write the PATCH route refuses. The operator-owned half must
+    // still apply, or a routine restore would stop working.
+    mockTx.aiCapability.findUnique.mockResolvedValue({
+      id: 'cap-1',
+      slug: 'web-search',
+      isSystem: true,
+    });
+    mockTx.aiCapability.update.mockResolvedValue({});
+
+    await importOrchestrationConfig(
+      { ...minPayload, data: { ...minPayload.data, capabilities: [makeCapability()] } },
+      'user-1'
+    );
+
+    const data = (
+      mockTx.aiCapability.update.mock.calls[0]?.[0] as { data: Record<string, unknown> }
+    ).data;
+    expect(Object.keys(data)).not.toContain('functionDefinition');
+    expect(Object.keys(data)).not.toContain('executionType');
+    expect(Object.keys(data)).not.toContain('executionHandler');
+    expect(Object.keys(data)).not.toContain('isActive');
+    expect(data).toMatchObject({ name: expect.anything(), description: expect.anything() });
+  });
+
+  it('still restores every field onto a non-system capability', async () => {
+    // The other half: a capability the operator owns must round-trip whole.
+    mockTx.aiCapability.findUnique.mockResolvedValue({
+      id: 'cap-1',
+      slug: 'web-search',
+      isSystem: false,
+    });
+    mockTx.aiCapability.update.mockResolvedValue({});
+
+    await importOrchestrationConfig(
+      { ...minPayload, data: { ...minPayload.data, capabilities: [makeCapability()] } },
+      'user-1'
+    );
+
+    const data = (
+      mockTx.aiCapability.update.mock.calls[0]?.[0] as { data: Record<string, unknown> }
+    ).data;
+    expect(Object.keys(data)).toContain('functionDefinition');
+    expect(Object.keys(data)).toContain('executionHandler');
+    expect(Object.keys(data)).toContain('isActive');
+  });
 });

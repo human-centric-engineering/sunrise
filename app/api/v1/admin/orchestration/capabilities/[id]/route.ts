@@ -148,22 +148,43 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
 
   // Code-owned fields on a system capability are re-applied by the seed on
-  // every deploy whose seed-file hash changed (#545). Accepting an edit here
+  // every deploy whose seed-file hash changed (#545). Accepting a CHANGE here
   // would write it, log a `capability.update` audit entry, show the operator
   // success — and then silently revert it later with no audit entry and no
   // signal. Refusing is the honest failure: the edit never had a chance of
   // being durable, so say so now rather than appear to work.
   //
-  // `name`, `description`, `category`, `isActive` and `rateLimit` stay
-  // editable: the seed deliberately leaves those alone. See
-  // `.context/database/seeding.md` for the ownership split.
+  // Keyed on the value actually DIFFERING, not on the field being present.
+  // `capability-form.tsx` sends the whole form on every save — all three of
+  // these are defaulted in `useForm` and `functionDefinition` is always
+  // attached — so a presence check rejected every save of a system capability,
+  // including one that only touched the description. That made `name`,
+  // `description`, `category`, `rateLimit` and the safety settings uneditable
+  // through the only UI that edits capabilities, which is the opposite of the
+  // ownership split this enforces.
+  //
+  // `slug` is in the list because it is the seed's `where` key: renaming it
+  // makes the next upsert match nothing and CREATE A SECOND ROW for one
+  // built-in. That was only incidentally blocked, via the name/slug agreement
+  // check above, and only when the stored definition parses.
   if (current.isSystem) {
-    const codeOwned = (['functionDefinition', 'executionType', 'executionHandler'] as const).filter(
-      (field) => body[field] !== undefined
-    );
-    if (codeOwned.length > 0) {
+    const storedFn = JSON.stringify(current.functionDefinition ?? null);
+    const changed = [
+      body.functionDefinition !== undefined && JSON.stringify(body.functionDefinition) !== storedFn
+        ? 'functionDefinition'
+        : null,
+      body.executionType !== undefined && body.executionType !== current.executionType
+        ? 'executionType'
+        : null,
+      body.executionHandler !== undefined && body.executionHandler !== current.executionHandler
+        ? 'executionHandler'
+        : null,
+      body.slug !== undefined && body.slug !== current.slug ? 'slug' : null,
+    ].filter((f): f is string => f !== null);
+
+    if (changed.length > 0) {
       throw new ForbiddenError(
-        `System capabilities own ${codeOwned.join(', ')} in code — an edit here would be reverted ` +
+        `System capabilities own ${changed.join(', ')} in code — an edit here would be reverted ` +
           `by the next re-seed. Change the capability class and its seed, or clone this capability ` +
           `into a non-system one you own.`
       );

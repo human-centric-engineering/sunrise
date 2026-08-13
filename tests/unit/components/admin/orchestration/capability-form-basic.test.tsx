@@ -732,7 +732,13 @@ describe('CapabilityForm — Basic tab', () => {
         />
       );
 
-      expect(screen.getByText(/system capability managed by seed data/i)).toBeInTheDocument();
+      // Asserts the banner names what is actually protected. The old copy said
+      // "managed by seed data… you can edit its description, safety settings",
+      // which stopped being the whole story once the API began rejecting
+      // changes to the code-owned fields (#545) — an operator needs to know
+      // before they type, not from a 403.
+      expect(screen.getByText(/function definition and execution handler/i)).toBeInTheDocument();
+      expect(screen.getByText(/cannot be deleted or deactivated/i)).toBeInTheDocument();
     });
 
     it('does not show info banner for non-system capabilities', () => {
