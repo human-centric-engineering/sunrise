@@ -60,6 +60,35 @@ function displacedFunctionName(
   return stored.data.name === nextName ? null : stored.data.name;
 }
 
+/**
+ * JSON with object keys sorted at every level.
+ *
+ * `functionDefinition` is a `JSONB` column, and Postgres canonicalises jsonb
+ * key order (by key length, then bytewise) rather than preserving insertion
+ * order. Zod rebuilds the parsed body in SCHEMA order. So the same definition
+ * read from the database and echoed back by a client serialises to two
+ * different strings, and a plain `JSON.stringify` comparison calls a
+ * byte-identical value "changed" — which would 403 every save of a system
+ * capability, the very thing the change-not-presence check exists to avoid.
+ *
+ * Verified rather than reasoned: parsing `{name, parameters, description}`
+ * through `updateCapabilitySchema` yields `{name, description, parameters}`.
+ */
+function canonicalJson(value: unknown): string {
+  const sortKeys = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (v !== null && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([k, val]) => [k, sortKeys(val)])
+      );
+    }
+    return v;
+  };
+  return JSON.stringify(sortKeys(value));
+}
+
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
 
@@ -168,9 +197,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // built-in. That was only incidentally blocked, via the name/slug agreement
   // check above, and only when the stored definition parses.
   if (current.isSystem) {
-    const storedFn = JSON.stringify(current.functionDefinition ?? null);
+    const storedFn = canonicalJson(current.functionDefinition ?? null);
     const changed = [
-      body.functionDefinition !== undefined && JSON.stringify(body.functionDefinition) !== storedFn
+      body.functionDefinition !== undefined && canonicalJson(body.functionDefinition) !== storedFn
         ? 'functionDefinition'
         : null,
       body.executionType !== undefined && body.executionType !== current.executionType

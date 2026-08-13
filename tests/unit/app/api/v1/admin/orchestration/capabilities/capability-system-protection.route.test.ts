@@ -231,6 +231,37 @@ describe('System capability protection', () => {
       expect(mockUpdate).toHaveBeenCalled();
     });
 
+    it('accepts an echo of a definition stored in jsonb key order', async () => {
+      // `functionDefinition` is JSONB: Postgres canonicalises key order rather
+      // than preserving insertion order, and Zod rebuilds the parsed body in
+      // SCHEMA order. So the row read back and the client's echo of it
+      // serialise to different strings for a byte-identical value.
+      //
+      // Comparing with a plain JSON.stringify called that "changed" and 403'd
+      // every save — the same bug as the presence check, one layer down. Every
+      // other test here misses it because their stored object happens to be in
+      // schema order already.
+      const jsonbOrder = {
+        name: 'search_knowledge_base',
+        parameters: { type: 'object', properties: {} },
+        description: 'Semantic search over the knowledge base.',
+      };
+      const cap = makeSystemCapability({ functionDefinition: jsonbOrder });
+      mockFindUnique.mockResolvedValue(cap);
+      mockUpdate.mockResolvedValue({ ...cap, description: 'Reworded.' });
+
+      const response = await PATCH(
+        makePatchRequest({
+          ...fullFormPayload({ description: 'Reworded.' }),
+          functionDefinition: jsonbOrder,
+        }),
+        makeParams(CAP_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+
     it.each([
       [
         'functionDefinition',
