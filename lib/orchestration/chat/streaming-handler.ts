@@ -124,16 +124,22 @@ const TOOL_DISPATCH_TIMEOUT_MS = 30_000;
 /**
  * `ProviderError` codes that describe the REQUEST rather than the provider.
  *
- * These fail identically on every endpoint — the token cap and the schema come
- * from the agent's config and travel with the request — so the stream loop
- * neither fails over nor records a circuit-breaker failure for them. See the
- * catch in the stream loop for why this is a code list and not `retriable`.
+ * These fail identically on every endpoint — the token cap travels with the
+ * agent's config, not with the URL — so the stream loop neither fails over nor
+ * records a circuit-breaker failure for them. See the catch in the stream loop
+ * for why this is a code list and not `retriable`.
  *
- * Keep it narrow. Anything whose cause could differ between two vendors (a
- * 401, a 500, a timeout) belongs in the failover path, which is what fallback
+ * Deliberately one entry. `invalid_schema` (Anthropic, non-object-rooted
+ * schema) fits the same description and is the obvious next member, but it is
+ * unrelated to what #587 changed and adding it here would be an untested
+ * behaviour change smuggled in on the side; it belongs with the rest of the
+ * failover-policy work in #592.
+ *
+ * Anything whose cause could differ between two vendors — a 401, a 500, a
+ * timeout — must stay OUT, because routing around that is what fallback
  * providers exist for.
  */
-const REQUEST_FAULT_CODES = new Set(['truncated_no_output', 'invalid_schema']);
+const REQUEST_FAULT_CODES = new Set(['truncated_no_output']);
 
 /** Slug of the built-in knowledge-search capability (forced by knowledgeRetrievalMode). */
 const SEARCH_KNOWLEDGE_SLUG = 'search_knowledge_base';

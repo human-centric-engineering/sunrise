@@ -226,60 +226,65 @@ export async function runStructuredCompletion<T>(
     ...(opts.phase ? { [SUNRISE_EVALUATION_PHASE]: opts.phase } : {}),
   };
 
-  // One attempt. Returns `null` when the response was truncated at the cap —
-  // whether the provider raised that itself (both in-repo adapters do, for a
-  // structured extraction) or it came back as a `'length'` finish we have to
-  // notice here (a provider that ignores `responseFormat`, or a caller with
-  // no `responseSchema` at all).
+  // One attempt. Resolves `null` when the response was truncated at the cap,
+  // reached either way: the provider raised it (both in-repo adapters do, for
+  // a structured extraction) or it came back as a `'length'` finish we notice
+  // here (a provider that ignores `responseFormat`, or no `responseSchema` at
+  // all). From here the two are the same event.
   //
-  // Collapsing the provider's throw into the same `null` as our own check is
-  // the point: from here the two are the same event, and neither should be
-  // able to end the call on its own. See the retry note below.
+  // The truncation is thrown INSIDE `withSpan` and caught outside it, rather
+  // than returned as `null` from the callback. That is load-bearing:
+  // `withSpan` stamps `{ code: 'ok' }` on any normal return, so returning
+  // early would file a truncated attempt in the trace as a success — hiding
+  // the exact fault this module exists to make visible.
   const attempt = async (
     messages: LlmMessage[],
     attemptTemperature: number
   ): Promise<{ response: LlmResponse; parsed: T | null } | null> => {
+    // Note this is a fresh deadline per attempt, so `timeoutMs` bounds each
+    // call and not the sequence — two attempts can take 2 × `timeoutMs`. That
+    // is long-standing behaviour (both attempts always built their own
+    // signal); the comment that used to sit here claimed the opposite.
     const signal = AbortSignal.timeout(timeoutMs);
-    return withSpan(
-      SPAN_LLM_CALL,
-      {
-        ...phaseAttrs,
-        [GEN_AI_REQUEST_TEMPERATURE]: attemptTemperature,
-        [GEN_AI_REQUEST_MAX_TOKENS]: maxTokens,
-      },
-      async (span) => {
-        let response: LlmResponse;
-        try {
-          response = await opts.provider.chat(messages, {
+    try {
+      return await withSpan(
+        SPAN_LLM_CALL,
+        {
+          ...phaseAttrs,
+          [GEN_AI_REQUEST_TEMPERATURE]: attemptTemperature,
+          [GEN_AI_REQUEST_MAX_TOKENS]: maxTokens,
+        },
+        async (span) => {
+          const response = await opts.provider.chat(messages, {
             model: opts.model,
             temperature: attemptTemperature,
             maxTokens,
-            // Both halves: the signal bounds the whole attempt sequence (it is
-            // absolute, so retries share it), `timeoutMs` caps the individual
-            // HTTP request inside the provider SDK.
+            // `timeoutMs` also caps the individual HTTP request inside the
+            // provider SDK; `signal` aborts it from out here.
             timeoutMs,
             signal,
             ...(responseFormat ? { responseFormat } : {}),
           });
-        } catch (err) {
-          if (err instanceof ProviderError && err.code === 'truncated_no_output') return null;
-          throw err;
+          setSpanAttributes(span, {
+            [GEN_AI_RESPONSE_MODEL]: opts.model,
+            [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
+            [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
+            [GEN_AI_USAGE_TOTAL_TOKENS]: response.usage.inputTokens + response.usage.outputTokens,
+          });
+          const parsed = opts.parse(response.content);
+          // Unparseable AND cut off at the cap. A `'length'` finish that still
+          // parses is NOT a truncation for our purposes — the caller got its
+          // value, and `finishReason` on the result lets it judge.
+          if (parsed === null && response.finishReason === 'length') {
+            throw truncationError(opts.model, maxTokens);
+          }
+          return { response, parsed };
         }
-        setSpanAttributes(span, {
-          [GEN_AI_RESPONSE_MODEL]: opts.model,
-          [GEN_AI_USAGE_INPUT_TOKENS]: response.usage.inputTokens,
-          [GEN_AI_USAGE_OUTPUT_TOKENS]: response.usage.outputTokens,
-          [GEN_AI_USAGE_TOTAL_TOKENS]: response.usage.inputTokens + response.usage.outputTokens,
-        });
-        const parsed = opts.parse(response.content);
-        // Unparseable AND cut off at the cap — the same event the adapter
-        // raises above, just reached the other way. A `'length'` finish that
-        // still parses is NOT a truncation for our purposes: the caller got
-        // its value, and `finishReason` on the result lets it judge.
-        if (parsed === null && response.finishReason === 'length') return null;
-        return { response, parsed };
-      }
-    );
+      );
+    } catch (err) {
+      if (err instanceof ProviderError && err.code === 'truncated_no_output') return null;
+      throw err;
+    }
   };
 
   const first = await attempt(opts.messages, temperature);
@@ -294,31 +299,19 @@ export async function runStructuredCompletion<T>(
     };
   }
 
-  // A truncation gets the retry too, and deliberately so.
+  // A truncation gets the retry too. Skipping it needs "the same cap cannot
+  // fit this", and the only signal available is `responseFormat` — which
+  // records what we SENT, not what the server honoured. Plenty of hosts
+  // ignore it (Ollama, LM Studio, vLLM, older gateways) and can still emit a
+  // preamble the retry's "respond ONLY with a JSON object" would remove. Skip
+  // on that proxy and a recoverable call hard-fails; run it and a doomed one
+  // costs a call. Not symmetric, so it runs.
   //
-  // The tempting optimisation is to skip it — the issue asked for that, and an
-  // earlier version of this did it. Both rested on the idea that a second call
-  // at the same cap cannot succeed. It can: the retry says "respond ONLY with
-  // a JSON object" at temperature 0, which is the fix for the commonest
-  // truncation there is — a chatty model spending the budget introducing its
-  // answer before starting the JSON.
-  //
-  // That leaves only "was the shape provider-ENFORCED, so there is no preamble
-  // to remove?" — and nothing here can answer it. `responseFormat` records
-  // what we SENT, not what the server honoured, and this class explicitly
-  // targets hosts that ignore it (Ollama, LM Studio, vLLM, older gateways).
-  // Using it as a proxy hard-fails a call the retry would have recovered,
-  // against the cross-provider safety net promised in `responseSchema`'s own
-  // docs above.
-  //
-  // So: spend one extra call on the genuinely-doomed case rather than break
-  // the recoverable one. The errors are not symmetric.
-  //
-  // (And NOT because the retry appends a message: `max_tokens` /
+  // Not, note, because the retry appends a message: `max_tokens` /
   // `max_completion_tokens` bound the COMPLETION on both providers, so prompt
-  // length does not shrink the output budget. Don't reintroduce that.)
+  // length does not shrink the output budget.
   //
-  // We do NOT include the malformed prior response — never trust output that
+  // The malformed prior response is NOT included — never trust output that
   // just misbehaved as part of a subsequent prompt.
   const retry = await attempt(
     [...opts.messages, { role: 'user', content: opts.retryUserMessage }],

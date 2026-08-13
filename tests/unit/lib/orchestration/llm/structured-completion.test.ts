@@ -9,13 +9,17 @@
  *  - responseSchema forwarding (absent / empty / named / strict on-off)
  *  - malformed first AND retry → throws (with caller's onFinalFailure if
  *    supplied, otherwise default error)
- *  - truncation (`finishReason: 'length'`) is reported as truncation rather
- *    than as a schema failure, and does not buy a second doomed attempt (#587)
+ *  - truncation (#587): reported as truncation rather than as a schema
+ *    failure, reached either from a `'length'` finish or from the adapter's
+ *    own `truncated_no_output` throw, and still retried in both cases
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { SPAN_LLM_CALL } from '@/lib/orchestration/tracing';
+import { registerTracer, resetTracer } from '@/lib/orchestration/tracing/registry';
+import { MockTracer } from '@/tests/helpers/mock-tracer';
 import type { LlmFinishReason } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
@@ -381,6 +385,40 @@ describe('runStructuredCompletion', () => {
         })
       ).rejects.toThrow(/truncated at maxTokens \(2048\)/);
       expect(chat).toHaveBeenCalledTimes(2);
+    });
+
+    it('records a truncated attempt as a FAILED span, not a successful one', async () => {
+      // `withSpan` stamps `{ code: 'ok' }` on any normal return, so an early
+      // `return` from the callback would file the truncated attempt in the
+      // trace as a success — hiding the one fault this work exists to make
+      // diagnosable, in the exact place an operator goes to look for it. The
+      // truncation is therefore thrown inside the span and caught outside.
+      const tracer = new MockTracer();
+      registerTracer(tracer);
+      try {
+        const provider = makeProvider([
+          { content: CUT_OFF, finishReason: 'length' },
+          { content: '{"ok":true}', finishReason: 'stop' },
+        ]);
+
+        await runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+        });
+
+        const llmSpans = tracer.spans.filter((s) => s.name === SPAN_LLM_CALL);
+        expect(llmSpans).toHaveLength(2);
+        expect(llmSpans[0]?.status).toMatchObject({ code: 'error' });
+        // ...and names the cap, so the trace alone is enough to diagnose it.
+        expect(llmSpans[0]?.status?.message).toMatch(/truncated at maxTokens/);
+        // The recovered retry is still recorded as the success it was.
+        expect(llmSpans[1]?.status).toMatchObject({ code: 'ok' });
+      } finally {
+        resetTracer();
+      }
     });
 
     it('lets a non-truncation provider error escape immediately', async () => {
