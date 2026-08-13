@@ -328,7 +328,13 @@ export class AnthropicProvider implements LlmProvider {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
-        { code: 'truncated_no_output', retriable: false, usage: { inputTokens, outputTokens } }
+        {
+          code: 'truncated_no_output',
+          retriable: false,
+          // Only when the stream actually reported usage — a zeroed cost row
+          // would tell the dashboard this turn was free.
+          ...(inputTokens > 0 || outputTokens > 0 ? { usage: { inputTokens, outputTokens } } : {}),
+        }
       );
     }
 

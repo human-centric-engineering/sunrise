@@ -439,6 +439,70 @@ describe('chat', () => {
     expect(response.finishReason).toBe('length');
   });
 
+  it("accepts a complete object inside a code fence, as the callers' parser does", async () => {
+    // A host that ignores `response_format` (Ollama, LM Studio, vLLM) can
+    // still fence its JSON. `tryParseJson` strips one fence and would have
+    // accepted this; a guard stricter than the parser it protects turns a
+    // usable response into a hard failure — and on the streaming and
+    // llm_call paths there is no retry to save it.
+    chatCreateMock.mockResolvedValue(
+      makeChatCompletion('```json\n{"dimension":"clarity"}\n```', 'length')
+    );
+
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+      responseFormat: { type: 'json_schema', name: 'judgement', schema: { type: 'object' } },
+    });
+
+    expect(response.finishReason).toBe('length');
+  });
+
+  it('still flags a fence whose object never closed', async () => {
+    // Guards the leniency above from going too far.
+    chatCreateMock.mockResolvedValue(makeChatCompletion('```json\n{"dimension":"clar', 'length'));
+
+    const provider = makeProvider();
+    await expect(
+      provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'gpt-5',
+        responseFormat: { type: 'json_schema', name: 'judgement', schema: { type: 'object' } },
+      })
+    ).rejects.toMatchObject({ code: 'truncated_no_output' });
+  });
+
+  it('omits usage from the truncation error when the host reported none', async () => {
+    // `{0, 0}` is truthy at the call site, so it would write a $0 cost row for
+    // a full-cap turn — "this turn was free" is a worse lie than the missing
+    // row it replaced. Local hosts that ignore `stream_options` do this.
+    chatCreateMock.mockResolvedValue({
+      id: 'cmpl-test',
+      model: 'local-model',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: '{"partial', tool_calls: null },
+          finish_reason: 'length',
+        },
+      ],
+      usage: null,
+    });
+
+    const provider = makeLocalProvider();
+    let caught: unknown;
+    try {
+      await provider.chat([{ role: 'user', content: 'x' }], {
+        model: 'local-model',
+        responseFormat: { type: 'json_schema', name: 'j', schema: { type: 'object' } },
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+    expect((caught as { usage?: unknown }).usage).toBeUndefined();
+  });
+
   it('does not flag a truncated tool-calling turn that also carries a responseFormat', async () => {
     // Arrange — with tools in play a `length` stop is the ordinary
     // partial-output case, not a broken extraction: the model may be

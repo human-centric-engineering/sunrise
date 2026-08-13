@@ -2137,6 +2137,50 @@ describe('StreamingChatHandler', () => {
       );
     });
 
+    it('keeps error markers out of the prompt on the next turn', async () => {
+      // The marker exists so the CLIENT can render a failed turn. Feeding
+      // "[An error occurred...]" back to the model burns context and invites
+      // imitation for the rest of the conversation — and now that every
+      // ProviderError persists one, it would happen on ordinary 429/503
+      // exhaustion too, where previously no row existed at all.
+      (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'first question',
+          metadata: null,
+          createdAt: new Date(),
+        },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: '[An error occurred and the response could not be completed.]',
+          metadata: { error: true, errorCode: 'truncated_no_output' },
+          createdAt: new Date(),
+        },
+      ]);
+
+      const provider = mockProvider([
+        [
+          { type: 'text', content: 'ok' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+
+      const sent = (provider.chatStream as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as Array<{
+        content: string;
+      }>;
+      expect(sent.some((m) => String(m.content).includes('An error occurred'))).toBe(false);
+      // The genuine turn is still there — this filters markers, not history.
+      expect(sent.some((m) => String(m.content).includes('first question'))).toBe(true);
+    });
+
     it('cost-logs a truncated turn the vendor already billed', async () => {
       // The `done` chunk normally carries usage and never arrives here, so
       // the turn was charged and AiCostLog showed nothing. The guard attaches

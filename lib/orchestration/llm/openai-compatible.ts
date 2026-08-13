@@ -85,13 +85,25 @@ import { getTextContent } from '@/lib/orchestration/llm/types';
  * `stop_reason` alone, and must keep doing so.
  */
 function isCompleteJson(text: string): boolean {
-  if (text.trim().length === 0) return false;
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  // Mirrors `tryParseJson`/`stripCodeFence` in
+  // `evaluations/parse-structured.ts` — raw first, then one unwrapped code
+  // fence. A guard that is STRICTER than the parser it protects turns a
+  // response the caller would have accepted into a hard failure, which is
+  // the same class of bug as not guarding at all. Deliberately no more
+  // lenient either: digging a complete object out of surrounding prose would
+  // let a genuinely truncated response through. (Duplicated rather than
+  // imported — this module must not depend on `evaluations/`.)
+  for (const candidate of [trimmed, trimmed.replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, '$1')]) {
+    try {
+      JSON.parse(candidate);
+      return true;
+    } catch {
+      // try the next candidate
+    }
   }
+  return false;
 }
 
 /** Sentinel API key for local servers that require *something* in the header. */
@@ -267,10 +279,17 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           retriable: false,
           // The call was billed in full even though it produced nothing
           // usable — carry it so the caller's error path can still cost it.
-          usage: {
-            inputTokens: completion.usage?.prompt_tokens ?? 0,
-            outputTokens: completion.usage?.completion_tokens ?? 0,
-          },
+          // Omitted entirely when the host reported nothing: a zeroed row
+          // would tell the cost dashboard this turn was free, which is a
+          // worse lie than the missing row it replaced.
+          ...(completion.usage
+            ? {
+                usage: {
+                  inputTokens: completion.usage.prompt_tokens ?? 0,
+                  outputTokens: completion.usage.completion_tokens ?? 0,
+                },
+              }
+            : {}),
         }
       );
     }
@@ -389,9 +408,15 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_completion_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
-        // `stream_options.include_usage` means the usage chunk has already
-        // been consumed by the loop above, so these are the real figures.
-        { code: 'truncated_no_output', retriable: false, usage: { inputTokens, outputTokens } }
+        // `stream_options.include_usage` asks for a final usage chunk, and
+        // the loop above has already consumed it — but a local host or
+        // gateway may ignore the option, in which case these are still 0 and
+        // a zeroed cost row would read as "this turn was free".
+        {
+          code: 'truncated_no_output',
+          retriable: false,
+          ...(inputTokens > 0 || outputTokens > 0 ? { usage: { inputTokens, outputTokens } } : {}),
+        }
       );
     }
 

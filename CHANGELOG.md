@@ -411,6 +411,16 @@ release process.
   also now persists an error-marker assistant message, so a failed turn no
   longer reloads as a user question with no answer (#587).
 
+- **Error-marker assistant messages are no longer replayed into the prompt.**
+  `loadHistory` returned them like any other turn, so
+  `[An error occurred and the response could not be completed.]` became a
+  permanent part of the model's context — burning tokens and inviting
+  imitation — for the rest of the conversation. They are persisted for the
+  *client*, so a failed turn renders instead of an unanswered question, and are
+  now filtered out of prompt rebuilding. Pre-existing, but newly common: this
+  release persists a marker for every `ProviderError` reaching the outer catch,
+  where previously an exhausted 429/503 left no row at all (#587).
+
 - **A request-fault provider failure is no longer retried by workflow steps.**
   `ExecutorError` defaults to `retriable: true`, and `llm_call`, `chat_turn`
   and `agent_call` all wrapped a `provider.chat()` throw at that default — so a

@@ -2530,7 +2530,20 @@ export class StreamingChatHandler {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 200,
     });
-    return messages.reverse();
+    // Drop error markers. They exist so the CLIENT can show a failed turn
+    // instead of an unanswered question; this history is only ever used to
+    // rebuild the prompt (`historyRows`, the summary threshold, the
+    // first-turn check) and never returned to a caller. Feeding
+    // "[An error occurred and the response could not be completed.]" back to
+    // the model burns context and invites imitation, for the rest of the
+    // conversation. Excluded in JS rather than the `where` because the flag
+    // lives in a JSON column.
+    return messages
+      .filter((m) => {
+        const metadata = (m.metadata ?? null) as MessageMetadata | null;
+        return metadata?.error !== true;
+      })
+      .reverse();
   }
 
   /**
