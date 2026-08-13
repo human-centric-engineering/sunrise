@@ -209,7 +209,12 @@ public-surface contract behind the bump decision lives in
    be up to seven days stale at the moment you cut:
 
    ```bash
-   gh workflow run dependency-audit.yml && gh run watch
+   gh workflow run dependency-audit.yml
+   # `gh workflow run` returns before the run exists, so `gh run watch` with no
+   # id would attach to the previous (scheduled) run. Give it a moment, then
+   # watch the newest one by id:
+   sleep 10 && gh run watch "$(gh run list --workflow dependency-audit.yml \
+     --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
 
    Its `lockfile-libc` job is the **absolute** platform-metadata check — it asks

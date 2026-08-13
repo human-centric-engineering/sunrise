@@ -7,13 +7,13 @@ repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 
 ## Workflows
 
-| File                                      | Trigger                      | Purpose                                                            |
-| ----------------------------------------- | ---------------------------- | ------------------------------------------------------------------ |
-| `.github/workflows/ci.yml`                | push to `main`, PR to `main` | Type-check, lint/format, build, tests, erasure smoke, Docker build |
-| `.github/workflows/codeql.yml`            | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)      |
-| `.github/workflows/dependency-review.yml` | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)    |
-| `.github/workflows/secret-scan.yml`       | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                       |
-| `.github/workflows/dependency-audit.yml`  | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness |
+| File                                      | Trigger                      | Purpose                                                                                             |
+| ----------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`                | push to `main`, PR to `main` | Type-check, lint/format, build, tests, erasure smoke, Docker build + stack smoke, lockfile metadata |
+| `.github/workflows/codeql.yml`            | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                       |
+| `.github/workflows/dependency-review.yml` | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                     |
+| `.github/workflows/secret-scan.yml`       | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                                                        |
+| `.github/workflows/dependency-audit.yml`  | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                  |
 
 ## `ci.yml` shape
 
@@ -27,7 +27,8 @@ config ──┬─ typecheck
          ├─ test-full   (4-way shard matrix)   ┐ exactly one test
          ├─ test-changed (single, PR only)     ┘ job runs (see below)
          ├─ smoke — account erasure (real DB)
-         └─ docker — build + prod-stack smoke  (parallel; gated on PRs)
+         ├─ docker — build + prod-stack smoke  (parallel; gated on PRs)
+         └─ lockfile — platform metadata       (PRs touching the manifest)
                                    └─ ci-status (branch-protection gate)
 ```
 
@@ -206,6 +207,21 @@ These help both repo types and cost nothing, so they're always on:
   modes are opaque, this job's cost is visible and already path-gated. A fork
   that must drop it edits the one `if:` line, and accepts that the compose stack
   is then unverified. Watch disk rather than minutes: three loaded images.
+
+- **Lockfile metadata on manifest PRs** — the `lockfile` job runs
+  `check:lockfile` whenever `package.json` or `package-lock.json` moves (a
+  `deps` output from `config`, alongside `code` and `docker`). It is the
+  **offline diff** check — it compares the two revisions' own contents and
+  makes no registry calls — which is what makes it safe as a PR gate; the
+  absolute counterpart (`fix:lockfile-libc --check`, ~1,400 registry requests)
+  stays on the weekly schedule in `dependency-audit.yml`.
+
+  It exists because `/pre-pr` runs this check locally and **Dependabot PRs never
+  run `/pre-pr`**. npm below 11.11.0 deletes `libc` from every entry it writes,
+  on every platform, and the result installs fine locally and wrong on Alpine —
+  #571 shipped that way for two releases. Restricted to `pull_request`: on a
+  push to `main` the merge base is HEAD, so the job would diff the tree against
+  itself and pass on anything.
 
 ### Knob 1: `CI_TEST_SCOPE`
 

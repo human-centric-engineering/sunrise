@@ -280,13 +280,20 @@ export function diffLockfiles(
     // An entry with no `version` cannot be matched, so it falls through to the
     // check below rather than being skipped: for a supply-chain guard, the safe
     // default is to report.
+    //
+    // Two independent reasons to keep looking, because keying on the version
+    // ALONE was the second wrong answer here: `npm update` bumps and
+    // restructures in one operation, so a nested native package that is
+    // upgraded while being hoisted has no same-version survivor and was skipped
+    // entirely — silencing the exact signature the header calls "the operation
+    // this rule exists to catch". A survivor at a path that did not exist in
+    // the base is movement, whatever the version says.
     const removedVersion = basePackages[name].version;
-    if (
+    const sameResolutionSurvives =
       removedVersion !== undefined &&
-      !survivors.some(({ entry }) => entry.version === removedVersion)
-    ) {
-      continue;
-    }
+      survivors.some(({ entry }) => entry.version === removedVersion);
+    const landedSomewhereNew = survivors.some(({ path }) => !(path in basePackages));
+    if (!sameResolutionSurvives && !landedSomewhereNew) continue;
 
     // Lost only if EVERY surviving copy lacks the key — one intact copy means
     // the metadata is still in the tree. Deliberately still spans *all*

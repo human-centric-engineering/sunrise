@@ -219,6 +219,37 @@ describe('diffLockfiles', () => {
       expect(diff.removed).toContain('node_modules/ui/node_modules/sharp-wasm32');
     });
 
+    it('still fires on a hoist AND upgrade in one operation', () => {
+      // `npm update` does both at once, which is why the header calls it the
+      // operation this rule exists to catch. Keying the dedup guard on the
+      // version alone skipped it — the upgraded copy is at a new path with a
+      // new version, so no same-version survivor exists — and the same-path
+      // loop never sees it either, because the path changed. The loss was
+      // invisible in every field of the diff.
+      const base: Lockfile = {
+        packages: {
+          'node_modules/pdf/node_modules/sharp-linux-x64': {
+            version: '0.33.5',
+            os: ['linux'],
+            cpu: ['x64'],
+            libc: ['musl'],
+          },
+        },
+      };
+      const hoistedUpgradedStripped: Lockfile = {
+        packages: {
+          'node_modules/sharp-linux-x64': { version: '0.34.0', os: ['linux'], cpu: ['x64'] },
+        },
+      };
+
+      const diff = diffLockfiles(base, hoistedUpgradedStripped);
+
+      expect(diff.lostNativeMetadata).toEqual([
+        { name: 'node_modules/pdf/node_modules/sharp-linux-x64', keys: ['libc'] },
+      ]);
+      expect(hasRisk(diff)).toBe(true);
+    });
+
     it('still fires when the SAME version is deduped into an un-annotated copy', () => {
       // The dedup guard must key on the removed *resolution*, not on its path
       // having pre-existed. Here 1.0.0 was in the tree twice with `libc` and

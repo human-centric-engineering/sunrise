@@ -384,8 +384,9 @@ release process.
   configuration must supply those values another way — compose `env_file`,
   `docker run --env-file`, or the platform's environment settings — or they
   will read as `undefined` in a container that otherwise starts cleanly.
-  Note `.env.production` is **not** in `.gitignore` either, so check you have
-  not committed one (#583).
+  `.gitignore` used to have the same hole; it is closed in the same release
+  (see the `.gitignore` entry above), but that does not untrack a file already
+  committed — check you have not committed one (#583).
 
 - **The production runtime image no longer contains the Prisma CLI** — nor the
   schema, the migrations, or `prisma.config.ts`. **Action required if you run Prisma inside
