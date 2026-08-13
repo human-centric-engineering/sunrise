@@ -15,6 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 import type { LlmFinishReason } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
@@ -269,51 +270,13 @@ describe('runStructuredCompletion', () => {
     // from the content alone, and only `finishReason` tells them apart.
     const CUT_OFF = '{"ok":tr';
 
-    it('skips the retry when the shape was provider-enforced and the cap was hit', async () => {
-      // With `responseSchema` forwarded, the provider constrained the output
-      // to the object — every token went into it, and there is no preamble
-      // for the stricter retry prompt to remove. The same object meets the
-      // same cap, so the second call is knowably wasted.
-      const provider = makeProvider([
-        {
-          content: CUT_OFF,
-          usage: { inputTokens: 40, outputTokens: 2048 },
-          finishReason: 'length',
-        },
-        { content: '{"ok":true}' },
-      ]);
-
-      let caught: unknown;
-      try {
-        await runStructuredCompletion<DummyShape>({
-          provider,
-          model: 'gpt-5.4',
-          messages: [{ role: 'user', content: 'go' }],
-          parse: dummyParse,
-          retryUserMessage: 'STRICT',
-          maxTokens: 2048,
-          responseSchema: { type: 'object', properties: { ok: { type: 'boolean' } } },
-        });
-      } catch (err) {
-        caught = err;
-      }
-
-      // The message has to name the real fault. "not valid against the
-      // schema" sends the operator to edit a schema that was never wrong.
-      expect((caught as Error).message).toMatch(/truncat/i);
-      expect((caught as Error).message).toMatch(/2048/);
-      expect((caught as { code?: string }).code).toBe('truncated_no_output');
-      expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
-    });
-
-    it('still retries an unenforced truncation, where the stricter prompt is a real remedy', async () => {
-      // No `responseSchema`: the shape is only a request in the prose, so a
-      // chatty model can spend the budget introducing its answer and get cut
+    it('retries a truncation — the stricter prompt is a real remedy', async () => {
+      // A chatty model spent the budget introducing its answer and got cut
       // off before finishing the JSON. "Respond ONLY with a JSON object" at
-      // temperature 0 fixes exactly that, and the cap bounds the COMPLETION —
-      // appending the retry message does not shrink the output budget.
-      // Skipping this retry would hard-fail a recoverable call and blame a
-      // token cap that was adequate.
+      // temperature 0 fixes exactly that, and the cap bounds the COMPLETION,
+      // so appending the retry message does not shrink the output budget.
+      // Skipping this retry hard-fails a recoverable call and blames a token
+      // cap that was adequate.
       const provider = makeProvider([
         { content: `here is my considered answer: ${CUT_OFF}`, finishReason: 'length' },
         { content: '{"ok":true}', finishReason: 'stop' },
@@ -332,7 +295,117 @@ describe('runStructuredCompletion', () => {
       expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
     });
 
-    it('reports truncation when an unenforced retry is cut off too', async () => {
+    it('retries even when a responseSchema was sent — sent is not honoured', async () => {
+      // The proxy that looks right and is not: `responseSchema` records what
+      // was SENT. `OpenAiCompatibleProvider` targets hosts that ignore
+      // `response_format` (Ollama, LM Studio, vLLM, older gateways), and one
+      // of those can still emit a preamble and get cut off. Skipping the
+      // retry here breaks the cross-provider safety net that `responseSchema`
+      // documents ("`parse` plus the existing temp-0 retry").
+      const provider = makeProvider([
+        { content: `Sure! Here's the JSON: ${CUT_OFF}`, finishReason: 'length' },
+        { content: '{"ok":true}', finishReason: 'stop' },
+      ]);
+
+      const result = await runStructuredCompletion<DummyShape>({
+        provider,
+        model: 'llama-3.3-70b',
+        messages: [{ role: 'user', content: 'go' }],
+        parse: dummyParse,
+        retryUserMessage: 'Respond ONLY with a JSON object.',
+        maxTokens: 1500,
+        responseSchema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+      });
+
+      expect(result.value).toEqual({ ok: true });
+      expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    });
+
+    it('recovers when the ADAPTER throws the truncation rather than returning it', async () => {
+      // Both in-repo adapters raise `truncated_no_output` from inside
+      // `provider.chat` for a structured extraction, so on that path the
+      // runner never sees a `'length'` finish — it sees an exception. If that
+      // escapes, the retry never runs and a recoverable call hard-fails.
+      const chat = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new ProviderError('Model "gpt-5" hit max_completion_tokens', {
+            code: 'truncated_no_output',
+            retriable: false,
+          })
+        )
+        .mockResolvedValueOnce({
+          content: '{"ok":true}',
+          usage: { inputTokens: 5, outputTokens: 3 },
+          finishReason: 'stop',
+        });
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const result = await runStructuredCompletion<DummyShape>({
+        provider,
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'go' }],
+        parse: dummyParse,
+        retryUserMessage: 'Respond ONLY with a JSON object.',
+        responseSchema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+      });
+
+      expect(result.value).toEqual({ ok: true });
+      expect(chat).toHaveBeenCalledTimes(2);
+      // The thrown attempt reported no usage, so only the retry's is counted.
+      expect(result.tokenUsage).toEqual({ input: 5, output: 3 });
+    });
+
+    it('reports truncation when the adapter throws on both attempts', async () => {
+      const truncated = () =>
+        new ProviderError('hit max_completion_tokens', {
+          code: 'truncated_no_output',
+          retriable: false,
+        });
+      const chat = vi.fn().mockRejectedValue(truncated());
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      await expect(
+        runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+          maxTokens: 2048,
+          responseSchema: { type: 'object' },
+        })
+      ).rejects.toThrow(/truncated at maxTokens \(2048\)/);
+      expect(chat).toHaveBeenCalledTimes(2);
+    });
+
+    it('lets a non-truncation provider error escape immediately', async () => {
+      // Only `truncated_no_output` is absorbed into the retry. A 401 or a
+      // network fault must not be turned into a second call.
+      const chat = vi
+        .fn()
+        .mockRejectedValue(new ProviderError('bad key', { code: 'http_401', retriable: false }));
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      await expect(
+        runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+        })
+      ).rejects.toThrow('bad key');
+      expect(chat).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports truncation when the retry is cut off too', async () => {
       // The retry earned its call and still ran out of room — now the cap
       // genuinely is the fault, and the error says so rather than blaming
       // the schema.

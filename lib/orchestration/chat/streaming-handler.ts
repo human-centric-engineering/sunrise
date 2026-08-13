@@ -121,6 +121,20 @@ import {
 /** Maximum time (ms) a single tool dispatch can run before being timed out. */
 const TOOL_DISPATCH_TIMEOUT_MS = 30_000;
 
+/**
+ * `ProviderError` codes that describe the REQUEST rather than the provider.
+ *
+ * These fail identically on every endpoint — the token cap and the schema come
+ * from the agent's config and travel with the request — so the stream loop
+ * neither fails over nor records a circuit-breaker failure for them. See the
+ * catch in the stream loop for why this is a code list and not `retriable`.
+ *
+ * Keep it narrow. Anything whose cause could differ between two vendors (a
+ * 401, a 500, a timeout) belongs in the failover path, which is what fallback
+ * providers exist for.
+ */
+const REQUEST_FAULT_CODES = new Set(['truncated_no_output', 'invalid_schema']);
+
 /** Slug of the built-in knowledge-search capability (forced by knowledgeRetrievalMode). */
 const SEARCH_KNOWLEDGE_SLUG = 'search_knowledge_base';
 
@@ -1194,6 +1208,30 @@ export class StreamingChatHandler {
                 setSpanStatus(llmSpan, { code: 'ok' });
               } catch (streamErr) {
                 streamRetries++;
+
+                // A fault in the REQUEST, not in the provider. Every provider
+                // will reject it identically — the token cap and the schema
+                // travel with the agent config, not with the endpoint — so
+                // failing over just buys the same failure at another vendor's
+                // price, and the visitor watches content stream in and get
+                // wiped by a `content_reset` for each attempt.
+                //
+                // Not keyed on `retriable`: `toProviderError` marks every 4xx
+                // non-retriable, and failing over on a 401 from a provider
+                // with a stale key is exactly what a fallback is FOR. The
+                // question is whether the error is about the provider's
+                // health or about what we asked it for.
+                //
+                // Recording a breaker failure would be worse than the wasted
+                // call. The breaker exists to route around a sick provider;
+                // one agent's `maxTokens` being too low is not evidence about
+                // provider health, and at `failureThreshold: 5` a couple of
+                // bad turns would open it for every other agent on that slug.
+                if (streamErr instanceof ProviderError && REQUEST_FAULT_CODES.has(streamErr.code)) {
+                  setSpanStatus(llmSpan, { code: 'error', message: streamErr.message });
+                  throw streamErr;
+                }
+
                 getBreaker(currentProviderSlug).recordFailure();
 
                 // If aborted, don't retry. Throw to let `withSpanGenerator`

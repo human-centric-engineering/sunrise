@@ -377,13 +377,25 @@ release process.
   salvaging partial JSON from a truncated extraction will now see a thrown
   error instead — raise `maxTokens`. A turn that carries tools is unaffected:
   a `length` stop there is the ordinary partial-output case.
-  `runStructuredCompletion` correspondingly **skips its retry** on a truncation
-  **when a `responseSchema` was enforced** — the provider constrained the
-  output, so there is no preamble a stricter prompt could remove and the same
-  object meets the same cap. Without enforcement the retry still runs. In
-  either case it does **not** consult the caller's `onFinalFailure` hook, which
-  exists to phrase "the model broke my contract" — a premise that is false
-  here (#587).
+  `runStructuredCompletion` keeps its retry on a truncation and now absorbs the
+  adapter's throw to get there — the stricter temp-0 retry prompt is a real
+  remedy for the commonest truncation of all, a model spending the budget on a
+  preamble before starting the JSON. Once both attempts are spent it does
+  **not** consult the caller's `onFinalFailure` hook, which exists to phrase
+  "the model broke my contract" — a premise that is false here (#587).
+
+- **A chat stream no longer fails over to another provider when the fault is in
+  the request.** `ProviderError`s whose cause travels with the request rather
+  than the endpoint — currently `truncated_no_output` and `invalid_schema` —
+  end the turn instead of retrying against each configured fallback and
+  recording a circuit-breaker failure for every one. The cap and the schema
+  come from the agent's config, so a fallback rejects them identically; the
+  old path billed a full-cap call per provider, wiped the visitor's screen with
+  a `content_reset` each time, and could open a healthy provider's breaker for
+  every other agent using it. Deliberately a code list and **not** the
+  `retriable` flag: `toProviderError` marks every 4xx non-retriable, and
+  failing over on a `401` from a provider with a stale key is exactly what
+  fallbacks are for (#587).
 
 - **`.gitignore` now denies `.env*` by default** and allowlists only
   `.env.example` and `.env.development`. The previous form enumerated names, so
@@ -500,14 +512,19 @@ release process.
   rather than "we never got JSON" — when the real fault was a 2048-token cap on
   a reasoning model, where the cap covers hidden reasoning tokens as well as
   visible output. The error now names the truncation and the cap on the three
-  routes that can detect it: both provider adapters and the runner. The runner
-  skips its retry only when a `responseSchema` was enforced — with the shape
-  merely requested in the prose, a stricter retry prompt is a real remedy for a
-  model that spent the budget on a preamble, so it still runs. **Two in-repo
-  paths are not covered** and are tracked separately: evaluation judge agents
-  go through `drainStreamChat`, whose `done` event carries no finish reason,
-  and the orchestrator planner uses `json_object` rather than `json_schema`
-  (#594) (#587).
+  routes that can detect it: both provider adapters and the runner, which
+  raises it once both attempts are spent. **Two in-repo paths are not covered**
+  and are tracked separately: evaluation judge agents go through
+  `drainStreamChat`, whose `done` event carries no finish reason, and the
+  orchestrator planner uses `json_object` rather than `json_schema` (#594)
+  (#587).
+
+- **`truncated_no_output` gains user-facing chat copy.** It had no `ERROR_MAP`
+  entry, so `getUserFacingError` fell through to the generic "Something went
+  wrong" — the actionable detail reached the server log and the trace but never
+  the person who could act on it. The new copy is deliberately vaguer than the
+  underlying `ProviderError`: it is reachable from the embed widget, where the
+  model id and the configured cap are not a visitor's business (#587).
 
 - **`CI_NODE_HEAP_MB` now reaches the Docker build.** A workflow-level `env:`
   does not cross into a container build, so raising the variable moved

@@ -209,6 +209,7 @@ const { emitHookEvent } = await import('@/lib/orchestration/hooks/registry');
 const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler');
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
+const { ProviderError } = await import('@/lib/orchestration/llm/provider');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 const { registerGuardFloorContributor, __resetGuardFloorContributorsForTests } =
   await import('@/lib/orchestration/chat/guard-floor');
@@ -2077,6 +2078,105 @@ describe('StreamingChatHandler', () => {
       expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
       // And success exactly once for the recovered stream
       expect(mockBreaker.recordSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not fail over or trip the breaker on a request-fault provider error', async () => {
+      // A truncation is about the agent's `maxTokens`, not the provider's
+      // health: the cap travels with the request, so every fallback rejects
+      // it identically. Failing over would bill three full-cap calls and show
+      // the visitor two `content_reset` wipes; recording a breaker failure
+      // per attempt would open the provider for every OTHER agent using it
+      // (`failureThreshold: 5`) over one agent's misconfiguration. #587
+      // made this reachable on the OpenAI-compatible adapter.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('hit max_completion_tokens before a complete response', {
+            code: 'truncated_no_output',
+            retriable: false,
+          });
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        [
+          { type: 'text', content: 'OK' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+      const events = await collect(streamChat(baseRequest));
+
+      const typed = events as Array<{ type: string; code?: string }>;
+      expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
+      expect(fallbackProvider.chatStream).not.toHaveBeenCalled();
+      expect(typed.some((e) => e.type === 'warning' && e.code === 'provider_retry')).toBe(false);
+      // Surfaces as an error rather than silently ending the turn.
+      expect(typed.some((e) => e.type === 'error')).toBe(true);
+    });
+
+    it('still fails over on a non-retriable error that IS about the provider', async () => {
+      // The guard above is a code list, not the `retriable` flag, precisely
+      // so this keeps working: `toProviderError` marks every 4xx
+      // non-retriable, and routing around a provider whose key has gone stale
+      // is exactly what a fallback is for.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('invalid api key', {
+            code: 'http_401',
+            status: 401,
+            retriable: false,
+          });
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        [
+          { type: 'text', content: 'OK' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+      const events = await collect(streamChat(baseRequest));
+
+      const typed = events as Array<{ type: string; code?: string }>;
+      expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
+      expect(typed.some((e) => e.type === 'warning' && e.code === 'provider_retry')).toBe(true);
     });
 
     it('does not retry on AbortError — rethrows immediately', async () => {

@@ -391,18 +391,18 @@ Short-but-non-empty responses that hit the cap are **not** flagged **outside** s
 
 `runStructuredCompletion` (`lib/orchestration/llm/structured-completion.ts`) repeats the check on the response it gets back, and throws the same `truncated_no_output` code. It is not redundant with the adapters: they can only act on structured extraction they know about, and a caller may be relying on the prompt's prose contract with no `responseSchema` at all, or talking to a provider that ignores one.
 
-Whether it **skips the retry** depends on whether a `responseSchema` was enforced:
+A truncation **still gets the retry**, and the error is raised only once both attempts are spent. Two tempting shortcuts are deliberately not taken:
 
-| `responseSchema` | On a truncated first attempt | Why                                                                                                                                                     |
-| ---------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Supplied         | throw, no retry              | The provider constrained the output to the object, so every token went into it. No preamble for a stricter prompt to remove — same object, same cap.    |
-| Absent           | retry, then judge again      | The shape is only a request in the prose. A chatty model can spend the budget introducing its answer, and "respond ONLY with a JSON object" fixes that. |
+- **"A second call at the same cap cannot succeed."** It can. The retry says "respond ONLY with a JSON object" at temperature 0, which fixes the commonest truncation of all — a chatty model spending the budget introducing its answer before starting the JSON.
+- **"Skip the retry when a `responseSchema` was supplied, since the output was constrained."** `responseSchema` records what was **sent**, not what the server **honoured**, and `OpenAiCompatibleProvider` explicitly targets hosts that ignore it (Ollama, LM Studio, vLLM, older gateways). Using it as a proxy hard-fails calls the retry would have recovered. One wasted call on the doomed case is the cheaper error.
 
-Note what is **not** a reason to skip: the retry appends a message, but `max_tokens` / `max_completion_tokens` bound the **completion** on both providers, so a longer prompt does not shrink the output budget.
+(And not because the retry appends a message: `max_tokens` / `max_completion_tokens` bound the **completion** on both providers, so a longer prompt does not shrink the output budget.)
+
+Because the adapters raise `truncated_no_output` before returning, the runner treats that throw on a first attempt as identical to a `'length'` finish it noticed itself — it is caught, the retry runs, and only a second truncation ends the call. A first attempt that threw contributes no token usage to the result: the provider discarded it with the response.
 
 The caller's `onFinalFailure` hook is deliberately **not** consulted on a truncation, because that hook exists to phrase "the model broke my contract" and on a truncation that premise is false.
 
-`StructuredCompletionResult.finishReason` carries the finish reason of the attempt that produced the value. Check it for `'length'` even on success: a lenient `parse` can accept content that happened to be well-formed where it was cut — a truncated array of results reads as a complete short one.
+`StructuredCompletionResult.finishReason` carries the finish reason of the attempt that produced the value. Check it for `'length'` even on success: a lenient `parse` can accept content that happened to be well-formed where it was cut — a truncated array of results reads as a complete short one. Caveat: on Anthropic with a `responseSchema` it can never read `'length'`, because that adapter reports `'stop'` for a structured extraction (having already thrown on the truncating case).
 
 ### Reasoning-token observability
 
