@@ -544,6 +544,29 @@ release process.
 
 ### Fixed
 
+- **Built-in capability seeds now re-apply their function schema on re-seed.**
+  Every `AiCapability` upsert wrote `functionDefinition`, `executionType` and
+  `executionHandler` on `create` only, so once a row existed the DB — and
+  therefore the MCP tool list and everything the LLM is shown — kept
+  advertising the **original** schema forever. Reported from a fork that added
+  a parameter to a capability: every test stayed green and the new field never
+  appeared on dev or prod. The tests could not catch it because they pin the
+  capability class against the seed constant, not the seed constant against the
+  DB write.
+
+  The code-owned fields are now hoisted into one constant per seed and spread
+  into both branches, so they cannot drift.
+  `tests/unit/prisma/seeds/capability-code-owned-fields.test.ts` parses every
+  seed and enforces it, including for seeds not yet written.
+
+  **`005-pattern-advisor` changed in the other direction:** it was the one seed
+  re-applying `name`, `description` and `category`, which silently reverted an
+  operator's renames on every deploy. Those are admin-UI presentation and are
+  now left alone — what the LLM reads lives inside `functionDefinition`, which
+  is still re-applied. `isActive` and `rateLimit` were never touched and still
+  aren't. See [`.context/database/seeding.md`](./.context/database/seeding.md)
+  for the ownership rule (#545).
+
 - **A truncated response is no longer reported as a schema failure on the
   `runStructuredCompletion` and provider-adapter paths.**
   `runStructuredCompletion` never read `finishReason`, so a response cut off at

@@ -7,9 +7,61 @@ import type { SeedUnit } from '@/prisma/runner';
  * Bindings are created per-agent in the admin UI (or via API) so
  * outbound storage writes stay off-by-default.
  *
- * Idempotent — safe to run on every deploy. The `update` branch only
- * sets `isSystem: true` so re-seeding never overwrites admin edits.
+ * Idempotent — safe to run on every deploy. Re-seeding re-applies the
+ * code-owned fields (see the constant below) and leaves everything the
+ * admin owns — `name`, `description`, `category`, `isActive`, `rateLimit` —
+ * exactly as it found them.
  */
+/**
+ * Code-owned half of the capability row: these must track the capability
+ * class, so the seed re-applies them to rows that already exist. A stale
+ * `functionDefinition` is not an admin customisation — it is a schema the
+ * handler will reject, advertised to every LLM and MCP client (#545).
+ *
+ * The LLM-facing name and description live INSIDE `functionDefinition`;
+ * the row's own `name` / `description` are admin-UI presentation and stay
+ * operator-owned, along with `isActive` and `rateLimit`.
+ */
+const UPLOAD_TO_STORAGE_IMPL = {
+  executionType: 'internal',
+  executionHandler: 'UploadToStorageCapability',
+  functionDefinition: {
+    name: 'upload_to_storage',
+    description:
+      'Upload a binary file (PDF, image, CSV, etc) to persistent storage and return a URL the user can open. Use this after generating a document, receiving a binary response from another tool, or capturing any artefact you want to hand back to the user. The path is chosen by the system — you only supply the bytes, content type, and an optional filename used for the extension.',
+    parameters: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'string',
+          description:
+            'Base64-encoded file bytes. If a previous tool returned `{ encoding: "base64", data }`, pass the `data` field directly.',
+          maxLength: 8 * 1024 * 1024,
+        },
+        contentType: {
+          type: 'string',
+          description:
+            'MIME type of the file (e.g. application/pdf, image/png, text/csv). Bindings may restrict which types are accepted.',
+          maxLength: 127,
+        },
+        filename: {
+          type: 'string',
+          description:
+            'Optional original filename. Only the extension is used; the stored path is a random UUID under an admin-defined prefix.',
+          maxLength: 200,
+        },
+        description: {
+          type: 'string',
+          description:
+            'Optional human-readable description stored as object metadata for later auditing.',
+          maxLength: 500,
+        },
+      },
+      required: ['data', 'contentType'],
+    },
+  },
+};
+
 const unit: SeedUnit = {
   name: '013-upload-to-storage',
   async run({ prisma, logger }) {
@@ -17,53 +69,17 @@ const unit: SeedUnit = {
 
     await prisma.aiCapability.upsert({
       where: { slug: 'upload_to_storage' },
-      update: { isSystem: true },
+      update: { isSystem: true, ...UPLOAD_TO_STORAGE_IMPL },
       create: {
         slug: 'upload_to_storage',
         name: 'Upload to Storage',
         description:
           'Persist a binary artefact (PDF, image, CSV) to the configured Sunrise storage backend (S3, Vercel Blob, or local) and return a URL the user can open. Path is admin-scoped — the LLM only supplies bytes, content type, and an optional filename.',
         category: 'external',
-        executionType: 'internal',
-        executionHandler: 'UploadToStorageCapability',
-        functionDefinition: {
-          name: 'upload_to_storage',
-          description:
-            'Upload a binary file (PDF, image, CSV, etc) to persistent storage and return a URL the user can open. Use this after generating a document, receiving a binary response from another tool, or capturing any artefact you want to hand back to the user. The path is chosen by the system — you only supply the bytes, content type, and an optional filename used for the extension.',
-          parameters: {
-            type: 'object',
-            properties: {
-              data: {
-                type: 'string',
-                description:
-                  'Base64-encoded file bytes. If a previous tool returned `{ encoding: "base64", data }`, pass the `data` field directly.',
-                maxLength: 8 * 1024 * 1024,
-              },
-              contentType: {
-                type: 'string',
-                description:
-                  'MIME type of the file (e.g. application/pdf, image/png, text/csv). Bindings may restrict which types are accepted.',
-                maxLength: 127,
-              },
-              filename: {
-                type: 'string',
-                description:
-                  'Optional original filename. Only the extension is used; the stored path is a random UUID under an admin-defined prefix.',
-                maxLength: 200,
-              },
-              description: {
-                type: 'string',
-                description:
-                  'Optional human-readable description stored as object metadata for later auditing.',
-                maxLength: 500,
-              },
-            },
-            required: ['data', 'contentType'],
-          },
-        },
         rateLimit: 30,
         isActive: true,
         isSystem: true,
+        ...UPLOAD_TO_STORAGE_IMPL,
       },
     });
 

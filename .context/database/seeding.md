@@ -102,7 +102,44 @@ export default unit;
 
 ### Rules
 
-**Idempotent.** Every write is an `upsert` (or equivalent). `update: {}` is the common idiom — re-seeding never overwrites admin edits. `createMany` is not safe unless you pair it with `skipDuplicates: true` and a unique constraint.
+**Idempotent.** Every write is an `upsert` (or equivalent). `createMany` is not safe unless you pair it with `skipDuplicates: true` and a unique constraint.
+
+**Split the `update` branch by who owns the field.** `update: {}` — "never overwrite admin edits" — is the common idiom and the right default, but it is wrong for anything that has to track the code. A row seeded once then never re-synced keeps advertising the original definition forever, and nothing fails: the tests pin the class against the seed constant, not the seed constant against the DB row (#545).
+
+| Ownership          | Examples                                                   | On update       |
+| ------------------ | ---------------------------------------------------------- | --------------- |
+| **Code-owned**     | `functionDefinition`, `executionType`, `executionHandler`  | Always re-apply |
+| **Operator-owned** | `isActive`, `rateLimit`, `name`, `description`, `category` | Never touch     |
+
+A stale `functionDefinition` is not a customisation — it is a schema the handler will reject, shown to every LLM and MCP client. A stale `executionHandler` points at a class that may no longer exist. Neither is something an admin chose.
+
+The split falls where it does because **what the model reads lives inside `functionDefinition`** — its own `name`, `description` and parameter schema. The row's top-level `name` / `description` are the admin UI's presentation, editable via `PATCH /capabilities/{id}`, so re-applying them would revert an operator's rename on the next deploy while gaining nothing the LLM sees.
+
+Hoist the code-owned half into a constant and spread it into both branches, so the two cannot drift:
+
+```typescript
+const CALL_EXTERNAL_API_IMPL = {
+  executionType: 'internal',
+  executionHandler: 'CallExternalApiCapability',
+  functionDefinition: {/* … */},
+};
+
+await prisma.aiCapability.upsert({
+  where: { slug: 'call_external_api' },
+  update: { isSystem: true, ...CALL_EXTERNAL_API_IMPL },
+  create: {
+    slug: 'call_external_api',
+    name,
+    description,
+    category,
+    rateLimit: 60,
+    isActive: true,
+    ...CALL_EXTERNAL_API_IMPL,
+  },
+});
+```
+
+Enforced by `tests/unit/prisma/seeds/capability-code-owned-fields.test.ts`, which parses every `aiCapability.upsert` in this directory and checks both directions. **The same shape applies to any seeded row with code-owned fields** — built-in agents' `systemInstructions` are the obvious next case, and the agent seeds are currently inconsistent about it (`008`/`016`/`017`/`018` re-apply them; `005`/`006`/`010` do not).
 
 **Self-contained.** Look up dependencies from the DB, don't pass them between units. For config ownership — `001-system-owner` seeds a non-login `system@sunrise.local` user (`role: ADMIN`, `accountType: SERVICE`, no credential) precisely so config-owning seeds always have a deterministic owner. Resolve it via the SERVICE predicate (not "first ADMIN", which is non-deterministic once humans exist):
 

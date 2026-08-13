@@ -353,7 +353,15 @@ const unit: SeedUnit = {
     const def = APPLY_AUDIT_CHANGES_DEFINITION;
     const auditCap = await prisma.aiCapability.upsert({
       where: { slug: def.slug },
-      update: { isSystem: true },
+      // Code-owned fields are re-applied so an edited definition reaches rows
+      // that already exist; `name` / `description` / `category` / `isActive`
+      // stay operator-owned. See `.context/database/seeding.md` (#545).
+      update: {
+        isSystem: true,
+        executionType: def.executionType,
+        executionHandler: def.executionHandler,
+        functionDefinition: def.functionDefinition,
+      },
       create: {
         name: def.name,
         slug: def.slug,
@@ -371,7 +379,15 @@ const unit: SeedUnit = {
     const addDef = ADD_PROVIDER_MODELS_DEFINITION;
     const addCap = await prisma.aiCapability.upsert({
       where: { slug: addDef.slug },
-      update: { isSystem: true },
+      // Code-owned fields are re-applied so an edited definition reaches rows
+      // that already exist; `name` / `description` / `category` / `isActive`
+      // stay operator-owned. See `.context/database/seeding.md` (#545).
+      update: {
+        isSystem: true,
+        executionType: addDef.executionType,
+        executionHandler: addDef.executionHandler,
+        functionDefinition: addDef.functionDefinition,
+      },
       create: {
         name: addDef.name,
         slug: addDef.slug,
@@ -389,7 +405,15 @@ const unit: SeedUnit = {
     const deactDef = DEACTIVATE_PROVIDER_MODELS_DEFINITION;
     const deactCap = await prisma.aiCapability.upsert({
       where: { slug: deactDef.slug },
-      update: { isSystem: true },
+      // Code-owned fields are re-applied so an edited definition reaches rows
+      // that already exist; `name` / `description` / `category` / `isActive`
+      // stay operator-owned. See `.context/database/seeding.md` (#545).
+      update: {
+        isSystem: true,
+        executionType: deactDef.executionType,
+        executionHandler: deactDef.executionHandler,
+        functionDefinition: deactDef.functionDefinition,
+      },
       create: {
         name: deactDef.name,
         slug: deactDef.slug,

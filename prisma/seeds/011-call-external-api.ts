@@ -8,9 +8,64 @@ import type { SeedUnit } from '@/prisma/runner';
  * the recipes in `.context/orchestration/recipes/` — keeping
  * outbound-HTTP power off-by-default for every agent.
  *
- * Idempotent — safe to run on every deploy. The `update` branch only
- * sets `isSystem: true` so re-seeding never overwrites admin edits.
+ * Idempotent — safe to run on every deploy. Re-seeding re-applies the
+ * code-owned fields (see the constant below) and leaves everything the
+ * admin owns — `name`, `description`, `category`, `isActive`, `rateLimit` —
+ * exactly as it found them.
  */
+/**
+ * Code-owned half of the capability row: these must track the capability
+ * class, so the seed re-applies them to rows that already exist. A stale
+ * `functionDefinition` is not an admin customisation — it is a schema the
+ * handler will reject, advertised to every LLM and MCP client (#545).
+ *
+ * The LLM-facing name and description live INSIDE `functionDefinition`;
+ * the row's own `name` / `description` are admin-UI presentation and stay
+ * operator-owned, along with `isActive` and `rateLimit`.
+ */
+const CALL_EXTERNAL_API_IMPL = {
+  executionType: 'internal',
+  executionHandler: 'CallExternalApiCapability',
+  functionDefinition: {
+    name: 'call_external_api',
+    description:
+      'Make an outbound HTTP request to an allowlisted external API. URL, method, headers, and body are supplied by the caller; authentication is configured by the admin per-agent and is not visible to the LLM. Use this when the agent needs to send an email, post a notification, charge a card, fetch data from a third-party service, or otherwise interact with an external system.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description:
+            'Fully qualified HTTPS URL. The host must be in the deployment allowlist; if the binding restricts URL prefixes, the URL must start with an allowed prefix. May be omitted when the binding pins a `forcedUrl`.',
+          maxLength: 2048,
+        },
+        method: {
+          type: 'string',
+          enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+          description: 'HTTP method.',
+        },
+        headers: {
+          type: 'object',
+          description:
+            'Optional request headers. Per-binding `forcedHeaders` override any matching key here.',
+          additionalProperties: { type: 'string' },
+        },
+        body: {
+          description:
+            'Optional request body. Object → JSON-stringified; string → sent verbatim. Ignored for GET and DELETE.',
+        },
+        responseExtract: {
+          type: 'string',
+          description:
+            'Optional JMESPath expression to apply to the response body before returning. Falls back to the binding default when omitted.',
+          maxLength: 2000,
+        },
+      },
+      required: ['method'],
+    },
+  },
+};
+
 const unit: SeedUnit = {
   name: '011-call-external-api',
   async run({ prisma, logger }) {
@@ -18,56 +73,17 @@ const unit: SeedUnit = {
 
     await prisma.aiCapability.upsert({
       where: { slug: 'call_external_api' },
-      update: { isSystem: true },
+      update: { isSystem: true, ...CALL_EXTERNAL_API_IMPL },
       create: {
         slug: 'call_external_api',
         name: 'Call External API',
         description:
           'Make an outbound HTTP request to an allowlisted external API. Auth credentials, URL prefix restrictions, and idempotency policy are configured per-agent and not visible to the LLM.',
         category: 'external',
-        executionType: 'internal',
-        executionHandler: 'CallExternalApiCapability',
-        functionDefinition: {
-          name: 'call_external_api',
-          description:
-            'Make an outbound HTTP request to an allowlisted external API. URL, method, headers, and body are supplied by the caller; authentication is configured by the admin per-agent and is not visible to the LLM. Use this when the agent needs to send an email, post a notification, charge a card, fetch data from a third-party service, or otherwise interact with an external system.',
-          parameters: {
-            type: 'object',
-            properties: {
-              url: {
-                type: 'string',
-                description:
-                  'Fully qualified HTTPS URL. The host must be in the deployment allowlist; if the binding restricts URL prefixes, the URL must start with an allowed prefix. May be omitted when the binding pins a `forcedUrl`.',
-                maxLength: 2048,
-              },
-              method: {
-                type: 'string',
-                enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-                description: 'HTTP method.',
-              },
-              headers: {
-                type: 'object',
-                description:
-                  'Optional request headers. Per-binding `forcedHeaders` override any matching key here.',
-                additionalProperties: { type: 'string' },
-              },
-              body: {
-                description:
-                  'Optional request body. Object → JSON-stringified; string → sent verbatim. Ignored for GET and DELETE.',
-              },
-              responseExtract: {
-                type: 'string',
-                description:
-                  'Optional JMESPath expression to apply to the response body before returning. Falls back to the binding default when omitted.',
-                maxLength: 2000,
-              },
-            },
-            required: ['method'],
-          },
-        },
         rateLimit: 60,
         isActive: true,
         isSystem: true,
+        ...CALL_EXTERNAL_API_IMPL,
       },
     });
 

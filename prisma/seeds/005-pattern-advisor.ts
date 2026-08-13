@@ -227,17 +227,17 @@ const unit: SeedUnit = {
     for (const def of CAPABILITY_DEFINITIONS) {
       const capability = await prisma.aiCapability.upsert({
         where: { slug: def.slug },
-        // System capabilities are seed-owned: re-apply the definition fields so an
-        // edited seed propagates to environments where the row already exists. We
-        // intentionally do NOT touch `isActive` — that stays an operator choice.
+        // Re-apply the code-owned fields so an edited definition reaches rows
+        // that already exist. Narrowed in #545: this used to re-apply `name`,
+        // `description` and `category` too, which reverted an operator's
+        // renames and re-wordings on every deploy. Those columns are admin-UI
+        // presentation — what the LLM reads is inside `functionDefinition`,
+        // which is still re-applied. See `.context/database/seeding.md`.
         update: {
           isSystem: true,
-          name: def.name,
-          description: def.description,
-          category: def.category,
-          functionDefinition: def.functionDefinition,
           executionType: def.executionType,
           executionHandler: def.executionHandler,
+          functionDefinition: def.functionDefinition,
         },
         create: {
           name: def.name,
