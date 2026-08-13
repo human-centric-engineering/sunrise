@@ -188,7 +188,12 @@ describe('executeToolCall', () => {
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'my-tool',
       { x: 1 },
-      { userId: 'user_1', agentId: 'workflow:wf_tool', scope: { projectId: 'proj-42' } }
+      {
+        userId: 'user_1',
+        agentId: 'workflow:wf_tool',
+        workflowExecutionId: 'exec_1',
+        scope: { projectId: 'proj-42' },
+      }
     );
   });
 
@@ -203,7 +208,14 @@ describe('executeToolCall', () => {
 
     const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
     expect(context).not.toHaveProperty('scope');
-    expect(context).toEqual({ userId: 'user_1', agentId: 'workflow:wf_tool' });
+    // `workflowExecutionId` is unconditional, unlike `scope`: it is the only FK
+    // the dispatcher's cost log can persist a workflow dispatch against, since
+    // the `agentId` beside it is a label rather than an `AiAgent.id`.
+    expect(context).toEqual({
+      userId: 'user_1',
+      agentId: 'workflow:wf_tool',
+      workflowExecutionId: 'exec_1',
+    });
   });
 
   it('uses argsFrom step output (object) when config.args is absent', async () => {

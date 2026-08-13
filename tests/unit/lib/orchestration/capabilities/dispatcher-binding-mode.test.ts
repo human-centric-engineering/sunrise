@@ -49,6 +49,7 @@ const { prisma } = await import('@/lib/db/client');
 const { capabilityDispatcher, workflowAgentId } =
   await import('@/lib/orchestration/capabilities/dispatcher');
 const { BaseCapability } = await import('@/lib/orchestration/capabilities/base-capability');
+const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 
 class OkCapability extends BaseCapability<{ n: number }, { doubled: number }> {
   readonly slug = 'ok';
@@ -198,6 +199,41 @@ describe('CAPABILITY_BINDING_MODE', () => {
       const result = await capabilityDispatcher.dispatch('ok', { n: 5 }, workflowCtx);
 
       expect(result).toEqual({ success: true, data: { doubled: 10 } });
+    });
+
+    it('never writes the workflow label to AiCostLog.agentId — it is not an AiAgent.id', async () => {
+      // `AiCostLog.agentId` is an FK to `AiAgent.id`. Writing `workflow:<id>`
+      // there is rejected by Postgres with P2003
+      // (`ai_cost_log_agentId_fkey` — reproduced against a real dev DB), and
+      // `logCost` swallows the rejection into an error log and returns null.
+      // So every capability a workflow invoked logged an error and recorded no
+      // cost row at all, and the Costs page's per-tool breakdown reported zero
+      // for them. A mocked prisma cannot enforce an FK, so this asserts the
+      // shape that the FK would have rejected.
+      (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      await capabilityDispatcher.dispatch(
+        'ok',
+        { n: 7 },
+        { ...workflowCtx, workflowExecutionId: 'exec_abc' }
+      );
+
+      expect(logCost).toHaveBeenCalledTimes(1);
+      const logged = (logCost as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(logged.agentId).toBeUndefined();
+      // Positive half: the row still lands, linked by the FK that IS real.
+      // Without this, dropping `workflowExecutionId` entirely would pass.
+      expect(logged.workflowExecutionId).toBe('exec_abc');
+      expect(logged.operation).toBe('tool_call');
+    });
+
+    it('still records agentId for a REAL agent — the omission is workflow-only', async () => {
+      (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      await capabilityDispatcher.dispatch('ok', { n: 8 }, ctx);
+
+      const logged = (logCost as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(logged.agentId).toBe('agent-1');
     });
 
     it('still denies a REAL agent id under strict — the exemption is not a blanket off-switch', async () => {

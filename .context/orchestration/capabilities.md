@@ -51,7 +51,7 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 | `BaseCapability`               | class     | Abstract parent with `validate`, `success`, `error` helpers                                                                              |
 | `CapabilityValidationError`    | class     | Thrown by `validate` on bad args; dispatcher maps to `invalid_args`                                                                      |
 | `CapabilityResult`             | type      | `{ success, data?, error?, skipFollowup? }`                                                                                              |
-| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, entityContext?, scope?, customConfig?, isEnabled? }`                                                |
+| `CapabilityContext`            | type      | `{ userId, agentId, conversationId?, workflowExecutionId?, entityContext?, scope?, customConfig?, isEnabled? }`                          |
 | `CapabilityFunctionDefinition` | type      | OpenAI-compatible function schema stored in `AiCapability.functionDefinition`                                                            |
 | `CapabilityRegistryEntry`      | type      | Merged view of the `AiCapability` row loaded by the dispatcher                                                                           |
 | `AgentCapabilityBinding`       | type      | Per-agent override, merged `AiAgentCapability` + `AiCapability`                                                                          |
@@ -117,6 +117,16 @@ Re-registering the same key **replaces the handler and its guard together** — 
 ### Dispatch scope carrier (`CapabilityContext.scope`)
 
 `CapabilityContext.scope?: Record<string, string>` is a free-form, optional string map the dispatcher's caller can populate. It is **generic by design** — core names no keys and no built-in capability reads it; the dispatcher passes it verbatim into `execute()`. A fork uses it to let a capability refuse to run outside its intended scope (e.g. a `module` slug). In vanilla Sunrise the chat handler threads it from `ChatRequest.scope` into the dispatch context, so it stays `undefined` and inert unless a caller sets it.
+
+### Workflow attribution (`CapabilityContext.workflowExecutionId`)
+
+`CapabilityContext.workflowExecutionId?: string` is set by the `tool_call` executor from `ctx.executionId`, and is how a capability dispatched by a workflow gets attributed on its cost row.
+
+It exists because **`agentId` cannot do that job for a workflow.** The label the executor dispatches under is not an `AiAgent.id`, and `AiCostLog.agentId` is a foreign key to one — so writing it there was rejected with P2003 (`ai_cost_log_agentId_fkey`). `logCost` swallows that rejection into an error log and returns `null`, so the symptom was not a crash but an error line per step and a **missing** cost row: the Costs page's per-tool breakdown reported zero for every capability a workflow ran.
+
+Dispatch step 9 therefore writes `agentId` only when it is a real agent, and `workflowExecutionId` otherwise. That FK is satisfied — the `AiWorkflowExecution` row exists before any step runs.
+
+**If you add a dispatch path that is not an agent**, carry the id of whatever real row owns the call and add a column for it, rather than encoding it into `agentId`. `workflowAgentId()` carries the same warning for the same reason.
 
 ### Resolved-binding carrier (`CapabilityContext.customConfig` / `isEnabled`)
 

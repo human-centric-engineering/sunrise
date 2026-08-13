@@ -69,7 +69,16 @@ import {
  */
 export const WORKFLOW_AGENT_ID_PREFIX = 'workflow:';
 
-/** Build the synthetic `agentId` a workflow's `tool_call` steps dispatch under. */
+/**
+ * Build the synthetic `agentId` a workflow's `tool_call` steps dispatch under.
+ *
+ * ⚠️ **This value is not an `AiAgent.id` and must never be written to a column
+ * with a foreign key to one.** More than one table has such a column —
+ * `AiAgentCapability.agentId` (which is why strict mode needed the exemption
+ * below) and `AiCostLog.agentId` — and Postgres rejects the insert with P2003.
+ * Treat it as a label for in-memory scoping (rate-limit buckets, log context),
+ * not as a persistable id.
+ */
 export function workflowAgentId(workflowId: string): string {
   return `${WORKFLOW_AGENT_ID_PREFIX}${workflowId}`;
 }
@@ -527,8 +536,22 @@ class CapabilityDispatcher {
         //    tool already logged its own tokens, so we record zeros and
         //    rely on the `operation: 'tool_call'` breakdown for per-tool
         //    analytics.
+        //    `agentId` is written only when it is a real `AiAgent.id`. A
+        //    workflow label is not one, and `AiCostLog.agentId` is a foreign
+        //    key to `AiAgent.id` — so writing the label violated
+        //    `ai_cost_log_agentId_fkey` (P2003). `logCost` catches and swallows
+        //    that, which meant every capability invoked from a workflow logged
+        //    an error and recorded NO cost row: the Costs page's per-tool
+        //    breakdown under-reported workflow tool usage to zero.
+        //    `workflowExecutionId` is the column that models this properly, and
+        //    its FK is satisfied — the execution row exists before any step runs.
         void logCost({
-          ...(context.agentId ? { agentId: context.agentId } : {}),
+          ...(context.agentId && !isWorkflowAgentId(context.agentId)
+            ? { agentId: context.agentId }
+            : {}),
+          ...(context.workflowExecutionId
+            ? { workflowExecutionId: context.workflowExecutionId }
+            : {}),
           ...(context.conversationId ? { conversationId: context.conversationId } : {}),
           operation: CostOperation.TOOL_CALL,
           model: 'n/a',

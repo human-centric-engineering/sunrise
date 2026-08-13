@@ -36,6 +36,19 @@ export interface CapabilityContext {
   agentId: string;
   conversationId?: string;
   /**
+   * The `AiWorkflowExecution.id` this dispatch belongs to, when it came from a
+   * workflow step. Set by the `tool_call` executor, which dispatches under a
+   * synthetic `workflow:${workflowId}` label rather than a real agent id.
+   *
+   * The dispatcher's cost log needs it because that label is NOT an
+   * `AiAgent.id`: writing it to `AiCostLog.agentId` violates
+   * `ai_cost_log_agentId_fkey` (P2003), which `logCost` swallows — so before
+   * this existed, every capability invoked from a workflow logged an error and
+   * recorded no cost row at all. `AiCostLog.workflowExecutionId` is the column
+   * that actually models this relationship.
+   */
+  workflowExecutionId?: string;
+  /**
    * Free-form context from the chat handler (e.g. the current entity
    * being discussed). Capabilities can inspect but shouldn't require
    * it.

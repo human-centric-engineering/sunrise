@@ -22,6 +22,15 @@
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import { toolCallConfigSchema } from '@/lib/validations/orchestration';
 import { capabilityDispatcher, workflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
+// Cycle warning: this import closes a loop — registry.ts → built-in/run-workflow.ts
+// → engine/orchestration-engine.ts → executors/index.ts → back here. The same loop
+// already existed via agent-call.ts and resolves benignly, because nothing in it
+// dereferences a cyclic binding at module-evaluation time. But `tool-call` is 2nd in
+// the executors barrel and `agent-call` is 14th, so this import moves the loop's
+// re-entry point much earlier. If anything in `run-workflow.ts` or
+// `orchestration-engine.ts` ever uses its import at module scope rather than call
+// time, `tool_call` registration is what breaks first — and it would present exactly
+// like #537 all over again.
 import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import {
@@ -115,6 +124,9 @@ export async function executeToolCall(
   const result = await capabilityDispatcher.dispatch(slug, rawArgs, {
     userId: ctx.userId,
     agentId: workflowAgentId(ctx.workflowId),
+    // The real FK. `agentId` above is a label the dispatcher uses for scoping;
+    // this is what its cost log can actually persist against.
+    workflowExecutionId: ctx.executionId,
     ...(ctx.scope ? { scope: ctx.scope } : {}),
   });
 

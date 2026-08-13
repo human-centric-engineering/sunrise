@@ -544,6 +544,22 @@ release process.
 
 ### Fixed
 
+- **Capabilities invoked from a workflow now record a cost row.** The dispatcher
+  wrote `CapabilityContext.agentId` to `AiCostLog.agentId`, but a workflow
+  dispatches under a `workflow:${workflowId}` label rather than a real
+  `AiAgent.id` — and that column is a foreign key to it. Postgres rejected every
+  such insert with P2003 (`ai_cost_log_agentId_fkey`, reproduced against a live
+  database), `logCost` swallowed the rejection into an error log and returned
+  `null`, and the row was lost. So every `tool_call` step emitted an error-level
+  log line and the Costs page's per-tool breakdown under-reported capabilities
+  run from workflows to **zero**. The label is no longer written to that column;
+  `CapabilityContext` gained an optional `workflowExecutionId`, which the
+  `tool_call` executor sets from `ctx.executionId` and which maps to
+  `AiCostLog.workflowExecutionId` — a real FK, satisfied because the execution
+  row exists before any step runs. **Fork-facing:** these rows appear where none
+  did before. No agent's `checkBudget()` total moves (it sums by `agentId`, and
+  these rows never existed to be counted); a workflow's costs are now
+  attributable to its execution. Pre-existing, found by review of #528.
 - **Scheduled `tool_call` steps no longer fail on a cold process.**
   `engine/executors/tool-call.ts` dispatched straight into the capability
   registry without calling `registerBuiltInCapabilities()` first, unlike the
