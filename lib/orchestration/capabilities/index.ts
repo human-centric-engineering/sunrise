@@ -12,7 +12,16 @@ export {
   BaseCapability,
   CapabilityValidationError,
 } from '@/lib/orchestration/capabilities/base-capability';
-export { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+export {
+  capabilityDispatcher,
+  // The workflow-label seam. Exported because a fork writing its own executor
+  // must MINT the label through `workflowAgentId()` rather than re-inlining
+  // `workflow:${id}` — the executor and the dispatcher holding two copies of
+  // that template is exactly what #528 was.
+  WORKFLOW_AGENT_ID_PREFIX,
+  workflowAgentId,
+  isWorkflowAgentId,
+} from '@/lib/orchestration/capabilities/dispatcher';
 export {
   registerBuiltInCapabilities,
   registerAppCapability,

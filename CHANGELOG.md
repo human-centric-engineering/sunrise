@@ -576,10 +576,18 @@ release process.
   never granted, and all three agent-facing paths take the tool name from a
   model — whereas a step's `capabilitySlug` is Zod-parsed config on an
   admin-authored workflow (`withAdminAuth` on every workflow write route), so
-  the step *is* the grant. **Fork-facing:** the prefix is now the shared
-  constant `WORKFLOW_AGENT_ID_PREFIX`, with `workflowAgentId()` and
-  `isWorkflowAgentId()` exported alongside it from
-  `lib/orchestration/capabilities/dispatcher.ts` — mint and test the label
+  the step *is* the grant — a **workflow-scoped** one. **Read this before
+  relying on strict as a revocation:** its guarantee is _agent_-scoped and does
+  not follow into a workflow. An agent bound to `run_workflow` names the
+  workflow as a tool argument, so every capability inside any workflow its
+  `customConfig.allowedWorkflowSlugs` permits runs under that workflow's label —
+  including one you revoked from the calling agent. Neither deleting the binding
+  row nor `isEnabled: false` closes that, because the workflow path consults no
+  binding at all; `isActive: false` and quarantine do, because both deny before
+  any binding is read. **Fork-facing:** the prefix is now the shared constant
+  `WORKFLOW_AGENT_ID_PREFIX`, with `workflowAgentId()` and `isWorkflowAgentId()`
+  beside it — on `lib/orchestration/capabilities/dispatcher.ts` and re-exported
+  from the `@/lib/orchestration/capabilities` barrel. Mint and test the label
   through those rather than re-inlining the template, which is how the executor
   and the dispatcher came to disagree. `permissive` (the default) is
   behaviourally unchanged; it now skips a query that could only ever return

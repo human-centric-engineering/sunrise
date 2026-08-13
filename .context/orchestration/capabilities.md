@@ -40,7 +40,10 @@ Everything is exported from `@/lib/orchestration/capabilities`:
 
 | Export                         | Kind      | Purpose                                                                                                                                  |
 | ------------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `has`, `clearCache`                                                      |
+| `capabilityDispatcher`         | singleton | `register`, `dispatch`, `loadFromDatabase`, `getRegistryEntry`, `getHandler`, `has`, `clearCache`                                        |
+| `workflowAgentId`              | function  | Mint the synthetic `agentId` a workflow's `tool_call` steps dispatch under. Use this rather than re-inlining the template (#528)         |
+| `isWorkflowAgentId`            | function  | True when an `agentId` is a workflow label rather than a real `AiAgent.id`                                                               |
+| `WORKFLOW_AGENT_ID_PREFIX`     | const     | The `workflow:` prefix itself, for a fork that needs to match on it directly                                                             |
 | `registerBuiltInCapabilities`  | function  | Idempotent wiring of the built-in handlers; also runs the app auto-init + flush                                                          |
 | `registerAppCapability`        | function  | Add one app/fork capability (extends `BaseCapability`); optional `{ slug?, guard? }`; idempotent by key                                  |
 | `registerAppCapabilities`      | function  | Flush app-registered capabilities into the dispatcher (called by `registerBuiltInCapabilities`)                                          |
@@ -76,12 +79,14 @@ export function initAppCapabilities(): void {
 
 > **Every path that dispatches must call it first.** The registry is a `globalThis`-backed singleton (#462), so a registration made in one module realm is visible from all of them — but the _trigger_ is lazy, guarded by module-scoped booleans, so the shared map is only populated once something calls the initialiser. All four callers below do — but `executors/tool-call.ts` did not until #537. It dispatched straight in, and on a process that had served no HTTP request — precisely an overnight-quiet server running a 03:15 scheduled workflow — the map was empty and the step failed `unknown_capability` naming a slug that was registered fine. Under load the bug hides, and no unit suite sees it because tests register explicitly in setup. If you add a dispatch path, call `registerBuiltInCapabilities()` at the top of it.
 
-| Dispatch path                    | Reached by         |
-| -------------------------------- | ------------------ |
-| `chat/streaming-handler.ts`      | HTTP request       |
-| `mcp/tool-registry.ts`           | HTTP request       |
-| `engine/executors/agent-call.ts` | HTTP request       |
-| `engine/executors/tool-call.ts`  | **scheduler tick** |
+| Dispatch path                    | Reached by                                                  |
+| -------------------------------- | ----------------------------------------------------------- |
+| `chat/streaming-handler.ts`      | HTTP request                                                |
+| `mcp/tool-registry.ts`           | HTTP request                                                |
+| `engine/executors/agent-call.ts` | HTTP request **or a scheduler tick** (an `agent_call` step) |
+| `engine/executors/tool-call.ts`  | HTTP request **or a scheduler tick** (a `tool_call` step)   |
+
+Both engine executors can run cold — anything the scheduler starts reaches them without an HTTP request first. `agent-call.ts` happened to already register; `tool-call.ts` did not, and that asymmetry is the whole of #537.
 
 Like every built-in, an app capability still needs an active `AiCapability` row (and a per-agent `AiAgentCapability` binding) before an LLM will _see_ it — `getCapabilityDefinitions` cross-checks the DB against the in-memory dispatcher.
 
@@ -262,6 +267,25 @@ That differs from the `mcp-system` caveat in the same env var's description, whi
 What makes it safe rather than merely convenient: strict mode is about an **agent** reaching a capability it was never granted, and all three agent-facing dispatch paths take the tool name from a model. A `tool_call` step's `capabilitySlug` is Zod-parsed config on a workflow definition, and every workflow write route is `withAdminAuth` — so the step **is** the explicit grant, authored by an admin. Nothing constructs a `tool_call` step at runtime either: an `orchestrator` step builds a synthetic `agent_call` step and delegates to `executeAgentCall`, which dispatches under the real agent id and is checked against that agent's advertised set.
 
 The prefix is a shared constant (`WORKFLOW_AGENT_ID_PREFIX`, with `workflowAgentId()` / `isWorkflowAgentId()` beside it) rather than an inline template, because the executor that mints it and the dispatcher that recognises it are different modules — and #528 is what it looks like when they disagree.
+
+#### What `strict` does NOT cover — read this before relying on it as a revocation
+
+**`strict` is agent-scoped, and its scope does not follow into a workflow.** The exemption above is deliberate, but it has a consequence that is easy to miss when you are using strict as a hardening measure:
+
+An agent bound to `run_workflow` names the workflow it wants as a **tool argument**. The binding's `customConfig.allowedWorkflowSlugs` constrains which ones, but every capability inside an allow-listed workflow then dispatches under that workflow's label — so it runs regardless of whether the calling agent has a binding for it. Revoking capability X from agent A does not stop A reaching X through a workflow it is allowed to run.
+
+So "the step is the grant" is exact, and worth reading precisely: the grant is **workflow-scoped**, authored by the admin who wrote the step. It is not the calling agent's grant, and the calling agent's revocations do not apply to it.
+
+Two things that do **not** close this, both worth stating because both look like they should:
+
+- `isEnabled: false` on the agent's `AiAgentCapability` row — the workflow path never consults a binding row at all.
+- Deleting the row — that is the [default-allow hazard](#default-allow-vs-default-deny) and widens rather than revokes.
+
+What does close it, because each denies **before** any binding is read (steps 3 and 3a of `dispatch()`, ahead of `getAgentBinding` at step 4):
+
+- `isActive: false` on the `AiCapability` row — the capability is off everywhere, workflows included.
+- [Quarantine](#quarantine-incident-disable) — same, and reversible, which is what you want mid-incident.
+- Or narrow the `allowedWorkflowSlugs` on the `run_workflow` binding, which is the agent-scoped control for this path.
 
 ## Quarantine (incident disable)
 
