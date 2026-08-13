@@ -2124,12 +2124,53 @@ describe('StreamingChatHandler', () => {
 
       const events = await collect(streamChat(baseRequest));
 
-      const typed = events as Array<{ type: string; code?: string }>;
+      const typed = events as Array<{ type: string; code?: string; reason?: string }>;
       expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
       expect(fallbackProvider.chatStream).not.toHaveBeenCalled();
       expect(typed.some((e) => e.type === 'warning' && e.code === 'provider_retry')).toBe(false);
       // Surfaces as an error rather than silently ending the turn.
       expect(typed.some((e) => e.type === 'error')).toBe(true);
+      // And wipes whatever fragment was streamed, so the live view agrees
+      // with the error marker a reload will show.
+      expect(typed.some((e) => e.type === 'content_reset' && e.reason === 'request_fault')).toBe(
+        true
+      );
+    });
+
+    it('cost-logs a truncated turn the vendor already billed', async () => {
+      // The `done` chunk normally carries usage and never arrives here, so
+      // the turn was charged and AiCostLog showed nothing. The guard attaches
+      // what the provider reported; this asserts it reaches logCost.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('hit max_completion_tokens', {
+            code: 'truncated_no_output',
+            retriable: false,
+            usage: { inputTokens: 320, outputTokens: 2048 },
+          });
+        }),
+      };
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+
+      expect(logCost).toHaveBeenCalledWith(
+        expect.objectContaining({ inputTokens: 320, outputTokens: 2048 })
+      );
     });
 
     it('persists an error marker so a request fault does not orphan the user turn', async () => {

@@ -24,7 +24,8 @@ import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
-import { ExecutorError, retriabilityOfCause } from '@/lib/orchestration/engine/errors';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { isRequestFault } from '@/lib/orchestration/llm/provider';
 import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
 import {
   GEN_AI_OPERATION_NAME,
@@ -154,7 +155,7 @@ export async function runLlmCall(
           'llm_call_failed',
           err instanceof Error ? err.message : 'LLM call failed',
           err,
-          retriabilityOfCause(err)
+          !isRequestFault(err)
         );
       }
       const callDurationMs = Date.now() - callStarted;

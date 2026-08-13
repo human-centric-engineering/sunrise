@@ -35,7 +35,7 @@ import { runLlmCall, interpolatePrompt } from '@/lib/orchestration/engine/llm-ru
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
-import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { ProviderError, toProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 
@@ -214,6 +214,25 @@ describe('runLlmCall', () => {
       code: 'llm_call_failed',
       retriable: false,
     });
+  });
+
+  it('leaves a status-less transport failure retriable', async () => {
+    // The regression guard. A dropped connection or read timeout reaches
+    // `toProviderError` with no HTTP status, so it becomes `provider_error`
+    // with `retriable: false` — and `withRetry` inside the adapter declines
+    // it too, making the STEP retry the only backstop. Keying this wrap on
+    // the `retriable` flag rather than the error code silently removed that.
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi
+        .fn()
+        .mockRejectedValue(toProviderError(new Error('Connection error.'), 'chat request failed')),
+    } as any);
+
+    const ctx = makeCtx();
+    await expect(
+      runLlmCall(ctx, { stepId: 's6', prompt: 'test', modelOverride: 'gpt-5' })
+    ).rejects.toMatchObject({ name: 'ExecutorError', retriable: true });
   });
 
   it('leaves a transient provider failure retriable', async () => {

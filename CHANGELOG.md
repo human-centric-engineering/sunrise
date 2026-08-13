@@ -202,6 +202,20 @@ release process.
   in its place (#559).
 ### Added
 
+- **`ProviderError.usage`** — tokens the provider billed for the call an error
+  ended, populated by the four truncation guards. A truncation is a full cap's
+  worth of output, the most expensive shape a turn has, and it used to vanish
+  with the response when the guard threw: the vendor charged and `AiCostLog`
+  recorded nothing. `streamChat` now costs it on that path, and
+  `runStructuredCompletion` folds it into the totals it returns. Absent for
+  errors raised before the model produced anything (#587).
+
+- **`isRequestFault()`** on `@/lib/orchestration/llm/provider` — is this
+  `ProviderError` a fault in the request rather than the provider, i.e. one
+  that re-running, re-routing or failing over cannot fix? Used by `streamChat`
+  to skip provider failover and by the engine's executors to mark the step
+  non-retriable. Currently `truncated_no_output` only (#587).
+
 - **`StructuredCompletionResult.finishReason`** — the finish reason of the
   attempt that produced the value. Worth checking for `'length'` even on
   success: a lenient `parse` can accept content that happened to be well-formed
@@ -397,15 +411,17 @@ release process.
   also now persists an error-marker assistant message, so a failed turn no
   longer reloads as a user question with no answer (#587).
 
-- **A deterministic provider failure is no longer retried by workflow steps.**
+- **A request-fault provider failure is no longer retried by workflow steps.**
   `ExecutorError` defaults to `retriable: true`, and `llm_call`, `chat_turn`
-  and `agent_call` all discarded the `ProviderError.retriable` verdict when
-  wrapping a `provider.chat()` throw — so a step with a `retry` error strategy
-  re-issued a truncation for its whole `retryCount`, each attempt billing a
-  full cap's worth of output to hit the identical wall. The new
-  `retriabilityOfCause()` in `lib/orchestration/engine/errors.ts` adopts the
-  cause's verdict when it has one and keeps the optimistic default otherwise
-  (#587).
+  and `agent_call` all wrapped a `provider.chat()` throw at that default — so a
+  step with a `retry` error strategy re-issued a truncation for its whole
+  `retryCount`, each attempt billing a full cap's worth of output to hit the
+  identical wall. They now mark it non-retriable via the shared
+  `isRequestFault()`. Note this keys on the error **code**, not on
+  `ProviderError.retriable`: that flag is only set when `toProviderError` can
+  read a retriable HTTP status, so a connection reset or read timeout carries
+  `retriable: false`, and gating on it would have stopped steps retrying
+  ordinary network blips (#587).
 
 - **`.gitignore` now denies `.env*` by default** and allowlists only
   `.env.example` and `.env.development`. The previous form enumerated names, so

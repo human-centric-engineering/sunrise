@@ -52,7 +52,7 @@ import {
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
-import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
@@ -120,26 +120,6 @@ import {
 
 /** Maximum time (ms) a single tool dispatch can run before being timed out. */
 const TOOL_DISPATCH_TIMEOUT_MS = 30_000;
-
-/**
- * `ProviderError` codes that describe the REQUEST rather than the provider.
- *
- * These fail identically on every endpoint — the token cap travels with the
- * agent's config, not with the URL — so the stream loop neither fails over nor
- * records a circuit-breaker failure for them. See the catch in the stream loop
- * for why this is a code list and not `retriable`.
- *
- * Deliberately one entry. `invalid_schema` (Anthropic, non-object-rooted
- * schema) fits the same description and is the obvious next member, but it is
- * unrelated to what #587 changed and adding it here would be an untested
- * behaviour change smuggled in on the side; it belongs with the rest of the
- * failover-policy work in #592.
- *
- * Anything whose cause could differ between two vendors — a 401, a 500, a
- * timeout — must stay OUT, because routing around that is what fallback
- * providers exist for.
- */
-const REQUEST_FAULT_CODES = new Set(['truncated_no_output']);
 
 /** Slug of the built-in knowledge-search capability (forced by knowledgeRetrievalMode). */
 const SEARCH_KNOWLEDGE_SLUG = 'search_knowledge_base';
@@ -1233,8 +1213,43 @@ export class StreamingChatHandler {
                 // one agent's `maxTokens` being too low is not evidence about
                 // provider health, and at `failureThreshold: 5` a couple of
                 // bad turns would open it for every other agent on that slug.
-                if (streamErr instanceof ProviderError && REQUEST_FAULT_CODES.has(streamErr.code)) {
+                if (isRequestFault(streamErr)) {
                   setSpanStatus(llmSpan, { code: 'error', message: streamErr.message });
+                  // Discard what was streamed. A structured extraction only
+                  // trips this after yielding the fragment of JSON it managed
+                  // before the cap — unusable on its own, and the turn is
+                  // about to persist an error marker instead. Without this the
+                  // live view keeps the fragment while a reload shows "[An
+                  // error occurred...]", so the two disagree about what
+                  // happened. Same event the failover path uses to wipe a
+                  // partial response, different reason.
+                  yield { type: 'content_reset', reason: 'request_fault' };
+                  // The turn was billed. A truncation is a full cap's worth of
+                  // output — the most expensive shape a turn has — and the
+                  // `done` chunk that normally carries usage never arrives, so
+                  // without this the vendor charges and `AiCostLog` shows
+                  // nothing. The guards attach what the provider reported.
+                  // (Other stream errors still lose their usage; that is the
+                  // general hole in #592, which this mechanism can extend to.)
+                  if (streamErr.usage) {
+                    turnCostUsd += calculateCost(
+                      resolvedModel,
+                      streamErr.usage.inputTokens,
+                      streamErr.usage.outputTokens
+                    ).totalCostUsd;
+                    void logCost({
+                      agentId: agent.id,
+                      conversationId: conversation.id,
+                      model: resolvedModel,
+                      provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+                      inputTokens: streamErr.usage.inputTokens,
+                      outputTokens: streamErr.usage.outputTokens,
+                      operation: CostOperation.CHAT,
+                      traceId: llmTraceId,
+                      spanId: llmSpanId,
+                      ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
+                    });
+                  }
                   throw streamErr;
                 }
 

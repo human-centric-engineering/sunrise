@@ -158,6 +158,18 @@ export class ProviderError extends Error {
   public readonly status?: number;
   public readonly retriable: boolean;
   public readonly cause?: unknown;
+  /**
+   * Tokens the provider billed for the call this error ended.
+   *
+   * Set by the truncation guards, where the request genuinely consumed a full
+   * cap's worth of output before failing — the largest single charge a turn
+   * can incur, and one that used to vanish with the response when the guard
+   * threw. Callers that log cost should fold it in on their error paths.
+   *
+   * Absent for errors raised before the model produced anything (bad schema,
+   * auth, connection), and absent when the provider reported no usage.
+   */
+  public readonly usage?: { inputTokens: number; outputTokens: number };
 
   constructor(
     message: string,
@@ -166,6 +178,7 @@ export class ProviderError extends Error {
       status?: number;
       retriable?: boolean;
       cause?: unknown;
+      usage?: { inputTokens: number; outputTokens: number };
     } = {}
   ) {
     super(message);
@@ -174,7 +187,40 @@ export class ProviderError extends Error {
     if (options.status !== undefined) this.status = options.status;
     this.retriable = options.retriable ?? false;
     if (options.cause !== undefined) this.cause = options.cause;
+    if (options.usage !== undefined) this.usage = options.usage;
   }
+}
+
+/**
+ * `ProviderError` codes describing a fault in the REQUEST rather than in the
+ * provider — the same cap, the same schema, the same rejection at any vendor.
+ *
+ * Callers use this to decide not to re-run something that cannot succeed:
+ * `streamChat` skips provider failover, and the engine's executors mark the
+ * `ExecutorError` non-retriable so a step's `retry` strategy stops.
+ *
+ * **Do not replace this with the `retriable` flag.** They answer different
+ * questions and the flag is far broader than it looks: `toProviderError` sets
+ * `retriable` only when it can read a retriable HTTP status, so a connection
+ * reset or a read timeout — which carry no status — comes through as
+ * `provider_error` with `retriable: false`, as does anything using
+ * `ProviderError`'s own default. Gating retry on the flag would stop a
+ * workflow step retrying an ordinary network blip, and stop a chat turn
+ * failing over from a provider whose key has gone stale, both of which are
+ * exactly what those mechanisms are for.
+ *
+ * Keep it narrow, and add only codes that are deterministic for the request.
+ * `invalid_schema` is the obvious next member; it is held back to #592 with
+ * the rest of the failover-policy work rather than shipped untested here.
+ */
+const REQUEST_FAULT_CODES = new Set(['truncated_no_output']);
+
+/**
+ * Whether `err` is a {@link REQUEST_FAULT_CODES} `ProviderError` — i.e. a
+ * failure that re-running, re-routing or failing over cannot fix.
+ */
+export function isRequestFault(err: unknown): err is ProviderError {
+  return err instanceof ProviderError && REQUEST_FAULT_CODES.has(err.code);
 }
 
 /**

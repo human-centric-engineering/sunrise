@@ -22,6 +22,7 @@ import {
   ProviderError,
   buildRequestOptions,
   toProviderError,
+  isRequestFault,
   fetchWithTimeout,
   withRetry,
   DEFAULT_TIMEOUT_MS,
@@ -247,6 +248,51 @@ describe('toProviderError', () => {
 // ---------------------------------------------------------------------------
 // fetchWithTimeout
 // ---------------------------------------------------------------------------
+
+describe('isRequestFault', () => {
+  it('identifies a truncation as a request fault', () => {
+    expect(isRequestFault(new ProviderError('cut off', { code: 'truncated_no_output' }))).toBe(
+      true
+    );
+  });
+
+  it('does NOT treat a status-less transport failure as one', () => {
+    // The regression this predicate exists to prevent. `toProviderError` can
+    // only set `retriable` when it reads a retriable HTTP status, so a
+    // connection reset or read timeout — no status — arrives as
+    // `provider_error` with `retriable: false`. Gating retry on that flag
+    // would stop a workflow step retrying an ordinary network blip, since
+    // `withRetry` also declines to retry it. Only the CODE may gate.
+    const connectionReset = toProviderError(
+      new Error('Connection error.'),
+      'OpenAI-compatible chat request failed'
+    );
+    expect(connectionReset.retriable).toBe(false);
+    expect(connectionReset.code).toBe('provider_error');
+    expect(isRequestFault(connectionReset)).toBe(false);
+  });
+
+  it('does NOT treat an auth failure as one — failing over is the point', () => {
+    const unauthorized = new ProviderError('bad key', {
+      code: 'http_401',
+      status: 401,
+      retriable: false,
+    });
+    expect(isRequestFault(unauthorized)).toBe(false);
+  });
+
+  it('ignores non-ProviderError values', () => {
+    for (const v of [
+      new Error('truncated_no_output'),
+      'truncated_no_output',
+      null,
+      undefined,
+      {},
+    ]) {
+      expect(isRequestFault(v)).toBe(false);
+    }
+  });
+});
 
 describe('fetchWithTimeout', () => {
   // Use real timers for fetchWithTimeout tests to avoid happy-dom AbortSignal

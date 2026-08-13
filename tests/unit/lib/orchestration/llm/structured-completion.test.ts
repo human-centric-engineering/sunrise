@@ -419,6 +419,38 @@ describe('runStructuredCompletion', () => {
       expect(result.tokenUsage).toEqual({ input: 210, output: 1520 });
     });
 
+    it("reports both attempts' billed tokens on the thrown truncation", async () => {
+      // Both calls were charged, and the truncated one is a full cap of
+      // output — the most expensive part. Attributing only one of them (or
+      // only the non-truncated one, which an earlier version did) under-reports
+      // the failure that costs the most. Attempt 1 finished cleanly at 'stop'
+      // and merely failed to parse; attempt 2 is the truncation.
+      const provider = makeProvider([
+        {
+          content: 'here is prose',
+          usage: { inputTokens: 10, outputTokens: 8 },
+          finishReason: 'stop',
+        },
+        { content: CUT_OFF, usage: { inputTokens: 12, outputTokens: 900 }, finishReason: 'length' },
+      ]);
+
+      let caught: unknown;
+      try {
+        await runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'gpt-5.4',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      const usage = (caught as { usage?: { inputTokens: number; outputTokens: number } }).usage;
+      expect(usage).toEqual({ inputTokens: 22, outputTokens: 908 });
+    });
+
     it('records a truncated attempt as a FAILED span, not a successful one', async () => {
       // `withSpan` stamps `{ code: 'ok' }` on any normal return, so an early
       // `return` from the callback would file the truncated attempt in the

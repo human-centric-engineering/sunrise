@@ -198,7 +198,16 @@ export class AnthropicProvider implements LlmProvider {
         `Model "${options.model}" hit max_tokens before producing ${
           isStructuredExtraction ? 'a complete structured response' : 'visible output'
         }. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
-        { code: 'truncated_no_output', retriable: false }
+        {
+          code: 'truncated_no_output',
+          retriable: false,
+          // Billed in full despite producing nothing usable — carry it so the
+          // caller's error path can still cost it.
+          usage: {
+            inputTokens: message.usage.input_tokens,
+            outputTokens: message.usage.output_tokens,
+          },
+        }
       );
     }
 
@@ -319,7 +328,7 @@ export class AnthropicProvider implements LlmProvider {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
-        { code: 'truncated_no_output', retriable: false }
+        { code: 'truncated_no_output', retriable: false, usage: { inputTokens, outputTokens } }
       );
     }
 

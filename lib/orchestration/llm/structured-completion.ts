@@ -49,12 +49,7 @@
 
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
-import type {
-  LlmFinishReason,
-  LlmMessage,
-  LlmResponse,
-  LlmResponseFormat,
-} from '@/lib/orchestration/llm/types';
+import type { LlmFinishReason, LlmMessage, LlmResponseFormat } from '@/lib/orchestration/llm/types';
 import type { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import {
   GEN_AI_OPERATION_NAME,
@@ -188,32 +183,23 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * Reaching a caller means the attempts are exhausted, so the cap really is the
  * problem — not that a retry might have fitted.
  *
- * `response` rides along on `cause` when we detected the truncation ourselves.
- * The throw is how the attempt unwinds (so `withSpan` records an error rather
- * than stamping the span ok), and without this the billed tokens of a
- * full-cap response would be lost on the way out. `usageOf` reads it back.
+ * `usage` rides along because throwing is how an attempt unwinds here (so
+ * `withSpan` records an error rather than stamping the span ok), and a
+ * full-cap response's billed tokens would otherwise be lost on the way out.
+ * Same field the adapters' own guards populate.
  */
-function truncationError(model: string, maxTokens: number, response?: LlmResponse): ProviderError {
+function truncationError(
+  model: string,
+  maxTokens: number,
+  usage?: { inputTokens: number; outputTokens: number }
+): ProviderError {
   return new ProviderError(
     `Structured completion for model "${model}" was truncated at maxTokens (${maxTokens}) ` +
       `before it could be parsed — the response is incomplete, not schema-invalid. Raise ` +
       `maxTokens: on OpenAI reasoning models this cap is sent as max_completion_tokens and ` +
       `covers hidden reasoning tokens as well as visible output.`,
-    { code: 'truncated_no_output', retriable: false, ...(response ? { cause: response } : {}) }
+    { code: 'truncated_no_output', retriable: false, ...(usage ? { usage } : {}) }
   );
-}
-
-/**
- * The `LlmResponse` a truncation was raised over, when there was one.
- *
- * Null for an adapter-raised truncation: those construct their own
- * `ProviderError` with no response attached, because the provider discarded it.
- */
-function usageOf(err: ProviderError): LlmResponse | null {
-  const cause = err.cause;
-  return cause !== null && typeof cause === 'object' && 'usage' in cause
-    ? (cause as LlmResponse)
-    : null;
 }
 
 export async function runStructuredCompletion<T>(
@@ -264,7 +250,12 @@ export async function runStructuredCompletion<T>(
   const attempt = async (
     messages: LlmMessage[],
     attemptTemperature: number
-  ): Promise<{ response: LlmResponse | null; parsed: T | null; truncated: boolean }> => {
+  ): Promise<{
+    parsed: T | null;
+    truncated: boolean;
+    usage: { inputTokens: number; outputTokens: number } | null;
+    finishReason: LlmFinishReason | null;
+  }> => {
     // Note this is a fresh deadline per attempt, so `timeoutMs` bounds each
     // call and not the sequence — two attempts can take 2 × `timeoutMs`. That
     // is long-standing behaviour (both attempts always built their own
@@ -300,28 +291,40 @@ export async function runStructuredCompletion<T>(
           // parses is NOT a truncation for our purposes — the caller got its
           // value, and `finishReason` on the result lets it judge.
           if (parsed === null && response.finishReason === 'length') {
-            throw truncationError(opts.model, maxTokens, response);
+            throw truncationError(opts.model, maxTokens, response.usage);
           }
-          return { response, parsed, truncated: false };
+          return {
+            parsed,
+            truncated: false,
+            usage: response.usage,
+            finishReason: response.finishReason,
+          };
         }
       );
     } catch (err) {
       if (err instanceof ProviderError && err.code === 'truncated_no_output') {
-        return { response: usageOf(err), parsed: null, truncated: true };
+        // `usage` is absent when the provider discarded the numbers before we
+        // saw them — an adapter guard that had none to report.
+        return {
+          parsed: null,
+          truncated: true,
+          usage: err.usage ?? null,
+          finishReason: 'length',
+        };
       }
       throw err;
     }
   };
 
   const first = await attempt(opts.messages, temperature);
-  if (first.response !== null && first.parsed !== null) {
-    const inputTokens = first.response.usage.inputTokens;
-    const outputTokens = first.response.usage.outputTokens;
+  if (first.parsed !== null) {
+    const inputTokens = first.usage?.inputTokens ?? 0;
+    const outputTokens = first.usage?.outputTokens ?? 0;
     return {
       value: first.parsed,
       tokenUsage: { input: inputTokens, output: outputTokens },
       costUsd: calculateCost(opts.model, inputTokens, outputTokens).totalCostUsd,
-      finishReason: first.response.finishReason,
+      finishReason: first.finishReason ?? 'stop',
     };
   }
 
@@ -345,8 +348,15 @@ export async function runStructuredCompletion<T>(
   );
 
   // Both attempts are spent. Only now is the cap provably the problem.
-  if (retry.truncated || retry.response === null) {
-    throw truncationError(opts.model, maxTokens, first.response ?? undefined);
+  //
+  // Report BOTH attempts' tokens: each was billed, and a truncated attempt is
+  // a full cap's worth of output. Attributing only one of them under-reports
+  // the most expensive failure shape there is.
+  if (retry.truncated) {
+    throw truncationError(opts.model, maxTokens, {
+      inputTokens: (first.usage?.inputTokens ?? 0) + (retry.usage?.inputTokens ?? 0),
+      outputTokens: (first.usage?.outputTokens ?? 0) + (retry.usage?.outputTokens ?? 0),
+    });
   }
 
   if (retry.parsed === null) {
@@ -356,17 +366,13 @@ export async function runStructuredCompletion<T>(
 
   // Both attempts are billed, so both are counted — including a first attempt
   // that was truncated, which is by definition a full cap's worth of output
-  // and so the LARGEST component of the bill. The only usage that goes missing
-  // is an adapter-raised truncation carrying no response, where the provider
-  // discarded the numbers before we saw them (#592 territory); the alternative
-  // there is inventing them.
-  const inputTokens = (first.response?.usage.inputTokens ?? 0) + retry.response.usage.inputTokens;
-  const outputTokens =
-    (first.response?.usage.outputTokens ?? 0) + retry.response.usage.outputTokens;
+  // and so the LARGEST component of the bill.
+  const inputTokens = (first.usage?.inputTokens ?? 0) + (retry.usage?.inputTokens ?? 0);
+  const outputTokens = (first.usage?.outputTokens ?? 0) + (retry.usage?.outputTokens ?? 0);
   return {
     value: retry.parsed,
     tokenUsage: { input: inputTokens, output: outputTokens },
     costUsd: calculateCost(opts.model, inputTokens, outputTokens).totalCostUsd,
-    finishReason: retry.response.finishReason,
+    finishReason: retry.finishReason ?? 'stop',
   };
 }

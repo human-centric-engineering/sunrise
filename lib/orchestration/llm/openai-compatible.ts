@@ -237,7 +237,16 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         `Model "${options.model}" hit max_completion_tokens before producing ${
           isStructuredExtraction ? 'a complete structured response' : 'visible output'
         }.${reasoningNote} Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
-        { code: 'truncated_no_output', retriable: false }
+        {
+          code: 'truncated_no_output',
+          retriable: false,
+          // The call was billed in full even though it produced nothing
+          // usable — carry it so the caller's error path can still cost it.
+          usage: {
+            inputTokens: completion.usage?.prompt_tokens ?? 0,
+            outputTokens: completion.usage?.completion_tokens ?? 0,
+          },
+        }
       );
     }
 
@@ -349,7 +358,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_completion_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
-        { code: 'truncated_no_output', retriable: false }
+        // `stream_options.include_usage` means the usage chunk has already
+        // been consumed by the loop above, so these are the real figures.
+        { code: 'truncated_no_output', retriable: false, usage: { inputTokens, outputTokens } }
       );
     }
 

@@ -385,6 +385,10 @@ Every one of these messages includes the model id and the current cap, so the op
 
 The error is **non-retriable** — retrying with the same cap will hit the same wall. Bump the agent's or step's `maxTokens` to address it (16384 is a reasonable headroom for reasoning-heavy workloads producing structured JSON).
 
+Callers act on that through **`isRequestFault(err)`**, not through `ProviderError.retriable`. The two are easy to confuse and the flag is much broader than it looks: `toProviderError` only sets it when it can read a retriable HTTP status, so a connection reset or a read timeout — no status — arrives as `provider_error` with `retriable: false`. Gating on the flag would stop a workflow step retrying an ordinary network blip and stop a chat turn failing over from a provider whose key had gone stale. `isRequestFault` is a narrow **code** list (`truncated_no_output` today) for failures that are deterministic for the request itself. `streamChat` uses it to end the turn instead of failing over; `llm_call`, `chat_turn` and `agent_call` use it to mark the `ExecutorError` non-retriable.
+
+Each guard also attaches **`ProviderError.usage`** — the tokens the provider billed before it gave up. A truncation is a full cap's worth of output, so losing it under-reports the most expensive turn shape there is; `streamChat` cost-logs from it and `runStructuredCompletion` folds it into its returned totals.
+
 Short-but-non-empty responses that hit the cap are **not** flagged **outside** structured extraction — the visible content is meaningful, and we surface `finishReason: 'length'` so callers that care (e.g. continuation flows) can detect it. A turn that carries tools is treated as ordinary even with a `responseFormat` set: a `length` stop there is the normal partial-output case for the tool loop to handle.
 
 ### The runner-level backstop

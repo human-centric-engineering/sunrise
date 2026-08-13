@@ -103,27 +103,3 @@ export class ExecutorError extends Error {
     this.costUsd = costUsd;
   }
 }
-
-/**
- * Retriability for an `ExecutorError` that is wrapping a provider failure.
- *
- * `ExecutorError` defaults to `retriable: true`, which is right for an unknown
- * cause but wrong for one that has already told us it is deterministic.
- * `ProviderError` carries that verdict, and it was being discarded by every
- * executor that wraps a `provider.chat()` throw in the four-argument form —
- * so a `truncated_no_output` (the same token cap, the same prompt, every time)
- * would be re-issued for the step's whole `retryCount`, each attempt billing a
- * full cap's worth of output to hit the identical wall.
- *
- * Duck-typed on the `retriable` property rather than `instanceof ProviderError`
- * so `engine/errors.ts` stays free of an `llm/` import — this module is the
- * platform-agnostic bottom of the engine and several forks re-export it.
- * Anything else, including a bare `Error`, keeps the optimistic default.
- */
-export function retriabilityOfCause(cause: unknown): boolean {
-  if (typeof cause === 'object' && cause !== null && 'retriable' in cause) {
-    const { retriable } = cause;
-    if (typeof retriable === 'boolean') return retriable;
-  }
-  return true;
-}
