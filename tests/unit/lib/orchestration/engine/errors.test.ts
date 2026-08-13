@@ -7,7 +7,9 @@ import {
   BudgetExceeded,
   ExecutorError,
   PausedForApproval,
+  retriabilityOfCause,
 } from '@/lib/orchestration/engine/errors';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 
 describe('BudgetExceeded', () => {
   it('sets usedUsd, limitUsd, name, and formatted message', () => {
@@ -63,5 +65,40 @@ describe('ExecutorError', () => {
     const err = new ExecutorError('s1', 'http_error_retriable', 'HTTP 503', undefined, true);
     // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
     expect(err.retriable).toBe(true);
+  });
+
+  describe('retriabilityOfCause', () => {
+    it('adopts a non-retriable verdict the cause already made', () => {
+      // The case that matters: a `truncated_no_output` ProviderError is the
+      // same cap, the same prompt, every time. Wrapping it at the default
+      // `retriable: true` let a step's retry strategy re-issue it for the
+      // whole retryCount, each attempt billing a full cap of output to hit
+      // the identical wall (#587).
+      expect(
+        retriabilityOfCause(new ProviderError('cut off', { code: 'truncated_no_output' }))
+      ).toBe(false);
+    });
+
+    it('keeps a retriable cause retriable', () => {
+      expect(
+        retriabilityOfCause(
+          new ProviderError('upstream 503', { code: 'http_503', retriable: true })
+        )
+      ).toBe(true);
+    });
+
+    it('defaults to retriable for a cause that expresses no verdict', () => {
+      // A bare Error, a string, null, undefined — nothing has claimed the
+      // failure is deterministic, so the optimistic default stands.
+      for (const cause of [new Error('network'), 'boom', null, undefined, {}]) {
+        expect(retriabilityOfCause(cause)).toBe(true);
+      }
+    });
+
+    it('ignores a non-boolean `retriable` rather than coercing it', () => {
+      // Guards against a truthy string flipping the verdict silently.
+      expect(retriabilityOfCause({ retriable: 'false' })).toBe(true);
+      expect(retriabilityOfCause({ retriable: 0 })).toBe(true);
+    });
   });
 });

@@ -2132,6 +2132,47 @@ describe('StreamingChatHandler', () => {
       expect(typed.some((e) => e.type === 'error')).toBe(true);
     });
 
+    it('persists an error marker so a request fault does not orphan the user turn', async () => {
+      // The user message is persisted up front, and this path returns early.
+      // Without a marker the conversation reloads as a question with no
+      // answer at all — the exact thing the generic crash path already
+      // guards against ("no orphaned user message with no response").
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('hit max_completion_tokens', {
+            code: 'truncated_no_output',
+            retriable: false,
+          });
+        }),
+      };
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+
+      const created = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+      const marker = created.find(
+        (c) => (c[0] as { data?: { role?: string } })?.data?.role === 'assistant'
+      );
+      expect(marker).toBeDefined();
+      expect(
+        (marker?.[0] as { data: { metadata: Record<string, unknown> } }).data.metadata
+      ).toMatchObject({ error: true, errorCode: 'truncated_no_output' });
+    });
+
     it('still fails over on a non-retriable error that IS about the provider', async () => {
       // The guard above is a code list, not the `retriable` flag, precisely
       // so this keeps working: `toProviderError` marks every 4xx

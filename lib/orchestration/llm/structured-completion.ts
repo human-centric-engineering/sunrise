@@ -185,17 +185,35 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * provider that ignores `responseSchema` altogether, or a caller relying on
  * the prompt's prose contract rather than native structured output.
  *
- * Raised only once the attempts are exhausted, so reaching here means the cap
- * really is the problem — not that a retry might have fitted.
+ * Reaching a caller means the attempts are exhausted, so the cap really is the
+ * problem — not that a retry might have fitted.
+ *
+ * `response` rides along on `cause` when we detected the truncation ourselves.
+ * The throw is how the attempt unwinds (so `withSpan` records an error rather
+ * than stamping the span ok), and without this the billed tokens of a
+ * full-cap response would be lost on the way out. `usageOf` reads it back.
  */
-function truncationError(model: string, maxTokens: number): ProviderError {
+function truncationError(model: string, maxTokens: number, response?: LlmResponse): ProviderError {
   return new ProviderError(
     `Structured completion for model "${model}" was truncated at maxTokens (${maxTokens}) ` +
       `before it could be parsed — the response is incomplete, not schema-invalid. Raise ` +
       `maxTokens: on OpenAI reasoning models this cap is sent as max_completion_tokens and ` +
       `covers hidden reasoning tokens as well as visible output.`,
-    { code: 'truncated_no_output', retriable: false }
+    { code: 'truncated_no_output', retriable: false, ...(response ? { cause: response } : {}) }
   );
+}
+
+/**
+ * The `LlmResponse` a truncation was raised over, when there was one.
+ *
+ * Null for an adapter-raised truncation: those construct their own
+ * `ProviderError` with no response attached, because the provider discarded it.
+ */
+function usageOf(err: ProviderError): LlmResponse | null {
+  const cause = err.cause;
+  return cause !== null && typeof cause === 'object' && 'usage' in cause
+    ? (cause as LlmResponse)
+    : null;
 }
 
 export async function runStructuredCompletion<T>(
@@ -226,21 +244,27 @@ export async function runStructuredCompletion<T>(
     ...(opts.phase ? { [SUNRISE_EVALUATION_PHASE]: opts.phase } : {}),
   };
 
-  // One attempt. Resolves `null` when the response was truncated at the cap,
-  // reached either way: the provider raised it (both in-repo adapters do, for
-  // a structured extraction) or it came back as a `'length'` finish we notice
-  // here (a provider that ignores `responseFormat`, or no `responseSchema` at
-  // all). From here the two are the same event.
+  // One attempt. `truncated` covers both routes to the same event: the
+  // provider raised it (both in-repo adapters do, for a structured
+  // extraction), or it came back as a `'length'` finish we notice here (a
+  // provider that ignores `responseFormat`, or no `responseSchema` at all).
   //
-  // The truncation is thrown INSIDE `withSpan` and caught outside it, rather
-  // than returned as `null` from the callback. That is load-bearing:
-  // `withSpan` stamps `{ code: 'ok' }` on any normal return, so returning
-  // early would file a truncated attempt in the trace as a success — hiding
-  // the exact fault this module exists to make visible.
+  // `response` is null ONLY on the provider-raised route, where the usage was
+  // discarded along with the response. When we detect it ourselves the numbers
+  // are in hand and must be kept — a truncated attempt is a full cap's worth
+  // of output, so dropping it under-reports the largest component of the bill
+  // and breaks this module's own promise to sum across attempts.
+  //
+  // The truncation is thrown INSIDE `withSpan` and caught outside it rather
+  // than returned from the callback. That is load-bearing: `withSpan` stamps
+  // `{ code: 'ok' }` on any normal return, so returning early would file a
+  // truncated attempt in the trace as a success — hiding the exact fault this
+  // module exists to make visible. The response rides out on the error so the
+  // usage survives the throw.
   const attempt = async (
     messages: LlmMessage[],
     attemptTemperature: number
-  ): Promise<{ response: LlmResponse; parsed: T | null } | null> => {
+  ): Promise<{ response: LlmResponse | null; parsed: T | null; truncated: boolean }> => {
     // Note this is a fresh deadline per attempt, so `timeoutMs` bounds each
     // call and not the sequence — two attempts can take 2 × `timeoutMs`. That
     // is long-standing behaviour (both attempts always built their own
@@ -276,19 +300,21 @@ export async function runStructuredCompletion<T>(
           // parses is NOT a truncation for our purposes — the caller got its
           // value, and `finishReason` on the result lets it judge.
           if (parsed === null && response.finishReason === 'length') {
-            throw truncationError(opts.model, maxTokens);
+            throw truncationError(opts.model, maxTokens, response);
           }
-          return { response, parsed };
+          return { response, parsed, truncated: false };
         }
       );
     } catch (err) {
-      if (err instanceof ProviderError && err.code === 'truncated_no_output') return null;
+      if (err instanceof ProviderError && err.code === 'truncated_no_output') {
+        return { response: usageOf(err), parsed: null, truncated: true };
+      }
       throw err;
     }
   };
 
   const first = await attempt(opts.messages, temperature);
-  if (first !== null && first.parsed !== null) {
+  if (first.response !== null && first.parsed !== null) {
     const inputTokens = first.response.usage.inputTokens;
     const outputTokens = first.response.usage.outputTokens;
     return {
@@ -319,20 +345,24 @@ export async function runStructuredCompletion<T>(
   );
 
   // Both attempts are spent. Only now is the cap provably the problem.
-  if (retry === null) throw truncationError(opts.model, maxTokens);
+  if (retry.truncated || retry.response === null) {
+    throw truncationError(opts.model, maxTokens, first.response ?? undefined);
+  }
 
   if (retry.parsed === null) {
     if (opts.onFinalFailure) throw opts.onFinalFailure();
     throw new Error('Structured completion response was not valid JSON after retry');
   }
 
-  // A first attempt the provider threw on carries no usage — it was discarded
-  // with the response, so the totals are the retry's alone. Under-counting,
-  // and the same shape as the streaming gap in #592; the alternative is
-  // inventing numbers.
-  const inputTokens = (first?.response.usage.inputTokens ?? 0) + retry.response.usage.inputTokens;
+  // Both attempts are billed, so both are counted — including a first attempt
+  // that was truncated, which is by definition a full cap's worth of output
+  // and so the LARGEST component of the bill. The only usage that goes missing
+  // is an adapter-raised truncation carrying no response, where the provider
+  // discarded the numbers before we saw them (#592 territory); the alternative
+  // there is inventing them.
+  const inputTokens = (first.response?.usage.inputTokens ?? 0) + retry.response.usage.inputTokens;
   const outputTokens =
-    (first?.response.usage.outputTokens ?? 0) + retry.response.usage.outputTokens;
+    (first.response?.usage.outputTokens ?? 0) + retry.response.usage.outputTokens;
   return {
     value: retry.parsed,
     tokenUsage: { input: inputTokens, output: outputTokens },

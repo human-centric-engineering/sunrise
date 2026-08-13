@@ -46,7 +46,7 @@ import {
 } from '@/lib/orchestration/capabilities/registry';
 import { agentCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
-import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { ExecutorError, retriabilityOfCause } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import {
   composeSystemPromptString,
@@ -201,7 +201,7 @@ async function runSingleTurn(
             'agent_call_failed',
             err instanceof Error ? err.message : 'Agent LLM call failed',
             err,
-            true,
+            retriabilityOfCause(err),
             totalTokensUsed,
             totalCostUsd
           );

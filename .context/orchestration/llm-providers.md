@@ -381,7 +381,7 @@ The first rule catches a class of silent corruption unique to reasoning models (
 
 The second rule exists because the far more common shape is reasoning eating _most_ of the budget, not all of it: a few hundred tokens of an object arrive, cut off mid-string. Content is non-empty, so the first rule cannot see it — but truncated JSON is not usable at any cap, and left alone it fails the caller's parse and reads as a **schema** violation, sending the operator to fix a schema that was never wrong (#587).
 
-The error message includes the model id, the current cap, and (for OpenAI) the reasoning-token count, so the operator's first move ("raise maxTokens") is obvious from the trace.
+Every one of these messages includes the model id and the current cap, so the operator's first move ("raise maxTokens") is obvious from the trace. The **reasoning-token count** is narrower: only the OpenAI-compatible non-streaming guard has it, because `completion_tokens_details` arrives with the batch response. The streaming guard and the runner's own error do not.
 
 The error is **non-retriable** — retrying with the same cap will hit the same wall. Bump the agent's or step's `maxTokens` to address it (16384 is a reasonable headroom for reasoning-heavy workloads producing structured JSON).
 

@@ -45,7 +45,7 @@ import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-reso
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { chatTurnConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
-import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { ExecutorError, retriabilityOfCause } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import {
   composeSystemPromptString,
@@ -207,7 +207,8 @@ export async function executeChatTurn(
       step.id,
       'chat_turn_failed',
       err instanceof Error ? err.message : 'Provider chat() call failed',
-      err
+      err,
+      retriabilityOfCause(err)
     );
   }
   const latencyMs = Date.now() - started;

@@ -24,7 +24,7 @@ import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
-import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { ExecutorError, retriabilityOfCause } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
 import {
   GEN_AI_OPERATION_NAME,
@@ -144,11 +144,17 @@ export async function runLlmCall(
           signal: ctx.signal,
         });
       } catch (err) {
+        // Honour a deterministic provider verdict. `responseFormat` reaches
+        // here from `llm_call` step config, so a truncated structured
+        // extraction lands as a non-retriable `truncated_no_output` — and the
+        // step's `retry` strategy would otherwise re-issue it at the same cap
+        // until `retryCount` ran out.
         throw new ExecutorError(
           params.stepId,
           'llm_call_failed',
           err instanceof Error ? err.message : 'LLM call failed',
-          err
+          err,
+          retriabilityOfCause(err)
         );
       }
       const callDurationMs = Date.now() - callStarted;

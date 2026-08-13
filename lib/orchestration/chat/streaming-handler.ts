@@ -2342,6 +2342,34 @@ export class StreamingChatHandler {
       // the finally. In-try `yield errorEvent(...); return;` paths are
       // application-level outcomes (HTTP 4xx-equivalent) and keep span ok.
       chatSpanError = err;
+
+      // Persist an error-marker assistant message so the conversation has no
+      // orphaned user message with no response — the user's turn was written
+      // up front, so returning without this leaves a question that reloads
+      // with no answer at all. Clients detect the marker via
+      // `metadata.error === true`.
+      const persistErrorMarker = async (errorCode: string): Promise<void> => {
+        if (!conversationId) return;
+        try {
+          await this.persistMessage({
+            conversationId,
+            role: 'assistant',
+            content: '[An error occurred and the response could not be completed.]',
+            // Pin provider only — `resolvedModel` lives inside the try
+            // and isn't reliably in scope here. modelId stays null on
+            // error markers; the audit trail reads that as "model in
+            // effect at error time was ambiguous (possibly mid-fallback)".
+            ...(resolvedProviderSlug ? { providerSlug: resolvedProviderSlug } : {}),
+            metadata: { error: true, errorCode },
+          });
+        } catch (persistErr) {
+          log.warn('Failed to persist error-marker assistant message', {
+            conversationId,
+            error: persistErr instanceof Error ? persistErr.message : String(persistErr),
+          });
+        }
+      };
+
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {
           code: err.code,
@@ -2363,6 +2391,12 @@ export class StreamingChatHandler {
         // contain internal details (env var names, provider slugs, base URLs)
         // that must not reach the browser.
         const safe = getUserFacingError(err.code);
+        // Same reason the generic path below does it. This branch returns
+        // early, so without it a provider failure that exhausted its
+        // fallbacks — or a request fault like `truncated_no_output`, which
+        // now ends the turn here rather than failing over — leaves the user
+        // message unanswered on reload.
+        await persistErrorMarker(err.code);
         yield errorEvent(err.code, safe.message);
         return;
       }
@@ -2375,32 +2409,7 @@ export class StreamingChatHandler {
         conversationId,
       });
 
-      // Persist an error-marker assistant message so the conversation has
-      // no orphaned user message with no response. Clients can detect the
-      // marker via metadata.error === true.
-      if (conversationId) {
-        try {
-          await this.persistMessage({
-            conversationId,
-            role: 'assistant',
-            content: '[An error occurred and the response could not be completed.]',
-            // Pin provider only — `resolvedModel` lives inside the try
-            // and isn't reliably in scope here. modelId stays null on
-            // error markers; the audit trail reads that as "model in
-            // effect at error time was ambiguous (possibly mid-fallback)".
-            ...(resolvedProviderSlug ? { providerSlug: resolvedProviderSlug } : {}),
-            metadata: {
-              error: true,
-              errorCode: 'internal_error',
-            },
-          });
-        } catch (persistErr) {
-          log.warn('Failed to persist error-marker assistant message', {
-            conversationId,
-            error: persistErr instanceof Error ? persistErr.message : String(persistErr),
-          });
-        }
-      }
+      await persistErrorMarker('internal_error');
 
       // Do NOT forward raw err.message — it can leak Prisma internals,
       // provider SDK details, and internal hostnames to the client. The

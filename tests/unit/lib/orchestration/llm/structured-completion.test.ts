@@ -387,6 +387,38 @@ describe('runStructuredCompletion', () => {
       expect(chat).toHaveBeenCalledTimes(2);
     });
 
+    it('counts the tokens of a truncated first attempt in the total', async () => {
+      // A truncated attempt is a full cap's worth of output — the LARGEST
+      // component of the bill, and the one most worth counting. It is billed
+      // whether or not it parsed, `complete-session.ts` feeds this straight
+      // into `logCost`, and the module docstring promises the sum spans both
+      // attempts. Signalling the truncation by discarding the response threw
+      // these away.
+      const provider = makeProvider([
+        {
+          content: CUT_OFF,
+          usage: { inputTokens: 100, outputTokens: 1500 },
+          finishReason: 'length',
+        },
+        {
+          content: '{"ok":true}',
+          usage: { inputTokens: 110, outputTokens: 20 },
+          finishReason: 'stop',
+        },
+      ]);
+
+      const result = await runStructuredCompletion<DummyShape>({
+        provider,
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'go' }],
+        parse: dummyParse,
+        retryUserMessage: 'STRICT',
+      });
+
+      expect(result.value).toEqual({ ok: true });
+      expect(result.tokenUsage).toEqual({ input: 210, output: 1520 });
+    });
+
     it('records a truncated attempt as a FAILED span, not a successful one', async () => {
       // `withSpan` stamps `{ code: 'ok' }` on any normal return, so an early
       // `return` from the callback would file the truncated attempt in the

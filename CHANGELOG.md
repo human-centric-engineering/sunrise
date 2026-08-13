@@ -385,17 +385,27 @@ release process.
   "the model broke my contract" — a premise that is false here (#587).
 
 - **A chat stream no longer fails over to another provider when the fault is in
-  the request.** `ProviderError`s whose cause travels with the request rather
-  than the endpoint — currently `truncated_no_output` and `invalid_schema` —
-  end the turn instead of retrying against each configured fallback and
-  recording a circuit-breaker failure for every one. The cap and the schema
-  come from the agent's config, so a fallback rejects them identically; the
-  old path billed a full-cap call per provider, wiped the visitor's screen with
-  a `content_reset` each time, and could open a healthy provider's breaker for
-  every other agent using it. Deliberately a code list and **not** the
-  `retriable` flag: `toProviderError` marks every 4xx non-retriable, and
-  failing over on a `401` from a provider with a stale key is exactly what
-  fallbacks are for (#587).
+  the request.** A `truncated_no_output` `ProviderError` now ends the turn
+  instead of retrying against each configured fallback and recording a
+  circuit-breaker failure for every one. The token cap comes from the agent's
+  config, so a fallback rejects it identically; the old path billed a full-cap
+  call per provider, wiped the visitor's screen with a `content_reset` each
+  time, and could open a healthy provider's breaker for every other agent using
+  it. Deliberately a one-entry code list and **not** the `retriable` flag:
+  `toProviderError` marks every 4xx non-retriable, and failing over on a `401`
+  from a provider with a stale key is exactly what fallbacks are for. That path
+  also now persists an error-marker assistant message, so a failed turn no
+  longer reloads as a user question with no answer (#587).
+
+- **A deterministic provider failure is no longer retried by workflow steps.**
+  `ExecutorError` defaults to `retriable: true`, and `llm_call`, `chat_turn`
+  and `agent_call` all discarded the `ProviderError.retriable` verdict when
+  wrapping a `provider.chat()` throw — so a step with a `retry` error strategy
+  re-issued a truncation for its whole `retryCount`, each attempt billing a
+  full cap's worth of output to hit the identical wall. The new
+  `retriabilityOfCause()` in `lib/orchestration/engine/errors.ts` adopts the
+  cause's verdict when it has one and keeps the optimistic default otherwise
+  (#587).
 
 - **`.gitignore` now denies `.env*` by default** and allowlists only
   `.env.example` and `.env.development`. The previous form enumerated names, so

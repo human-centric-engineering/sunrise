@@ -178,6 +178,11 @@ retry, but once both attempts are spent the error names the truncation and the
 cap rather than blaming the schema. See
 [Truncation](./llm-providers.md#truncation-guard-truncated_no_output).
 
+Note where that message stops: `completeEvaluationSession` deliberately never
+forwards raw provider text, so it logs the detail and rethrows a flat
+`Failed to generate evaluation analysis`. The truncation and the cap are in the
+**server log and the `llm.call` span**, not in the API response.
+
 **That covers the completion summary only.** `runAnalysis` is the one
 evaluation caller of `runStructuredCompletion`. Per-turn metric scoring goes
 through `scoreResponse` → `drainStreamChat`, whose `done` event carries no
