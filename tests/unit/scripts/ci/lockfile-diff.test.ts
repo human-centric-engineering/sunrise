@@ -219,6 +219,63 @@ describe('diffLockfiles', () => {
       expect(diff.removed).toContain('node_modules/ui/node_modules/sharp-wasm32');
     });
 
+    it('still fires when the SAME version is deduped into an un-annotated copy', () => {
+      // The dedup guard must key on the removed *resolution*, not on its path
+      // having pre-existed. Here 1.0.0 was in the tree twice with `libc` and
+      // once without; after the dedupe it is in the tree only without. That is
+      // a genuine loss of platform filtering for whatever resolved to the
+      // nested copies — the #571 failure mode exactly — and a path-membership
+      // guard silently skips it.
+      const partiallyAnnotated: Lockfile = {
+        packages: {
+          'node_modules/foo': { version: '1.0.0' },
+          'node_modules/a/node_modules/foo': { version: '1.0.0', libc: ['musl'] },
+          'node_modules/b/node_modules/foo': { version: '1.0.0', libc: ['musl'] },
+        },
+      };
+      const dedupedToTheUnannotatedCopy: Lockfile = {
+        packages: { 'node_modules/foo': { version: '1.0.0' } },
+      };
+
+      const diff = diffLockfiles(partiallyAnnotated, dedupedToTheUnannotatedCopy);
+
+      expect(diff.lostNativeMetadata).toEqual([
+        { name: 'node_modules/a/node_modules/foo', keys: ['libc'] },
+        { name: 'node_modules/b/node_modules/foo', keys: ['libc'] },
+      ]);
+      expect(hasRisk(diff)).toBe(true);
+    });
+
+    it('still fires when a hoist upgrades into a pre-existing un-annotated path', () => {
+      // `npm update` under npm < 11.11.0: the top-level entry is rewritten to
+      // the nested copy's version and loses `libc` on the way. The surviving
+      // path pre-existed, so path-membership suppresses it — but the version
+      // that only ever existed WITH libc is now in the tree WITHOUT it.
+      const before: Lockfile = {
+        packages: {
+          'node_modules/sharp-linux-x64': { version: '0.33.0', os: ['linux'], cpu: ['x64'] },
+          'node_modules/pdfkit/node_modules/sharp-linux-x64': {
+            version: '0.34.0',
+            os: ['linux'],
+            cpu: ['x64'],
+            libc: ['musl'],
+          },
+        },
+      };
+      const after: Lockfile = {
+        packages: {
+          'node_modules/sharp-linux-x64': { version: '0.34.0', os: ['linux'], cpu: ['x64'] },
+        },
+      };
+
+      const diff = diffLockfiles(before, after);
+
+      expect(diff.lostNativeMetadata).toEqual([
+        { name: 'node_modules/pdfkit/node_modules/sharp-linux-x64', keys: ['libc'] },
+      ]);
+      expect(hasRisk(diff)).toBe(true);
+    });
+
     it('still fires when the survivor is new, even alongside an untouched copy', () => {
       // Guards the fix from over-correcting: one survivor predates the move and
       // one is new. A genuine hoist is hiding in here and must still be caught.

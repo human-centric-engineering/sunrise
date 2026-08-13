@@ -258,18 +258,35 @@ export function diffLockfiles(
     const survivors = headByPackageName.get(short);
     if (survivors === undefined) continue; // genuinely removed, not moved
 
-    // A hoist puts the package somewhere NEW. If every surviving copy was
-    // already in the base tree, nothing moved: a duplicate was deduped away,
-    // and whatever metadata the untouched survivor does or does not declare is
-    // unchanged by this diff.
+    // Only compare against survivors that are the SAME RESOLUTION. If the
+    // version that was removed is no longer installed anywhere, the metadata
+    // that went with it described something the tree no longer contains, and
+    // an unrelated copy at a different version is not evidence of a loss.
     //
     // Without this, a `react-email` bump that deleted a nested
     // `@react-email/ui` subtree got matched against a top-level copy of
-    // `@img/sharp-wasm32` that had predated it and had never declared `cpu`,
-    // and the removal was reported as "lost cpu". A check that cries wolf on a
-    // dependency simply going away is worse than no check, because the next
-    // real loss reads the same (#589).
-    if (survivors.every(({ path }) => path in basePackages)) continue;
+    // `@img/sharp-wasm32` at a *different* version, which had predated it and
+    // had never declared `cpu` — reported as "lost cpu". A check that cries
+    // wolf on a dependency simply going away is worse than no check, because
+    // the next real loss reads the same (#589).
+    //
+    // Keyed on the version and NOT on "did this path already exist", which was
+    // the first attempt and was far too broad: it also silenced the case where
+    // a package is annotated on some copies and not others — precisely the
+    // state d5b913fb left this repo in — and the annotated copy is deduped into
+    // the un-annotated one. That takes the tree from partly guarded to not
+    // guarded at all, which is the #571 failure mode, and it must still gate.
+    //
+    // An entry with no `version` cannot be matched, so it falls through to the
+    // check below rather than being skipped: for a supply-chain guard, the safe
+    // default is to report.
+    const removedVersion = basePackages[name].version;
+    if (
+      removedVersion !== undefined &&
+      !survivors.some(({ entry }) => entry.version === removedVersion)
+    ) {
+      continue;
+    }
 
     // Lost only if EVERY surviving copy lacks the key — one intact copy means
     // the metadata is still in the tree. Deliberately still spans *all*
