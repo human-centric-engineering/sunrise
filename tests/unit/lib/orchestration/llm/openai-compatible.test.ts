@@ -419,6 +419,26 @@ describe('chat', () => {
     expect((caught as Error).message).toMatch(/2048/);
   });
 
+  it('does not flag an extraction whose object is complete when the cap is hit', async () => {
+    // The model closed the object and was cut before the stop token, so
+    // `finish_reason` is 'length' but the payload is usable. Throwing here
+    // hard-fails a call the caller would have parsed happily, and burns a
+    // retry first. Matches the runner's rule, which requires parse to have
+    // failed AND the finish to be 'length'.
+    chatCreateMock.mockResolvedValue(makeChatCompletion('{"dimension":"clarity"}', 'length'));
+
+    const provider = makeProvider();
+    const response = await provider.chat([{ role: 'user', content: 'x' }], {
+      model: 'gpt-5',
+      maxTokens: 2048,
+      responseFormat: { type: 'json_schema', name: 'judgement', schema: { type: 'object' } },
+    });
+
+    expect(response.content).toBe('{"dimension":"clarity"}');
+    // Still surfaced, so a caller that cares can notice the model wanted more.
+    expect(response.finishReason).toBe('length');
+  });
+
   it('does not flag a truncated tool-calling turn that also carries a responseFormat', async () => {
     // Arrange — with tools in play a `length` stop is the ordinary
     // partial-output case, not a broken extraction: the model may be
@@ -656,6 +676,29 @@ describe('chatStream', () => {
     // Assert — surfaced before the `done` chunk, as on Anthropic.
     expect((caught as { code?: string }).code).toBe('truncated_no_output');
     expect((caught as Error).message).toMatch(/structured/i);
+  });
+
+  it('does not flag a streaming extraction whose object completed at the cap', async () => {
+    // Streaming counterpart of the non-streaming case above.
+    const chunks = [
+      makeChunk({ content: '{"verdict":' }),
+      makeChunk({ content: '"pass"}' }),
+      makeChunk({ finishReason: 'length' }),
+    ];
+    chatCreateMock.mockResolvedValue(toAsyncIterable(chunks));
+
+    const provider = makeProvider();
+    const collected: unknown[] = [];
+    for await (const chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+      model: 'gpt-5',
+      maxTokens: 512,
+      responseFormat: { type: 'json_schema', name: 'verdict', schema: { type: 'object' } },
+    })) {
+      collected.push(chunk);
+    }
+
+    const done = collected.find((c) => (c as { type: string }).type === 'done');
+    expect(done).toMatchObject({ type: 'done', finishReason: 'length' });
   });
 
   it('throws ProviderError with code aborted when signal is already aborted at chunk boundary', async () => {

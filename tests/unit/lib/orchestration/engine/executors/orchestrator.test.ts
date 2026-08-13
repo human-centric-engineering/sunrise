@@ -56,6 +56,7 @@ vi.mock('@/lib/orchestration/engine/executors/agent-call', () => ({
 import { executeOrchestrator } from '@/lib/orchestration/engine/executors/orchestrator';
 import { prisma } from '@/lib/db/client';
 import { runLlmCall, interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { executeAgentCall } from '@/lib/orchestration/engine/executors/agent-call';
 import type { WorkflowStep, OrchestratorTurn, TurnEntry } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -1352,6 +1353,33 @@ describe('config defaults and prompt formatting', () => {
     // Assert — explicit override propagated to both calls
     expect(vi.mocked(runLlmCall).mock.calls[0][1].temperature).toBe(0.7);
     expect(vi.mocked(runLlmCall).mock.calls[1][1].temperature).toBe(0.7);
+  });
+
+  it("preserves runLlmCall's non-retriable verdict when re-wrapping", async () => {
+    // `runLlmCall` marks a request fault non-retriable; re-wrapping without
+    // passing that through silently restores ExecutorError's `true` default,
+    // so a step with `errorStrategy: 'retry'` re-issues the identical
+    // full-cap call for its whole retryCount. `supervisor.ts` rethrows an
+    // ExecutorError untouched for the same reason (#587).
+    vi.mocked(runLlmCall).mockRejectedValueOnce(
+      new ExecutorError('s1', 'llm_call_failed', 'hit max_completion_tokens', undefined, false)
+    );
+
+    await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'planner_call_failed',
+      retriable: false,
+    });
+  });
+
+  it('keeps a transient planner failure retriable', async () => {
+    // The other half — an ordinary failure must not become non-retriable.
+    vi.mocked(runLlmCall).mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      retriable: true,
+    });
   });
 
   it('non-Error thrown by planner LLM call is wrapped via String() in ExecutorError message', async () => {

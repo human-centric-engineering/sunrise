@@ -395,7 +395,13 @@ export async function executeOrchestrator(
         step.id,
         'planner_call_failed',
         `Planner LLM call failed in round ${round + 1}: ${err instanceof Error ? err.message : String(err)}`,
-        err
+        err,
+        // `runLlmCall` already decided this — re-wrapping without the verdict
+        // silently restores the `true` default, so a request fault it marked
+        // non-retriable would be re-issued for the step's whole `retryCount`
+        // at the same cap. Same reason `supervisor.ts` rethrows an
+        // `ExecutorError` untouched.
+        err instanceof ExecutorError ? err.retriable : true
       );
     }
 

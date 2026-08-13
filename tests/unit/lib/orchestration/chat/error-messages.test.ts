@@ -125,8 +125,9 @@ describe('getUserFacingError', () => {
 
   it('gives truncated_no_output its own copy without disclosing the cap', () => {
     // The underlying ProviderError names the model and the exact token cap;
-    // that goes to the server log and the trace. This copy is reachable from
-    // the embed widget, so it must stay actionable without naming either.
+    // that goes to the server log and the trace. This registry is rendered by
+    // whatever client is attached — including a fork's end-user surface — so
+    // the copy must stay actionable without assuming an admin audience.
     const truncated = getUserFacingError('truncated_no_output');
     const generic = getUserFacingError('internal_error');
 

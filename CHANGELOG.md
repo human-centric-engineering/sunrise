@@ -548,9 +548,12 @@ release process.
 - **`truncated_no_output` gains user-facing chat copy.** It had no `ERROR_MAP`
   entry, so `getUserFacingError` fell through to the generic "Something went
   wrong" — the actionable detail reached the server log and the trace but never
-  the person who could act on it. The new copy is deliberately vaguer than the
-  underlying `ProviderError`: it is reachable from the embed widget, where the
-  model id and the configured cap are not a visitor's business (#587).
+  the person who could act on it. The copy is deliberately vaguer than the
+  underlying `ProviderError`, because this registry is rendered by whatever
+  client is attached, a fork's end-user surface included. Note the bundled
+  embed widget does **not** consult it — it renders a fixed
+  `'Something went wrong.'` for every error event — so this reaches the admin
+  chat interface and any client that calls `getUserFacingError` (#587).
 
 - **`CI_NODE_HEAP_MB` now reaches the Docker build.** A workflow-level `env:`
   does not cross into a container build, so raising the variable moved

@@ -136,10 +136,18 @@ const ERROR_MAP: Record<string, UserFacingError> = {
   },
   // Deliberately vaguer than the underlying `ProviderError`, which names the
   // model and the exact token cap. That detail is what an operator needs and
-  // it stays on the server log and the trace; this copy is reachable from the
-  // embed widget, where the model id and configured cap are not the visitor's
-  // business. Without an entry here the code fell through to the generic
-  // "Something went wrong", which gave the user nothing to act on.
+  // it stays on the server log and the trace; this registry is rendered by
+  // whatever client is attached, including a fork's own end-user surface, so
+  // it must not assume an admin audience. Without an entry here the code fell
+  // through to the generic "Something went wrong", which gave the reader
+  // nothing to act on.
+  //
+  // Note who actually sees it: the admin chat interface, which calls
+  // `getUserFacingError(code)` client-side. The bundled embed widget does
+  // NOT — it renders a hard-coded 'Something went wrong.' for every `error`
+  // event and never reads `code` or `message`, so an embed visitor hitting a
+  // truncation still gets nothing specific. Teaching the widget to use this
+  // registry is its own change.
   truncated_no_output: {
     title: 'Response Cut Short',
     message: 'The assistant ran out of room before it could finish its answer.',

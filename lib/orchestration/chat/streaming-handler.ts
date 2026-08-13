@@ -1245,8 +1245,13 @@ export class StreamingChatHandler {
                       inputTokens: streamErr.usage.inputTokens,
                       outputTokens: streamErr.usage.outputTokens,
                       operation: CostOperation.CHAT,
-                      traceId: llmTraceId,
-                      spanId: llmSpanId,
+                      // Read off the span directly: `llmTraceId`/`llmSpanId`
+                      // are only assigned on the success path below, so they
+                      // are still '' here — and `logCost` drops falsy ids,
+                      // leaving the most expensive turn shape unjoinable to
+                      // the very error span an operator is looking at.
+                      traceId: llmSpan.traceId(),
+                      spanId: llmSpan.spanId(),
                       ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
                     });
                   }

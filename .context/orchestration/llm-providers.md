@@ -370,16 +370,18 @@ Every long-running call accepts an `AbortSignal` via `LlmOptions.signal`. Aborts
 
 Both providers fail loudly when the model hits its token cap **without producing usable output**. Two rules, because what counts as usable differs:
 
-| Call shape                                                            | Fires when                                                                 | Where                           |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------- |
-| Ordinary completion                                                   | cap hit **and** content empty **and** no tool calls                        | `chat()` only                   |
-| **Structured extraction** (`responseFormat: 'json_schema'`, no tools) | cap hit — **any** `length` / `max_tokens` stop, whatever content came back | `chat()` **and** `chatStream()` |
+| Call shape                                                            | Fires when                                               | Where                           |
+| --------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------- |
+| Ordinary completion                                                   | cap hit **and** content empty **and** no tool calls      | `chat()` only                   |
+| **Structured extraction** (`responseFormat: 'json_schema'`, no tools) | cap hit **and** the payload is not a complete JSON value | `chat()` **and** `chatStream()` |
 
 Both adapters implement both rules (`finish_reason: 'length'` on OpenAI-compatible, `stop_reason: 'max_tokens'` on Anthropic) and raise `ProviderError('truncated_no_output')`. Note the asymmetry in the last column: `chatStream()` carries only the extraction rule, so an ordinary streaming turn that produces nothing before hitting the cap still ends with an empty `done` chunk rather than an error.
 
 The first rule catches a class of silent corruption unique to reasoning models (gpt-5, o-series, Claude with extended thinking). For these models the `max_completion_tokens` / `max_tokens` cap is shared between **reasoning tokens** and **visible output tokens**; when reasoning consumes the whole budget the SDK returns an empty `content` string. Without this guard the engine would happily store `""` as a "successful" step output and downstream guards/validators would invent confused failures.
 
 The second rule exists because the far more common shape is reasoning eating _most_ of the budget, not all of it: a few hundred tokens of an object arrive, cut off mid-string. Content is non-empty, so the first rule cannot see it — but truncated JSON is not usable at any cap, and left alone it fails the caller's parse and reads as a **schema** violation, sending the operator to fix a schema that was never wrong (#587).
+
+It tests the payload rather than the stop reason alone, so an object that _closed_ just as the cap was reached is returned normally — the caller can use it, and `finishReason: 'length'` still says the model wanted more room. **On Anthropic that test is deliberately absent**: there the extraction payload is rebuilt with `JSON.stringify` from the tool-use block's already-parsed input, so even a truncated one serialises to valid JSON and a parse gate would disable the guard entirely. Anthropic keys on `stop_reason` alone and must keep doing so.
 
 Every one of these messages includes the model id and the current cap, so the operator's first move ("raise maxTokens") is obvious from the trace. The **reasoning-token count** is narrower: only the OpenAI-compatible non-streaming guard has it, because `completion_tokens_details` arrives with the batch response. The streaming guard and the runner's own error do not.
 
