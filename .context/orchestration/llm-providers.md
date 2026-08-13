@@ -404,7 +404,7 @@ A truncation **still gets the retry**, and the error is raised only once both at
 
 (And not because the retry appends a message: `max_tokens` / `max_completion_tokens` bound the **completion** on both providers, so a longer prompt does not shrink the output budget.)
 
-Because the adapters raise `truncated_no_output` before returning, the runner treats that throw on a first attempt as identical to a `'length'` finish it noticed itself — it is caught, the retry runs, and only a second truncation ends the call. A first attempt that threw contributes no token usage to the result: the provider discarded it with the response.
+Because the adapters raise `truncated_no_output` before returning, the runner treats that throw on a first attempt as identical to a `'length'` finish it noticed itself — it is caught, the retry runs, and only a second truncation ends the call. Either route keeps the first attempt's tokens: the adapters attach `ProviderError.usage` when they raise, so the full cap it billed still reaches the totals. The exception is a host that reports no usage at all, where there is nothing to carry.
 
 The caller's `onFinalFailure` hook is deliberately **not** consulted on a truncation, because that hook exists to phrase "the model broke my contract" and on a truncation that premise is false.
 

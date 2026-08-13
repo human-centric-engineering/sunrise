@@ -235,11 +235,12 @@ export async function runStructuredCompletion<T>(
   // extraction), or it came back as a `'length'` finish we notice here (a
   // provider that ignores `responseFormat`, or no `responseSchema` at all).
   //
-  // `response` is null ONLY on the provider-raised route, where the usage was
-  // discarded along with the response. When we detect it ourselves the numbers
-  // are in hand and must be kept — a truncated attempt is a full cap's worth
-  // of output, so dropping it under-reports the largest component of the bill
-  // and breaks this module's own promise to sum across attempts.
+  // `usage` survives either route: we have the response in hand when we
+  // detect it ourselves, and the adapters attach `ProviderError.usage` when
+  // they raise it. It is null only when the host reported no usage at all. A
+  // truncated attempt is a full cap's worth of output, so dropping it would
+  // under-report the largest component of the bill and break this module's
+  // own promise to sum across attempts.
   //
   // The truncation is thrown INSIDE `withSpan` and caught outside it rather
   // than returned from the callback. That is load-bearing: `withSpan` stamps
@@ -353,10 +354,19 @@ export async function runStructuredCompletion<T>(
   // a full cap's worth of output. Attributing only one of them under-reports
   // the most expensive failure shape there is.
   if (retry.truncated) {
-    throw truncationError(opts.model, maxTokens, {
+    const billed = {
       inputTokens: (first.usage?.inputTokens ?? 0) + (retry.usage?.inputTokens ?? 0),
       outputTokens: (first.usage?.outputTokens ?? 0) + (retry.usage?.outputTokens ?? 0),
-    });
+    };
+    // Omit rather than report zeros, matching the adapter guards: a consumer
+    // doing `if (err.usage) logCost(...)` would otherwise write the "this turn
+    // was free" row those guards exist to avoid. Both attempts can come back
+    // usage-less from a host that ignores `stream_options.include_usage`.
+    throw truncationError(
+      opts.model,
+      maxTokens,
+      billed.inputTokens > 0 || billed.outputTokens > 0 ? billed : undefined
+    );
   }
 
   if (retry.parsed === null) {

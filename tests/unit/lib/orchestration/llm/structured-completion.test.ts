@@ -451,6 +451,33 @@ describe('runStructuredCompletion', () => {
       expect(usage).toEqual({ inputTokens: 22, outputTokens: 908 });
     });
 
+    it('omits usage from the final error when neither attempt reported any', async () => {
+      // Same invariant the adapter guards hold: a consumer doing
+      // `if (err.usage) logCost(...)` must not be handed {0, 0} and write a
+      // "this turn was free" row for a full-cap failure. Hosts that ignore
+      // `stream_options.include_usage` report nothing.
+      const provider = makeProvider([
+        { content: CUT_OFF, usage: { inputTokens: 0, outputTokens: 0 }, finishReason: 'length' },
+        { content: CUT_OFF, usage: { inputTokens: 0, outputTokens: 0 }, finishReason: 'length' },
+      ]);
+
+      let caught: unknown;
+      try {
+        await runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'local-model',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect((caught as { code?: string }).code).toBe('truncated_no_output');
+      expect((caught as { usage?: unknown }).usage).toBeUndefined();
+    });
+
     it('records a truncated attempt as a FAILED span, not a successful one', async () => {
       // `withSpan` stamps `{ code: 'ok' }` on any normal return, so an early
       // `return` from the callback would file the truncated attempt in the
