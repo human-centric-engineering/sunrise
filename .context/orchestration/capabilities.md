@@ -126,6 +126,8 @@ It exists because **`agentId` cannot do that job for a workflow.** The label the
 
 Dispatch step 9 therefore writes `agentId` only when it is a real agent, and `workflowExecutionId` otherwise. That FK is satisfied — the `AiWorkflowExecution` row exists before any step runs.
 
+**What this does and does not get you.** The row persists, is queryable by execution, and is counted by the per-capability stats route (which filters on `operation: 'tool_call'` and `metadata.slug`). It does **not** appear in the execution detail or live cost panels: both key on `metadata.stepId` and skip any row without one, and the dispatcher writes `{ slug, success }`. Capabilities dispatched from an `agent_call` step likewise still carry no `workflowExecutionId`. Both are open — see #600.
+
 **If you add a dispatch path that is not an agent**, carry the id of whatever real row owns the call and add a column for it, rather than encoding it into `agentId`. `workflowAgentId()` carries the same warning for the same reason.
 
 ### Resolved-binding carrier (`CapabilityContext.customConfig` / `isEnabled`)

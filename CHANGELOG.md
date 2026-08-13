@@ -557,9 +557,15 @@ release process.
   `tool_call` executor sets from `ctx.executionId` and which maps to
   `AiCostLog.workflowExecutionId` — a real FK, satisfied because the execution
   row exists before any step runs. **Fork-facing:** these rows appear where none
-  did before. No agent's `checkBudget()` total moves (it sums by `agentId`, and
-  these rows never existed to be counted); a workflow's costs are now
-  attributable to its execution. Pre-existing, found by review of #528.
+  did before. No agent's `checkBudget()` total moves — it sums by `agentId`, and
+  these rows never existed to be counted. **Scope of the fix, stated precisely:**
+  the row persists and carries `workflowExecutionId`, so it is queryable by
+  execution and the per-capability stats route (`operation: 'tool_call'` +
+  `metadata.slug`) reports it instead of zero. It does **not** yet show in the
+  execution detail or live cost panels, which key on `metadata.stepId` and skip
+  any row without one — `tool_call` rows carry `{ slug, success }`. Completing
+  that, and the same `workflowExecutionId` for capabilities dispatched from an
+  `agent_call` step, is tracked in #600. Pre-existing, found by review of #528.
 - **Scheduled `tool_call` steps no longer fail on a cold process.**
   `engine/executors/tool-call.ts` dispatched straight into the capability
   registry without calling `registerBuiltInCapabilities()` first, unlike the
