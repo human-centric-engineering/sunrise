@@ -134,6 +134,17 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: 'The response was blocked by content policy.',
     action: 'Try a different question or contact an admin.',
   },
+  // Deliberately vaguer than the underlying `ProviderError`, which names the
+  // model and the exact token cap. That detail is what an operator needs and
+  // it stays on the server log and the trace; this copy is reachable from the
+  // embed widget, where the model id and configured cap are not the visitor's
+  // business. Without an entry here the code fell through to the generic
+  // "Something went wrong", which gave the user nothing to act on.
+  truncated_no_output: {
+    title: 'Response Cut Short',
+    message: 'The assistant ran out of room before it could finish its answer.',
+    action: "Try a shorter or simpler question, or ask an admin to raise this agent's max tokens.",
+  },
   conversation_length_cap_reached: {
     title: 'Conversation Limit Reached',
     message: 'This conversation has reached the maximum number of messages.',

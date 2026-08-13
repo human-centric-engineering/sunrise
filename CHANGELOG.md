@@ -376,11 +376,14 @@ release process.
   `ProviderError('truncated_no_output')`. **Fork-facing:** any caller that was
   salvaging partial JSON from a truncated extraction will now see a thrown
   error instead — raise `maxTokens`. A turn that carries tools is unaffected:
-  a `length` stop there is the ordinary partial-output case. `runStructuredCompletion`
-  correspondingly **skips its retry** on a truncation (the retry runs the same
-  cap against a longer prompt, so it cannot succeed) and does **not** consult
-  the caller's `onFinalFailure` hook, which exists to phrase "the model broke
-  my contract" — a premise that is false here (#587).
+  a `length` stop there is the ordinary partial-output case.
+  `runStructuredCompletion` correspondingly **skips its retry** on a truncation
+  **when a `responseSchema` was enforced** — the provider constrained the
+  output, so there is no preamble a stricter prompt could remove and the same
+  object meets the same cap. Without enforcement the retry still runs. In
+  either case it does **not** consult the caller's `onFinalFailure` hook, which
+  exists to phrase "the model broke my contract" — a premise that is false
+  here (#587).
 
 - **`.gitignore` now denies `.env*` by default** and allowlists only
   `.env.example` and `.env.development`. The previous form enumerated names, so
@@ -485,7 +488,8 @@ release process.
 
 ### Fixed
 
-- **A truncated LLM response is no longer reported as a schema failure.**
+- **A truncated response is no longer reported as a schema failure on the
+  `runStructuredCompletion` and provider-adapter paths.**
   `runStructuredCompletion` never read `finishReason`, so a response cut off at
   the token cap arrived as text its `parse` rejected — indistinguishable, from
   the content alone, from a model that ignored the schema. Both attempts burned
@@ -495,8 +499,15 @@ release process.
   retry"` and an empty issue list — reading as "no schema problems found"
   rather than "we never got JSON" — when the real fault was a 2048-token cap on
   a reasoning model, where the cap covers hidden reasoning tokens as well as
-  visible output. The error now names the truncation and the cap on all three
-  routes that can detect it (both provider adapters and the runner) (#587).
+  visible output. The error now names the truncation and the cap on the three
+  routes that can detect it: both provider adapters and the runner. The runner
+  skips its retry only when a `responseSchema` was enforced — with the shape
+  merely requested in the prose, a stricter retry prompt is a real remedy for a
+  model that spent the budget on a preamble, so it still runs. **Two in-repo
+  paths are not covered** and are tracked separately: evaluation judge agents
+  go through `drainStreamChat`, whose `done` event carries no finish reason,
+  and the orchestrator planner uses `json_object` rather than `json_schema`
+  (#594) (#587).
 
 - **`CI_NODE_HEAP_MB` now reaches the Docker build.** A workflow-level `env:`
   does not cross into a container build, so raising the variable moved

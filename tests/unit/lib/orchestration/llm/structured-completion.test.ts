@@ -269,7 +269,11 @@ describe('runStructuredCompletion', () => {
     // from the content alone, and only `finishReason` tells them apart.
     const CUT_OFF = '{"ok":tr';
 
-    it('reports truncation instead of buying a second attempt at the same cap', async () => {
+    it('skips the retry when the shape was provider-enforced and the cap was hit', async () => {
+      // With `responseSchema` forwarded, the provider constrained the output
+      // to the object — every token went into it, and there is no preamble
+      // for the stricter retry prompt to remove. The same object meets the
+      // same cap, so the second call is knowably wasted.
       const provider = makeProvider([
         {
           content: CUT_OFF,
@@ -288,6 +292,7 @@ describe('runStructuredCompletion', () => {
           parse: dummyParse,
           retryUserMessage: 'STRICT',
           maxTokens: 2048,
+          responseSchema: { type: 'object', properties: { ok: { type: 'boolean' } } },
         });
       } catch (err) {
         caught = err;
@@ -298,9 +303,61 @@ describe('runStructuredCompletion', () => {
       expect((caught as Error).message).toMatch(/truncat/i);
       expect((caught as Error).message).toMatch(/2048/);
       expect((caught as { code?: string }).code).toBe('truncated_no_output');
-      // And no second call: the retry runs the same cap against a LONGER
-      // prompt, so its outcome is knowable from data we already hold.
       expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    });
+
+    it('still retries an unenforced truncation, where the stricter prompt is a real remedy', async () => {
+      // No `responseSchema`: the shape is only a request in the prose, so a
+      // chatty model can spend the budget introducing its answer and get cut
+      // off before finishing the JSON. "Respond ONLY with a JSON object" at
+      // temperature 0 fixes exactly that, and the cap bounds the COMPLETION —
+      // appending the retry message does not shrink the output budget.
+      // Skipping this retry would hard-fail a recoverable call and blame a
+      // token cap that was adequate.
+      const provider = makeProvider([
+        { content: `here is my considered answer: ${CUT_OFF}`, finishReason: 'length' },
+        { content: '{"ok":true}', finishReason: 'stop' },
+      ]);
+
+      const result = await runStructuredCompletion<DummyShape>({
+        provider,
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'go' }],
+        parse: dummyParse,
+        retryUserMessage: 'Respond ONLY with a JSON object. No prose, no code fences.',
+        maxTokens: 1500,
+      });
+
+      expect(result.value).toEqual({ ok: true });
+      expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    });
+
+    it('reports truncation when an unenforced retry is cut off too', async () => {
+      // The retry earned its call and still ran out of room — now the cap
+      // genuinely is the fault, and the error says so rather than blaming
+      // the schema.
+      const provider = makeProvider([
+        { content: `preamble ${CUT_OFF}`, finishReason: 'length' },
+        { content: CUT_OFF, finishReason: 'length' },
+      ]);
+
+      let caught: unknown;
+      try {
+        await runStructuredCompletion<DummyShape>({
+          provider,
+          model: 'claude-sonnet-4-6',
+          messages: [{ role: 'user', content: 'go' }],
+          parse: dummyParse,
+          retryUserMessage: 'STRICT',
+          maxTokens: 1500,
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect((caught as { code?: string }).code).toBe('truncated_no_output');
+      expect((caught as Error).message).toMatch(/1500/);
+      expect((provider.chat as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
     });
 
     it("does not defer to the caller's onFinalFailure, whose premise is false here", async () => {

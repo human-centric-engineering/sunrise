@@ -173,9 +173,14 @@ Both attempts going through `runStructuredCompletion`
 machinery the summary call uses. The retry never includes the
 malformed prior response in the prompt.
 
-A response that failed to parse because it was **truncated** is the
-exception: there is no retry, and the error says so. See
-[Truncation](./llm-providers.md#truncation-guard-truncated_no_output).
+A response that failed to parse because it was **truncated** is reported as
+truncation rather than as a schema failure, and when the shape was
+provider-enforced there is no retry (it could not help). See
+[Truncation](./llm-providers.md#truncation-guard-truncated_no_output). Note
+this applies to the metric scorer and the completion summary, which go through
+`runStructuredCompletion`; the **judge agents** in `score-response.ts` take the
+`drainStreamChat` path instead, which does not surface a finish reason, so a
+truncated judge still records `score: null` with a JSON-shape reason (#594).
 
 `runStructuredCompletion` also accepts an optional `responseSchema`
 (plus `responseSchemaName` / `responseSchemaStrict`). When supplied it is

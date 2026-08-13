@@ -391,7 +391,16 @@ Short-but-non-empty responses that hit the cap are **not** flagged **outside** s
 
 `runStructuredCompletion` (`lib/orchestration/llm/structured-completion.ts`) repeats the check on the response it gets back, and throws the same `truncated_no_output` code. It is not redundant with the adapters: they can only act on structured extraction they know about, and a caller may be relying on the prompt's prose contract with no `responseSchema` at all, or talking to a provider that ignores one.
 
-It also **skips the retry** in this case. The retry would run the same cap against a _longer_ prompt (the stricter retry message is appended), so its failure is already knowable — a second paid call for nothing. And the caller's `onFinalFailure` hook is deliberately **not** consulted, because that hook exists to phrase "the model broke my contract" and on a truncation that premise is false.
+Whether it **skips the retry** depends on whether a `responseSchema` was enforced:
+
+| `responseSchema` | On a truncated first attempt | Why                                                                                                                                                     |
+| ---------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supplied         | throw, no retry              | The provider constrained the output to the object, so every token went into it. No preamble for a stricter prompt to remove — same object, same cap.    |
+| Absent           | retry, then judge again      | The shape is only a request in the prose. A chatty model can spend the budget introducing its answer, and "respond ONLY with a JSON object" fixes that. |
+
+Note what is **not** a reason to skip: the retry appends a message, but `max_tokens` / `max_completion_tokens` bound the **completion** on both providers, so a longer prompt does not shrink the output budget.
+
+The caller's `onFinalFailure` hook is deliberately **not** consulted on a truncation, because that hook exists to phrase "the model broke my contract" and on a truncation that premise is false.
 
 `StructuredCompletionResult.finishReason` carries the finish reason of the attempt that produced the value. Check it for `'length'` even on success: a lenient `parse` can accept content that happened to be well-formed where it was cut — a truncated array of results reads as a complete short one.
 

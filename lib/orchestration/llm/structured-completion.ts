@@ -119,9 +119,10 @@ export interface StructuredCompletionOptions<T> {
   maxTokens?: number;
   timeoutMs?: number;
   /**
-   * Optional caller-supplied error to throw when both attempts fail.
+   * Optional caller-supplied error to throw when the attempts are exhausted
+   * and nothing parsed.
    *
-   * **Not consulted when the failure is a truncation** (`finishReason:
+   * **Not consulted when the final attempt was truncated** (`finishReason:
    * 'length'`). This hook exists to phrase "the model broke my contract",
    * and on a truncation that premise is false — the response was cut off at
    * the token cap, so there was never a complete answer to check against the
@@ -171,6 +172,9 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * catch whichever layer noticed. This layer catches what they cannot: a
  * provider that ignores `responseSchema` altogether, or a caller relying on
  * the prompt's prose contract rather than native structured output.
+ *
+ * Raised only once the attempts are exhausted, so reaching here means the cap
+ * really is the problem — not that a retry might have fitted.
  */
 function truncationError(model: string, maxTokens: number): ProviderError {
   return new ProviderError(
@@ -252,18 +256,33 @@ export async function runStructuredCompletion<T>(
     };
   }
 
-  // Truncation, not a contract violation — and the retry cannot fix it.
-  // Nothing in the content distinguishes "cut off mid-object" from "the model
-  // ignored the schema": both arrive as text that `parse` rejects. Only
-  // `finishReason` tells them apart, and the retry would run the same cap
-  // against a *longer* prompt (the retry message is appended), so it is a
-  // second paid call whose failure is already knowable from data we hold.
+  // Truncation, not a contract violation. Nothing in the content
+  // distinguishes "cut off mid-object" from "the model ignored the schema":
+  // both arrive as text that `parse` rejects. Only `finishReason` tells them
+  // apart, and getting that wrong sends the operator to edit a schema that
+  // was never wrong (#587).
   //
-  // Both providers catch what they can see themselves, but neither covers
-  // every route here: a provider may ignore `responseSchema` entirely, and a
-  // caller may be relying on the prompt's prose contract instead. This is the
-  // provider-agnostic backstop (#587).
-  if (first.finishReason === 'length') throw truncationError(opts.model, maxTokens);
+  // Whether the retry is worth running depends on what the cap was spent on,
+  // and `responseFormat` is the signal:
+  //
+  //  - **Enforced** — the provider constrained the output to the schema, so
+  //    every token went into the object itself. There is no preamble for a
+  //    stricter instruction to remove; the same object meets the same cap.
+  //    Skip it rather than buy a second call with a knowable outcome.
+  //  - **Not enforced** — the shape is a request in the prose, and a chatty
+  //    model can spend most of the budget introducing its answer before
+  //    starting the JSON. The retry's whole job is to stop that ("respond
+  //    ONLY with a JSON object", at temperature 0), so it has a real remedy
+  //    and gets to run.
+  //
+  // Note what is NOT a reason to skip: an earlier version of this claimed the
+  // retry appends a message and so runs "the same cap against a longer
+  // prompt". That is wrong — `max_tokens` / `max_completion_tokens` bound the
+  // *completion* on both providers, so prompt length does not shrink the
+  // output budget. Don't reintroduce that reasoning.
+  if (first.finishReason === 'length' && responseFormat) {
+    throw truncationError(opts.model, maxTokens);
+  }
 
   // Retry with a stricter prompt at temperature 0. We do NOT include
   // the malformed prior response — never trust output that just

@@ -15,6 +15,7 @@ describe('getUserFacingError', () => {
     'rate_limited',
     'input_blocked',
     'output_blocked',
+    'truncated_no_output',
     'conversation_length_cap_reached',
     'conversation_cap_reached',
     'provider_not_found',
@@ -120,6 +121,21 @@ describe('getUserFacingError', () => {
     const convCap = getUserFacingError('conversation_cap_reached');
     expect(lengthCap.message).toContain('maximum number of messages');
     expect(convCap.message).toContain('maximum number of conversations');
+  });
+
+  it('gives truncated_no_output its own copy without disclosing the cap', () => {
+    // The underlying ProviderError names the model and the exact token cap;
+    // that goes to the server log and the trace. This copy is reachable from
+    // the embed widget, so it must stay actionable without naming either.
+    const truncated = getUserFacingError('truncated_no_output');
+    const generic = getUserFacingError('internal_error');
+
+    expect(truncated.title).not.toBe(generic.title);
+    expect(truncated.action).toMatch(/max tokens/i);
+    // No model id, no numeric cap.
+    const all = `${truncated.title} ${truncated.message} ${truncated.action ?? ''}`;
+    expect(all).not.toMatch(/\d/);
+    expect(all).not.toMatch(/gpt|claude|max_completion_tokens/i);
   });
 
   it('never returns empty title or message', () => {
