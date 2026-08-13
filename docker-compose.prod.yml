@@ -27,9 +27,13 @@ services:
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
         - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
-        # Raise if `next build` OOMs here (FATAL ERROR: Reached heap limit).
-        # Same wall CI hits at 4096 (#543); only raise it if the build host has
-        # the memory, or a clean heap error becomes an OS-level kill.
+        # Raise if `next build` OOMs here (FATAL ERROR: Reached heap limit) —
+        # the wall #543 was about. Note this default is NOT what CI builds at:
+        # CI passes `vars.CI_NODE_HEAP_MB || 5120`, so it always overrides the
+        # Dockerfile's 4096, while a self-hosted build gets 4096 unless you set
+        # NODE_HEAP_MB. Same lever, different default, on purpose — CI knows its
+        # runner, this file cannot. Only raise it if the build host has the
+        # memory, or a clean heap error becomes an OS-level kill.
         - NODE_HEAP_MB=${NODE_HEAP_MB:-4096}
     container_name: sunrise-web
     restart: unless-stopped

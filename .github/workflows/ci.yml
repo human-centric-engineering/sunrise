@@ -35,9 +35,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Raise Node's heap cap globally. It is a ceiling, not a reservation: on a 16GB
-# public runner it is never approached; on a 7GB private-fork runner it stops
-# `tsc` / `next build` OOMing (exit 134) when Node's default heap caps near ~2GB.
+# Raise Node's heap cap for every job's own steps. It is a ceiling, not a
+# reservation: on a 16GB public runner it is never approached; on a 7GB
+# private-fork runner it stops `tsc` / `next build` OOMing (exit 134) when
+# Node's default heap caps near ~2GB.
+#
+# It does NOT reach inside a container build — this used to say "globally",
+# which is the belief that cost #543 two weeks of a red `docker` job. The
+# builder stage takes the value as a `NODE_HEAP_MB` build arg instead; see the
+# `docker` job below.
 #
 # Economics knob 2 — repo variable `CI_NODE_HEAP_MB` (default 5120):
 # 5120 is sized for base Sunrise. A fork with a meaningful amount of added code

@@ -456,10 +456,12 @@ release process.
   `typecheck`, `lint` and `build` while the `docker` job stayed pinned at the
   `builder` stage's hardcoded 4096 — a fork that outgrew the default got a green
   board with one permanently red job, OOMing at exactly 4128 MB, and a knob that
-  appeared to do nothing. The cap is now a `NODE_HEAP_MB` build arg (default
-  unchanged at 4096, so builds outside CI behave as before); the `docker` job
-  forwards `CI_NODE_HEAP_MB`, and `docker-compose.prod.yml` exposes
-  `NODE_HEAP_MB` so a self-hosted build has the same lever. Base Sunrise never
+  appeared to do nothing. The cap is now a `NODE_HEAP_MB` build arg. The
+  Dockerfile default is unchanged at 4096, so a bare `docker build` and a
+  self-hosted compose build behave exactly as before; the `docker` CI job
+  forwards `CI_NODE_HEAP_MB` (so it now builds at 5120 by default, matching
+  every other job rather than lagging them), and `docker-compose.prod.yml`
+  exposes `NODE_HEAP_MB` so a self-hosted build has the same lever. Base Sunrise never
   hit this — 4096 is enough for the template — so it only affected forks, which
   is the population the variable exists for. Reported and verified in a fork by
   @JohnD-EE (#543).
