@@ -544,6 +544,46 @@ release process.
 
 ### Fixed
 
+- **Scheduled `tool_call` steps no longer fail on a cold process.**
+  `engine/executors/tool-call.ts` dispatched straight into the capability
+  registry without calling `registerBuiltInCapabilities()` first, unlike the
+  chat handler, the MCP tool registry and `agent_call`. #462 made the registry
+  a `globalThis` singleton so a registration in one module realm is visible
+  from all of them, but the *trigger* stayed lazy behind module-scoped
+  booleans — so the map is only populated once something calls the initialiser,
+  and all three callers that do are reached by an HTTP request. The scheduler
+  is not. A server that had served nothing since boot dispatched into an empty
+  map and the step failed `unknown_capability` naming a slug that was
+  registered perfectly well. It presented as a fork bug (the message names the
+  fork's own slug) and was worst exactly when it mattered: an overnight-quiet
+  process is precisely the one running a 03:15 scheduled workflow. Under load
+  it hid, and no unit suite could see it — tests register explicitly in setup,
+  so their registry is never empty. Reported from a fork whose four scheduled
+  workflows are built almost entirely from `tool_call` steps (#537).
+- **`CAPABILITY_BINDING_MODE=strict` no longer breaks every workflow
+  `tool_call` step.** A workflow execution isn't bound to an agent, so the
+  executor dispatches under a synthetic `workflow:${workflowId}` label. Under
+  `strict` a missing `AiAgentCapability` row denies — and that row **cannot be
+  created**, because `AiAgentCapability.agentId` is a foreign key to
+  `AiAgent.id` and the FK rejects a `workflow:` id. So enabling strict as a
+  hardening measure failed every `tool_call` step in every workflow with
+  `capability_disabled_for_agent` and no configuration that fixed it; because
+  the error is per-step it read as a capability misconfiguration, sending an
+  operator to audit a table that was already correct. Workflow labels are now
+  exempt and fall through to the base capability's defaults in both modes.
+  **Semantics change, deliberate:** `strict` no longer covers workflow
+  `tool_call` steps at all. It is about an *agent* reaching a capability it was
+  never granted, and all three agent-facing paths take the tool name from a
+  model — whereas a step's `capabilitySlug` is Zod-parsed config on an
+  admin-authored workflow (`withAdminAuth` on every workflow write route), so
+  the step *is* the grant. **Fork-facing:** the prefix is now the shared
+  constant `WORKFLOW_AGENT_ID_PREFIX`, with `workflowAgentId()` and
+  `isWorkflowAgentId()` exported alongside it from
+  `lib/orchestration/capabilities/dispatcher.ts` — mint and test the label
+  through those rather than re-inlining the template, which is how the executor
+  and the dispatcher came to disagree. `permissive` (the default) is
+  behaviourally unchanged; it now skips a query that could only ever return
+  zero rows (#528).
 - **Built-in capability seeds now re-apply their function schema on re-seed.**
   Every `AiCapability` upsert wrote `functionDefinition`, `executionType` and
   `executionHandler` on `create` only, so once a row existed the DB — and

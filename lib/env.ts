@@ -119,7 +119,12 @@ const serverEnvSchema = z.object({
         'setting isEnabled:false and keeping the row. "strict" makes a missing row deny instead. ' +
         'Strict is opt-in because it retroactively revokes every capability an agent relied on ' +
         'implicitly, including the mcp-system agent, which dispatches built-ins with no pivot ' +
-        'rows in a default install — audit AiAgentCapability before enabling it.'
+        'rows in a default install — audit AiAgentCapability before enabling it. ' +
+        'Workflow tool_call steps are EXEMPT: they dispatch under a synthetic ' +
+        '"workflow:<id>" agentId that the AiAgentCapability FK rejects, so no binding row can ' +
+        'be created for them and strict would deny every one with no available remedy. The ' +
+        "step's capabilitySlug is admin-authored config, not a model-chosen tool name, so the " +
+        'step itself is the grant.'
     ),
 
   // Logging Configuration (optional)

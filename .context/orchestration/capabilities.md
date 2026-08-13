@@ -72,7 +72,16 @@ export function initAppCapabilities(): void {
 }
 ```
 
-`registerBuiltInCapabilities()` (already on the lazy path the chat handler and agent-call executor hit) runs `initAppCapabilities()` once in the **server route-handler runtime**, then flushes — so your capability is in the dispatcher before any agent resolves its tools. Registration is idempotent by slug. `lib/app/capabilities.ts` is one of the `lib/app/` auto-wired bootstrap files; see [Building on Sunrise → §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface) for the full set and the per-runtime rationale.
+`registerBuiltInCapabilities()` (already on the lazy path every dispatch caller hits) runs `initAppCapabilities()` once in the **server route-handler runtime**, then flushes — so your capability is in the dispatcher before any agent resolves its tools. Registration is idempotent by slug. `lib/app/capabilities.ts` is one of the `lib/app/` auto-wired bootstrap files; see [Building on Sunrise → §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface) for the full set and the per-runtime rationale.
+
+> **Every path that dispatches must call it first.** The registry is a `globalThis`-backed singleton (#462), so a registration made in one module realm is visible from all of them — but the _trigger_ is lazy, guarded by module-scoped booleans, so the shared map is only populated once something calls the initialiser. All four callers below do — but `executors/tool-call.ts` did not until #537. It dispatched straight in, and on a process that had served no HTTP request — precisely an overnight-quiet server running a 03:15 scheduled workflow — the map was empty and the step failed `unknown_capability` naming a slug that was registered fine. Under load the bug hides, and no unit suite sees it because tests register explicitly in setup. If you add a dispatch path, call `registerBuiltInCapabilities()` at the top of it.
+
+| Dispatch path                    | Reached by         |
+| -------------------------------- | ------------------ |
+| `chat/streaming-handler.ts`      | HTTP request       |
+| `mcp/tool-registry.ts`           | HTTP request       |
+| `engine/executors/agent-call.ts` | HTTP request       |
+| `engine/executors/tool-call.ts`  | **scheduler tick** |
 
 Like every built-in, an app capability still needs an active `AiCapability` row (and a per-agent `AiAgentCapability` binding) before an LLM will _see_ it — `getCapabilityDefinitions` cross-checks the DB against the in-memory dispatcher.
 
@@ -241,6 +250,18 @@ The dispatcher and `getCapabilityDefinitions` use deliberately asymmetric defaul
 **MCP is a model-driven surface too — the host on the other end of an MCP key is an LLM — so it is worth being exact about what protects it, and what does not.** What it checks is membership of the **globally exposed** set: an admin publishing an `McpExposedTool` row is the grant. What it does **not** check is the calling key's scoped agent, and `getAgentBinding` default-allows when that agent has no pivot row — so a key scoped to a restricted agent can call any exposed tool that agent was never explicitly granted. That is [documented, deliberate opt-out scoping](./mcp.md), not an oversight, and `tools/list` ↔ `tools/call` stay consistent about it; whether scoped should mean allow-list-only is an open question recorded there. The difference from the `agent_call` gap #559 closed is that publishing a tool over MCP is an explicit per-capability decision, whereas `agent_call` checked nothing at all.
 
 `agent_call` had no such check until #559 — #476 added it to chat only, and the dispatcher's own note claimed the path was closed generally. **A new caller that dispatches a model-emitted name must add the check**; `CAPABILITY_BINDING_MODE=strict` is the blunt alternative and revokes every implicit binding at once.
+
+### `strict` mode and workflows
+
+A workflow execution isn't bound to an agent, so `executors/tool-call.ts` dispatches under a synthetic `agentId` of `workflow:${workflowId}` — a label, not an `AiAgent.id`. **Workflow `tool_call` steps are therefore exempt from `strict`** (#528).
+
+The exemption exists because the remedy strict mode implies is unavailable here, not because workflows are trusted in general. `AiAgentCapability.agentId` is a foreign key to `AiAgent.id`, and the FK rejects `workflow:<cuid>` — so an operator told to "create the binding rows before enabling strict" **cannot create this one**. Before the exemption, enabling strict failed every `tool_call` step in every workflow with `capability_disabled_for_agent` and no configuration that fixed it. Because the error is per-step, it read as a capability misconfiguration; an operator would audit `AiAgentCapability`, find nothing wrong, and be left with silently dead scheduled workflows.
+
+That differs from the `mcp-system` caveat in the same env var's description, which **is** actionable: `mcp-system` is a real seeded `AiAgent` row (`prisma/seeds/008-mcp-server.ts`), so the rows can be added.
+
+What makes it safe rather than merely convenient: strict mode is about an **agent** reaching a capability it was never granted, and all three agent-facing dispatch paths take the tool name from a model. A `tool_call` step's `capabilitySlug` is Zod-parsed config on a workflow definition, and every workflow write route is `withAdminAuth` — so the step **is** the explicit grant, authored by an admin. Nothing constructs a `tool_call` step at runtime either: an `orchestrator` step builds a synthetic `agent_call` step and delegates to `executeAgentCall`, which dispatches under the real agent id and is checked against that agent's advertised set.
+
+The prefix is a shared constant (`WORKFLOW_AGENT_ID_PREFIX`, with `workflowAgentId()` / `isWorkflowAgentId()` beside it) rather than an inline template, because the executor that mints it and the dispatcher that recognises it are different modules — and #528 is what it looks like when they disagree.
 
 ## Quarantine (incident disable)
 

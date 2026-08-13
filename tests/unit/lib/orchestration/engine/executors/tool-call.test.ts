@@ -23,6 +23,17 @@ vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
     loadFromDatabase: vi.fn().mockResolvedValue(undefined),
     getRegistryEntry: vi.fn().mockReturnValue(undefined),
   },
+  // Kept in step with the real export so the executor's `agentId` assertion
+  // below is testing the executor, not a stub that invented the format.
+  workflowAgentId: (workflowId: string) => `workflow:${workflowId}`,
+}));
+// The executor calls this before dispatching (#537). Stubbed here because this
+// file mocks the dispatcher wholesale, so the real registration would call
+// `register()` on an object that has no such method. That also means this file
+// cannot see #537 at all — the registry it dispatches into is never empty.
+// `tool-call-cold-registry.test.ts` runs the real dispatcher for exactly that.
+vi.mock('@/lib/orchestration/capabilities/registry', () => ({
+  registerBuiltInCapabilities: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
   buildIdempotencyKey: vi.fn(({ executionId, stepId, turnIndex }) =>

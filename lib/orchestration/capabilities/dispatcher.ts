@@ -57,6 +57,35 @@ import {
 } from '@/lib/orchestration/tracing';
 
 /**
+ * Prefix marking a `CapabilityContext.agentId` that is a LABEL, not an
+ * `AiAgent.id`. A workflow execution isn't bound to an agent, so the
+ * `tool_call` executor dispatches under `workflow:${workflowId}` to keep rate
+ * limits scoped per-workflow (see {@link workflowAgentId}).
+ *
+ * The prefix is a constant rather than an inline template in each file
+ * because two modules have to agree on it: the executor mints it and
+ * {@link CapabilityDispatcher.getAgentBinding} has to recognise it. They
+ * disagreed in exactly that way in #528.
+ */
+export const WORKFLOW_AGENT_ID_PREFIX = 'workflow:';
+
+/** Build the synthetic `agentId` a workflow's `tool_call` steps dispatch under. */
+export function workflowAgentId(workflowId: string): string {
+  return `${WORKFLOW_AGENT_ID_PREFIX}${workflowId}`;
+}
+
+/**
+ * True when an `agentId` is a workflow label rather than a real agent id.
+ *
+ * Safe as a prefix test because `AiAgent.id` is a cuid — no colons — so no
+ * real agent can collide, and no caller passes an attacker-chosen `agentId`
+ * (every other `dispatch()` call site passes a row's own `id`).
+ */
+export function isWorkflowAgentId(agentId: string): boolean {
+  return agentId.startsWith(WORKFLOW_AGENT_ID_PREFIX);
+}
+
+/**
  * Parse a Prisma `Json` value from `AiCapability.functionDefinition` into a
  * trusted `CapabilityFunctionDefinition`. Returns `null` (with a warn log)
  * if the row's JSON shape doesn't match — the caller is expected to skip
@@ -554,6 +583,12 @@ class CapabilityDispatcher {
    * `mcp-system` agent, which dispatches built-ins with no pivot rows in a
    * default install. Audit your `AiAgentCapability` table before enabling it.
    *
+   * **Workflow `tool_call` steps are exempt from `strict`** — see the
+   * short-circuit at the top of the method. That advice ("audit the table
+   * first") is only actionable for a caller whose `agentId` is a real
+   * `AiAgent.id`; a workflow's is not, and the FK makes the row strict mode
+   * asks for impossible to insert (#528).
+   *
    * Independently of this setting, here is what each caller checks before it
    * gets here. THREE of the four take a name from a model.
    *
@@ -570,6 +605,10 @@ class CapabilityDispatcher {
    *   should mean allow-list-only.
    * - `executors/tool-call.ts` — the only one that is NOT model-driven:
    *   `capabilitySlug` comes from Zod-parsed, admin-authored step config.
+   *   Nothing synthesizes a `tool_call` step at runtime; an orchestrator or
+   *   `plan` step delegates to `agent_call`, which dispatches under the real
+   *   agent id and is checked against that agent's advertised set. This is
+   *   what makes the workflow exemption above safe rather than convenient.
    *
    * An earlier draft of this note listed MCP among the callers that "do not
    * take a name from a model at all" and then contradicted itself two lines
@@ -586,6 +625,30 @@ class CapabilityDispatcher {
     slug: string,
     entry: CapabilityRegistryEntry
   ): Promise<AgentCapabilityBinding | null> {
+    // What a caller gets when no pivot row narrows the capability: the base
+    // entry's own defaults. Named because two paths now return it.
+    const defaultAllowBinding = (): AgentCapabilityBinding => ({
+      slug,
+      isEnabled: true,
+      effectiveRateLimit: entry.rateLimit,
+      customConfig: null,
+      functionDefinition: entry.functionDefinition,
+      requiresApproval: entry.requiresApproval,
+    });
+
+    // A workflow label is not an agent id, so there is no row to look for:
+    // `AiAgentCapability.agentId` is a FK to `AiAgent.id`, and the FK rejects
+    // `workflow:<cuid>`. That is what separates this from the `mcp-system`
+    // caveat above — an operator told to "create the binding rows first"
+    // literally cannot, so under `strict` EVERY tool_call step in EVERY
+    // workflow failed with `capability_disabled_for_agent` and no available
+    // remedy (#528).
+    //
+    // Under `permissive` this changes nothing: the query could only ever
+    // return zero rows, so it already fell through to the same binding — this
+    // just stops issuing it.
+    if (isWorkflowAgentId(agentId)) return defaultAllowBinding();
+
     const now = Date.now();
     const fetchedAt = this.agentBindingsFetchedAt.get(agentId) ?? 0;
 
@@ -643,14 +706,7 @@ class CapabilityDispatcher {
       return null;
     }
 
-    return {
-      slug,
-      isEnabled: true,
-      effectiveRateLimit: entry.rateLimit,
-      customConfig: null,
-      functionDefinition: entry.functionDefinition,
-      requiresApproval: entry.requiresApproval,
-    };
+    return defaultAllowBinding();
   }
 
   private getOrCreateRateLimiter(slug: string, maxRequests: number): RateLimiter {

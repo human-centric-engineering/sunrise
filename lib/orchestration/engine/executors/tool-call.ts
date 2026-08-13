@@ -13,12 +13,16 @@
  * dispatcher. This keeps rate limits scoped per-workflow and prevents
  * accidental collision with a real agent's bucket. The capability
  * registry uses opt-out semantics, so a missing pivot row just means
- * "use the capability's defaults", which is what workflows want.
+ * "use the capability's defaults", which is what workflows want — and
+ * `CAPABILITY_BINDING_MODE=strict` no longer inverts that for this path,
+ * because the pivot row it would demand cannot exist (the FK rejects a
+ * `workflow:` id). See `isWorkflowAgentId` in the dispatcher.
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import { toolCallConfigSchema } from '@/lib/validations/orchestration';
-import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import { capabilityDispatcher, workflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
+import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import {
   buildIdempotencyKey,
@@ -43,6 +47,16 @@ export async function executeToolCall(
       false
     );
   }
+
+  // Populate the in-memory handler map before touching the dispatcher. Every
+  // other dispatch path (chat, MCP, agent_call) already does this, and each is
+  // reached by an HTTP request — so on a server that has served one, this is a
+  // no-op guarded by a boolean. The scheduler is the path that has NOT: a
+  // process that has been quiet overnight is exactly the one whose 03:15 tick
+  // dispatches into an empty map, and the step fails `unknown_capability`
+  // naming a slug that is registered perfectly well (#537). Under load the bug
+  // hides, which is why no green test suite says anything about it.
+  registerBuiltInCapabilities();
 
   // Resolve the capability's `isIdempotent` flag from the registry. A registry
   // miss (cache cold, capability unknown) defaults to `false`: the conservative
@@ -100,7 +114,7 @@ export async function executeToolCall(
 
   const result = await capabilityDispatcher.dispatch(slug, rawArgs, {
     userId: ctx.userId,
-    agentId: `workflow:${ctx.workflowId}`,
+    agentId: workflowAgentId(ctx.workflowId),
     ...(ctx.scope ? { scope: ctx.scope } : {}),
   });
 
