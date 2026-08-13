@@ -740,21 +740,30 @@ jobs:
       DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The check diffs against the merge base, which needs real history.
-          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
+      # `HEAD^`, not `merge-base origin/main HEAD`, and not `fetch-depth: 0`.
+      # Both are the same lesson the CHANGELOG step above already learned: on a
+      # PR, checkout gives us `refs/pull/N/merge`, whose first parent IS the
+      # base commit it was merged against. That is what the merge ref is made
+      # of, so there is nothing to resolve and no assumption to get wrong —
+      # whereas `origin/main` depends on the refspec checkout happened to
+      # configure, and a full-history fetch costs the whole clone to read one
+      # file at one revision.
+      #
+      # Deepen by `github.sha`, not by branch: `--depth` counts from the tip of
+      # whatever is fetched, so `origin main` would deepen around the CURRENT
+      # tip, and another merge landing while this run queues would leave this
+      # commit's parent unfetched. Guarded, because `--depth` truncates a
+      # complete clone as readily as it deepens a shallow one.
       - name: Check lockfile platform metadata
         run: |
           set -euo pipefail
-          git fetch origin main --quiet
-          BASE=$(git merge-base origin/main HEAD)
-          echo "diffing against $BASE"
-          npm run check:lockfile -- --base "$BASE"
+          git cat-file -e 'HEAD^' 2>/dev/null || git fetch --no-tags --depth=2 origin "${{ github.sha }}"
+          npm run check:lockfile -- --base 'HEAD^'
 
   # Gate job for branch protection — always runs and reports a single status.
   # Skipped jobs (docs-only, the inactive test mode, non-docker PRs) are not
