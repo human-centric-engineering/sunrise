@@ -23,7 +23,7 @@ import type { SeedUnit } from '@/prisma/runner';
  * the row's own `name` / `description` are admin-UI presentation and stay
  * operator-owned, along with `isActive` and `rateLimit`.
  */
-const CALL_EXTERNAL_API_IMPL = {
+export const CALL_EXTERNAL_API_IMPL = {
   executionType: 'internal',
   executionHandler: 'CallExternalApiCapability',
   functionDefinition: {
@@ -52,7 +52,35 @@ const CALL_EXTERNAL_API_IMPL = {
         },
         body: {
           description:
-            'Optional request body. Object → JSON-stringified; string → sent verbatim. Ignored for GET and DELETE.',
+            'Optional request body. Object → JSON-stringified; string → sent verbatim. Ignored for GET and DELETE. Mutually exclusive with `multipart` — supply one or the other.',
+        },
+        multipart: {
+          type: 'object',
+          description:
+            'Optional multipart/form-data body for endpoints that require named file parts (e.g. document renderers like Gotenberg). Mutually exclusive with `body`. Per-file size cap is 8 MB base64; total request body cap is 25 MB.',
+          properties: {
+            files: {
+              type: 'array',
+              description:
+                'File parts. Each entry is `{ name, filename?, contentType, data }` where `data` is base64-encoded bytes. If a previous tool returned `{ encoding: "base64", data }`, pass that `data` directly here.',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  filename: { type: 'string' },
+                  contentType: { type: 'string' },
+                  data: { type: 'string' },
+                },
+                required: ['name', 'contentType', 'data'],
+              },
+            },
+            fields: {
+              type: 'object',
+              description: 'Optional plain-text field parts (form key → value).',
+              additionalProperties: { type: 'string' },
+            },
+          },
+          required: ['files'],
         },
         responseExtract: {
           type: 'string',

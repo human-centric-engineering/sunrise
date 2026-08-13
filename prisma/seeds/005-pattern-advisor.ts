@@ -39,7 +39,7 @@ Use descriptive step labels. Include all required fields. Keep workflows focused
 - Reference pattern numbers (e.g. "Pattern 3: Chain of Thought") so admins can look them up.
 - If you're unsure about a recommendation, say so and suggest what to investigate.`;
 
-const CAPABILITY_DEFINITIONS = [
+export const CAPABILITY_DEFINITIONS = [
   {
     slug: 'search_knowledge_base',
     name: 'Search Knowledge Base',

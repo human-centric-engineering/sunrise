@@ -567,6 +567,19 @@ release process.
   aren't. See [`.context/database/seeding.md`](./.context/database/seeding.md)
   for the ownership rule (#545).
 
+- **Three built-in capabilities were advertising a stale schema to the LLM.**
+  Separate from the propagation bug above and found while fixing it: the seed
+  constants had drifted from the capability classes that actually validate and
+  run. `call_external_api` never gained the `multipart` parameter (named file
+  parts, for endpoints like document renderers), so no agent could use it;
+  `apply_audit_changes` was missing `deploymentProfiles`; `add_provider_models`
+  carried several out-of-date parameter descriptions. All three now match their
+  class exactly, enforced by
+  `tests/unit/prisma/seeds/capability-class-seed-parity.test.ts` — a
+  deep-equality check per capability, since a name-only comparison would have
+  missed the descriptions, and a description is how the model picks a
+  parameter (#545).
+
 - **A truncated response is no longer reported as a schema failure on the
   `runStructuredCompletion` and provider-adapter paths.**
   `runStructuredCompletion` never read `finishReason`, so a response cut off at

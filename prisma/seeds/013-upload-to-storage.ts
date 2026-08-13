@@ -22,7 +22,7 @@ import type { SeedUnit } from '@/prisma/runner';
  * the row's own `name` / `description` are admin-UI presentation and stay
  * operator-owned, along with `isActive` and `rateLimit`.
  */
-const UPLOAD_TO_STORAGE_IMPL = {
+export const UPLOAD_TO_STORAGE_IMPL = {
   executionType: 'internal',
   executionHandler: 'UploadToStorageCapability',
   functionDefinition: {

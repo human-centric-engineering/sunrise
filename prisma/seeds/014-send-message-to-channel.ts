@@ -23,7 +23,7 @@ import type { SeedUnit } from '@/prisma/runner';
  * the row's own `name` / `description` are admin-UI presentation and stay
  * operator-owned, along with `isActive` and `rateLimit`.
  */
-const SEND_MESSAGE_IMPL = {
+export const SEND_MESSAGE_IMPL = {
   executionType: 'internal',
   executionHandler: 'SendMessageToChannelCapability',
   functionDefinition: {
