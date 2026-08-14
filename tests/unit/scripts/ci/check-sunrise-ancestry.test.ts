@@ -59,6 +59,10 @@ function configureRepo(dir: string): void {
   git(dir, 'config', 'user.email', 'test@example.com');
   git(dir, 'config', 'user.name', 'Test');
   git(dir, 'config', 'commit.gpgsign', 'false');
+  // Three tests create tags, and a global `tag.gpgSign = true` with no usable
+  // key in this shell fails them with `fatal: no tag message?` — the same
+  // environment leakage the commit setting above exists to stop.
+  git(dir, 'config', 'tag.gpgSign', 'false');
 }
 
 function initRepo(dir: string): void {
@@ -163,7 +167,15 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
     expect(result.output).toMatch(/NOT an ancestor/);
     // The message has to carry the repair, because the reader is an operator
     // who has just been told something they did not know was possible.
-    expect(result.output).toMatch(/merge -s ours v0\.8\.0/);
+    //
+    // It must merge an explicit REF, never the bare tag name: a fork holding
+    // its own `v0.8.0` makes `git fetch upstream --tags` exit 1 with "would
+    // clobber existing tag", leaving the name pointing at the fork's own
+    // commit — so `git merge -s ours v0.8.0` would record a claim that is
+    // false. Verified: the plain fetch is rejected and the tag is unchanged.
+    expect(result.output).toMatch(/merge -s ours refs\/sunrise-upstream\/v0\.8\.0/);
+    expect(result.output).toMatch(/refs\/tags\/v0\.8\.0:refs\/sunrise-upstream\/v0\.8\.0/);
+    expect(result.output).not.toMatch(/git fetch upstream --tags\n/);
   });
 
   it('FAILS even when the fork has its OWN tag of the same name', () => {
@@ -272,7 +284,7 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
     const annotation = result.output.split('\n').find((l) => l.startsWith('::error'));
     expect(annotation).toBeDefined();
     expect(annotation).toMatch(/%0A/);
-    expect(annotation).toMatch(/merge -s ours v0\.8\.0/);
+    expect(annotation).toMatch(/merge -s ours refs\/sunrise-upstream\/v0\.8\.0/);
   });
 
   it('SKIPS on a shallow clone rather than reporting a loss that did not happen', () => {

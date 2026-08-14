@@ -38,6 +38,10 @@ jobs:
   ancestry:
     name: Sunrise ancestry
     runs-on: ubuntu-latest
+    # The job makes an outbound fetch and git sets no client-side deadline by
+    # default, so a stalling host would otherwise sit on GitHub's 6-hour cap.
+    # Matches the pattern already used by ci.yml's docker job.
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v7

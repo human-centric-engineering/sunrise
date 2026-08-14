@@ -336,14 +336,17 @@ on `main`, so the tag is always an ancestor. It is also self-enforcing: a fork
 receives the workflow _by doing a sync merge_, so squashing that sync makes it
 fire on the first run afterwards.
 
-Three deliberate non-failures, each of which would otherwise red-line a build
-for something that is not a lost merge base:
+**Five** deliberate non-failures, each of which would otherwise red-line a build
+for something that is not a lost merge base. The script has exactly one `fail`
+path; everything else skips:
 
-| Situation                                | Behaviour            | Why                                                                                          |
-| ---------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| Version bumped, tag not pushed yet       | skip + `::warning::` | This is every Sunrise release at the moment of cutting it — the bump commit precedes the tag |
-| Upstream unreachable (private, no token) | skip + `::warning::` | The guard cannot tell "ancestry lost" from "cannot look"                                     |
-| Shallow clone                            | skip + `::warning::` | `merge-base` would answer from truncated history and report a loss that has not happened     |
+| Situation                                      | Behaviour            | Why                                                                                                                                          |
+| ---------------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `SUNRISE_VERSION` in the tree               | skip + `::warning::` | Nothing is being claimed, so there is nothing to check                                                                                       |
+| Shallow clone                                  | skip + `::warning::` | `merge-base` would answer from truncated history and report a loss that has not happened                                                     |
+| Tag not fetchable                              | skip + `::warning::` | Mid-release (every Sunrise release, at the moment of cutting it) or an unreachable upstream                                                  |
+| Fetched tag claims a different Sunrise version | skip + `::warning::` | It is some other project's release of the same name — see the identity check below                                                           |
+| `merge-base` exits non-zero **and non-1**      | skip + `::warning::` | Only exit 1 means "not an ancestor"; 128 is a git error, and reporting it as a finding would announce a lost merge base for a corrupt object |
 
 **Every skip emits a `::warning::` annotation.** All three exit 0, and a bare
 `echo` would render the check fully green with nothing on the run — which, for a
@@ -351,9 +354,9 @@ guard whose entire premise is time-to-discovery, would reinstate the original
 failure mode one level up. The skips are the residual risk in this design, so
 they are made visible rather than merely logged.
 
-Two implementation details are load-bearing and were each confirmed by control
-experiment before being written (`tests/unit/scripts/ci/check-sunrise-ancestry.test.ts`
-fails against the naive version of both):
+Four implementation details are load-bearing. Each was confirmed by control
+experiment, and `tests/unit/scripts/ci/check-sunrise-ancestry.test.ts` fails
+against the naive version of each:
 
 - **Upstream's tag is fetched into a private ref, not `refs/tags/`, and there is
   no fallback to the local tag.** A fork versions its app independently of
@@ -374,6 +377,20 @@ fails against the naive version of both):
   Sunrise's — the private-ref collision again, arriving through the escape
   hatch. The tag's own `lib/sunrise-version.ts` must equal the claim; every
   Sunrise release tag satisfies that by construction (verified v0.5.0–v0.8.1).
+
+  **This narrows the collision; it does not eliminate it.** The comparison is on
+  the version _string_, so it still passes if an intermediate fork's own release
+  number happens to equal the Sunrise version it carries — Daybreak cutting its
+  `v0.8.1` while sitting on Sunrise 0.8.1. A tag name is not a globally unique
+  identifier, and no amount of layering makes it one; this is why the guidance
+  is to leave `UPSTREAM_URL` unset unless Sunrise's tags genuinely are
+  unreachable, rather than to rely on the check.
+
+- **The printed repair merges an explicit ref, never the bare tag name.** Plain
+  `git fetch upstream --tags` is **rejected** when the fork already holds a tag
+  of that name (`would clobber existing tag`, exit 1), leaving it pointing at
+  the fork's own commit — so a repair naming the bare tag would record a false
+  claim. The same collision, in the instructions rather than the detection.
 - **The fetch's exit status gates the check, not the ref's existence.** A
   leftover `refs/sunrise-ancestry/*` from a killed run would otherwise be an
   undocumented fallback of exactly the kind removed above.

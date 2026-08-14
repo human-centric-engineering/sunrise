@@ -1055,9 +1055,14 @@ git push origin main
 guard looks for is `v<SUNRISE_VERSION>` — Sunrise's namespace — but it is
 resolved against whatever that URL points at. Point it at a framework-tier fork
 that versions itself independently and you may fetch _its_ `v0.8.1`, an
-unrelated release of a different project. The guard detects that and skips
-(it compares the fetched tag's own `lib/sunrise-version.ts` against your claim),
-so it fails safe — but it stops checking anything, which is not what you want.
+unrelated release of a different project. The guard usually detects that and
+skips — it compares the fetched tag's own `lib/sunrise-version.ts` against your
+claim — so it normally fails safe, but it stops checking anything, which is not
+what you want. And the comparison is on the version _string_, so it does not
+help in the one case where the numbers coincide: an intermediate fork cutting
+its own `v0.8.1` while sitting on Sunrise 0.8.1. A tag name is not a globally
+unique identifier and no check makes it one.
+
 Sunrise's public URL is reachable from a leaf fork anyway, so only override this
 when Sunrise's tags genuinely are not.
 

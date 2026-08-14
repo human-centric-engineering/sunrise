@@ -47,6 +47,18 @@ set -uo pipefail
 REF="${1:-HEAD}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/human-centric-engineering/sunrise.git}"
 
+# Never print the URL raw. Git strips the userinfo component — everything
+# between the scheme and the `@` — from its own error output, keeping just
+# scheme and host. So a message echoing `$UPSTREAM_URL` verbatim would be the
+# only place a token appeared in full, and `CUSTOMIZATION.md` allows the URL to
+# be a repository VARIABLE, which GitHub does not mask.
+#
+# (Described rather than illustrated: a worked example here would itself be a
+# credential-shaped URI, which is what TruffleHog's URI detector exists to
+# find — and it duly failed the secret-scan job on the first version of this
+# comment.)
+SAFE_URL=$(printf '%s' "$UPSTREAM_URL" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@]*@#\1#')
+
 # A skip is the outcome that most needs to be VISIBLE. Three legitimate
 # conditions below end in one, and a silent green tick on any of them is
 # indistinguishable from a real pass — which for a guard whose whole premise is
@@ -106,7 +118,10 @@ fi
 # fork-owned `v0.8.0` present, a squash-merged repository reported
 # "sync history intact". There is no fallback now — if upstream cannot be
 # reached, the honest answer is that we could not look.
-readonly PRIVATE_REF="refs/sunrise-ancestry/$TAG"
+# Namespaced by PID. Two runs in one working copy — which the manual-use case
+# makes real — would otherwise share a ref, and one run's EXIT trap would delete
+# it out from under the other between its fetch and its merge-base.
+readonly PRIVATE_REF="refs/sunrise-ancestry/$$/$TAG"
 
 # The ref is an implementation detail of one run. Left behind it accumulates one
 # per version, keeps the fetched objects permanently reachable from gc, and
@@ -162,12 +177,22 @@ fi
 TAG_VERSION=$(git show "$PRIVATE_REF:lib/sunrise-version.ts" 2>/dev/null |
   sed -n "s/.*SUNRISE_VERSION *= *['\"]\([^'\"]*\)['\"].*/\1/p" | head -1)
 if [ "$TAG_VERSION" != "$VERSION" ]; then
-  skip "$TAG at $UPSTREAM_URL claims Sunrise '${TAG_VERSION:-none}', not '$VERSION' — that is not Sunrise's release tag, so ancestry cannot be judged from it"
+  skip "$TAG at $SAFE_URL claims Sunrise '${TAG_VERSION:-none}', not '$VERSION' — that is not Sunrise's release tag, so ancestry cannot be judged from it"
 fi
 
-if git merge-base --is-ancestor "$PRIVATE_REF" "$REF"; then
+git merge-base --is-ancestor "$PRIVATE_REF" "$REF"
+ancestry_status=$?
+if [ "$ancestry_status" -eq 0 ]; then
   echo "ok: $TAG is an ancestor of $REF — sync history intact"
   exit 0
+fi
+
+# ONLY exit 1 means "not an ancestor". A missing or unreadable ref exits 128,
+# and treating that as a finding would announce a lost merge base — with the
+# repair below — for a corrupt object, an I/O error, or a ref that vanished
+# mid-run. Verified: `merge-base --is-ancestor` on a missing ref exits 128.
+if [ "$ancestry_status" -ne 1 ]; then
+  skip "could not evaluate ancestry for $TAG (git exit $ancestry_status) — not treating that as a finding"
 fi
 
 fail "Sunrise $TAG is NOT an ancestor of $REF.
@@ -180,10 +205,15 @@ Consequence: the merge base against upstream silently reverts to the PREVIOUS
 release, so the next 'git merge vNEXT' replays the whole range again and
 re-conflicts every file already resolved by hand.
 
-Repair (changes no files):
-  git fetch upstream --tags
+Repair (changes no files). The refspec is explicit on purpose: plain
+'git fetch upstream --tags' is REJECTED when you already hold a tag of that
+name ('would clobber existing tag'), leaving $TAG pointing at your own
+release — so the merge below would record a claim that is false.
+
+  git fetch upstream --force \"refs/tags/$TAG:refs/sunrise-upstream/$TAG\"
   git checkout main
-  git merge -s ours $TAG -m \"chore: record Sunrise $VERSION as merged (ancestry repair)\"
+  git merge -s ours refs/sunrise-upstream/$TAG -m \"chore: record Sunrise $VERSION as merged (ancestry repair)\"
+  git update-ref -d refs/sunrise-upstream/$TAG
   git push origin main
 
 '-s ours' is only safe once you have confirmed the content is already present:

@@ -215,12 +215,13 @@ release process.
   GitHub's line-scoped workflow commands rather than being left in log output. **A guaranteed no-op in Sunrise's own repository**
   (Sunrise tags every release on `main`), and self-enforcing downstream: a fork
   receives the workflow *by doing a sync merge*, so squashing that sync makes it
-  fire on the first run afterwards. It skips rather than fails on the three
-  cases that are not a lost merge base — version bumped before the tag is pushed
-  (every Sunrise release, at the moment of cutting it), unreachable upstream,
-  and shallow clone — and each skip emits a `::warning::` annotation, because a
-  guard that goes permanently and silently green is the original failure mode
-  one level up. **Fork-facing:** set `SUNRISE_UPSTREAM_URL` if your
+  fire on the first run afterwards. It has exactly one failing path: everything
+  else skips, including a version bumped before its tag is pushed (every Sunrise
+  release, at the moment of cutting it), an unreachable upstream, a shallow
+  clone, a fetched tag belonging to some other project's release of the same
+  name, and any `git merge-base` error that is not a plain "not an ancestor".
+  Each skip emits a `::warning::` annotation, because a guard that goes
+  permanently and silently green is the original failure mode one level up. **Fork-facing:** set `SUNRISE_UPSTREAM_URL` if your
   upstream is not Sunrise itself (a leaf fork of a framework-tier fork) — as a
   repository **variable**, or as a **secret** of the same name if the URL has to
   carry a token for a private upstream (the workflow prefers the secret; secrets
