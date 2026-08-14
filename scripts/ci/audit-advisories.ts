@@ -49,7 +49,8 @@
  * shape this job exists for, a `package.json` `overrides` entry forces the
  * patched transitive past the parent's declared range and clears the finding
  * *legitimately*, because the tree actually changes. It is not a back door
- * either: `hasRisk` in `lockfile-diff.ts` gates on any `overrides` change, so
+ * either: `remainingRisk` in `lockfile-diff.ts` gates on any `overrides` change
+ * that is not acknowledged in `.lockfile-decisions` (#584), so
  * it lands as a reviewed decision. It can break the parent that declared the
  * range, which is precisely why it is gated rather than quiet.
  *

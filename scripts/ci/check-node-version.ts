@@ -114,10 +114,21 @@ const sources: NodeVersionSource[] = [
     // What `tsc` type-checks against. Ahead of the runtime, it accepts APIs
     // that throw in the production image and reports nothing (#584).
     label: '@types/node (resolved)',
-    major: parseTypesNodeMajor(lockfile.missing ? undefined : lockfile.text),
-    raw: lockfile.missing
-      ? '(package-lock.json not found)'
-      : `${typesNode ?? '(range absent)'} → ${resolvedTypesNode(lockfile.text) ?? '(no lockfile entry)'}`,
+    // Only when `package.json` actually declares it. Many packages pull
+    // `@types/node` transitively, and a fork that drops the direct
+    // devDependency would otherwise be judged on a hoisted copy it never chose
+    // — and told to "update package.json devDependencies[\"@types/node\"]",
+    // which does not exist there.
+    major:
+      typesNode === undefined
+        ? null
+        : parseTypesNodeMajor(lockfile.missing ? undefined : lockfile.text),
+    raw:
+      typesNode === undefined
+        ? '(@types/node not a direct dependency of package.json)'
+        : lockfile.missing
+          ? '(package-lock.json not found)'
+          : `${typesNode} → ${resolvedTypesNode(lockfile.text) ?? '(no lockfile entry)'}`,
   },
 ];
 

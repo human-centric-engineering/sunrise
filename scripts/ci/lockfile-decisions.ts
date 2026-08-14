@@ -43,8 +43,12 @@
  *
  * ```
  * downgrade node_modules/@types/node 26.2.0 -> 24.13.3   # runtime major (#584)
- * overrides [["adm-zip","^0.6.0"]]                       # epub2 pins ^0.5.10 (#601)
+ * overrides adm-zip none -> "^0.6.0"                     # epub2 pins ^0.5.10 (#601)
  * ```
+ *
+ * Both forms name a transition — `<what> <from> -> <to>` — with the literal
+ * `none` for an `overrides` side where the entry does not exist. An override is
+ * acknowledged per KEY, so removing one is a separate decision from adding it.
  *
  * An unparseable line is a hard error, not a skipped line. A typo'd ACK that
  * silently does nothing sends someone hunting for why the gate still fires on a
@@ -64,11 +68,21 @@ export interface DowngradeDecision {
   line: number;
 }
 
-/** One acknowledged `overrides` block, as its canonical text. */
+/**
+ * One acknowledged `overrides` entry, as a transition of a single key.
+ *
+ * Keyed on the KEY and both sides, not on the resulting block. An ACK naming
+ * only the result cannot distinguish "we added an override" from "we removed
+ * the one that was fixing a CVE" — removing a later addition returns the block
+ * to an earlier, already-acknowledged shape and passes silently.
+ */
 export interface OverridesDecision {
   kind: 'overrides';
-  /** Must equal the canonical form the diff computes for the HEAD revision. */
-  canonical: string;
+  /** The `overrides` key, e.g. `adm-zip`. */
+  key: string;
+  /** JSON of the value on each side; the literal `none` when absent. */
+  from: string;
+  to: string;
   reason: string;
   line: number;
 }
@@ -121,9 +135,16 @@ export function parseDecisions(text: string): ParsedDecisions {
       return;
     }
 
-    const overrides = /^overrides\s+(.+)$/.exec(directive);
+    const overrides = /^overrides\s+(\S+)\s+(.+?)\s*->\s*(.+?)$/.exec(directive);
     if (overrides) {
-      decisions.push({ kind: 'overrides', canonical: overrides[1].trim(), reason, line });
+      decisions.push({
+        kind: 'overrides',
+        key: overrides[1],
+        from: overrides[2].trim(),
+        to: overrides[3].trim(),
+        reason,
+        line,
+      });
       return;
     }
 
@@ -179,18 +200,41 @@ export function partitionDowngrades<T extends AcknowledgeableDowngrade>(
   return { acknowledged, gating };
 }
 
+/** The shape {@link acknowledgedOverrideKeys} needs from an override change. */
+export interface AcknowledgeableOverride {
+  key: string;
+  from: string | null;
+  to: string | null;
+}
+
+/** The literal written in the file for a side where the entry does not exist. */
+export const OVERRIDE_ABSENT = 'none';
+
 /**
- * Whether an `overrides` change is acknowledged.
+ * The `overrides` keys whose exact transition is acknowledged.
  *
- * The decision carries the canonical text of the block it approves, so adding a
- * further override later produces a different canonical string and gates again
- * — the risk is per-override, not "this repo uses overrides".
+ * Each changed key needs its own line, naming both sides. Removing an override
+ * is therefore a separate decision from adding it — which is the point: a
+ * revert that drops a CVE-fixing override is exactly as much of a decision as
+ * adding it was, and an ACK keyed on the resulting block would have waved it
+ * through.
  */
-export function isOverridesAcknowledged(
-  headCanonical: string,
+export function acknowledgedOverrideKeys(
+  changes: AcknowledgeableOverride[],
   decisions: LockfileDecision[]
-): boolean {
-  return decisions.some((d) => d.kind === 'overrides' && d.canonical === headCanonical);
+): string[] {
+  const acked = new Set(
+    decisions
+      .filter((d): d is OverridesDecision => d.kind === 'overrides')
+      .map((d) => JSON.stringify([d.key, d.from, d.to]))
+  );
+  return changes
+    .filter((change) =>
+      acked.has(
+        JSON.stringify([change.key, change.from ?? OVERRIDE_ABSENT, change.to ?? OVERRIDE_ABSENT])
+      )
+    )
+    .map((change) => change.key);
 }
 
 /**

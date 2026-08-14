@@ -3,7 +3,8 @@
  *
  * Reports what moved between the base revision and this one, and exits
  * non-zero only for the changes that need a human decision (see
- * {@link hasRisk}). Run by `/pre-pr` when the lockfile is in the diff.
+ * {@link remainingRisk}, of which `hasRisk` is the nothing-acknowledged case).
+ * Run by `/pre-pr` when the lockfile is in the diff.
  *
  * The rules, and why each exists, live in `scripts/ci/lockfile-diff.ts`.
  *
@@ -25,14 +26,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
-  canonicalOverrides,
   diffLockfiles,
   directDependencyKeys,
+  directDowngrades,
+  remainingRisk,
   type Lockfile,
   type Manifest,
 } from '@/scripts/ci/lockfile-diff';
 import {
-  isOverridesAcknowledged,
+  OVERRIDE_ABSENT,
+  acknowledgedOverrideKeys,
   parseDecisions,
   partitionDowngrades,
   unusedDecisions,
@@ -75,31 +78,48 @@ function readOptional(path: string): string | null {
  */
 function reportAcknowledged(
   acknowledged: { name: string; from: string; to: string }[],
-  overridesAcked: boolean,
+  ackedOverrideKeys: string[],
   decisions: LockfileDecision[],
   usedLines: ReadonlySet<number>
 ): void {
-  const unused = unusedDecisions(decisions, usedLines);
-  if (acknowledged.length === 0 && !overridesAcked && unused.length === 0) return;
+  // Only claim something was acknowledged when something was. An earlier
+  // version printed this header for a file containing nothing but historical
+  // entries, asserting a wave-through that had not happened — on every
+  // dependency PR, since the file is a permanent log.
+  if (acknowledged.length > 0 || ackedOverrideKeys.length > 0) {
+    console.log('');
+    console.log(`Acknowledged in ${DECISIONS} (still reported — an ACK is not a silence):`);
+    for (const change of acknowledged) {
+      const match = decisions.find(
+        (d) =>
+          d.kind === 'downgrade' &&
+          d.name === change.name &&
+          d.from === change.from &&
+          d.to === change.to
+      );
+      console.log(`  ${change.name} ${change.from} → ${change.to} — ${match?.reason ?? ''}`);
+    }
+    for (const key of ackedOverrideKeys) {
+      const match = decisions.find(
+        (d) => d.kind === 'overrides' && d.key === key && usedLines.has(d.line)
+      );
+      console.log(`  "overrides" ${key} — ${match?.reason ?? ''}`);
+    }
+  }
 
-  console.log('');
-  console.log(`Acknowledged in ${DECISIONS} (still reported — an ACK is not a silence):`);
-  for (const change of acknowledged) {
-    const match = decisions.find(
-      (d) =>
-        d.kind === 'downgrade' &&
-        d.name === change.name &&
-        d.from === change.from &&
-        d.to === change.to
-    );
-    console.log(`  ${change.name} ${change.from} → ${change.to} — ${match?.reason ?? ''}`);
-  }
-  if (overridesAcked) {
-    const match = decisions.find((d) => d.kind === 'overrides' && usedLines.has(d.line));
-    console.log(`  ${MANIFEST} "overrides" changed — ${match?.reason ?? ''}`);
-  }
-  for (const stale of unused) {
-    console.log(`  (line ${stale.line} matched nothing in this diff — kept as a record)`);
+  // Historical entries are listed separately and with their content, so a
+  // reader does not have to open the file to learn what line 32 was.
+  const unused = unusedDecisions(decisions, usedLines);
+  if (unused.length > 0) {
+    console.log('');
+    console.log(`${DECISIONS}: ${unused.length} past decision(s) not relevant to this diff:`);
+    for (const stale of unused) {
+      const what =
+        stale.kind === 'downgrade'
+          ? `${stale.name} ${stale.from} → ${stale.to}`
+          : `"overrides" ${stale.key} ${stale.from} → ${stale.to}`;
+      console.log(`  line ${stale.line}: ${what} — ${stale.reason}`);
+    }
   }
 }
 
@@ -237,6 +257,22 @@ export function main(argv: string[]): number {
   // headline case — d5b913fb, where 77 packages lost `libc` and not one
   // version moved — report "unchanged" and exit 0. The rules had it right and
   // the reporting put the blindfold back on.
+  // Recorded decisions, from the working tree — the ACK ships in the same
+  // commit as the change it describes, so it is reviewed in that diff.
+  //
+  // Parsed BEFORE the `nothingMoved` early return below. A PR that touches only
+  // this file moves no packages, so returning first meant a malformed entry was
+  // never even read — it would surface on the NEXT dependency PR, looking like
+  // that author's problem. The `deps` arm in `ci.yml` names this file precisely
+  // so that cannot happen, and the early return was quietly undoing it.
+  const { decisions, errors: decisionErrors } = parseDecisions(readOptional(DECISIONS) ?? '');
+  if (decisionErrors.length > 0) {
+    console.error('');
+    console.error(`${DECISIONS} could not be read:`);
+    for (const problem of decisionErrors) console.error(`  ${problem}`);
+    return 1;
+  }
+
   const nothingMoved =
     diff.added.length === 0 &&
     diff.removed.length === 0 &&
@@ -288,23 +324,9 @@ export function main(argv: string[]): number {
     console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
   }
 
-  // Recorded decisions, from the working tree — the ACK ships in the same
-  // commit as the change it describes, so it is reviewed in that diff.
-  const { decisions, errors: decisionErrors } = parseDecisions(readOptional(DECISIONS) ?? '');
-  if (decisionErrors.length > 0) {
-    console.error('');
-    console.error(`${DECISIONS} could not be read:`);
-    for (const problem of decisionErrors) console.error(`  ${problem}`);
-    return 1;
-  }
-
-  const directDowngrades = diff.changed.filter((entry) => entry.downgrade && entry.direct);
-  const { acknowledged, gating } = partitionDowngrades(directDowngrades, decisions);
-  const headCanonical = canCompareOverrides ? canonicalOverrides(headManifest?.overrides) : '';
-  const overridesAcked =
-    diff.overridesChanged &&
-    canCompareOverrides &&
-    isOverridesAcknowledged(headCanonical, decisions);
+  const { acknowledged, gating } = partitionDowngrades(directDowngrades(diff), decisions);
+  const ackedOverrideKeys = acknowledgedOverrideKeys(diff.overrideChanges, decisions);
+  const gatingOverrides = diff.overrideChanges.filter((c) => !ackedOverrideKeys.includes(c.key));
 
   const usedLines = new Set<number>();
   for (const change of acknowledged) {
@@ -317,21 +339,28 @@ export function main(argv: string[]): number {
     );
     if (match) usedLines.add(match.line);
   }
-  if (overridesAcked) {
-    const match = decisions.find((d) => d.kind === 'overrides' && d.canonical === headCanonical);
+  for (const key of ackedOverrideKeys) {
+    const change = diff.overrideChanges.find((c) => c.key === key);
+    const match = decisions.find(
+      (d) =>
+        d.kind === 'overrides' &&
+        d.key === key &&
+        d.from === (change?.from ?? OVERRIDE_ABSENT) &&
+        d.to === (change?.to ?? OVERRIDE_ABSENT)
+    );
     if (match) usedLines.add(match.line);
   }
 
-  reportAcknowledged(acknowledged, overridesAcked, decisions, usedLines);
+  reportAcknowledged(acknowledged, ackedOverrideKeys, decisions, usedLines);
 
-  // Lost platform metadata is deliberately NOT acknowledgeable — never a
-  // decision, only ever npm dropping the key, and it has a repair.
-  const stillGating =
-    diff.lostNativeMetadata.length > 0 ||
-    gating.length > 0 ||
-    (diff.overridesChanged && !overridesAcked);
-
-  if (!stillGating) {
+  // The single definition of what gates lives in `lockfile-diff.ts`; lost
+  // platform metadata is not among the things it can be told to forgive.
+  if (
+    !remainingRisk(diff, {
+      acknowledgedDowngrades: acknowledged,
+      acknowledgedOverrideKeys: ackedOverrideKeys,
+    })
+  ) {
     const transitive = diff.changed.filter((c) => c.downgrade && !c.direct).length;
     console.log('');
     console.log(
@@ -362,13 +391,15 @@ export function main(argv: string[]): number {
     console.error(`    If intentional, record it in ${DECISIONS}:`);
     console.error(`      downgrade ${change.name} ${change.from} -> ${change.to}   # why (#issue)`);
   }
-  if (diff.overridesChanged && !overridesAcked) {
-    console.error(`  ${MANIFEST} "overrides" changed — that forces a package past a range its`);
-    console.error('    dependents declared. Intentional?');
-    if (canCompareOverrides) {
-      console.error(`    If intentional, record it in ${DECISIONS}:`);
-      console.error(`      overrides ${headCanonical}   # why (#issue)`);
-    }
+  for (const change of gatingOverrides) {
+    const from = change.from ?? OVERRIDE_ABSENT;
+    const to = change.to ?? OVERRIDE_ABSENT;
+    console.error(`  ${MANIFEST} "overrides" changed: ${change.key} ${from} → ${to}`);
+    console.error('    An override forces a package past a range its dependents declared —');
+    console.error('    and REMOVING one can walk a patched transitive back to a vulnerable');
+    console.error('    version. Intentional?');
+    console.error(`    If intentional, record it in ${DECISIONS}:`);
+    console.error(`      overrides ${change.key} ${from} -> ${to}   # why (#issue)`);
   }
 
   return 1;

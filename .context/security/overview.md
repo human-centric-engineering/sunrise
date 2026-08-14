@@ -457,11 +457,20 @@ rather than reaching for the off switch:
    `socket.io-adapter` both declared `ws: ~8.20.1`. Sunrise carries two
    overrides today (`hono`, `valibot`).
 
-   Adding one is deliberately not quiet: `hasRisk()` in
+   Adding one is deliberately not quiet: `remainingRisk()` in
    `scripts/ci/lockfile-diff.ts` fails `check:lockfile` on any `overrides`
-   change, so it arrives as a reviewed decision on a PR. That gate exists
-   because an override forces a package past a range its dependents declared,
-   which can break the dependent — test the affected path before merging one.
+   change that is not acknowledged in `.lockfile-decisions`, so it arrives as a
+   reviewed decision on a PR either way — the acknowledgement is written in the
+   same commit and read in the same diff (#584). That gate exists because an
+   override forces a package past a range its dependents declared, which can
+   break the dependent — test the affected path before merging one.
+
+   **Removing an override is a separate decision from adding it**, and gates on
+   its own. Acknowledgements name a per-key transition (`overrides ws "^8.21.0"
+-> none`) rather than the resulting block, because dropping an override that
+   was fixing a CVE returns the block to an earlier, already-approved shape —
+   and a block-keyed acknowledgement would wave the patched transitive back to
+   a vulnerable version in silence.
 
 3. **If overriding genuinely breaks things**, there is no good option today.
    `--report` drops gating entirely and `--floor` drops a whole severity; both

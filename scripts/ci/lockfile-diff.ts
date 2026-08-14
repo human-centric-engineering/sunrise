@@ -84,6 +84,20 @@ export function canonicalOverrides(overrides: Manifest['overrides']): string {
   );
 }
 
+/** The per-key transitions between two `overrides` blocks. */
+function diffOverrides(base: Manifest['overrides'], head: Manifest['overrides']): OverrideChange[] {
+  const text = (value: unknown): string | null =>
+    value === undefined ? null : JSON.stringify(value);
+  const keys = [...new Set([...Object.keys(base ?? {}), ...Object.keys(head ?? {})])].sort();
+  const changes: OverrideChange[] = [];
+  for (const key of keys) {
+    const from = text(base?.[key]);
+    const to = text(head?.[key]);
+    if (from !== to) changes.push({ key, from, to });
+  }
+  return changes;
+}
+
 /** A package whose version changed, with the direction resolved. */
 export interface VersionChange {
   name: string;
@@ -113,6 +127,22 @@ export interface VersionChange {
   direct: boolean;
 }
 
+/**
+ * One `overrides` entry that was added, removed or re-pointed.
+ *
+ * The per-KEY delta, not just "the block changed". An acknowledgement keyed on
+ * the resulting block cannot tell "we added an override" from "we removed the
+ * one that was fixing a CVE" — removing a later addition returns the block to
+ * an earlier, already-acknowledged shape and passes silently. Keying on the
+ * transition of each entry removes that entirely.
+ */
+export interface OverrideChange {
+  key: string;
+  /** `null` when the entry did not exist on that side. */
+  from: string | null;
+  to: string | null;
+}
+
 /** A package whose platform-metadata keys changed in one direction. */
 export interface NativeMetadataChange {
   name: string;
@@ -136,6 +166,8 @@ export interface LockfileDiff {
    */
   gainedNativeMetadata: NativeMetadataChange[];
   overridesChanged: boolean;
+  /** Per-key `overrides` transitions; empty when the block did not change. */
+  overrideChanges: OverrideChange[];
 }
 
 /**
@@ -325,6 +357,7 @@ export function diffLockfiles(
     // a semantic change and answered with "Intentional?".
     overridesChanged:
       canonicalOverrides(options.baseOverrides) !== canonicalOverrides(options.headOverrides),
+    overrideChanges: diffOverrides(options.baseOverrides, options.headOverrides),
   };
 }
 
@@ -340,11 +373,39 @@ export function diffLockfiles(
  * visible; they just do not stop the run.
  */
 export function hasRisk(diff: LockfileDiff): boolean {
-  return (
-    diff.lostNativeMetadata.length > 0 ||
-    diff.overridesChanged ||
-    diff.changed.some((change) => change.downgrade && change.direct)
+  return remainingRisk(diff, { acknowledgedDowngrades: [], acknowledgedOverrideKeys: [] });
+}
+
+/** The gated downgrades in a diff — direct ones only. */
+export function directDowngrades(diff: LockfileDiff): VersionChange[] {
+  return diff.changed.filter((change) => change.downgrade && change.direct);
+}
+
+/**
+ * Whether anything in the diff still needs a human decision.
+ *
+ * The single definition of what gates. `hasRisk` is this with nothing
+ * acknowledged — kept because it is the name three other files document as
+ * "the gate", and because a fourth risk added here must gate through both.
+ *
+ * **Lost platform metadata is not acknowledgeable** and is deliberately absent
+ * from the parameters: it is never a decision, only ever npm below 11.11.0
+ * dropping the key, and it has a repair.
+ */
+export function remainingRisk(
+  diff: LockfileDiff,
+  acknowledged: { acknowledgedDowngrades: VersionChange[]; acknowledgedOverrideKeys: string[] }
+): boolean {
+  const ackedDowngrades = new Set(
+    acknowledged.acknowledgedDowngrades.map((c) => JSON.stringify([c.name, c.from, c.to]))
   );
+  const gatingDowngrade = directDowngrades(diff).some(
+    (c) => !ackedDowngrades.has(JSON.stringify([c.name, c.from, c.to]))
+  );
+  const ackedKeys = new Set(acknowledged.acknowledgedOverrideKeys);
+  const gatingOverride = diff.overrideChanges.some((c) => !ackedKeys.has(c.key));
+
+  return diff.lostNativeMetadata.length > 0 || gatingDowngrade || gatingOverride;
 }
 
 /**

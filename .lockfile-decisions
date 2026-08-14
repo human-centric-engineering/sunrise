@@ -9,17 +9,30 @@
 # Format — one decision per line, reason after the `#`:
 #
 #   downgrade <lockfile-key> <from> -> <to>   # why, with an issue number
-#   overrides <canonical-json>                # why, with an issue number
+#   overrides <key> <from> -> <to>            # why, with an issue number
+#
+# Both name a TRANSITION. For `overrides`, use the literal `none` for a side
+# where the entry does not exist, and one line per key — so removing an override
+# is a separate decision from adding it. That matters: dropping an override that
+# was fixing a CVE walks the patched transitive back to a vulnerable version,
+# and an acknowledgement keyed on the resulting block would wave it through
+# because the block returns to an earlier, already-approved shape.
 #
 # When the check gates it prints the exact line to add. Copy it verbatim: the
 # package field is the lockfile's own path key (`node_modules/@types/node`, and
 # `node_modules/a/node_modules/b` for a nested copy), not the bare package name.
 #
 # Entries are keyed to EXACT versions, so one acknowledges precisely one move.
-# A later, different downgrade of the same package is a new decision and fires
-# the gate again. That is also why old entries are safe to leave: once a PR
-# merges its entry stops matching, and a stale entry cannot cover a change it
-# does not name. Treat this as a decision log rather than something to prune.
+# A later, DIFFERENT downgrade of the same package is a new decision and fires
+# the gate again, which is what stops an entry becoming a blanket exemption.
+#
+# Be aware of the limit: an entry acknowledges its exact transition FOREVER, so
+# a diff that repeats the identical (package, from, to) move — a revert of a
+# revert, or a fork sync that replays it — is waved through silently. That is
+# the price of entries being safe to leave in place, which they have to be:
+# once a PR merges its entry no longer matches anything, and four live forks
+# inherit this whole log and would otherwise fail every sync. Treat the file as
+# a decision log rather than something to prune.
 #
 # NOT acknowledgeable: lost `libc` / `os` / `cpu`. Never a decision — npm below
 # 11.11.0 drops the key on every platform, the lockfile then installs fine

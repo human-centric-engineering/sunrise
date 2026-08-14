@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  isOverridesAcknowledged,
+  acknowledgedOverrideKeys,
   parseDecisions,
   partitionDowngrades,
   unusedDecisions,
@@ -45,13 +45,15 @@ describe('parseDecisions', () => {
 
   it('reads an overrides line', () => {
     const { decisions, errors } = parseDecisions(
-      'overrides [["adm-zip","^0.6.0"]]   # epub2 pins ^0.5.10 (#601)'
+      'overrides adm-zip none -> "^0.6.0"   # epub2 pins ^0.5.10 (#601)'
     );
 
     expect(errors).toEqual([]);
     expect(decisions[0]).toMatchObject({
       kind: 'overrides',
-      canonical: '[["adm-zip","^0.6.0"]]',
+      key: 'adm-zip',
+      from: 'none',
+      to: '"^0.6.0"',
       reason: 'epub2 pins ^0.5.10 (#601)',
     });
   });
@@ -70,12 +72,13 @@ describe('parseDecisions', () => {
     // the block could never be acknowledged — a mismatch that looked like a
     // real change.
     const { decisions, errors } = parseDecisions(
-      'overrides [["adm-zip","github:owner/repo#semver:^0.6.0"]]   # vendored (#601)'
+      'overrides adm-zip none -> "github:owner/repo#semver:^0.6.0"   # vendored (#601)'
     );
 
     expect(errors).toEqual([]);
     expect(decisions[0]).toMatchObject({
-      canonical: '[["adm-zip","github:owner/repo#semver:^0.6.0"]]',
+      key: 'adm-zip',
+      to: '"github:owner/repo#semver:^0.6.0"',
       reason: 'vendored (#601)',
     });
   });
@@ -174,25 +177,75 @@ describe('partitionDowngrades — what an ACK must NOT cover', () => {
   });
 });
 
-describe('isOverridesAcknowledged', () => {
-  const { decisions } = parseDecisions('overrides [["a","^1"],["b","^2"]]  # both reviewed (#1)');
+describe('acknowledgedOverrideKeys — keyed on the transition, not the result', () => {
+  const ADD = parseDecisions('overrides adm-zip none -> "^0.6.0"  # epub2 pins ^0.5.10 (#601)');
 
-  it('accepts the exact canonical block', () => {
-    expect(isOverridesAcknowledged('[["a","^1"],["b","^2"]]', decisions)).toBe(true);
+  it('acknowledges the exact transition it names', () => {
+    const keys = acknowledgedOverrideKeys(
+      [{ key: 'adm-zip', from: null, to: '"^0.6.0"' }],
+      ADD.decisions
+    );
+
+    expect(keys).toEqual(['adm-zip']);
   });
 
-  it('does NOT accept a block with an override added', () => {
-    // The risk is per-override. Adding a third is a new decision, not covered
-    // by having once approved two.
-    expect(isOverridesAcknowledged('[["a","^1"],["b","^2"],["c","^3"]]', decisions)).toBe(false);
+  it('does NOT acknowledge the REMOVAL of an override it approved adding', () => {
+    // The hole this shape closes. Adding `ws` to fix a CVE gates and is
+    // acknowledged; a later revert that drops it returns the block to an
+    // earlier, already-approved shape. An ACK keyed on the resulting block
+    // would wave that through and walk the patched transitive back.
+    const keys = acknowledgedOverrideKeys(
+      [{ key: 'adm-zip', from: '"^0.6.0"', to: null }],
+      ADD.decisions
+    );
+
+    expect(keys).toEqual([]);
   });
 
-  it('does NOT accept a block with a changed range', () => {
-    expect(isOverridesAcknowledged('[["a","^9"],["b","^2"]]', decisions)).toBe(false);
+  it('does NOT acknowledge a different value for the same key', () => {
+    const keys = acknowledgedOverrideKeys(
+      [{ key: 'adm-zip', from: null, to: '"^0.7.0"' }],
+      ADD.decisions
+    );
+
+    expect(keys).toEqual([]);
   });
 
-  it('accepts nothing when only a downgrade decision exists', () => {
-    expect(isOverridesAcknowledged('[["a","^1"]]', parseDecisions(ACK).decisions)).toBe(false);
+  it('does NOT acknowledge a different key', () => {
+    expect(
+      acknowledgedOverrideKeys([{ key: 'hono', from: null, to: '"^0.6.0"' }], ADD.decisions)
+    ).toEqual([]);
+  });
+
+  it('acknowledges only the keys named, leaving others gating', () => {
+    const two = parseDecisions(
+      [
+        'overrides adm-zip none -> "^0.6.0"  # approved (#601)',
+        'overrides ws "^8.21.0" -> none      # NOT approved elsewhere (#1)',
+      ].join('\n')
+    );
+
+    const keys = acknowledgedOverrideKeys(
+      [
+        { key: 'adm-zip', from: null, to: '"^0.6.0"' },
+        { key: 'hono', from: '"^4"', to: '"^5"' },
+      ],
+      two.decisions
+    );
+
+    expect(keys).toEqual(['adm-zip']);
+  });
+
+  it('reads an overrides removal line', () => {
+    const { decisions, errors } = parseDecisions('overrides ws "^8.21.0" -> none  # dropped (#1)');
+
+    expect(errors).toEqual([]);
+    expect(decisions[0]).toMatchObject({
+      kind: 'overrides',
+      key: 'ws',
+      from: '"^8.21.0"',
+      to: 'none',
+    });
   });
 });
 

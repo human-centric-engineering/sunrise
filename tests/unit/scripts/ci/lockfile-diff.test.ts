@@ -94,6 +94,7 @@ describe('diffLockfiles', () => {
       lostNativeMetadata: [],
       gainedNativeMetadata: [],
       overridesChanged: false,
+      overrideChanges: [],
     });
     expect(hasRisk(diff)).toBe(false);
   });
