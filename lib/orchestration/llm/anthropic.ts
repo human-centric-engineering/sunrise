@@ -157,8 +157,23 @@ export class AnthropicProvider implements LlmProvider {
 
     const content: string[] = [];
     const toolCalls: LlmToolCall[] = [];
+    // Gates the extraction-tool -> JSON-text conversion below. Stays
+    // `json_schema`-only: that is the only mode that installs a forced
+    // extraction tool (see buildBaseParams).
     const isStructuredExtraction =
       options.responseFormat?.type === 'json_schema' && !options.tools?.length;
+    /**
+     * Any JSON-shaped request, for the truncation guard only — `json_object`
+     * as well as `json_schema`.
+     *
+     * Anthropic has no native JSON mode, so `json_object` is just an
+     * instruction and its output arrives as ordinary text. A cut-off response
+     * is therefore a partial JSON string in `joinedContent`: non-empty, so the
+     * empty-output test below cannot see it, and it then fails to parse
+     * downstream and reads as a malformed answer rather than a truncation
+     * (#594).
+     */
+    const wantsParseableJson = !!options.responseFormat && !options.tools?.length;
 
     for (const block of message.content) {
       if (block.type === 'text') {
@@ -191,12 +206,12 @@ export class AnthropicProvider implements LlmProvider {
     // malformed-JSON failure (and a wasted retry) downstream.
     if (
       message.stop_reason === 'max_tokens' &&
-      (isStructuredExtraction || (joinedContent.length === 0 && toolCalls.length === 0))
+      (wantsParseableJson || (joinedContent.length === 0 && toolCalls.length === 0))
     ) {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_tokens before producing ${
-          isStructuredExtraction ? 'a complete structured response' : 'visible output'
+          wantsParseableJson ? 'a complete structured response' : 'visible output'
         }. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
         {
           code: 'truncated_no_output',
@@ -240,8 +255,12 @@ export class AnthropicProvider implements LlmProvider {
       throw toProviderError(err, 'Anthropic chat stream failed');
     }
 
+    // Gates the extraction-tool -> text conversion below; `json_schema` only,
+    // since that is the only mode that installs a forced extraction tool.
     const isStructuredExtraction =
       options.responseFormat?.type === 'json_schema' && !options.tools?.length;
+    /** Any JSON-shaped request, for the truncation guard only (#594). */
+    const wantsParseableJson = !!options.responseFormat && !options.tools?.length;
 
     let inputTokens = 0;
     let outputTokens = 0;
@@ -318,13 +337,14 @@ export class AnthropicProvider implements LlmProvider {
       throw toProviderError(err, 'Anthropic stream iteration failed');
     }
 
-    // Mirror the non-streaming truncation guard: a max_tokens stop during
-    // structured extraction means the forced-tool input was cut off, so the
-    // JSON already emitted as a `text` chunk is incomplete. Surface the
-    // actionable error before the `done` chunk instead of letting the
-    // consumer treat a silently-empty/garbage structured result as success.
+    // Mirror the non-streaming truncation guard: a max_tokens stop on a
+    // JSON-shaped request means the output is incomplete — either a forced
+    // extraction tool's input was cut off (so the JSON already emitted as a
+    // `text` chunk is partial), or a `json_object` response stopped mid-object.
+    // Surface the actionable error before the `done` chunk instead of letting
+    // the consumer treat a garbage structured result as success.
     // (`mapStopReason('max_tokens')` is `'length'`.)
-    if (isStructuredExtraction && finishReason === 'length') {
+    if (wantsParseableJson && finishReason === 'length') {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,

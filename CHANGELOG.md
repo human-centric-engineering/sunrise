@@ -202,6 +202,17 @@ release process.
   in its place (#559).
 ### Added
 
+- **`finishReason` on the `done` SSE event.** `ChatEvent.done` now carries an
+  optional `finishReason` (`'stop' | 'tool_use' | 'length' | 'error'`) telling a
+  consumer why the provider stopped generating on the final turn of the tool
+  loop. `'length'` means the assistant text is a **fragment** cut off at the
+  token cap, not a complete answer. The information already existed on
+  `StreamChunk.done`; the chat handler discarded it, so nothing downstream of
+  the stream could distinguish "the model produced the wrong shape" from "the
+  model was interrupted mid-shape". `drainStreamChat` surfaces it on
+  `DrainResult` too. **Optional and additive** — absent when the provider
+  reports nothing, and no existing consumer (widget, admin chat UI, forks) has
+  to read it (#594).
 - **`ProviderError.usage`** — tokens the provider billed for the call an error
   ended, populated by the four truncation guards. A truncation is a full cap's
   worth of output, the most expensive shape a turn has, and it used to vanish
@@ -544,6 +555,33 @@ release process.
 
 ### Fixed
 
+- **A truncated evaluation judge no longer records a wrong verdict.** A judge
+  agent runs as a streaming chat call, so it goes through `drainStreamChat`
+  rather than `runStructuredCompletion`, and the seeded judges run at
+  `maxTokens: 1000` with **no** `responseFormat` — so neither adapter's
+  truncation guard can fire. When a judge ran out of tokens mid-object,
+  `scoreResponse` recorded `score: null, reasoning: "judge response was not
+  valid {score, reasoning} JSON"` — into a metric row **an operator reads**.
+  That is a wrong diagnosis, and it sent people to rewrite a judge prompt that
+  was working when the fix was to raise `maxTokens`. It now distinguishes the
+  two, names the output-token count, and states the remedy. Same defect as
+  #587, on the feature the original report came from (#594).
+- **A truncated `json_object` response is now reported as truncation on both
+  adapters.** The truncation guards tested `responseFormat.type ===
+  'json_schema'` specifically, so a caller asking for `json_object` — notably
+  the orchestrator's planner — sailed straight through with partial JSON. It
+  then failed `JSON.parse`, spent a **clarifying retry into the same token
+  cap**, and surfaced as `planner_parse_failed` with `retriable: true`, inviting
+  the engine to re-run the whole step at that same cap. All four guards
+  (Anthropic and OpenAI-compatible, streaming and non-streaming) now cover any
+  `responseFormat`: a caller asking for `json_object` wants parseable JSON just
+  as much as one supplying a schema, and truncated JSON is unusable under
+  either. This also removes the wasted retry and the false `retriable`, since
+  the adapter now raises `truncated_no_output` before the parse and
+  `isRequestFault` marks it non-retriable. **Fork-facing:** a `json_object` call
+  that previously returned a partial string now throws — which is the point,
+  but a fork catching parse failures downstream should expect the error earlier
+  and better-labelled (#594).
 - **Capabilities invoked from a workflow now record a cost row.** The dispatcher
   wrote `CapabilityContext.agentId` to `AiCostLog.agentId`, but a workflow
   dispatches under a `workflow:${workflowId}` label rather than a real

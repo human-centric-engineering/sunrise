@@ -143,15 +143,34 @@ async function runJudge(
     }
     const parsed = parseJudgeOutput(result.assistantText);
     if (!parsed) {
-      logger.warn('scoreResponse: judge returned non-JSON', {
-        judgeSlug,
-        preview: result.assistantText.slice(0, 200),
-      });
+      // Truncation and a genuinely malformed answer both land here, and they
+      // are different failures with different fixes: one is "raise the judge's
+      // maxTokens", the other is "the judge is not following its prompt".
+      // Reporting the first as the second sent operators to rewrite a prompt
+      // that was working (#594). The seeded judges run at maxTokens: 1000 and
+      // carry no responseFormat, so neither adapter's truncation guard can
+      // fire — this is the only place the distinction can be made.
+      const truncated = result.finishReason === 'length';
+      logger.warn(
+        truncated
+          ? 'scoreResponse: judge response was cut off at the token cap'
+          : 'scoreResponse: judge returned non-JSON',
+        {
+          judgeSlug,
+          finishReason: result.finishReason,
+          outputTokens: result.tokenUsage.output,
+          preview: result.assistantText.slice(0, 200),
+        }
+      );
       return {
         ok: true,
         score: {
           score: null,
-          reasoning: 'judge response was not valid {score, reasoning} JSON',
+          // Written to the metric row and shown to an operator, so it has to
+          // name the actual problem and the actual remedy.
+          reasoning: truncated
+            ? `judge response was cut off at the model's token limit after ${result.tokenUsage.output} output tokens — raise the judge agent's maxTokens; this is not a scoring result`
+            : 'judge response was not valid {score, reasoning} JSON',
         },
         costUsd: result.costUsd,
       };

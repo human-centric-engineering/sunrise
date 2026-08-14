@@ -35,6 +35,7 @@ import type {
 } from '@/types/orchestration';
 import { CostOperation } from '@/types/orchestration';
 import type {
+  LlmFinishReason,
   LlmMessage,
   LlmToolCall,
   LlmToolChoice,
@@ -1109,6 +1110,10 @@ export class StreamingChatHandler {
         let assistantText = '';
         const toolCalls = new Map<number, LlmToolCall>();
         let usage: { inputTokens: number; outputTokens: number } | null = null;
+        // Per-iteration, deliberately: the `done` event is emitted from inside
+        // the terminal iteration, so this carries why the FINAL turn stopped —
+        // which is the one whose text a consumer is about to parse.
+        let finishReason: LlmFinishReason | undefined;
 
         // Runtime-narrow `agent.reasoningEffort` — the column is plain
         // TEXT in Postgres, so direct SQL writes / forked backup bundles
@@ -1178,6 +1183,7 @@ export class StreamingChatHandler {
                     toolCalls.set(toolCallIndex++, chunk.toolCall);
                   } else if (chunk.type === 'done') {
                     usage = chunk.usage;
+                    finishReason = chunk.finishReason;
                   }
                 }
                 streamSucceeded = true;
@@ -1685,7 +1691,8 @@ export class StreamingChatHandler {
             aggregateSideEffectModels(
               turnToolCalls.map((t) => t.sideEffectModel),
               summarizerSideEffect
-            )
+            ),
+            finishReason
           );
           return;
         }
@@ -2040,7 +2047,8 @@ export class StreamingChatHandler {
               aggregateSideEffectModels(
                 turnToolCalls.map((t) => t.sideEffectModel),
                 summarizerSideEffect
-              )
+              ),
+              finishReason
             );
             return;
           }
@@ -2333,7 +2341,8 @@ export class StreamingChatHandler {
               aggregateSideEffectModels(
                 turnToolCalls.map((t) => t.sideEffectModel),
                 summarizerSideEffect
-              )
+              ),
+              finishReason
             );
             return;
           }
@@ -2780,7 +2789,8 @@ function buildDoneEvent(
   usage: { inputTokens: number; outputTokens: number } | null,
   providerSlug?: string | null,
   inputBreakdown?: InputBreakdown,
-  sideEffectModels?: SideEffectModelUsage[]
+  sideEffectModels?: SideEffectModelUsage[],
+  finishReason?: LlmFinishReason
 ): ChatEvent {
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
@@ -2802,6 +2812,7 @@ function buildDoneEvent(
     model,
     ...(reconciled ? { inputBreakdown: reconciled } : {}),
     ...(cleanSideEffects ? { sideEffectModels: cleanSideEffects } : {}),
+    ...(finishReason ? { finishReason } : {}),
   };
 }
 

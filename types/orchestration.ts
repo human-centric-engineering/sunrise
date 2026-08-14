@@ -24,6 +24,7 @@ import type {
   AiProviderModel,
 } from '@/types/prisma';
 import type { ProvenanceItem } from '@/lib/orchestration/provenance/types';
+import type { LlmFinishReason } from '@/lib/orchestration/llm/types';
 
 // ============================================================================
 // Enums
@@ -884,6 +885,23 @@ export type ChatEvent =
       costUsd: number;
       provider?: string;
       model?: string;
+      /**
+       * Why the provider stopped generating, for the FINAL turn of the
+       * tool loop. `'length'` means the response was cut off at the token
+       * cap — the text is a fragment, not a complete answer.
+       *
+       * Added because a consumer that parses the assistant text has no
+       * other way to tell "the model produced the wrong shape" from "the
+       * model was interrupted mid-shape", and reports the second as the
+       * first. The evaluation judge did exactly that: it recorded
+       * `score: null, reasoning: "not valid JSON"` — a wrong verdict, in a
+       * row an operator reads — for a judge that had simply run out of
+       * tokens (#594).
+       *
+       * Optional and additive: absent when the provider reports nothing,
+       * and no existing consumer has to read it.
+       */
+      finishReason?: LlmFinishReason;
       /**
        * Admin-only: per-component estimate of input-token usage so the
        * UI can show why a small user message can still cost hundreds

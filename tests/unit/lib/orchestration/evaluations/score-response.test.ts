@@ -30,6 +30,7 @@ interface PartialDrain {
   costUsd?: number;
   errorCode?: string;
   errorMessage?: string;
+  finishReason?: 'stop' | 'tool_use' | 'length' | 'error';
 }
 
 function drainOk(overrides: PartialDrain = {}) {
@@ -40,6 +41,7 @@ function drainOk(overrides: PartialDrain = {}) {
     tokenUsage: { input: 40, output: 20 },
     costUsd: overrides.costUsd ?? 0.001,
     latencyMs: 80,
+    ...(overrides.finishReason ? { finishReason: overrides.finishReason } : {}),
   };
 }
 
@@ -255,6 +257,48 @@ describe('scoreResponse — partial failure', () => {
     // The other two judges still produced their happy-path scores.
     expect(result.scores.groundedness.score).toBe(0.8);
     expect(result.scores.relevance.score).toBe(0.8);
+  });
+
+  it('reports a judge cut off at the token cap as truncation, not malformed JSON (#594)', async () => {
+    // The judge is a streaming chat agent, so it goes through drainStreamChat
+    // rather than runStructuredCompletion, and the seeded judges run at
+    // maxTokens: 1000 with NO responseFormat — so neither adapter truncation
+    // guard can fire. This is the only place the distinction can be drawn.
+    //
+    // It matters because the string below is written to the metric row and
+    // shown to an operator. Reporting "not valid JSON" for a judge that simply
+    // ran out of tokens sent people to rewrite a prompt that was working; the
+    // actual remedy is to raise maxTokens.
+    mockedDrain
+      .mockResolvedValueOnce(
+        drainOk({ assistantText: '{"score": 0.7, "reason', finishReason: 'length' })
+      )
+      .mockResolvedValueOnce(drainOk())
+      .mockResolvedValueOnce(drainOk());
+
+    const result = await scoreResponse(BASE_PARAMS);
+
+    expect(result.scores.faithfulness.score).toBeNull();
+    expect(result.scores.faithfulness.reasoning).toMatch(/cut off/i);
+    expect(result.scores.faithfulness.reasoning).toMatch(/maxTokens/);
+    // The wrong diagnosis must be gone, not merely joined by the right one.
+    expect(result.scores.faithfulness.reasoning).not.toMatch(/not valid/);
+    // Unaffected judges still score.
+    expect(result.scores.groundedness.score).toBe(0.8);
+  });
+
+  it('still reports genuinely malformed JSON as malformed when the turn was not truncated', async () => {
+    // The complementary half: without it, always reporting "cut off" would
+    // pass the test above and lose the other diagnosis entirely.
+    mockedDrain
+      .mockResolvedValueOnce(drainOk({ assistantText: 'not json at all', finishReason: 'stop' }))
+      .mockResolvedValueOnce(drainOk())
+      .mockResolvedValueOnce(drainOk());
+
+    const result = await scoreResponse(BASE_PARAMS);
+
+    expect(result.scores.faithfulness.reasoning).toMatch(/not valid \{score, reasoning\} JSON/);
+    expect(result.scores.faithfulness.reasoning).not.toMatch(/cut off/i);
   });
 
   it('sums costUsd across successful and failed calls', async () => {

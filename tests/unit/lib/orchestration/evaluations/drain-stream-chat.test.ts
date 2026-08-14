@@ -38,6 +38,49 @@ beforeEach(() => {
 });
 
 describe('drainStreamChat', () => {
+  it('surfaces finishReason from the done event (#594)', async () => {
+    // The last hop of the chain that lets a caller tell a truncated answer
+    // from a malformed one: StreamChunk.done already carried finishReason,
+    // ChatEvent.done now forwards it, and this fold has to keep it. Dropping
+    // it here is what made the judge report `score: null, reasoning: "not
+    // valid JSON"` for a response that had simply run out of tokens.
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([
+        { type: 'content', delta: '{"score": 0.7, "reason' },
+        {
+          type: 'done',
+          tokenUsage: { inputTokens: 10, outputTokens: 1000, totalTokens: 1010 },
+          costUsd: 0.002,
+          finishReason: 'length',
+        },
+      ])
+    );
+
+    const result = await drainStreamChat(baseRequest);
+
+    expect(result.finishReason).toBe('length');
+    expect(result.assistantText).toBe('{"score": 0.7, "reason');
+  });
+
+  it('leaves finishReason undefined when the done event omits it', async () => {
+    // Optional and additive — a provider or fork consumer that reports
+    // nothing must not turn into a phantom value a caller would act on.
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([
+        {
+          type: 'done',
+          tokenUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+          costUsd: 0.0001,
+        },
+      ])
+    );
+
+    const result = await drainStreamChat(baseRequest);
+
+    expect(result.finishReason).toBeUndefined();
+    expect('finishReason' in result).toBe(false);
+  });
+
   it('returns zeroed result on an empty stream', async () => {
     mockedStreamChat.mockReturnValueOnce(fromEvents([]));
 

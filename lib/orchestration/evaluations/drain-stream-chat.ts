@@ -14,6 +14,7 @@
  */
 
 import type { ChatEvent, Citation, ToolCallTrace } from '@/types/orchestration';
+import type { LlmFinishReason } from '@/lib/orchestration/llm/types';
 import type { ChatRequest } from '@/lib/orchestration/chat/types';
 import { streamChat } from '@/lib/orchestration/chat/streaming-handler';
 
@@ -25,6 +26,14 @@ export interface DrainResult {
   tokenUsage: { input: number; output: number };
   costUsd: number;
   latencyMs: number;
+  /**
+   * Why the provider stopped generating on the final turn, when the stream
+   * reported it. `'length'` means the assistant text is a fragment cut off at
+   * the token cap — so a parse failure on it is a truncation, not a model that
+   * produced the wrong shape. Callers that parse `assistantText` should check
+   * this before blaming the shape (#594).
+   */
+  finishReason?: LlmFinishReason;
   /** Set when the stream ended with a `{ type: 'error' }` event. */
   errorCode?: string;
   errorMessage?: string;
@@ -57,6 +66,7 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
   let errorMessage: string | undefined;
   let conversationId: string | undefined;
   let messageId: string | undefined;
+  let finishReason: LlmFinishReason | undefined;
 
   for await (const event of stream) {
     switch (event.type) {
@@ -79,6 +89,7 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
           output: event.tokenUsage.outputTokens ?? 0,
         };
         costUsd = event.costUsd;
+        finishReason = event.finishReason;
         break;
       case 'error':
         errorCode = event.code;
@@ -95,6 +106,7 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
     costUsd,
     latencyMs: Date.now() - start,
   };
+  if (finishReason) result.finishReason = finishReason;
   if (errorCode) result.errorCode = errorCode;
   if (errorMessage) result.errorMessage = errorMessage;
   if (conversationId) result.conversationId = conversationId;
