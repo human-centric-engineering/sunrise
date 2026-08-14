@@ -42,9 +42,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Required. Ancestry cannot be computed on a shallow clone — the
-          # script detects that and skips rather than reporting a false loss,
-          # so lowering this silently disables the guard.
+          # Required. Ancestry cannot be computed on a shallow clone, so the
+          # script detects that and skips rather than reporting a false loss —
+          # with a ::warning:: annotation, so lowering this turns the guard off
+          # visibly rather than quietly.
           fetch-depth: 0
           # This is the only workflow here that fetches from a CONFIGURABLE
           # url, and the step below needs no credential to reach a public

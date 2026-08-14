@@ -1060,8 +1060,9 @@ If that upstream is **private** and the URL has to carry a token, put it in a
 are masked in logs and are write-only; repository variables are neither, and are
 readable back through the API by anyone with write access.
 
-Without either, the check skips rather than failing: it cannot tell "ancestry
-lost" from "cannot look".
+Without either, the check skips rather than failing — it cannot tell "ancestry
+lost" from "cannot look" — and says so with a warning annotation on the run, so
+a permanently-skipping guard is visible rather than a silent green tick.
 
 ### Migrations
 

@@ -47,6 +47,29 @@ set -uo pipefail
 REF="${1:-HEAD}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/human-centric-engineering/sunrise.git}"
 
+# A skip is the outcome that most needs to be VISIBLE. Three legitimate
+# conditions below end in one, and a silent green tick on any of them is
+# indistinguishable from a real pass — which for a guard whose whole premise is
+# time-to-discovery would be the failure mode reappearing one level up. GitHub
+# renders `::warning::` as an annotation on the run; a bare `echo` does not.
+skip() {
+  echo "notice: $1"
+  echo "::warning title=Sunrise ancestry check skipped::$1"
+  exit 0
+}
+
+# `::error::` is LINE-scoped: everything after the first newline would land in
+# the log only, and the annotation — the surface an operator actually sees
+# without expanding the job — would carry the diagnosis without the repair. So
+# print the body plainly for the log, then again encoded onto one line.
+fail() {
+  local body="$1"
+  printf '%s\n' "$body"
+  printf '::error title=Sunrise sync ancestry lost::%s\n' \
+    "$(printf '%s' "$body" | awk '{ gsub(/%/, "%25"); printf "%s%s", sep, $0; sep = "%0A" }')"
+  exit 1
+}
+
 # Read the claim from the TREE, not the working directory — the question is
 # what this commit says it is, which is what a reader six months later will see.
 # Tolerates either quote style: prettier enforces single, but a fork's editor
@@ -55,60 +78,63 @@ VERSION=$(git show "$REF:lib/sunrise-version.ts" 2>/dev/null |
   sed -n "s/.*SUNRISE_VERSION *= *['\"]\([^'\"]*\)['\"].*/\1/p" | head -1)
 
 if [ -z "$VERSION" ]; then
-  echo "notice: no SUNRISE_VERSION found at $REF — skipping"
-  exit 0
+  skip "no SUNRISE_VERSION found at $REF"
 fi
 TAG="v$VERSION"
 
 # Ancestry cannot be computed on a shallow clone: `merge-base --is-ancestor`
 # would answer from truncated history and report a loss that has not happened.
-# Skip loudly rather than fail — a fork that copies this workflow and lowers
-# `fetch-depth` should get a fixable notice, not a red build it cannot explain.
 if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-  echo "notice: shallow clone — skipping (ancestry needs 'fetch-depth: 0')"
-  exit 0
+  skip "shallow clone — ancestry needs 'fetch-depth: 0'"
 fi
 
-# Resolve the tag into a PRIVATE ref rather than trusting `refs/tags/$TAG`.
+# Resolve the tag into a PRIVATE ref, and use ONLY that.
 #
-# A fork tags its own app releases, and `lib/app-version.ts` is versioned
-# independently of Sunrise — so a fork sitting at Sunrise 0.9.0 may well have
-# its OWN `v0.9.0` tag pointing at its own history. Reusing `refs/tags/` would
-# then compare against the wrong object, and because a fork's own tag is
-# normally an ancestor of its own main, the check would PASS. A guard that
-# silently reports success on the exact repository it exists to protect is
-# worse than no guard, so upstream's tag is fetched into a namespace nothing
-# else writes to.
+# `refs/tags/$TAG` cannot be trusted, in either direction. A fork versions its
+# app independently of Sunrise, so a fork sitting at Sunrise 0.9.0 may hold its
+# OWN `v0.9.0` pointing at its own history:
+#
+#   - if that tag IS an ancestor of the fork's main (the normal case for a
+#     fork's own release), a check reading it reports SUCCESS on a repository
+#     whose Sunrise ancestry is genuinely broken;
+#   - if it is not, the check fails and tells the operator to
+#     `git merge -s ours` the fork's unrelated release branch into main —
+#     recording a claim that is false.
+#
+# An earlier revision of this script fell back to the local tag when the fetch
+# failed, which reintroduced both. Verified: with the fetch unreachable and a
+# fork-owned `v0.8.0` present, a squash-merged repository reported
+# "sync history intact". There is no fallback now — if upstream cannot be
+# reached, the honest answer is that we could not look.
 readonly PRIVATE_REF="refs/sunrise-ancestry/$TAG"
+
+# The ref is an implementation detail of one run. Left behind it accumulates one
+# per version, keeps the fetched objects permanently reachable from gc, and
+# shows up in `git log --all` — which matters because this script is also meant
+# to be run by hand against a working copy.
+cleanup() { git update-ref -d "$PRIVATE_REF" 2>/dev/null || true; }
+trap cleanup EXIT
+
 git fetch --quiet --no-tags --force "$UPSTREAM_URL" "refs/tags/$TAG:$PRIVATE_REF" 2>/dev/null || true
 
-RESOLVED="$PRIVATE_REF"
+# Unresolvable => mid-release (the commit bumping SUNRISE_VERSION lands BEFORE
+# the tag is pushed) or an unreachable upstream. Never fail on either: a hard
+# failure on the first would red-line every Sunrise release at the moment of
+# cutting it, and on the second the guard cannot tell "ancestry lost" from
+# "cannot look".
 if ! git rev-parse -q --verify "$PRIVATE_REF" >/dev/null 2>&1; then
-  # Upstream unreachable (private remote without a token, or offline). Fall back
-  # to a local tag — correct and authoritative in Sunrise's OWN repo, where the
-  # tag is created locally and no collision is possible.
-  RESOLVED="refs/tags/$TAG"
+  skip "$TAG not fetchable from upstream — mid-release, or upstream unreachable"
 fi
 
-# Still unresolvable => mid-release (the commit bumping SUNRISE_VERSION lands
-# BEFORE the tag is pushed) or an unreachable private upstream. Never fail on
-# that: a hard failure here would red-line every Sunrise release at the moment
-# of cutting it.
-if ! git rev-parse -q --verify "$RESOLVED" >/dev/null 2>&1; then
-  echo "notice: $TAG not resolvable — skipping (mid-release, or upstream unreachable)"
-  exit 0
-fi
-
-if git merge-base --is-ancestor "$RESOLVED" "$REF"; then
+if git merge-base --is-ancestor "$PRIVATE_REF" "$REF"; then
   echo "ok: $TAG is an ancestor of $REF — sync history intact"
   exit 0
 fi
 
-cat <<EOF
-::error::Sunrise $TAG is NOT an ancestor of $REF.
+fail "Sunrise $TAG is NOT an ancestor of $REF.
 
 The tree claims Sunrise $VERSION, but $TAG is missing from this branch's
-ancestry. That is the signature of a sync PR merged with "Squash and merge":
+ancestry. That is the signature of a sync PR merged with \"Squash and merge\":
 the content is kept, the second parent is discarded.
 
 Consequence: the merge base against upstream silently reverts to the PREVIOUS
@@ -118,10 +144,8 @@ re-conflicts every file already resolved by hand.
 Repair (changes no files):
   git fetch upstream --tags
   git checkout main
-  git merge -s ours $TAG -m "chore: record Sunrise $VERSION as merged (ancestry repair)"
+  git merge -s ours $TAG -m \"chore: record Sunrise $VERSION as merged (ancestry repair)\"
   git push origin main
 
 '-s ours' is only safe once you have confirmed the content is already present:
-  git diff --stat <tip-of-the-squashed-PR-branch> main   # must be empty
-EOF
-exit 1
+  git diff --stat <tip-of-the-squashed-PR-branch> main   # must be empty"

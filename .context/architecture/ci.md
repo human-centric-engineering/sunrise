@@ -339,23 +339,41 @@ fire on the first run afterwards.
 Three deliberate non-failures, each of which would otherwise red-line a build
 for something that is not a lost merge base:
 
-| Situation                                | Behaviour | Why                                                                                          |
-| ---------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
-| Version bumped, tag not pushed yet       | skip      | This is every Sunrise release at the moment of cutting it — the bump commit precedes the tag |
-| Upstream unreachable (private, no token) | skip      | The guard cannot tell "ancestry lost" from "cannot look"                                     |
-| Shallow clone                            | skip      | `merge-base` would answer from truncated history and report a loss that has not happened     |
+| Situation                                | Behaviour            | Why                                                                                          |
+| ---------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
+| Version bumped, tag not pushed yet       | skip + `::warning::` | This is every Sunrise release at the moment of cutting it — the bump commit precedes the tag |
+| Upstream unreachable (private, no token) | skip + `::warning::` | The guard cannot tell "ancestry lost" from "cannot look"                                     |
+| Shallow clone                            | skip + `::warning::` | `merge-base` would answer from truncated history and report a loss that has not happened     |
+
+**Every skip emits a `::warning::` annotation.** All three exit 0, and a bare
+`echo` would render the check fully green with nothing on the run — which, for a
+guard whose entire premise is time-to-discovery, would reinstate the original
+failure mode one level up. The skips are the residual risk in this design, so
+they are made visible rather than merely logged.
 
 Two implementation details are load-bearing and were each confirmed by control
 experiment before being written (`tests/unit/scripts/ci/check-sunrise-ancestry.test.ts`
 fails against the naive version of both):
 
-- **Upstream's tag is fetched into a private ref, not `refs/tags/`.** A fork
-  versions its app independently of Sunrise, so it may hold its own `v0.8.0`
-  pointing at its own history — which _is_ an ancestor of its own `main`, so a
-  `refs/tags/`-based check reports **success on the very repository it exists to
-  protect**.
-- **`fetch-depth: 0` is required** in the workflow. Lowering it does not weaken
-  the guard quietly — the shallow check turns it into a visible skip.
+- **Upstream's tag is fetched into a private ref, not `refs/tags/`, and there is
+  no fallback to the local tag.** A fork versions its app independently of
+  Sunrise, so it may hold its own `v0.8.0` pointing at its own history — which
+  _is_ an ancestor of its own `main`, so a `refs/tags/`-based check reports
+  **success on the very repository it exists to protect**. The mirror case is
+  worse: where the fork's own tag is _not_ an ancestor, such a check fails and
+  tells the operator to `git merge -s ours` an unrelated release branch into
+  `main`, recording a claim that is false. An earlier revision fell back to the
+  local tag when the fetch failed and reinstated both; an unreachable upstream
+  now skips instead, because the honest answer is that we could not look.
+- **`fetch-depth: 0` is required** in the workflow. Lowering it does not disable
+  the guard quietly — the shallow check turns it into a skip with a
+  `::warning::` annotation on the run.
+
+The failure message is emitted twice on purpose: plainly for the log, and
+`%0A`-encoded onto a single `::error::` line. Workflow commands are line-scoped,
+so without the encoding the annotation — the surface an operator sees without
+expanding the job — would carry the diagnosis and leave the `git merge -s ours`
+repair behind in log output.
 
 `UPSTREAM_URL` is overridable via `SUNRISE_UPSTREAM_URL`, for a leaf fork of a
 framework-tier fork. The workflow reads the **secret** first and falls back to

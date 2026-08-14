@@ -43,12 +43,33 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync('git', args, { cwd, stdio: 'pipe' });
 }
 
-/** Initialise a repo with deterministic identity — CI has no global git config. */
-function initRepo(dir: string): void {
-  git(dir, 'init', '-q', '-b', 'main', '.');
+/**
+ * Give a repo a deterministic committer, whether it was created by `init` or by
+ * `clone`.
+ *
+ * Both paths need it and only the init path had it, which passed locally and
+ * would have failed on every GitHub runner: a hosted runner sets no global git
+ * identity, and the address git derives from the hostname
+ * (`runner@fv-az…(none)`) is one it refuses to commit with. `commit.gpgsign`
+ * is off for the same class of reason — a developer with global signing and no
+ * usable key in this shell would otherwise fail here for a reason that has
+ * nothing to do with the test.
+ */
+function configureRepo(dir: string): void {
   git(dir, 'config', 'user.email', 'test@example.com');
   git(dir, 'config', 'user.name', 'Test');
   git(dir, 'config', 'commit.gpgsign', 'false');
+}
+
+function initRepo(dir: string): void {
+  git(dir, 'init', '-q', '-b', 'main', '.');
+  configureRepo(dir);
+}
+
+/** Clone, then configure — the step the clone-based tests were missing. */
+function cloneRepo(from: string, to: string, parent: string, ...extra: string[]): void {
+  git(parent, 'clone', '-q', ...extra, from, to);
+  configureRepo(to);
 }
 
 function writeVersion(dir: string, version: string): void {
@@ -107,9 +128,7 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
   });
 
   it('passes when the sync was a real merge — the tag is an ancestor', () => {
-    git(root, 'clone', '-q', upstream, fork);
-    git(fork, 'config', 'user.email', 'test@example.com');
-    git(fork, 'config', 'user.name', 'Test');
+    cloneRepo(upstream, fork, root);
     // Diverge from v0.7.0, then bring v0.8.0 in as a real merge — the supported
     // sync flow, and the case that must NOT fire.
     git(fork, 'checkout', '-q', '-B', 'main', 'v0.7.0');
@@ -169,14 +188,14 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
     // Protects Sunrise's own release process: the commit bumping
     // SUNRISE_VERSION lands before the tag is pushed, and a hard failure there
     // would red-line every release at the moment of cutting it.
-    git(root, 'clone', '-q', upstream, fork);
+    cloneRepo(upstream, fork, root);
     writeVersion(fork, '0.99.0');
     commitAll(fork, 'chore(release): 0.99.0');
 
     const result = runGuard(fork, upstream);
 
     expect(result.status).toBe(0);
-    expect(result.output).toMatch(/not resolvable — skipping/);
+    expect(result.output).toMatch(/not fetchable from upstream/);
   });
 
   it('SKIPS when there is no version file to make a claim', () => {
@@ -190,8 +209,69 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
     expect(result.output).toMatch(/no SUNRISE_VERSION found/);
   });
 
+  it('SKIPS — never passes — when upstream is unreachable AND a colliding local tag exists', () => {
+    // The combination the first version of these tests avoided, and the one
+    // that mattered. An earlier revision fell back to `refs/tags/$TAG` when the
+    // fetch failed, which reinstated exactly the collision the private ref was
+    // introduced to prevent: a squash-merged fork holding its own `v0.8.0`
+    // reported "sync history intact" and exited 0.
+    //
+    // The mirror case is worse than a missed detection: with a healthy fork
+    // whose own `v0.8.0` sits on a side branch, the fallback FAILED and told
+    // the operator to `git merge -s ours v0.8.0` — merging an unrelated release
+    // branch into main and recording a claim that is false.
+    //
+    // There is no fallback now. Unreachable upstream means we could not look.
+    initRepo(fork);
+    writeVersion(fork, '0.7.0');
+    commitAll(fork, 'fork base at 0.7.0');
+    writeVersion(fork, '0.8.0');
+    commitAll(fork, 'chore: sync Sunrise v0.8.0 (squashed)');
+    git(fork, 'tag', 'v0.8.0'); // the fork's own release, an ancestor of its main
+
+    const result = runGuard(fork, join(root, 'does-not-exist'));
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(/not fetchable from upstream/);
+    // The specific wrong answer this guards against.
+    expect(result.output).not.toMatch(/sync history intact/);
+  });
+
+  it('emits a ::warning:: annotation on a skip, so it is not an invisible green tick', () => {
+    // Every skip path ends in exit 0. A bare `echo` renders the check fully
+    // green with no annotation, which for a guard whose premise is
+    // time-to-discovery would be the original failure mode one level up.
+    initRepo(fork);
+    writeFileSync(join(fork, 'app.txt'), 'no sunrise here\n');
+    commitAll(fork, 'unrelated repo');
+
+    const result = runGuard(fork, upstream);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(/^::warning title=Sunrise ancestry check skipped::/m);
+  });
+
+  it('encodes the repair into the ::error:: annotation, not just the log', () => {
+    // Workflow commands are line-scoped, so an un-encoded multi-line body would
+    // put the diagnosis in the annotation and leave the repair in log output
+    // the operator has to expand the job to reach.
+    initRepo(fork);
+    writeVersion(fork, '0.7.0');
+    commitAll(fork, 'fork base at 0.7.0');
+    writeVersion(fork, '0.8.0');
+    commitAll(fork, 'chore: sync Sunrise v0.8.0 (squashed)');
+
+    const result = runGuard(fork, upstream);
+
+    expect(result.status).toBe(1);
+    const annotation = result.output.split('\n').find((l) => l.startsWith('::error'));
+    expect(annotation).toBeDefined();
+    expect(annotation).toMatch(/%0A/);
+    expect(annotation).toMatch(/merge -s ours v0\.8\.0/);
+  });
+
   it('SKIPS on a shallow clone rather than reporting a loss that did not happen', () => {
-    git(root, 'clone', '-q', '--depth', '1', `file://${upstream}`, fork);
+    cloneRepo(`file://${upstream}`, fork, root, '--depth', '1');
 
     const result = runGuard(fork, upstream);
 
@@ -209,6 +289,6 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
     const result = runGuard(fork, join(root, 'does-not-exist'));
 
     expect(result.status).toBe(0);
-    expect(result.output).toMatch(/not resolvable — skipping/);
+    expect(result.output).toMatch(/not fetchable from upstream/);
   });
 });
