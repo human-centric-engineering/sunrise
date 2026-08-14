@@ -581,6 +581,22 @@ release process.
 
 ### Fixed
 
+- **CI's changed-file detection no longer caps at 100 files, silently skipping
+  every gate.** The `config` job read `gh pr view --json files`, which goes
+  through GraphQL and pages `files(first: 100)` without following on —
+  **measured: 100 of 411** against a real PR. Every gate defaults to off and is
+  switched on by a matching path, and `ci-status` fails only on a literal
+  `failure`, so a skipped job passes: a PR over 100 files could go fully green
+  with type-check, lint, build, tests, the Docker stack smoke and the
+  `lockfile` supply-chain check never having run. A release PR is exactly the
+  large-diff case, and exactly when `package-lock.json` moves. PRs now use the
+  REST files endpoint with `--paginate` (cap 3000) and **cross-check the result
+  against the PR's own `changed_files` count**, so a future API change that
+  reintroduces a cap is caught rather than trusted. Pushes keep the commits API
+  — which hard-caps at 300 and cannot paginate, as does `compare` — and treat
+  hitting that cap as truncation. On any truncation the job now runs **every**
+  gate and emits a `::warning::`: running too much on a huge diff is the cheap
+  mistake (#591).
 - **A truncated evaluation judge no longer records a wrong verdict.** A judge
   agent runs as a streaming chat call, so it goes through `drainStreamChat`
   rather than `runStructuredCompletion`, and the seeded judges run at
