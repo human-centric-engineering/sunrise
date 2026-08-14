@@ -79,32 +79,47 @@ jobs:
           # `gh pr view --json files` goes through GraphQL, which pages
           # `files(first: 100)` and does not follow on. Measured against
           # kubernetes/kubernetes#141224 (411 files): it returns exactly 100.
-          # The REST files endpoint paginates properly (cap 3000), so PRs use
-          # that.
-          TRUNCATED=false
+          # Both paths below use REST with `--paginate`, which follows the
+          # `Link: rel="next"` headers to exhaustion — 411 on the same commit.
+          # `per_page=100` keeps that to 5 requests instead of 14; every extra
+          # request is another chance for a 5xx to abort this step.
+          #
+          # DEFAULT TO TRUNCATED. This flag is only cleared by a positive,
+          # numeric confirmation that the list is complete. Starting it `false`
+          # meant any comparison that merely ERRORED — an empty `$TOTAL` makes
+          # `[ "$COUNT" -ne "$TOTAL" ]` exit 2 with "integer expression
+          # expected", and `set -e` is exempt inside an `if` — left it false and
+          # carried on with whatever partial list came back. That is fail-closed
+          # in the one place that must fail open.
+          TRUNCATED=true
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR=${{ github.event.pull_request.number }}
-            CHANGED=$(gh api "repos/${{ github.repository }}/pulls/$PR/files" --paginate --jq '.[].filename')
-            # Cross-check against the PR's own authoritative count rather than
-            # trusting the pagination. This survives a future API change that
-            # reintroduces a cap: any disagreement means the list is short.
+            CHANGED=$(gh api "repos/${{ github.repository }}/pulls/$PR/files?per_page=100" --paginate --jq '.[].filename')
+            # Cross-checked against the PR's own count rather than trusting
+            # pagination, so a future API change that reintroduces a cap is
+            # caught instead of inherited.
             TOTAL=$(gh api "repos/${{ github.repository }}/pulls/$PR" --jq '.changed_files')
             COUNT=$(printf '%s\n' "$CHANGED" | grep -c . || true)
-            if [ "$COUNT" -ne "$TOTAL" ]; then
-              echo "::warning::Changed-file list is short ($COUNT of $TOTAL) — running every gate"
-              TRUNCATED=true
+            if printf '%s' "$TOTAL" | grep -qE '^[0-9]+$' && [ "$COUNT" -eq "$TOTAL" ]; then
+              TRUNCATED=false
+            else
+              echo "::warning::Changed-file list unconfirmed ($COUNT found, PR reports '${TOTAL:-unknown}') — running every gate"
             fi
           else
-            CHANGED=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }} --jq '.files[].filename')
+            # The commits API caps `files` at 300 PER PAGE but does paginate:
+            # the un-paginated response carries `Link: rel="next"`, and
+            # `--paginate` returns all 411 on the commit above. An earlier
+            # revision of this file claimed the opposite and called it measured;
+            # it was not — the 300 came from a run without the flag. The
+            # `compare` endpoint genuinely does cap at 300 (its pagination is
+            # over commits, not files), which is what that measurement was.
+            CHANGED=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}?per_page=100" --paginate --jq '.files[].filename')
             COUNT=$(printf '%s\n' "$CHANGED" | grep -c . || true)
-            # The commits API hard-caps `files` at 300 and does NOT paginate —
-            # `--paginate` changes nothing, and the compare endpoint caps
-            # identically (both measured). There is no exact option here, so
-            # hitting the cap means assume-everything.
-            if [ "$COUNT" -ge 300 ]; then
-              echo "::warning::Commit touches >=300 files, the API cap — running every gate"
-              TRUNCATED=true
-            fi
+            # No independent total exists on this path — a commit object reports
+            # no file count — so completeness rests on `--paginate` exhausting
+            # the Link chain. Accepted: the alternative (assume-everything above
+            # 300) ran every gate on any large merge for no benefit.
+            TRUNCATED=false
           fi
 
           echo "Changed files ($COUNT):"
@@ -811,12 +826,17 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [typecheck, lint, build, test-full, test-changed, smoke, docker, lockfile]
+    # `config` is in this list deliberately. Every other job is gated on its
+    # outputs, so if IT fails they all resolve to `skipped` — and the loop below
+    # passes on `skipped`. That produced "CI passed" with zero gates run: the
+    # exact hole this file's change-detection fix closes, one job further up.
+    needs: [config, typecheck, lint, build, test-full, test-changed, smoke, docker, lockfile]
     if: always()
     steps:
       - name: Check CI result
         run: |
           for result in \
+            "${{ needs.config.result }}" \
             "${{ needs.typecheck.result }}" \
             "${{ needs.lint.result }}" \
             "${{ needs.build.result }}" \

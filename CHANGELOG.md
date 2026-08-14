@@ -592,11 +592,16 @@ release process.
   large-diff case, and exactly when `package-lock.json` moves. PRs now use the
   REST files endpoint with `--paginate` (cap 3000) and **cross-check the result
   against the PR's own `changed_files` count**, so a future API change that
-  reintroduces a cap is caught rather than trusted. Pushes keep the commits API
-  — which hard-caps at 300 and cannot paginate, as does `compare` — and treat
-  hitting that cap as truncation. On any truncation the job now runs **every**
-  gate and emits a `::warning::`: running too much on a huge diff is the cheap
-  mistake (#591).
+  reintroduces a cap is caught rather than trusted. Pushes use the commits API with the same
+  flag — it caps at 300 *per page* but does paginate, returning all 411 (only
+  `compare` genuinely caps, because its pagination is over commits). The
+  truncation flag defaults to **true** and is cleared only by a positive numeric
+  match, so a comparison that merely errors cannot leave the gates switched off.
+  On any truncation the job runs **every** gate and emits a `::warning::`:
+  running too much on a huge diff is the cheap mistake. Also adds `config` to
+  `ci-status`'s `needs` — every other job is gated on its outputs, so a failure
+  in change detection made them all `skipped` and reported "CI passed" with
+  nothing run (#591).
 - **A truncated evaluation judge no longer records a wrong verdict.** A judge
   agent runs as a streaming chat call, so it goes through `drainStreamChat`
   rather than `runStructuredCompletion`, and the seeded judges run at

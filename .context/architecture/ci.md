@@ -50,20 +50,42 @@ and pages `files(first: 100)` without following on. Measured against
 use the REST files endpoint with `--paginate`, which returns all 411 (its own cap
 is 3000).
 
+The push path uses the commits API the same way. It caps at 300 files **per
+page** but does paginate — the un-paginated response carries `Link: rel="next"`,
+and `--paginate` returns all 411 on the same commit. Both paths pass
+`per_page=100` so a large diff costs 5 requests rather than 14; each extra
+request is another chance for a 5xx to abort the step.
+
+> An earlier revision of this section said the commits API "does not paginate"
+> and called it measured. It was not: the 300 came from a run **without** the
+> flag. The `compare` endpoint genuinely does cap at 300 — its pagination is over
+> commits, not files — and that measurement got reported as though it covered
+> both. Left here rather than quietly deleted, because the wrong version was
+> stated confidently in three places.
+
 Two safety nets, because the list being complete is load-bearing:
 
 - **PRs cross-check the count** against the PR's own `changed_files` field rather
-  than trusting pagination. Any disagreement means the list is short — including
-  after some future API change that reintroduces a cap.
-- **Pushes assume-everything at 300.** The commits API hard-caps `files` at 300
-  and does not paginate; `--paginate` changes nothing and the `compare` endpoint
-  caps identically (both measured). There is no exact option, so hitting the cap
-  is treated as truncation.
+  than trusting pagination, so a future API change that reintroduces a cap is
+  caught instead of inherited. The push path has no equivalent — a commit object
+  reports no file total — so there completeness rests on `--paginate` exhausting
+  the Link chain.
+- **The truncation flag defaults to `true`** and is cleared only by a positive
+  numeric match. Starting it `false` meant a comparison that merely _errored_
+  (an empty `$TOTAL` makes `[ "$COUNT" -ne "$TOTAL" ]` exit 2, and `set -e` is
+  exempt inside an `if`) carried on with whatever partial list came back — fail
+  _closed_, in the one place that must fail open.
 
 On truncation the job sets `code`, `docker` and `deps` all true and emits a
 `::warning::`. Running everything on a huge diff is the cheap mistake; skipping
 the supply-chain check on the largest PRs is the expensive one — and a release
 PR is exactly the large-diff case (#591).
+
+**`ci-status` lists `config` in its `needs`.** Every other job is gated on
+`config`'s outputs, so if `config` itself fails they all resolve to `skipped` —
+and the loop fails only on the literal string `failure`. Without `config` in the
+list, one API hiccup in change detection produced "CI passed" with zero gates
+run: the same hole as a truncated file list, one job further up.
 
 **Exception — `lint & format` runs on every PR, including docs-only.** Most jobs
 are gated `if: needs.config.outputs.code == 'true'` and skip on docs-only changes
