@@ -27,6 +27,7 @@ import { resolve } from 'node:path';
 import {
   diffLockfiles,
   directDependencyKeys,
+  gatesAsDowngrade,
   hasRisk,
   type Lockfile,
   type Manifest,
@@ -234,11 +235,23 @@ export function main(argv: string[]): number {
   }
 
   if (!hasRisk(diff)) {
-    const transitive = diff.changed.filter((c) => c.downgrade).length;
+    const transitive = diff.changed.filter((c) => c.downgrade && !c.direct).length;
+    // A direct downgrade that did not gate is a `@types/*` one. Name it rather
+    // than folding it into the transitive count: "no direct dependency moved
+    // backwards" would be false, and an all-clear that misdescribes what it
+    // waved through is the failure this whole check exists to prevent.
+    const exempt = diff.changed.filter((c) => c.downgrade && c.direct && !gatesAsDowngrade(c));
     console.log('');
+    for (const change of exempt) {
+      console.log(
+        `  ${change.name} moved backwards (${change.from} → ${change.to}) and did NOT gate:` +
+          ` @types/* packages ship declaration files only, so a downgrade cannot reintroduce` +
+          ` a runtime vulnerability.`
+      );
+    }
     console.log(
       `Nothing needing a decision: no lost platform metadata, no override change, and no` +
-        ` direct dependency moved backwards${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
+        ` gating direct downgrade${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
     );
     return 0;
   }
@@ -256,7 +269,7 @@ export function main(argv: string[]): number {
     console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
   }
 
-  for (const change of diff.changed.filter((entry) => entry.downgrade && entry.direct)) {
+  for (const change of diff.changed.filter(gatesAsDowngrade)) {
     console.error(`  ${change.name} went BACKWARDS: ${change.from} → ${change.to}`);
     console.error('    A direct dependency losing ground is how a patched package returns to a');
     console.error('    vulnerable one. Intentional pin, or an accident of recomputing the tree?');

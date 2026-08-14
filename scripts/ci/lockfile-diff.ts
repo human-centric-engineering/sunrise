@@ -337,8 +337,42 @@ export function hasRisk(diff: LockfileDiff): boolean {
   return (
     diff.lostNativeMetadata.length > 0 ||
     diff.overridesChanged ||
-    diff.changed.some((change) => change.downgrade && change.direct)
+    diff.changed.some(gatesAsDowngrade)
   );
+}
+
+/**
+ * Whether a version change is a downgrade this check should stop the build for.
+ *
+ * Direct downgrades gate — except for **`@types/*` packages, which ship
+ * declaration files and nothing else**. The rule exists because "a version
+ * going backwards is how a patched dependency quietly returns to a vulnerable
+ * one", and that sentence needs runtime code to be true. A DefinitelyTyped
+ * package has none: no `main`, no `bin`, no install scripts, nothing present at
+ * runtime or executed during install (verified against the installed
+ * `@types/node`, rather than assumed). Moving one backwards cannot reintroduce
+ * a vulnerability; it can only make `tsc` more conservative, since types behind
+ * the runtime reject APIs that exist while types ahead of it accept APIs that
+ * throw.
+ *
+ * Pinning `@types/node` to the runtime major is exactly the change #584 makes,
+ * and it is a change this repo now *requires* — `check:node-version` fails if
+ * the two disagree. A gate that blocks the fix another gate demands is not a
+ * gate, it is a deadlock.
+ *
+ * Deliberately narrow: only the `@types/` scope, only downgrades. Every other
+ * direct downgrade still gates, and `libc`/`os`/`cpu` loss and `overrides`
+ * changes are untouched.
+ */
+export function gatesAsDowngrade(change: VersionChange): boolean {
+  if (!change.downgrade || !change.direct) return false;
+  return !isTypesOnlyPackage(change.name);
+}
+
+/** `node_modules/@types/foo` — including a nested copy. */
+function isTypesOnlyPackage(lockfileKey: string): boolean {
+  const name = packageNameOf(lockfileKey);
+  return name !== null && name.startsWith('@types/');
 }
 
 /**

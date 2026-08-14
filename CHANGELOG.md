@@ -418,6 +418,16 @@ release process.
 
 ### Changed
 
+- **`check:lockfile` no longer gates a direct `@types/*` downgrade.** The rule
+  exists because "a version going backwards is how a patched dependency quietly
+  returns to a vulnerable one", and that needs runtime code to be true — a
+  DefinitelyTyped package ships declaration files and nothing else (no `main`,
+  no `bin`, no install scripts). It also deadlocked against `check:node-version`,
+  which now *requires* `@types/node` to match the runtime major: one gate
+  blocking the fix another demands. Deliberately narrow — only the `@types/`
+  scope, only downgrades, and the change is still printed with the reason it did
+  not gate. Every other direct downgrade, `libc`/`os`/`cpu` loss and `overrides`
+  change is untouched (#584).
 - **`@types/node` pinned to the runtime major (`^26` → `^24`), and added as a
   fifth source to `npm run check:node-version`.** #581 established Node 24 as
   the floor and `node:24-alpine` as what ships, but `tsc` was type-checking
