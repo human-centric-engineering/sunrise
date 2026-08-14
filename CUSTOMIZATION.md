@@ -1051,9 +1051,18 @@ git push origin main
 `-s ours` is only safe once you have confirmed the content is already there —
 `git diff --stat <tip-of-the-squashed-PR-branch> main` must be empty.
 
-If your fork's upstream is not Sunrise itself (a leaf fork of a framework-tier
-fork), point the guard at the right remote with a repository **variable** named
-`SUNRISE_UPSTREAM_URL`.
+**Leave `SUNRISE_UPSTREAM_URL` unset unless you have to set it.** The tag the
+guard looks for is `v<SUNRISE_VERSION>` — Sunrise's namespace — but it is
+resolved against whatever that URL points at. Point it at a framework-tier fork
+that versions itself independently and you may fetch _its_ `v0.8.1`, an
+unrelated release of a different project. The guard detects that and skips
+(it compares the fetched tag's own `lib/sunrise-version.ts` against your claim),
+so it fails safe — but it stops checking anything, which is not what you want.
+Sunrise's public URL is reachable from a leaf fork anyway, so only override this
+when Sunrise's tags genuinely are not.
+
+If you must — a private upstream, or a mirror — set it as a repository
+**variable** named `SUNRISE_UPSTREAM_URL`.
 
 If that upstream is **private** and the URL has to carry a token, put it in a
 **secret** of the same name instead — the workflow prefers the secret. Secrets
@@ -1061,8 +1070,14 @@ are masked in logs and are write-only; repository variables are neither, and are
 readable back through the API by anyone with write access.
 
 Without either, the check skips rather than failing — it cannot tell "ancestry
-lost" from "cannot look" — and says so with a warning annotation on the run, so
-a permanently-skipping guard is visible rather than a silent green tick.
+lost" from "cannot look" — and says so with a warning annotation on the run,
+quoting git's own error, so a permanently-skipping guard is visible and
+diagnosable rather than a silent green tick.
+
+**If your default branch is not `main`,** edit the `branches:` filter in
+`.github/workflows/fork-sync-integrity.yml`. The workflow triggers on pushes to
+`main` only, so on a fork that uses something else it never runs at all — no
+check, no annotation, not even a skip.
 
 ### Migrations
 

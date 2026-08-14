@@ -115,15 +115,54 @@ readonly PRIVATE_REF="refs/sunrise-ancestry/$TAG"
 cleanup() { git update-ref -d "$PRIVATE_REF" 2>/dev/null || true; }
 trap cleanup EXIT
 
-git fetch --quiet --no-tags --force "$UPSTREAM_URL" "refs/tags/$TAG:$PRIVATE_REF" 2>/dev/null || true
+# `--` before the URL: without it a value beginning with `-` is parsed as an
+# option, and `--upload-pack=<cmd>` is arbitrary command execution on the
+# runner. Setting the repo variable already requires write access (which implies
+# workflow-edit rights), so this is defence in depth rather than a boundary —
+# but it costs one token.
+#
+# stderr is CAPTURED rather than discarded. A fork that mistypes the URL or
+# supplies a token with the wrong scope would otherwise get the same opaque skip
+# forever, indistinguishable from Sunrise's normal mid-release skip — and for a
+# guard whose premise is that skips must be visible and actionable, git's reason
+# is the actionable half. GitHub masks secrets in logs, so a tokenised URL in
+# git's output is not leaked by this.
+fetch_err=$(git fetch --quiet --no-tags --force -- "$UPSTREAM_URL" "refs/tags/$TAG:$PRIVATE_REF" 2>&1 >/dev/null)
+fetch_status=$?
 
-# Unresolvable => mid-release (the commit bumping SUNRISE_VERSION lands BEFORE
-# the tag is pushed) or an unreachable upstream. Never fail on either: a hard
-# failure on the first would red-line every Sunrise release at the moment of
-# cutting it, and on the second the guard cannot tell "ancestry lost" from
-# "cannot look".
-if ! git rev-parse -q --verify "$PRIVATE_REF" >/dev/null 2>&1; then
-  skip "$TAG not fetchable from upstream — mid-release, or upstream unreachable"
+# Branch on the FETCH, not on whether the ref exists. Testing existence made a
+# leftover `refs/sunrise-ancestry/*` — from a killed run, or a second concurrent
+# hand-run in the same working copy — into exactly the silent fallback the
+# comment above says was removed. Reproduced: a pre-created private ref pointing
+# at the fork's own HEAD, with upstream unreachable, reported "sync history
+# intact".
+#
+# A failure here is mid-release (the commit bumping SUNRISE_VERSION lands BEFORE
+# the tag is pushed) or an unreachable upstream. Never fail on either: the first
+# would red-line every Sunrise release at the moment of cutting it, and on the
+# second the guard cannot tell "ancestry lost" from "cannot look".
+if [ "$fetch_status" -ne 0 ] || ! git rev-parse -q --verify "$PRIVATE_REF" >/dev/null 2>&1; then
+  detail=$(printf '%s' "$fetch_err" | tr '\n' ' ' | sed 's/  */ /g')
+  skip "$TAG not fetchable from upstream — mid-release, or upstream unreachable${detail:+ (git: $detail)}"
+fi
+
+# Confirm the tag we fetched is SUNRISE's release, not a same-named release
+# belonging to whatever `UPSTREAM_URL` points at.
+#
+# This closes the collision one level up from the private ref. `CUSTOMIZATION.md`
+# tells a leaf fork of a framework-tier fork (Daybreak) to point `UPSTREAM_URL`
+# at that intermediate — which versions itself independently, so its own
+# `v0.8.1` is an unrelated release that IS an ancestor of the leaf fork's main.
+# Without this the guard would print "sync history intact" on a repository whose
+# Sunrise ancestry is genuinely lost: the same false negative the private ref
+# exists to prevent, arriving through the escape hatch.
+#
+# Every Sunrise release tag points at the commit that bumped the file, so the
+# claim and the tag always agree — verified against v0.5.0 through v0.8.1.
+TAG_VERSION=$(git show "$PRIVATE_REF:lib/sunrise-version.ts" 2>/dev/null |
+  sed -n "s/.*SUNRISE_VERSION *= *['\"]\([^'\"]*\)['\"].*/\1/p" | head -1)
+if [ "$TAG_VERSION" != "$VERSION" ]; then
+  skip "$TAG at $UPSTREAM_URL claims Sunrise '${TAG_VERSION:-none}', not '$VERSION' — that is not Sunrise's release tag, so ancestry cannot be judged from it"
 fi
 
 if git merge-base --is-ancestor "$PRIVATE_REF" "$REF"; then

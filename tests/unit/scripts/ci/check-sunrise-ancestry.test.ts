@@ -118,6 +118,11 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
     writeVersion(upstream, '0.8.0');
     commitAll(upstream, 'release 0.8.0');
     git(upstream, 'tag', 'v0.8.0');
+    // Commits AFTER the tag, so a `--depth 1` clone's HEAD is not the tagged
+    // commit. Without them the shallow fixture cannot exhibit the problem the
+    // shallow branch exists for, and its "control experiment" would be vacuous.
+    writeFileSync(join(upstream, 'post.txt'), 'work after the release\n');
+    commitAll(upstream, 'post-release work');
 
     fork = join(root, 'fork');
     mkdirSync(fork);
@@ -273,10 +278,73 @@ describe('scripts/ci/check-sunrise-ancestry', () => {
   it('SKIPS on a shallow clone rather than reporting a loss that did not happen', () => {
     cloneRepo(`file://${upstream}`, fork, root, '--depth', '1');
 
+    // Control: without the shallow branch this fixture false-FAILS. The
+    // ancestry is genuinely intact upstream; the clone simply cannot see far
+    // enough back to prove it. (This assertion is the point of the post-release
+    // commits in the fixture — with HEAD sitting on the tag, the naive check
+    // would trivially succeed and prove nothing.)
+    git(fork, 'fetch', '-q', '--no-tags', '--force', upstream, 'refs/tags/v0.8.0:refs/probe');
+    expect(() => git(fork, 'merge-base', '--is-ancestor', 'refs/probe', 'HEAD')).toThrow();
+
     const result = runGuard(fork, upstream);
 
     expect(result.status).toBe(0);
     expect(result.output).toMatch(/shallow clone/);
+  });
+
+  it("SKIPS when the upstream tag is a DIFFERENT project's release of the same name", () => {
+    // The collision one level up from the private ref. `CUSTOMIZATION.md` tells
+    // a leaf fork of a framework-tier fork to point UPSTREAM_URL at that
+    // intermediate — which versions itself independently, so its own `v0.8.0`
+    // is an unrelated release that IS an ancestor of the leaf fork's main.
+    // Fetching into a private ref does not help when the ref is fetched from
+    // the wrong repository.
+    const intermediate = join(root, 'intermediate');
+    mkdirSync(intermediate);
+    initRepo(intermediate);
+    writeVersion(intermediate, '0.7.0'); // on Sunrise 0.7.0...
+    commitAll(intermediate, 'framework fork at Sunrise 0.7.0');
+    git(intermediate, 'tag', 'v0.8.0'); // ...but cutting ITS OWN 0.8.0
+
+    initRepo(fork);
+    writeVersion(fork, '0.8.0');
+    commitAll(fork, 'leaf fork claiming Sunrise 0.8.0');
+
+    const result = runGuard(fork, intermediate);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(/not Sunrise's release tag/);
+    expect(result.output).not.toMatch(/sync history intact/);
+  });
+
+  it('SKIPS when a leftover private ref survives a killed run', () => {
+    // Gating on ref EXISTENCE rather than fetch success made a stale
+    // `refs/sunrise-ancestry/*` into the silent fallback this script says it
+    // removed. Reachable from a killed run or two concurrent hand-runs in one
+    // working copy — and the script is explicitly meant for manual use.
+    initRepo(fork);
+    writeVersion(fork, '0.7.0');
+    commitAll(fork, 'fork base at 0.7.0');
+    writeVersion(fork, '0.8.0');
+    commitAll(fork, 'chore: sync Sunrise v0.8.0 (squashed)');
+    git(fork, 'update-ref', 'refs/sunrise-ancestry/v0.8.0', 'HEAD');
+
+    const result = runGuard(fork, join(root, 'does-not-exist'));
+
+    expect(result.status).toBe(0);
+    expect(result.output).not.toMatch(/sync history intact/);
+  });
+
+  it("reports git's own reason when the fetch fails, so a bad URL is diagnosable", () => {
+    // Without this a fork that mistypes SUNRISE_UPSTREAM_URL gets the same
+    // opaque skip forever, indistinguishable from Sunrise's mid-release skip.
+    initRepo(fork);
+    writeVersion(fork, '0.8.0');
+    commitAll(fork, 'fork at 0.8.0');
+
+    const result = runGuard(fork, join(root, 'does-not-exist'));
+
+    expect(result.output).toMatch(/git: .*does not appear to be a git repository/);
   });
 
   it('SKIPS when upstream is unreachable and no local tag exists', () => {

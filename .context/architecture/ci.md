@@ -368,6 +368,21 @@ fails against the naive version of both):
 - **`fetch-depth: 0` is required** in the workflow. Lowering it does not disable
   the guard quietly — the shallow check turns it into a skip with a
   `::warning::` annotation on the run.
+- **The fetched tag is checked for identity, not just fetched.** The tag name is
+  Sunrise's namespace but resolves against whatever `UPSTREAM_URL` points at, so
+  a framework-tier fork's own same-named release would otherwise be treated as
+  Sunrise's — the private-ref collision again, arriving through the escape
+  hatch. The tag's own `lib/sunrise-version.ts` must equal the claim; every
+  Sunrise release tag satisfies that by construction (verified v0.5.0–v0.8.1).
+- **The fetch's exit status gates the check, not the ref's existence.** A
+  leftover `refs/sunrise-ancestry/*` from a killed run would otherwise be an
+  undocumented fallback of exactly the kind removed above.
+
+Two caveats for forks, both of which make the guard inert rather than wrong:
+the workflow triggers on `push` to **`main`** only, so a fork with a different
+default branch must edit the `branches:` filter; and a permanently-failing fetch
+(a mistyped or expired `SUNRISE_UPSTREAM_URL`) skips forever. The skip
+annotation quotes git's own error so the second is diagnosable from the run.
 
 The failure message is emitted twice on purpose: plainly for the log, and
 `%0A`-encoded onto a single `::error::` line. Workflow commands are line-scoped,
