@@ -196,13 +196,26 @@ rather than a literal. Delete or rename that file and every job that installs
 Node fails — which is the intended trade: before #581 the major was hardcoded
 in eight places and nothing kept them in step.
 
-Consolidating the CI pins left four declarations that no tool can merge:
-`.nvmrc` (what CI installs), `Dockerfile` and `Dockerfile.dev` (what ships),
-and `engines.node` in `package.json` (what forks are told, and what **Vercel**
-resolves its runtime from — see
-[`vercel.md`](../deployment/platforms/vercel.md)). A `FROM` line cannot read
-`.nvmrc` and npm cannot read a Dockerfile, so this step reconciles them
-instead.
+Consolidating the CI pins left **five** declarations that no tool can merge,
+across four files: `.nvmrc` (what CI installs), `Dockerfile` and
+`Dockerfile.dev` (what ships), `engines.node` in `package.json` (what forks are
+told, and what **Vercel** resolves its runtime from — see
+[`vercel.md`](../deployment/platforms/vercel.md)), and the `@types/node`
+devDependency (what `tsc` believes). A `FROM` line cannot read `.nvmrc` and npm
+cannot read a Dockerfile, so this step reconciles them instead.
+
+`@types/node` was excluded when the check first landed and was the one that
+disagreed — `^26` against a `>=24` runtime, so `tsc` accepted any API added in
+Node 25 or 26 and reported nothing, with the first signal a `TypeError` in the
+production image on a path the types called safe. It joined the check in #584;
+pinning to `^24` produced a clean `tsc --noEmit`, so nothing depended on the
+post-24 surface. Only the MAJOR is compared — `24.x` minors should move freely,
+since that is the types package tracking Node 24's own additions.
+
+A Dependabot `ignore` holds it at `>=25`. Without it the major would re-land on
+a Monday and turn this gate red, which is a worse way to learn the same thing;
+with it, moving the runtime means moving all five declarations **and** that
+entry together.
 
 The drift it exists for is silent and asymmetric: bump `.nvmrc` alone and every
 job here goes green on the new major while the image serving traffic still
@@ -211,7 +224,9 @@ Gated on the code filter, like the Prisma step; `.nvmrc`, both Dockerfiles and
 `package.json` all set `code=true`.
 
 An unparseable source fails rather than being skipped. When nobody is watching
-four files, "cannot read it" and "it disagrees" have the same consequence.
+these files, "cannot read it" and "it disagrees" have the same consequence. That
+is why an `@types/node` of `*` or `latest` is a failure too: both mean "whatever
+npm resolves", which is precisely the unwatched state the check exists to catch.
 
 **Forks:** if you retarget the base image (a different distro, or a pinned
 digest), keep the `FROM node:<major>` shape or this check cannot read it. If

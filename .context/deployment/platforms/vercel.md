@@ -131,7 +131,11 @@ Node.js Version will not give you 20.x while `engines.node` says `>=24` — it
 will quietly keep deploying 24, and the setting will read back as though it took
 effect. If you genuinely need a different major, change `engines.node`; the
 version-consistency check (`npm run check:node-version`) will then require the
-Dockerfiles and `.nvmrc` to move with it.
+Dockerfiles, `.nvmrc` and the `@types/node` devDependency to move with it — five
+declarations in four files, all of which must agree. `@types/node` is in that
+set because it is what `tsc` type-checks against: ahead of the runtime it
+accepts APIs that throw in production and reports nothing (#584). Moving it also
+means updating its Dependabot `ignore` entry.
 
 To confirm what a deployment actually ran, log `process.version` or run
 `node -v` in the build command.

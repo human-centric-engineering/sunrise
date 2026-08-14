@@ -418,6 +418,21 @@ release process.
 
 ### Changed
 
+- **`@types/node` pinned to the runtime major (`^26` → `^24`), and added as a
+  fifth source to `npm run check:node-version`.** #581 established Node 24 as
+  the floor and `node:24-alpine` as what ships, but `tsc` was type-checking
+  against a standard library **two majors ahead of every runtime we run on** —
+  so it accepted any API added in Node 25 or 26 and reported nothing, with the
+  first signal a `TypeError` in the production image on a path the types called
+  safe. Pinning to `^24` produced a clean `tsc --noEmit`, so nothing in the tree
+  depended on the post-24 surface. The version-consistency check now covers all
+  five declarations across four files instead of four, and a Dependabot `ignore`
+  holds `@types/node` at `>=25` so the major cannot re-land silently — which is
+  how it arrived. **Fork-facing:** a fork on a different Node major must move
+  `@types/node` with `.nvmrc`, both Dockerfiles and `engines.node`, or
+  `check:node-version` fails; a fork that had been relying on the newer types
+  will see real errors, and those are the point. Only the major is compared, so
+  `24.x` minors still flow through Dependabot (#584).
 - **A structured extraction cut off at the token cap is now an error on the
   OpenAI-compatible adapter, not partial JSON.** It already was on Anthropic
   and on the empty-content case; what changes is `finish_reason: 'length'` with

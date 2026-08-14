@@ -12,6 +12,7 @@ import {
   parseDockerfileMajor,
   parseEnginesMajor,
   parseNvmrc,
+  parseTypesNodeMajor,
   type NodeVersionSource,
 } from '@/scripts/ci/node-version';
 
@@ -73,6 +74,36 @@ describe('parseEnginesMajor', () => {
   });
 });
 
+describe('parseTypesNodeMajor', () => {
+  it('reads the major from the range forms npm writes', () => {
+    expect(parseTypesNodeMajor('^24.13.3')).toBe(24);
+    expect(parseTypesNodeMajor('~24.13')).toBe(24);
+    expect(parseTypesNodeMajor('24.13.3')).toBe(24);
+    expect(parseTypesNodeMajor('>=24')).toBe(24);
+    expect(parseTypesNodeMajor('=24.0.0')).toBe(24);
+  });
+
+  it('does not confuse a major for a prefix of another', () => {
+    // A regex reading digits without a boundary would call `^2.4` a 24.
+    expect(parseTypesNodeMajor('^2.4.0')).toBe(2);
+    expect(parseTypesNodeMajor('^240.0.0')).toBe(240);
+  });
+
+  it('returns null when the dependency is absent', () => {
+    expect(parseTypesNodeMajor(undefined)).toBeNull();
+  });
+
+  it('FAILS rather than skips a range with no pinned major', () => {
+    // `*` / `latest` mean "whatever npm resolves", which is exactly the
+    // unwatched state this check exists to prevent. Returning null makes
+    // `checkNodeVersion` report it as unreadable — a failure, not a pass.
+    expect(parseTypesNodeMajor('*')).toBeNull();
+    expect(parseTypesNodeMajor('latest')).toBeNull();
+    expect(parseTypesNodeMajor('x')).toBeNull();
+    expect(parseTypesNodeMajor('')).toBeNull();
+  });
+});
+
 describe('checkNodeVersion', () => {
   it('passes when every source agrees', () => {
     const result = checkNodeVersion([
@@ -80,10 +111,28 @@ describe('checkNodeVersion', () => {
       source('Dockerfile', 24),
       source('Dockerfile.dev', 24),
       source('package.json engines.node', 24),
+      source('package.json @types/node', 24),
     ]);
 
     expect(result.ok).toBe(true);
     expect(result.problems).toEqual([]);
+  });
+
+  it('fails when @types/node runs ahead of the runtime — the #584 drift', () => {
+    // The state this repo shipped in: tsc type-checking against a standard
+    // library two majors ahead of every runtime, accepting APIs that throw in
+    // the production image and reporting nothing.
+    const result = checkNodeVersion([
+      source('.nvmrc', 24),
+      source('Dockerfile', 24),
+      source('Dockerfile.dev', 24),
+      source('package.json engines.node', 24),
+      source('package.json @types/node', 26),
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0]).toContain('@types/node=26');
   });
 
   it('fails when the Dockerfile lags a bumped .nvmrc — the motivating drift', () => {

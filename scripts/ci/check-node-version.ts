@@ -2,8 +2,10 @@
  * Node major-version consistency check — CLI.
  *
  * The rules, and why this is needed at all, live in
- * `scripts/ci/node-version.ts`. This file only reads the four files and hands
- * their contents over, so importing the rules never touches the filesystem.
+ * `scripts/ci/node-version.ts`. This file only reads the files and hands their
+ * contents over, so importing the rules never touches the filesystem. Four
+ * files, five sources — `package.json` states the major twice, once for npm
+ * (`engines.node`) and once for `tsc` (`@types/node`).
  *
  * Usage:
  *   npm run check:node-version
@@ -17,6 +19,7 @@ import {
   parseDockerfileMajor,
   parseEnginesMajor,
   parseNvmrc,
+  parseTypesNodeMajor,
   type NodeVersionSource,
 } from '@/scripts/ci/node-version';
 
@@ -50,10 +53,21 @@ function dockerfileEvidence(file: { text: string; missing: boolean }, path: stri
 
 const pkg = read('package.json');
 let enginesNode: string | undefined;
+let typesNode: string | undefined;
 try {
-  enginesNode = (JSON.parse(pkg.text) as { engines?: { node?: string } }).engines?.node;
+  const parsed = JSON.parse(pkg.text) as {
+    engines?: { node?: string };
+    devDependencies?: Record<string, string>;
+    dependencies?: Record<string, string>;
+  };
+  enginesNode = parsed.engines?.node;
+  // `devDependencies` is where it belongs and where it is, but a fork that
+  // moved it to `dependencies` still ships the same mismatch — read both
+  // rather than reporting "absent" for a package that is plainly present.
+  typesNode = parsed.devDependencies?.['@types/node'] ?? parsed.dependencies?.['@types/node'];
 } catch {
   enginesNode = undefined;
+  typesNode = undefined;
 }
 
 const nvmrc = read('.nvmrc');
@@ -80,6 +94,13 @@ const sources: NodeVersionSource[] = [
     label: 'package.json engines.node',
     major: parseEnginesMajor(enginesNode),
     raw: pkg.missing ? '(package.json not found)' : (enginesNode ?? '(engines.node absent)'),
+  },
+  {
+    // What `tsc` type-checks against. Ahead of the runtime, it accepts APIs
+    // that throw in the production image and reports nothing (#584).
+    label: 'package.json @types/node',
+    major: parseTypesNodeMajor(typesNode),
+    raw: pkg.missing ? '(package.json not found)' : (typesNode ?? '(@types/node absent)'),
   },
 ];
 
