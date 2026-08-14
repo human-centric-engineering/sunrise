@@ -202,6 +202,28 @@ release process.
   in its place (#559).
 ### Added
 
+- **`Fork Sync Integrity` workflow — catches a squash-merged sync PR.** Squashing
+  a sync PR keeps every file but discards the second parent, so git no longer
+  knows the release tag is in your history and the merge base against upstream
+  silently reverts to the **previous** release. Nothing looks wrong until the
+  next sync replays the whole preceding range and re-conflicts every file
+  already resolved by hand. `scripts/ci/check-sunrise-ancestry.sh` asserts that
+  the release the tree claims in `lib/sunrise-version.ts` is genuinely an
+  ancestor of `HEAD`, and runs on every push to `main`, so the repair is still a
+  zero-diff `git merge -s ours` while the context is fresh — the failure message
+  carries that command. **A guaranteed no-op in Sunrise's own repository**
+  (Sunrise tags every release on `main`), and self-enforcing downstream: a fork
+  receives the workflow *by doing a sync merge*, so squashing that sync makes it
+  fire on the first run afterwards. It skips rather than fails on the three
+  cases that are not a lost merge base — version bumped before the tag is pushed
+  (every Sunrise release, at the moment of cutting it), unreachable private
+  upstream, and shallow clone. **Fork-facing:** set `SUNRISE_UPSTREAM_URL` if your
+  upstream is not Sunrise itself (a leaf fork of a framework-tier fork) — as a
+  repository **variable**, or as a **secret** of the same name if the URL has to
+  carry a token for a private upstream (the workflow prefers the secret; secrets
+  are masked in logs and write-only, variables are neither).
+  `CUSTOMIZATION.md` §9 now opens with the merge-don't-squash rule and the
+  repair (#539).
 - **`finishReason` on the `done` SSE event.** `ChatEvent.done` now carries an
   optional `finishReason` (`'stop' | 'tool_use' | 'length' | 'error'`) telling a
   consumer why the provider stopped generating on the final turn of the tool

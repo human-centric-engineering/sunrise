@@ -7,13 +7,14 @@ repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 
 ## Workflows
 
-| File                                      | Trigger                      | Purpose                                                                                             |
-| ----------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `.github/workflows/ci.yml`                | push to `main`, PR to `main` | Type-check, lint/format, build, tests, erasure smoke, Docker build + stack smoke, lockfile metadata |
-| `.github/workflows/codeql.yml`            | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                       |
-| `.github/workflows/dependency-review.yml` | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                     |
-| `.github/workflows/secret-scan.yml`       | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                                                        |
-| `.github/workflows/dependency-audit.yml`  | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                  |
+| File                                        | Trigger                      | Purpose                                                                                             |
+| ------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`                  | push to `main`, PR to `main` | Type-check, lint/format, build, tests, erasure smoke, Docker build + stack smoke, lockfile metadata |
+| `.github/workflows/codeql.yml`              | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                       |
+| `.github/workflows/dependency-review.yml`   | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                     |
+| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                                                        |
+| `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                  |
+| `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)      |
 
 ## `ci.yml` shape
 
@@ -315,6 +316,52 @@ fail (`Advanced Security must be enabled…`). Both skip automatically on privat
 Dependabot (existing deps), TruffleHog (secret scanning) and `dependency-audit`
 (`npm audit` + the `libc` completeness check) are unaffected — they work on
 private repos regardless, needing no Advanced Security.
+
+### `Fork Sync Integrity` — the one job that only ever fires downstream
+
+`scripts/ci/check-sunrise-ancestry.sh` asserts that the release the tree
+**claims** in `lib/sunrise-version.ts` is genuinely an **ancestor** of `HEAD`.
+
+It exists because a fork that squash-merges its sync PR keeps every file but
+loses the second parent, so the merge base against upstream silently reverts to
+the previous release and the next sync re-conflicts everything already resolved
+by hand. Neither repo settings nor documentation can prevent it — rulesets can
+only restrict merge methods for _every_ PR into the branch, and merging is a
+human click months after anyone read the sync guide. So this is **detection**:
+it collapses time-to-discovery from months to minutes, because the repair is
+trivial only while the context is fresh.
+
+**It is a guaranteed no-op in Sunrise's own repo.** Sunrise tags every release
+on `main`, so the tag is always an ancestor. It is also self-enforcing: a fork
+receives the workflow _by doing a sync merge_, so squashing that sync makes it
+fire on the first run afterwards.
+
+Three deliberate non-failures, each of which would otherwise red-line a build
+for something that is not a lost merge base:
+
+| Situation                                | Behaviour | Why                                                                                          |
+| ---------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| Version bumped, tag not pushed yet       | skip      | This is every Sunrise release at the moment of cutting it — the bump commit precedes the tag |
+| Upstream unreachable (private, no token) | skip      | The guard cannot tell "ancestry lost" from "cannot look"                                     |
+| Shallow clone                            | skip      | `merge-base` would answer from truncated history and report a loss that has not happened     |
+
+Two implementation details are load-bearing and were each confirmed by control
+experiment before being written (`tests/unit/scripts/ci/check-sunrise-ancestry.test.ts`
+fails against the naive version of both):
+
+- **Upstream's tag is fetched into a private ref, not `refs/tags/`.** A fork
+  versions its app independently of Sunrise, so it may hold its own `v0.8.0`
+  pointing at its own history — which _is_ an ancestor of its own `main`, so a
+  `refs/tags/`-based check reports **success on the very repository it exists to
+  protect**.
+- **`fetch-depth: 0` is required** in the workflow. Lowering it does not weaken
+  the guard quietly — the shallow check turns it into a visible skip.
+
+`UPSTREAM_URL` is overridable via `SUNRISE_UPSTREAM_URL`, for a leaf fork of a
+framework-tier fork. The workflow reads the **secret** first and falls back to
+the **variable**: a private upstream needs a token in the URL, and secrets are
+masked in logs and write-only, whereas `vars.*` are unmasked and readable back
+through the API by anyone with write access.
 
 ### One caveat on the scheduled audit
 

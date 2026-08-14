@@ -1,0 +1,68 @@
+name: Fork Sync Integrity
+
+# Detects a sync PR that was merged with "Squash and merge", which keeps every
+# file but discards the second parent — silently resetting the merge base
+# against upstream so the NEXT sync replays the whole preceding range and
+# re-conflicts every file already resolved by hand.
+#
+# Fires on push to main, right after the merge, so the repair is still a
+# zero-diff one-liner while the context is fresh. Caught months later it reads
+# as "why is this merge conflicting on 342 files?" with the cause out of view.
+#
+# **No-op in Sunrise's own repository** — Sunrise tags every release on main, so
+# the tag is always an ancestor. It can only fire downstream, which is where the
+# hazard lives. And it is self-enforcing: a fork receives this workflow BY doing
+# a sync merge, so squashing that sync makes it fire on the first run after.
+#
+# Deliberately a separate workflow rather than a job in ci.yml: it is
+# push-triggered rather than PR-triggered, and keeping it out of ci.yml avoids
+# touching the `ci-status` aggregation, which is the most merge-hostile region
+# of that file for forks.
+#
+# See #539 and scripts/ci/check-sunrise-ancestry.sh.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch is enough; a burst of merges only needs the latest answer.
+concurrency:
+  group: fork-sync-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ancestry:
+    name: Sunrise ancestry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Required. Ancestry cannot be computed on a shallow clone — the
+          # script detects that and skips rather than reporting a false loss,
+          # so lowering this silently disables the guard.
+          fetch-depth: 0
+          # This is the only workflow here that fetches from a CONFIGURABLE
+          # url, and the step below needs no credential to reach a public
+          # upstream. Checkout otherwise leaves the GITHUB_TOKEN in
+          # .git/config; git scopes it by exact host so it would not travel to
+          # a third-party upstream anyway, but not persisting it removes the
+          # question rather than relying on that.
+          persist-credentials: false
+
+      - name: Verify the claimed Sunrise release is an ancestor
+        env:
+          # Overridable for a framework-tier fork whose upstream is not Sunrise
+          # itself (e.g. a leaf fork of Daybreak). Unset falls back to Sunrise.
+          #
+          # A private upstream needs credentials in the URL — put that in a
+          # SECRET, not a variable: GitHub masks secrets in logs and makes them
+          # write-only, whereas `vars.*` are unmasked and readable back through
+          # the API by anyone with write access. `secrets.SUNRISE_UPSTREAM_URL`
+          # takes precedence here when set.
+          UPSTREAM_URL: ${{ secrets.SUNRISE_UPSTREAM_URL || vars.SUNRISE_UPSTREAM_URL || 'https://github.com/human-centric-engineering/sunrise.git' }}
+        run: bash scripts/ci/check-sunrise-ancestry.sh
