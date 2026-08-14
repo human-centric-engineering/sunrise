@@ -211,7 +211,8 @@ release process.
   (`agent-version-diff.ts`, `apply-audit-changes.ts`) are deliberately *not*
   key-order-insensitive — both compare values produced by the same code path on
   both sides (#598).
-- **`SEED_OWNED_CAPABILITY_FIELDS` and `changedSeedOwnedFields()` on
+- **`SEED_OWNED_CAPABILITY_FIELDS`, `changedSeedOwnedFields()` and the types
+  `SeedOwnedCapabilityField` / `SeedOwnedCapabilityValues` on
   `@/lib/orchestration/capabilities`** — the single definition of which
   `AiCapability` fields belong to the seeds rather than the operator, and the
   value-level (not presence-level) diff both write paths consult. A fork adding
