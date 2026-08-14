@@ -56,6 +56,20 @@ and `--paginate` returns all 411 on the same commit. Both paths pass
 `per_page=100` so a large diff costs 5 requests rather than 14; each extra
 request is another chance for a 5xx to abort the step.
 
+**Both endpoints then stop at a hard 3000 files, `--paginate` or not.** Measured
+on `torvalds/linux` `1da177e4` (~17k files): exactly 3000. The final page comes
+back as `files: []` with HTTP 200, so `gh` exits 0 and a truncated list looks
+exactly like a complete one. Numbers here are worth re-measuring rather than
+trusting: three separate claims in this section were wrong before they were
+right.
+
+| Endpoint               | Per page | Paginates?              | Hard cap |
+| ---------------------- | -------- | ----------------------- | -------- |
+| GraphQL (`gh pr view`) | 100      | no                      | 100      |
+| REST `/pulls/N/files`  | 100      | yes                     | 3000     |
+| REST `/commits/SHA`    | 300      | yes                     | 3000     |
+| REST `/compare/A...B`  | 300      | over commits, not files | 300      |
+
 > An earlier revision of this section said the commits API "does not paginate"
 > and called it measured. It was not: the 300 came from a run **without** the
 > flag. The `compare` endpoint genuinely does cap at 300 — its pagination is over
@@ -66,10 +80,13 @@ request is another chance for a 5xx to abort the step.
 Two safety nets, because the list being complete is load-bearing:
 
 - **PRs cross-check the count** against the PR's own `changed_files` field rather
-  than trusting pagination, so a future API change that reintroduces a cap is
-  caught instead of inherited. The push path has no equivalent — a commit object
-  reports no file total — so there completeness rests on `--paginate` exhausting
-  the Link chain.
+  than trusting pagination, so a cap — the 3000 one, or a future reintroduced
+  one — is caught instead of inherited. The push path has no equivalent, because
+  a commit object reports no file total; there the 3000 cap itself is the only
+  available signal, and reaching it counts as truncation. An exact alternative
+  exists (check out and `git diff --name-only` the push range, which has no cap)
+  and is noted in the workflow; it is not taken because it adds a checkout to a
+  job that is otherwise API-only and seconds long.
 - **The truncation flag defaults to `true`** and is cleared only by a positive
   numeric match. Starting it `false` meant a comparison that merely _errored_
   (an empty `$TOTAL` makes `[ "$COUNT" -ne "$TOTAL" ]` exit 2, and `set -e` is
@@ -80,6 +97,12 @@ On truncation the job sets `code`, `docker` and `deps` all true and emits a
 `::warning::`. Running everything on a huge diff is the cheap mistake; skipping
 the supply-chain check on the largest PRs is the expensive one — and a release
 PR is exactly the large-diff case (#591).
+
+**`ci-status` fails on anything that is not `success` or `skipped`.** It used to
+test for the literal string `failure`, which let `cancelled` through — a job
+killed by its own `timeout-minutes` (the docker job carries 30), or a run
+cancelled while `ci-status`'s `if: always()` still fires, reported "CI passed"
+for gates that never finished.
 
 **`ci-status` lists `config` in its `needs`.** Every other job is gated on
 `config`'s outputs, so if `config` itself fails they all resolve to `skipped` —

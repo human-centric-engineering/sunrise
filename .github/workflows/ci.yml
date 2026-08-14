@@ -115,11 +115,28 @@ jobs:
             # over commits, not files), which is what that measurement was.
             CHANGED=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}?per_page=100" --paginate --jq '.files[].filename')
             COUNT=$(printf '%s\n' "$CHANGED" | grep -c . || true)
-            # No independent total exists on this path — a commit object reports
-            # no file count — so completeness rests on `--paginate` exhausting
-            # the Link chain. Accepted: the alternative (assume-everything above
-            # 300) ran every gate on any large merge for no benefit.
-            TRUNCATED=false
+            # Both REST endpoints stop at a hard 3000 files even WITH
+            # `--paginate` — measured on torvalds/linux 1da177e4 (~17k files):
+            # exactly 3000. The last page returns `files: []` with HTTP 200, so
+            # `gh` exits 0 and a truncated list is indistinguishable from a
+            # complete one.
+            #
+            # The PR path catches that through its cross-check against
+            # `changed_files`. This path has no equivalent — a commit object
+            # reports no file total — so the cap itself is the only signal, and
+            # hitting it is treated as truncation.
+            #
+            # An exact alternative exists if this ever matters: check out with
+            # `fetch-depth: 0` and use `git diff --name-only
+            # ${{ github.event.before }} ${{ github.sha }}`, which has no cap.
+            # Not taken because it adds a checkout to a job that is currently
+            # API-only and seconds long, and `github.event.before` needs
+            # handling for branch creation and force-push.
+            if [ "$COUNT" -ge 3000 ]; then
+              echo "::warning::Commit touches >=3000 files, the API's hard cap — running every gate"
+            else
+              TRUNCATED=false
+            fi
           fi
 
           echo "Changed files ($COUNT):"
@@ -845,8 +862,14 @@ jobs:
             "${{ needs.smoke.result }}" \
             "${{ needs.docker.result }}" \
             "${{ needs.lockfile.result }}"; do
-            if [[ "$result" == "failure" ]]; then
-              echo "CI failed"
+            # Allow-list, not a deny-list. Testing for `failure` let
+            # `cancelled` through — a job killed by its own `timeout-minutes`
+            # (the docker job carries 30), or a run cancelled while this job's
+            # `if: always()` still fires, reported "CI passed" for gates that
+            # never finished. Same shape as the `skipped` hole this file's
+            # change-detection fix closes, so it gets the same treatment.
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "CI failed (a required job reported '$result')"
               exit 1
             fi
           done

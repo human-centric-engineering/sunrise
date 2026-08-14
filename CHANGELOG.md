@@ -593,15 +593,19 @@ release process.
   REST files endpoint with `--paginate` (cap 3000) and **cross-check the result
   against the PR's own `changed_files` count**, so a future API change that
   reintroduces a cap is caught rather than trusted. Pushes use the commits API with the same
-  flag — it caps at 300 *per page* but does paginate, returning all 411 (only
-  `compare` genuinely caps, because its pagination is over commits). The
+  flag — it caps at 300 *per page* but does paginate. **Both endpoints stop at a
+  hard 3000 files regardless**, returning a final empty page with HTTP 200, so
+  the push path treats reaching that cap as truncation (the PR path catches it
+  via the cross-check instead). The
   truncation flag defaults to **true** and is cleared only by a positive numeric
   match, so a comparison that merely errors cannot leave the gates switched off.
   On any truncation the job runs **every** gate and emits a `::warning::`:
-  running too much on a huge diff is the cheap mistake. Also adds `config` to
-  `ci-status`'s `needs` — every other job is gated on its outputs, so a failure
-  in change detection made them all `skipped` and reported "CI passed" with
-  nothing run (#591).
+  running too much on a huge diff is the cheap mistake. Two fixes to the gate itself:
+  `config` joins `ci-status`'s `needs` — every other job is gated on its
+  outputs, so a failure in change detection made them all `skipped` and reported
+  "CI passed" with nothing run — and `ci-status` now fails on anything that is
+  not `success` or `skipped`, so a `cancelled` job (a `timeout-minutes` kill, or
+  a cancelled run) no longer passes the required check (#591).
 - **A truncated evaluation judge no longer records a wrong verdict.** A judge
   agent runs as a streaming chat call, so it goes through `drainStreamChat`
   rather than `runStructuredCompletion`, and the seeded judges run at
