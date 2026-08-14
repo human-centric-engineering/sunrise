@@ -10,7 +10,9 @@
  *   - .md         — markdown (passed through as-is to existing chunker)
  *   - .csv        — RFC 4180 with delimiter sniffing, row-level chunking
  *   - .html/.htm  — web pages via jsdom: extracts title + main article text
- *   - .epub       — EPUB ebooks, ~85% reliability (best for books)
+ *   - .epub       — EPUB ebooks; chapters via the OPF spine, titles via the NCX.
+ *                   Reliability deliberately not quoted — see the note in
+ *                   `.context/orchestration/document-ingestion.md` (#606)
  *   - .docx       — Word documents via mammoth, ~80% reliability
  *   - .pdf        — PDF via pdf-parse, 40-70% reliability (requires preview step)
  */

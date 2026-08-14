@@ -29,22 +29,29 @@ import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledg
  * sanitiser (e.g. DOMPurify) before doing so.
  */
 function stripHtml(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/h[1-6]>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return (
+    html
+      // `getChapterRawAsync` returns the whole XHTML file, `<head>` included, so
+      // without this every chapter's text opened with its own `<title>` — and
+      // then its `<h1>`, giving the same heading twice before a word of prose.
+      // Only visible once #606 made the parser return anything at all.
+      .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  );
 }
 
 export async function parseEpub(buffer: Buffer, fileName: string): Promise<ParsedDocument> {
@@ -61,8 +68,26 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
     const tempPath = join(tempDir, 'book.epub');
     await writeFile(tempPath, buffer);
 
-    const epub = new EPub(tempPath);
-    await epub.parse();
+    // `EPub.createAsync()`, NOT `new EPub()` + `await parse()`.
+    //
+    // `parse()` returns `this`, not a promise — parsing is callback-driven and
+    // finishes on an `end` event. Awaiting it resolves on the next microtask
+    // with `metadata`, `flow` and `toc` all still empty, so every EPUB ever
+    // ingested became a document with the filename as its title, zero sections
+    // and empty text — reported as a successful upload, with no warning (#606).
+    //
+    // `createAsync` is the library's own entry point for this: it resolves
+    // only once `end` has fired. A malformed archive still rejects, as it did
+    // before — that was never the broken part. What changes is that a VALID
+    // archive now comes back with its contents, so rejecting is once again the
+    // only way to get an empty result, and "unreadable" stops being
+    // indistinguishable from "read fine, contained nothing".
+    //
+    // Worth knowing if you reproduce this: with a STORED (uncompressed)
+    // archive `parse()` completes synchronously and the bug does not appear.
+    // Real books are deflated, which is where it bites. See
+    // `tests/helpers/epub-fixture.ts`.
+    const epub = await EPub.createAsync(tempPath);
 
     const metadata: Record<string, string> = { format: 'epub' };
     if (epub.metadata.title) metadata.title = epub.metadata.title;
@@ -82,7 +107,13 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
     for (let i = 0; i < epub.flow.length; i++) {
       const chapter = epub.flow[i];
       try {
-        const rawHtml = await epub.getChapterRaw(chapter.id);
+        // `getChapterRawAsync`, not `getChapterRaw` — the latter is
+        // callback-style and returns `void`, so awaiting it yielded
+        // `undefined` and `stripHtml` threw on it. The `catch` below turned
+        // that into a "extraction failed" warning for every chapter, which is
+        // what the empty-document symptom looked like from the inside on the
+        // rare file that got this far.
+        const rawHtml = await epub.getChapterRawAsync(chapter.id);
         const text = stripHtml(rawHtml);
 
         if (text.length < 10) {

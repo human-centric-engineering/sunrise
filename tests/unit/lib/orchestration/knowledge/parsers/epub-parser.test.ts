@@ -16,7 +16,7 @@
  *
  * Mocking strategy:
  * - `fs/promises` (writeFile / mkdtemp / rm) is mocked via vi.hoisted + vi.mock
- * - `epub2` default export — EPub class constructor + parse + metadata/toc/flow/getChapterRaw
+ * - `epub2` default export — EPub.createAsync + metadata/toc/flow/getChapterRawAsync
  *
  * @see lib/orchestration/knowledge/parsers/epub-parser.ts
  */
@@ -28,8 +28,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // available inside mock factories without hoisting issues.
 
 const mocks = vi.hoisted(() => {
+  // Mirrors the library's REAL async surface: `EPub.createAsync()` (a static
+  // that resolves once the `end` event has fired) and `getChapterRawAsync()`.
+  //
+  // The previous version of this mock declared `parse()` returning a resolved
+  // promise and `getChapterRaw()` likewise. Neither exists in `epub2@3.0.2` in
+  // that shape, and every test below passed against the invention while the
+  // real parser returned an empty document for every book (#606). If you add a
+  // method here, copy its shape from `types/epub2.d.ts`, which is now honest
+  // about the library — and remember that a mocked test can never catch this
+  // class. `epub-parser-archive.test.ts` is the file that can.
   const epubInstance = {
-    parse: vi.fn(),
     metadata: {
       title: 'Test Book',
       creator: 'Test Author',
@@ -38,20 +47,24 @@ const mocks = vi.hoisted(() => {
     },
     toc: [] as Array<{ id: string; title: string }>,
     flow: [] as Array<{ id: string; title?: string }>,
-    getChapterRaw: vi.fn(),
+    getChapterRawAsync: vi.fn(),
   };
 
-  // EPub must be a proper constructor function so `new EPub(...)` works.
-  // Cannot use an arrow function here — it would fail with "not a constructor".
+  const createAsync = vi.fn();
+
+  // Kept a constructor function so a stray `new EPub(...)` still behaves, even
+  // though the parser no longer uses it.
   function MockEPubConstructor(this: unknown) {
     return epubInstance;
   }
+  MockEPubConstructor.createAsync = createAsync;
 
   return {
     writeFile: vi.fn(),
     mkdtemp: vi.fn(),
     rm: vi.fn(),
     epubInstance,
+    createAsync,
     EPub: MockEPubConstructor,
   };
 });
@@ -84,7 +97,7 @@ function fakeBuffer(): Buffer {
 }
 
 function resetEpubInstance(): void {
-  mocks.epubInstance.parse.mockResolvedValue(undefined);
+  mocks.createAsync.mockResolvedValue(mocks.epubInstance);
   mocks.epubInstance.metadata = {
     title: 'Test Book',
     creator: 'Test Author',
@@ -93,7 +106,7 @@ function resetEpubInstance(): void {
   };
   mocks.epubInstance.toc = [];
   mocks.epubInstance.flow = [];
-  mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Chapter content.</p>');
+  mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Chapter content.</p>');
 }
 
 // =============================================================================
@@ -117,7 +130,7 @@ describe('parseEpub', () => {
     it('should write the buffer into a private temp directory before parsing', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Content here.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Content here.</p>');
 
       // Act
       await parseEpub(fakeBuffer(), 'book.epub');
@@ -135,7 +148,7 @@ describe('parseEpub', () => {
     it('should always remove the temp directory after successful parse', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Content here.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Content here.</p>');
 
       // Act
       await parseEpub(fakeBuffer(), 'book.epub');
@@ -150,9 +163,9 @@ describe('parseEpub', () => {
       expect(opts).toEqual({ recursive: true, force: true });
     });
 
-    it('should remove the temp directory even when epub.parse() throws', async () => {
+    it('should remove the temp directory even when EPub.createAsync() rejects', async () => {
       // Arrange: simulate corrupt EPUB
-      mocks.epubInstance.parse.mockRejectedValue(new Error('Corrupt EPUB'));
+      mocks.createAsync.mockRejectedValue(new Error('Corrupt EPUB'));
 
       // Act + Assert: error re-thrown after cleanup
       await expect(parseEpub(fakeBuffer(), 'bad.epub')).rejects.toThrow('Corrupt EPUB');
@@ -275,7 +288,7 @@ describe('parseEpub', () => {
     it('should extract a single chapter and preserve its content', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1', title: 'Chapter One' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Hello world content.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Hello world content.</p>');
 
       // Act
       const result = await parseEpub(fakeBuffer(), 'book.epub');
@@ -289,7 +302,7 @@ describe('parseEpub', () => {
     it('should assign ascending order values matching flow index', async () => {
       // Arrange: three chapters
       mocks.epubInstance.flow = [{ id: 'ch1' }, { id: 'ch2' }, { id: 'ch3' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Content here.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Content here.</p>');
 
       // Act
       const result = await parseEpub(fakeBuffer(), 'book.epub');
@@ -301,7 +314,7 @@ describe('parseEpub', () => {
     it('should skip chapters with fewer than 10 characters after stripping HTML', async () => {
       // Arrange: cover page (near-empty) + real chapter
       mocks.epubInstance.flow = [{ id: 'cover' }, { id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw
+      mocks.epubInstance.getChapterRawAsync
         .mockResolvedValueOnce('<p> </p>') // 1 char after stripping — too short
         .mockResolvedValueOnce('<p>Proper chapter content here.</p>');
 
@@ -317,7 +330,7 @@ describe('parseEpub', () => {
       // Arrange: TOC and flow both have ch1 but with different titles
       mocks.epubInstance.toc = [{ id: 'ch1', title: 'TOC Chapter One' }];
       mocks.epubInstance.flow = [{ id: 'ch1', title: 'Flow Title' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Chapter content here.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Chapter content here.</p>');
 
       // Act
       const result = await parseEpub(fakeBuffer(), 'book.epub');
@@ -330,7 +343,7 @@ describe('parseEpub', () => {
       // Arrange: no TOC entries
       mocks.epubInstance.toc = [];
       mocks.epubInstance.flow = [{ id: 'ch1', title: 'Flow Chapter Title' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Chapter content here.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Chapter content here.</p>');
 
       // Act
       const result = await parseEpub(fakeBuffer(), 'book.epub');
@@ -343,7 +356,7 @@ describe('parseEpub', () => {
       // Arrange: no TOC, no flow title
       mocks.epubInstance.toc = [];
       mocks.epubInstance.flow = [{ id: 'ch1' }]; // no title field
-      mocks.epubInstance.getChapterRaw.mockResolvedValue('<p>Content here at least.</p>');
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue('<p>Content here at least.</p>');
 
       // Act
       const result = await parseEpub(fakeBuffer(), 'book.epub');
@@ -355,7 +368,7 @@ describe('parseEpub', () => {
     it('should join all section content into fullText', async () => {
       // Arrange: two chapters
       mocks.epubInstance.flow = [{ id: 'ch1' }, { id: 'ch2' }];
-      mocks.epubInstance.getChapterRaw
+      mocks.epubInstance.getChapterRawAsync
         .mockResolvedValueOnce('<p>First chapter content.</p>')
         .mockResolvedValueOnce('<p>Second chapter content.</p>');
 
@@ -373,10 +386,10 @@ describe('parseEpub', () => {
   // ---------------------------------------------------------------------------
 
   describe('per-chapter error handling', () => {
-    it('should skip a chapter and add a warning when getChapterRaw throws', async () => {
+    it('should skip a chapter and add a warning when getChapterRawAsync throws', async () => {
       // Arrange: ch1 fails, ch2 succeeds
       mocks.epubInstance.flow = [{ id: 'ch1' }, { id: 'ch2' }];
-      mocks.epubInstance.getChapterRaw
+      mocks.epubInstance.getChapterRawAsync
         .mockRejectedValueOnce(new Error('Chapter extraction failed'))
         .mockResolvedValueOnce('<p>Second chapter content here.</p>');
 
@@ -394,7 +407,7 @@ describe('parseEpub', () => {
     it('should collect multiple warnings for multiple failed chapters', async () => {
       // Arrange: first two chapters fail, third succeeds
       mocks.epubInstance.flow = [{ id: 'ch1' }, { id: 'ch2' }, { id: 'ch3' }];
-      mocks.epubInstance.getChapterRaw
+      mocks.epubInstance.getChapterRawAsync
         .mockRejectedValueOnce(new Error('Failed'))
         .mockRejectedValueOnce(new Error('Failed'))
         .mockResolvedValueOnce('<p>Third chapter content here.</p>');
@@ -410,7 +423,7 @@ describe('parseEpub', () => {
     it('should return empty sections with all warnings when all chapters fail', async () => {
       // Arrange: all chapters fail
       mocks.epubInstance.flow = [{ id: 'ch1' }, { id: 'ch2' }];
-      mocks.epubInstance.getChapterRaw.mockRejectedValue(new Error('Extraction failed'));
+      mocks.epubInstance.getChapterRawAsync.mockRejectedValue(new Error('Extraction failed'));
 
       // Act
       const result = await parseEpub(fakeBuffer(), 'book.epub');
@@ -429,7 +442,7 @@ describe('parseEpub', () => {
     it('should strip HTML tags from chapter content', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue(
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue(
         '<div><h1>Title here</h1><p>Body text here.</p></div>'
       );
 
@@ -446,7 +459,7 @@ describe('parseEpub', () => {
     it('should strip style blocks from chapter content', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue(
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue(
         '<style>body { color: red; }</style><p>Actual content here.</p>'
       );
 
@@ -461,7 +474,7 @@ describe('parseEpub', () => {
     it('should strip script blocks from chapter content', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue(
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue(
         '<script>alert("xss")</script><p>Safe content here.</p>'
       );
 
@@ -476,7 +489,7 @@ describe('parseEpub', () => {
     it('should decode HTML entities in content', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue(
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue(
         '<p>5 &amp; 3, &lt;value&gt;, &quot;quoted&quot;, it&#39;s here&nbsp;now.</p>'
       );
 
@@ -493,7 +506,7 @@ describe('parseEpub', () => {
     it('should convert <br> tags to newlines', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue(
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue(
         '<p>Line one.<br/>Line two.<br />Line three.</p>'
       );
 
@@ -507,7 +520,7 @@ describe('parseEpub', () => {
     it('should convert </p> to double newlines for paragraph separation', async () => {
       // Arrange
       mocks.epubInstance.flow = [{ id: 'ch1' }];
-      mocks.epubInstance.getChapterRaw.mockResolvedValue(
+      mocks.epubInstance.getChapterRawAsync.mockResolvedValue(
         '<p>First paragraph.</p><p>Second paragraph.</p>'
       );
 

@@ -642,6 +642,37 @@ release process.
 
 ### Fixed
 
+- **The EPUB parser returned an empty document for every book ever ingested.**
+  `epub-parser.ts` called `await epub.parse()`, but `epub2@3.0.2`'s `parse()`
+  returns `this`, not a promise — parsing is callback-driven and completes on an
+  `end` event. The `await` resolved on the next microtask and the parser read
+  `metadata`, `flow` and `toc` while all three were still empty. Measured
+  against a spec-valid EPUB 2 archive, the old code returned
+  `{ title: '<filename>', metadata: { format: 'epub' }, sections: 0, fullText: '', warnings: [] }`.
+  Silent: the upload reported success, and any agent grounded on an EPUB had
+  been answering from nothing. A second instance of the same mistake sat two
+  lines below — `await epub.getChapterRaw(id)` awaits a callback-style method
+  that returns `void`. Both now use the library's promise API,
+  `EPub.createAsync()` and `getChapterRawAsync()`.
+
+  **Fork-facing:** a caller that treated `sections: []` as "an empty book" was
+  reading every book that way and will now get content. An unreadable archive
+  rejected before this change and still does — what changed is that rejection is
+  once again the only path to an empty result. Chapter text also no longer
+  repeats the chapter title, which leaked in from the XHTML `<head>`.
+
+  **What let it ship, and what stops it recurring.** `types/epub2.d.ts` — a
+  hand-written declaration shadowing the library's own — declared both methods
+  as returning promises. That is the only reason
+  `@typescript-eslint/await-thenable`, an error under `recommendedTypeChecked`,
+  stayed silent; with the declaration corrected it flags both call sites. The
+  unit tests mocked `epub2` wholesale and asserted against the invented shape,
+  so 27 green tests sat on top of a parser that never worked. They are kept for
+  the branch cases and the mock now mirrors the real API, but the guard is a new
+  no-mock suite that parses an archive built byte-by-byte by
+  `tests/helpers/epub-fixture.ts`. That fixture DEFLATEs its entries on purpose:
+  with stored entries `parse()` happens to complete synchronously and the bug
+  does not reproduce (#606).
 - **Edits to a system capability's seed-owned fields are now refused instead of
   silently reverted.** Since #545 the capability seeds re-apply
   `functionDefinition`, `executionType` and `executionHandler` to existing rows

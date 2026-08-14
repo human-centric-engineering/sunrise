@@ -9,10 +9,24 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 | Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting                             |
 | Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings                         |
 | CSV         | `.csv`    | ~95%        | `csv-parser.ts`  | RFC 4180 with delimiter sniffing; one chunk per row (batched above 5k rows)      |
-| EPUB        | `.epub`   | ~85%        | `epub-parser.ts` | Best format for books. Extracts chapters via XHTML structure                     |
+| EPUB        | `.epub`   | unmeasured  | `epub-parser.ts` | Chapters via the OPF spine, section titles via the NCX. See the note below       |
 | DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split                       |
 | PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2                                   |
 | Scanned PDF | N/A       | N/A         | Not supported    | Use macOS Preview / Adobe Acrobat / `ocrmypdf` to OCR externally, then re-upload |
+
+> **The EPUB figure was withdrawn rather than revised.** It read `~85%` — and
+> "Best format for books" — while the parser returned an **empty document for
+> every EPUB ever ingested**: filename as the title, zero sections, no warning
+> (#606). The number described an intention, not a measurement, and it is the
+> reason nobody looked.
+>
+> What replaces it is narrower and checkable.
+> `tests/unit/lib/orchestration/knowledge/parsers/epub-parser-archive.test.ts`
+> parses a spec-valid EPUB 2 archive end to end — deflated, as real books are —
+> and asserts on the extracted chapter text, the NCX titles and the flow order.
+> That is a proof the parser works, not a reliability rate: it has not been run
+> against a corpus of real books, so no percentage is quoted. Quote one only
+> once something has measured it.
 
 ## Architecture
 
