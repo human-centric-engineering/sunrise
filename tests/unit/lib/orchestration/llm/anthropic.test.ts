@@ -206,6 +206,80 @@ describe('AnthropicProvider.chat', () => {
     expect(response.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
   });
 
+  it('throws truncated_no_output when a json_object response is cut off mid-JSON (#594)', async () => {
+    // Anthropic has no native JSON mode — `json_object` is only an
+    // instruction, so the output arrives as ordinary text. A cut-off response
+    // is a partial JSON string in the content: non-empty, so the empty-output
+    // guard below cannot see it.
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: '{"steps":[{"agent":"resea' }],
+      usage: { input_tokens: 20, output_tokens: 512 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'max_tokens',
+    });
+
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      await provider.chat([{ role: 'user', content: 'plan it' }], {
+        model: 'claude-opus-4-6',
+        maxTokens: 512,
+        responseFormat: { type: 'json_object' },
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+  });
+
+  it('does NOT flag a json_object response whose object completed before the cap', async () => {
+    // The completeness half. Anthropic used to fire on the cap alone for
+    // json_object, so a complete object followed by trailing prose was
+    // discarded here while the OpenAI adapter returned it — two adapters
+    // disagreeing about the same response.
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: '{"score":0.7,"reasoning":"good"}' }],
+      usage: { input_tokens: 20, output_tokens: 512 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'max_tokens',
+    });
+
+    const provider = makeProvider();
+    const res = await provider.chat([{ role: 'user', content: 'judge it' }], {
+      model: 'claude-opus-4-6',
+      maxTokens: 512,
+      responseFormat: { type: 'json_object' },
+    });
+
+    expect(res.content).toBe('{"score":0.7,"reasoning":"good"}');
+  });
+
+  it('does NOT arm the JSON guard when responseFormat is a bare string', async () => {
+    // `metadataSchema` allows only primitives, so an agent configured through
+    // the admin API stores `metadata.responseFormat` as the STRING
+    // "json_object", and `streaming-handler` forwards it unvalidated. A guard
+    // testing truthiness rather than `.type` armed itself on that string and
+    // hard-failed ordinary prose turns — wiping the user's streamed text via
+    // `content_reset`. Nothing is sent to the API for a string, so the model
+    // returns prose and a `length` finish is normal, not an error.
+    createMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'Here is a long prose answer that ran out of' }],
+      usage: { input_tokens: 20, output_tokens: 512 },
+      model: 'claude-opus-4-6',
+      stop_reason: 'max_tokens',
+    });
+
+    const provider = makeProvider();
+    const res = await provider.chat([{ role: 'user', content: 'explain' }], {
+      model: 'claude-opus-4-6',
+      maxTokens: 512,
+      responseFormat: 'json_object' as unknown as { type: 'json_object' },
+    });
+
+    expect(res.content).toMatch(/^Here is a long prose answer/);
+  });
+
   it('throws truncated_no_output when stop_reason is max_tokens with empty content and no tool calls', async () => {
     // Arrange — Anthropic equivalent of the gpt-5 silent-truncation
     // bug. Extended thinking can consume the entire `max_tokens`
@@ -453,6 +527,106 @@ describe('AnthropicProvider.chat — extended thinking (reasoningEffort)', () =>
 });
 
 describe('AnthropicProvider.chatStream', () => {
+  it('throws truncated_no_output when a streaming json_object response is cut off (#594)', async () => {
+    const events = [
+      { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '{"steps":[{"agent":"resea' },
+      },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens' },
+        usage: { output_tokens: 512 },
+      },
+      { type: 'message_stop' },
+    ];
+    createMock.mockResolvedValue(makeStream(events));
+
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+        model: 'claude-haiku-4-5',
+        maxTokens: 512,
+        responseFormat: { type: 'json_object' },
+      })) {
+        // drain
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as { code?: string }).code).toBe('truncated_no_output');
+  });
+
+  it('does NOT flag a streaming json_object response whose object completed', async () => {
+    // Guards the accumulator as much as the guard: `streamedText` has to be
+    // collected for json_object, or this reads an empty string and the guard
+    // fires on every capped turn.
+    const events = [
+      { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '{"steps":[]}' },
+      },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens' },
+        usage: { output_tokens: 512 },
+      },
+      { type: 'message_stop' },
+    ];
+    createMock.mockResolvedValue(makeStream(events));
+
+    const provider = makeProvider();
+    const seen: string[] = [];
+    for await (const chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+      model: 'claude-haiku-4-5',
+      maxTokens: 512,
+      responseFormat: { type: 'json_object' },
+    })) {
+      if (chunk.type === 'text') seen.push(chunk.content);
+    }
+
+    expect(seen.join('')).toBe('{"steps":[]}');
+  });
+
+  it('does NOT arm the streaming JSON guard when responseFormat is a bare string', async () => {
+    // See the non-streaming counterpart: agent metadata stores a string.
+    const events = [
+      { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'prose that' } },
+      { type: 'content_block_stop', index: 0 },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'max_tokens' },
+        usage: { output_tokens: 512 },
+      },
+      { type: 'message_stop' },
+    ];
+    createMock.mockResolvedValue(makeStream(events));
+
+    const provider = makeProvider();
+    const seen: string[] = [];
+    for await (const chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+      model: 'claude-haiku-4-5',
+      maxTokens: 512,
+      responseFormat: 'json_object' as unknown as { type: 'json_object' },
+    })) {
+      if (chunk.type === 'text') seen.push(chunk.content);
+    }
+
+    expect(seen.join('')).toBe('prose that');
+  });
+
   it('yields text chunks from text_delta events', async () => {
     const events = [
       { type: 'message_start', message: { usage: { input_tokens: 10 } } },

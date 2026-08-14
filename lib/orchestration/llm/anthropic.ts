@@ -62,6 +62,7 @@ import type {
   StreamChunk,
 } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
+import { isCompleteJson } from '@/lib/orchestration/llm/json-completeness';
 
 /** Model used for cheap connectivity pings. */
 const PING_MODEL = 'claude-haiku-4-5';
@@ -173,7 +174,10 @@ export class AnthropicProvider implements LlmProvider {
      * downstream and reads as a malformed answer rather than a truncation
      * (#594).
      */
-    const wantsParseableJson = !!options.responseFormat && !options.tools?.length;
+    const wantsParseableJson =
+      (options.responseFormat?.type === 'json_object' ||
+        options.responseFormat?.type === 'json_schema') &&
+      !options.tools?.length;
 
     for (const block of message.content) {
       if (block.type === 'text') {
@@ -204,14 +208,24 @@ export class AnthropicProvider implements LlmProvider {
     // JSON won't parse. Treat ANY max_tokens stop on the extraction path as
     // a truncation rather than letting it degrade into a confusing
     // malformed-JSON failure (and a wasted retry) downstream.
+    // Completeness applies to `json_object` but NOT to the extraction path:
+    // there the payload is rebuilt via `JSON.stringify` from the forced tool's
+    // already-parsed input, so even a truncated one is valid JSON and a parse
+    // gate would disable the guard entirely. For `json_object` the text is the
+    // model's raw output and IS checkable — and without this the adapter threw
+    // on a complete object that merely ended at the cap, where the
+    // OpenAI-compatible adapter returns it. Two adapters disagreeing about the
+    // same response is the divergence #594 set out to remove.
+    const truncatedJson =
+      wantsParseableJson && (isStructuredExtraction || !isCompleteJson(joinedContent));
     if (
       message.stop_reason === 'max_tokens' &&
-      (wantsParseableJson || (joinedContent.length === 0 && toolCalls.length === 0))
+      (truncatedJson || (joinedContent.length === 0 && toolCalls.length === 0))
     ) {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_tokens before producing ${
-          wantsParseableJson ? 'a complete structured response' : 'visible output'
+          truncatedJson ? 'a complete structured response' : 'visible output'
         }. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,
         {
           code: 'truncated_no_output',
@@ -260,7 +274,16 @@ export class AnthropicProvider implements LlmProvider {
     const isStructuredExtraction =
       options.responseFormat?.type === 'json_schema' && !options.tools?.length;
     /** Any JSON-shaped request, for the truncation guard only (#594). */
-    const wantsParseableJson = !!options.responseFormat && !options.tools?.length;
+    const wantsParseableJson =
+      (options.responseFormat?.type === 'json_object' ||
+        options.responseFormat?.type === 'json_schema') &&
+      !options.tools?.length;
+    // Raw text accumulated for the `json_object` completeness test below. Only
+    // collected when the guard will actually consult it, and bounded by
+    // maxTokens. MUST cover exactly what the guard tests: when an accumulator
+    // is narrower than its guard, the guard reads an empty string,
+    // `isCompleteJson('')` is false, and it fires on every capped turn.
+    let streamedText = '';
 
     let inputTokens = 0;
     let outputTokens = 0;
@@ -291,6 +314,7 @@ export class AnthropicProvider implements LlmProvider {
 
           case 'content_block_delta': {
             if (event.delta.type === 'text_delta') {
+              if (wantsParseableJson) streamedText += event.delta.text;
               yield { type: 'text', content: event.delta.text };
             } else if (event.delta.type === 'input_json_delta') {
               const buf = toolBuffers.get(event.index);
@@ -344,7 +368,13 @@ export class AnthropicProvider implements LlmProvider {
     // Surface the actionable error before the `done` chunk instead of letting
     // the consumer treat a garbage structured result as success.
     // (`mapStopReason('max_tokens')` is `'length'`.)
-    if (wantsParseableJson && finishReason === 'length') {
+    // Same asymmetry as the non-streaming guard: cap alone for the extraction
+    // path, cap AND incomplete text for `json_object`.
+    if (
+      finishReason === 'length' &&
+      wantsParseableJson &&
+      (isStructuredExtraction || !isCompleteJson(streamedText))
+    ) {
       const cap = (params as { max_tokens?: number }).max_tokens;
       throw new ProviderError(
         `Model "${options.model}" hit max_tokens before producing a complete structured response. Raise the agent/step maxTokens (current cap: ${cap ?? 'unset'}).`,

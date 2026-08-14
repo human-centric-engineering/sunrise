@@ -69,42 +69,7 @@ import type {
   TranscribeResponse,
 } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
-
-/**
- * Is `text` a complete JSON value?
- *
- * Used to tell a structured extraction that merely *ended* at the token cap
- * from one that was cut off mid-value. Only the second is a truncation worth
- * failing: if the object closed, the caller can use it, and `finishReason:
- * 'length'` still tells anyone who cares that the model wanted more room.
- *
- * Deliberately NOT mirrored in the Anthropic adapter. There the extraction
- * payload is rebuilt with `JSON.stringify` from the tool-use block's already
- * parsed input, so even a truncated one serialises to valid JSON — a parse
- * gate would silently disable that guard entirely. Anthropic keys on
- * `stop_reason` alone, and must keep doing so.
- */
-function isCompleteJson(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return false;
-  // Mirrors `tryParseJson`/`stripCodeFence` in
-  // `evaluations/parse-structured.ts` — raw first, then one unwrapped code
-  // fence. A guard that is STRICTER than the parser it protects turns a
-  // response the caller would have accepted into a hard failure, which is
-  // the same class of bug as not guarding at all. Deliberately no more
-  // lenient either: digging a complete object out of surrounding prose would
-  // let a genuinely truncated response through. (Duplicated rather than
-  // imported — this module must not depend on `evaluations/`.)
-  for (const candidate of [trimmed, trimmed.replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, '$1')]) {
-    try {
-      JSON.parse(candidate);
-      return true;
-    } catch {
-      // try the next candidate
-    }
-  }
-  return false;
-}
+import { isCompleteJson } from '@/lib/orchestration/llm/json-completeness';
 
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
@@ -249,7 +214,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
      * clarifying retry into the same cap, and surfaced as the misleading
      * `planner_parse_failed` (#594).
      */
-    const wantsParseableJson = !!options.responseFormat && !options.tools?.length;
+    const wantsParseableJson =
+      (options.responseFormat?.type === 'json_object' ||
+        options.responseFormat?.type === 'json_schema') &&
+      !options.tools?.length;
 
     // Truncation guard. For reasoning models (o-series, gpt-5) the
     // `max_completion_tokens` cap covers reasoning tokens AND visible
@@ -353,7 +321,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
      * See the non-streaming guard for why this is wider than the schema-only
      * test it replaced (#594).
      */
-    const wantsParseableJson = !!options.responseFormat && !options.tools?.length;
+    const wantsParseableJson =
+      (options.responseFormat?.type === 'json_object' ||
+        options.responseFormat?.type === 'json_schema') &&
+      !options.tools?.length;
     // Accumulated for any JSON-shaped request, so the truncation guard after
     // the loop can tell a complete object that ended at the cap from one cut
     // off mid-value. Bounded by maxTokens.

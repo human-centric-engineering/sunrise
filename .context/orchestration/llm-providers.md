@@ -370,12 +370,20 @@ Every long-running call accepts an `AbortSignal` via `LlmOptions.signal`. Aborts
 
 Both providers fail loudly when the model hits its token cap **without producing usable output**. Two rules, because what counts as usable differs:
 
-| Call shape                                                                                     | Fires when                                               | Where                           |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------- |
-| Ordinary completion                                                                            | cap hit **and** content empty **and** no tool calls      | `chat()` only                   |
-| **Any JSON-shaped request** (`responseFormat` of `json_schema` **or** `json_object`, no tools) | cap hit **and** the payload is not a complete JSON value | `chat()` **and** `chatStream()` |
+| Call shape                            | Fires when                                            | Where                           |
+| ------------------------------------- | ----------------------------------------------------- | ------------------------------- |
+| Ordinary completion                   | cap hit **and** content empty **and** no tool calls   | `chat()` only                   |
+| **`json_object`** (either adapter)    | cap hit **and** the text is not a complete JSON value | `chat()` **and** `chatStream()` |
+| **`json_schema`** — OpenAI-compatible | cap hit **and** the text is not a complete JSON value | `chat()` **and** `chatStream()` |
+| **`json_schema`** — Anthropic         | cap hit, **alone** (see below)                        | `chat()` **and** `chatStream()` |
 
-Both adapters implement both rules (`finish_reason: 'length'` on OpenAI-compatible, `stop_reason: 'max_tokens'` on Anthropic) and raise `ProviderError('truncated_no_output')`.
+Both adapters implement these rules (`finish_reason: 'length'` on OpenAI-compatible, `stop_reason: 'max_tokens'` on Anthropic) and raise `ProviderError('truncated_no_output')`.
+
+**Why Anthropic's `json_schema` row has no completeness test.** There the payload is rebuilt with `JSON.stringify` from the forced extraction tool's already-parsed input, so even a truncated one serialises to _valid_ JSON — a parse gate would silently disable the guard entirely. That reasoning is specific to the extraction path: Anthropic has no native JSON mode, so a `json_object` response is raw model text and **is** checkable, and it gets the same completeness test as OpenAI. Without that split the two adapters disagreed about the same response — a complete object followed by trailing prose, cut off at the cap, was returned by one and rejected by the other.
+
+The shared test lives in `lib/orchestration/llm/json-completeness.ts` precisely so the two cannot drift.
+
+**The guards key on `responseFormat.type`, never on truthiness.** `agent.metadata` permits only primitive values (`metadataSchema`), so an agent configured through the admin API stores `metadata.responseFormat` as the **string** `"json_object"`, which `streaming-handler` forwards unvalidated. A guard testing `!!options.responseFormat` arms itself on that string — and since `buildBaseParams` keys on `.type`, nothing is sent to the API, the model returns ordinary prose, and every capped turn becomes a hard error that wipes the user's streamed text via `content_reset`. Both adapters test the discriminant, and there are regression tests for the bare-string case on each.
 
 The second rule covered `json_schema` only until #594, which meant the orchestrator's planner — it requests `json_object` — sailed through with partial JSON, failed `JSON.parse`, spent a clarifying retry into the same cap, and surfaced as `planner_parse_failed` with `retriable: true`. A caller asking for `json_object` wants parseable JSON just as much as one supplying a schema, and truncated JSON is unusable under either, so the rule now asks the wider question. Because the adapter raises before the caller's parse, that also removes the wasted retry, and `isRequestFault` marks the code non-retriable so the engine does not re-run the step at the same cap. Note the asymmetry in the last column: `chatStream()` carries only the extraction rule, so an ordinary streaming turn that produces nothing before hitting the cap still ends with an empty `done` chunk rather than an error.
 

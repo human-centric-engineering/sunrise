@@ -578,10 +578,19 @@ release process.
   as much as one supplying a schema, and truncated JSON is unusable under
   either. This also removes the wasted retry and the false `retriable`, since
   the adapter now raises `truncated_no_output` before the parse and
-  `isRequestFault` marks it non-retriable. **Fork-facing:** a `json_object` call
-  that previously returned a partial string now throws — which is the point,
-  but a fork catching parse failures downstream should expect the error earlier
-  and better-labelled (#594).
+  `isRequestFault` marks it non-retriable. The guards test
+  `responseFormat.type` explicitly rather than truthiness, because
+  `agent.metadata` permits only primitives — so an agent configured through the
+  admin API stores the **string** `"json_object"`, and a truthiness test would
+  arm the guard on a request that never reaches the API as JSON at all. On
+  Anthropic the completeness test applies to `json_object` but not to the
+  forced-tool `json_schema` path, whose payload is rebuilt via `JSON.stringify`
+  and is therefore always valid JSON; the shared test now lives in
+  `lib/orchestration/llm/json-completeness.ts` so the two adapters cannot
+  drift. **Fork-facing:** a `json_object` call that previously returned a
+  partial string now throws — which is the point, but a fork catching parse
+  failures downstream should expect the error earlier and better-labelled
+  (#594).
 - **Capabilities invoked from a workflow now record a cost row.** The dispatcher
   wrote `CapabilityContext.agentId` to `AiCostLog.agentId`, but a workflow
   dispatches under a `workflow:${workflowId}` label rather than a real

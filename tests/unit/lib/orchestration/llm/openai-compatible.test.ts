@@ -531,6 +531,32 @@ describe('chat', () => {
     expect((caught as { retriable?: boolean }).retriable).toBe(false);
   });
 
+  it('does NOT arm the JSON guard when responseFormat is a bare string (#594 regression)', async () => {
+    // `metadataSchema` (lib/validations/orchestration.ts) allows only
+    // primitives, so an agent configured through the admin API stores
+    // `metadata.responseFormat` as the STRING "json_object", and
+    // `streaming-handler` casts it to LlmResponseFormat without validating.
+    //
+    // The first version of the widened guard tested `!!options.responseFormat`,
+    // which is true for a non-empty string. Nothing is sent to the API for a
+    // string (buildBaseParams keys on `.type`), so the model returns ordinary
+    // prose — and every `length` finish became `truncated_no_output`, which
+    // `isRequestFault` treats as a request fault, so the chat handler emitted
+    // `content_reset` and wiped text already streamed to the user.
+    chatCreateMock.mockResolvedValue(
+      makeChatCompletion('Here is a long prose answer that ran out of', 'length')
+    );
+
+    const provider = makeProvider();
+    const res = await provider.chat([{ role: 'user', content: 'explain' }], {
+      model: 'gpt-5',
+      maxTokens: 512,
+      responseFormat: 'json_object' as unknown as { type: 'json_object' },
+    });
+
+    expect(res.content).toMatch(/^Here is a long prose answer/);
+  });
+
   it('does NOT flag a json_object response that completed before the cap', async () => {
     // The complementary half. Without it, widening the guard to any
     // responseFormat could fire on every `length` finish and the suite would

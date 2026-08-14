@@ -168,8 +168,16 @@ async function runJudge(
           score: null,
           // Written to the metric row and shown to an operator, so it has to
           // name the actual problem and the actual remedy.
+          // The token count is dropped when the host reported none — a local
+          // model or gateway that omits usage would otherwise produce
+          // "cut off ... after 0 output tokens", which reads as a
+          // contradiction in the one place an operator looks.
           reasoning: truncated
-            ? `judge response was cut off at the model's token limit after ${result.tokenUsage.output} output tokens — raise the judge agent's maxTokens; this is not a scoring result`
+            ? `judge response was cut off at the model's token limit${
+                result.tokenUsage.output > 0
+                  ? ` after ${result.tokenUsage.output} output tokens`
+                  : ''
+              } — raise the judge agent's maxTokens; this is not a scoring result`
             : 'judge response was not valid {score, reasoning} JSON',
         },
         costUsd: result.costUsd,
