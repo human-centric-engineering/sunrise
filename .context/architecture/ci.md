@@ -213,9 +213,15 @@ post-24 surface. Only the MAJOR is compared — `24.x` minors should move freely
 since that is the types package tracking Node 24's own additions.
 
 The source reads the **resolved** version from `package-lock.json`, not the
-range in `package.json`: a range need not pin a major, and `>=24` resolves to
-26.2.0 — so a range-based reading reported "consistent" for precisely the drift
-this source was added to catch. A Dependabot `ignore` holds it at `>=25`. Without it the major would re-land on
+range in `package.json`. A range need not pin a major — `>=24` resolves to
+26.2.0, and `>24` parses as the one major it excludes — so a range-based reading
+reported "consistent" for precisely the drift this source was added to catch.
+The question is "what is `tsc` loading?", and only the lockfile answers it: a
+loose `"*"` is therefore judged on what npm actually produced. It is checked
+even when `@types/node` is not named in `package.json` at all, since `tsc` loads
+a transitive copy just the same — and **skipped entirely when there is no npm
+lockfile**, so a fork on pnpm or yarn is not failed by a check it cannot
+satisfy. A Dependabot `ignore` holds it at `>=25`. Without it the major would re-land on
 a Monday and turn this gate red, which is a worse way to learn the same thing;
 with it, moving the runtime means moving all five declarations **and** that
 entry together.
@@ -228,14 +234,6 @@ Gated on the code filter, like the Prisma step; `.nvmrc`, both Dockerfiles and
 
 An unparseable source fails rather than being skipped. When nobody is watching
 these files, "cannot read it" and "it disagrees" have the same consequence.
-
-The `@types/node` source reads the **resolved** version from
-`package-lock.json`, not the range in `package.json`, so a loose range is judged
-on what npm actually produced: `"*"` passes when it resolves inside the runtime
-major and fails when it does not. That is deliberate — the question the check
-asks is "what is `tsc` loading?", and only the lockfile answers it. It is also
-checked when `@types/node` is not named in `package.json` at all, since `tsc`
-loads a transitive copy just the same.
 
 **Forks:** if you retarget the base image (a different distro, or a pinned
 digest), keep the `FROM node:<major>` shape or this check cannot read it. If

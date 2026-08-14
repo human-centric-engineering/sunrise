@@ -145,16 +145,41 @@ export function checkNodeVersion(sources: NodeVersionSource[]): NodeVersionResul
   return { ok: problems.length === 0, problems };
 }
 
-/** Formats the result for a CI log. Returns an exit code. */
-export function formatResult(result: NodeVersionResult, agreedMajor: number | null): number {
+/**
+ * Formats the result for a CI log. Returns an exit code.
+ *
+ * The success line names the sources that were ACTUALLY compared, not a fixed
+ * list. It used to hardcode "…engines and @types/node", which then claimed
+ * `@types/node` had been checked on a repo with no npm lockfile — where the
+ * source is deliberately skipped. An all-clear that overstates its own coverage
+ * is the failure mode this whole check exists to prevent.
+ */
+export function formatResult(
+  result: NodeVersionResult,
+  agreedMajor: number | null,
+  sources: NodeVersionSource[] = []
+): number {
   if (result.ok) {
-    console.log(
-      `Node major consistent across .nvmrc, both Dockerfiles, engines and @types/node (${agreedMajor}).`
-    );
+    const what =
+      sources.length > 0 ? sources.map((s) => s.label).join(', ') : 'every declared source';
+    console.log(`Node major consistent across ${what} (${agreedMajor}).`);
     return 0;
   }
   console.error('Node version consistency check failed:');
   for (const problem of result.problems) console.error(`  ${problem}`);
+
+  // The evidence, per source. A disagreement previously printed only
+  // `label=major`, so an operator could see `@types/node (resolved)=26` with
+  // nothing to say where the 26 came from — a declared range, a transitive
+  // copy, a stale lockfile. `raw` is built to answer exactly that and was only
+  // ever shown for sources that failed to parse.
+  if (sources.length > 0) {
+    console.error('');
+    console.error('Read from:');
+    for (const source of sources) {
+      console.error(`  ${source.label}: ${source.raw}`);
+    }
+  }
   console.error(
     '\nUpdate all five together: .nvmrc, Dockerfile, Dockerfile.dev, ' +
       'package.json engines.node, package.json devDependencies["@types/node"].'

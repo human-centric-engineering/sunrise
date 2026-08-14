@@ -463,12 +463,11 @@ rather than reaching for the off switch:
    because an override forces a package past a range its dependents declared,
    which can break the dependent — test the affected path before merging one.
 
-   **Removing an override is a separate decision from adding it**, and gates on
-   its own. Acknowledgements name a per-key transition (`overrides ws "^8.21.0"
--> none`) rather than the resulting block, because dropping an override that
-   was fixing a CVE returns the block to an earlier, already-approved shape —
-   and a block-keyed acknowledgement would wave the patched transitive back to
-   a vulnerable version in silence.
+   **Removing one gates too**, and should: dropping an override that was
+   fixing a CVE walks the patched transitive straight back to the vulnerable
+   version, and is exactly as much of a decision as adding it was. There is no
+   acknowledgement facility — an `overrides` change is cleared by review, not by
+   a file.
 
 3. **If overriding genuinely breaks things**, there is no good option today.
    `--report` drops gating entirely and `--floor` drops a whole severity; both

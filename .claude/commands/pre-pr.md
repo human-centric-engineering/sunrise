@@ -60,12 +60,20 @@ npm run check:lockfile -- --base "$BASE"
 ```
 
 Exit 1 means something needs a decision: platform metadata (`libc`/`os`/`cpu`)
-lost — including across a hoist — a **direct** dependency moved backwards, or
-`overrides` changed. Lost metadata is the one that has actually bitten (#571).
+lost — including across a hoist — or `overrides` changed (adding, changing OR
+removing an entry). Lost metadata is the one that has actually bitten (#571).
 The cause is almost always **npm below 11.11.0**, which deletes `libc` from
 every entry it writes on every platform; check `npm -v`, then repair with `npm
-run fix:lockfile-libc` and re-run this. Transitive downgrades are listed but do
-not fail.
+run fix:lockfile-libc` and re-run this.
+
+**Downgrades do not fail this check** — neither transitive nor direct. They are
+reported, direct ones in their own block. The direct rule used to gate; over 134
+lockfile commits it fired twice, on two deliberate pins, while
+`dependency-review` fails any PR landing on a KNOWN-vulnerable version, which is
+the actual risk (#584). So a run that prints "moved BACKWARDS" and still exits 0
+is the tool working, not a bug. **On a private fork `dependency-review` is
+skipped**, so read that block yourself rather than assuming something enforced
+it.
 
 Note the all-clear says "no version or platform-metadata change", not
 "unchanged": these rules do not read `dev`, `resolved`, `integrity` or `link`,

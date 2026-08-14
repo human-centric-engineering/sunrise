@@ -54,6 +54,11 @@ function dockerfileEvidence(file: { text: string; missing: boolean }, path: stri
 const pkg = read('package.json');
 let enginesNode: string | undefined;
 let typesNode: string | undefined;
+// Tracked separately from `pkg.missing`: "absent", "unreadable" and "present
+// but does not name it" are three different things to an operator, and only
+// the third is about the dependency. Collapsing the middle one produced "not
+// named in package.json" for a file that named it on the line above the error.
+let pkgUnparseable = false;
 try {
   const parsed = JSON.parse(pkg.text) as {
     engines?: { node?: string };
@@ -68,6 +73,7 @@ try {
 } catch {
   enginesNode = undefined;
   typesNode = undefined;
+  pkgUnparseable = true;
 }
 
 // The RESOLVED version, which is what `tsc` loads. The range in `package.json`
@@ -85,6 +91,7 @@ const lockfile = read('package-lock.json');
  */
 function typesNodeEvidence(): string {
   if (pkg.missing) return '(package.json not found)';
+  if (pkgUnparseable) return '(package.json could not be parsed)';
   if (lockfile.missing) return '(package-lock.json not found)';
   const resolved = resolvedTypesNode(lockfile.text) ?? '(no lockfile entry)';
   return typesNode === undefined
@@ -125,25 +132,34 @@ const sources: NodeVersionSource[] = [
   {
     label: 'package.json engines.node',
     major: parseEnginesMajor(enginesNode),
-    raw: pkg.missing ? '(package.json not found)' : (enginesNode ?? '(engines.node absent)'),
-  },
-  {
-    // What `tsc` type-checks against. Ahead of the runtime, it accepts APIs
-    // that throw in the production image and reports nothing (#584).
-    //
-    // Checked even when `package.json` does not name it directly. `tsc` loads
-    // whatever copy resolves, so a transitive one carries exactly the same
-    // risk — skipping would leave a blind spot a fork could fall into by
-    // deleting a line. An earlier version DID skip it, by handing this source a
-    // `null` major; but `checkNodeVersion` treats `null` as unreadable, so the
-    // "skip" was a hard failure for every fork relying on a transitive copy.
-    // There is no skip path here by design, so the honest move is to check it
-    // and say where the version came from.
-    label: '@types/node (resolved)',
-    major: parseTypesNodeMajor(lockfile.missing ? undefined : lockfile.text),
-    raw: typesNodeEvidence(),
+    raw: pkg.missing
+      ? '(package.json not found)'
+      : pkgUnparseable
+        ? '(package.json could not be parsed)'
+        : (enginesNode ?? '(engines.node absent)'),
   },
 ];
+
+// Only when there IS an npm lockfile. `parseTypesNodeMajor` returns null for a
+// missing one, and `checkNodeVersion` treats null as unreadable — a hard
+// failure — which would break any fork that uses pnpm or yarn, or gitignores
+// the lockfile, with nothing it could edit to satisfy the check. A lockfile
+// that EXISTS but cannot be read, or has no entry, still fails: that is a
+// broken tree rather than a different package manager.
+//
+// Checked even when `package.json` does not name `@types/node` directly, since
+// `tsc` loads whatever copy resolves and a transitive one carries the same
+// risk. An earlier version skipped that case by handing this source a `null`
+// major, which — same trap — was a hard failure rather than a skip.
+if (!lockfile.missing) {
+  sources.push({
+    // What `tsc` type-checks against. Ahead of the runtime, it accepts APIs
+    // that throw in the production image and reports nothing (#584).
+    label: '@types/node (resolved)',
+    major: parseTypesNodeMajor(lockfile.text),
+    raw: typesNodeEvidence(),
+  });
+}
 
 const result = checkNodeVersion(sources);
 const agreed = sources.find((s) => s.major !== null)?.major ?? null;
@@ -151,4 +167,4 @@ const agreed = sources.find((s) => s.major !== null)?.major ?? null;
 // `process.exitCode`, not `process.exit()` — stderr is asynchronous when it is
 // a pipe, which it is under both `npm run` and GitHub Actions, and exiting
 // discards whatever is still queued.
-process.exitCode = formatResult(result, agreed);
+process.exitCode = formatResult(result, agreed, sources);

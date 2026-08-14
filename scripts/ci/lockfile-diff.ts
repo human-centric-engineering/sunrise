@@ -131,11 +131,11 @@ export interface VersionChange {
 /**
  * One `overrides` entry that was added, removed or re-pointed.
  *
- * The per-KEY delta, not just "the block changed". An acknowledgement keyed on
- * the resulting block cannot tell "we added an override" from "we removed the
- * one that was fixing a CVE" — removing a later addition returns the block to
- * an earlier, already-acknowledged shape and passes silently. Keying on the
- * transition of each entry removes that entirely.
+ * The per-KEY delta, not just "the block changed", so the failure names the
+ * entry and both sides. That distinction matters for what it makes visible:
+ * removing an override that was fixing a CVE walks the patched transitive
+ * straight back, and "the overrides block changed" does not tell a reviewer
+ * which way it went.
  */
 export interface OverrideChange {
   key: string;
