@@ -253,10 +253,6 @@ export function main(argv: string[]): number {
       : {}),
   });
 
-  // Every field, including lost metadata. Leaving that one out made the
-  // headline case — d5b913fb, where 77 packages lost `libc` and not one
-  // version moved — report "unchanged" and exit 0. The rules had it right and
-  // the reporting put the blindfold back on.
   // Recorded decisions, from the working tree — the ACK ships in the same
   // commit as the change it describes, so it is reviewed in that diff.
   //
@@ -273,6 +269,10 @@ export function main(argv: string[]): number {
     return 1;
   }
 
+  // Every field, including lost metadata. Leaving that one out made the
+  // headline case — d5b913fb, where 77 packages lost `libc` and not one
+  // version moved — report "unchanged" and exit 0. The rules had it right and
+  // the reporting put the blindfold back on.
   const nothingMoved =
     diff.added.length === 0 &&
     diff.removed.length === 0 &&
@@ -328,27 +328,35 @@ export function main(argv: string[]): number {
   const ackedOverrideKeys = acknowledgedOverrideKeys(diff.overrideChanges, decisions);
   const gatingOverrides = diff.overrideChanges.filter((c) => !ackedOverrideKeys.includes(c.key));
 
+  // `filter`, not `find`: a duplicate entry is expected rather than exotic —
+  // four forks inherit this whole log and a sync can replay a line. Marking
+  // only the first left the copy listed as "not relevant to this diff" while
+  // it was in fact the decision being applied.
   const usedLines = new Set<number>();
   for (const change of acknowledged) {
-    const match = decisions.find(
-      (d) =>
+    for (const d of decisions) {
+      if (
         d.kind === 'downgrade' &&
         d.name === change.name &&
         d.from === change.from &&
         d.to === change.to
-    );
-    if (match) usedLines.add(match.line);
+      ) {
+        usedLines.add(d.line);
+      }
+    }
   }
   for (const key of ackedOverrideKeys) {
     const change = diff.overrideChanges.find((c) => c.key === key);
-    const match = decisions.find(
-      (d) =>
+    for (const d of decisions) {
+      if (
         d.kind === 'overrides' &&
         d.key === key &&
         d.from === (change?.from ?? OVERRIDE_ABSENT) &&
         d.to === (change?.to ?? OVERRIDE_ABSENT)
-    );
-    if (match) usedLines.add(match.line);
+      ) {
+        usedLines.add(d.line);
+      }
+    }
   }
 
   reportAcknowledged(acknowledged, ackedOverrideKeys, decisions, usedLines);

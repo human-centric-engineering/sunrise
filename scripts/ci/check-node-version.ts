@@ -75,6 +75,23 @@ try {
 // so a range cannot answer "what is tsc checking against?".
 const lockfile = read('package-lock.json');
 
+/**
+ * Where the `@types/node` major came from, in the operator's terms.
+ *
+ * Distinguishes "package.json unreadable" from "not declared directly" from
+ * "declared as X, resolved to Y" — the same distinction {@link read} exists to
+ * preserve. Collapsing them produced "not a direct dependency" for a
+ * `package.json` nobody could parse.
+ */
+function typesNodeEvidence(): string {
+  if (pkg.missing) return '(package.json not found)';
+  if (lockfile.missing) return '(package-lock.json not found)';
+  const resolved = resolvedTypesNode(lockfile.text) ?? '(no lockfile entry)';
+  return typesNode === undefined
+    ? `(not named in package.json; a transitive copy resolves to ${resolved})`
+    : `${typesNode} → ${resolved}`;
+}
+
 /** The resolved version, for the evidence string — parsing lives in the rules. */
 function resolvedTypesNode(text: string): string | undefined {
   try {
@@ -113,22 +130,18 @@ const sources: NodeVersionSource[] = [
   {
     // What `tsc` type-checks against. Ahead of the runtime, it accepts APIs
     // that throw in the production image and reports nothing (#584).
+    //
+    // Checked even when `package.json` does not name it directly. `tsc` loads
+    // whatever copy resolves, so a transitive one carries exactly the same
+    // risk — skipping would leave a blind spot a fork could fall into by
+    // deleting a line. An earlier version DID skip it, by handing this source a
+    // `null` major; but `checkNodeVersion` treats `null` as unreadable, so the
+    // "skip" was a hard failure for every fork relying on a transitive copy.
+    // There is no skip path here by design, so the honest move is to check it
+    // and say where the version came from.
     label: '@types/node (resolved)',
-    // Only when `package.json` actually declares it. Many packages pull
-    // `@types/node` transitively, and a fork that drops the direct
-    // devDependency would otherwise be judged on a hoisted copy it never chose
-    // — and told to "update package.json devDependencies[\"@types/node\"]",
-    // which does not exist there.
-    major:
-      typesNode === undefined
-        ? null
-        : parseTypesNodeMajor(lockfile.missing ? undefined : lockfile.text),
-    raw:
-      typesNode === undefined
-        ? '(@types/node not a direct dependency of package.json)'
-        : lockfile.missing
-          ? '(package-lock.json not found)'
-          : `${typesNode} → ${resolvedTypesNode(lockfile.text) ?? '(no lockfile entry)'}`,
+    major: parseTypesNodeMajor(lockfile.missing ? undefined : lockfile.text),
+    raw: typesNodeEvidence(),
   },
 ];
 

@@ -472,6 +472,22 @@ describe('scripts/ci/check-lockfile', () => {
         expect(out()).toContain('historical (#1)');
       });
 
+      it('marks BOTH copies used when a fork sync replays a decision line', async () => {
+        // Duplicates are expected, not exotic: four forks inherit the whole log
+        // and a sync can replay a line. Marking only the first left the copy
+        // listed as "not relevant to this diff" while it was the decision
+        // actually being applied.
+        serveDowngrade();
+        mockReadFileSync.mockImplementation(
+          reads({ lock: DOWNGRADED, decisions: `${ACK}\n${ACK}` })
+        );
+
+        await run();
+
+        expect(process.exitCode).toBe(0);
+        expect(out()).not.toContain('not relevant to this diff');
+      });
+
       it('behaves exactly as before when the file does not exist', async () => {
         serveDowngrade();
         mockReadFileSync.mockImplementation((path: string) => {

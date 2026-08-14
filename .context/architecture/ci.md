@@ -227,9 +227,15 @@ Gated on the code filter, like the Prisma step; `.nvmrc`, both Dockerfiles and
 `package.json` all set `code=true`.
 
 An unparseable source fails rather than being skipped. When nobody is watching
-these files, "cannot read it" and "it disagrees" have the same consequence. That
-is why an `@types/node` of `*` or `latest` is a failure too: both mean "whatever
-npm resolves", which is precisely the unwatched state the check exists to catch.
+these files, "cannot read it" and "it disagrees" have the same consequence.
+
+The `@types/node` source reads the **resolved** version from
+`package-lock.json`, not the range in `package.json`, so a loose range is judged
+on what npm actually produced: `"*"` passes when it resolves inside the runtime
+major and fails when it does not. That is deliberate — the question the check
+asks is "what is `tsc` loading?", and only the lockfile answers it. It is also
+checked when `@types/node` is not named in `package.json` at all, since `tsc`
+loads a transitive copy just the same.
 
 **Forks:** if you retarget the base image (a different distro, or a pinned
 digest), keep the `FROM node:<major>` shape or this check cannot read it. If

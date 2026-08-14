@@ -71,11 +71,12 @@ export interface Manifest {
 /**
  * Stable text for an overrides block, so key order is not a change.
  *
- * Exported because `.lockfile-decisions` acknowledges an `overrides` change by
- * quoting this exact string — a decision has to be keyed on the same form the
- * comparison uses, or one written by hand could never match.
+ * Used only to answer "did the block change at all". Acknowledgements do NOT
+ * quote this form — they name a per-key transition, because a block-keyed ACK
+ * cannot tell adding an override from removing one. It was briefly exported on
+ * the assumption that they would; nothing imported it.
  */
-export function canonicalOverrides(overrides: Manifest['overrides']): string {
+function canonicalOverrides(overrides: Manifest['overrides']): string {
   if (overrides === undefined) return 'none';
   return JSON.stringify(
     Object.keys(overrides)
