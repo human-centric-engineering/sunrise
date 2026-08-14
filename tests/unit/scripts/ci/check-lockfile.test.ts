@@ -35,6 +35,31 @@ const LOCK_NO_LIBC = JSON.stringify({
 });
 const MANIFEST = JSON.stringify({ dependencies: { native: '^1' } });
 
+/**
+ * Builds a `readFileSync` implementation answering all THREE files the CLI
+ * reads: the lockfile, the manifest, and `.lockfile-decisions`.
+ *
+ * Every test routes through this rather than writing its own suffix check.
+ * When the decisions file was added, each hand-rolled implementation silently
+ * handed it the lockfile JSON, which parses as an unreadable decision and
+ * turned five gating tests into "could not be read".
+ */
+function reads({
+  lock = LOCK,
+  manifest = MANIFEST,
+  decisions = '',
+}: {
+  lock?: string;
+  manifest?: string;
+  decisions?: string;
+} = {}) {
+  return (path: string): string => {
+    const target = String(path);
+    if (target.endsWith('.lockfile-decisions')) return decisions;
+    return target.endsWith('package.json') ? manifest : lock;
+  };
+}
+
 describe('scripts/ci/check-lockfile', () => {
   let originalExitCode: typeof process.exitCode;
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -58,9 +83,7 @@ describe('scripts/ci/check-lockfile', () => {
     process.exitCode = 0;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : LOCK
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: LOCK }));
   });
 
   afterEach(() => {
@@ -90,9 +113,7 @@ describe('scripts/ci/check-lockfile', () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : LOCK
     );
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : LOCK_NO_LIBC
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: LOCK_NO_LIBC }));
 
     await run();
 
@@ -112,9 +133,7 @@ describe('scripts/ci/check-lockfile', () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : LOCK_NO_LIBC
     );
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : LOCK
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: LOCK }));
 
     await run();
 
@@ -146,9 +165,7 @@ describe('scripts/ci/check-lockfile', () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : base
     );
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : head
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: head }));
 
     await run();
 
@@ -213,9 +230,7 @@ describe('scripts/ci/check-lockfile', () => {
       mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
         a[0] === 'merge-base' ? 'abc123\n' : JSON.stringify(base)
       );
-      mockReadFileSync.mockImplementation((path: string) =>
-        String(path).endsWith('package.json') ? MANIFEST : JSON.stringify(head)
-      );
+      mockReadFileSync.mockImplementation(reads({ lock: JSON.stringify(head) }));
     }
 
     it('names each added, removed and changed package', async () => {
@@ -285,10 +300,8 @@ describe('scripts/ci/check-lockfile', () => {
         if (String(a[1]).endsWith(':package.json')) return '{"overrides":{"hono":"^4"}}';
         return LOCK;
       });
-      mockReadFileSync.mockImplementation((path: string) =>
-        String(path).endsWith('package.json')
-          ? '{"dependencies":{"native":"^1"},"overrides":{"hono":"^5"}}'
-          : LOCK
+      mockReadFileSync.mockImplementation(
+        reads({ manifest: '{"dependencies":{"native":"^1"},"overrides":{"hono":"^5"}}' })
       );
 
       await run();
@@ -306,6 +319,7 @@ describe('scripts/ci/check-lockfile', () => {
         return LOCK;
       });
       mockReadFileSync.mockImplementation((path: string) => {
+        if (String(path).endsWith('.lockfile-decisions')) return '';
         if (String(path).endsWith('package.json')) throw new Error('ENOENT');
         return LOCK;
       });
@@ -324,6 +338,7 @@ describe('scripts/ci/check-lockfile', () => {
         a[0] === 'merge-base' ? 'abc123\n' : LOCK
       );
       mockReadFileSync.mockImplementation((path: string) => {
+        if (String(path).endsWith('.lockfile-decisions')) return '';
         if (String(path).endsWith('package.json')) throw new Error('ENOENT');
         return LOCK_NO_LIBC;
       });

@@ -1,0 +1,31 @@
+# Acknowledged package-lock.json decisions.
+#
+# `npm run check:lockfile` gates on three things. Two of them are questions
+# rather than defects — a direct dependency moving backwards, and a change to
+# `overrides` — and its output asks "Intentional?" with nowhere to answer.
+# This file is the answer, written in the SAME commit as the change it
+# describes so it is reviewed as part of that diff.
+#
+# Format — one decision per line, reason after the `#`:
+#
+#   downgrade <lockfile-key> <from> -> <to>   # why, with an issue number
+#   overrides <canonical-json>                # why, with an issue number
+#
+# When the check gates it prints the exact line to add. Copy it verbatim: the
+# package field is the lockfile's own path key (`node_modules/@types/node`, and
+# `node_modules/a/node_modules/b` for a nested copy), not the bare package name.
+#
+# Entries are keyed to EXACT versions, so one acknowledges precisely one move.
+# A later, different downgrade of the same package is a new decision and fires
+# the gate again. That is also why old entries are safe to leave: once a PR
+# merges its entry stops matching, and a stale entry cannot cover a change it
+# does not name. Treat this as a decision log rather than something to prune.
+#
+# NOT acknowledgeable: lost `libc` / `os` / `cpu`. Never a decision — npm below
+# 11.11.0 drops the key on every platform, the lockfile then installs fine
+# locally and wrong on Alpine (#571), and there is a repair:
+# `npm run fix:lockfile-libc`.
+#
+# See scripts/ci/lockfile-decisions.ts and .context/architecture/ci.md.
+
+downgrade node_modules/@types/node 26.2.0 -> 24.13.3   # pinned to the runtime major — tsc was type-checking against a stdlib two majors ahead of every runtime (#584)

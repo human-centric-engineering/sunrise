@@ -212,7 +212,10 @@ pinning to `^24` produced a clean `tsc --noEmit`, so nothing depended on the
 post-24 surface. Only the MAJOR is compared — `24.x` minors should move freely,
 since that is the types package tracking Node 24's own additions.
 
-A Dependabot `ignore` holds it at `>=25`. Without it the major would re-land on
+The source reads the **resolved** version from `package-lock.json`, not the
+range in `package.json`: a range need not pin a major, and `>=24` resolves to
+26.2.0 — so a range-based reading reported "consistent" for precisely the drift
+this source was added to catch. A Dependabot `ignore` holds it at `>=25`. Without it the major would re-land on
 a Monday and turn this gate red, which is a worse way to learn the same thing;
 with it, moving the runtime means moving all five declarations **and** that
 entry together.
@@ -304,6 +307,27 @@ These help both repo types and cost nothing, so they're always on:
   makes no registry calls — which is what makes it safe as a PR gate; the
   absolute counterpart (`fix:lockfile-libc --check`, ~1,400 registry requests)
   stays on the weekly schedule in `dependency-audit.yml`.
+
+  **Answering it: `.lockfile-decisions`.** Two of the three gated risks are
+  questions rather than defects — a direct dependency moving backwards, and an
+  `overrides` change — and the check's output asked "Intentional?" with nowhere
+  to answer. A decision now lives in `.lockfile-decisions`, in the **same
+  commit** as the change it describes; the check prints the exact line to add.
+  Entries are keyed to exact versions on the lockfile's own path key, a reason
+  is mandatory, an unparseable line fails, and acknowledged risks are still
+  printed — an ACK is not a silence.
+
+  Entries that match nothing are reported and **never gate**. That is what keeps
+  fork syncs working: a fork inherits upstream's whole decision log, and only
+  the entries whose exact move that particular sync reproduces will match. An
+  earlier design gated on unmatched _new_ entries — to stop a decision being
+  landed ahead of its change — and broke every fork-sync PR, telling maintainers
+  to delete upstream's decisions. That defence was dropped deliberately: this
+  gate catches **accidents** ("an accident of recomputing the tree"), and anyone
+  able to land two PRs to game it can merge the change outright.
+
+  **Lost `libc`/`os`/`cpu` is not acknowledgeable** and must stay that way —
+  never a decision, only ever npm dropping the key, and it has a repair.
 
   It exists because `/pre-pr` runs this check locally and **Dependabot PRs never
   run `/pre-pr`**. npm below 11.11.0 deletes `libc` from every entry it writes,

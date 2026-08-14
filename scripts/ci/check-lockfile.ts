@@ -25,16 +25,23 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  canonicalOverrides,
   diffLockfiles,
   directDependencyKeys,
-  gatesAsDowngrade,
-  hasRisk,
   type Lockfile,
   type Manifest,
 } from '@/scripts/ci/lockfile-diff';
+import {
+  isOverridesAcknowledged,
+  parseDecisions,
+  partitionDowngrades,
+  unusedDecisions,
+  type LockfileDecision,
+} from '@/scripts/ci/lockfile-decisions';
 
 const LOCKFILE = 'package-lock.json';
 const MANIFEST = 'package.json';
+const DECISIONS = '.lockfile-decisions';
 
 /** git's own first line of complaint, falling back to the thrown message. */
 function describeGitFailure(error: unknown): string {
@@ -47,6 +54,53 @@ function describeGitFailure(error: unknown): string {
         ? error.message
         : String(error);
   return text.split('\n')[0].trim();
+}
+
+/** Reads a working-tree file, returning `null` when it does not exist. */
+function readOptional(path: string): string | null {
+  try {
+    return readFileSync(resolve(process.cwd(), path), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prints what was waved through, and why.
+ *
+ * An acknowledged risk must stay VISIBLE. The failure mode this whole file
+ * guards against is a check that quietly stops looking, and an ACK that
+ * suppressed its own output would be exactly that — a reviewer would see a
+ * clean run and never learn a direct dependency moved backwards.
+ */
+function reportAcknowledged(
+  acknowledged: { name: string; from: string; to: string }[],
+  overridesAcked: boolean,
+  decisions: LockfileDecision[],
+  usedLines: ReadonlySet<number>
+): void {
+  const unused = unusedDecisions(decisions, usedLines);
+  if (acknowledged.length === 0 && !overridesAcked && unused.length === 0) return;
+
+  console.log('');
+  console.log(`Acknowledged in ${DECISIONS} (still reported — an ACK is not a silence):`);
+  for (const change of acknowledged) {
+    const match = decisions.find(
+      (d) =>
+        d.kind === 'downgrade' &&
+        d.name === change.name &&
+        d.from === change.from &&
+        d.to === change.to
+    );
+    console.log(`  ${change.name} ${change.from} → ${change.to} — ${match?.reason ?? ''}`);
+  }
+  if (overridesAcked) {
+    const match = decisions.find((d) => d.kind === 'overrides' && usedLines.has(d.line));
+    console.log(`  ${MANIFEST} "overrides" changed — ${match?.reason ?? ''}`);
+  }
+  for (const stale of unused) {
+    console.log(`  (line ${stale.line} matched nothing in this diff — kept as a record)`);
+  }
 }
 
 let lastGitError = '';
@@ -234,24 +288,55 @@ export function main(argv: string[]): number {
     console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
   }
 
-  if (!hasRisk(diff)) {
+  // Recorded decisions, from the working tree — the ACK ships in the same
+  // commit as the change it describes, so it is reviewed in that diff.
+  const { decisions, errors: decisionErrors } = parseDecisions(readOptional(DECISIONS) ?? '');
+  if (decisionErrors.length > 0) {
+    console.error('');
+    console.error(`${DECISIONS} could not be read:`);
+    for (const problem of decisionErrors) console.error(`  ${problem}`);
+    return 1;
+  }
+
+  const directDowngrades = diff.changed.filter((entry) => entry.downgrade && entry.direct);
+  const { acknowledged, gating } = partitionDowngrades(directDowngrades, decisions);
+  const headCanonical = canCompareOverrides ? canonicalOverrides(headManifest?.overrides) : '';
+  const overridesAcked =
+    diff.overridesChanged &&
+    canCompareOverrides &&
+    isOverridesAcknowledged(headCanonical, decisions);
+
+  const usedLines = new Set<number>();
+  for (const change of acknowledged) {
+    const match = decisions.find(
+      (d) =>
+        d.kind === 'downgrade' &&
+        d.name === change.name &&
+        d.from === change.from &&
+        d.to === change.to
+    );
+    if (match) usedLines.add(match.line);
+  }
+  if (overridesAcked) {
+    const match = decisions.find((d) => d.kind === 'overrides' && d.canonical === headCanonical);
+    if (match) usedLines.add(match.line);
+  }
+
+  reportAcknowledged(acknowledged, overridesAcked, decisions, usedLines);
+
+  // Lost platform metadata is deliberately NOT acknowledgeable — never a
+  // decision, only ever npm dropping the key, and it has a repair.
+  const stillGating =
+    diff.lostNativeMetadata.length > 0 ||
+    gating.length > 0 ||
+    (diff.overridesChanged && !overridesAcked);
+
+  if (!stillGating) {
     const transitive = diff.changed.filter((c) => c.downgrade && !c.direct).length;
-    // A direct downgrade that did not gate is a `@types/*` one. Name it rather
-    // than folding it into the transitive count: "no direct dependency moved
-    // backwards" would be false, and an all-clear that misdescribes what it
-    // waved through is the failure this whole check exists to prevent.
-    const exempt = diff.changed.filter((c) => c.downgrade && c.direct && !gatesAsDowngrade(c));
     console.log('');
-    for (const change of exempt) {
-      console.log(
-        `  ${change.name} moved backwards (${change.from} → ${change.to}) and did NOT gate:` +
-          ` @types/* packages ship declaration files only, so a downgrade cannot reintroduce` +
-          ` a runtime vulnerability.`
-      );
-    }
     console.log(
-      `Nothing needing a decision: no lost platform metadata, no override change, and no` +
-        ` gating direct downgrade${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
+      `Nothing needing a decision: no lost platform metadata, no unacknowledged override` +
+        ` change, and no unacknowledged direct downgrade${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
     );
     return 0;
   }
@@ -267,16 +352,23 @@ export function main(argv: string[]): number {
     console.error('    platform — check `npm -v`. The lockfile will install fine locally and');
     console.error('    wrong on Alpine. Repair with `npm run fix:lockfile-libc`; background in');
     console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
+    console.error(`    NOT acknowledgeable in ${DECISIONS} — this one is never a decision.`);
   }
 
-  for (const change of diff.changed.filter(gatesAsDowngrade)) {
+  for (const change of gating) {
     console.error(`  ${change.name} went BACKWARDS: ${change.from} → ${change.to}`);
     console.error('    A direct dependency losing ground is how a patched package returns to a');
     console.error('    vulnerable one. Intentional pin, or an accident of recomputing the tree?');
+    console.error(`    If intentional, record it in ${DECISIONS}:`);
+    console.error(`      downgrade ${change.name} ${change.from} -> ${change.to}   # why (#issue)`);
   }
-  if (diff.overridesChanged) {
+  if (diff.overridesChanged && !overridesAcked) {
     console.error(`  ${MANIFEST} "overrides" changed — that forces a package past a range its`);
     console.error('    dependents declared. Intentional?');
+    if (canCompareOverrides) {
+      console.error(`    If intentional, record it in ${DECISIONS}:`);
+      console.error(`      overrides ${headCanonical}   # why (#issue)`);
+    }
   }
 
   return 1;

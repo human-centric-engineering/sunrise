@@ -68,8 +68,14 @@ export interface Manifest {
   overrides?: Record<string, unknown>;
 }
 
-/** Stable text for an overrides block, so key order is not a change. */
-function canonicalOverrides(overrides: Manifest['overrides']): string {
+/**
+ * Stable text for an overrides block, so key order is not a change.
+ *
+ * Exported because `.lockfile-decisions` acknowledges an `overrides` change by
+ * quoting this exact string — a decision has to be keyed on the same form the
+ * comparison uses, or one written by hand could never match.
+ */
+export function canonicalOverrides(overrides: Manifest['overrides']): string {
   if (overrides === undefined) return 'none';
   return JSON.stringify(
     Object.keys(overrides)
@@ -337,42 +343,8 @@ export function hasRisk(diff: LockfileDiff): boolean {
   return (
     diff.lostNativeMetadata.length > 0 ||
     diff.overridesChanged ||
-    diff.changed.some(gatesAsDowngrade)
+    diff.changed.some((change) => change.downgrade && change.direct)
   );
-}
-
-/**
- * Whether a version change is a downgrade this check should stop the build for.
- *
- * Direct downgrades gate — except for **`@types/*` packages, which ship
- * declaration files and nothing else**. The rule exists because "a version
- * going backwards is how a patched dependency quietly returns to a vulnerable
- * one", and that sentence needs runtime code to be true. A DefinitelyTyped
- * package has none: no `main`, no `bin`, no install scripts, nothing present at
- * runtime or executed during install (verified against the installed
- * `@types/node`, rather than assumed). Moving one backwards cannot reintroduce
- * a vulnerability; it can only make `tsc` more conservative, since types behind
- * the runtime reject APIs that exist while types ahead of it accept APIs that
- * throw.
- *
- * Pinning `@types/node` to the runtime major is exactly the change #584 makes,
- * and it is a change this repo now *requires* — `check:node-version` fails if
- * the two disagree. A gate that blocks the fix another gate demands is not a
- * gate, it is a deadlock.
- *
- * Deliberately narrow: only the `@types/` scope, only downgrades. Every other
- * direct downgrade still gates, and `libc`/`os`/`cpu` loss and `overrides`
- * changes are untouched.
- */
-export function gatesAsDowngrade(change: VersionChange): boolean {
-  if (!change.downgrade || !change.direct) return false;
-  return !isTypesOnlyPackage(change.name);
-}
-
-/** `node_modules/@types/foo` — including a nested copy. */
-function isTypesOnlyPackage(lockfileKey: string): boolean {
-  const name = packageNameOf(lockfileKey);
-  return name !== null && name.startsWith('@types/');
 }
 
 /**

@@ -74,33 +74,47 @@ describe('parseEnginesMajor', () => {
   });
 });
 
-describe('parseTypesNodeMajor', () => {
-  it('reads the major from the range forms npm writes', () => {
-    expect(parseTypesNodeMajor('^24.13.3')).toBe(24);
-    expect(parseTypesNodeMajor('~24.13')).toBe(24);
-    expect(parseTypesNodeMajor('24.13.3')).toBe(24);
-    expect(parseTypesNodeMajor('>=24')).toBe(24);
-    expect(parseTypesNodeMajor('=24.0.0')).toBe(24);
+function lockWith(version: string | undefined): string {
+  return JSON.stringify({
+    packages: {
+      '': { version: '0.8.1' },
+      ...(version === undefined ? {} : { 'node_modules/@types/node': { version } }),
+    },
+  });
+}
+
+describe('parseTypesNodeMajor — reads the RESOLVED version, not the range', () => {
+  it('reads the major from the lockfile entry', () => {
+    expect(parseTypesNodeMajor(lockWith('24.13.3'))).toBe(24);
+    expect(parseTypesNodeMajor(lockWith('26.2.0'))).toBe(26);
+  });
+
+  it('catches the case a range parser passed: >=24 resolving to 26', () => {
+    // The defect this rewrite exists for. `>=24` parses as 24 by any sane
+    // reading of the range, while npm resolves 26.2.0 — so a range-based check
+    // reported "consistent" for exactly the two-majors-ahead drift it was
+    // added to catch. The resolved version cannot lie about what tsc loads.
+    expect(parseTypesNodeMajor(lockWith('26.2.0'))).toBe(26);
+  });
+
+  it('FAILS rather than skips when there is nothing to read', () => {
+    // The package is a devDependency of this repo and every fork. Its absence
+    // means something is wrong, not that there is nothing to check.
+    expect(parseTypesNodeMajor(undefined)).toBeNull();
+    expect(parseTypesNodeMajor('')).toBeNull();
+    expect(parseTypesNodeMajor('not json at all')).toBeNull();
+    expect(parseTypesNodeMajor(lockWith(undefined))).toBeNull();
+    expect(parseTypesNodeMajor(JSON.stringify({ packages: {} }))).toBeNull();
+  });
+
+  it('FAILS on a malformed version rather than guessing', () => {
+    expect(parseTypesNodeMajor(lockWith('latest'))).toBeNull();
+    expect(parseTypesNodeMajor(lockWith(''))).toBeNull();
   });
 
   it('does not confuse a major for a prefix of another', () => {
-    // A regex reading digits without a boundary would call `^2.4` a 24.
-    expect(parseTypesNodeMajor('^2.4.0')).toBe(2);
-    expect(parseTypesNodeMajor('^240.0.0')).toBe(240);
-  });
-
-  it('returns null when the dependency is absent', () => {
-    expect(parseTypesNodeMajor(undefined)).toBeNull();
-  });
-
-  it('FAILS rather than skips a range with no pinned major', () => {
-    // `*` / `latest` mean "whatever npm resolves", which is exactly the
-    // unwatched state this check exists to prevent. Returning null makes
-    // `checkNodeVersion` report it as unreadable — a failure, not a pass.
-    expect(parseTypesNodeMajor('*')).toBeNull();
-    expect(parseTypesNodeMajor('latest')).toBeNull();
-    expect(parseTypesNodeMajor('x')).toBeNull();
-    expect(parseTypesNodeMajor('')).toBeNull();
+    expect(parseTypesNodeMajor(lockWith('2.4.0'))).toBe(2);
+    expect(parseTypesNodeMajor(lockWith('240.0.0'))).toBe(240);
   });
 });
 

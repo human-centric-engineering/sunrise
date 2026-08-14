@@ -418,16 +418,20 @@ release process.
 
 ### Changed
 
-- **`check:lockfile` no longer gates a direct `@types/*` downgrade.** The rule
-  exists because "a version going backwards is how a patched dependency quietly
-  returns to a vulnerable one", and that needs runtime code to be true — a
-  DefinitelyTyped package ships declaration files and nothing else (no `main`,
-  no `bin`, no install scripts). It also deadlocked against `check:node-version`,
-  which now *requires* `@types/node` to match the runtime major: one gate
-  blocking the fix another demands. Deliberately narrow — only the `@types/`
-  scope, only downgrades, and the change is still printed with the reason it did
-  not gate. Every other direct downgrade, `libc`/`os`/`cpu` loss and `overrides`
-  change is untouched (#584).
+- **`.lockfile-decisions` — a way to answer `check:lockfile`.** Two of that
+  check's three gated risks are questions rather than defects (a direct
+  dependency moving backwards, an `overrides` change), and its output asked
+  _"Intentional?"_ with nowhere to answer — so the only routes past it were
+  bypassing branch protection or weakening the gate. A decision is now recorded
+  in `.lockfile-decisions` in the **same commit** as the change it describes,
+  and the check prints the exact line to add when it gates. Entries are keyed to
+  exact versions on the lockfile's own path key, a reason is mandatory, an
+  unparseable line fails, and acknowledged risks are still printed with their
+  reason — an ACK is not a silence. Entries that match nothing are reported and
+  **never gate**, so a fork inheriting upstream's decisions is unaffected.
+  **Lost `libc`/`os`/`cpu` is deliberately not acknowledgeable**: never a
+  decision, only ever npm below 11.11.0 dropping the key, and it has a repair
+  (#584).
 - **`@types/node` pinned to the runtime major (`^26` → `^24`), and added as a
   fifth source to `npm run check:node-version`.** #581 established Node 24 as
   the floor and `node:24-alpine` as what ships, but `tsc` was type-checking
@@ -442,7 +446,11 @@ release process.
   `@types/node` with `.nvmrc`, both Dockerfiles and `engines.node`, or
   `check:node-version` fails; a fork that had been relying on the newer types
   will see real errors, and those are the point. Only the major is compared, so
-  `24.x` minors still flow through Dependabot (#584).
+  `24.x` minors still flow through Dependabot. The fifth source reads the
+  **resolved** version from `package-lock.json` rather than the range in
+  `package.json`, because a range need not pin a major — `>=24` resolves to
+  26.2.0, so a range-based check reported "consistent" for exactly the drift
+  it was added to catch (#584).
 - **A structured extraction cut off at the token cap is now an error on the
   OpenAI-compatible adapter, not partial JSON.** It already was on Anthropic
   and on the empty-content case; what changes is `finish_reason: 'length'` with

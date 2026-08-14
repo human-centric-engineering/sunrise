@@ -71,27 +71,45 @@ export function parseEnginesMajor(engines: string | undefined): number | null {
 }
 
 /**
- * `devDependencies["@types/node"]` — the major `tsc` type-checks against.
+ * The `@types/node` major `tsc` actually type-checks against.
  *
- * Accepts the caret/tilde/bare/`>=` forms npm writes (`^24.13.3`, `~24.13`,
- * `24.13.3`, `>=24`), which is the whole realistic space for a types pin.
+ * Takes `package-lock.json`'s text and reads the RESOLVED version at
+ * `packages["node_modules/@types/node"].version` — not the range in
+ * `package.json`.
  *
- * Deliberately returns `null` — a hard failure, not a skip — for a range with
- * no leading major (`*`, `latest`, `x`, a git or `file:` specifier). Those are
- * all ways of saying "whatever npm resolves", which is precisely the state this
- * check exists to prevent: the version nobody is watching. Treating them as
- * "nothing to check" would let the one declaration that silently follows the
- * registry be the one declaration exempt from the gate.
+ * That distinction is the whole point, and an earlier version of this function
+ * got it wrong by parsing the range. A range is a declaration of intent; the
+ * resolved version is the fact, and it is what ends up on disk for `tsc` to
+ * load. Several ranges npm accepts do not pin a major at all:
  *
- * Reads only the FIRST major, so a compound range (`^24 || ^26`) is judged on
- * its left side. That is a deliberate limit rather than an oversight: a types
- * pin that spans two majors cannot agree with a single runtime major in any
- * useful sense, and the failure it produces (24 vs the others) is the honest
- * answer. Same one-major assumption `parseEnginesMajor` already makes.
+ * | range      | parsed as | npm resolves |
+ * | ---------- | --------- | ------------ |
+ * | `^24.13.3` | 24        | 24.13.3      |
+ * | `>=24`     | **24**    | **26.2.0**   |
+ * | `>24`      | **24**    | **26.2.0**   |
+ *
+ * So `>=24` sailed through a check whose entire purpose is to catch `tsc`
+ * running two majors ahead of the runtime, and `>24` parsed as the one major it
+ * excludes. Reading the lockfile removes range interpretation from the problem
+ * rather than trying to enumerate the safe forms.
+ *
+ * Returns `null` — a hard failure, not a skip — when the lockfile is missing,
+ * unparseable, or has no entry. The package is a devDependency of this repo and
+ * of every fork; its absence means something is wrong, not that there is
+ * nothing to check.
  */
-export function parseTypesNodeMajor(range: string | undefined): number | null {
-  if (!range) return null;
-  const match = /^\s*(?:[\^~]|>=?|=)?\s*v?(\d+)(?:[.\s]|$)/.exec(range);
+export function parseTypesNodeMajor(lockfileText: string | undefined): number | null {
+  if (!lockfileText) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lockfileText);
+  } catch {
+    return null;
+  }
+  const packages = (parsed as { packages?: Record<string, { version?: string }> }).packages;
+  const version = packages?.['node_modules/@types/node']?.version;
+  if (typeof version !== 'string') return null;
+  const match = /^v?(\d+)\./.exec(version);
   return match ? Number(match[1]) : null;
 }
 

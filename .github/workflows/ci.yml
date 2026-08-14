@@ -173,7 +173,10 @@ jobs:
                 ;;
             esac
             case "$file" in
-              package.json | package-lock.json)
+              # `.lockfile-decisions` is here so a malformed entry is caught in
+              # the PR that writes it, rather than surfacing on the next
+              # dependency PR and looking like that author's problem.
+              package.json | package-lock.json | .lockfile-decisions)
                 DEPS=true
                 echo "Dependency manifest change detected: $file"
                 ;;

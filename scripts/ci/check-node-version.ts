@@ -70,6 +70,21 @@ try {
   typesNode = undefined;
 }
 
+// The RESOLVED version, which is what `tsc` loads. The range in `package.json`
+// is read only to show the operator what they wrote — `>=24` resolves to 26,
+// so a range cannot answer "what is tsc checking against?".
+const lockfile = read('package-lock.json');
+
+/** The resolved version, for the evidence string — parsing lives in the rules. */
+function resolvedTypesNode(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as { packages?: Record<string, { version?: string }> };
+    return parsed.packages?.['node_modules/@types/node']?.version;
+  } catch {
+    return undefined;
+  }
+}
+
 const nvmrc = read('.nvmrc');
 const dockerfile = read('Dockerfile');
 const dockerfileDev = read('Dockerfile.dev');
@@ -98,9 +113,11 @@ const sources: NodeVersionSource[] = [
   {
     // What `tsc` type-checks against. Ahead of the runtime, it accepts APIs
     // that throw in the production image and reports nothing (#584).
-    label: 'package.json @types/node',
-    major: parseTypesNodeMajor(typesNode),
-    raw: pkg.missing ? '(package.json not found)' : (typesNode ?? '(@types/node absent)'),
+    label: '@types/node (resolved)',
+    major: parseTypesNodeMajor(lockfile.missing ? undefined : lockfile.text),
+    raw: lockfile.missing
+      ? '(package-lock.json not found)'
+      : `${typesNode ?? '(range absent)'} → ${resolvedTypesNode(lockfile.text) ?? '(no lockfile entry)'}`,
   },
 ];
 

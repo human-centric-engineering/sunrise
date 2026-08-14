@@ -13,7 +13,6 @@ import { describe, it, expect } from 'vitest';
 import {
   diffLockfiles,
   directDependencyKeys,
-  gatesAsDowngrade,
   hasRisk,
   isDowngrade,
   type Lockfile,
@@ -481,78 +480,5 @@ describe('diffLockfiles', () => {
 
   it('tolerates a lockfile with no packages at all', () => {
     expect(diffLockfiles({}, {})).toMatchObject({ added: [], removed: [], changed: [] });
-  });
-});
-
-describe('@types/* downgrades do not gate (#584)', () => {
-  // The rule's own justification — "a version going backwards is how a patched
-  // dependency quietly returns to a vulnerable one" — needs runtime code to be
-  // true. A DefinitelyTyped package has none: no `main`, no `bin`, no install
-  // scripts, nothing present at runtime. And pinning `@types/node` to the
-  // runtime major is a change `check:node-version` now REQUIRES, so gating it
-  // here would make two checks contradict each other.
-  function lock(name: string, version: string): Lockfile {
-    return { packages: { '': { version: '1.0.0' }, [name]: { version } } };
-  }
-  const direct = (name: string) => ({ directDependencies: new Set([name]) });
-
-  it('does not gate a direct @types/* downgrade', () => {
-    const diff = diffLockfiles(
-      lock('node_modules/@types/node', '26.2.0'),
-      lock('node_modules/@types/node', '24.13.3'),
-      direct('node_modules/@types/node')
-    );
-
-    // Still REPORTED as a direct downgrade — the exemption is about gating,
-    // not about hiding it.
-    expect(diff.changed[0]).toMatchObject({ downgrade: true, direct: true });
-    expect(gatesAsDowngrade(diff.changed[0])).toBe(false);
-    expect(hasRisk(diff)).toBe(false);
-  });
-
-  it('STILL gates a direct downgrade of a package with runtime code', () => {
-    // The exemption must be narrow. This is the case it must not swallow.
-    const diff = diffLockfiles(
-      lock('node_modules/lodash', '4.17.21'),
-      lock('node_modules/lodash', '4.17.11'),
-      direct('node_modules/lodash')
-    );
-
-    expect(gatesAsDowngrade(diff.changed[0])).toBe(true);
-    expect(hasRisk(diff)).toBe(true);
-  });
-
-  it('does not exempt a package merely because its name contains @types', () => {
-    // `@typescript-eslint/parser` ships runtime code, and a name-substring
-    // match would wave it through.
-    for (const name of [
-      'node_modules/@typescript-eslint/parser',
-      'node_modules/types-are-fun',
-      'node_modules/my-@types/node',
-    ]) {
-      const diff = diffLockfiles(lock(name, '2.0.0'), lock(name, '1.0.0'), direct(name));
-      expect(gatesAsDowngrade(diff.changed[0])).toBe(true);
-    }
-  });
-
-  it('exempts a nested @types/* copy too', () => {
-    const name = 'node_modules/foo/node_modules/@types/node';
-    const diff = diffLockfiles(lock(name, '26.0.0'), lock(name, '24.0.0'), direct(name));
-
-    expect(gatesAsDowngrade(diff.changed[0])).toBe(false);
-  });
-
-  it('does not exempt an @types/* UPGRADE from being a non-event', () => {
-    // Sanity: the exemption is scoped to downgrades, and an upgrade was never
-    // gating in the first place.
-    const diff = diffLockfiles(
-      lock('node_modules/@types/node', '24.0.0'),
-      lock('node_modules/@types/node', '26.0.0'),
-      direct('node_modules/@types/node')
-    );
-
-    expect(diff.changed[0].downgrade).toBe(false);
-    expect(gatesAsDowngrade(diff.changed[0])).toBe(false);
-    expect(hasRisk(diff)).toBe(false);
   });
 });
