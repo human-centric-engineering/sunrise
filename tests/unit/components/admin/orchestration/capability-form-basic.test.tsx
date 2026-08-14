@@ -678,6 +678,142 @@ describe('CapabilityForm — Basic tab', () => {
         expect(screen.getByText(/slug already taken/i)).toBeInTheDocument();
       });
     });
+
+    // ── An UNTOUCHED definition is not sent for a system row (#598) ─────────
+    //
+    // The API 403s a write that CHANGES `functionDefinition` on a system row,
+    // and what this form holds is not the stored value: `initialFunctionState`
+    // normalises it on load — `name` forced to the slug, a non-string
+    // `description` replaced with `''`, `parameters` coerced. So on a system
+    // row whose stored definition does not already match that normalisation, a
+    // save that only edited the DESCRIPTION came back 403 naming
+    // `functionDefinition` — the one field the operator has no way to fix
+    // there, leaving the row uneditable.
+    //
+    // The fixture reproduces it without contrivance: `functionDefinition.name`
+    // is `existing_capability` while the slug is `existing-capability`, so the
+    // normalisation genuinely rewrites it.
+    //
+    // The omission is deliberately conditional. Dropping the field on every
+    // system save would be worse than the bug it fixes: a deliberate edit in
+    // the Function tab would vanish and the form would report "Saved". See the
+    // next test.
+    it('does not send an UNTOUCHED function definition on a system capability', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ id: 'cap-edit-1' });
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            isSystem: true,
+            functionDefinition: {
+              name: 'existing_capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      const descriptionInput = screen.getByRole('textbox', { name: /^description/i });
+      await user.clear(descriptionInput);
+      await user.type(descriptionInput, 'Operator edited only this');
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+      const body = vi.mocked(apiClient.patch).mock.calls[0][1]?.body as Record<string, unknown>;
+      expect(body).toHaveProperty('description', 'Operator edited only this');
+      expect(Object.prototype.hasOwnProperty.call(body, 'functionDefinition')).toBe(false);
+      // The slug was already dropped for its own reason; the others are still
+      // sent, because they come straight from the stored row and so cannot
+      // differ from it unless the operator edits them.
+      expect(Object.prototype.hasOwnProperty.call(body, 'slug')).toBe(false);
+      expect(body).toHaveProperty('executionType');
+    });
+
+    it('DOES send an edited definition on a system row, so the API can refuse it', async () => {
+      // The half that makes the omission honest. A deliberate edit must reach
+      // the server and come back 403 with a message naming the seed unit —
+      // dropping it here would report "Saved" over a change that never
+      // happened, which is the silent failure the whole issue is about.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ id: 'cap-edit-1' });
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            isSystem: true,
+            functionDefinition: {
+              name: 'existing-capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      await user.click(screen.getByRole('tab', { name: /function definition/i }));
+      await user.click(screen.getByRole('button', { name: /^json editor$/i }));
+      fireEvent.change(screen.getByRole('textbox', { name: /json editor/i }), {
+        target: {
+          value: JSON.stringify({
+            name: 'existing-capability',
+            description: 'An edit the operator meant',
+            parameters: { type: 'object', properties: {} },
+          }),
+        },
+      });
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+      const body = vi.mocked(apiClient.patch).mock.calls[0][1]?.body as Record<string, unknown>;
+      expect(body.functionDefinition).toMatchObject({
+        description: 'An edit the operator meant',
+      });
+    });
+
+    it('still sends the function definition for a NON-system capability', async () => {
+      // The omission keys on `isSystem`. An operator-owned capability's
+      // definition is theirs to edit, and dropping it would make the Function
+      // tab silently do nothing.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ id: 'cap-edit-1' });
+
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({
+            isSystem: false,
+            functionDefinition: {
+              name: 'existing_capability',
+              description: 'Does something',
+              parameters: { type: 'object', properties: {} },
+            },
+          })}
+          availableCategories={['api']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+      const body = vi.mocked(apiClient.patch).mock.calls[0][1]?.body as Record<string, unknown>;
+      expect(body).toHaveProperty('functionDefinition');
+      expect(body).toHaveProperty('executionType');
+      expect(body).toHaveProperty('executionHandler');
+    });
   });
 
   // ── Metadata validation ──────────────────────────────────────────────────

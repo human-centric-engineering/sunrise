@@ -142,7 +142,8 @@ await prisma.aiCapability.upsert({
 **The write paths enforce this split on system rows** (#598), via `changedSeedOwnedFields()` in `lib/orchestration/capabilities/seed-owned.ts`:
 
 - `PATCH /capabilities/{id}` returns **403** naming the fields, rather than accepting an edit the next re-seed reverts with no audit entry.
-- The **config importer** skips those fields on a system row and records a warning, rather than failing the whole restore. Sunrise's exporter filters `isSystem: false`, so only a hand-edited or foreign bundle reaches that path.
+- The **config importer** skips those fields on a system row and records a warning, rather than failing the whole restore. Sunrise's exporter filters `isSystem: false`, so only a hand-edited or foreign bundle reaches that path. It also skips `isActive: false` on a system row, because PATCH refuses that too — deactivating a built-in is equivalent to deleting it, and no re-seed restores it (seeds set `isActive` only in their `create` branch). Re-activating is still imported.
+- The **capability form** does not send an _untouched_ `functionDefinition` for a system row. It has to normalise the stored definition on load — `name` forced to the slug, a non-string `description` replaced, `parameters` coerced — so a row whose stored value did not already match that normalisation would 403 a save that only edited the description, naming the one field the operator cannot fix there. An **edited** definition is still sent and still refused: dropping it unconditionally would silently discard a deliberate edit and report "Saved", which is a worse failure than the one being fixed.
 
 `slug` is guarded alongside the three, for a different reason: it is the upsert's `where` key, so a rename is **not** reverted — the next re-seed matches nothing and creates a **second row** for one built-in.
 

@@ -22,10 +22,31 @@
  * distinct (they are in `jsonb` too). Object comparison ignores keys whose
  * value is `undefined` on neither side — JSON has no such value, so any input
  * carrying one is already outside the domain and is compared literally.
- * Non-JSON values (functions, symbols) compare by identity via `===`.
+ * Non-JSON values (functions, symbols) compare by identity via `===`; so do
+ * non-plain objects (`Date`, `Map`, `Set`, `RegExp`, class instances), which
+ * are otherwise reported UNEQUAL — see {@link isPlainObject}.
  */
 
 import { isRecord } from '@/lib/utils';
+
+/**
+ * A `{}` or `Object.create(null)` object — not a `Date`, `Map`, `Set`,
+ * `RegExp` or class instance.
+ *
+ * `isRecord` is true for ANY non-array object, and every one of those types
+ * has an empty set of own enumerable keys — so without this check
+ * `jsonEquals(new Date(0), new Date(1e12))` compares `{}` to `{}` and answers
+ * `true`. Same for two `Map`s with different contents, or `/a/` and `/b/`.
+ *
+ * None of them are JSON values, so a caller holding one is outside this
+ * function's domain either way; the choice is only in how it says so, and
+ * "these two different values are equal" is the worst available answer.
+ * Identical instances still compare equal via the `a === b` fast path.
+ */
+function isPlainObject(value: object): boolean {
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
 
 export function jsonEquals(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -45,6 +66,7 @@ export function jsonEquals(a: unknown, b: unknown): boolean {
 
   if (isRecord(a) || isRecord(b)) {
     if (!isRecord(a) || !isRecord(b)) return false;
+    if (!isPlainObject(a) || !isPlainObject(b)) return false;
     const aKeys = Object.keys(a);
     const bKeys = Object.keys(b);
     if (aKeys.length !== bKeys.length) return false;

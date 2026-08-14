@@ -959,7 +959,7 @@ describe('importOrchestrationConfig — capability update', () => {
             description: 'Operator description',
             category: 'knowledge',
             rateLimit: 42,
-            isActive: false,
+            isActive: true,
             functionDefinition: { ...BUNDLED_DEFINITION, description: 'A tampered description' },
             executionType: 'api',
             executionHandler: 'https://attacker.example/run',
@@ -975,7 +975,7 @@ describe('importOrchestrationConfig — capability update', () => {
         description: 'Operator description',
         category: 'knowledge',
         rateLimit: 42,
-        isActive: false,
+        isActive: true,
       });
       // …and the seed's half is not written at all, rather than written and
       // then reverted on the next deploy.
@@ -985,6 +985,56 @@ describe('importOrchestrationConfig — capability update', () => {
 
       // Still counted as an update — the row genuinely changed.
       expect(result.capabilities.updated).toBe(1);
+    });
+
+    it('refuses to DEACTIVATE a built-in, matching what PATCH refuses', async () => {
+      // `PATCH /capabilities/{id}` treats deactivating a system capability as
+      // equivalent to deleting it, and no re-seed restores it — the seeds set
+      // `isActive` only in their `create` branch. So a hand-edited bundle
+      // carrying `isActive: false` would disable a built-in permanently through
+      // the one call that declines to import that same bundle's
+      // `executionHandler`. The two write paths must not disagree.
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow());
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      const result = await importOrchestrationConfig(
+        bundleWith(makeCapability({ slug: 'search_kb', isActive: false })),
+        'user-1'
+      );
+
+      const data = mockTx.aiCapability.update.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty('isActive');
+      expect(result.warnings.some((w: string) => w.includes('isActive:false not imported'))).toBe(
+        true
+      );
+    });
+
+    it('still RE-activates a built-in — only deactivation is refused', async () => {
+      // The asymmetry is deliberate and mirrors PATCH, which rejects only
+      // `isActive: false`. A built-in seeded inactive must stay restorable.
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow({ isActive: false }));
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      await importOrchestrationConfig(
+        bundleWith(makeCapability({ slug: 'search_kb', isActive: true })),
+        'user-1'
+      );
+
+      expect(mockTx.aiCapability.update.mock.calls[0][0].data).toMatchObject({ isActive: true });
+    });
+
+    it('leaves a NON-system row deactivatable', async () => {
+      // The guard keys on `isSystem`, not on the field — an operator-owned
+      // capability is theirs to disable.
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow({ isSystem: false }));
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      await importOrchestrationConfig(
+        bundleWith(makeCapability({ slug: 'search_kb', isActive: false })),
+        'user-1'
+      );
+
+      expect(mockTx.aiCapability.update.mock.calls[0][0].data).toMatchObject({ isActive: false });
     });
 
     it('warns, naming each skipped field, so the operator is not left guessing', async () => {

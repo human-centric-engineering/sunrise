@@ -24,8 +24,10 @@
  * Skips cleanly (exit 0) when no database is reachable, so it is safe to invoke
  * anywhere — it only does real work where a DB exists.
  *
- * Self-cleaning: creates one `smoke-test-seed-ownership-*` capability and
- * removes it on every path. Never touches seed data.
+ * Self-cleaning: creates one `smoke-test-seed-ownership_*` capability and
+ * removes it on every path, plus a prefix-scoped sweep at startup for the one
+ * path `finally` cannot cover — a signal between the create and the delete.
+ * Never touches seed data.
  *
  * Run with:
  *   npm run smoke:capability-ownership
@@ -74,6 +76,21 @@ async function main(): Promise<void> {
       'smoke:capability-ownership skipped — no database reachable (DATABASE_URL unset or DB down).'
     );
     return;
+  }
+
+  // 0. Sweep any row a previous run left behind. `finally` covers a thrown
+  //    assertion but not a Ctrl-C or a SIGTERM between the create and the
+  //    delete — and what it would strand is an `isSystem` capability that NO
+  //    application path can remove: DELETE refuses `isSystem`, PATCH refuses
+  //    `isActive: false` on it, and the guard this script exists to prove
+  //    refuses its seed-owned fields. It would sit in the admin list and in
+  //    `getCapabilityDefinitions` until someone reached for psql. Scoped to the
+  //    script's own prefix, per `scripts/smoke/README.md` safety rule 2.
+  const swept = await prisma.aiCapability.deleteMany({
+    where: { slug: { startsWith: `${PREFIX}_` } },
+  });
+  if (swept.count > 0) {
+    console.log(`  swept ${swept.count} stranded row(s) from an interrupted run`);
   }
 
   let capabilityId: string | null = null;

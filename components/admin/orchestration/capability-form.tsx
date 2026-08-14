@@ -53,6 +53,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
+import { jsonEquals } from '@/lib/utils/json-equal';
 import type { AiCapability } from '@/types/prisma';
 
 /**
@@ -910,7 +911,28 @@ export function CapabilityForm({
         // it stopped being harmless: the server caps new slugs at 64, so
         // echoing a longer legacy slug would fail validation and leave the
         // capability uneditable through a field the admin cannot change.
-        const { slug: _unusedSlug, ...editPayload } = payload;
+        const { slug: _unusedSlug, functionDefinition, ...operatorOwned } = payload;
+        // Same reasoning one field further, but conditionally. On a system row
+        // the seeds own `functionDefinition` and the API 403s a write that
+        // CHANGES it (#598) — and what this form holds is not the stored value:
+        // `initialFunctionState` normalises it on load, forcing `name` to the
+        // slug, replacing a non-string `description` with `''` and coercing
+        // `parameters`. A stored definition that does not already match that
+        // normalisation therefore arrives DIFFERENT from a save that only
+        // touched the description, and the 403 names `functionDefinition` —
+        // the one field the operator has no way to fix here, leaving the row
+        // uneditable.
+        //
+        // So omit it, but ONLY when the operator did not touch it:
+        // `initialParsedFn` is exactly what the form loaded, so an untouched
+        // save compares equal to it. A real edit is still sent, and still
+        // refused by the API with a message saying why. Omitting it
+        // unconditionally would be worse than the bug — it would silently
+        // discard a deliberate edit and report "Saved".
+        const editPayload =
+          capability.isSystem && jsonEquals(functionDefinition, initialParsedFn)
+            ? operatorOwned
+            : { ...operatorOwned, functionDefinition };
         await apiClient.patch<AiCapability>(API.ADMIN.ORCHESTRATION.capabilityById(capability.id), {
           body: editPayload,
         });

@@ -278,8 +278,25 @@ export async function importOrchestrationConfig(
           executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           requiresApproval: cap.requiresApproval,
           rateLimit: cap.rateLimit,
-          isActive: cap.isActive,
         };
+
+        // `PATCH /capabilities/{id}` refuses `isActive: false` on a system row —
+        // deactivating a built-in is treated as equivalent to deleting it — and
+        // nothing puts it back: every capability seed sets `isActive` only in
+        // its `create` branch, so a re-seed will not undo it. An import must not
+        // do what the API refuses, or a hand-edited bundle carrying
+        // `{"slug":"upload_to_storage","isActive":false}` silently disables a
+        // built-in for good, through the same call that declines to import that
+        // bundle's `executionHandler`.
+        //
+        // Re-ACTIVATING stays allowed, exactly as PATCH allows it.
+        if (existing.isSystem && cap.isActive === false) {
+          result.warnings.push(
+            `System capability '${cap.slug}' — isActive:false not imported; deactivating a built-in is equivalent to deleting it and no re-seed restores it`
+          );
+        } else {
+          data.isActive = cap.isActive;
+        }
 
         // On a system row the seeds own the execution fields, so importing them
         // would write a change the next re-seed reverts with no audit entry.
@@ -287,8 +304,8 @@ export async function importOrchestrationConfig(
         // the agent path above does): an import is a whole-config restore, and
         // refusing it because the bundle carries a built-in's shipped
         // definition would make routine restores unusable. Everything the
-        // operator owns — name, description, category, rate limit, approval,
-        // active state — still restores.
+        // operator owns — name, description, category, rate limit, approval —
+        // still restores.
         //
         // Sunrise's own exporter filters `isSystem: false`, so a bundle this
         // produced never reaches here with a system capability. A hand-edited

@@ -122,11 +122,62 @@ describe('jsonEquals — primitives and hostile input', () => {
   });
 
   it('does not accept an inherited property in place of an own one', () => {
-    const polluted = Object.create({ a: 1 }) as Record<string, unknown>;
-    polluted.b = 2;
+    // The own-key COUNTS have to match for this to test what it claims. The
+    // first version of this test used `Object.create({ a: 1 })`, whose own keys
+    // number one against the other side's two — so it returned false at the
+    // length check and would have passed just as happily with `key in b`.
+    //
+    // Polluting `Object.prototype` instead keeps both sides plain objects with
+    // two own keys each, and puts the inherited `x` only on the side that does
+    // not own it. `key in b` reports true for `x`, compares 1 to the inherited
+    // 1, then matches `y` — and calls two different objects equal.
+    const proto = Object.prototype as unknown as Record<string, unknown>;
+    proto.x = 1;
+    try {
+      const b = { y: 2, w: 9 };
+      expect('x' in b).toBe(true);
+      expect(Object.keys(b)).toHaveLength(2);
 
-    // `'a' in polluted` is true, so a `key in b` check would pass this.
-    expect(jsonEquals({ a: 1, b: 2 }, polluted)).toBe(false);
+      expect(jsonEquals({ x: 1, y: 2 }, b)).toBe(false);
+    } finally {
+      delete proto.x;
+    }
+  });
+
+  it('reports non-plain objects UNEQUAL rather than comparing their empty key sets', () => {
+    // `isRecord` is true for any non-array object, and `Date`/`Map`/`Set`/
+    // `RegExp` all have zero own enumerable keys — so without the plain-object
+    // guard each of these compares `{}` to `{}` and answers `true`. None are
+    // JSON values, but "two different values are equal" is the worst way to
+    // say so, and this helper is exported for reuse.
+    expect(jsonEquals(new Date(0), new Date(1_000_000_000_000))).toBe(false);
+    expect(jsonEquals(new Map([['a', 1]]), new Map([['b', 2]]))).toBe(false);
+    expect(jsonEquals(new Set([1]), new Set([2]))).toBe(false);
+    expect(jsonEquals(/a/, /b/)).toBe(false);
+
+    class Thing {
+      constructor(public v: number) {}
+    }
+    expect(jsonEquals(new Thing(1), new Thing(2))).toBe(false);
+    // Even matching contents: the guard does not try to decide, it declines.
+    expect(jsonEquals(new Date(0), new Date(0))).toBe(false);
+    // A non-plain object is never equal to the plain object it mirrors.
+    expect(jsonEquals(new Thing(1), { v: 1 })).toBe(false);
+  });
+
+  it('still compares the same instance as equal, via the identity fast path', () => {
+    const d = new Date(0);
+    expect(jsonEquals(d, d)).toBe(true);
+  });
+
+  it('compares a null-prototype object as the plain object it is', () => {
+    // `Object.create(null)` is what a JSON parser may hand back in hardened
+    // code, and it is a JSON value in every sense that matters here.
+    const bare = Object.create(null) as Record<string, unknown>;
+    bare.a = 1;
+
+    expect(jsonEquals(bare, { a: 1 })).toBe(true);
+    expect(jsonEquals(bare, { a: 2 })).toBe(false);
   });
 
   it('handles deeply nested structures without blowing up', () => {

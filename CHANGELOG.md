@@ -210,7 +210,9 @@ release process.
   calls it changed. The two existing `valuesEqual` helpers
   (`agent-version-diff.ts`, `apply-audit-changes.ts`) are deliberately *not*
   key-order-insensitive — both compare values produced by the same code path on
-  both sides (#598).
+  both sides. Values that are not JSON — `Date`, `Map`, `Set`, `RegExp`, class
+  instances — are reported **unequal** rather than compared by their (empty) own
+  key sets, which would otherwise make any two `Date`s equal (#598).
 - **`SEED_OWNED_CAPABILITY_FIELDS`, `changedSeedOwnedFields()` and the types
   `SeedOwnedCapabilityField` / `SeedOwnedCapabilityValues` on
   `@/lib/orchestration/capabilities`** — the single definition of which
@@ -653,7 +655,24 @@ release process.
   skips just those fields and records a warning, so a whole-config restore is
   not failed by a bundle carrying a built-in's shipped definition. The System
   badge and banner in the capability form now name what is protected rather than
-  leaving the operator to discover it at save time (#598).
+  leaving the operator to discover it at save time. The form also stops sending
+  an **untouched** `functionDefinition` for a system row: it normalises the
+  stored definition on load — forcing `name` to the slug, replacing a non-string
+  `description`, coercing `parameters` — so a row whose stored value did not
+  already match that normalisation would have 403'd a save that only edited the
+  description, naming the one field the operator has no way to fix there. An
+  edited definition is still sent, and still refused with a message saying why;
+  dropping it unconditionally would silently discard a deliberate edit and
+  report "Saved" (#598).
+- **The config importer no longer deactivates a built-in capability.**
+  `PATCH …/capabilities/{id}` treats `isActive: false` on a system row as
+  equivalent to deleting it and refuses; the importer applied it, and nothing
+  put it back — every capability seed sets `isActive` only in its `create`
+  branch, so no re-seed restores it. A hand-edited or foreign bundle carrying
+  `{"slug":"upload_to_storage","isActive":false}` therefore disabled a built-in
+  permanently, through the same call that declines to import that bundle's
+  `executionHandler`. It is now skipped with a warning. Re-**activating** is
+  still imported, exactly as PATCH still allows it (#598).
 
 - **CI's changed-file detection no longer caps at 100 files, silently skipping
   every gate.** The `config` job read `gh pr view --json files`, which goes
