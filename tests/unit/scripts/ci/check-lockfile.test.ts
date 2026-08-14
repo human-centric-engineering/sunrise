@@ -35,6 +35,18 @@ const LOCK_NO_LIBC = JSON.stringify({
 });
 const MANIFEST = JSON.stringify({ dependencies: { native: '^1' } });
 
+/**
+ * Builds a `readFileSync` implementation answering both files the CLI reads.
+ *
+ * Every test routes through this rather than writing its own suffix check: a
+ * per-test override that forgets a newly-added file silently hands it the
+ * wrong contents, which is how five gating tests once started failing with
+ * "could not be read".
+ */
+function reads({ lock = LOCK, manifest = MANIFEST }: { lock?: string; manifest?: string } = {}) {
+  return (path: string): string => (String(path).endsWith('package.json') ? manifest : lock);
+}
+
 describe('scripts/ci/check-lockfile', () => {
   let originalExitCode: typeof process.exitCode;
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -58,9 +70,7 @@ describe('scripts/ci/check-lockfile', () => {
     process.exitCode = 0;
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : LOCK
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: LOCK }));
   });
 
   afterEach(() => {
@@ -90,9 +100,7 @@ describe('scripts/ci/check-lockfile', () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : LOCK
     );
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : LOCK_NO_LIBC
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: LOCK_NO_LIBC }));
 
     await run();
 
@@ -112,9 +120,7 @@ describe('scripts/ci/check-lockfile', () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : LOCK_NO_LIBC
     );
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : LOCK
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: LOCK }));
 
     await run();
 
@@ -146,9 +152,7 @@ describe('scripts/ci/check-lockfile', () => {
     mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
       a[0] === 'merge-base' ? 'abc123\n' : base
     );
-    mockReadFileSync.mockImplementation((path: string) =>
-      String(path).endsWith('package.json') ? MANIFEST : head
-    );
+    mockReadFileSync.mockImplementation(reads({ manifest: MANIFEST, lock: head }));
 
     await run();
 
@@ -213,9 +217,7 @@ describe('scripts/ci/check-lockfile', () => {
       mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
         a[0] === 'merge-base' ? 'abc123\n' : JSON.stringify(base)
       );
-      mockReadFileSync.mockImplementation((path: string) =>
-        String(path).endsWith('package.json') ? MANIFEST : JSON.stringify(head)
-      );
+      mockReadFileSync.mockImplementation(reads({ lock: JSON.stringify(head) }));
     }
 
     it('names each added, removed and changed package', async () => {
@@ -263,7 +265,11 @@ describe('scripts/ci/check-lockfile', () => {
       expect(out()).toContain('1 transitive downgrade');
     });
 
-    it('gates and explains a direct downgrade', async () => {
+    it('reports a direct downgrade prominently WITHOUT gating', async () => {
+      // It used to gate. Over 134 lockfile commits it fired twice, on two
+      // deliberate pins — and `dependency-review` measures the real risk (a
+      // KNOWN-vulnerable version) on every public PR. The signal stays; the
+      // false failure goes.
       serve({
         packages: {
           '': { version: '0.8.1' },
@@ -272,9 +278,28 @@ describe('scripts/ci/check-lockfile', () => {
       });
 
       await run();
-      expect(process.exitCode).toBe(1);
+
+      expect(process.exitCode).toBe(0);
       expect(out()).toContain('DOWNGRADE (direct)');
-      expect(out()).toContain('went BACKWARDS');
+      expect(out()).toContain('moved BACKWARDS');
+      // The private-fork caveat must survive: that is where nothing else looks.
+      expect(out()).toContain('PRIVATE fork');
+    });
+
+    it('still gates lost platform metadata alongside a direct downgrade', async () => {
+      // The downgrade relaxation must not leak into the rule that actually
+      // shipped broken (#571).
+      serve({
+        packages: {
+          '': { version: '0.8.1' },
+          'node_modules/native': { version: '0.5.0', os: ['linux'] },
+        },
+      });
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain('lost libc');
     });
 
     it('gates a change to overrides, read from package.json', async () => {
@@ -285,10 +310,8 @@ describe('scripts/ci/check-lockfile', () => {
         if (String(a[1]).endsWith(':package.json')) return '{"overrides":{"hono":"^4"}}';
         return LOCK;
       });
-      mockReadFileSync.mockImplementation((path: string) =>
-        String(path).endsWith('package.json')
-          ? '{"dependencies":{"native":"^1"},"overrides":{"hono":"^5"}}'
-          : LOCK
+      mockReadFileSync.mockImplementation(
+        reads({ manifest: '{"dependencies":{"native":"^1"},"overrides":{"hono":"^5"}}' })
       );
 
       await run();

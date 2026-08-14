@@ -463,6 +463,12 @@ rather than reaching for the off switch:
    because an override forces a package past a range its dependents declared,
    which can break the dependent — test the affected path before merging one.
 
+   **Removing one gates too**, and should: dropping an override that was
+   fixing a CVE walks the patched transitive straight back to the vulnerable
+   version, and is exactly as much of a decision as adding it was. There is no
+   acknowledgement facility — an `overrides` change is cleared by review, not by
+   a file.
+
 3. **If overriding genuinely breaks things**, there is no good option today.
    `--report` drops gating entirely and `--floor` drops a whole severity; both
    throw away the whole signal to silence one finding. The intended answer is a

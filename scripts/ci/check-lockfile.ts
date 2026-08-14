@@ -3,7 +3,9 @@
  *
  * Reports what moved between the base revision and this one, and exits
  * non-zero only for the changes that need a human decision (see
- * {@link hasRisk}). Run by `/pre-pr` when the lockfile is in the diff.
+ * {@link hasRisk}). A direct downgrade is reported but does NOT gate — see
+ * `directDowngrades` in `lockfile-diff.ts` for the measurement behind that.
+ * Run by `/pre-pr` when the lockfile is in the diff.
  *
  * The rules, and why each exists, live in `scripts/ci/lockfile-diff.ts`.
  *
@@ -27,6 +29,7 @@ import { resolve } from 'node:path';
 import {
   diffLockfiles,
   directDependencyKeys,
+  directDowngrades,
   hasRisk,
   type Lockfile,
   type Manifest,
@@ -233,12 +236,28 @@ export function main(argv: string[]): number {
     console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
   }
 
+  // Direct downgrades are reported in their own block and do NOT gate. They
+  // used to; see `directDowngrades` in `lockfile-diff.ts` for the measurement
+  // that changed it. The block is deliberately prominent, because on a private
+  // fork `dependency-review` is skipped and this is the only per-PR sight of it.
+  const downgrades = directDowngrades(diff);
+  if (downgrades.length > 0) {
+    console.log('');
+    console.log(`${downgrades.length} direct dependency(ies) moved BACKWARDS:`);
+    for (const change of downgrades) {
+      console.log(`  ${change.name} ${change.from} → ${change.to}`);
+    }
+    console.log('  Not a failure — `dependency-review` fails a PR that lands on a KNOWN');
+    console.log('  vulnerable version, which is the actual risk. On a PRIVATE fork that');
+    console.log('  action is skipped, so check this one yourself.');
+  }
+
   if (!hasRisk(diff)) {
-    const transitive = diff.changed.filter((c) => c.downgrade).length;
+    const transitive = diff.changed.filter((c) => c.downgrade && !c.direct).length;
     console.log('');
     console.log(
-      `Nothing needing a decision: no lost platform metadata, no override change, and no` +
-        ` direct dependency moved backwards${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
+      `Nothing needing a decision: no lost platform metadata and no override change` +
+        `${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
     );
     return 0;
   }
@@ -256,14 +275,13 @@ export function main(argv: string[]): number {
     console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
   }
 
-  for (const change of diff.changed.filter((entry) => entry.downgrade && entry.direct)) {
-    console.error(`  ${change.name} went BACKWARDS: ${change.from} → ${change.to}`);
-    console.error('    A direct dependency losing ground is how a patched package returns to a');
-    console.error('    vulnerable one. Intentional pin, or an accident of recomputing the tree?');
-  }
-  if (diff.overridesChanged) {
-    console.error(`  ${MANIFEST} "overrides" changed — that forces a package past a range its`);
-    console.error('    dependents declared. Intentional?');
+  for (const change of diff.overrideChanges) {
+    const from = change.from ?? 'none';
+    const to = change.to ?? 'none';
+    console.error(`  ${MANIFEST} "overrides" changed: ${change.key} ${from} → ${to}`);
+    console.error('    An override forces a package past a range its dependents declared —');
+    console.error('    and REMOVING one can walk a patched transitive back to a vulnerable');
+    console.error('    version. Intentional?');
   }
 
   return 1;

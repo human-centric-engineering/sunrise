@@ -62,6 +62,15 @@ updates:
       # bundle (dual-package publish or a Next externalRequire fix).
       - dependency-name: 'jsdom'
         versions: ['>=27']
+      # @types/node states the Node major a FIFTH time, for `tsc` (#584). Ahead
+      # of the runtime it silently accepts APIs that throw in the production
+      # image — the first signal is a TypeError on a path the types called
+      # safe. It is pinned to the runtime major and enforced by
+      # `npm run check:node-version`, so an un-ignored major bump would simply
+      # turn that gate red on a Monday. Raise this WITH the runtime: bump
+      # .nvmrc, both Dockerfiles, engines.node and this entry together.
+      - dependency-name: '@types/node'
+        versions: ['>=25']
       # typescript >=7 is the native (Go) compiler port. `tsc --noEmit` passes
       # on our code (tsconfig uses none of the flags TS 7 removed — es5 target,
       # baseUrl, node10 resolution), but the port restructured the JavaScript

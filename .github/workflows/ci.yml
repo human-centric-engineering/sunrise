@@ -330,17 +330,19 @@ jobs:
             echo "::error::Prisma schema format check failed — see the step log."
             exit 1
           }
-      # The Node major lives in four files no tool reconciles: `.nvmrc` (what
-      # this workflow installs), both Dockerfiles (what ships), and
-      # `engines.node` (what forks are told). Bump `.nvmrc` alone and every job
-      # here goes green on the new major while the image still builds the old
-      # one — the suite passes precisely because it stopped testing what ships.
+      # The Node major lives in FIVE declarations no tool reconciles: `.nvmrc`
+      # (what this workflow installs), both Dockerfiles (what ships),
+      # `engines.node` (what forks are told), and the resolved `@types/node`
+      # (what `tsc` type-checks against). Bump `.nvmrc` alone and every job here
+      # goes green on the new major while the image still builds the old one —
+      # the suite passes precisely because it stopped testing what ships. Leave
+      # `@types/node` behind and `tsc` accepts APIs that throw in production.
       # Same npm script `npm run validate` runs, for the reason given above.
       - name: Node version consistency
         if: needs.config.outputs.code == 'true'
         run: |
           npm run check:node-version || {
-            echo "::error::Node major disagrees across .nvmrc, the Dockerfiles and engines — see the step log."
+            echo "::error::Node major disagrees across .nvmrc, the Dockerfiles, engines.node or the resolved @types/node — see the step log."
             exit 1
           }
       # Fork-owned CI checks seam. A fork adds an `app:ci-checks` script to

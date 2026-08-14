@@ -12,6 +12,7 @@ import {
   parseDockerfileMajor,
   parseEnginesMajor,
   parseNvmrc,
+  parseTypesNodeMajor,
   type NodeVersionSource,
 } from '@/scripts/ci/node-version';
 
@@ -73,6 +74,50 @@ describe('parseEnginesMajor', () => {
   });
 });
 
+function lockWith(version: string | undefined): string {
+  return JSON.stringify({
+    packages: {
+      '': { version: '0.8.1' },
+      ...(version === undefined ? {} : { 'node_modules/@types/node': { version } }),
+    },
+  });
+}
+
+describe('parseTypesNodeMajor — reads the RESOLVED version, not the range', () => {
+  it('reads the major from the lockfile entry', () => {
+    expect(parseTypesNodeMajor(lockWith('24.13.3'))).toBe(24);
+    expect(parseTypesNodeMajor(lockWith('26.2.0'))).toBe(26);
+  });
+
+  it('catches the case a range parser passed: >=24 resolving to 26', () => {
+    // The defect this rewrite exists for. `>=24` parses as 24 by any sane
+    // reading of the range, while npm resolves 26.2.0 — so a range-based check
+    // reported "consistent" for exactly the two-majors-ahead drift it was
+    // added to catch. The resolved version cannot lie about what tsc loads.
+    expect(parseTypesNodeMajor(lockWith('26.2.0'))).toBe(26);
+  });
+
+  it('FAILS rather than skips when there is nothing to read', () => {
+    // The package is a devDependency of this repo and every fork. Its absence
+    // means something is wrong, not that there is nothing to check.
+    expect(parseTypesNodeMajor(undefined)).toBeNull();
+    expect(parseTypesNodeMajor('')).toBeNull();
+    expect(parseTypesNodeMajor('not json at all')).toBeNull();
+    expect(parseTypesNodeMajor(lockWith(undefined))).toBeNull();
+    expect(parseTypesNodeMajor(JSON.stringify({ packages: {} }))).toBeNull();
+  });
+
+  it('FAILS on a malformed version rather than guessing', () => {
+    expect(parseTypesNodeMajor(lockWith('latest'))).toBeNull();
+    expect(parseTypesNodeMajor(lockWith(''))).toBeNull();
+  });
+
+  it('does not confuse a major for a prefix of another', () => {
+    expect(parseTypesNodeMajor(lockWith('2.4.0'))).toBe(2);
+    expect(parseTypesNodeMajor(lockWith('240.0.0'))).toBe(240);
+  });
+});
+
 describe('checkNodeVersion', () => {
   it('passes when every source agrees', () => {
     const result = checkNodeVersion([
@@ -80,10 +125,28 @@ describe('checkNodeVersion', () => {
       source('Dockerfile', 24),
       source('Dockerfile.dev', 24),
       source('package.json engines.node', 24),
+      source('package.json @types/node', 24),
     ]);
 
     expect(result.ok).toBe(true);
     expect(result.problems).toEqual([]);
+  });
+
+  it('fails when @types/node runs ahead of the runtime — the #584 drift', () => {
+    // The state this repo shipped in: tsc type-checking against a standard
+    // library two majors ahead of every runtime, accepting APIs that throw in
+    // the production image and reporting nothing.
+    const result = checkNodeVersion([
+      source('.nvmrc', 24),
+      source('Dockerfile', 24),
+      source('Dockerfile.dev', 24),
+      source('package.json engines.node', 24),
+      source('package.json @types/node', 26),
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.problems).toHaveLength(1);
+    expect(result.problems[0]).toContain('@types/node=26');
   });
 
   it('fails when the Dockerfile lags a bumped .nvmrc — the motivating drift', () => {

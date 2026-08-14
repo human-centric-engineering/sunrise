@@ -434,6 +434,40 @@ release process.
 
 ### Changed
 
+- **`check:lockfile` no longer fails a PR for a direct-dependency downgrade.** It
+  reports them in their own block instead. The rule existed because "a version
+  going backwards is how a patched dependency quietly returns to a vulnerable
+  one" — but that is a proxy for a risk something else measures exactly:
+  `dependency-review` runs on every PR at `fail-on-severity: high` and fails a
+  change landing on a **known-vulnerable** version, and `check:audit` covers the
+  standing tree weekly. Measured over all 134 commits that touched this
+  lockfile, the rule would have fired twice, on `pin Prisma to ~7.1.0` and `pin
+  jsdom to 26` — two deliberate pins, zero accidents. A gate whose only outcomes
+  are false positives teaches people to route around it. **Fork-facing:**
+  `dependency-review` is skipped on private repos, so a private fork now has no
+  per-PR enforcement here — the downgrade is still printed prominently, with
+  that caveat in the output. Lost `libc`/`os`/`cpu` and `overrides` changes still
+  gate: both are rare, neither is covered by another PR-time check, and the
+  first is the one that actually shipped broken (#571) (#584).
+- **`@types/node` pinned to the runtime major (`^26` → `^24`), and added as a
+  fifth source to `npm run check:node-version`.** #581 established Node 24 as
+  the floor and `node:24-alpine` as what ships, but `tsc` was type-checking
+  against a standard library **two majors ahead of every runtime we run on** —
+  so it accepted any API added in Node 25 or 26 and reported nothing, with the
+  first signal a `TypeError` in the production image on a path the types called
+  safe. Pinning to `^24` produced a clean `tsc --noEmit`, so nothing in the tree
+  depended on the post-24 surface. The version-consistency check now covers all
+  five declarations across four files instead of four, and a Dependabot `ignore`
+  holds `@types/node` at `>=25` so the major cannot re-land silently — which is
+  how it arrived. **Fork-facing:** a fork on a different Node major must move
+  `@types/node` with `.nvmrc`, both Dockerfiles and `engines.node`, or
+  `check:node-version` fails; a fork that had been relying on the newer types
+  will see real errors, and those are the point. Only the major is compared, so
+  `24.x` minors still flow through Dependabot. The fifth source reads the
+  **resolved** version from `package-lock.json` rather than the range in
+  `package.json`, because a range need not pin a major — `>=24` resolves to
+  26.2.0, so a range-based check reported "consistent" for exactly the drift
+  it was added to catch (#584).
 - **`PATCH …/capabilities/{id}` now returns 403 for a change to a system
   capability's `slug`, `functionDefinition`, `executionType` or
   `executionHandler`.** **Fork-facing:** any automation that reconfigures a

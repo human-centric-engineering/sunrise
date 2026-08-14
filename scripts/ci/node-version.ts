@@ -1,13 +1,13 @@
 /**
  * Node major-version consistency — rules.
  *
- * WHY THIS EXISTS: the Node major is stated in four places that no tool
+ * WHY THIS EXISTS: the Node major is stated in five places that no tool
  * reconciles — `.nvmrc` (what CI installs), `Dockerfile` and `Dockerfile.dev`
- * (what ships), and `engines.node` (what forks are told). #581 collapsed eight
- * hardcoded CI pins (six in `ci.yml`, two in `dependency-audit.yml`) down to
- * `.nvmrc`, but the remaining four are structurally
- * unavoidable: a `FROM` line cannot read `.nvmrc`, and npm cannot read a
- * Dockerfile.
+ * (what ships), `engines.node` (what forks are told), and the `@types/node`
+ * devDependency (what `tsc` believes). #581 collapsed eight hardcoded CI pins
+ * (six in `ci.yml`, two in `dependency-audit.yml`) down to `.nvmrc`, but the
+ * remaining five are structurally unavoidable: a `FROM` line cannot read
+ * `.nvmrc`, and npm cannot read a Dockerfile.
  *
  * The failure that motivates this is silent and asymmetric. Bump `.nvmrc`
  * alone and every CI job goes green on the new major while the image that
@@ -16,12 +16,17 @@
  * this check's own PR set out to remove, so leaving it unguarded would have
  * been the change congratulating itself.
  *
- * NOT checked: `@types/node`. It is a fifth declaration of the Node version and
- * it currently disagrees — `^26` against a `>=24` runtime — so `tsc` will
- * accept APIs that throw in the production image. That is a real gap, but it is
- * pre-existing and fixing it means moving a types major, which can surface
- * unrelated errors; folding it in here would have turned a consistency check
- * into a dependency change. Tracked separately rather than silently omitted.
+ * `@types/node` was excluded when this check first landed, and disagreed —
+ * `^26` against a `>=24` runtime, so `tsc` accepted APIs that throw in the
+ * production image, with the first signal a `TypeError` on a path the types
+ * called safe. It is now the fifth source (#584). Pinning it to `^24` produced
+ * a clean `tsc --noEmit`, so nothing depended on the post-24 surface.
+ *
+ * NOT checked: anything about the types package beyond its MAJOR. The minor is
+ * free to move — `@types/node@24.x` tracks Node 24's own additions, which is
+ * exactly what should happen. Dependabot carries an `ignore` for `>=25` so the
+ * major cannot re-land silently; without it this check would simply start
+ * failing on a Monday, which is a worse way to learn the same thing.
  *
  * Parsers take file *contents*, not paths, so the rules stay testable without
  * touching the repo's real files.
@@ -65,6 +70,49 @@ export function parseEnginesMajor(engines: string | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/**
+ * The `@types/node` major `tsc` actually type-checks against.
+ *
+ * Takes `package-lock.json`'s text and reads the RESOLVED version at
+ * `packages["node_modules/@types/node"].version` — not the range in
+ * `package.json`.
+ *
+ * That distinction is the whole point, and an earlier version of this function
+ * got it wrong by parsing the range. A range is a declaration of intent; the
+ * resolved version is the fact, and it is what ends up on disk for `tsc` to
+ * load. Several ranges npm accepts do not pin a major at all:
+ *
+ * | range      | parsed as | npm resolves |
+ * | ---------- | --------- | ------------ |
+ * | `^24.13.3` | 24        | 24.13.3      |
+ * | `>=24`     | **24**    | **26.2.0**   |
+ * | `>24`      | **24**    | **26.2.0**   |
+ *
+ * So `>=24` sailed through a check whose entire purpose is to catch `tsc`
+ * running two majors ahead of the runtime, and `>24` parsed as the one major it
+ * excludes. Reading the lockfile removes range interpretation from the problem
+ * rather than trying to enumerate the safe forms.
+ *
+ * Returns `null` — a hard failure, not a skip — when the lockfile is missing,
+ * unparseable, or has no entry. The package is a devDependency of this repo and
+ * of every fork; its absence means something is wrong, not that there is
+ * nothing to check.
+ */
+export function parseTypesNodeMajor(lockfileText: string | undefined): number | null {
+  if (!lockfileText) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lockfileText);
+  } catch {
+    return null;
+  }
+  const packages = (parsed as { packages?: Record<string, { version?: string }> }).packages;
+  const version = packages?.['node_modules/@types/node']?.version;
+  if (typeof version !== 'string') return null;
+  const match = /^v?(\d+)\./.exec(version);
+  return match ? Number(match[1]) : null;
+}
+
 export type NodeVersionResult = { ok: boolean; problems: string[] };
 
 /**
@@ -97,18 +145,48 @@ export function checkNodeVersion(sources: NodeVersionSource[]): NodeVersionResul
   return { ok: problems.length === 0, problems };
 }
 
-/** Formats the result for a CI log. Returns an exit code. */
-export function formatResult(result: NodeVersionResult, agreedMajor: number | null): number {
+/**
+ * Formats the result for a CI log. Returns an exit code.
+ *
+ * The success line names the sources that were ACTUALLY compared, not a fixed
+ * list. It used to hardcode "…engines and @types/node", which then claimed
+ * `@types/node` had been checked on a repo with no npm lockfile — where the
+ * source is deliberately skipped. An all-clear that overstates its own coverage
+ * is the failure mode this whole check exists to prevent.
+ */
+export function formatResult(
+  result: NodeVersionResult,
+  agreedMajor: number | null,
+  sources: NodeVersionSource[] = []
+): number {
   if (result.ok) {
-    console.log(
-      `Node major consistent across .nvmrc, both Dockerfiles and engines (${agreedMajor}).`
-    );
+    const what =
+      sources.length > 0 ? sources.map((s) => s.label).join(', ') : 'every declared source';
+    console.log(`Node major consistent across ${what} (${agreedMajor}).`);
     return 0;
   }
   console.error('Node version consistency check failed:');
   for (const problem of result.problems) console.error(`  ${problem}`);
+
+  // The evidence, per source. A disagreement previously printed only
+  // `label=major`, so an operator could see `@types/node (resolved)=26` with
+  // nothing to say where the 26 came from — a declared range, a transitive
+  // copy, a stale lockfile. `raw` is built to answer exactly that and was only
+  // ever shown for sources that failed to parse.
+  if (sources.length > 0) {
+    console.error('');
+    console.error('Read from:');
+    for (const source of sources) {
+      console.error(`  ${source.label}: ${source.raw}`);
+    }
+  }
   console.error(
-    '\nUpdate all four together: .nvmrc, Dockerfile, Dockerfile.dev, package.json engines.node.'
+    '\nUpdate all five together: .nvmrc, Dockerfile, Dockerfile.dev, ' +
+      'package.json engines.node, package.json devDependencies["@types/node"].'
+  );
+  console.error(
+    'Moving @types/node also means updating the Dependabot `ignore` entry that ' +
+      'holds it at the runtime major.'
   );
   return 1;
 }

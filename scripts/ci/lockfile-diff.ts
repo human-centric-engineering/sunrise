@@ -68,7 +68,14 @@ export interface Manifest {
   overrides?: Record<string, unknown>;
 }
 
-/** Stable text for an overrides block, so key order is not a change. */
+/**
+ * Stable text for an overrides block, so key order is not a change.
+ *
+ * Used only to answer "did the block change at all". Acknowledgements do NOT
+ * quote this form — they name a per-key transition, because a block-keyed ACK
+ * cannot tell adding an override from removing one. It was briefly exported on
+ * the assumption that they would; nothing imported it.
+ */
 function canonicalOverrides(overrides: Manifest['overrides']): string {
   if (overrides === undefined) return 'none';
   return JSON.stringify(
@@ -76,6 +83,20 @@ function canonicalOverrides(overrides: Manifest['overrides']): string {
       .sort()
       .map((key) => [key, overrides[key]])
   );
+}
+
+/** The per-key transitions between two `overrides` blocks. */
+function diffOverrides(base: Manifest['overrides'], head: Manifest['overrides']): OverrideChange[] {
+  const text = (value: unknown): string | null =>
+    value === undefined ? null : JSON.stringify(value);
+  const keys = [...new Set([...Object.keys(base ?? {}), ...Object.keys(head ?? {})])].sort();
+  const changes: OverrideChange[] = [];
+  for (const key of keys) {
+    const from = text(base?.[key]);
+    const to = text(head?.[key]);
+    if (from !== to) changes.push({ key, from, to });
+  }
+  return changes;
 }
 
 /** A package whose version changed, with the direction resolved. */
@@ -107,6 +128,22 @@ export interface VersionChange {
   direct: boolean;
 }
 
+/**
+ * One `overrides` entry that was added, removed or re-pointed.
+ *
+ * The per-KEY delta, not just "the block changed", so the failure names the
+ * entry and both sides. That distinction matters for what it makes visible:
+ * removing an override that was fixing a CVE walks the patched transitive
+ * straight back, and "the overrides block changed" does not tell a reviewer
+ * which way it went.
+ */
+export interface OverrideChange {
+  key: string;
+  /** `null` when the entry did not exist on that side. */
+  from: string | null;
+  to: string | null;
+}
+
 /** A package whose platform-metadata keys changed in one direction. */
 export interface NativeMetadataChange {
   name: string;
@@ -130,6 +167,8 @@ export interface LockfileDiff {
    */
   gainedNativeMetadata: NativeMetadataChange[];
   overridesChanged: boolean;
+  /** Per-key `overrides` transitions; empty when the block did not change. */
+  overrideChanges: OverrideChange[];
 }
 
 /**
@@ -319,6 +358,7 @@ export function diffLockfiles(
     // a semantic change and answered with "Intentional?".
     overridesChanged:
       canonicalOverrides(options.baseOverrides) !== canonicalOverrides(options.headOverrides),
+    overrideChanges: diffOverrides(options.baseOverrides, options.headOverrides),
   };
 }
 
@@ -334,11 +374,43 @@ export function diffLockfiles(
  * visible; they just do not stop the run.
  */
 export function hasRisk(diff: LockfileDiff): boolean {
-  return (
-    diff.lostNativeMetadata.length > 0 ||
-    diff.overridesChanged ||
-    diff.changed.some((change) => change.downgrade && change.direct)
-  );
+  return diff.lostNativeMetadata.length > 0 || diff.overrideChanges.length > 0;
+}
+
+/**
+ * The direct-dependency downgrades in a diff. Reported prominently; NOT gated.
+ *
+ * This used to fail the build, on the reasoning that "a version going backwards
+ * is how a patched dependency quietly returns to a vulnerable one". Two things
+ * make that the wrong gate:
+ *
+ * 1. **It is a proxy for a risk something else measures exactly.**
+ *    `dependency-review-action` runs on every PR at `fail-on-severity: high`
+ *    and fails a dependency change that lands on a KNOWN-vulnerable version —
+ *    the actual risk, rather than "a number got smaller". `check:audit` covers
+ *    the standing tree weekly. This check is deliberately offline, so it can
+ *    never answer the vulnerability question itself.
+ * 2. **Measured, it has never caught one.** Over all 134 commits that touched
+ *    this lockfile there are exactly 2 direct downgrades — `pin Prisma to
+ *    ~7.1.0` and `pin jsdom to 26` — and the note on {@link VersionChange.direct}
+ *    already calls them "both deliberate, both exactly the decision worth
+ *    surfacing". Two firings, two intentional pins, zero accidents. A gate whose
+ *    only outcomes are false positives teaches people to route around it, which
+ *    is what happened: #584 needed a 250-line acknowledgement mechanism to make
+ *    a correct one-line pin mergeable.
+ *
+ * **What is lost, and where.** `dependency-review` needs the dependency graph
+ * and Advanced Security, so it is skipped on private repos — a private fork
+ * gets no per-PR check that a downgrade landed somewhere vulnerable. That is
+ * why these are still printed loudly, with their own block in the output rather
+ * than a line in a list: the signal stays, the false failure goes.
+ *
+ * Lost `libc`/`os`/`cpu` and `overrides` changes still gate. Both are rare,
+ * neither is measurable by another PR-time check, and the first is the one that
+ * actually shipped broken (#571).
+ */
+export function directDowngrades(diff: LockfileDiff): VersionChange[] {
+  return diff.changed.filter((change) => change.downgrade && change.direct);
 }
 
 /**

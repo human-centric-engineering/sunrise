@@ -196,13 +196,35 @@ rather than a literal. Delete or rename that file and every job that installs
 Node fails — which is the intended trade: before #581 the major was hardcoded
 in eight places and nothing kept them in step.
 
-Consolidating the CI pins left four declarations that no tool can merge:
-`.nvmrc` (what CI installs), `Dockerfile` and `Dockerfile.dev` (what ships),
-and `engines.node` in `package.json` (what forks are told, and what **Vercel**
-resolves its runtime from — see
-[`vercel.md`](../deployment/platforms/vercel.md)). A `FROM` line cannot read
-`.nvmrc` and npm cannot read a Dockerfile, so this step reconciles them
-instead.
+Consolidating the CI pins left **five** declarations that no tool can merge,
+across four files: `.nvmrc` (what CI installs), `Dockerfile` and
+`Dockerfile.dev` (what ships), `engines.node` in `package.json` (what forks are
+told, and what **Vercel** resolves its runtime from — see
+[`vercel.md`](../deployment/platforms/vercel.md)), and the `@types/node`
+devDependency (what `tsc` believes). A `FROM` line cannot read `.nvmrc` and npm
+cannot read a Dockerfile, so this step reconciles them instead.
+
+`@types/node` was excluded when the check first landed and was the one that
+disagreed — `^26` against a `>=24` runtime, so `tsc` accepted any API added in
+Node 25 or 26 and reported nothing, with the first signal a `TypeError` in the
+production image on a path the types called safe. It joined the check in #584;
+pinning to `^24` produced a clean `tsc --noEmit`, so nothing depended on the
+post-24 surface. Only the MAJOR is compared — `24.x` minors should move freely,
+since that is the types package tracking Node 24's own additions.
+
+The source reads the **resolved** version from `package-lock.json`, not the
+range in `package.json`. A range need not pin a major — `>=24` resolves to
+26.2.0, and `>24` parses as the one major it excludes — so a range-based reading
+reported "consistent" for precisely the drift this source was added to catch.
+The question is "what is `tsc` loading?", and only the lockfile answers it: a
+loose `"*"` is therefore judged on what npm actually produced. It is checked
+even when `@types/node` is not named in `package.json` at all, since `tsc` loads
+a transitive copy just the same — and **skipped entirely when there is no npm
+lockfile**, so a fork on pnpm or yarn is not failed by a check it cannot
+satisfy. A Dependabot `ignore` holds it at `>=25`. Without it the major would re-land on
+a Monday and turn this gate red, which is a worse way to learn the same thing;
+with it, moving the runtime means moving all five declarations **and** that
+entry together.
 
 The drift it exists for is silent and asymmetric: bump `.nvmrc` alone and every
 job here goes green on the new major while the image serving traffic still
@@ -211,7 +233,7 @@ Gated on the code filter, like the Prisma step; `.nvmrc`, both Dockerfiles and
 `package.json` all set `code=true`.
 
 An unparseable source fails rather than being skipped. When nobody is watching
-four files, "cannot read it" and "it disagrees" have the same consequence.
+these files, "cannot read it" and "it disagrees" have the same consequence.
 
 **Forks:** if you retarget the base image (a different distro, or a pinned
 digest), keep the `FROM node:<major>` shape or this check cannot read it. If
@@ -289,6 +311,17 @@ These help both repo types and cost nothing, so they're always on:
   makes no registry calls — which is what makes it safe as a PR gate; the
   absolute counterpart (`fix:lockfile-libc --check`, ~1,400 registry requests)
   stays on the weekly schedule in `dependency-audit.yml`.
+
+  **A direct downgrade reports, it does not gate.** The rule was a proxy for "a
+  patched dependency returned to a vulnerable one", which `dependency-review`
+  measures exactly on every PR (`fail-on-severity: high`) and `check:audit`
+  covers weekly for the standing tree. Measured across all 134 commits that
+  touched this lockfile it would have fired twice — both deliberate pins, zero
+  accidents — and the cost of that was real: a correct one-line `@types/node`
+  pin needed a 250-line acknowledgement mechanism to become mergeable.
+  `dependency-review` is **skipped on private repos**, so a private fork loses
+  the per-PR enforcement; the downgrade is still printed in its own block with
+  that caveat. Lost `libc`/`os`/`cpu` and `overrides` changes still gate.
 
   It exists because `/pre-pr` runs this check locally and **Dependabot PRs never
   run `/pre-pr`**. npm below 11.11.0 deletes `libc` from every entry it writes,
