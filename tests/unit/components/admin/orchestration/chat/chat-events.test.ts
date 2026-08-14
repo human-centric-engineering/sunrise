@@ -166,6 +166,57 @@ describe('parseChatStreamEvent', () => {
   });
 });
 
+describe('done event', () => {
+  it('preserves finishReason so a consumer can tell a truncated turn (#594)', () => {
+    // Zod objects are NON-STRICT: an unmodelled field is silently stripped,
+    // not rejected. So when `ChatEvent.done` gained `finishReason`, the server
+    // advertised it (sse.md, consumer-chat.md) while every consumer of
+    // `parseChatStreamEvent` read `undefined` — a contract that looks whole
+    // and is not, with no runtime signal anywhere.
+    //
+    // The compile-time drift guard above cannot catch this class: it compares
+    // the union's `type` NAMES, so a new field on an existing variant passes
+    // it untouched. This is the runtime half.
+    const event = parseChatStreamEvent(
+      `event: done\ndata: ${JSON.stringify({
+        type: 'done',
+        tokenUsage: { inputTokens: 10, outputTokens: 1000, totalTokens: 1010 },
+        costUsd: 0.002,
+        finishReason: 'length',
+      })}`
+    );
+
+    expect(event).not.toBeNull();
+    expect(event).toMatchObject({ type: 'done', finishReason: 'length' });
+  });
+
+  it('accepts a done frame with no finishReason — the field is optional', () => {
+    const event = parseChatStreamEvent(
+      `event: done\ndata: ${JSON.stringify({
+        type: 'done',
+        tokenUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        costUsd: 0,
+      })}`
+    );
+
+    expect(event).toMatchObject({ type: 'done' });
+    expect((event as { finishReason?: string }).finishReason).toBeUndefined();
+  });
+
+  it('rejects a finishReason outside the provider enum', () => {
+    const event = parseChatStreamEvent(
+      `event: done\ndata: ${JSON.stringify({
+        type: 'done',
+        tokenUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+        costUsd: 0,
+        finishReason: 'exploded',
+      })}`
+    );
+
+    expect(event).toBeNull();
+  });
+});
+
 describe('schema/type parity', () => {
   it('covers the canonical ChatEvent union in both directions', () => {
     // The assertion is the type annotation, not the runtime value: either

@@ -1336,6 +1336,15 @@ export class StreamingChatHandler {
                 assistantText = '';
                 toolCalls.clear();
                 usage = null;
+                // Reset with its siblings. Not reachable via the two in-repo
+                // adapters — both yield `done` as their final statement, so a
+                // throw after it cannot happen — but `LlmProvider` is a
+                // supported fork seam, and a fork adapter that threw after
+                // yielding `done` would leave a stale `'length'` here. The
+                // fallback provider then completes normally and the `done`
+                // event tells every consumer that a complete answer was
+                // truncated.
+                finishReason = undefined;
 
                 try {
                   currentProvider = await getProvider(nextSlug);

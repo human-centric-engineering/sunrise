@@ -102,6 +102,16 @@ export const chatStreamEventSchema = z.discriminatedUnion('type', [
     model: z.string().optional(),
     inputBreakdown: inputBreakdownSchema.optional(),
     sideEffectModels: z.array(sideEffectModelUsageSchema).optional(),
+    /**
+     * Why the provider stopped on the final turn. `'length'` means the answer
+     * is a fragment cut off at the token cap (#594).
+     *
+     * Listed here because Zod objects are non-strict: an unmodelled field is
+     * silently STRIPPED rather than rejected, so omitting it would make the
+     * server advertise a field that every consumer of `parseChatStreamEvent`
+     * reads as `undefined` — a contract that looks whole and is not.
+     */
+    finishReason: z.enum(['stop', 'tool_use', 'length', 'error']).optional(),
   }),
   /**
    * Terminal on one path. The tool-loop-abort branch of the streaming
