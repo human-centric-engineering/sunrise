@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
   diffLockfiles,
   directDependencyKeys,
+  directDowngrades,
   hasRisk,
   isDowngrade,
   type Lockfile,
@@ -392,7 +393,11 @@ describe('diffLockfiles', () => {
       return head;
     };
 
-    it('gates a DIRECT dependency going backwards', () => {
+    it('CLASSIFIES a direct downgrade but no longer gates on it', () => {
+      // The classification is what the report is built from and must stay
+      // exact. The gating changed: over 134 lockfile commits the rule fired
+      // twice, on two deliberate pins, while `dependency-review` measures the
+      // real risk — a KNOWN-vulnerable version — on every public PR.
       const diff = diffLockfiles(BASE, downgraded('node_modules/left-pad'), {
         directDependencies: new Set(['node_modules/left-pad']),
       });
@@ -406,6 +411,20 @@ describe('diffLockfiles', () => {
           direct: true,
         },
       ]);
+      expect(directDowngrades(diff)).toHaveLength(1);
+      expect(hasRisk(diff)).toBe(false);
+    });
+
+    it('STILL gates lost platform metadata when a direct downgrade is present', () => {
+      // The relaxation must not leak into the rule that actually shipped
+      // broken (#571).
+      const head = downgraded('node_modules/left-pad');
+      delete head.packages!['node_modules/@napi-rs/canvas-linux-x64-gnu'].libc;
+
+      const diff = diffLockfiles(BASE, head, {
+        directDependencies: new Set(['node_modules/left-pad']),
+      });
+
       expect(hasRisk(diff)).toBe(true);
     });
 

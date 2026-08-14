@@ -36,28 +36,15 @@ const LOCK_NO_LIBC = JSON.stringify({
 const MANIFEST = JSON.stringify({ dependencies: { native: '^1' } });
 
 /**
- * Builds a `readFileSync` implementation answering all THREE files the CLI
- * reads: the lockfile, the manifest, and `.lockfile-decisions`.
+ * Builds a `readFileSync` implementation answering both files the CLI reads.
  *
- * Every test routes through this rather than writing its own suffix check.
- * When the decisions file was added, each hand-rolled implementation silently
- * handed it the lockfile JSON, which parses as an unreadable decision and
- * turned five gating tests into "could not be read".
+ * Every test routes through this rather than writing its own suffix check: a
+ * per-test override that forgets a newly-added file silently hands it the
+ * wrong contents, which is how five gating tests once started failing with
+ * "could not be read".
  */
-function reads({
-  lock = LOCK,
-  manifest = MANIFEST,
-  decisions = '',
-}: {
-  lock?: string;
-  manifest?: string;
-  decisions?: string;
-} = {}) {
-  return (path: string): string => {
-    const target = String(path);
-    if (target.endsWith('.lockfile-decisions')) return decisions;
-    return target.endsWith('package.json') ? manifest : lock;
-  };
+function reads({ lock = LOCK, manifest = MANIFEST }: { lock?: string; manifest?: string } = {}) {
+  return (path: string): string => (String(path).endsWith('package.json') ? manifest : lock);
 }
 
 describe('scripts/ci/check-lockfile', () => {
@@ -278,7 +265,11 @@ describe('scripts/ci/check-lockfile', () => {
       expect(out()).toContain('1 transitive downgrade');
     });
 
-    it('gates and explains a direct downgrade', async () => {
+    it('reports a direct downgrade prominently WITHOUT gating', async () => {
+      // It used to gate. Over 134 lockfile commits it fired twice, on two
+      // deliberate pins — and `dependency-review` measures the real risk (a
+      // KNOWN-vulnerable version) on every public PR. The signal stays; the
+      // false failure goes.
       serve({
         packages: {
           '': { version: '0.8.1' },
@@ -287,9 +278,28 @@ describe('scripts/ci/check-lockfile', () => {
       });
 
       await run();
-      expect(process.exitCode).toBe(1);
+
+      expect(process.exitCode).toBe(0);
       expect(out()).toContain('DOWNGRADE (direct)');
-      expect(out()).toContain('went BACKWARDS');
+      expect(out()).toContain('moved BACKWARDS');
+      // The private-fork caveat must survive: that is where nothing else looks.
+      expect(out()).toContain('PRIVATE fork');
+    });
+
+    it('still gates lost platform metadata alongside a direct downgrade', async () => {
+      // The downgrade relaxation must not leak into the rule that actually
+      // shipped broken (#571).
+      serve({
+        packages: {
+          '': { version: '0.8.1' },
+          'node_modules/native': { version: '0.5.0', os: ['linux'] },
+        },
+      });
+
+      await run();
+
+      expect(process.exitCode).toBe(1);
+      expect(out()).toContain('lost libc');
     });
 
     it('gates a change to overrides, read from package.json', async () => {
@@ -319,7 +329,6 @@ describe('scripts/ci/check-lockfile', () => {
         return LOCK;
       });
       mockReadFileSync.mockImplementation((path: string) => {
-        if (String(path).endsWith('.lockfile-decisions')) return '';
         if (String(path).endsWith('package.json')) throw new Error('ENOENT');
         return LOCK;
       });
@@ -338,168 +347,12 @@ describe('scripts/ci/check-lockfile', () => {
         a[0] === 'merge-base' ? 'abc123\n' : LOCK
       );
       mockReadFileSync.mockImplementation((path: string) => {
-        if (String(path).endsWith('.lockfile-decisions')) return '';
         if (String(path).endsWith('package.json')) throw new Error('ENOENT');
         return LOCK_NO_LIBC;
       });
 
       await run();
       expect(out()).toContain('treating every downgrade as transitive');
-    });
-
-    // ── .lockfile-decisions wiring (#584) ──────────────────────────────────
-    // The rules live in `lockfile-decisions.test.ts`. These cover the SEAM —
-    // the place the gate is actually weakened. Without them a regression that
-    // let an ACK silence lost `libc` would pass the whole suite, which is the
-    // opposite of what a file about weakening a gate should be able to do.
-    describe('acknowledged decisions', () => {
-      const DOWNGRADED = JSON.stringify({
-        packages: {
-          '': { version: '0.8.1' },
-          'node_modules/native': { version: '0.5.0', os: ['linux'], libc: ['glibc'] },
-        },
-      });
-      const ACK = 'downgrade node_modules/native 1.0.0 -> 0.5.0  # deliberate pin (#1)';
-
-      function serveDowngrade(): void {
-        mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
-          a[0] === 'merge-base' ? 'abc123\n' : LOCK
-        );
-      }
-
-      it('flips a gating downgrade to a pass when acknowledged exactly', async () => {
-        serveDowngrade();
-        mockReadFileSync.mockImplementation(reads({ lock: DOWNGRADED, decisions: ACK }));
-
-        await run();
-
-        expect(process.exitCode).toBe(0);
-      });
-
-      it('still PRINTS the acknowledged downgrade with its reason', async () => {
-        serveDowngrade();
-        mockReadFileSync.mockImplementation(reads({ lock: DOWNGRADED, decisions: ACK }));
-
-        await run();
-
-        expect(out()).toContain('Acknowledged in .lockfile-decisions');
-        expect(out()).toContain('deliberate pin (#1)');
-        expect(out()).toContain('DOWNGRADE (direct)');
-      });
-
-      it('still gates when the ACK names different versions', async () => {
-        serveDowngrade();
-        mockReadFileSync.mockImplementation(
-          reads({
-            lock: DOWNGRADED,
-            decisions: 'downgrade node_modules/native 1.0.0 -> 0.9.0  # a different move (#1)',
-          })
-        );
-
-        await run();
-
-        expect(process.exitCode).toBe(1);
-        expect(out()).toContain('went BACKWARDS');
-      });
-
-      it('does NOT let an ACK wave through lost platform metadata', async () => {
-        // The invariant that must survive every refactor of this seam.
-        mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
-          a[0] === 'merge-base' ? 'abc123\n' : LOCK
-        );
-        mockReadFileSync.mockImplementation(reads({ lock: LOCK_NO_LIBC, decisions: ACK }));
-
-        await run();
-
-        expect(process.exitCode).toBe(1);
-        expect(out()).toContain('lost libc');
-      });
-
-      it('fails an unparseable decisions file even when nothing moved', async () => {
-        // A decisions-only PR moves no packages, so an early return used to
-        // mean the file was never read — the malformed line then surfaced on
-        // the next dependency PR, looking like that author's problem.
-        mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
-          a[0] === 'merge-base' ? 'abc123\n' : LOCK
-        );
-        mockReadFileSync.mockImplementation(
-          reads({ decisions: 'downgrade node_modules/foo 1.0.0 => 2.0.0  # wrong arrow' })
-        );
-
-        await run();
-
-        expect(process.exitCode).toBe(1);
-        expect(out()).toContain('could not be read');
-      });
-
-      it('fails a decision with no reason', async () => {
-        serveDowngrade();
-        mockReadFileSync.mockImplementation(
-          reads({ lock: DOWNGRADED, decisions: 'downgrade node_modules/native 1.0.0 -> 0.5.0' })
-        );
-
-        await run();
-
-        expect(process.exitCode).toBe(1);
-        expect(out()).toContain('no reason given');
-      });
-
-      it('does not claim anything was acknowledged when only stale entries exist', async () => {
-        // The file is a permanent log, so every future dependency PR would
-        // otherwise print an "Acknowledged" header asserting a wave-through
-        // that did not happen. Uses an ordinary UPGRADE so the diff has
-        // movement (an unchanged lockfile returns before any reporting).
-        const upgraded = JSON.stringify({
-          packages: {
-            '': { version: '0.8.1' },
-            'node_modules/native': { version: '1.1.0', os: ['linux'], libc: ['glibc'] },
-          },
-        });
-        mockExecFileSync.mockImplementation((_c: string, a: string[]) =>
-          a[0] === 'merge-base' ? 'abc123\n' : LOCK
-        );
-        mockReadFileSync.mockImplementation(
-          reads({
-            lock: upgraded,
-            decisions: 'downgrade node_modules/other 9.0.0 -> 8.0.0  # historical (#1)',
-          })
-        );
-
-        await run();
-
-        expect(out()).not.toContain('Acknowledged in .lockfile-decisions');
-        expect(out()).toContain('past decision(s) not relevant to this diff');
-        expect(out()).toContain('historical (#1)');
-      });
-
-      it('marks BOTH copies used when a fork sync replays a decision line', async () => {
-        // Duplicates are expected, not exotic: four forks inherit the whole log
-        // and a sync can replay a line. Marking only the first left the copy
-        // listed as "not relevant to this diff" while it was the decision
-        // actually being applied.
-        serveDowngrade();
-        mockReadFileSync.mockImplementation(
-          reads({ lock: DOWNGRADED, decisions: `${ACK}\n${ACK}` })
-        );
-
-        await run();
-
-        expect(process.exitCode).toBe(0);
-        expect(out()).not.toContain('not relevant to this diff');
-      });
-
-      it('behaves exactly as before when the file does not exist', async () => {
-        serveDowngrade();
-        mockReadFileSync.mockImplementation((path: string) => {
-          if (String(path).endsWith('.lockfile-decisions')) throw new Error('ENOENT');
-          return String(path).endsWith('package.json') ? MANIFEST : DOWNGRADED;
-        });
-
-        await run();
-
-        expect(process.exitCode).toBe(1);
-        expect(out()).toContain('went BACKWARDS');
-      });
     });
 
     it('reports an unreadable lockfile instead of throwing', async () => {

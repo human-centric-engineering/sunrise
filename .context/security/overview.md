@@ -457,13 +457,11 @@ rather than reaching for the off switch:
    `socket.io-adapter` both declared `ws: ~8.20.1`. Sunrise carries two
    overrides today (`hono`, `valibot`).
 
-   Adding one is deliberately not quiet: `remainingRisk()` in
+   Adding one is deliberately not quiet: `hasRisk()` in
    `scripts/ci/lockfile-diff.ts` fails `check:lockfile` on any `overrides`
-   change that is not acknowledged in `.lockfile-decisions`, so it arrives as a
-   reviewed decision on a PR either way — the acknowledgement is written in the
-   same commit and read in the same diff (#584). That gate exists because an
-   override forces a package past a range its dependents declared, which can
-   break the dependent — test the affected path before merging one.
+   change, so it arrives as a reviewed decision on a PR. That gate exists
+   because an override forces a package past a range its dependents declared,
+   which can break the dependent — test the affected path before merging one.
 
    **Removing an override is a separate decision from adding it**, and gates on
    its own. Acknowledgements name a per-key transition (`overrides ws "^8.21.0"

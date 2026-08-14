@@ -418,20 +418,21 @@ release process.
 
 ### Changed
 
-- **`.lockfile-decisions` — a way to answer `check:lockfile`.** Two of that
-  check's three gated risks are questions rather than defects (a direct
-  dependency moving backwards, an `overrides` change), and its output asked
-  _"Intentional?"_ with nowhere to answer — so the only routes past it were
-  bypassing branch protection or weakening the gate. A decision is now recorded
-  in `.lockfile-decisions` in the **same commit** as the change it describes,
-  and the check prints the exact line to add when it gates. Entries are keyed to
-  exact versions on the lockfile's own path key, a reason is mandatory, an
-  unparseable line fails, and acknowledged risks are still printed with their
-  reason — an ACK is not a silence. Entries that match nothing are reported and
-  **never gate**, so a fork inheriting upstream's decisions is unaffected.
-  **Lost `libc`/`os`/`cpu` is deliberately not acknowledgeable**: never a
-  decision, only ever npm below 11.11.0 dropping the key, and it has a repair
-  (#584).
+- **`check:lockfile` no longer fails a PR for a direct-dependency downgrade.** It
+  reports them in their own block instead. The rule existed because "a version
+  going backwards is how a patched dependency quietly returns to a vulnerable
+  one" — but that is a proxy for a risk something else measures exactly:
+  `dependency-review` runs on every PR at `fail-on-severity: high` and fails a
+  change landing on a **known-vulnerable** version, and `check:audit` covers the
+  standing tree weekly. Measured over all 134 commits that touched this
+  lockfile, the rule would have fired twice, on `pin Prisma to ~7.1.0` and `pin
+  jsdom to 26` — two deliberate pins, zero accidents. A gate whose only outcomes
+  are false positives teaches people to route around it. **Fork-facing:**
+  `dependency-review` is skipped on private repos, so a private fork now has no
+  per-PR enforcement here — the downgrade is still printed prominently, with
+  that caveat in the output. Lost `libc`/`os`/`cpu` and `overrides` changes still
+  gate: both are rare, neither is covered by another PR-time check, and the
+  first is the one that actually shipped broken (#571) (#584).
 - **`@types/node` pinned to the runtime major (`^26` → `^24`), and added as a
   fifth source to `npm run check:node-version`.** #581 established Node 24 as
   the floor and `node:24-alpine` as what ships, but `tsc` was type-checking

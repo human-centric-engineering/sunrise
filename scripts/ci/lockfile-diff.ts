@@ -374,39 +374,43 @@ export function diffLockfiles(
  * visible; they just do not stop the run.
  */
 export function hasRisk(diff: LockfileDiff): boolean {
-  return remainingRisk(diff, { acknowledgedDowngrades: [], acknowledgedOverrideKeys: [] });
-}
-
-/** The gated downgrades in a diff — direct ones only. */
-export function directDowngrades(diff: LockfileDiff): VersionChange[] {
-  return diff.changed.filter((change) => change.downgrade && change.direct);
+  return diff.lostNativeMetadata.length > 0 || diff.overrideChanges.length > 0;
 }
 
 /**
- * Whether anything in the diff still needs a human decision.
+ * The direct-dependency downgrades in a diff. Reported prominently; NOT gated.
  *
- * The single definition of what gates. `hasRisk` is this with nothing
- * acknowledged — kept because it is the name three other files document as
- * "the gate", and because a fourth risk added here must gate through both.
+ * This used to fail the build, on the reasoning that "a version going backwards
+ * is how a patched dependency quietly returns to a vulnerable one". Two things
+ * make that the wrong gate:
  *
- * **Lost platform metadata is not acknowledgeable** and is deliberately absent
- * from the parameters: it is never a decision, only ever npm below 11.11.0
- * dropping the key, and it has a repair.
+ * 1. **It is a proxy for a risk something else measures exactly.**
+ *    `dependency-review-action` runs on every PR at `fail-on-severity: high`
+ *    and fails a dependency change that lands on a KNOWN-vulnerable version —
+ *    the actual risk, rather than "a number got smaller". `check:audit` covers
+ *    the standing tree weekly. This check is deliberately offline, so it can
+ *    never answer the vulnerability question itself.
+ * 2. **Measured, it has never caught one.** Over all 134 commits that touched
+ *    this lockfile there are exactly 2 direct downgrades — `pin Prisma to
+ *    ~7.1.0` and `pin jsdom to 26` — and the note on {@link VersionChange.direct}
+ *    already calls them "both deliberate, both exactly the decision worth
+ *    surfacing". Two firings, two intentional pins, zero accidents. A gate whose
+ *    only outcomes are false positives teaches people to route around it, which
+ *    is what happened: #584 needed a 250-line acknowledgement mechanism to make
+ *    a correct one-line pin mergeable.
+ *
+ * **What is lost, and where.** `dependency-review` needs the dependency graph
+ * and Advanced Security, so it is skipped on private repos — a private fork
+ * gets no per-PR check that a downgrade landed somewhere vulnerable. That is
+ * why these are still printed loudly, with their own block in the output rather
+ * than a line in a list: the signal stays, the false failure goes.
+ *
+ * Lost `libc`/`os`/`cpu` and `overrides` changes still gate. Both are rare,
+ * neither is measurable by another PR-time check, and the first is the one that
+ * actually shipped broken (#571).
  */
-export function remainingRisk(
-  diff: LockfileDiff,
-  acknowledged: { acknowledgedDowngrades: VersionChange[]; acknowledgedOverrideKeys: string[] }
-): boolean {
-  const ackedDowngrades = new Set(
-    acknowledged.acknowledgedDowngrades.map((c) => JSON.stringify([c.name, c.from, c.to]))
-  );
-  const gatingDowngrade = directDowngrades(diff).some(
-    (c) => !ackedDowngrades.has(JSON.stringify([c.name, c.from, c.to]))
-  );
-  const ackedKeys = new Set(acknowledged.acknowledgedOverrideKeys);
-  const gatingOverride = diff.overrideChanges.some((c) => !ackedKeys.has(c.key));
-
-  return diff.lostNativeMetadata.length > 0 || gatingDowngrade || gatingOverride;
+export function directDowngrades(diff: LockfileDiff): VersionChange[] {
+  return diff.changed.filter((change) => change.downgrade && change.direct);
 }
 
 /**

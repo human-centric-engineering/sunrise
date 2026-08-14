@@ -314,26 +314,16 @@ These help both repo types and cost nothing, so they're always on:
   absolute counterpart (`fix:lockfile-libc --check`, ~1,400 registry requests)
   stays on the weekly schedule in `dependency-audit.yml`.
 
-  **Answering it: `.lockfile-decisions`.** Two of the three gated risks are
-  questions rather than defects — a direct dependency moving backwards, and an
-  `overrides` change — and the check's output asked "Intentional?" with nowhere
-  to answer. A decision now lives in `.lockfile-decisions`, in the **same
-  commit** as the change it describes; the check prints the exact line to add.
-  Entries are keyed to exact versions on the lockfile's own path key, a reason
-  is mandatory, an unparseable line fails, and acknowledged risks are still
-  printed — an ACK is not a silence.
-
-  Entries that match nothing are reported and **never gate**. That is what keeps
-  fork syncs working: a fork inherits upstream's whole decision log, and only
-  the entries whose exact move that particular sync reproduces will match. An
-  earlier design gated on unmatched _new_ entries — to stop a decision being
-  landed ahead of its change — and broke every fork-sync PR, telling maintainers
-  to delete upstream's decisions. That defence was dropped deliberately: this
-  gate catches **accidents** ("an accident of recomputing the tree"), and anyone
-  able to land two PRs to game it can merge the change outright.
-
-  **Lost `libc`/`os`/`cpu` is not acknowledgeable** and must stay that way —
-  never a decision, only ever npm dropping the key, and it has a repair.
+  **A direct downgrade reports, it does not gate.** The rule was a proxy for "a
+  patched dependency returned to a vulnerable one", which `dependency-review`
+  measures exactly on every PR (`fail-on-severity: high`) and `check:audit`
+  covers weekly for the standing tree. Measured across all 134 commits that
+  touched this lockfile it would have fired twice — both deliberate pins, zero
+  accidents — and the cost of that was real: a correct one-line `@types/node`
+  pin needed a 250-line acknowledgement mechanism to become mergeable.
+  `dependency-review` is **skipped on private repos**, so a private fork loses
+  the per-PR enforcement; the downgrade is still printed in its own block with
+  that caveat. Lost `libc`/`os`/`cpu` and `overrides` changes still gate.
 
   It exists because `/pre-pr` runs this check locally and **Dependabot PRs never
   run `/pre-pr`**. npm below 11.11.0 deletes `libc` from every entry it writes,
