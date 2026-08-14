@@ -185,10 +185,25 @@ forwards raw provider text, so it logs the detail and rethrows a flat
 
 **That covers the completion summary only.** `runAnalysis` is the one
 evaluation caller of `runStructuredCompletion`. Per-turn metric scoring goes
-through `scoreResponse` → `drainStreamChat`, whose `done` event carries no
-finish reason, so a truncated judge still records `score: null` with
-`'judge response was not valid {score, reasoning} JSON'` — the same
-misdiagnosis, tracked in #594.
+through `scoreResponse` → `drainStreamChat`, which is a different route to the
+same question — and it used to reach the same wrong answer, recording
+`score: null` with `'judge response was not valid {score, reasoning} JSON'` for
+a judge that had merely run out of tokens.
+
+Closed in #594. `ChatEvent.done` now carries an optional
+[`finishReason`](../api/sse.md), `DrainResult` surfaces it, and `runJudge`
+separates the two failures — because they have different fixes and the string
+is persisted to the metric row and shown to an operator:
+
+| What happened                     | Recorded reasoning                                                                | Operator's fix                |
+| --------------------------------- | --------------------------------------------------------------------------------- | ----------------------------- |
+| `finishReason === 'length'`       | `judge response was cut off at the model's token limit after N output tokens — …` | Raise the judge's `maxTokens` |
+| Anything else that fails to parse | `judge response was not valid {score, reasoning} JSON`                            | Fix the judge's prompt        |
+
+Note why the adapter guards cannot help here, since it is the reason this needed
+its own fix: the seeded judges run at `maxTokens: 1000` and carry **no**
+`responseFormat`, and every adapter truncation guard keys on one. `runJudge` is
+the only place the distinction can be drawn.
 
 `runStructuredCompletion` also accepts an optional `responseSchema`
 (plus `responseSchemaName` / `responseSchemaStrict`). When supplied it is
