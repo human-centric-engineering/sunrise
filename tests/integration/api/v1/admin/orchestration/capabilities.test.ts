@@ -62,8 +62,14 @@ vi.mock('@/lib/db/client', () => {
   };
 });
 
-vi.mock('@/lib/orchestration/capabilities', () => ({
+// The route imports `changedSeedOwnedFields` from this barrel too. It is a
+// pure comparison over values the test already controls, so it is wired to the
+// REAL implementation — stubbing it would make the system-capability guard
+// assert against the stub rather than against the rule (#598).
+vi.mock('@/lib/orchestration/capabilities', async () => ({
   capabilityDispatcher: { clearCache: vi.fn() },
+  changedSeedOwnedFields: (await import('@/lib/orchestration/capabilities/seed-owned'))
+    .changedSeedOwnedFields,
 }));
 
 vi.mock('@/lib/orchestration/mcp', () => ({

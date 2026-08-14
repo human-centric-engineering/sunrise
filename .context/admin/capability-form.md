@@ -39,7 +39,9 @@ Populated from the `availableCategories` prop (derived server-side from the curr
 
 ### System capability banner
 
-When editing a system capability (`isSystem: true`), a blue info banner appears below the sticky header: "This is a system capability managed by seed data. It cannot be deleted or deactivated. You can edit its description, safety settings, and execution config." The System badge in the header also has a FieldHelp popover explaining the protection.
+When editing a system capability (`isSystem: true`), a blue info banner appears below the sticky header naming the four fields the seeds own — `slug`, `functionDefinition`, `executionType`, `executionHandler` — and stating that changing any of them is refused because a re-seed would overwrite them. The System badge in the header carries the same list in a FieldHelp popover.
+
+Both were rewritten for #598. They previously said the operator "can edit its description, safety settings, and execution config" without naming what was protected, which was the wrong half of the sentence to be specific about: the form does not disable the protected inputs, so the copy is the only thing telling an operator before they type rather than at the 403. If you add a field to `SEED_OWNED_CAPABILITY_FIELDS`, update both strings.
 
 ## Tab 2 — Function definition
 

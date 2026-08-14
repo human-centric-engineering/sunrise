@@ -23,6 +23,12 @@ export {
   isWorkflowAgentId,
 } from '@/lib/orchestration/capabilities/dispatcher';
 export {
+  SEED_OWNED_CAPABILITY_FIELDS,
+  changedSeedOwnedFields,
+  type SeedOwnedCapabilityField,
+  type SeedOwnedCapabilityValues,
+} from '@/lib/orchestration/capabilities/seed-owned';
+export {
   registerBuiltInCapabilities,
   registerAppCapability,
   registerAppCapabilities,

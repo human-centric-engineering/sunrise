@@ -202,6 +202,21 @@ release process.
   in its place (#559).
 ### Added
 
+- **`jsonEquals()` on `@/lib/utils/json-equal`** — structural equality for JSON
+  values that ignores object key order. Needed wherever one side of a comparison
+  has been through Postgres (`jsonb` canonicalises key order on write) or Zod
+  (which rebuilds a parsed object in schema-declaration order), so the same
+  value round-trips to two different strings and a `JSON.stringify` comparison
+  calls it changed. The two existing `valuesEqual` helpers
+  (`agent-version-diff.ts`, `apply-audit-changes.ts`) are deliberately *not*
+  key-order-insensitive — both compare values produced by the same code path on
+  both sides (#598).
+- **`SEED_OWNED_CAPABILITY_FIELDS` and `changedSeedOwnedFields()` on
+  `@/lib/orchestration/capabilities`** — the single definition of which
+  `AiCapability` fields belong to the seeds rather than the operator, and the
+  value-level (not presence-level) diff both write paths consult. A fork adding
+  a third write path to capabilities should call it rather than re-deriving the
+  list (#598).
 - **`Fork Sync Integrity` workflow — catches a squash-merged sync PR.** Squashing
   a sync PR keeps every file but discards the second parent, so git no longer
   knows the release tag is in your history and the merge base against upstream
@@ -418,6 +433,15 @@ release process.
 
 ### Changed
 
+- **`PATCH …/capabilities/{id}` now returns 403 for a change to a system
+  capability's `slug`, `functionDefinition`, `executionType` or
+  `executionHandler`.** **Fork-facing:** any automation that reconfigures a
+  built-in capability over the API will start failing at that call. It was
+  already failing — silently, at the next re-seed — so the fix is to move the
+  change into the capability's seed unit in `prisma/seeds/`, which is where it
+  had to live to survive a deploy. Every other field, including
+  `executionConfig`, stays editable. See the entry under **Fixed** for the full
+  reasoning (#598).
 - **A structured extraction cut off at the token cap is now an error on the
   OpenAI-compatible adapter, not partial JSON.** It already was on Anthropic
   and on the empty-content case; what changes is `finish_reason: 'length'` with
@@ -580,6 +604,21 @@ release process.
   explicitly (#509).
 
 ### Fixed
+
+- **Edits to a system capability's seed-owned fields are now refused instead of
+  silently reverted.** Since #545 the capability seeds re-apply
+  `functionDefinition`, `executionType` and `executionHandler` to existing rows
+  on every deploy whose seed-file hash changes. Nothing stopped an operator
+  writing those same fields through `PATCH …/capabilities/{id}` or the config
+  importer: the write succeeded, logged a `capability.update` audit entry — and
+  the next re-seed undid it with **no audit entry, no log and no signal in the
+  UI**. `slug` had a worse ending, because it is the key the seed upserts on: a
+  rename was not reverted, it made the next re-seed create a **second row** for
+  one built-in. PATCH now returns 403 naming the offending fields; the importer
+  skips just those fields and records a warning, so a whole-config restore is
+  not failed by a bundle carrying a built-in's shipped definition. The System
+  badge and banner in the capability form now name what is protected rather than
+  leaving the operator to discover it at save time (#598).
 
 - **CI's changed-file detection no longer caps at 100 files, silently skipping
   every gate.** The `config` job read `gh pr view --json files`, which goes

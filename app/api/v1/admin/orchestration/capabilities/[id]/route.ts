@@ -22,7 +22,7 @@ import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors
 import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
-import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import { capabilityDispatcher, changedSeedOwnedFields } from '@/lib/orchestration/capabilities';
 import {
   capabilityFunctionDefinitionSchema,
   updateCapabilitySchema,
@@ -71,6 +71,38 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (!current) throw new NotFoundError(`Capability ${id} not found`);
 
   const body = await validateRequestBody(request, updateCapabilitySchema);
+
+  // ── System-capability guards ────────────────────────────────────────────
+  // These run before the field-shape checks below so a system row gets the
+  // accurate answer rather than an incidental one. Renaming a built-in's slug,
+  // for instance, trips the `functionDefinition.name must equal slug` check on
+  // its way past — a 400 about a field the operator did not touch, when the
+  // real answer is that the slug is not theirs to change.
+
+  // System capabilities cannot be deactivated via PATCH (equivalent to deletion).
+  if (current.isSystem && body.isActive === false) {
+    throw new ForbiddenError('System capabilities cannot be deactivated');
+  }
+
+  // A system capability's `functionDefinition`, `executionType` and
+  // `executionHandler` are re-applied by its seed on every deploy whose seed
+  // file hash changes, and its `slug` is the key that upsert matches on. So
+  // accepting a write to any of them means accepting an edit that does not
+  // survive — reverted with no audit entry, or (for `slug`) leaving a second
+  // row for one built-in. Refuse instead, naming the fields.
+  //
+  // `changedSeedOwnedFields` compares VALUES, not presence: the capability form
+  // PATCHes the whole form on every save, so a presence check would 403 an
+  // admin who only edited the description. See `seed-owned.ts` for both traps.
+  if (current.isSystem) {
+    const seedOwned = changedSeedOwnedFields(current, body);
+    if (seedOwned.length > 0) {
+      throw new ForbiddenError(
+        `System capabilities are seeded from code — ${seedOwned.join(', ')} cannot be changed here. ` +
+          `Edit the capability's seed unit in prisma/seeds/ instead; every other field on this capability remains editable.`
+      );
+    }
+  }
 
   // When executionHandler is changed without executionType in the body,
   // validate URL format against the existing executionType from the DB.
@@ -141,11 +173,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const renamedFrom =
     displacedName && mcpToolNameSchema.safeParse(displacedName).success ? displacedName : null;
   const unpinnableName = displacedName && !renamedFrom ? displacedName : null;
-
-  // System capabilities cannot be deactivated via PATCH (equivalent to deletion).
-  if (current.isSystem && body.isActive === false) {
-    throw new ForbiddenError('System capabilities cannot be deactivated');
-  }
 
   const data: Prisma.AiCapabilityUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;

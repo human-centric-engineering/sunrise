@@ -10,6 +10,10 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { backupSchema } from '@/lib/orchestration/backup/schema';
+// Direct submodule import, not the barrel: `@/lib/orchestration/capabilities`
+// re-exports the dispatcher and the built-in registry, none of which a config
+// restore needs pulled into its module graph.
+import { changedSeedOwnedFields } from '@/lib/orchestration/capabilities/seed-owned';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
@@ -267,21 +271,44 @@ export async function importOrchestrationConfig(
     for (const cap of parsed.data.capabilities) {
       const existing = await tx.aiCapability.findUnique({ where: { slug: cap.slug } });
       if (existing) {
-        await tx.aiCapability.update({
-          where: { slug: cap.slug },
-          data: {
-            name: cap.name,
-            description: cap.description,
-            category: cap.category,
-            functionDefinition: cap.functionDefinition as Prisma.InputJsonValue,
-            executionType: cap.executionType,
-            executionHandler: cap.executionHandler,
-            executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            requiresApproval: cap.requiresApproval,
-            rateLimit: cap.rateLimit,
-            isActive: cap.isActive,
-          },
-        });
+        const data: Prisma.AiCapabilityUpdateInput = {
+          name: cap.name,
+          description: cap.description,
+          category: cap.category,
+          executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+          requiresApproval: cap.requiresApproval,
+          rateLimit: cap.rateLimit,
+          isActive: cap.isActive,
+        };
+
+        // On a system row the seeds own the execution fields, so importing them
+        // would write a change the next re-seed reverts with no audit entry.
+        // Skip just those fields rather than skipping the row (which is what
+        // the agent path above does): an import is a whole-config restore, and
+        // refusing it because the bundle carries a built-in's shipped
+        // definition would make routine restores unusable. Everything the
+        // operator owns — name, description, category, rate limit, approval,
+        // active state — still restores.
+        //
+        // Sunrise's own exporter filters `isSystem: false`, so a bundle this
+        // produced never reaches here with a system capability. A hand-edited
+        // or foreign bundle can, and that is the case worth being correct for.
+        const seedOwned = existing.isSystem ? changedSeedOwnedFields(existing, cap) : [];
+        if (seedOwned.length > 0) {
+          // Only warn when a value actually differs — a routine restore of an
+          // unmodified bundle carries the shipped definition verbatim, and
+          // warning on that would be noise on every import.
+          result.warnings.push(
+            `System capability '${cap.slug}' — ${seedOwned.join(', ')} not imported; these are seeded from code and a re-seed would revert them`
+          );
+        }
+        if (!existing.isSystem) {
+          data.functionDefinition = cap.functionDefinition as Prisma.InputJsonValue;
+          data.executionType = cap.executionType;
+          data.executionHandler = cap.executionHandler;
+        }
+
+        await tx.aiCapability.update({ where: { slug: cap.slug }, data });
         result.capabilities.updated++;
       } else {
         await tx.aiCapability.create({

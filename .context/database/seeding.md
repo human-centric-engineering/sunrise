@@ -139,7 +139,19 @@ await prisma.aiCapability.upsert({
 });
 ```
 
-The write paths do **not** enforce this split yet: `PATCH /capabilities/{id}` and the config importer will both happily write a code-owned field onto a system row, report success, and let the next re-seed revert it with no audit entry. Tracked separately — until then, treat an edit to a built-in's schema as temporary.
+**The write paths enforce this split on system rows** (#598), via `changedSeedOwnedFields()` in `lib/orchestration/capabilities/seed-owned.ts`:
+
+- `PATCH /capabilities/{id}` returns **403** naming the fields, rather than accepting an edit the next re-seed reverts with no audit entry.
+- The **config importer** skips those fields on a system row and records a warning, rather than failing the whole restore. Sunrise's exporter filters `isSystem: false`, so only a hand-edited or foreign bundle reaches that path.
+
+`slug` is guarded alongside the three, for a different reason: it is the upsert's `where` key, so a rename is **not** reverted — the next re-seed matches nothing and creates a **second row** for one built-in.
+
+Two things to preserve if you touch that guard, both of which shipped broken once:
+
+1. **Gate on the value changing, not on the field being present.** The capability form PATCHes the whole form on every save, so a presence check 403s an admin who only edited the description, naming three fields they never touched.
+2. **Compare `functionDefinition` structurally, not with `JSON.stringify`.** It is `jsonb`: Postgres canonicalises key order on write and Zod rebuilds the parsed body in schema order, so the same value round-trips to two different strings. `jsonEquals()` (`lib/utils/json-equal.ts`) is key-order-insensitive; the two other `valuesEqual` helpers in the codebase are not, deliberately.
+
+`npm run smoke:capability-ownership` proves (2) against the real database rather than against anyone's belief about it — writing `{description, parameters, name}` and reading back `{name, parameters, description}`. It fails loudly if a future Postgres stops re-ordering, because that would mean the comparison strategy needs re-deciding rather than that the guard is fine.
 
 Two caveats when seeding a live box:
 

@@ -14,6 +14,7 @@ Each script has an `npm run smoke:<slice>` entry in `package.json`:
 npm run smoke:chat           # Phase 2c streaming chat handler
 npm run smoke:orchestration  # Phase 3 admin orchestration HTTP surface (requires dev server)
 npm run smoke:transcribe     # Audio (speech-to-text): getAudioProvider → transcribe() round-trip
+npm run smoke:capability-ownership  # #598 guard vs. Postgres jsonb key re-ordering
 ```
 
 Or directly:

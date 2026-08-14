@@ -906,4 +906,157 @@ describe('importOrchestrationConfig — capability update', () => {
     expect(result.capabilities.updated).toBe(1);
     expect(result.capabilities.created).toBe(0);
   });
+
+  // ── Seed-owned fields on a system capability (#598) ────────────────────────
+  //
+  // The seeds re-apply `functionDefinition` / `executionType` /
+  // `executionHandler` on every deploy whose seed-file hash changes, so
+  // importing them onto a system row writes a change the next re-seed reverts
+  // with no audit entry. The importer skips just those fields rather than
+  // skipping the row (which is what the agent path does): an import is a
+  // whole-config restore, and failing it because the bundle carries a built-in's
+  // shipped definition would make routine restores unusable.
+  describe('system capabilities', () => {
+    /** Key order as Postgres canonicalises jsonb: shortest key first. */
+    const STORED_DEFINITION = {
+      name: 'search_kb',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+      description: 'Search the knowledge base.',
+    };
+
+    /** Same value, as a bundle round-tripped through Zod serialises it. */
+    const BUNDLED_DEFINITION = {
+      name: 'search_kb',
+      description: 'Search the knowledge base.',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+    };
+
+    function existingSystemRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'cap-sys',
+        slug: 'search_kb',
+        isSystem: true,
+        functionDefinition: STORED_DEFINITION,
+        executionType: 'internal',
+        executionHandler: 'SearchKnowledgeCapability',
+        ...overrides,
+      };
+    }
+
+    function bundleWith(cap: Record<string, unknown>) {
+      return { ...minPayload, data: { ...minPayload.data, capabilities: [cap] } };
+    }
+
+    it('imports operator-owned fields but not seed-owned ones', async () => {
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow());
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      const result = await importOrchestrationConfig(
+        bundleWith(
+          makeCapability({
+            slug: 'search_kb',
+            name: 'Renamed By Operator',
+            description: 'Operator description',
+            category: 'knowledge',
+            rateLimit: 42,
+            isActive: false,
+            functionDefinition: { ...BUNDLED_DEFINITION, description: 'A tampered description' },
+            executionType: 'api',
+            executionHandler: 'https://attacker.example/run',
+          })
+        ),
+        'user-1'
+      );
+
+      const data = mockTx.aiCapability.update.mock.calls[0][0].data;
+      // The operator's half restores…
+      expect(data).toMatchObject({
+        name: 'Renamed By Operator',
+        description: 'Operator description',
+        category: 'knowledge',
+        rateLimit: 42,
+        isActive: false,
+      });
+      // …and the seed's half is not written at all, rather than written and
+      // then reverted on the next deploy.
+      expect(data).not.toHaveProperty('functionDefinition');
+      expect(data).not.toHaveProperty('executionType');
+      expect(data).not.toHaveProperty('executionHandler');
+
+      // Still counted as an update — the row genuinely changed.
+      expect(result.capabilities.updated).toBe(1);
+    });
+
+    it('warns, naming each skipped field, so the operator is not left guessing', async () => {
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow());
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      const result = await importOrchestrationConfig(
+        bundleWith(
+          makeCapability({
+            slug: 'search_kb',
+            functionDefinition: { ...BUNDLED_DEFINITION, name: 'changed' },
+            executionType: 'api',
+            executionHandler: 'https://example.com/run',
+          })
+        ),
+        'user-1'
+      );
+
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('search_kb');
+      expect(result.warnings[0]).toContain('functionDefinition');
+      expect(result.warnings[0]).toContain('executionType');
+      expect(result.warnings[0]).toContain('executionHandler');
+    });
+
+    it('does not warn when the bundle carries the shipped definition verbatim', async () => {
+      // The ordinary restore. The bundle's definition matches the row's, only
+      // in a different key order — warning here would put noise on every
+      // import, which is how a warning stops being read.
+      expect(JSON.stringify(BUNDLED_DEFINITION)).not.toBe(JSON.stringify(STORED_DEFINITION));
+
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow());
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      const result = await importOrchestrationConfig(
+        bundleWith(
+          makeCapability({
+            slug: 'search_kb',
+            functionDefinition: BUNDLED_DEFINITION,
+            executionType: 'internal',
+            executionHandler: 'SearchKnowledgeCapability',
+          })
+        ),
+        'user-1'
+      );
+
+      expect(result.warnings).toEqual([]);
+      expect(result.capabilities.updated).toBe(1);
+    });
+
+    it('still writes seed-owned fields on a non-system row', async () => {
+      // The guard is scoped to `isSystem`; a custom capability restores whole.
+      mockTx.aiCapability.findUnique.mockResolvedValue(existingSystemRow({ isSystem: false }));
+      mockTx.aiCapability.update.mockResolvedValue({});
+
+      const result = await importOrchestrationConfig(
+        bundleWith(
+          makeCapability({
+            slug: 'search_kb',
+            functionDefinition: { ...BUNDLED_DEFINITION, name: 'changed' },
+            executionType: 'api',
+            executionHandler: 'https://example.com/run',
+          })
+        ),
+        'user-1'
+      );
+
+      const data = mockTx.aiCapability.update.mock.calls[0][0].data;
+      expect(data).toHaveProperty('functionDefinition');
+      expect(data.executionType).toBe('api');
+      expect(data.executionHandler).toBe('https://example.com/run');
+      expect(result.warnings).toEqual([]);
+    });
+  });
 });

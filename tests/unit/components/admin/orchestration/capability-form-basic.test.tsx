@@ -723,6 +723,27 @@ describe('CapabilityForm — Basic tab', () => {
   // ── System capability banner ──────────────────────────────────────────────
 
   describe('system capability banner', () => {
+    /**
+     * The banner interleaves `<strong>` field names with plain text, so the
+     * sentence spans several DOM nodes and `getByText` on a full phrase finds
+     * nothing. Match on the container whose *combined* text content reads as
+     * the banner instead.
+     *
+     * Anchoring on "seeded from code" rather than on the whole sentence is
+     * deliberate: the copy is prose and will be reworded, but the claim that
+     * the capability comes from code is the part that must not quietly vanish.
+     */
+    const bannerMatcher = (_content: string, element: Element | null): boolean => {
+      if (!element) return false;
+      const text = element.textContent ?? '';
+      if (!/seeded from code/i.test(text)) return false;
+      // Only the innermost matching element, or every ancestor up to <body>
+      // matches and `getByText` throws on multiple results.
+      return !Array.from(element.children).some((child) =>
+        /seeded from code/i.test(child.textContent ?? '')
+      );
+    };
+
     it('shows info banner when editing a system capability', () => {
       render(
         <CapabilityForm
@@ -732,7 +753,26 @@ describe('CapabilityForm — Basic tab', () => {
         />
       );
 
-      expect(screen.getByText(/system capability managed by seed data/i)).toBeInTheDocument();
+      expect(screen.getByText(bannerMatcher)).toBeInTheDocument();
+    });
+
+    it('names every seed-owned field so the operator learns before the 403', () => {
+      // The form does not disable the protected inputs, so this copy is the
+      // only thing telling an admin which fields are refused. It previously
+      // said they "can edit its description, safety settings, and execution
+      // config" — true, but silent on the four that are not theirs (#598).
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability({ isSystem: true })}
+          availableCategories={['api']}
+        />
+      );
+
+      const banner = screen.getByText(bannerMatcher);
+      for (const field of ['slug', 'function definition', 'execution type', 'execution handler']) {
+        expect(banner.textContent?.toLowerCase()).toContain(field);
+      }
     });
 
     it('does not show info banner for non-system capabilities', () => {
@@ -744,13 +784,13 @@ describe('CapabilityForm — Basic tab', () => {
         />
       );
 
-      expect(screen.queryByText(/system capability managed by seed data/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(bannerMatcher)).not.toBeInTheDocument();
     });
 
     it('does not show info banner in create mode', () => {
       render(<CapabilityForm mode="create" availableCategories={['api']} />);
 
-      expect(screen.queryByText(/system capability managed by seed data/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(bannerMatcher)).not.toBeInTheDocument();
     });
   });
 });

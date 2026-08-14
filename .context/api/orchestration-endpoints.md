@@ -302,6 +302,8 @@ Create. Body validated by `createCapabilitySchema` — `functionDefinition` must
 
 Standard CRUD. `DELETE` is a soft delete. Dispatcher cache is cleared on every mutation.
 
+On an `isSystem: true` row, `PATCH` returns **403** for a _changed_ `slug`, `functionDefinition`, `executionType` or `executionHandler` — the seeds own those four and would revert (or, for `slug`, duplicate) the row on the next deploy (#598). The check compares values rather than presence, so the admin form resubmitting the whole form on every save is unaffected, and it is key-order-insensitive because `functionDefinition` is `jsonb`. Every other field, `executionConfig` included, stays editable. See [`.context/database/seeding.md`](../database/seeding.md).
+
 ### `GET /capabilities/:id/stats`
 
 Aggregates execution metrics for a capability over a configurable period. Query: `period=7d|30d|90d` (default `30d`).
