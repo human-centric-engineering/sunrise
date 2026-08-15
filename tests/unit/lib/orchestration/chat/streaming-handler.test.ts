@@ -2137,6 +2137,221 @@ describe('StreamingChatHandler', () => {
       );
     });
 
+    it('does not trip the breaker when the CLIENT aborts the stream', async () => {
+      // A cancelled stream says nothing about provider health. The abort check
+      // used to sit AFTER `recordFailure()`, so every visitor who pressed
+      // stop, closed the tab or navigated away mid-answer scored a failure
+      // against the provider — and at `failureThreshold: 5`, five of those
+      // open the circuit for every agent on that slug, not just this one.
+      const failingProvider = {
+        name: 'aborting',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          throw err;
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+
+      expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it('still trips the breaker on a genuine provider failure', async () => {
+      // The other half: moving the abort check must not stop real failures
+      // reaching the breaker, which is the whole point of having one.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('service unavailable', {
+            code: 'http_503',
+            status: 503,
+            retriable: true,
+          });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+
+      expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("records the first provider's spend before failing over to the next", async () => {
+      // The gap #592 named, one branch over from where #593 closed it. Cost
+      // logging on error used to sit INSIDE the request-fault branch, which
+      // returns without failing over. An error that carries usage and is NOT a
+      // request fault takes the failover path instead — so the first
+      // provider's spend was dropped and the turn logged only the fallback's,
+      // under-reporting a turn that was billed twice.
+      //
+      // `http_500` with usage attached is the shape: the provider streamed,
+      // billed, then failed. Retriable, so failing over is right; the charge
+      // is real either way.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('upstream exploded mid-stream', {
+            code: 'http_500',
+            status: 500,
+            retriable: true,
+            usage: { inputTokens: 400, outputTokens: 900 },
+          });
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        [
+          { type: 'text', content: 'OK' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+      await collect(streamChat(baseRequest));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Two real charges, two rows — not one.
+      expect(logCost).toHaveBeenCalledTimes(2);
+      expect(logCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: CostOperation.CHAT,
+          inputTokens: 400,
+          outputTokens: 900,
+        })
+      );
+      // The failover itself is unchanged: this IS a provider-health failure,
+      // so the breaker still hears about it and the fallback still runs.
+      expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
+      expect(fallbackProvider.chatStream).toHaveBeenCalled();
+    });
+
+    it('records spend on a terminal stream error with no fallback left', async () => {
+      // The other uncovered exit. Same error, no fallback configured: the
+      // handler throws straight out, and the charge went with it.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('upstream exploded mid-stream', {
+            code: 'http_500',
+            status: 500,
+            retriable: true,
+            usage: { inputTokens: 111, outputTokens: 222 },
+          });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(logCost).toHaveBeenCalledWith(
+        expect.objectContaining({ inputTokens: 111, outputTokens: 222 })
+      );
+    });
+
+    it('logs nothing extra when the error carries no usage', async () => {
+      // Most errors do not know what they cost — a 401, a connection refused,
+      // anything raised before the model produced output. A zeroed row would
+      // tell the dashboard the turn was free, which is worse than no row.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('unauthorized', { code: 'http_401', status: 401 });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(logCost).not.toHaveBeenCalled();
+    });
+
     it('keeps error markers out of the prompt on the next turn', async () => {
       // The marker exists so the CLIENT can render a failed turn. Feeding
       // "[An error occurred...]" back to the model burns context and invites

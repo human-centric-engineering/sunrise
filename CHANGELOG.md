@@ -677,6 +677,29 @@ release process.
 
 ### Fixed
 
+- **A cancelled stream no longer counts against the provider's circuit breaker.**
+  Pressing stop, closing the tab or navigating away mid-answer raises an
+  `AbortError`, and the streaming handler recorded that as a provider failure —
+  in **two** places, since an `AbortError` is not a `ProviderError` and so fell
+  through the inner catch to the generic crash path as well. At
+  `failureThreshold: 5`, five cancelled streams opened the circuit for that
+  provider slug across **every** agent using it: one reader changing their mind
+  five times could take a healthy provider offline for everybody. The breaker
+  exists to route around a provider that is unwell, and a reader is not evidence
+  about the provider. Both sites now consult one `isClientAbort()` predicate, so
+  they cannot drift (#592).
+- **Cost recorded on a failed stream is no longer confined to one exit.**
+  `ProviderError.usage` carries what the provider billed for the call an error
+  ended, and the handler folded it into `AiCostLog` only inside the
+  request-fault branch added by #593. The other two exits — failing over to a
+  fallback, and giving up with no fallback left — dropped it: a turn billed by
+  two providers would have logged only the second. The fold now happens on the
+  way into the catch, so every exit is covered by one statement. Only the
+  truncation guards populate `usage` today, so this is structural rather than a
+  behaviour change; it is what stops the next adapter that populates it from
+  having to know which branch was listening. An error carrying no usage still
+  logs nothing — a zeroed row would report the turn as free (#592).
+
 - **EPUB chapter text is now extracted by a real DOM parse, not a regex chain.**
   `epub-parser.ts` stripped markup with fourteen chained `.replace()` calls;
   CodeQL raised five high-severity findings against them on #613. Three were

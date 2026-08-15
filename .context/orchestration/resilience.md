@@ -150,13 +150,21 @@ Use case: A customer-facing FAQ bot may use `block` mode to prevent any flagged 
 
 If the LLM stream fails after starting (network error, provider crash), the streaming handler automatically retries with the next fallback provider:
 
-1. Record a circuit breaker failure for the current provider
-2. Emit `{ type: 'warning', code: 'provider_retry' }` SSE event
-3. Reset accumulated content and tool calls
-4. Resolve the next provider from `agent.fallbackProviders`
-5. Restart the stream from the new provider
+1. Record whatever the failed call cost, if the error carries usage
+2. Record a circuit breaker failure for the current provider
+3. Emit `{ type: 'warning', code: 'provider_retry' }` SSE event
+4. Reset accumulated content and tool calls
+5. Resolve the next provider from `agent.fallbackProviders`
+6. Restart the stream from the new provider
 
-Maximum retries: 2 (`MAX_STREAM_RETRIES`). `AbortError` (client disconnect) bypasses retry — no point retrying if nobody's listening. See [Streaming Chat Handler](./chat.md#mid-stream-retry--recovery) for details.
+Maximum retries: 2 (`MAX_STREAM_RETRIES`). See [Streaming Chat Handler](./chat.md#mid-stream-retry--recovery) for details.
+
+**Two failures are deliberately kept away from the breaker**, because it exists to route around a provider that is _unwell_ and neither is evidence of that:
+
+- **A client abort** (stop pressed, tab closed, navigation mid-answer) bypasses retry — nobody is listening — and records **no** breaker failure. It is checked by `isClientAbort()` in **two** places: the inner stream catch and the outer crash catch. Both are needed; an `AbortError` is not a `ProviderError`, so without the outer check it falls through to the generic crash path and scores the failure one level up. At `failureThreshold: 5`, five cancelled streams would otherwise open the circuit for that provider slug across **every** agent using it — one reader changing their mind five times taking a healthy provider offline for everybody.
+- **A request fault** (`isRequestFault()`, currently `truncated_no_output`) neither fails over nor records a failure: the token cap travels with the agent config, not the endpoint, so every fallback rejects it identically.
+
+**Cost on the error path.** `ProviderError.usage` carries what the provider billed for the call the error ended. The streaming handler folds it into `AiCostLog` on the way into the catch, so it is recorded whichever exit is taken — request fault, failover, or terminal. Only the truncation guards populate the field today; the placement is what stops the next adapter that populates it from having to know which of the three branches was listening. An error carrying no usage logs nothing: a zeroed row would tell the dashboard the turn was free, which is worse than no row at all.
 
 ## Guard Mode Fallback Logging
 

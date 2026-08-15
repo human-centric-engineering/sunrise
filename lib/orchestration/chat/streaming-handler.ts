@@ -1201,6 +1201,53 @@ export class StreamingChatHandler {
               } catch (streamErr) {
                 streamRetries++;
 
+                // Whatever the provider told us this failed call cost, record
+                // it — before deciding what to do about the failure, so every
+                // exit below is covered by one statement rather than each
+                // remembering for itself.
+                //
+                // This used to live inside the request-fault branch, which
+                // covered the truncation case (#593) and nothing else. The
+                // other two exits are a real gap once any error carries usage:
+                // the FAILOVER path would drop the first provider's spend and
+                // then log only the fallback's, and the terminal path would
+                // drop it entirely. Both are the same mistake #592 describes,
+                // one branch over.
+                //
+                // Today only the truncation guards populate `usage`, and both
+                // are request faults — so this is structural rather than a
+                // behaviour change, and no test can observe the difference
+                // without a fixture that invents such an error. It is here
+                // because `ProviderError.usage` is documented as something
+                // "callers that log cost should fold in on their error paths",
+                // and the next adapter to attach it should not have to know
+                // that only one of three paths was listening.
+                if (streamErr instanceof ProviderError && streamErr.usage) {
+                  const errUsage = streamErr.usage;
+                  turnCostUsd += calculateCost(
+                    resolvedModel,
+                    errUsage.inputTokens,
+                    errUsage.outputTokens
+                  ).totalCostUsd;
+                  void logCost({
+                    agentId: agent.id,
+                    conversationId: conversation.id,
+                    model: resolvedModel,
+                    provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+                    inputTokens: errUsage.inputTokens,
+                    outputTokens: errUsage.outputTokens,
+                    operation: CostOperation.CHAT,
+                    // Read off the span directly: `llmTraceId`/`llmSpanId` are
+                    // only assigned on the success path below, so they are
+                    // still '' here — and `logCost` drops falsy ids, leaving
+                    // the most expensive turn shape unjoinable to the very
+                    // error span an operator is looking at.
+                    traceId: llmSpan.traceId(),
+                    spanId: llmSpan.spanId(),
+                    ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
+                  });
+                }
+
                 // A fault in the REQUEST, not in the provider. Every provider
                 // will reject it identically — the token cap and the schema
                 // travel with the agent config, not with the endpoint — so
@@ -1230,55 +1277,39 @@ export class StreamingChatHandler {
                   // happened. Same event the failover path uses to wipe a
                   // partial response, different reason.
                   yield { type: 'content_reset', reason: 'request_fault' };
-                  // The turn was billed. A truncation is a full cap's worth of
-                  // output — the most expensive shape a turn has — and the
-                  // `done` chunk that normally carries usage never arrives, so
-                  // without this the vendor charges and `AiCostLog` shows
-                  // nothing. The guards attach what the provider reported.
-                  // (Other stream errors still lose their usage; that is the
-                  // general hole in #592, which this mechanism can extend to.)
-                  if (streamErr.usage) {
-                    turnCostUsd += calculateCost(
-                      resolvedModel,
-                      streamErr.usage.inputTokens,
-                      streamErr.usage.outputTokens
-                    ).totalCostUsd;
-                    void logCost({
-                      agentId: agent.id,
-                      conversationId: conversation.id,
-                      model: resolvedModel,
-                      provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
-                      inputTokens: streamErr.usage.inputTokens,
-                      outputTokens: streamErr.usage.outputTokens,
-                      operation: CostOperation.CHAT,
-                      // Read off the span directly: `llmTraceId`/`llmSpanId`
-                      // are only assigned on the success path below, so they
-                      // are still '' here — and `logCost` drops falsy ids,
-                      // leaving the most expensive turn shape unjoinable to
-                      // the very error span an operator is looking at.
-                      traceId: llmSpan.traceId(),
-                      spanId: llmSpan.spanId(),
-                      ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
-                    });
-                  }
+                  // Cost for this turn was already recorded above, on the way
+                  // into the catch — a truncation is a full cap's worth of
+                  // output, the most expensive shape a turn has, and the `done`
+                  // chunk that would normally carry usage never arrives.
                   throw streamErr;
                 }
 
-                getBreaker(currentProviderSlug).recordFailure();
-
-                // If aborted, don't retry. Throw to let `withSpanGenerator`
-                // record the exception on the span and propagate to the
-                // outer try/catch in `runInner`.
-                if (
-                  streamErr instanceof Error &&
-                  (streamErr.name === 'AbortError' || streamErr.message.includes('aborted'))
-                ) {
+                // An abort is checked BEFORE the breaker hears anything, and
+                // deliberately so. The client hung up — pressed stop, closed
+                // the tab, navigated away mid-answer. That is a statement
+                // about the reader, not about the provider, and the breaker
+                // exists to route around a provider that is unwell.
+                //
+                // Recorded as a failure it is worse than noise: at
+                // `failureThreshold: 5`, five cancelled streams open the
+                // circuit for that provider slug — for every agent using it,
+                // not just this one. A visitor who changes their mind five
+                // times can take a healthy provider offline for everybody.
+                // Same reasoning the request-fault branch above spells out for
+                // truncations; a cancellation is even further from evidence of
+                // ill health.
+                //
+                // Throw so `withSpanGenerator` records the exception on the
+                // span and it propagates to the outer try/catch in `runInner`.
+                if (isClientAbort(streamErr)) {
                   setSpanStatus(llmSpan, {
                     code: 'error',
                     message: streamErr instanceof Error ? streamErr.message : 'stream aborted',
                   });
                   throw streamErr;
                 }
+
+                getBreaker(currentProviderSlug).recordFailure();
 
                 // Try next fallback provider
                 const nextSlug = remainingFallbacks.shift();
@@ -2438,7 +2469,12 @@ export class StreamingChatHandler {
         yield errorEvent(err.code, safe.message);
         return;
       }
-      if (resolvedProviderSlug) {
+      // Not on a client abort — see `isClientAbort`. The inner catch already
+      // declines to record one; without the same check here an abort simply
+      // falls through to this generic crash path (an `AbortError` is not a
+      // `ProviderError`, so the branch above does not claim it) and scores the
+      // failure anyway, one level up.
+      if (resolvedProviderSlug && !isClientAbort(err)) {
         getBreaker(resolvedProviderSlug).recordFailure();
       }
       log.error('Streaming chat handler crashed', err, {
@@ -2730,6 +2766,25 @@ export class StreamingChatHandler {
 /** Convenience wrapper — most callers will use this. */
 export function streamChat(request: ChatRequest): ChatStream {
   return new StreamingChatHandler().run(request);
+}
+
+/**
+ * Whether the stream ended because the CLIENT went away — stop pressed, tab
+ * closed, navigation mid-answer.
+ *
+ * Kept as one predicate because two places have to agree about it, and the
+ * consequence of them disagreeing is invisible: the circuit breaker exists to
+ * route around a provider that is unwell, and a reader changing their mind is
+ * not evidence of that. At `failureThreshold: 5`, five cancelled streams open
+ * the circuit for a provider slug across every agent using it.
+ *
+ * Matches on `name` and on the message because the abort reaches us from three
+ * places that do not agree on the shape: `AbortController` raises a DOMException
+ * named `AbortError`, the provider SDKs wrap it, and undici surfaces a plain
+ * `Error` whose message merely contains "aborted".
+ */
+function isClientAbort(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'));
 }
 
 function errorEvent(code: string, message: string): ChatEvent {
