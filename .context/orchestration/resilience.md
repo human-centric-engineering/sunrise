@@ -16,7 +16,7 @@ Phase 7 Session 7.3 — circuit breaker, provider fallback, budget UX, input gua
 | Error message registry  | `lib/orchestration/chat/error-messages.ts`                                 |
 | Chat rate limiter       | `lib/security/rate-limit.ts` → `chatLimiter`                               |
 | Warning ChatEvent       | `types/orchestration.ts` → `{ type: 'warning' }`                           |
-| Client reconnect        | `components/admin/orchestration/agent-test-chat.tsx`                       |
+| Client reconnect        | `components/admin/orchestration/chat/chat-interface.tsx`                   |
 
 ## Circuit Breaker
 
@@ -202,7 +202,7 @@ This is sufficient for single-server deployments. Multi-instance deployments wou
 - `streaming-handler.ts` persists partial responses before errors
 - Error events are sanitized — raw provider errors never reach the client
 
-### Client-side (`agent-test-chat.tsx`)
+### Client-side (`chat/chat-interface.tsx`)
 
 - **Warning banner**: yellow alert above reply area for `warning` events
 - **Structured errors**: error panel with title, message, and action from registry
@@ -210,10 +210,10 @@ This is sufficient for single-server deployments. Multi-instance deployments wou
 
 ## Test Coverage
 
-| Test File                                                            | Tests                                           |
-| -------------------------------------------------------------------- | ----------------------------------------------- |
-| `tests/unit/lib/orchestration/llm/circuit-breaker.test.ts`           | States, transitions, window pruning, registry   |
-| `tests/unit/lib/orchestration/llm/provider-fallback.test.ts`         | Primary, fallback, exhaustion, DB failure skip  |
-| `tests/unit/lib/orchestration/chat/input-guard.test.ts`              | All patterns, edge cases, false positive checks |
-| `tests/unit/lib/orchestration/chat/error-messages.test.ts`           | All codes, fallback, non-empty guarantees       |
-| `tests/unit/components/admin/orchestration/agent-test-chat.test.tsx` | Warning banner, structured errors, reconnect    |
+| Test File                                                                | Tests                                           |
+| ------------------------------------------------------------------------ | ----------------------------------------------- |
+| `tests/unit/lib/orchestration/llm/circuit-breaker.test.ts`               | States, transitions, window pruning, registry   |
+| `tests/unit/lib/orchestration/llm/provider-fallback.test.ts`             | Primary, fallback, exhaustion, DB failure skip  |
+| `tests/unit/lib/orchestration/chat/input-guard.test.ts`                  | All patterns, edge cases, false positive checks |
+| `tests/unit/lib/orchestration/chat/error-messages.test.ts`               | All codes, fallback, non-empty guarantees       |
+| `tests/unit/components/admin/orchestration/chat/chat-interface.test.tsx` | Warning banner, structured errors, reconnect    |

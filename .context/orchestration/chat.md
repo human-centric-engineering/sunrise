@@ -807,9 +807,9 @@ When `contextWindowTokens` is not set, the handler falls back to the message-cou
 
 If the LLM stream fails mid-response (network error, provider outage), the handler automatically retries with the next fallback provider:
 
-1. On stream failure, the handler records a circuit breaker failure for the current provider
-2. If the error is an `AbortError` (client disconnect), it throws immediately — no retry
-3. Otherwise, it shifts the next slug from `remainingFallbacks` and emits a `{ type: 'warning', code: 'provider_retry' }` SSE event
+1. Whatever the failed call was billed for is recorded, if the error carries usage (`ProviderError.usage`) — before any decision about what to do next, so every exit below is covered
+2. If the error is a **client abort** (`isClientAbort()` — stop pressed, tab closed, navigation), it throws immediately: no retry, and **no circuit breaker failure**. A reader hanging up is not evidence about provider health, and at `failureThreshold: 5` five cancellations would open the circuit for every agent on that slug
+3. Otherwise the handler records a circuit breaker failure for the current provider, shifts the next slug from `remainingFallbacks` and emits a `{ type: 'warning', code: 'provider_retry' }` SSE event
 4. A `{ type: 'content_reset', reason: 'provider_fallback' }` event is yielded — **clients must discard any buffered `content` deltas** received before this event
 5. Accumulated content and tool calls are reset, and the stream restarts from the new provider
 6. After `MAX_STREAM_RETRIES` (2) attempts or no more fallbacks, the error propagates

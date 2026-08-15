@@ -2174,6 +2174,79 @@ describe('StreamingChatHandler', () => {
       expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
     });
 
+    it("does NOT mistake a provider error mentioning 'aborted' for a client abort", async () => {
+      // The breaker suppression must not be reachable by anything the provider
+      // can put in a message. `isClientAbort` falls back to a substring test
+      // only when there is no signal to consult — with a live, un-aborted
+      // signal, a 400 echoing user text stays a provider failure.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('the upload was aborted by the remote host', {
+            code: 'http_502',
+            status: 502,
+            retriable: true,
+          });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat({ ...baseRequest, signal: new AbortController().signal }));
+
+      expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats an aborted signal as a client abort whatever the error looks like', async () => {
+      // The authoritative half: if the caller hung up, the shape of the error
+      // the provider happened to raise is irrelevant.
+      const controller = new AbortController();
+      controller.abort();
+
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('socket closed', { code: 'http_500', status: 500 });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat({ ...baseRequest, signal: controller.signal }));
+
+      expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
+    });
+
     it('still trips the breaker on a genuine provider failure', async () => {
       // The other half: moving the abort check must not stop real failures
       // reaching the breaker, which is the whole point of having one.

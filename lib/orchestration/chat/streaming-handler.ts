@@ -1301,7 +1301,7 @@ export class StreamingChatHandler {
                 //
                 // Throw so `withSpanGenerator` records the exception on the
                 // span and it propagates to the outer try/catch in `runInner`.
-                if (isClientAbort(streamErr)) {
+                if (isClientAbort(streamErr, request.signal)) {
                   setSpanStatus(llmSpan, {
                     code: 'error',
                     message: streamErr instanceof Error ? streamErr.message : 'stream aborted',
@@ -2474,7 +2474,7 @@ export class StreamingChatHandler {
       // falls through to this generic crash path (an `AbortError` is not a
       // `ProviderError`, so the branch above does not claim it) and scores the
       // failure anyway, one level up.
-      if (resolvedProviderSlug && !isClientAbort(err)) {
+      if (resolvedProviderSlug && !isClientAbort(err, request.signal)) {
         getBreaker(resolvedProviderSlug).recordFailure();
       }
       log.error('Streaming chat handler crashed', err, {
@@ -2778,13 +2778,23 @@ export function streamChat(request: ChatRequest): ChatStream {
  * not evidence of that. At `failureThreshold: 5`, five cancelled streams open
  * the circuit for a provider slug across every agent using it.
  *
- * Matches on `name` and on the message because the abort reaches us from three
- * places that do not agree on the shape: `AbortController` raises a DOMException
- * named `AbortError`, the provider SDKs wrap it, and undici surfaces a plain
- * `Error` whose message merely contains "aborted".
+ * **The caller's signal is the authority when we have one.** The fallbacks
+ * exist because the abort reaches us from three places that do not agree on the
+ * shape — `AbortController` raises a DOMException named `AbortError`, the
+ * provider SDKs wrap it, and undici surfaces a plain `Error` whose message
+ * merely contains "aborted" — but a substring test against a provider-supplied
+ * message is a poor last resort: a 400 that echoes user text containing the
+ * word "aborted" would suppress a breaker record that a genuinely sick provider
+ * had earned. So the loose test only applies when there was no signal to ask.
  */
-function isClientAbort(err: unknown): boolean {
-  return err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'));
+function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
+  // Authoritative: the caller hung up, whatever the error looks like.
+  if (signal?.aborted) return true;
+  if (!(err instanceof Error)) return false;
+  // Unambiguous: nothing else is named this.
+  if (err.name === 'AbortError') return true;
+  // Only with no signal to consult — see above.
+  return signal === undefined && err.message.includes('aborted');
 }
 
 function errorEvent(code: string, message: string): ChatEvent {
