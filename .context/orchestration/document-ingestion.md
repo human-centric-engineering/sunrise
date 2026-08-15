@@ -39,8 +39,9 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 > **Run `npm run smoke:epub` against a production build after touching this
 > parser.** Not the unit suite — a production build. This path has broken twice
 > in ways vitest could not see (#606, and jsdom's ESM move before it), and it
-> now goes through jsdom again, so bundling is a live risk rather than a
-> historical one. The script uploads a real EPUB through the real admin route
+> now carries both of those risks at once: extraction goes through jsdom again,
+> and `epub` is ESM-only. Whether it survives bundling is a question only a real
+> server answers. The script uploads a real EPUB through the real admin route
 > and asserts the book's prose is in the stored chunks.
 
 ## Architecture
@@ -358,7 +359,7 @@ CSV files use a dedicated path:
 | Package     | Version | Used by     |
 | ----------- | ------- | ----------- |
 | `mammoth`   | ^1.12   | DOCX parser |
-| `epub2`     | ^3.0    | EPUB parser |
+| `epub`      | ^2.1    | EPUB parser |
 | `pdf-parse` | ^2.4    | PDF parser  |
 
 CSV parsing is in-house (no third-party dependency).

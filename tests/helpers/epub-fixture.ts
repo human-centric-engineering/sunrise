@@ -10,21 +10,25 @@
  * the input the library actually has to read.
  *
  * **Why it writes the ZIP by hand.** The archive has to be constructed
- * independently of the code under test, and nothing in the dependency tree
- * writes ZIPs — `adm-zip` is a *transitive* dep of `epub2` itself (and #601 may
- * remove it), so reaching for it would both couple the fixture to the library
- * it is meant to check and break on a dependency change. The writer supports
+ * independently of the code under test, and the only ZIP implementations in the
+ * tree are transitive deps of the EPUB library itself — so reaching for one
+ * would couple the fixture to the thing it is meant to check, and break when
+ * that dependency changes. It has already earned this: the library was swapped
+ * from `epub2` to `epub` (#601/#614) and every test built on this fixture passed
+ * unchanged, because none of them knew which library was underneath. The writer
+ * supports
  * the two methods an EPUB actually uses: `mimetype` STORED and first, as the
  * spec requires, and everything else DEFLATE, as every real book is.
  *
  * **The DEFLATE part is load-bearing — do not "simplify" it away.** Measured
- * against `epub2@3.0.2`: with a stored-only archive, `parse()` populates
- * `metadata`, `flow` and `toc` synchronously, so the missing `await` is
- * invisible and only the `getChapterRaw` half of #606 reproduces. Deflate an
- * entry and the same call returns with all three still empty — which is the
- * real-book behaviour, and the one that made every ingested EPUB come back as
+ * against `epub2@3.0.2` (the library at the time): with a stored-only archive,
+ * `parse()` populated `metadata`, `flow` and `toc` synchronously, so the missing
+ * `await` was invisible and only half of #606 reproduced. Deflate an entry and
+ * the same call returned with all three still empty — the real-book behaviour,
+ * and the one that made every ingested EPUB come back as
  * `{ sections: 0, warnings: [] }` with the filename as its title. A stored-only
- * fixture lets a half-fix pass.
+ * fixture would have let a half-fix pass. The current library does not have that
+ * bug, which is exactly why the fixture should keep being able to catch it.
  */
 
 import { crc32, deflateRawSync } from 'zlib';

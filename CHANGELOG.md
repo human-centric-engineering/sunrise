@@ -436,6 +436,41 @@ release process.
 
 ### Changed
 
+- **The EPUB parser now uses `epub` instead of `epub2`.** `epub2` is a fork of
+  `epub` that overtook it while the original was dormant; the original has since
+  been modernised and the fork has not published since September 2023. Three
+  open issues were all downstream of that one choice, and all three close here:
+
+  - **#601** — `epub2` pins `adm-zip ^0.5.10` while the fix for its high
+    advisory is `0.6.0`, so no Dependabot PR could ever arrive and no in-range
+    bump existed. `epub` depends on `fast-xml-parser` + `jszip` instead, so
+    `adm-zip` leaves the tree entirely — `npm audit` on the new tree reports
+    **0 vulnerabilities**. No `overrides` entry was needed, which also means
+    this never touched the `overrides` gate.
+  - **#614** — a malformed OPF made `epub2` reject *and then* throw an
+    uncatchable `TypeError` out of its own inflate callback, an
+    `uncaughtException` reachable from an admin upload. `epub` rejects cleanly;
+    verified against the same crafted archive.
+  - **#606** — `parse()` and `getChapterRaw()` genuinely return promises here,
+    so the class of bug is gone rather than worked around.
+
+  Also removed: the temp-file dance (`epub` reads a `Buffer` directly, where
+  `epub2` could only read a path), and `types/epub2.d.ts` — the hand-written
+  declaration that shadowed the library's own and, by claiming both methods
+  returned promises, silenced the `await-thenable` rule that would have caught
+  #606 at authoring time. `epub` ships its own types, so there is nothing left
+  to get wrong there. Nothing chose `epub2` deliberately: it arrived inside a
+  large feature commit in April 2026 with no comparison recorded anywhere.
+
+  **Fork-facing:** if you import `epub2` directly, it is no longer a dependency.
+  `parseEpub()`'s own signature and return shape are unchanged.
+
+  **Verified beyond the unit suite**, because this path has twice broken in ways
+  vitest could not see and `epub` is ESM-only: a production build, then a real
+  `.epub` uploaded through the real admin route against both `next start` and
+  the **standalone** server, asserting the book's prose landed in the stored
+  chunks. That check is now `npm run smoke:epub`.
+
 - **`check:lockfile` no longer fails a PR for a direct-dependency downgrade.** It
   reports them in their own block instead. The rule existed because "a version
   going backwards is how a patched dependency quietly returns to a vulnerable
@@ -694,9 +729,8 @@ release process.
   reading every book that way and will now get content. An unreadable archive
   rejected before this change and still does — that was never the broken part.
   Chapter text also no longer repeats the chapter title, which leaked in from
-  the XHTML `<head>`. A malformed OPF remains able to throw an uncatchable
-  `TypeError` out of `epub2`'s own inflate callback; that is a defect in the
-  library with no call-site fix, tracked in #614.
+  the XHTML `<head>`. (The library itself was then replaced — see the next
+  entry, which is where the rest of this stopped mattering.)
 
   **What let it ship, and what stops it recurring.** `types/epub2.d.ts` — a
   hand-written declaration shadowing the library's own — declared both methods
