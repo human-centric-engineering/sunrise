@@ -14,89 +14,14 @@
  */
 
 import { JSDOM } from 'jsdom';
+// Shared with `epub-parser.ts` — both formats are markup that has to come out
+// as chunkable text, and keeping two implementations is how they drift.
+import { cleanInline, extractText } from '@/lib/orchestration/knowledge/parsers/dom-text';
 import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
 
 /** Elements that never carry article content — removed before extraction. */
 const NOISE_SELECTOR =
   'script, style, noscript, iframe, nav, header, footer, aside, form, svg, button, template';
-
-/** Block-level tags that should force a line break around their text. */
-const BLOCK_TAGS = new Set([
-  'P',
-  'DIV',
-  'SECTION',
-  'ARTICLE',
-  'UL',
-  'OL',
-  'TABLE',
-  'TR',
-  'BLOCKQUOTE',
-  'PRE',
-  'FIGURE',
-  'FIGCAPTION',
-  'HR',
-  'MAIN',
-]);
-
-/** Collapse runs of spaces/tabs but preserve intentional newlines. */
-function normalizeWhitespace(text: string): string {
-  return text
-    .replace(/[ \t]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function cleanInline(text: string | null | undefined): string {
-  return (text ?? '').replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Walk a DOM subtree and emit plain text, using `textContent` for leaf nodes
- * (which decodes HTML entities) and inserting newlines / markdown headings
- * around block elements.
- */
-function domToText(root: Node, win: JSDOM['window'], out: string[]): void {
-  for (const child of Array.from(root.childNodes)) {
-    if (child.nodeType === win.Node.TEXT_NODE) {
-      out.push(child.textContent ?? '');
-      continue;
-    }
-    if (child.nodeType !== win.Node.ELEMENT_NODE) continue;
-
-    const el = child as Element;
-    const tag = el.tagName.toUpperCase();
-    const heading = /^H([1-6])$/.exec(tag);
-
-    if (heading) {
-      out.push(`\n\n${'#'.repeat(Number(heading[1]))} ${cleanInline(el.textContent)}\n\n`);
-      continue;
-    }
-    if (tag === 'BR') {
-      out.push('\n');
-      continue;
-    }
-    if (tag === 'LI') {
-      out.push('\n- ');
-      domToText(el, win, out);
-      continue;
-    }
-    if (BLOCK_TAGS.has(tag)) {
-      out.push('\n');
-      domToText(el, win, out);
-      out.push('\n');
-      continue;
-    }
-    // Inline element — recurse without adding breaks.
-    domToText(el, win, out);
-  }
-}
-
-function extractText(el: Element, win: JSDOM['window']): string {
-  const out: string[] = [];
-  domToText(el, win, out);
-  return normalizeWhitespace(out.join(''));
-}
 
 export function parseHtml(buffer: Buffer, fileName: string): ParsedDocument {
   const warnings: string[] = [];

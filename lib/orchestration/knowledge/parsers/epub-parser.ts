@@ -3,7 +3,7 @@
  *
  * EPUBs are zipped XHTML with explicit chapter structure, making them
  * one of the most reliable formats to parse. Uses `epub2` to extract
- * chapters, then strips HTML tags to get plain text.
+ * chapters, then `dom-text.ts` to turn each one's markup into plain text.
  *
  * Requires the EPUB file to be written to a temp path because epub2
  * reads from the filesystem (not from a buffer).
@@ -13,46 +13,8 @@ import { writeFile, rm, mkdtemp } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import EPub from 'epub2';
+import { extractTextFromHtml } from '@/lib/orchestration/knowledge/parsers/dom-text';
 import type { ParsedDocument, ParsedSection } from '@/lib/orchestration/knowledge/parsers/types';
-
-/**
- * Strip HTML tags and decode basic entities to plain text.
- *
- * SECURITY INVARIANT — this is a best-effort *plaintext extractor*, not an
- * XSS-safe HTML sanitiser. The regex passes can be defeated by adversarial
- * markup (nested `<scr<script>ipt>`, `</script >`, double-encoded entities),
- * and that is acceptable here because the output is never rendered as HTML:
- * it is stored as knowledge-base text and rendered downstream by
- * `react-markdown` with no `rehype-raw` plugin, so any surviving tag is inert
- * (same contract as `pdf-parser.ts`). If a future change feeds this output to
- * an HTML sink or enables raw-HTML rendering, replace this with a real
- * sanitiser (e.g. DOMPurify) before doing so.
- */
-function stripHtml(html: string): string {
-  return (
-    html
-      // `getChapterRawAsync` returns the whole XHTML file, `<head>` included, so
-      // without this every chapter's text opened with its own `<title>` — and
-      // then its `<h1>`, giving the same heading twice before a word of prose.
-      // Only visible once #606 made the parser return anything at all.
-      .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/p>/gi, '\n\n')
-      .replace(/<\/div>/gi, '\n')
-      .replace(/<\/h[1-6]>/gi, '\n\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-  );
-}
 
 export async function parseEpub(buffer: Buffer, fileName: string): Promise<ParsedDocument> {
   const warnings: string[] = [];
@@ -122,7 +84,13 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
         // what the empty-document symptom looked like from the inside on the
         // rare file that got this far.
         const rawHtml = await epub.getChapterRawAsync(chapter.id);
-        const text = stripHtml(rawHtml);
+        // A real parse, not a regex strip. `<head>` is excluded structurally
+        // (it is not in `document.body`), so a chapter no longer opens with its
+        // own `<title>` followed by the same text as its `<h1>` — and CodeQL's
+        // five findings against the old replacement chain no longer have
+        // anything to describe. Headings come out as markdown, which
+        // `chunkMarkdownDocument()` splits on. See `dom-text.ts`.
+        const text = extractTextFromHtml(rawHtml);
 
         if (text.length < 10) {
           // Skip near-empty chapters (cover pages, blank pages)

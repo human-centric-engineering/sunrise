@@ -642,6 +642,32 @@ release process.
 
 ### Fixed
 
+- **EPUB chapter text is now extracted by a real DOM parse, not a regex chain.**
+  `epub-parser.ts` stripped markup with fourteen chained `.replace()` calls;
+  CodeQL raised five high-severity findings against them on #613. Three were
+  real, measured against the old code rather than assumed: `<[^>]+>` does not
+  match `</script >`, so a script block written that way survived removal and
+  its **body** landed in the knowledge base as text; `&amp;` was unescaped ahead
+  of `&lt;`, so the literal text `&amp;lt;` double-unescaped to `<`; and only
+  six entities were decoded, so `Caf&eacute;` reached the chunker verbatim —
+  every book not written in English. (The other two, the "incomplete
+  multi-character sanitization" pair, do not produce a live tag through either
+  implementation; they are theoretical for this sink and are not claimed as
+  fixed.)
+
+  The replacement is `lib/orchestration/knowledge/parsers/dom-text.ts`, holding
+  the jsdom text-extraction machinery `html-parser.ts` already had — now shared
+  rather than duplicated. Both parsers use it. Alongside the correctness fixes,
+  EPUB text gains proper decoding of every entity, `<head>` exclusion for free
+  (it is not in `document.body`, so the regex added earlier in this release is
+  gone), non-breaking spaces folded to ordinary ones, and markdown headings —
+  which `chunkMarkdownDocument()` splits on, so a book now chunks along its
+  chapters instead of arbitrarily.
+
+  Verified through a production build and against the standalone server, since
+  jsdom in a knowledge parser is precisely what broke this pipeline once before:
+  `npm run smoke:epub`.
+
 - **The EPUB parser returned an empty document for every book ever ingested.**
   `epub-parser.ts` called `await epub.parse()`, but `epub2@3.0.2`'s `parse()`
   returns `this`, not a promise — parsing is callback-driven and completes on an

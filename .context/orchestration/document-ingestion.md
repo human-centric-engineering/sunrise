@@ -28,14 +28,20 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 > against a corpus of real books, so no percentage is quoted. Quote one only
 > once something has measured it.
 >
-> Two limits worth knowing, both verified rather than assumed. **The section
-> titles do not survive ingestion** — `uploadDocument()` is handed
-> `parsed.fullText` only, so `parsed.sections` and their NCX titles are dropped
-> and the book is re-split by `chunkMarkdownDocument()` with no chapter
-> boundaries. The parser reads them; nothing downstream stores them yet. And a
-> **malformed OPF** can still throw an uncatchable `TypeError` from inside
-> `epub2`'s own inflate callback — a library defect with no call-site fix,
-> tracked in [#614](https://github.com/human-centric-engineering/sunrise/issues/614).
+> One limit worth knowing, verified rather than assumed: **the section titles do
+> not survive ingestion.** `uploadDocument()` is handed `parsed.fullText` only,
+> so `parsed.sections` and their NCX titles are dropped, and the book is
+> re-split by `chunkMarkdownDocument()`. Chapter _headings_ do survive as
+> markdown — `dom-text.ts` renders `<h1>`–`<h6>` as `#` — so the chunker splits
+> along them; it is the `ParsedSection.title` field specifically that goes
+> nowhere ([#615](https://github.com/human-centric-engineering/sunrise/issues/615)).
+>
+> **Run `npm run smoke:epub` against a production build after touching this
+> parser.** Not the unit suite — a production build. This path has broken twice
+> in ways vitest could not see (#606, and jsdom's ESM move before it), and it
+> now goes through jsdom again, so bundling is a live risk rather than a
+> historical one. The script uploads a real EPUB through the real admin route
+> and asserts the book's prose is in the stored chunks.
 
 ## Architecture
 
@@ -64,6 +70,7 @@ Upload (multipart form)
 | `lib/orchestration/knowledge/parsers/txt-parser.ts`  | Plain text → sections                                                                                                                                                                              |
 | `lib/orchestration/knowledge/parsers/csv-parser.ts`  | CSV → row-per-section (RFC 4180, delimiter sniffing, header detect)                                                                                                                                |
 | `lib/orchestration/knowledge/parsers/docx-parser.ts` | DOCX → markdown → sections                                                                                                                                                                         |
+| `lib/orchestration/knowledge/parsers/dom-text.ts`    | Shared jsdom text extraction — used by the HTML and EPUB parsers                                                                                                                                   |
 | `lib/orchestration/knowledge/parsers/epub-parser.ts` | EPUB → chapters → sections                                                                                                                                                                         |
 | `lib/orchestration/knowledge/parsers/pdf-parser.ts`  | PDF → pages → sections                                                                                                                                                                             |
 | `lib/orchestration/knowledge/parsers/types.ts`       | `ParsedDocument`, `ParsedSection` types                                                                                                                                                            |
