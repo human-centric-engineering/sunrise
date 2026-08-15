@@ -45,6 +45,7 @@ import {
   ProviderError,
   buildRequestOptions,
   toProviderError,
+  toProviderErrorWithUsage,
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
@@ -358,7 +359,13 @@ export class AnthropicProvider implements LlmProvider {
         }
       }
     } catch (err) {
-      throw toProviderError(err, 'Anthropic stream iteration failed');
+      // Carry what the stream has already been billed for — `inputTokens`
+      // lands at `message_start` and `outputTokens` updates on every
+      // `message_delta`, so a mid-stream failure knows its own cost (#592).
+      throw toProviderErrorWithUsage(err, 'Anthropic stream iteration failed', {
+        inputTokens,
+        outputTokens,
+      });
     }
 
     // Mirror the non-streaming truncation guard: a max_tokens stop on a

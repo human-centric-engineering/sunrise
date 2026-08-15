@@ -22,6 +22,7 @@ import {
   ProviderError,
   buildRequestOptions,
   toProviderError,
+  toProviderErrorWithUsage,
   isRequestFault,
   fetchWithTimeout,
   withRetry,
@@ -579,5 +580,80 @@ describe('buildRequestOptions', () => {
   it('honours a zero timeout rather than treating it as unset', () => {
     // 0 is falsy; an `if (options.timeoutMs)` guard would silently drop it.
     expect(buildRequestOptions({ model: 'gpt-4o', timeoutMs: 0 })).toEqual({ timeout: 0 });
+  });
+});
+
+describe('toProviderErrorWithUsage', () => {
+  // The half of #592 that survived #593: an adapter knows what a dying stream
+  // has already been billed for, and the plain `toProviderError` path drops it,
+  // leaving the streaming handler with nothing to write to `AiCostLog`.
+
+  it('attaches usage the provider had already reported', () => {
+    const err = toProviderErrorWithUsage(new Error('socket hang up'), 'stream failed', {
+      inputTokens: 400,
+      outputTokens: 900,
+    });
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.usage).toEqual({ inputTokens: 400, outputTokens: 900 });
+  });
+
+  it('drops zeroed usage rather than reporting the turn as free', () => {
+    // Zero means "the provider never told us", not "this cost nothing". An
+    // OpenAI-compatible stream reports usage in a final chunk, so an error
+    // before it leaves both counts at 0 — and a zeroed AiCostLog row reads as
+    // a free turn on the dashboard, which is worse than no row.
+    const err = toProviderErrorWithUsage(new Error('connection refused'), 'stream failed', {
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    expect(err.usage).toBeUndefined();
+  });
+
+  it('attaches a partial count when only one side is known', () => {
+    const err = toProviderErrorWithUsage(new Error('reset'), 'stream failed', {
+      inputTokens: 120,
+      outputTokens: 0,
+    });
+
+    expect(err.usage).toEqual({ inputTokens: 120, outputTokens: 0 });
+  });
+
+  it('does not overwrite usage an error already carries', () => {
+    // The truncation guards attach exactly what the provider reported, which
+    // beats anything reconstructed from a partial accumulator.
+    const original = new ProviderError('truncated', {
+      code: 'truncated_no_output',
+      usage: { inputTokens: 1, outputTokens: 2 },
+    });
+
+    const err = toProviderErrorWithUsage(original, 'stream failed', {
+      inputTokens: 999,
+      outputTokens: 999,
+    });
+
+    expect(err.usage).toEqual({ inputTokens: 1, outputTokens: 2 });
+    expect(err).toBe(original);
+  });
+
+  it('preserves code, status and retriable while adding usage', () => {
+    // Rebuilding the error must not quietly downgrade a retriable 503 into a
+    // non-retriable `provider_error`, which would stop failover.
+    const original = new ProviderError('unavailable', {
+      code: 'http_503',
+      status: 503,
+      retriable: true,
+    });
+
+    const err = toProviderErrorWithUsage(original, 'stream failed', {
+      inputTokens: 5,
+      outputTokens: 7,
+    });
+
+    expect(err.code).toBe('http_503');
+    expect(err.status).toBe(503);
+    expect(err.retriable).toBe(true);
+    expect(err.usage).toEqual({ inputTokens: 5, outputTokens: 7 });
   });
 });

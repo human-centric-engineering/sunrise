@@ -563,6 +563,70 @@ describe('AnthropicProvider.chatStream', () => {
     expect((caught as { code?: string }).code).toBe('truncated_no_output');
   });
 
+  it('attaches the tokens billed so far when the stream dies mid-way (#592)', async () => {
+    // The half of #592 that survived #593. `inputTokens` lands at
+    // `message_start` and `outputTokens` updates on every `message_delta`, so
+    // the adapter knows what the provider has charged for at the moment it
+    // throws — and `toProviderError` used to drop it. Without the counts the
+    // streaming handler has nothing to log, and a turn the vendor billed for
+    // shows up nowhere in `AiCostLog`.
+    async function* dyingStream(): AsyncGenerator<object, void, unknown> {
+      yield { type: 'message_start', message: { usage: { input_tokens: 400 } } };
+      yield { type: 'content_block_start', index: 0, content_block: { type: 'text' } };
+      yield {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'half an ans' },
+      };
+      yield { type: 'message_delta', delta: {}, usage: { output_tokens: 900 } };
+      throw new Error('socket hang up');
+    }
+    createMock.mockResolvedValue(dyingStream());
+
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+        model: 'claude-haiku-4-5',
+        maxTokens: 4096,
+      })) {
+        // drain
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as { usage?: unknown }).usage).toEqual({
+      inputTokens: 400,
+      outputTokens: 900,
+    });
+  });
+
+  it('attaches no usage when the stream dies before the provider reported any', async () => {
+    // Zero is "unknown", not "free". A zeroed cost row would tell the
+    // dashboard the turn was free, which is a worse answer than no row —
+    // the same rule the truncation guards already follow.
+    // eslint-disable-next-line require-yield
+    async function* dyingStream(): AsyncGenerator<object, void, unknown> {
+      throw new Error('connection refused');
+    }
+    createMock.mockResolvedValue(dyingStream());
+
+    const provider = makeProvider();
+    let caught: unknown;
+    try {
+      for await (const _chunk of provider.chatStream([{ role: 'user', content: 'go' }], {
+        model: 'claude-haiku-4-5',
+      })) {
+        // drain
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as { usage?: unknown }).usage).toBeUndefined();
+  });
+
   it('does NOT flag a streaming json_object response whose object completed', async () => {
     // Guards the accumulator as much as the guard: `streamedText` has to be
     // collected for json_object, or this reads an empty string and the guard

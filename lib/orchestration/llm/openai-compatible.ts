@@ -50,6 +50,7 @@ import {
   ProviderError,
   buildRequestOptions,
   toProviderError,
+  toProviderErrorWithUsage,
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
@@ -369,7 +370,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         }
       }
     } catch (err) {
-      throw toProviderError(err, 'OpenAI-compatible stream iteration failed');
+      // Usually still 0 here — this API reports usage in a final chunk, so an
+      // error before it has nothing to attach and the helper drops the zeroes
+      // rather than logging the turn as free. A gateway that streams usage
+      // earlier gets the same treatment as Anthropic, for free (#592).
+      throw toProviderErrorWithUsage(err, 'OpenAI-compatible stream iteration failed', {
+        inputTokens,
+        outputTokens,
+      });
     }
 
     for (const buf of toolBuffers.values()) {

@@ -688,17 +688,24 @@ release process.
   exists to route around a provider that is unwell, and a reader is not evidence
   about the provider. Both sites now consult one `isClientAbort()` predicate, so
   they cannot drift (#592).
-- **Cost recorded on a failed stream is no longer confined to one exit.**
-  `ProviderError.usage` carries what the provider billed for the call an error
-  ended, and the handler folded it into `AiCostLog` only inside the
-  request-fault branch added by #593. The other two exits — failing over to a
-  fallback, and giving up with no fallback left — dropped it: a turn billed by
-  two providers would have logged only the second. The fold now happens on the
-  way into the catch, so every exit is covered by one statement. Only the
-  truncation guards populate `usage` today, so this is structural rather than a
-  behaviour change; it is what stops the next adapter that populates it from
-  having to know which branch was listening. An error carrying no usage still
-  logs nothing — a zeroed row would report the turn as free (#592).
+- **A stream that dies part-way through now records what it was billed for.**
+  Two halves, and neither works without the other. The **adapters** knew the
+  cost and threw it away: Anthropic sets `inputTokens` at `message_start` and
+  updates `outputTokens` on every `message_delta`, so at the moment the stream
+  catch fires it knows exactly what the provider has charged for — and
+  `toProviderError` dropped it. `toProviderErrorWithUsage()` attaches it
+  instead. The **handler** folded `ProviderError.usage` into `AiCostLog` only
+  inside the request-fault branch added by #593; the other two exits — failing
+  over to a fallback, and giving up with no fallback left — dropped it, so a
+  turn billed by two providers would have logged only the second. The fold now
+  happens on the way into the catch, covering every exit in one statement.
+
+  Together: a mid-stream failure on Anthropic that previously vanished from
+  `AiCostLog` is now recorded against the agent's budget. OpenAI-compatible
+  reports usage in a final chunk, so an error before that still has nothing to
+  attach — and zeroed usage is deliberately dropped rather than written, because
+  a zeroed row tells the dashboard the turn was free, which is a worse answer
+  than no row (#592).
 
 - **EPUB chapter text is now extracted by a real DOM parse, not a regex chain.**
   `epub-parser.ts` stripped markup with fourteen chained `.replace()` calls;
