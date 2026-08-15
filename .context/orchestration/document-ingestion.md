@@ -4,15 +4,15 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 
 ## Supported Formats
 
-| Format      | Extension | Reliability | Parser           | Notes                                                                            |
-| ----------- | --------- | ----------- | ---------------- | -------------------------------------------------------------------------------- |
-| Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting                             |
-| Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings                         |
-| CSV         | `.csv`    | ~95%        | `csv-parser.ts`  | RFC 4180 with delimiter sniffing; one chunk per row (batched above 5k rows)      |
-| EPUB        | `.epub`   | unmeasured  | `epub-parser.ts` | Chapters via the OPF spine, section titles via the NCX. See the note below       |
-| DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split                       |
-| PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2                                   |
-| Scanned PDF | N/A       | N/A         | Not supported    | Use macOS Preview / Adobe Acrobat / `ocrmypdf` to OCR externally, then re-upload |
+| Format      | Extension | Reliability | Parser           | Notes                                                                              |
+| ----------- | --------- | ----------- | ---------------- | ---------------------------------------------------------------------------------- |
+| Markdown    | `.md`     | ~95%        | Passthrough      | Existing `chunkMarkdownDocument()` handles splitting                               |
+| Plain text  | `.txt`    | ~90%        | `txt-parser.ts`  | Splits on ALL CAPS headings and underline-style headings                           |
+| CSV         | `.csv`    | ~95%        | `csv-parser.ts`  | RFC 4180 with delimiter sniffing; one chunk per row (batched above 5k rows)        |
+| EPUB        | `.epub`   | unmeasured  | `epub-parser.ts` | Chapters via the OPF spine; NCX titles are read but dropped downstream — see below |
+| DOCX        | `.docx`   | ~80%        | `docx-parser.ts` | Uses `mammoth` for markdown conversion, then heading split                         |
+| PDF         | `.pdf`    | 40-70%      | `pdf-parser.ts`  | **Requires preview step.** Uses `pdf-parse` v2                                     |
+| Scanned PDF | N/A       | N/A         | Not supported    | Use macOS Preview / Adobe Acrobat / `ocrmypdf` to OCR externally, then re-upload   |
 
 > **The EPUB figure was withdrawn rather than revised.** It read `~85%` — and
 > "Best format for books" — while the parser returned an **empty document for
@@ -27,6 +27,15 @@ Multi-format document parsing for the knowledge base. Converts uploaded files in
 > That is a proof the parser works, not a reliability rate: it has not been run
 > against a corpus of real books, so no percentage is quoted. Quote one only
 > once something has measured it.
+>
+> Two limits worth knowing, both verified rather than assumed. **The section
+> titles do not survive ingestion** — `uploadDocument()` is handed
+> `parsed.fullText` only, so `parsed.sections` and their NCX titles are dropped
+> and the book is re-split by `chunkMarkdownDocument()` with no chapter
+> boundaries. The parser reads them; nothing downstream stores them yet. And a
+> **malformed OPF** can still throw an uncatchable `TypeError` from inside
+> `epub2`'s own inflate callback — a library defect with no call-site fix,
+> tracked in [#614](https://github.com/human-centric-engineering/sunrise/issues/614).
 
 ## Architecture
 

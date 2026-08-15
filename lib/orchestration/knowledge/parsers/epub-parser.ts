@@ -77,11 +77,19 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
     // and empty text — reported as a successful upload, with no warning (#606).
     //
     // `createAsync` is the library's own entry point for this: it resolves
-    // only once `end` has fired. A malformed archive still rejects, as it did
-    // before — that was never the broken part. What changes is that a VALID
-    // archive now comes back with its contents, so rejecting is once again the
-    // only way to get an empty result, and "unreadable" stops being
-    // indistinguishable from "read fine, contained nothing".
+    // only once `end` has fired. What changes is that a VALID archive now
+    // comes back with its contents.
+    //
+    // Two things this does NOT fix, both verified rather than assumed:
+    //
+    // - An unreadable archive rejected before this change and still does. That
+    //   was never the broken part.
+    // - A malformed OPF (valid zip, valid container.xml, broken package XML)
+    //   makes `createAsync` reject AND then throws an uncatchable
+    //   `TypeError: Cannot read properties of null` from inside epub2's own
+    //   inflate callback — xml2js emits `error` and `end`, and `parseRootFile`
+    //   runs on the null result. No try/catch here can reach it; in Node it
+    //   surfaces as an `uncaughtException`. Tracked in #614.
     //
     // Worth knowing if you reproduce this: with a STORED (uncompressed)
     // archive `parse()` completes synchronously and the bug does not appear.
@@ -126,6 +134,34 @@ export async function parseEpub(buffer: Buffer, fileName: string): Promise<Parse
       } catch {
         warnings.push(`Skipped chapter "${chapter.id}": extraction failed`);
       }
+    }
+
+    // An empty result must never be silent. #606 was silent-data-loss, and
+    // fixing the await left two paths that still return zero sections from a
+    // RESOLVED parse — a book with no spine, and a book whose every chapter
+    // strips to nothing (an image-only comic or photo book, where the text
+    // lives in the images). Both looked exactly like the bug: `sections: 0`,
+    // `warnings: []`, upload reported ready.
+    //
+    // It is worse than cosmetic downstream. `uploadDocument` derives
+    // `fileHash` from the extracted TEXT, not the file bytes
+    // (`document-manager.ts:228`), so every book that extracts to nothing
+    // hashes to `sha256('')` — and the second one silently dedups into the
+    // first, as a different title. A warning here is persisted into the
+    // document's metadata and logged, so the operator has something to see.
+    // The `warnings.length === 0` guard keeps this to the case where it adds
+    // something: if every chapter already failed loudly above, the operator has
+    // a warning per chapter and a summary claiming they were "under 10
+    // characters" would be both redundant and wrong about why.
+    if (epub.flow.length === 0) {
+      warnings.push(
+        'No chapters extracted: the book declares no reading order (an empty or missing spine).'
+      );
+    } else if (sections.length === 0 && warnings.length === 0) {
+      warnings.push(
+        `No text extracted: all ${epub.flow.length} chapter(s) were empty or shorter than 10 characters. ` +
+          'If this is an image-only book the text is inside the images and needs OCR before upload.'
+      );
     }
 
     const docTitle = epub.metadata.title || fileName.replace(/\.[^.]+$/, '');

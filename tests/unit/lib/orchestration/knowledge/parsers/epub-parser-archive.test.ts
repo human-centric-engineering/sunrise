@@ -143,6 +143,53 @@ describe('parseEpub — real archive', () => {
     });
   });
 
+  describe('an empty result is never silent', () => {
+    // Fixing the await left two paths that still return zero sections from a
+    // RESOLVED parse, and both looked exactly like the bug they were left
+    // behind by: `sections: 0`, `warnings: []`, upload reported ready.
+    //
+    // Not cosmetic. `uploadDocument` derives `fileHash` from the extracted
+    // TEXT, not the file bytes, so every book that extracts to nothing hashes
+    // to `sha256('')` — and the second one silently dedups into the first,
+    // under a different title.
+
+    it('warns when an image-only book yields no text', async () => {
+      const result = await parseEpub(
+        buildEpub({
+          chapters: [
+            { id: 'plate-1', title: 'Plate 1', bodyHtml: '<p><img src="1.jpg"/></p>' },
+            { id: 'plate-2', title: 'Plate 2', bodyHtml: '<p><img src="2.jpg"/></p>' },
+          ],
+        }),
+        'comic.epub'
+      );
+
+      expect(result.sections).toHaveLength(0);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('No text extracted');
+      expect(result.warnings[0]).toContain('2 chapter(s)');
+      expect(result.warnings[0]).toContain('OCR');
+    });
+
+    it('warns when the book declares no reading order', async () => {
+      const result = await parseEpub(buildEpub({ chapters: [] }), 'empty.epub');
+
+      expect(result.sections).toHaveLength(0);
+      expect(result.warnings).toEqual([
+        'No chapters extracted: the book declares no reading order (an empty or missing spine).',
+      ]);
+    });
+
+    it('stays quiet on a book that DID yield text', async () => {
+      // The warnings must not fire on the ordinary path, or they are noise and
+      // will be ignored on the one upload that needed them.
+      const result = await parseEpub(buildEpub(), 'probe.epub');
+
+      expect(result.sections.length).toBeGreaterThan(0);
+      expect(result.warnings).toEqual([]);
+    });
+  });
+
   describe('a file that cannot be read', () => {
     it('REJECTS rather than returning an empty document', async () => {
       // A regression guard, not a fix: measured against the pre-#606 parser,

@@ -655,11 +655,22 @@ release process.
   that returns `void`. Both now use the library's promise API,
   `EPub.createAsync()` and `getChapterRawAsync()`.
 
+  **An empty result is also no longer silent.** Two paths still return zero
+  sections from a *resolved* parse — a book with no spine, and one whose every
+  chapter strips to nothing (an image-only comic or photo book) — and both
+  looked exactly like the bug. Each now carries a warning naming the reason,
+  which `document-manager` persists into the document's metadata and logs. That
+  matters because `uploadDocument` derives `fileHash` from the extracted *text*,
+  so every book extracting to nothing hashes to `sha256('')` and the second one
+  silently dedups into the first under a different title.
+
   **Fork-facing:** a caller that treated `sections: []` as "an empty book" was
   reading every book that way and will now get content. An unreadable archive
-  rejected before this change and still does — what changed is that rejection is
-  once again the only path to an empty result. Chapter text also no longer
-  repeats the chapter title, which leaked in from the XHTML `<head>`.
+  rejected before this change and still does — that was never the broken part.
+  Chapter text also no longer repeats the chapter title, which leaked in from
+  the XHTML `<head>`. A malformed OPF remains able to throw an uncatchable
+  `TypeError` out of `epub2`'s own inflate callback; that is a defect in the
+  library with no call-site fix, tracked in #614.
 
   **What let it ship, and what stops it recurring.** `types/epub2.d.ts` — a
   hand-written declaration shadowing the library's own — declared both methods
