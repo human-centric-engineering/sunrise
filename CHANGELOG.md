@@ -77,6 +77,14 @@ release process.
 
 ### Security
 
+- **`js-yaml` bumped to 4.3.1**, clearing a high advisory
+  ([GHSA-5p4m-2wfm-xmqj](https://github.com/advisories/GHSA-5p4m-2wfm-xmqj),
+  CVE-2026-59870 — quadratic CPU consumption resolving `!!omap`). Transitive and
+  **dev-only**, via `@eslint/eslintrc`, so no fork runtime parses attacker-supplied
+  YAML through it; taken because the fix is a patch and a release should not ship
+  with its own audit red. Found by triggering `Dependency Audit` as step 5 of
+  this cut — the first time that workflow has ever completed.
+
 - **Open redirect closed in `isRootRelativePath()`.** The WHATWG URL parser
   removes ASCII tab, LF and CR from anywhere in a URL before reading the
   authority, so `/<TAB>/evil.com` survived `trim()` and the `path[1]` check and
