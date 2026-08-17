@@ -51,6 +51,13 @@ jobs:
   audit:
     name: npm audit
     runs-on: ubuntu-latest
+    # `npm ci` runs `prisma generate` via postinstall, and Prisma 7 resolves
+    # `DATABASE_URL` while loading `prisma.config.ts` — so without this the
+    # install fails before either job does any work. It does not connect; the
+    # value only has to parse. Every job in `ci.yml` that runs `npm ci` sets
+    # the same string for the same reason.
+    env:
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -61,7 +68,9 @@ jobs:
           cache: npm
 
       # Needed for `tsx`, not for the audit itself — `npm audit` reads the
-      # lockfile. Plain `npm ci`, matching every other job in this repo.
+      # lockfile. See the job-level `env:` above for why `DATABASE_URL` is set;
+      # this comment used to claim a plain `npm ci` "matching every other job in
+      # this repo", which was the one thing it did not do.
       - name: Install dependencies
         run: npm ci
 
@@ -75,6 +84,13 @@ jobs:
   lockfile-libc:
     name: Lockfile platform metadata
     runs-on: ubuntu-latest
+    # `npm ci` runs `prisma generate` via postinstall, and Prisma 7 resolves
+    # `DATABASE_URL` while loading `prisma.config.ts` — so without this the
+    # install fails before either job does any work. It does not connect; the
+    # value only has to parse. Every job in `ci.yml` that runs `npm ci` sets
+    # the same string for the same reason.
+    env:
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
