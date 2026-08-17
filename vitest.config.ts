@@ -11,6 +11,28 @@ export default defineConfig({
     // Use happy-dom for fast DOM testing (alternative to jsdom)
     environment: 'happy-dom',
 
+    // happy-dom loads `<script src>` and `<link rel=stylesheet>` for real —
+    // both flags default to false, i.e. loading enabled — using its own
+    // `node:http` client in `happy-dom/lib/fetch/`. Its default document URL
+    // is `http://localhost:3000`, so every relative asset in a rendered
+    // component resolved there and was fetched over the network, producing
+    // ~600 `ECONNREFUSED ::1:3000` lines per run. Because that client is
+    // internal to happy-dom, patching `globalThis.fetch` does not intercept
+    // it, which is what made the noise so hard to attribute (#597).
+    //
+    // Nothing in the suite asserts on a fetched stylesheet or script, so
+    // turning both off removes the network entirely. Image loading is already
+    // off by default (`enableImageFileLoading`).
+    environmentOptions: {
+      happyDOM: {
+        settings: {
+          disableJavaScriptFileLoading: true,
+          disableCSSFileLoading: true,
+          handleDisabledFileLoadingAsSuccess: true,
+        },
+      },
+    },
+
     // Global test setup file
     setupFiles: ['./tests/setup.ts'],
 
