@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { UserPreferences } from '@/types';
 
 interface PreferencesFormProps {
@@ -30,6 +31,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const schedule = useTimeout();
   const { track } = useAnalytics();
 
   // Local state for toggles
@@ -59,7 +61,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       router.refresh();
 
       // Reset success after 3 seconds
-      setTimeout(() => setSuccess(false), 3000);
+      schedule(() => setSuccess(false), 3000);
     } catch (err) {
       if (err instanceof APIClientError) {
         setError(err.message || 'Failed to update preferences');

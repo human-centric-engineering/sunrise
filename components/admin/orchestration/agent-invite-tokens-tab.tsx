@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 interface InviteToken {
   id: string;
@@ -66,6 +67,7 @@ function StatusBadge({ status }: { status: ReturnType<typeof tokenStatus> }) {
 }
 
 export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
+  const schedule = useTimeout();
   const [tokens, setTokens] = useState<InviteToken[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +138,7 @@ export function AgentInviteTokensTab({ agentId }: AgentInviteTokensTabProps) {
     try {
       await navigator.clipboard.writeText(token);
       setCopied(id);
-      setTimeout(() => setCopied(null), 2000);
+      schedule(() => setCopied(null), 2000);
     } catch {
       setError('Could not copy to clipboard. Your browser may require a secure (HTTPS) context.');
     }

@@ -19,6 +19,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { type McpSettingsResponse } from '@/lib/validations/mcp';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 interface McpSettingsFormProps {
   initialSettings: McpSettingsResponse | null;
@@ -38,6 +39,7 @@ type McpSettingsFormData = z.output<typeof mcpSettingsFormSchema>;
 export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const schedule = useTimeout();
 
   const {
     register,
@@ -62,7 +64,7 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
       await apiClient.patch(API.ADMIN.ORCHESTRATION.MCP_SETTINGS, { body: data });
       setSaved(true);
       reset(data);
-      setTimeout(() => setSaved(false), 3000);
+      schedule(() => setSaved(false), 3000);
     } catch (err) {
       if (err instanceof APIClientError) {
         setError(err.message);

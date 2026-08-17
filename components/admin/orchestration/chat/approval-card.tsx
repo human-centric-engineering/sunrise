@@ -35,6 +35,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { API } from '@/lib/api/endpoints';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
   extractFinalOutput,
   reducer,
@@ -73,6 +74,7 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
 
   const pollAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
+  const schedule = useTimeout();
 
   // Cancel any in-flight network on unmount.
   useEffect(() => {
@@ -138,12 +140,12 @@ export function ApprovalCard({ pendingApproval, onResolved }: ApprovalCardProps)
         }
         attempt += 1;
         const delay = Math.min(POLL_BASE_MS * Math.pow(1.5, attempt - 1), POLL_MAX_MS);
-        setTimeout(() => void tick(), delay);
+        schedule(() => void tick(), delay);
       };
 
       void tick();
     },
-    [pendingApproval.executionId, pendingApproval.approveToken, onResolved]
+    [pendingApproval.executionId, pendingApproval.approveToken, onResolved, schedule]
   );
 
   const submit = useCallback(

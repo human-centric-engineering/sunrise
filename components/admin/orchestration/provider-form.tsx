@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import { ProviderTestButton } from '@/components/admin/orchestration/provider-test-button';
 import type { AiProviderConfig } from '@/types/prisma';
 
@@ -432,6 +433,7 @@ function toSlug(value: string): string {
 
 export function ProviderForm({ mode, provider }: ProviderFormProps) {
   const router = useRouter();
+  const schedule = useTimeout();
   const isEdit = mode === 'edit';
 
   const initialFlavor: Flavor = provider ? flavorFromProvider(provider) : 'anthropic';
@@ -562,7 +564,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           maxRetries: updated.maxRetries ?? undefined,
         });
         setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        schedule(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<ProviderRowWithStatus>(
           API.ADMIN.ORCHESTRATION.PROVIDERS,

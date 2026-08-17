@@ -34,6 +34,7 @@ import {
 import { FieldHelp } from '@/components/ui/field-help';
 import { FormError } from '@/components/forms/form-error';
 import { getTimezonesByRegion, getTimezoneRegions } from '@/lib/utils/timezones';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 interface ProfileFormProps {
   user: {
@@ -51,6 +52,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const schedule = useTimeout();
   const { track } = useAnalytics();
   const originalValuesRef = useRef({
     name: user.name,
@@ -126,7 +128,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       router.refresh();
 
       // Reset success after 3 seconds
-      setTimeout(() => setSuccess(false), 3000);
+      schedule(() => setSuccess(false), 3000);
     } catch (err) {
       if (err instanceof APIClientError) {
         setError(err.message || 'Failed to update profile');

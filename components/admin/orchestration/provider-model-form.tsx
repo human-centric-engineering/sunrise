@@ -31,6 +31,7 @@ import {
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { narrowParamProfile } from '@/lib/orchestration/llm/db-model-adapter';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
   DEPLOYMENT_PROFILES,
   DEPLOYMENT_PROFILE_META,
@@ -193,6 +194,7 @@ interface ProviderModelFormProps {
 
 export function ProviderModelForm({ model }: ProviderModelFormProps) {
   const router = useRouter();
+  const schedule = useTimeout();
   const isEdit = !!model;
 
   const [submitting, setSubmitting] = useState(false);
@@ -342,7 +344,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
           body: payload,
         });
         setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+        schedule(() => setSaved(false), 2000);
       } else {
         const created = await apiClient.post<{ id: string }>(
           API.ADMIN.ORCHESTRATION.PROVIDER_MODELS,

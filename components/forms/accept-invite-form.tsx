@@ -18,6 +18,7 @@ import { FormError } from '@/components/forms/form-error';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { OAuthButtons } from '@/components/forms/oauth-buttons';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 /**
  * Invitation validation status
@@ -69,6 +70,7 @@ function parseOAuthError(error: string): string {
 export function AcceptInviteForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const schedule = useTimeout();
 
   // Read token, email, and error from URL
   const token = searchParams.get('token') || '';
@@ -203,7 +205,7 @@ export function AcceptInviteForm() {
       setSuccess(true);
 
       // Redirect to dashboard
-      setTimeout(() => {
+      schedule(() => {
         router.push(AUTH_LANDING_ROUTE);
       }, 1500);
     } catch (err) {

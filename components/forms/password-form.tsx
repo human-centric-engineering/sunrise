@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 import { PasswordStrength } from '@/components/forms/password-strength';
 import { FormError } from '@/components/forms/form-error';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 // Password change schema with confirmation
 const changePasswordSchema = z
@@ -42,6 +43,7 @@ export function PasswordForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const schedule = useTimeout();
   const { track } = useAnalytics();
 
   const {
@@ -81,7 +83,7 @@ export function PasswordForm() {
       reset(); // Clear form after success
 
       // Reset success message after 5 seconds
-      setTimeout(() => setSuccess(false), 5000);
+      schedule(() => setSuccess(false), 5000);
     } catch (err) {
       if (err instanceof Error) {
         // Handle common better-auth error messages

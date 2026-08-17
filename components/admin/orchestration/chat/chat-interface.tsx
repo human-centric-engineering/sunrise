@@ -88,6 +88,7 @@ import {
 import type { AttachmentEntry } from '@/lib/hooks/use-attachments';
 import { IMAGE_ATTACHMENT_MIME, DOCUMENT_ATTACHMENT_MIME } from '@/lib/hooks/use-attachments';
 import type { ChatAttachment } from '@/lib/orchestration/chat/types';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -100,6 +101,30 @@ const MAX_RECONNECT_ATTEMPTS = 3;
  * (e.g. 429, validation) and makes the chat feel more considered.
  */
 const MIN_THINKING_MS = 1500;
+
+/**
+ * `setTimeout` as an awaitable that settles early when `signal` aborts.
+ *
+ * A bare `await new Promise(r => setTimeout(r, ms))` keeps running after the
+ * component unmounts — the reconnect backoff below waits up to 4s, then
+ * resumes against a component that is gone. Threading the same signal that
+ * already cancels the in-flight fetch means the delay dies with it (#597).
+ */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const settle = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', settle);
+      resolve();
+    };
+    const timer = setTimeout(settle, ms);
+    signal.addEventListener('abort', settle, { once: true });
+  });
+}
 
 /**
  * How long a persisted conversation survives in localStorage before
@@ -604,6 +629,7 @@ export function ChatInterface({
   const [expandedPanels, setExpandedPanels] = useState<Record<number, MetaPanel | null>>({});
 
   const abortRef = useRef<AbortController | null>(null);
+  const schedule = useTimeout();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentsControlRef = useRef<{
@@ -797,7 +823,7 @@ export function ChatInterface({
       const ensureMinThinking = async (): Promise<void> => {
         const elapsed = Date.now() - streamStartedAt;
         if (elapsed < MIN_THINKING_MS) {
-          await new Promise((resolve) => setTimeout(resolve, MIN_THINKING_MS - elapsed));
+          await abortableDelay(MIN_THINKING_MS - elapsed, controller.signal);
         }
       };
 
@@ -1036,7 +1062,7 @@ export function ChatInterface({
           if (attempt < MAX_RECONNECT_ATTEMPTS) {
             const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
             setWarning('Connection interrupted. Reconnecting...');
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            await abortableDelay(delayMs, controller.signal);
             continue;
           }
 
@@ -1094,14 +1120,17 @@ export function ChatInterface({
     (text: string) => {
       const attempt = (): void => {
         if (streamingRef.current) {
-          setTimeout(attempt, 500);
+          // Unmounting freezes `streamingRef.current` at its last value, so a
+          // bare setTimeout here re-queues itself for ever once the component
+          // is gone. `schedule` cancels the pending tick and breaks the chain.
+          schedule(attempt, 500);
           return;
         }
         void sendMessageWrapped(text);
       };
       attempt();
     },
-    [sendMessageWrapped]
+    [sendMessageWrapped, schedule]
   );
 
   const handleClear = useCallback(async () => {

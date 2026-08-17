@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { useFormAnalytics } from '@/lib/analytics/events';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
   resetPasswordRequestSchema,
   resetPasswordSchema,
@@ -211,6 +212,7 @@ function RequestResetForm() {
  */
 function CompleteResetForm({ token }: { token: string }) {
   const router = useRouter();
+  const schedule = useTimeout();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -251,7 +253,7 @@ function CompleteResetForm({ token }: { token: string }) {
             setIsLoading(false);
 
             // Redirect to login after 1.5 seconds
-            setTimeout(() => {
+            schedule(() => {
               router.push('/login');
               router.refresh();
             }, 1500);

@@ -31,6 +31,7 @@ import { MicLevelMeter } from '@/components/admin/orchestration/chat/mic-level-m
 import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { cn } from '@/lib/utils';
 import { useVoiceRecording, DEFAULT_MAX_DURATION_MS } from '@/lib/hooks/use-voice-recording';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 /**
  * localStorage key for the one-time "Speak now — tap to stop" hint.
@@ -83,6 +84,7 @@ export function MicButton({
   className,
 }: MicButtonProps) {
   const recording = useVoiceRecording({ maxDurationMs });
+  const schedule = useTimeout();
   const [submit, setSubmit] = useState<SubmitState>('idle');
   // First-use coaching: show "Speak now — tap to stop" once, then never again.
   // Flipped to `true` the first time the user enters the `recording` state.
@@ -159,7 +161,7 @@ export function MicButton({
           onError?.(formatErrorMessage(code, message));
           setSubmit('error');
           // Reset to idle next tick so the button can be reused.
-          window.setTimeout(() => setSubmit('idle'), 0);
+          schedule(() => setSubmit('idle'), 0);
           return;
         }
 
@@ -172,10 +174,10 @@ export function MicButton({
             : 'Could not reach the transcription service'
         );
         setSubmit('error');
-        window.setTimeout(() => setSubmit('idle'), 0);
+        schedule(() => setSubmit('idle'), 0);
       }
     }
-  }, [agentId, disabled, endpoint, language, onError, onTranscript, recording, submit]);
+  }, [agentId, disabled, endpoint, language, onError, onTranscript, recording, submit, schedule]);
 
   const isRecording = recording.state === 'recording';
   const isBusy = submit === 'transcribing' || recording.state === 'requesting';

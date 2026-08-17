@@ -32,6 +32,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { agentProfileFormSchema } from '@/lib/validations/orchestration';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 export interface AgentProfileRow {
   id: string;
@@ -66,6 +67,7 @@ function deriveSlug(name: string): string {
 
 export function AgentProfileForm({ mode, profile }: Props) {
   const router = useRouter();
+  const schedule = useTimeout();
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
@@ -130,7 +132,7 @@ export function AgentProfileForm({ mode, profile }: Props) {
           }
         );
         setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        schedule(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AgentProfileRow>(
           API.ADMIN.ORCHESTRATION.AGENT_PROFILES,

@@ -59,6 +59,7 @@ import {
   toReasoningEffortFormValue,
 } from '@/components/admin/orchestration/reasoning-effort-select';
 import { slugSchema } from '@/lib/validations/common';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { EffectiveAgentDefaults, ModelOption } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
@@ -201,6 +202,7 @@ export function AgentForm({
 }: AgentFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const schedule = useTimeout();
   const isEdit = mode === 'edit';
 
   // On a fresh create, honour `?kind=judge` from the URL (used by the
@@ -477,7 +479,7 @@ export function AgentForm({
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
         setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        schedule(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AiAgent>(API.ADMIN.ORCHESTRATION.AGENTS, {
           body: payload,

@@ -21,6 +21,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { Badge } from '@/components/ui/badge';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import { WidgetAppearanceSection } from '@/components/admin/orchestration/agents/widget-appearance-section';
 
 interface EmbedToken {
@@ -86,6 +87,7 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
 }
 
 function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElement {
+  const schedule = useTimeout();
   const [tokens, setTokens] = React.useState<EmbedToken[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -179,7 +181,7 @@ function TokensCard({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElem
   function copyToClipboard(text: string, id: string): void {
     void navigator.clipboard.writeText(text);
     setCopied(id);
-    setTimeout(() => setCopied(null), 2000);
+    schedule(() => setCopied(null), 2000);
   }
 
   if (loading) {

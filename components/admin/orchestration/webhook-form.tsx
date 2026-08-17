@@ -39,6 +39,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { EVENT_LABELS } from '@/lib/orchestration/webhooks/event-labels';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
   WEBHOOK_EVENT_TYPES,
   WEBHOOK_MAX_ATTEMPTS_MIN,
@@ -189,6 +190,7 @@ function generateSecret(): string {
 
 export function WebhookForm({ mode, webhook }: WebhookFormProps) {
   const router = useRouter();
+  const schedule = useTimeout();
   const isEdit = mode === 'edit';
 
   const [submitting, setSubmitting] = useState(false);
@@ -337,7 +339,7 @@ export function WebhookForm({ mode, webhook }: WebhookFormProps) {
     try {
       await navigator.clipboard.writeText(currentSecret);
       setSecretCopied(true);
-      setTimeout(() => setSecretCopied(false), 2000);
+      schedule(() => setSecretCopied(false), 2000);
     } catch {
       setSecretCopyError(
         'Could not copy to clipboard. Your browser may require a secure (HTTPS) context.'
