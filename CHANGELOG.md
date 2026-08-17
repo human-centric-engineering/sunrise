@@ -426,7 +426,10 @@ release process.
   tree and does work here, but has no package to bump when the fix lives in a
   **grandparent**: `ws@8.20.1` sat behind `engine.io` and `socket.io-adapter`,
   both declaring `ws: ~8.20.1` and neither vulnerable, so no PR was raised and
-  the alert stayed open seven weeks (#538). `adm-zip` is in that state today.
+  the alert stayed open seven weeks (#538). `adm-zip` was in that state when
+  this landed, and is the case that proved the point: no bump existed at all,
+  because `epub2` pinned it below the patched version — it took replacing the
+  library to clear it (#601, under **Changed**).
   Two independent jobs: `npm run check:audit`, and the absolute counterpart to
   `check:lockfile` via `fix:lockfile-libc --check`, which catches `libc`
   missing since before the base commit — the state `main` was in for two
