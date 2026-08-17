@@ -114,7 +114,49 @@ const { copied, copy } = useCopyToClipboard();
 </Button>;
 ```
 
+## `useTimeout()`
+
+**File:** `lib/hooks/use-timeout.ts`
+
+Schedules timeouts that are cancelled when the component unmounts. Returns a
+stable `schedule(callback, delayMs)` — safe in dependency arrays.
+
+```ts
+export function useTimeout(): (callback: () => void, delayMs: number) => void;
+```
+
+### Why it exists
+
+A bare `setTimeout` outlives the component that scheduled it. The dominant case
+in this codebase — "hide the success banner after N seconds" — is a state update
+React discards, so it looks harmless in a browser.
+
+It is not harmless in a test run. Vitest tears the environment down when a file
+finishes, and a timer firing afterwards throws `ReferenceError: window is not
+defined` from inside React's scheduler, _outside_ any test. The run exits
+non-zero with zero failing tests and nothing naming the file responsible — see
+[#597](https://github.com/human-centric-engineering/sunrise/issues/597).
+
+### Caveats
+
+- Behaviour otherwise matches `setTimeout`: scheduling twice leaves two timers
+  pending, and neither cancels the other.
+- It cancels on unmount, not on re-render. A timer scheduled in a render that
+  is superseded still fires while the component is mounted.
+- For an `await`ed delay rather than a callback, this is the wrong tool — thread
+  an `AbortSignal` through instead, as `chat-interface.tsx` does with its
+  reconnect backoff.
+
+### Example
+
+```tsx
+const schedule = useTimeout();
+
+setSaved(true);
+schedule(() => setSaved(false), 2500);
+```
+
 ## See also
 
-- [Setup Wizard](../admin/setup-wizard.md) — composes both hooks together
+- [Setup Wizard](../admin/setup-wizard.md) — composes `useLocalStorage` and `useWizard` together
 - [Contextual help](./contextual-help.md)

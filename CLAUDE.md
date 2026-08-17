@@ -141,6 +141,7 @@ import { FormError } from './form-error'; // ❌ no exception for siblings
 | Logging               | `logger.info()`, `logger.error()`                                    | `lib/logging/index.ts`                  |
 | Local storage         | `useLocalStorage()`                                                  | `lib/hooks/use-local-storage.ts`        |
 | Wizard state          | `useWizard()`                                                        | `lib/hooks/use-wizard.ts`               |
+| Unmount-safe timer    | `useTimeout()`                                                       | `lib/hooks/use-timeout.ts`              |
 | ETag / 304            | `computeETag()`, `checkConditional()`                                | `lib/api/etag.ts`                       |
 
 ## Skills
@@ -363,7 +364,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Approval Queue (admin)   | `.context/admin/orchestration-approvals.md`               | Pending approvals list, approve/reject, sidebar badge                                                                       |
 | Setup Wizard             | `.context/admin/setup-wizard.md`                          | 5-step guided setup flow, resume behavior                                                                                   |
 | Contextual Help          | `.context/ui/contextual-help.md`                          | `<FieldHelp>` directive for form fields                                                                                     |
-| UI Hooks                 | `.context/ui/hooks.md`                                    | `useLocalStorage`, `useWizard`                                                                                              |
+| UI Hooks                 | `.context/ui/hooks.md`                                    | `useLocalStorage`, `useWizard`, `useTimeout`                                                                                |
 | Per-Surface Theming      | `.context/ui/surface-theming.md`                          | `data-surface` seam: proxy classification, `<SurfaceSync>`, fork-owned `brand-theme.css`, the six design constraints        |
 
 ## Troubleshooting
