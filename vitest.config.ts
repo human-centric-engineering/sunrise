@@ -11,6 +11,37 @@ export default defineConfig({
     // Use happy-dom for fast DOM testing (alternative to jsdom)
     environment: 'happy-dom',
 
+    // Cap worker forks well below the core count.
+    //
+    // Vitest defaults to roughly `cores - 1`, which is right for a machine
+    // running one suite and wrong for how this suite is actually run: agents
+    // execute it in the background behind `validate` and `/pre-pr`, and more
+    // than one of them is often working different forks of this repo at the
+    // same time. Two default runs on a 10-core box is ~18 forked processes,
+    // each with its own happy-dom, and the machine thrashes.
+    //
+    // The failure that produces is not a test failure and does not read like
+    // one: `[vitest-pool]: Failed to start forks worker` / `Timeout waiting
+    // for worker to respond`, plus tests that hang to the 30s `testTimeout`
+    // rather than asserting. It also silently shrinks the file count in the
+    // summary line — a run reporting 1054 of 1058 files has lost four workers,
+    // not four test files. That is a large share of what #597 recorded as
+    // flakiness, and no application-code change can fix it.
+    //
+    // Measured on a 10-core M1 Pro: capping to 4 costs ~6% wall-clock on a
+    // solo coverage run (239s -> 254s) while cutting the aggregate work the
+    // machine does by roughly half (summed in-worker `tests` time 860s ->
+    // 326s). The default was not buying parallelism, it was buying
+    // contention — which is why the headroom for a second concurrent run
+    // goes up far more than the 6% suggests.
+    //
+    // Left uncapped on CI deliberately. The problem above is a shared-dev-box
+    // problem; a CI shard has a runner to itself, and runner size varies by
+    // fork — `ubuntu-latest` is 4 vCPU for a public repo but 2 for a private
+    // one on a free plan, where a hardcoded 4 would oversubscribe. Vitest's
+    // own default sizing is right there, so this keeps CI exactly as it is.
+    maxWorkers: process.env.CI ? undefined : 4,
+
     // happy-dom loads `<script src>` and `<link rel=stylesheet>` for real —
     // both flags default to false, i.e. loading enabled — using its own
     // `node:http` client in `happy-dom/lib/fetch/`. Its default document URL
