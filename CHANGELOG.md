@@ -16,6 +16,59 @@ release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Timers are cancelled on unmount across 16 components.** Every `setTimeout`
+  in `components/**` without a matching `clearTimeout` outlived the component
+  that scheduled it. The dominant case — "hide the success banner after N
+  seconds" — is a state update React discards, so it looked harmless; two were
+  not. `chat-interface`'s follow-up poll re-queued itself indefinitely after
+  unmount, because `streamingRef.current` freezes at its last value and nothing
+  else terminated the chain, and its reconnect backoff held a timer for up to
+  four seconds past teardown. A new `useTimeout()` in `lib/hooks/` schedules
+  work that is cleared on unmount; behaviour is otherwise identical to
+  `setTimeout`. **A fork that has overridden any of these components carries
+  the same defect** — the affected files are listed in the commit for #597.
+
+- **CI test jobs no longer inherit `CI_NODE_HEAP_MB` once per worker.**
+  `NODE_OPTIONS: --max-old-space-size` is set at workflow level and is a
+  **per-process** cap, but `test-full` and `test-changed` fork roughly
+  `cores - 1` workers apiece — so the real ceiling was `workers × the knob`. At
+  the 5120 default that is ~15.4GB on a 4-vCPU/16GB public runner; at 8192, the
+  value the docs tell you to set when lint dies with exit 134, it is ~24.6GB on
+  the same runner. **The documented remedy for one job was the trigger for
+  another**, and the failure it produced was an OS OOM kill rather than a clean
+  V8 abort — surfacing as `Failed to start forks worker`, or as a shard quietly
+  missing from the file count. Both test jobs now opt out with
+  `NODE_OPTIONS: ''`, taking Node's own memory-derived default; `build` and
+  `smoke` keep the raised cap, which is what it exists for. **Forks that have
+  raised `CI_NODE_HEAP_MB` should re-read
+  [`.context/architecture/ci.md`](./.context/architecture/ci.md) — and lower it
+  to fit before flipping a repo private**, where `ubuntu-latest` is 7GB.
+
+### Changed
+
+- **The test suite no longer touches the network.** happy-dom loads
+  `<script src>` and `<link rel=stylesheet>` for real (both flags default to
+  *off*), and resolves relative URLs against its default document origin,
+  `http://localhost:3000` — so a full run made ~470 failed connections to a dev
+  server that was not running. Both loaders are now disabled, and a
+  `settings.fetch.interceptor` refuses any remaining request with the same
+  `TypeError` a real network failure produced. **A fork whose tests rely on a
+  real HTTP call will now fail fast** with a message naming the URL; stub it
+  with `vi.stubGlobal('fetch', …)` or mock the module that issues it. Note this
+  has to hook happy-dom's own fetch layer — it ships its own implementation
+  over `node:http` and binds it before `tests/setup.ts` runs, so patching
+  `globalThis.fetch` intercepts none of it.
+
+- **Vitest worker count is capped at 4 off CI.** The default of roughly
+  `cores - 1` assumes a machine running one suite; agents run this one in the
+  background behind `validate` and `/pre-pr`, often several at once against
+  different forks. Measured on a 10-core machine, the cap costs ~6% wall-clock
+  (239s → 254s) while halving the aggregate work (summed in-worker test time
+  860s → 326s) — the default was buying contention, not parallelism. CI is
+  untouched: a shard has its runner to itself and runner size varies by fork.
+
 ## [0.9.0] — 2026-08-17
 
 > **Alpha release.** Twelfth tagged Sunrise release. **MINOR bump** — the

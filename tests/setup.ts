@@ -40,6 +40,60 @@ import '@testing-library/jest-dom';
 import { expect, vi, afterEach } from 'vitest';
 
 /**
+ * Refuse real network requests.
+ *
+ * A component that fetches on mount, in a test that hasn't stubbed `fetch`,
+ * issues a genuine HTTP request. happy-dom's document URL is
+ * `http://localhost:3000`, so a relative path resolves against it and the
+ * suite spends the run connecting to a dev server that isn't there —
+ * ~470 `ECONNREFUSED ::1:3000` lines per full run before this guard.
+ *
+ * Nothing failed because of it, but every one of those is a socket opened
+ * during a test, and one still in flight when Vitest tears the environment
+ * down is the shape of the `EnvironmentTeardownError` reported on #597.
+ *
+ * **It has to hook here, not `globalThis.fetch`.** happy-dom ships its own
+ * fetch implementation (`happy-dom/lib/fetch/`) over `node:http`, and binds
+ * its module references at import time — before this file runs. Patching
+ * `globalThis.fetch`, or `node:http`'s `request`, intercepts none of it. That
+ * is why the traffic was so hard to attribute: it appears in the output with
+ * no test name attached, because it lands after the test that caused it.
+ *
+ * Throwing a `TypeError` is deliberately what a real network failure already
+ * produced, so no test changes behaviour — the rejection is simply immediate
+ * and costs no socket. A test that *wants* a response must stub it:
+ * `vi.stubGlobal('fetch', vi.fn())`, or mock the module that calls it.
+ */
+{
+  interface InterceptedRequest {
+    request: { url: string };
+  }
+  interface HappyDomFetchSettings {
+    interceptor: {
+      beforeAsyncRequest?: (ctx: InterceptedRequest) => Promise<Response | void>;
+      beforeSyncRequest?: (ctx: InterceptedRequest) => void;
+    } | null;
+  }
+  const happyDom = (globalThis as { happyDOM?: { settings?: { fetch?: HappyDomFetchSettings } } })
+    .happyDOM;
+
+  const refuse = (url: string): never => {
+    throw new TypeError(
+      `Blocked a real network request to ${url}. Tests must not reach the ` +
+        `network: stub it with vi.stubGlobal('fetch', …), or mock the module ` +
+        `that issues it. See tests/setup.ts.`
+    );
+  };
+
+  if (happyDom?.settings?.fetch) {
+    happyDom.settings.fetch.interceptor = {
+      beforeAsyncRequest: ({ request }) => refuse(request.url),
+      beforeSyncRequest: ({ request }) => refuse(request.url),
+    };
+  }
+}
+
+/**
  * Mock Next.js navigation hooks
  *
  * These are used frequently in components but need to be mocked for testing.
