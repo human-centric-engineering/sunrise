@@ -389,6 +389,34 @@ same opaque failure each time. Keep the value at or below the runner's physical
 memory — a cap above available RAM just moves the failure from a clean abort to
 the OOM killer.
 
+**It is a _per-process_ cap, and the test jobs are the only multi-process ones.**
+`--max-old-space-size` applies to each Node process, not to the runner. Every job
+this knob is aimed at — type-aware ESLint, `tsc`, `next build` — is a single
+process, so "cap ≤ physical memory" is the whole rule for them. `test-full` and
+`test-changed` are different: vitest forks roughly `cores - 1` workers, each its
+own Node process inheriting the same ceiling. The rule there is
+
+```
+workers × CI_NODE_HEAP_MB  ≤  runner memory − (OS + the Postgres service container)
+```
+
+At the 5120 default that is already ~15.4GB of ceiling on a 4-vCPU/16GB public
+runner. At `CI_NODE_HEAP_MB=8192` — the value this section tells you to set when
+lint dies with exit 134 — it is ~24.6GB on the same 16GB runner, and on a
+2-vCPU/7GB private runner a single worker exceeds physical memory on its own.
+**So the documented fix for one job was the trigger for the other**, and the
+resulting failure is the worse kind: an OS OOM kill of a worker rather than a
+clean V8 abort, surfacing as `Failed to start forks worker` or a shard that
+vanishes from the summary count.
+
+Both test jobs therefore set `NODE_OPTIONS: ''` at job level, opting out of the
+workflow-level ceiling entirely. Node's own default heap is derived from the
+machine's memory, so it adapts to public and private runners without a knob, and
+it is what the suite already runs under locally. **If you add a job that runs
+vitest (or anything else process-parallel), give it the same override** — a job
+that merely inherits the workflow `env:` is silently opting into `N ×
+CI_NODE_HEAP_MB`.
+
 **A workflow-level `env:` does not cross into a container build.** This is the
 non-obvious part, and it produced a distinctive symptom: raising the variable
 fixed `typecheck`, `lint` and `build` while `docker` kept OOMing at exactly

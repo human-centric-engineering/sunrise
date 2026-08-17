@@ -421,6 +421,24 @@ jobs:
       BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
       BETTER_AUTH_URL: 'http://localhost:3000'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+      # Opt out of the workflow-level `CI_NODE_HEAP_MB` ceiling.
+      #
+      # That knob raises a **per-process** cap and is sized for the
+      # single-process jobs it exists for (type-aware ESLint, tsc, next
+      # build). This is the only kind of job that runs several Node processes
+      # at once — vitest forks roughly `cores - 1` workers — so inheriting it
+      # multiplies the ceiling by the worker count. At `CI_NODE_HEAP_MB=8192`
+      # on a 4-vCPU public runner that is ~24.6GB of ceiling on 16GB of RAM,
+      # with Postgres resident as well; on a 2-vCPU/7GB private runner a
+      # single worker already exceeds physical memory. Both turn a clean V8
+      # abort into an OS OOM kill, which is far harder to diagnose — and the
+      # documented remedy for a lint OOM is exactly what triggers it.
+      #
+      # Empty means "no flag", so each worker takes Node's own default, which
+      # is already derived from the machine's memory and therefore adapts to
+      # public and private runners alike. The suite runs this way locally,
+      # including under coverage.
+      NODE_OPTIONS: ''
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -462,6 +480,9 @@ jobs:
       BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
       BETTER_AUTH_URL: 'http://localhost:3000'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+      # See the note on `test-full` — vitest is multi-process, so it opts out
+      # of the workflow-level per-process heap ceiling.
+      NODE_OPTIONS: ''
     steps:
       - uses: actions/checkout@v7
         with:
