@@ -2469,11 +2469,14 @@ export class StreamingChatHandler {
         yield errorEvent(err.code, safe.message);
         return;
       }
-      // Not on a client abort — see `isClientAbort`. The inner catch already
-      // declines to record one; without the same check here an abort simply
-      // falls through to this generic crash path (an `AbortError` is not a
-      // `ProviderError`, so the branch above does not claim it) and scores the
-      // failure anyway, one level up.
+      // Not on a client abort — see `isClientAbort`.
+      //
+      // Defence, not a second live site: both shipped adapters raise an in-loop
+      // abort as `ProviderError('request aborted', { code: 'aborted' })`, and
+      // the `instanceof ProviderError` branch above returns before reaching
+      // this line — so a cancellation from either of them never got here. It
+      // guards the shape a FORK adapter can still produce: a raw `AbortError`,
+      // or anything else not funnelled through `toProviderError`.
       if (resolvedProviderSlug && !isClientAbort(err, request.signal)) {
         getBreaker(resolvedProviderSlug).recordFailure();
       }
@@ -2790,10 +2793,19 @@ export function streamChat(request: ChatRequest): ChatStream {
 function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
   // Authoritative: the caller hung up, whatever the error looks like.
   if (signal?.aborted) return true;
+  // A `ProviderError` states its own kind. Both shipped adapters raise
+  // `code: 'aborted'` for an in-loop abort, so the code is the answer and the
+  // message must NOT be consulted — a 502 whose body echoes user text
+  // containing "aborted" is a provider failure, and the breaker should hear
+  // about it. This branch is what makes that true on the signal-less path too:
+  // the evaluation runner spreads `signal` conditionally
+  // (`run-cases/agent-case.ts`), so a run without one used to fall through to
+  // the substring test below.
+  if (err instanceof ProviderError) return err.code === 'aborted';
   if (!(err instanceof Error)) return false;
   // Unambiguous: nothing else is named this.
   if (err.name === 'AbortError') return true;
-  // Only with no signal to consult — see above.
+  // Last resort, for a raw undici-style error on a signal-less call.
   return signal === undefined && err.message.includes('aborted');
 }
 

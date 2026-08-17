@@ -2212,6 +2212,77 @@ describe('StreamingChatHandler', () => {
       expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
     });
 
+    it("does NOT mistake an 'aborted'-mentioning provider error for a client abort WITHOUT a signal", async () => {
+      // The signal-less path is real: the evaluation runner spreads `signal`
+      // conditionally, so a run that supplies none reaches here with
+      // `request.signal === undefined`. The sibling test above only proves the
+      // signal-present case; a `ProviderError` states its own kind via `code`,
+      // which is what covers this one.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('upstream reported the transfer was aborted', {
+            code: 'http_502',
+            status: 502,
+            retriable: true,
+          });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      // No `signal` on the request at all.
+      await collect(streamChat(baseRequest));
+
+      expect(mockBreaker.recordFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats an adapter's own aborted ProviderError as a client abort", async () => {
+      // What both shipped adapters actually raise for an in-flight abort.
+      const failingProvider = {
+        name: 'aborting',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('request aborted', { code: 'aborted', retriable: false });
+        }),
+      };
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+
+      await collect(streamChat(baseRequest));
+
+      expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
+    });
+
     it('treats an aborted signal as a client abort whatever the error looks like', async () => {
       // The authoritative half: if the caller hung up, the shape of the error
       // the provider happened to raise is irrelevant.

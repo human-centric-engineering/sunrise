@@ -274,16 +274,23 @@ export function toProviderErrorWithUsage(
   const base = toProviderError(err, fallbackMessage);
   if (base.usage || (usage.inputTokens <= 0 && usage.outputTokens <= 0)) return base;
 
-  return new ProviderError(base.message, {
+  const rebuilt = new ProviderError(base.message, {
     code: base.code,
     ...(base.status !== undefined ? { status: base.status } : {}),
     retriable: base.retriable,
-    // `base.cause` is the original SDK error when `toProviderError` wrapped
-    // one; when it passed a `ProviderError` straight through, the error
-    // itself is the thing worth keeping a handle on.
-    cause: base.cause ?? (base === err ? undefined : err),
+    // Every `toProviderError` branch that CONSTRUCTS an error already sets
+    // `cause`; the only branch that does not is the one returning its input
+    // untouched, where there is no wrapped error to point at. So `base.cause`
+    // is the whole answer — an `?? err` fallback would be unreachable.
+    cause: base.cause,
     usage,
   });
+  // Carry the original stack across. Without this the rebuilt error points at
+  // this helper rather than the adapter loop that threw, so
+  // `log.error('Streaming chat handler crashed', err)` and the span exception
+  // both lose the throw site — the one thing an operator opens them for.
+  if (base.stack) rebuilt.stack = base.stack;
+  return rebuilt;
 }
 
 /**

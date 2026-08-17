@@ -161,12 +161,19 @@ Maximum retries: 2 (`MAX_STREAM_RETRIES`). See [Streaming Chat Handler](./chat.m
 
 **Two failures are deliberately kept away from the breaker**, because it exists to route around a provider that is _unwell_ and neither is evidence of that:
 
-- **A client abort** (stop pressed, tab closed, navigation mid-answer) bypasses retry — nobody is listening — and records **no** breaker failure. It is checked by `isClientAbort()` in **two** places: the inner stream catch and the outer crash catch. Both are needed; an `AbortError` is not a `ProviderError`, so without the outer check it falls through to the generic crash path and scores the failure one level up. At `failureThreshold: 5`, five cancelled streams would otherwise open the circuit for that provider slug across **every** agent using it — one reader changing their mind five times taking a healthy provider offline for everybody.
+- **A client abort** (stop pressed, tab closed, navigation mid-answer) bypasses retry — nobody is listening — and records **no** breaker failure. At `failureThreshold: 5`, five cancelled streams would otherwise open the circuit for that provider slug across **every** agent using it — one reader changing their mind five times taking a healthy provider offline for everybody.
+
+  `isClientAbort()` decides, and it is consulted in two places: the inner stream catch, which is the one a cancellation actually reaches, and the outer crash catch as **defence** — both shipped adapters raise an in-flight abort as `ProviderError('request aborted', { code: 'aborted' })`, and the outer catch's `ProviderError` branch returns before the breaker line, so the outer guard exists for the shape a fork adapter can still produce (a raw `AbortError`, or anything not funnelled through `toProviderError`).
+
+  The predicate asks, in order: is the caller's `AbortSignal` aborted (authoritative); is this a `ProviderError` (then its `code` is the answer — never its message); is it named `AbortError`; and only with no signal to consult, does the message contain "aborted". The `ProviderError` rule is what stops a 502 whose body echoes the word from being read as a cancellation on the signal-less path — the evaluation runner spreads `signal` conditionally.
+
 - **A request fault** (`isRequestFault()`, currently `truncated_no_output`) neither fails over nor records a failure: the token cap travels with the agent config, not the endpoint, so every fallback rejects it identically.
 
 **Cost on the error path.** `ProviderError.usage` carries what the provider billed for the call the error ended, and it is populated from two places: the truncation guards (what the provider reported) and `toProviderErrorWithUsage()` in the adapters' stream-iteration catch (what had accumulated by the time it died). Anthropic sets `inputTokens` at `message_start` and updates `outputTokens` on every `message_delta`, so its mid-stream failures carry real numbers; an OpenAI-compatible stream reports usage in a final chunk, so an error before that has nothing to attach.
 
 The streaming handler folds the field into `AiCostLog` on the way into the catch, so it is recorded whichever exit is taken — request fault, failover, or terminal. **Zeroed usage is dropped, never written**: zero means "the provider never told us", and a zeroed row would report the turn as free, which is a worse answer than no row at all.
+
+**It feeds the per-turn cap too.** The same fold adds to `turnCostUsd`, which `maxCostPerTurnUsd` is tested against — so a turn that lost a nearly-capped stream and then recovered on a fallback can stop the tool loop early with an `endedReason: 'budget_exceeded'` marker. That is the cap counting the money actually spent rather than only the spend that reached a `done` chunk, but it is a behaviour change worth knowing when tuning a cap.
 
 ## Guard Mode Fallback Logging
 

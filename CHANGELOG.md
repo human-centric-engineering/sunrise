@@ -678,16 +678,24 @@ release process.
 ### Fixed
 
 - **A cancelled stream no longer counts against the provider's circuit breaker.**
-  Pressing stop, closing the tab or navigating away mid-answer raises an
-  `AbortError`, and the streaming handler recorded that as a provider failure —
-  in **two** places, since an `AbortError` is not a `ProviderError` and so fell
-  through the inner catch to the generic crash path as well. At
-  `failureThreshold: 5`, five cancelled streams opened the circuit for that
-  provider slug across **every** agent using it: one reader changing their mind
-  five times could take a healthy provider offline for everybody. The breaker
-  exists to route around a provider that is unwell, and a reader is not evidence
-  about the provider. Both sites now consult one `isClientAbort()` predicate, so
-  they cannot drift (#592).
+  Pressing stop, closing the tab or navigating away mid-answer raises an abort,
+  and the streaming handler's inner catch recorded a provider failure before it
+  checked for one. At `failureThreshold: 5`, five cancelled streams opened the
+  circuit for that provider slug across **every** agent using it: one reader
+  changing their mind five times could take a healthy provider offline for
+  everybody. The breaker exists to route around a provider that is unwell, and a
+  reader is not evidence about the provider.
+
+  One `isClientAbort()` predicate now answers the question, consulted at the
+  inner catch and — as **defence rather than a second live site** — at the outer
+  one. Both shipped adapters raise an in-flight abort as
+  `ProviderError('request aborted', { code: 'aborted' })`, which the outer
+  catch's `ProviderError` branch returns on before it could reach the breaker,
+  so a cancellation from either never got there. The outer guard covers the
+  shape a fork adapter can still produce. The predicate reads the caller's
+  `AbortSignal` first and a `ProviderError`'s own `code` second, and only falls
+  back to matching the message when neither exists — so a provider error whose
+  text happens to contain "aborted" stays a provider failure (#592).
 - **A stream that dies part-way through now records what it was billed for.**
   Two halves, and neither works without the other. The **adapters** knew the
   cost and threw it away: Anthropic sets `inputTokens` at `message_start` and
@@ -705,7 +713,16 @@ release process.
   reports usage in a final chunk, so an error before that still has nothing to
   attach — and zeroed usage is deliberately dropped rather than written, because
   a zeroed row tells the dashboard the turn was free, which is a worse answer
-  than no row (#592).
+  than no row.
+
+  **Fork-facing: this also feeds the per-turn cost cap, not just the log.** The
+  recovered spend is added to `turnCostUsd`, which `maxCostPerTurnUsd` is tested
+  against — so a turn that burned most of its cap, lost the stream, and then
+  succeeded on a fallback provider can now stop the tool loop early with an
+  `endedReason: 'budget_exceeded'` marker where it previously ran on. That is
+  the cap working on the money actually spent rather than on the subset that
+  survived to a `done` chunk, but it is a behaviour change and an agent sitting
+  close to its cap is where it will show (#592).
 
 - **EPUB chapter text is now extracted by a real DOM parse, not a regex chain.**
   `epub-parser.ts` stripped markup with fourteen chained `.replace()` calls;

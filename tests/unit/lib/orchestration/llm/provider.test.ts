@@ -637,6 +637,23 @@ describe('toProviderErrorWithUsage', () => {
     expect(err).toBe(original);
   });
 
+  it('keeps the original throw site in the stack', () => {
+    // The rebuild happens in this helper, so without carrying `stack` across,
+    // `log.error('Streaming chat handler crashed', err)` and the span exception
+    // both point at the helper instead of the adapter loop that threw — the one
+    // thing an operator opens them for.
+    const original = new ProviderError('exploded in the stream loop', { code: 'http_500' });
+    const originalStack = original.stack;
+
+    const err = toProviderErrorWithUsage(original, 'stream failed', {
+      inputTokens: 5,
+      outputTokens: 7,
+    });
+
+    expect(err).not.toBe(original);
+    expect(err.stack).toBe(originalStack);
+  });
+
   it('preserves code, status and retriable while adding usage', () => {
     // Rebuilding the error must not quietly downgrade a retriable 503 into a
     // non-retriable `provider_error`, which would stop failover.
