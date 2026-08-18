@@ -175,15 +175,32 @@ it('should measure database latency', async () => {
 
 ## Type-Safe Assertion Helpers
 
-### Use Type Guards Instead of Non-Null Assertions
+### When to reach for an assertion helper
 
-Always import assertion helpers from `tests/helpers/assertions.ts` for type narrowing.
-
-**Why**: Better error messages and type safety than `!` non-null assertions.
+Use the helpers in `tests/helpers/assertions.ts` to narrow **data the test did
+not construct** — `JSON.parse` output, a response body, anything arriving as
+`unknown`. There the value's shape is a claim about the code under test, and a
+failed narrowing should say so by name.
 
 ```typescript
 import { assertDefined, assertHasProperty, parseJSON } from '@/tests/helpers/assertions';
 ```
+
+**`!` is fine on a fixture the test built itself.** If the object was assembled
+two lines up, the invariant is local and visible, and `!` documents it as well as
+a helper would. Insisting otherwise is a rule the suite does not follow and never
+has: `assertDefined` appears in 2 files, `assertHasProperty` in 1, against roughly
+82 files using `!`. Scoping the rule to where it earns its place is the honest
+version, and it is the version worth enforcing.
+
+**Why it matters where it matters**: on parsed data, `!` fails as
+`Cannot read properties of undefined (reading 'userId')` at whichever `expect`
+happened to touch it first. `assertDefined(parsed.meta)` fails at the narrowing,
+naming the thing that was missing.
+
+`parseJSON<T>(response)` stays the default for reading an API response body —
+it is the one helper with real adoption (10 files), because typing
+`await response.json()` is otherwise `any` at every call site.
 
 ### assertDefined()
 
@@ -205,8 +222,9 @@ it('should include metadata in response', () => {
 // AVOID: Direct access (type error)
 expect(parsed.meta.userId).toBe('user-123'); // Error: meta possibly undefined
 
-// AVOID: Non-null assertion (runtime risk)
-expect(parsed.meta!.userId).toBe('user-123'); // Could fail if meta is undefined
+// AVOID here: `parsed` came from JSON.parse, so its shape is the claim under
+// test. `!` asserts it without checking, and fails at the wrong line.
+expect(parsed.meta!.userId).toBe('user-123'); // "Cannot read properties of undefined"
 ```
 
 ### assertHasProperty()
@@ -325,9 +343,9 @@ describe('passwordSchema', () => {
 
 1. **Define response interfaces** - For type-safe response parsing
 2. **Use shared mock factories** - `createMockHeaders()`, `createMockSession()`, `delayed()`
-3. **Use assertion helpers** - `assertDefined()`, `assertHasProperty()`, `parseJSON()`
+3. **Use assertion helpers on data you did not construct** - `assertDefined()`, `assertHasProperty()`, `parseJSON()`
 4. **Use instanceof for errors** - Type narrowing instead of type assertions
-5. **Avoid non-null assertions** - Use type guards instead of `!`
+5. **`!` is fine on your own fixtures** - reach for a type guard when narrowing parsed or `unknown` data
 
 **Import Locations**:
 
