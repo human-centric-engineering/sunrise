@@ -50,85 +50,74 @@ it('should throw error for malformed JSON', async () => {
 
 ### The Problem
 
-Vitest's fake timers (`vi.useFakeTimers()`) conflict with React Testing Library's async utilities. This causes tests to timeout because:
+A bare `vi.useFakeTimers()` does conflict with React Testing Library's async
+utilities. Both `waitFor` and `userEvent` poll on `setTimeout`, so when the clock
+stops they wait for a tick that never arrives and the test hangs to the 30s
+`testTimeout`.
 
-1. **`waitFor` uses real timers** - It polls with `setTimeout` internally, which never fires when fake timers are active
-2. **`userEvent` uses real timers** - Its internal delays and async handling break with fake timers
-3. **Test pollution** - If a test with fake timers fails or doesn't clean up, subsequent tests inherit broken timer state
-
-### Anti-Pattern: Global Fake Timers
+The fix is not to avoid fake timers in `beforeEach`. It is one option:
 
 ```typescript
-// WRONG - This causes widespread timeouts
+vi.useFakeTimers({ shouldAdvanceTime: true });
+```
+
+`shouldAdvanceTime` keeps the clock advancing in real time (20ms per real
+millisecond by default) while still letting you jump it forward with
+`vi.advanceTimersByTime()`. `waitFor` and `userEvent` get their ticks; your
+`setTimeout(…, 3000)` still fires the instant you advance to it.
+
+### The Standard Pattern
+
+Enable it in `beforeEach`, restore in `afterEach`, and use `userEvent` and
+`waitFor` normally:
+
+```typescript
 beforeEach(() => {
-  vi.useFakeTimers();  // Breaks ALL async utilities
+  vi.clearAllMocks();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
 });
 
-it('should hide message after timeout', async () => {
+afterEach(() => {
+  vi.useRealTimers(); // CRITICAL: prevents pollution if a test fails mid-flight
+});
+
+it('should hide the success message after 3 seconds', async () => {
   const user = userEvent.setup();
   render(<Component />);
 
-  await user.click(button);           // TIMEOUT - userEvent broken
-  await waitFor(() => expect(...));   // TIMEOUT - waitFor broken
+  await user.click(screen.getByRole('button', { name: /save/i }));
+  await waitFor(() => expect(screen.getByText(/success/)).toBeInTheDocument());
 
-  vi.advanceTimersByTime(3000);
-
-  await waitFor(() => expect(...));   // TIMEOUT - still broken
-});
-```
-
-### Correct Pattern: Localized Fake Timers
-
-```typescript
-// Always clean up fake timers in afterEach
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.useRealTimers();  // CRITICAL: Prevents test pollution
-});
-
-it('should hide success message after 3 seconds', async () => {
-  // 1. Enable fake timers at START of test
-  vi.useFakeTimers();
-
-  // 2. Set up mocks
-  vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
-
-  render(<Component />);
-
-  // 3. Use fireEvent (not userEvent) for fake timer compatibility
-  await act(async () => {
-    fireEvent.click(screen.getByRole('button'));
-    await Promise.resolve();  // Flush microtasks
-  });
-
-  // 4. Use synchronous assertions (not waitFor)
-  expect(screen.getByText(/success/)).toBeInTheDocument();
-
-  // 5. Advance time with act()
   act(() => {
     vi.advanceTimersByTime(3000);
   });
 
-  // 6. Assert final state synchronously
-  expect(screen.queryByText(/success/)).not.toBeInTheDocument();
-
-  // 7. Restore real timers (also done in afterEach as safety net)
-  vi.useRealTimers();
+  await waitFor(() => expect(screen.queryByText(/success/)).not.toBeInTheDocument());
 });
 ```
+
+This is what the suite actually does: 13 files use `shouldAdvanceTime: true`,
+eight of them from `beforeEach`, and they are the most `userEvent`/`waitFor`-heavy
+component tests in the repo — `chat-interface.test.tsx` alone has 73 of each.
+
+**One caveat that is real.** Because the clock keeps moving, a timer whose delay
+is close to the wall-clock duration of the surrounding work can fire on its own
+before you advance to it. If a test is sensitive to _exactly when_ a timer fires
+rather than to the state after it fires, prefer an explicit
+`vi.advanceTimersByTime()` immediately after the triggering action, or drop to
+real timers for that one test. See the notes in `agents-table.test.tsx:859` and
+`capabilities-table.test.tsx:299` where this was hit and worked around.
 
 ### Key Rules
 
 **Note**: These rules apply specifically to **React component tests** using React Testing Library. For unit tests without React components, fake timers can be used more freely.
 
-| Rule                                                  | Why                                                             |
-| ----------------------------------------------------- | --------------------------------------------------------------- |
-| Never use `vi.useFakeTimers()` in `beforeEach`        | Breaks userEvent and waitFor for ALL tests                      |
-| Always add `vi.useRealTimers()` to `afterEach`        | Prevents test pollution if a test fails mid-execution           |
-| Use `fireEvent` instead of `userEvent`                | fireEvent is synchronous, userEvent has internal async handling |
-| Wrap clicks in `act()` with `await Promise.resolve()` | Flushes React's microtask queue                                 |
-| Use synchronous assertions, not `waitFor`             | waitFor's polling uses real setTimeout                          |
-| Wrap `vi.advanceTimersByTime()` in `act()`            | Lets React process state updates from timers                    |
+| Rule                                                        | Why                                                                      |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Pass `{ shouldAdvanceTime: true }` whenever RTL is involved | Bare `vi.useFakeTimers()` starves `waitFor` and `userEvent` of ticks     |
+| Always add `vi.useRealTimers()` to `afterEach`              | Prevents test pollution if a test fails mid-execution                    |
+| Wrap `vi.advanceTimersByTime()` in `act()`                  | Lets React process state updates from timers                             |
+| Keep using `userEvent` and `waitFor`                        | With `shouldAdvanceTime` they work normally; `fireEvent` is not required |
 
 ### When to Use Fake Timers
 
@@ -139,29 +128,30 @@ Only use fake timers when testing time-dependent behavior:
 - Polling intervals
 - Animation timing
 
-For most tests, **real timers with `waitFor` work better** and are less error-prone.
+For tests with no timing dimension, real timers are simpler — but reaching for
+them to dodge a hang is treating the symptom; `shouldAdvanceTime` is the fix.
 
 ### Complete Example
 
 ```typescript
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 describe('NotificationForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Do NOT use vi.useFakeTimers() here
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.useRealTimers();  // Safety net for test pollution
+    vi.useRealTimers(); // Safety net for test pollution
   });
 
-  // Regular test - uses real timers (preferred)
+  // No timing dimension — the fake clock is simply not in the way.
   it('should show success message on save', async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup();
     vi.mocked(api.save).mockResolvedValue({ success: true });
 
     render(<NotificationForm />);
@@ -173,28 +163,25 @@ describe('NotificationForm', () => {
     });
   });
 
-  // Fake timer test - for testing auto-hide behavior
+  // Timing behaviour — same setup, plus an explicit advance.
   it('should auto-hide success message after 3 seconds', async () => {
-    vi.useFakeTimers();
+    const user = userEvent.setup();
     vi.mocked(api.save).mockResolvedValue({ success: true });
 
     render(<NotificationForm />);
 
-    // Use fireEvent + act for fake timer compatibility
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /save/i }));
-      await Promise.resolve();
+    await user.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/saved successfully/i)).toBeInTheDocument();
     });
-
-    expect(screen.getByText(/saved successfully/i)).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(3000);
     });
 
-    expect(screen.queryByText(/saved successfully/i)).not.toBeInTheDocument();
-
-    vi.useRealTimers();
+    await waitFor(() => {
+      expect(screen.queryByText(/saved successfully/i)).not.toBeInTheDocument();
+    });
   });
 });
 ```
@@ -237,10 +224,10 @@ it('should measure database latency', async () => {
 
 1. Use `async/await` for async functions
 2. Use `expect().rejects` for testing rejections
-3. Never use `vi.useFakeTimers()` in `beforeEach`
+3. Pass `{ shouldAdvanceTime: true }` to `vi.useFakeTimers()` in React component tests
 4. Always restore real timers in `afterEach`
-5. Use `fireEvent` + `act()` with fake timers
-6. Use `waitFor` with real timers (preferred)
+5. Wrap `vi.advanceTimersByTime()` in `act()`
+6. `userEvent` and `waitFor` work under fake timers — you do not need `fireEvent`
 7. Use `delayed()` for timing-sensitive mocks
 
 **Related Documentation**:

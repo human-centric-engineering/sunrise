@@ -424,7 +424,7 @@ import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
 import { successResponse } from '@/lib/api/responses';
 import { handleAPIError } from '@/lib/api/errors';
 import { inviteUserSchema, listUsersQuerySchema } from '@/lib/validations/user';
-import { prisma } from '@/lib/db';
+import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
   try {

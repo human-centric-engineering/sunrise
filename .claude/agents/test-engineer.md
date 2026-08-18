@@ -195,11 +195,11 @@ describe('ComponentName', () => {
 ```typescript
 import { GET, POST } from './route';
 import { NextRequest } from 'next/server';
-import { db } from '@/lib/db';
+import { prisma } from '@/lib/db/client';
 
 // Mock database
-vi.mock('@/lib/db', () => ({
-  db: {
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
     user: {
       findMany: vi.fn(),
       create: vi.fn(),
@@ -211,7 +211,7 @@ describe('GET /api/v1/users', () => {
   it('should wrap users in standard response envelope', async () => {
     // Arrange: seed the mock with raw DB rows
     const dbRows = [{ id: '1', name: 'John', passwordHash: 'secret' }];
-    vi.mocked(db.user.findMany).mockResolvedValue(dbRows);
+    vi.mocked(prisma.user.findMany).mockResolvedValue(dbRows);
 
     // Act
     const request = new NextRequest('http://localhost:3000/api/v1/users');
@@ -243,32 +243,48 @@ describe('GET /api/v1/users', () => {
 
 **Database Testing (Integration):**
 
+There is no test database. "Integration" here means the route handler is
+exercised end to end with its collaborators mocked at the module edge — 124 of
+the 175 files under `tests/integration/` mock `@/lib/db/client` exactly like
+this. Do not reach for a seed/cleanup fixture; none exists.
+
 ```typescript
-import { db } from '@/lib/db';
-import { seedTestData, cleanupTestData } from '@/tests/helpers/db';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/db/client';
 
-describe('User Repository', () => {
-  beforeEach(async () => {
-    await seedTestData();
-  });
+// Declare only the models and methods the handler under test actually calls.
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    user: { create: vi.fn(), findUnique: vi.fn() },
+  },
+}));
 
-  afterEach(async () => {
-    await cleanupTestData();
-  });
-
+describe('POST /api/v1/users', () => {
   it('should create user with valid data', async () => {
-    const userData = { name: 'John', email: 'john@example.com' };
-    const user = await db.user.create({ data: userData });
+    vi.mocked(prisma.user.create).mockResolvedValue(createMockUser({ name: 'John' }) as never);
 
-    expect(user.id).toBeDefined();
-    expect(user.name).toBe(userData.name);
-    expect(user.email).toBe(userData.email);
+    const response = await POST(makeRequest({ name: 'John', email: 'john@example.com' }));
+
+    expect(response.status).toBe(201);
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ email: 'john@example.com' }) })
+    );
   });
 
-  it('should enforce unique email constraint', async () => {
-    const userData = { name: 'John', email: 'existing@example.com' };
+  it('should surface a unique email constraint as 400', async () => {
+    // A real Prisma error, not `{ code: 'P2002' }` — the handler branches on
+    // `instanceof`, so a literal falls through to the 500 catch-all instead.
+    vi.mocked(prisma.user.create).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.0.0',
+        meta: { target: ['email'] },
+      })
+    );
 
-    await expect(db.user.create({ data: userData })).rejects.toThrow('Unique constraint failed');
+    const response = await POST(makeRequest({ name: 'John', email: 'taken@example.com' }));
+
+    expect(response.status).toBe(400);
   });
 });
 ```
@@ -320,10 +336,10 @@ Aim for meaningful coverage, not just high percentages:
 **Prisma 7 Mocking:**
 
 ```typescript
-import { db } from '@/lib/db';
+import { prisma } from '@/lib/db/client';
 
-vi.mock('@/lib/db', () => ({
-  db: {
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
     user: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
@@ -336,7 +352,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 // In tests
-vi.mocked(db.user.findUnique).mockResolvedValue(mockUser);
+vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser);
 ```
 
 ### 5. Testing Server Components
@@ -373,24 +389,31 @@ describe('ServerComponent', () => {
 
 ```
 tests/
-├── unit/                  # Unit tests
+├── unit/                  # Mirrors the source tree one-for-one
+│   ├── app/              # Route handlers, pages
 │   ├── components/       # Component tests
 │   ├── lib/              # Library/utility tests
-│   └── validations/      # Schema validation tests
-├── integration/           # Integration tests
+│   ├── emails/           # React Email templates
+│   ├── prisma/           # Schema and seed-unit tests
+│   └── scripts/          # CI and tooling scripts
+├── integration/           # Handler + collaborators, mocked at the module edge
 │   ├── api/              # API endpoint tests
-│   └── db/               # Database operation tests
-├── helpers/               # Test utilities
-│   ├── db.ts             # Database helpers
-│   ├── render.tsx        # Custom render with providers
-│   └── mocks.ts          # Mock factories
+│   ├── app/              # Server component / page integration
+│   ├── orchestration/    # Engine, workflows, capabilities
+│   └── storage/          # Upload and storage flows
+├── helpers/               # Test utilities (auth.ts, api.ts, assertions.ts, …)
+├── types/mocks.ts         # Mock factories: createMockUser, createMockRouter, …
+├── mocks/                 # MSW-style module stubs
 └── setup.ts               # Global test setup
 ```
 
 **Naming Convention:**
 
 - Test files: `ComponentName.test.tsx` or `utility.test.ts`
-- Place test files next to source files OR in `tests/` directory
+- **Mirror the source path under `tests/unit/` or `tests/integration/`** — e.g.
+  `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`.
+  Tests are never co-located with source; there are currently zero test files
+  outside `tests/`, and `/pre-pr` step 4f resolves coverage by that mirror.
 - Use descriptive test names: `should [expected behavior] when [condition]`
 
 ## Your Quality Assurance Process
