@@ -5028,8 +5028,15 @@ describe('attachment gate', () => {
     // provenance, …) with no attachment field, so bytes cannot reach
     // `aiMessage.create`. That is exactly the kind of implicit guarantee a
     // later contributor breaks silently — by adding `attachments` to
-    // `PersistMessageParams`, or by folding base64 into `metadata`. This test
-    // is the thing that would notice.
+    // `PersistMessageParams`, or by folding base64 into `metadata`.
+    //
+    // The guard detects both a suspect KEY name and a base64 payload SHAPE.
+    // The shape check is load-bearing, not belt-and-braces: the first version
+    // of this test checked keys only, and a mutation persisting the real
+    // field (`metadata.files[].data` — attachments are `{name, mediaType,
+    // data}`) passed it while writing the whole PNG to the database. Verified
+    // by mutation both ways: keys-only passed, shape-aware fails naming the
+    // PNG and PDF magic bytes.
     //
     // Every other test in this block exercises a REJECTION path, which errors
     // before any persistence happens. The turn has to succeed for the

@@ -13,6 +13,14 @@
  *   2. Object keys that look like attachment-shaped fields — catches the
  *      case where a future contributor stuffs base64 image bytes into
  *      JSON metadata "for analytics" or "for replay".
+ *   3. **Values that look like a base64 payload, whatever the key is
+ *      called.** (2) alone was not enough and was demonstrably bypassable:
+ *      attachments in this codebase are `{ name, mediaType, data }`, and
+ *      `data` is not an attachment-shaped name in any useful sense — a
+ *      mutation persisting `metadata.files[].data` passed the key check
+ *      cleanly while writing the whole PNG to the database. A key list can
+ *      only ever enumerate the names someone already thought of; the byte
+ *      shape is the property that does not depend on naming.
  *
  * Bounded recursion (depth cap 8) prevents circular references from
  * hanging the test runner.
@@ -41,6 +49,45 @@ const SUSPECT_KEYS = new Set([
 
 const MAX_DEPTH = 8;
 
+/**
+ * Minimum length before a base64-looking string is treated as a payload.
+ *
+ * Sized to sit above the things that legitimately travel in metadata and
+ * happen to be base64-alphabet — cuids (~25), UUIDs (36, and disqualified by
+ * their hyphens anyway), model slugs, trace ids — and well below any real
+ * attachment. The smallest possible valid PNG is ~68 bytes base64; a 1x1
+ * transparent GIF is ~62. 256 leaves generous headroom on both sides.
+ */
+const BASE64_PAYLOAD_MIN_LENGTH = 256;
+
+/** Strict base64 alphabet with optional padding, no whitespace. */
+const BASE64_RE = /^[A-Za-z0-9+/]{256,}={0,2}$/;
+
+/**
+ * Base64 prefixes of the magic bytes for formats this feature accepts.
+ * A short string carrying one of these is still a smoking gun, so these are
+ * checked without the length floor.
+ */
+const MAGIC_PREFIXES = [
+  'iVBORw0KGgo', // PNG
+  'JVBERi0', // PDF  (%PDF-)
+  '/9j/', // JPEG
+  'R0lGOD', // GIF
+  'UklGR', // WEBP (RIFF)
+];
+
+function looksLikeBase64Payload(value: string): string | null {
+  for (const prefix of MAGIC_PREFIXES) {
+    if (value.startsWith(prefix)) {
+      return `base64 payload with ${prefix} magic-byte prefix`;
+    }
+  }
+  if (value.length >= BASE64_PAYLOAD_MIN_LENGTH && BASE64_RE.test(value)) {
+    return `base64-shaped string of ${value.length} chars`;
+  }
+  return null;
+}
+
 interface Finding {
   callIndex: number;
   argIndex: number;
@@ -62,6 +109,14 @@ function walk(value: unknown, path: string, depth: number, findings: Finding[]):
 
   if (isBinary(value)) {
     findings.push({ callIndex: -1, argIndex: -1, path, reason: 'binary value' });
+    return;
+  }
+
+  if (typeof value === 'string') {
+    const reason = looksLikeBase64Payload(value);
+    if (reason) {
+      findings.push({ callIndex: -1, argIndex: -1, path, reason });
+    }
     return;
   }
 

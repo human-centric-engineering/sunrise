@@ -33,6 +33,43 @@ const SUSPECT_KEYS = new Set([
 
 const MAX_DEPTH = 8;
 
+/**
+ * Minimum length before a base64-looking string is treated as a payload.
+ * See the sibling rationale in `no-attachment-persistence.ts`: a key list can
+ * only enumerate names someone already thought of, so the byte shape is the
+ * property that does not depend on naming. 256 sits above cuids, UUIDs, model
+ * slugs and trace ids, and far below any real recording.
+ */
+const BASE64_PAYLOAD_MIN_LENGTH = 256;
+
+/** Strict base64 alphabet with optional padding, no whitespace. */
+const BASE64_RE = /^[A-Za-z0-9+/]{256,}={0,2}$/;
+
+/**
+ * Base64 prefixes of the magic bytes for audio container formats. A short
+ * string carrying one of these is a smoking gun, so these skip the length
+ * floor. `UklGR` is RIFF, which covers WAV.
+ */
+const MAGIC_PREFIXES = [
+  'UklGR', // RIFF / WAV
+  'SUQz', // ID3  / MP3
+  'T2dnUw', // OggS / OGG, Opus
+  'GkXf', // EBML / WebM, Matroska
+  '//uQ', // MPEG frame sync / bare MP3
+];
+
+function looksLikeBase64Payload(value: string): string | null {
+  for (const prefix of MAGIC_PREFIXES) {
+    if (value.startsWith(prefix)) {
+      return `base64 payload with ${prefix} magic-byte prefix`;
+    }
+  }
+  if (value.length >= BASE64_PAYLOAD_MIN_LENGTH && BASE64_RE.test(value)) {
+    return `base64-shaped string of ${value.length} chars`;
+  }
+  return null;
+}
+
 interface Finding {
   callIndex: number;
   argIndex: number;
@@ -54,6 +91,14 @@ function walk(value: unknown, path: string, depth: number, findings: Finding[]):
 
   if (isBinary(value)) {
     findings.push({ callIndex: -1, argIndex: -1, path, reason: 'binary value' });
+    return;
+  }
+
+  if (typeof value === 'string') {
+    const reason = looksLikeBase64Payload(value);
+    if (reason) {
+      findings.push({ callIndex: -1, argIndex: -1, path, reason });
+    }
     return;
   }
 
