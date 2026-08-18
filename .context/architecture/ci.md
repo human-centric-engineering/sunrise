@@ -418,6 +418,14 @@ then stop. Measured on one ~2x-Sunrise fork, lint aborts at 5120 and passes at
 6144 with a 5.6 GiB peak — so the gap between "fails" and "works" is one step,
 and 8192 was never needed.
 
+**The same wall exists locally, and this variable does not reach it.** `npm run
+lint` therefore runs through `scripts/run-capped.mjs`, which appends a
+`--max-old-space-size` to `NODE_OPTIONS` — but **only when nothing has set one
+already**, so in CI this variable still wins. A developer hitting exit 134 on a
+laptop is the usual first sighting of a fork outgrowing the default; see
+[`lint-toolchain.md`](./lint-toolchain.md#memory-why-lint-runs-under-an-explicit-heap-cap)
+for the measured per-fork numbers and the local `NODE_HEAP_MB` override.
+
 Setting it as a repo variable rather than editing `ci.yml` matters: an edit to
 the workflow file is reverted by every upstream sync, so the fork rediscovers the
 same opaque failure each time. Keep the value at or below the runner's physical

@@ -198,6 +198,67 @@ The companion **CI seam** is a `package.json` addition, not a config file: the
 `app:ci-checks` script (a boundary check, migration-hygiene lint, etc.) with **no
 `ci.yml` edit**. It no-ops in vanilla Sunrise, which ships no such script.
 
+## Memory: why `lint` runs under an explicit heap cap
+
+`npm run lint` goes through `scripts/run-capped.mjs` rather than calling
+`eslint` directly. Type-aware linting is by a wide margin the most
+memory-hungry job in the repo, and Node's default heap is not sized for it.
+
+**Node picks its default from machine RAM and then stops there** — 4288MB on a
+16GB host, no matter how much of the other 12GB is free. Cold, whole-repo,
+type-aware `eslint .` measured **18 Aug 2026**:
+
+| Repo                  | TS files | Prisma models | Cold lint peak | Minimum viable cap |
+| --------------------- | -------- | ------------- | -------------- | ------------------ |
+| Sunrise 0.9.0         | 2,260    | 61            | 4.05 GiB       | fits 4288, by ~2%  |
+| HCE Hub               | 2,653    | 75            | exit 134       | 5120               |
+| Daybreak              | 2,777    | 80            | exit 134       | 5120               |
+| ConQuest (~1.9x base) | 4,200    | 115           | exit 134       | 6144               |
+
+Base Sunrise clears the default by about 2%; every fork with real code on top
+does not. The failure is **exit 134** — SIGABRT, no message naming memory, no
+stack pointing at it. Bisected on HCE Hub, the commit that flipped it was the
+Sunrise 0.9.0 sync: 2,602 files passed, 2,652 aborted. Fifty files was the whole
+remaining margin.
+
+**Why it surfaces all at once.** The peak is only paid on a cold ESLint cache —
+warm, the same command needs 0.41 GiB and 2.3s versus 4.17 GiB and 93s. ESLint
+invalidates its entire cache when a plugin version changes, so a dependency bump
+makes the next run cold for every file, and an aborted run never writes a cache
+to warm the one after it.
+
+**The cap must never override an explicit one.** A command-line
+`--max-old-space-size` beats one in `NODE_OPTIONS` in both directions, so
+setting the flag directly would replace whatever a fork measured and set as
+`CI_NODE_HEAP_MB` with Sunrise's number, in every CI job, silently. The wrapper
+appends to `NODE_OPTIONS` and only when no cap is present; in CI the workflow's
+value always wins. `NODE_HEAP_MB` overrides the local default (6144), which is
+itself clamped to 75% of physical memory and floored at Node's own default — a
+cap above available RAM trades a clean V8 abort for an OS OOM kill.
+
+**What is deliberately _not_ capped**, because a cap without a measurement is
+the mistake this section exists to prevent:
+
+- `type-check` — `tsc --noEmit` peaks at 1.64-1.75 GiB across Sunrise, Hub and
+  Daybreak. A 2.4x margin.
+- `lint-staged` (the pre-commit hook) — one staged file measured 1.85 GiB. The
+  project service builds only what the linted files reach transitively, so a
+  commit-sized changeset stays far below a whole-repo run.
+
+Both are one line away in `BINS` if a fork ever measures otherwise. Re-derive by
+bisection rather than guessing: raise `--max-old-space-size` until the job stops
+aborting, then stop.
+
+**If a fork outgrows even this**, the lever that works is shrinking the
+TypeScript _program_, not the file list. Splitting the lint into `src` and
+`tests` invocations does nothing — `tsconfig.json` includes `**/*.ts`, so the
+project service builds the same whole-repo program whichever files you pass
+(Sunrise src-only, 1,188 files, measured _higher_ than all 2,262). A
+`tsconfig.lint.json` that excludes `tests/**`, with `project:` in place of
+`projectService: true`, took ConQuest from 5.61 GiB / 209s to 4.30 GiB / 81s.
+The cost is that test files lose the type-aware rules they still have —
+including `no-floating-promises`, so price it before taking it.
+
 ## Backlog (post-fork-readiness, not blockers)
 
 - **Enabling the React Compiler** — if/when adopted, re-enable `set-state-in-effect`
