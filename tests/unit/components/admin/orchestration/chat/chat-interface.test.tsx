@@ -57,6 +57,38 @@ vi.mock('@/components/admin/orchestration/chat/mic-button', () => ({
   ),
 }));
 
+// Stub ApprovalCard the same way MicButton is stubbed above. Its `onResolved`
+// callback is the only caller of `sendFollowupWhenIdle`, and reaching it for
+// real would mean driving the card's own approval polling — which the network
+// guard in tests/setup.ts refuses by design.
+//
+// Kept faithful to the contract the parent depends on — the prompt text and
+// the two accessibly-named actions — so the existing "mounts an ApprovalCard"
+// test still exercises what it was written to check.
+vi.mock('@/components/admin/orchestration/chat/approval-card', () => ({
+  ApprovalCard: ({
+    pendingApproval,
+    onResolved,
+  }: {
+    pendingApproval: { prompt?: string };
+    onResolved: (action: string, followup: string) => void;
+  }) => (
+    <div>
+      <p>{pendingApproval?.prompt}</p>
+      <button
+        type="button"
+        aria-label="Approve action"
+        onClick={() => onResolved('approved', 'ok')}
+      >
+        Approve
+      </button>
+      <button type="button" aria-label="Reject action" onClick={() => onResolved('rejected', 'no')}>
+        Reject
+      </button>
+    </div>
+  ),
+}));
+
 import { ChatInterface } from '@/components/admin/orchestration/chat/chat-interface';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -2242,6 +2274,83 @@ describe('ChatInterface', () => {
       });
       await user.click(screen.getByRole('button', { name: /suggested prompts/i }));
       expect(screen.getByTestId('suggested-prompts-panel')).toBeInTheDocument();
+    });
+  });
+
+  // ── #597 async lifetimes ────────────────────────────────────────────────
+  //
+  // The two changes the CHANGELOG calls out as *not* cosmetic. Both shipped
+  // without a regression test, so reverting either left the suite green — the
+  // same green-for-the-wrong-reason failure #597 is about.
+  //
+  // Real timers deliberately: fake timers deadlock here, because the component
+  // interleaves timer waits with promise chains (fetch rejection, stream
+  // reads) that need real microtask turns to settle. The waits are short —
+  // a 1s first backoff and a 500ms poll — so the cost is ~2s.
+
+  describe('async lifetimes (#597)', () => {
+    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+    it('stops the reconnect loop when the component unmounts mid-backoff', async () => {
+      // A network failure schedules a 1s backoff and retries. Before
+      // `abortableDelay` that wait was a bare `setTimeout` the unmount could
+      // not cancel, so the loop resumed against a dead component and issued
+      // another fetch. The stubbed fetch here ignores `signal`, which is
+      // exactly why the in-code `signal.aborted` check has to exist.
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockRejectedValue(new Error('Network error'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { unmount } = render(<ChatInterface agentSlug="a" starterPrompts={['Go']} />);
+      await user.click(screen.getByRole('button', { name: 'Go' }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      unmount();
+
+      await sleep(1400); // past the 1s first backoff
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops the follow-up poll when the component unmounts while streaming', async () => {
+      // `sendFollowupWhenIdle` re-queues itself every 500ms until the stream
+      // finishes. `streamingRef.current` freezes at its last value on unmount,
+      // so with a bare setTimeout the chain never terminated — it polled for
+      // the lifetime of the process.
+      const user = userEvent.setup();
+      // A stream that never closes, so `streaming` is still true at unmount.
+      const encoder = new TextEncoder();
+      const openStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(startFrame('c1', 'm1')));
+          controller.enqueue(
+            encoder.encode(
+              approvalRequiredFrame({
+                executionId: 'e1',
+                approveToken: 't1',
+                stepId: 's1',
+                summary: 'Approve?',
+              })
+            )
+          );
+        },
+      });
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: openStream }));
+
+      const { unmount } = render(<ChatInterface agentSlug="a" starterPrompts={['Go']} />);
+      await user.click(screen.getByRole('button', { name: 'Go' }));
+
+      const resolveButton = await screen.findByRole('button', { name: /approve action/i });
+      const setSpy = vi.spyOn(globalThis, 'setTimeout');
+      const pollCalls = (): number => setSpy.mock.calls.filter((c) => c[1] === 500).length;
+
+      await user.click(resolveButton);
+      await waitFor(() => expect(pollCalls()).toBeGreaterThan(0));
+
+      unmount();
+      const atUnmount = pollCalls();
+      await sleep(1400); // ~2 more ticks if the chain is still alive
+
+      expect(pollCalls()).toBe(atUnmount);
     });
   });
 });
