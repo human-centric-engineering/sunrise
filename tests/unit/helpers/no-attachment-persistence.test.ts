@@ -39,9 +39,6 @@ const PNG_BASE64 =
 
 const PDF_BASE64 = Buffer.from('%PDF-1.4\nfake').toString('base64');
 
-/** Base64-alphabet, long enough to trip the length floor, no known prefix. */
-const LONG_OPAQUE_BASE64 = 'QUJD'.repeat(80);
-
 function mockWithCall(arg: unknown) {
   const m = vi.fn();
   m(arg);
@@ -95,12 +92,6 @@ describe('assertNoAttachmentPersistence', () => {
       expect(() => assertNoAttachmentPersistence(mock, 'probe')).toThrow(/JVBERi0/);
     });
 
-    it('rejects a long base64 blob with no recognisable prefix', () => {
-      const mock = mockWithCall({ data: { metadata: { payload: LONG_OPAQUE_BASE64 } } });
-
-      expect(() => assertNoAttachmentPersistence(mock, 'probe')).toThrow(/base64-shaped string/);
-    });
-
     // #626 code review: the shapes this codebase's own attachment path
     // actually produces. `FileReader.readAsDataURL` yields the data: form and
     // `openai-compatible.ts` re-adds it when formatting for the provider, so
@@ -120,13 +111,6 @@ describe('assertNoAttachmentPersistence', () => {
       expect(() => assertNoAttachmentPersistence(mock, 'probe')).toThrow(/iVBORw0KGgo/);
     });
 
-    it('rejects MIME line-wrapped base64', () => {
-      const wrapped = (LONG_OPAQUE_BASE64.match(/.{1,76}/g) ?? []).join('\n');
-      const mock = mockWithCall({ data: { metadata: { src: wrapped } } });
-
-      expect(() => assertNoAttachmentPersistence(mock, 'probe')).toThrow(/base64-shaped string/);
-    });
-
     it('names the path so the failure is diagnosable', () => {
       const mock = mockWithCall({ data: { metadata: { files: [{ data: PNG_BASE64 }] } } });
 
@@ -134,19 +118,6 @@ describe('assertNoAttachmentPersistence', () => {
         /arg0\.data\.metadata\.files\[0\]\.data/
       );
     });
-  });
-
-  it('honours BASE64_PAYLOAD_MIN_LENGTH rather than a second hardcoded floor', () => {
-    // The regex used to carry its own `{256,}` quantifier duplicating the
-    // constant, so lowering the constant was a silent no-op (#626 review).
-    // 255 chars of pure base64 alphabet must NOT trip; 256 must.
-    const justUnder = 'A'.repeat(255);
-    const justOver = 'A'.repeat(256);
-
-    expect(() => assertNoAttachmentPersistence(mockWithCall({ x: justUnder }), 'p')).not.toThrow();
-    expect(() => assertNoAttachmentPersistence(mockWithCall({ x: justOver }), 'p')).toThrow(
-      /base64-shaped string of 256 chars/
-    );
   });
 
   describe('does not fire on what the codebase legitimately persists', () => {
@@ -180,6 +151,29 @@ describe('assertNoAttachmentPersistence', () => {
       // Spaces and punctuation disqualify it, so message content of any length
       // passes — which matters, because `content` is always persisted.
       const mock = mockWithCall({ data: { content: 'the quick brown fox. '.repeat(60) } });
+
+      expect(() => assertNoAttachmentPersistence(mock, 'probe')).not.toThrow();
+    });
+
+    // #626 review round 2: every one of these FAILED under the removed
+    // length+alphabet rule. They are ordinary chat content, and the guard
+    // asserting over five sinks meant any of them would have accused the route
+    // of persisting bytes it never touched.
+    it('accepts long prose with no punctuation', () => {
+      const mock = mockWithCall({ data: { content: 'the quick brown fox '.repeat(20) } });
+
+      expect(() => assertNoAttachmentPersistence(mock, 'probe')).not.toThrow();
+    });
+
+    it('accepts a long run of hyphenated slugs', () => {
+      const mock = mockWithCall({ data: { tags: 'some-long-slug-name-'.repeat(20) } });
+
+      expect(() => assertNoAttachmentPersistence(mock, 'probe')).not.toThrow();
+    });
+
+    it('accepts a newline-separated list', () => {
+      const list = Array.from({ length: 30 }, (_, i) => `item number ${i} in the list`).join('\n');
+      const mock = mockWithCall({ data: { content: list } });
 
       expect(() => assertNoAttachmentPersistence(mock, 'probe')).not.toThrow();
     });

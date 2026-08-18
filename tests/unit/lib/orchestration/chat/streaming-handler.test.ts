@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { assertNoAttachmentPersistence } from '@/tests/helpers/no-attachment-persistence';
 
 // ---------------------------------------------------------------------------
 // Module mocks — hoisted before dynamic imports
@@ -309,8 +310,6 @@ function makeMessage(overrides: Partial<Record<string, unknown>> = {}) {
 // ---------------------------------------------------------------------------
 // Default request used across most tests
 // ---------------------------------------------------------------------------
-
-import { assertNoAttachmentPersistence } from '@/tests/helpers/no-attachment-persistence';
 
 const baseRequest = {
   message: 'Hello there',

@@ -97,9 +97,16 @@ it('should hide the success message after 3 seconds', async () => {
 });
 ```
 
-This is what the suite actually does: 13 files use `shouldAdvanceTime: true`,
+This is what the suite actually does: 12 files use `shouldAdvanceTime: true`,
 eight of them from `beforeEach`, and they are the most `userEvent`/`waitFor`-heavy
 component tests in the repo — `chat-interface.test.tsx` alone has 73 of each.
+
+One component test deliberately opts out: `run-detail-view.test.tsx:323,372`
+passes `shouldAdvanceTime: false` and works, because it asserts on state between
+two timer boundaries and needs the clock to stay exactly where it is put. Treat
+the rule below as the default rather than a law — if a test needs a frozen
+clock and does not touch `waitFor` or `userEvent` while it is frozen, `false` is
+the right answer.
 
 **One caveat that is real.** Because the clock keeps moving, a timer whose delay
 is close to the wall-clock duration of the surrounding work can fire on its own

@@ -28,9 +28,6 @@ const WAV_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=
 /** ID3-tagged MP3. */
 const MP3_BASE64 = Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00fake').toString('base64');
 
-/** Base64-alphabet, past the length floor, no recognisable container prefix. */
-const LONG_OPAQUE_BASE64 = 'QUJD'.repeat(80);
-
 function mockWithCall(arg: unknown) {
   const m = vi.fn();
   m(arg);
@@ -70,12 +67,6 @@ describe('assertNoAudioPersistence', () => {
       expect(() => assertNoAudioPersistence(mock, 'probe')).toThrow(/SUQz/);
     });
 
-    it('rejects a long base64 blob with no recognisable prefix', () => {
-      const mock = mockWithCall({ data: { metadata: { payload: LONG_OPAQUE_BASE64 } } });
-
-      expect(() => assertNoAudioPersistence(mock, 'probe')).toThrow(/base64-shaped string/);
-    });
-
     it('rejects a data: URI, the form a MediaRecorder blob reads back as', () => {
       const mock = mockWithCall({
         data: { metadata: { src: `data:audio/wav;base64,${WAV_BASE64}` } },
@@ -113,12 +104,15 @@ describe('assertNoAudioPersistence', () => {
       expect(() => assertNoAudioPersistence(mock, 'probe')).not.toThrow();
     });
 
-    it('accepts a long PROSE transcript, which is not base64-alphabet', () => {
+    it('accepts a long PROSE transcript, punctuated or not', () => {
       // Transcripts are unbounded in length; flagging them would break the two
-      // real consumers of this guard.
-      const mock = mockWithCall({ data: { content: 'so then he said, and I quote. '.repeat(60) } });
+      // real consumers of this guard. The unpunctuated variant is the one the
+      // removed length+alphabet rule actually failed on (#626 review round 2).
+      const punctuated = mockWithCall({ data: { content: 'so then he said. '.repeat(60) } });
+      const bare = mockWithCall({ data: { content: 'so then he said '.repeat(60) } });
 
-      expect(() => assertNoAudioPersistence(mock, 'probe')).not.toThrow();
+      expect(() => assertNoAudioPersistence(punctuated, 'probe')).not.toThrow();
+      expect(() => assertNoAudioPersistence(bare, 'probe')).not.toThrow();
     });
   });
 

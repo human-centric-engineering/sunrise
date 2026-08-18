@@ -4,22 +4,27 @@
 #
 # Why this exists
 # ---------------
-# TruffleHog's `Postgres` detector is excluded in .github/workflows/secret-scan.yml
-# because it produced 27 unverified findings on this repo and zero verified ones —
-# every hit a `localhost` / `db` fixture in a test, a doc, .env.example or the CI
-# workflow itself. That noise failed the merge gate, and the alternative fix (a
-# path allowlist over ~29 files) would have blinded *every* detector on tests/ and
-# .context/, which is exactly where someone is most likely to paste a real key.
+# TruffleHog's `Postgres` detector produced 27 unverified findings on this repo
+# and zero verified ones — every hit a `localhost` / `db` fixture in a test, a
+# doc, .env.example or the CI workflow itself. That noise failed the merge gate.
 #
-# So the detector is off and this check replaces it. Unlike the detector it cannot
-# be fooled into firing on a fixture, because it only cares about one thing: is the
-# host routable? A DSN pointing at localhost is a fixture by definition. A DSN
-# pointing anywhere else in committed source is a leak until proven otherwise.
+# The fix was a PATH allowlist: .trufflehog-exclude.txt exempts tests/,
+# .context/, .claude/, docs/, .env.example and docker-compose*.yml. Note what
+# that costs — exclusions are per-path, not per-detector, so EVERY detector goes
+# quiet in those directories, which is exactly where someone is most likely to
+# paste a real key. (An earlier version of this comment described that allowlist
+# as the rejected alternative. It is what shipped.)
 #
-# This is narrower than TruffleHog's detector — it verifies nothing and it only
-# understands Postgres URIs. That is deliberate: it is a tripwire for the one class
-# of finding the detector was drowning out. Every other detector still runs at
-# --results=verified,unknown across every path, tests included.
+# This check is what buys that coverage back for the one credential class
+# provably living in those paths. It ignores paths entirely — `git ls-files`,
+# every tracked file — and it cannot be fooled into firing on a fixture, because
+# it only cares whether the host is routable. A DSN pointing at localhost is a
+# fixture by definition. A DSN pointing anywhere else in committed source is a
+# leak until proven otherwise.
+#
+# It is narrower than the detector it supplements: it verifies nothing and only
+# understands Postgres URIs. That is deliberate — it is a tripwire for the one
+# class of finding the noise was drowning out, not a replacement for TruffleHog.
 #
 # See #453.
 
