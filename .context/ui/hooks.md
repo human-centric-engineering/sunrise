@@ -141,11 +141,12 @@ non-zero with zero failing tests and nothing naming the file responsible — see
 
 - Scheduling twice leaves two timers pending, and neither cancels the other.
 - **After unmount, `schedule()` is a silent no-op** — the deliberate divergence
-  from `setTimeout`, and what makes an uncancellable timer impossible. The cost
-  is that a deferred effect which _should_ outlive the component is dropped
-  without warning (`accept-invite-form.tsx` defers a `router.push` 1500ms out).
-  Where the effect must survive unmount, use a bare `setTimeout` and own the
-  cleanup yourself.
+  from `setTimeout`, and what makes an uncancellable timer impossible. The
+  deferred redirects in `accept-invite-form.tsx` and `reset-password-form.tsx`
+  rely on it: unmounting inside their 1500ms window means the user navigated
+  away themselves, so firing the `router.push` would yank them off a page they
+  chose. Where an effect genuinely must outlive its component, use a bare
+  `setTimeout` and own the cleanup — this hook is the wrong tool.
 - It cancels on unmount, not on re-render. A timer scheduled in a render that
   is superseded still fires while the component is mounted.
 - For an `await`ed delay rather than a callback, this is the wrong tool — thread

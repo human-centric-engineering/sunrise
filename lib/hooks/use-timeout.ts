@@ -25,11 +25,18 @@ import { useCallback, useEffect, useRef } from 'react';
  * unmounted, `schedule()` is a silent no-op. That is what makes an
  * uncancellable timer impossible — almost every caller schedules from the
  * continuation of an `await`, so a component unmounted mid-request would
- * otherwise queue work into a set the cleanup has already drained. The cost is
- * that a deferred side effect which *should* outlive the component is dropped
- * without warning: `accept-invite-form.tsx` defers a `router.push` by 1500ms,
- * and if that form ever unmounts first the navigation no longer happens. Use a
- * bare `setTimeout` (and own the cleanup) where the effect must survive.
+ * otherwise queue work into a set the cleanup has already drained.
+ *
+ * The deferred navigations in `accept-invite-form.tsx` and
+ * `reset-password-form.tsx` are the interesting case, and they are on the
+ * right side of it: each defers a `router.push` by 1500ms so the user can read
+ * a success message, and unmounting inside that window means the user has
+ * already navigated somewhere themselves — firing the push then would yank
+ * them off a page they chose. Dropping it is correct.
+ *
+ * The cost is real where an effect genuinely must outlive its component — a
+ * fire-and-forget beacon, say. Use a bare `setTimeout` and own the cleanup
+ * there; this hook is the wrong tool.
  *
  * @example
  * const schedule = useTimeout();

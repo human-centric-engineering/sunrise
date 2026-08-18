@@ -416,6 +416,19 @@ under locally. **If you add a job that runs vitest (or anything else
 process-parallel), give it the same override** — a job that merely inherits the
 workflow `env:` is silently opting into `N × CI_NODE_HEAP_MB`.
 
+**A workflow-level `env:` does not cross into a container build.** This is the
+non-obvious part, and it produced a distinctive symptom: raising the variable
+fixed `typecheck`, `lint` and `build` while `docker` kept OOMing at exactly
+4128 MB, so the knob appeared to do nothing and the one job still failing was
+the one it had never been wired to. The `docker` job therefore forwards the same
+value explicitly as a `NODE_HEAP_MB` build arg, and `docker-compose.prod.yml`
+exposes it too (`NODE_HEAP_MB=${NODE_HEAP_MB:-4096}`) so a self-hosted build
+hits the same wall with the same lever (#543).
+
+The Dockerfile default stays **4096**, not the workflow's 5120: that stage is
+sized for ~7GB hosts, where a bigger cap trades a clean V8 heap error for an
+OS-level kill. Only a caller that knows its runner is larger asks for more.
+
 ### Knob 3: `CI_TEST_NODE_HEAP_MB`
 
 Unset by default, which means no `--max-old-space-size` flag on the test jobs at
@@ -432,19 +445,6 @@ gh variable set CI_TEST_NODE_HEAP_MB --body 3072
 2-vCPU runner vitest forks roughly one worker, on 4-vCPU roughly three — so the
 same value means very different totals, and the whole-runner figure that is
 right for `CI_NODE_HEAP_MB` is wrong here.
-
-**A workflow-level `env:` does not cross into a container build.** This is the
-non-obvious part, and it produced a distinctive symptom: raising the variable
-fixed `typecheck`, `lint` and `build` while `docker` kept OOMing at exactly
-4128 MB, so the knob appeared to do nothing and the one job still failing was
-the one it had never been wired to. The `docker` job therefore forwards the same
-value explicitly as a `NODE_HEAP_MB` build arg, and `docker-compose.prod.yml`
-exposes it too (`NODE_HEAP_MB=${NODE_HEAP_MB:-4096}`) so a self-hosted build
-hits the same wall with the same lever (#543).
-
-The Dockerfile default stays **4096**, not the workflow's 5120: that stage is
-sized for ~7GB hosts, where a bigger cap trades a clean V8 heap error for an
-OS-level kill. Only a caller that knows its runner is larger asks for more.
 
 ## Private-fork correctness (GHAS-dependent jobs)
 

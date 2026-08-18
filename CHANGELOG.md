@@ -40,9 +40,12 @@ release process.
   the same runner. **The documented remedy for one job was the trigger for
   another**, and the failure it produced was an OS OOM kill rather than a clean
   V8 abort — surfacing as `Failed to start forks worker`, or as a shard quietly
-  missing from the file count. Both test jobs now opt out with
-  `NODE_OPTIONS: ''`, taking Node's own memory-derived default; `build` and
-  `smoke` keep the raised cap, which is what it exists for. **Forks that have
+  missing from the file count. Both test jobs now opt out of it, taking Node's
+  own memory-derived default; the single-process jobs the knob is actually for
+  — `typecheck`, `lint`, `build` — keep it. A new `CI_TEST_NODE_HEAP_MB` gives
+  the test jobs their own knob for the case Node's default is not enough; unset
+  (the default) means no flag at all, and it must be sized per worker rather
+  than per runner. **Forks that have
   raised `CI_NODE_HEAP_MB` should re-read
   [`.context/architecture/ci.md`](./.context/architecture/ci.md) — and lower it
   to fit before flipping a repo private**, where `ubuntu-latest` is 7GB.

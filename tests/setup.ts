@@ -80,7 +80,9 @@ import { expect, vi, afterEach } from 'vitest';
   }
   interface HappyDomFetchSettings {
     interceptor: {
-      beforeAsyncRequest?: (ctx: InterceptedRequest) => Promise<Response | void>;
+      // happy-dom `await`s the async hook, so a plain `void` return is a valid
+      // "carry on with the real request" answer.
+      beforeAsyncRequest?: (ctx: InterceptedRequest) => Promise<Response | void> | void;
       beforeSyncRequest?: (ctx: InterceptedRequest) => void;
     } | null;
   }
@@ -100,16 +102,23 @@ import { expect, vi, afterEach } from 'vitest';
   // stable API across happy-dom majors, and a silently-skipped guard restores
   // ~470 real connections per run with nothing pointing at the cause — the
   // original #597 diagnosis took five attempts precisely because this traffic
-  // arrives unattributed. Only assert when happy-dom is actually the
-  // environment: files with `@vitest-environment node` legitimately have none.
-  if (typeof window !== 'undefined' && !happyDom?.settings?.fetch) {
+  // arrives unattributed.
+  //
+  // Keyed on the user-agent rather than on `globalThis.happyDOM`, so a rename
+  // of that object still trips the check instead of skipping in silence — and
+  // rather than on `typeof window`, which fires for ANY DOM environment. That
+  // second point is not hypothetical: `jsdom` is a runtime dependency of this
+  // repo, so `--environment jsdom` or a per-file `@vitest-environment jsdom`
+  // would otherwise fail every affected file with a message blaming a
+  // happy-dom upgrade that never happened. A non-happy-dom DOM environment
+  // simply gets no guard, which is the status quo for it.
+  const isHappyDom =
+    typeof navigator !== 'undefined' && /happydom/i.test(navigator.userAgent ?? '');
+  if (isHappyDom && !happyDom?.settings?.fetch) {
     throw new Error(
-      'tests/setup.ts: a DOM environment is active but `window.happyDOM.settings.fetch` ' +
+      'tests/setup.ts: happy-dom is the environment but `window.happyDOM.settings.fetch` ' +
         'is missing, so the network guard did not install. The hook point has probably ' +
         'moved in a happy-dom upgrade — re-point it rather than removing this check. ' +
-        'Gated on the environment rather than on `happyDOM` existing, because if that ' +
-        'object itself is renamed the guard would otherwise skip in silence, and the ' +
-        'loader flags keep the error count at zero so nothing else would signal it. ' +
         'See #597.'
     );
   }
@@ -120,7 +129,12 @@ import { expect, vi, afterEach } from 'vitest';
   // `if (err.name === 'AbortError') return` branch under test, of which
   // `chat-interface.tsx` and `approval-card.tsx` each have one. Mirror
   // happy-dom's check first so an aborted request still rejects as an abort.
-  const refuseUnlessAborted = ({ request }: InterceptedRequest): never => {
+  const refuseUnlessAborted = ({ request }: InterceptedRequest): void => {
+    // happy-dom's own `data:` branch sits *after* this hook (`Fetch.js:132`),
+    // so an unconditional refusal would block a URI that opens no socket at
+    // all. Returning without throwing lets happy-dom resolve it normally.
+    if (/^(data|blob):/i.test(request.url)) return;
+
     if (request.signal?.aborted) {
       throw (
         request.signal.reason ?? new DOMException('signal is aborted without reason', 'AbortError')
