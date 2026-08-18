@@ -152,7 +152,7 @@ npm run smoke:orchestration  # requires `npm run dev` running
 
 Full guide and template: [`scripts/smoke/README.md`](../../scripts/smoke/README.md).
 
-### Component Tests (`tests/components/` - future)
+### Component Tests (`tests/unit/components/`)
 
 Tests for React components using React Testing Library. Verify user interactions, rendering, and accessibility.
 

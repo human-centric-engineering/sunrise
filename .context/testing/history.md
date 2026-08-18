@@ -217,7 +217,9 @@ expect(parsed.meta.userId).toBe('user-123'); // Type-safe!
 3. **Developer confidence**: Predictable validation results without surprise breakage
 4. **Maintainability**: Centralized patterns easier to update than scattered inline mocks
 
-**Current State**:
+**State at the close of that work** (a historical snapshot, not a current
+figure — the suite is now two orders of magnitude larger; run
+`npm run test` for today's count):
 
 - ✅ 559 tests passing
 - ✅ Zero linting errors

@@ -116,11 +116,20 @@ tests/
     └── mocks.ts             # Mock type factories
 ```
 
-### Future: Component Tests
+### Component Tests
 
-**Decision**: Component tests will be added to `tests/components/` when UI testing is implemented.
+**Decision**: Component tests live in `tests/unit/components/`, mirroring
+`components/`, alongside every other unit test.
 
-**Rationale**: Separate directory for React Testing Library component tests keeps them distinct from unit and integration tests. Component tests have different execution patterns (JSDOM, rendering, user events) and benefit from isolation.
+**Rationale**: An earlier revision of this document reserved a top-level
+`tests/components/` for them, on the grounds that happy-dom rendering and user
+events are execution patterns worth isolating. That directory was never created
+and the argument did not survive contact: 264 component test files now sit under
+`tests/unit/components/`, and `vitest.config.ts` sets a single global
+`environment: 'happy-dom'` for the whole suite — there is no
+`environmentMatchGlobs` — so a separate directory could not have isolated the
+execution environment even in principle. Mirroring the source tree is the single
+rule; it has no exception for components.
 
 ---
 
