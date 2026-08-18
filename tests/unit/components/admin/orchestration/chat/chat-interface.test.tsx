@@ -2283,21 +2283,23 @@ describe('ChatInterface', () => {
   // without a regression test, so reverting either left the suite green — the
   // same green-for-the-wrong-reason failure #597 is about.
   //
-  // Real timers deliberately: fake timers deadlock here, because the component
-  // interleaves timer waits with promise chains (fetch rejection, stream
-  // reads) that need real microtask turns to settle. The waits are short —
-  // a 1s first backoff and a 500ms poll — so the cost is ~2s.
+  // `shouldAdvanceTime: true` is load-bearing, and is the pattern the rest of
+  // this file already uses. A bare `vi.useFakeTimers()` DOES hang both of
+  // these to the 30s timeout — the component interleaves timer waits with
+  // promise chains (fetch rejection, stream reads) that need real microtask
+  // turns, and plain fake timers supply none. `shouldAdvanceTime` advances
+  // fake time in lockstep with real time, which is what keeps `waitFor` and
+  // `userEvent` working underneath.
 
   describe('async lifetimes (#597)', () => {
-    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
     it('stops the reconnect loop when the component unmounts mid-backoff', async () => {
       // A network failure schedules a 1s backoff and retries. Before
       // `abortableDelay` that wait was a bare `setTimeout` the unmount could
       // not cancel, so the loop resumed against a dead component and issued
       // another fetch. The stubbed fetch here ignores `signal`, which is
       // exactly why the in-code `signal.aborted` check has to exist.
-      const user = userEvent.setup();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       const fetchMock = vi.fn().mockRejectedValue(new Error('Network error'));
       vi.stubGlobal('fetch', fetchMock);
 
@@ -2307,8 +2309,9 @@ describe('ChatInterface', () => {
       await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       unmount();
 
-      await sleep(1400); // past the 1s first backoff
+      await vi.advanceTimersByTimeAsync(10_000); // past all three backoffs
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
     });
 
     it('stops the follow-up poll when the component unmounts while streaming', async () => {
@@ -2316,7 +2319,8 @@ describe('ChatInterface', () => {
       // finishes. `streamingRef.current` freezes at its last value on unmount,
       // so with a bare setTimeout the chain never terminated — it polled for
       // the lifetime of the process.
-      const user = userEvent.setup();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       // A stream that never closes, so `streaming` is still true at unmount.
       const encoder = new TextEncoder();
       const openStream = new ReadableStream<Uint8Array>({
@@ -2348,9 +2352,10 @@ describe('ChatInterface', () => {
 
       unmount();
       const atUnmount = pollCalls();
-      await sleep(1400); // ~2 more ticks if the chain is still alive
+      await vi.advanceTimersByTimeAsync(5_000); // 10 more ticks if the chain lives
 
       expect(pollCalls()).toBe(atUnmount);
+      vi.useRealTimers();
     });
   });
 });

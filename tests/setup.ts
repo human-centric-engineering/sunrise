@@ -130,7 +130,7 @@ import { expect, vi, afterEach } from 'vitest';
   // `chat-interface.tsx` and `approval-card.tsx` each have one. Mirror
   // happy-dom's check first so an aborted request still rejects as an abort.
   const refuseUnlessAborted = ({ request }: InterceptedRequest): void => {
-    // happy-dom's own `data:` branch sits *after* this hook (`Fetch.js:132`),
+    // happy-dom's own `data:` branch sits *after* this hook (`Fetch.js:133`),
     // so an unconditional refusal would block a URI that opens no socket at
     // all. Returning without throwing lets happy-dom resolve it normally.
     if (/^(data|blob):/i.test(request.url)) return;
