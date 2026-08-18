@@ -60,6 +60,21 @@ release process.
 
 ### Changed
 
+- **The test jobs no longer attach a Postgres service container.** `test-full`
+  (×4 shards) and `test-changed` each started a `pgvector/pgvector:pg15`
+  container and ran `db:migrate:deploy` + `db:seed` against a database **no test
+  could reach**: `tests/setup.ts` is a global `setupFiles` entry and overwrites
+  `DATABASE_URL`, so a query would have authenticated as a user the container
+  never created. Measured at ~37s per shard against a 143s vitest step — ~2.5
+  job-minutes on every push, plus a term in the test-job heap budget on the 8GB
+  private runner where it is tightest. `smoke` keeps its container; it is the
+  job that queries Postgres for real. Both test jobs keep `DATABASE_URL`, which
+  `prisma generate` wants defined and never connects with. **A fork that has
+  repointed `tests/setup.ts` at the CI database and added genuinely DB-backed
+  tests will go red** — re-add the `services:` block and the two steps, both
+  shown in
+  [`.context/architecture/ci.md`](./.context/architecture/ci.md#the-postgres-service-container).
+
 - **Tests in the happy-dom environment no longer touch the network.** happy-dom loads
   `<script src>` and `<link rel=stylesheet>` for real (both flags default to
   *off*), and resolves relative URLs against its default document origin,

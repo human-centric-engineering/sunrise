@@ -422,8 +422,10 @@ Setting it as a repo variable rather than editing `ci.yml` matters: an edit to
 the workflow file is reverted by every upstream sync, so the fork rediscovers the
 same opaque failure each time. Keep the value at or below the runner's physical
 memory — a cap above available RAM just moves the failure from a clean abort to
-the OOM killer. On a private fork that ceiling is **8GB minus the OS, git, npm
-and any service container**, so treat ~6GB as the practical maximum, not 8.
+the OOM killer. On a private fork that ceiling is **8GB minus the OS, git and
+npm**, so treat ~6GB as the practical maximum, not 8. (None of the jobs this
+knob applies to attaches a service container; since #629 the test jobs don't
+either.)
 
 **It is a _per-process_ cap, and the test jobs are the only multi-process ones.**
 `--max-old-space-size` applies to each Node process, not to the runner. Every job
@@ -433,14 +435,14 @@ process, so "cap ≤ physical memory" is the whole rule for them. `test-full` an
 own Node process inheriting the same ceiling. The rule there is
 
 ```
-workers × CI_NODE_HEAP_MB  ≤  runner memory − (OS + the Postgres service container)
+workers × CI_NODE_HEAP_MB  ≤  runner memory − OS
 ```
 
 At the 5120 default that is already ~15.4GB of ceiling on a 4-vCPU/16GB public
 runner. At `CI_NODE_HEAP_MB=8192` — the value this section tells you to set when
 lint dies with exit 134 — it is ~24.6GB on the same 16GB runner, and on a
 2-vCPU/8GB private runner vitest forks about one worker, so a single 8192 cap
-already sits at the machine's ceiling before the OS and Postgres are counted.
+already sits at the machine's ceiling before the OS is counted.
 **So the documented fix for one job was the trigger for the other**, and the
 resulting failure is the worse kind: an OS OOM kill of a worker rather than a
 clean V8 abort, surfacing as `Failed to start forks worker` or a shard that
@@ -674,7 +676,7 @@ with no action available.
 
 ### The Postgres service container
 
-Three jobs attach one, all with the same block:
+One job attaches one — `smoke`:
 
 ```yaml
 services:
@@ -695,34 +697,38 @@ The `pg_isready` health check is what makes the container's readiness a
 precondition of the first step rather than a race: GitHub holds the job until it
 passes, up to 5 × 10s.
 
-| Job            | Container | Does the job actually query it?                                    |
-| -------------- | --------- | ------------------------------------------------------------------ |
-| `smoke`        | yes       | **Yes** — this is the job it exists for                            |
-| `test-full`    | yes ×4    | Only `db:migrate:deploy` + `db:seed`; **vitest itself never does** |
-| `test-changed` | yes       | Same                                                               |
-
-`smoke` is the real consumer: migration drift, the erasure invariants, and the
+`smoke` is the only consumer: migration drift, the erasure invariants, and the
 ~28 subject-access export queries all need Postgres, because the vitest suite
 mocks Prisma and so never executes them.
 
-**The test jobs' container is not used by the tests.** `tests/setup.ts` is a
-global `setupFile` and overrides `DATABASE_URL` to
-`postgresql://test:test@localhost:5432/test` — a user and database the container
-never creates — so anything inside vitest that tried to connect would fail
-authentication rather than reach `sunrise_ci`. Nothing tries: all 266 test files
-importing `@/lib/db/client` also `vi.mock` it (0 exceptions), no test constructs
-a `PrismaClient`, and `lib/db/client.ts` does not connect at import. The only
-consumers of the container in those jobs are the two steps that precede vitest.
+**`test-full` and `test-changed` used to attach one too, and it was dead weight
+(removed in #629).** `tests/setup.ts` is a global `setupFiles` entry and
+overwrites `DATABASE_URL` with `postgresql://test:test@localhost:5432/test` — a
+user and database the container never creates — so anything inside vitest that
+tried to connect would fail authentication rather than reach `sunrise_ci`.
+Nothing tries: no test constructs a `PrismaClient`, and `lib/db/client.ts` does
+not connect at import (a pg `Pool` and a `PrismaClient` both connect lazily, on
+first query). Of the 332 test files importing `@/lib/db/client`, 330 `vi.mock`
+it; the two that do not are safe for their own reasons — `lib/db/client.test.ts`
+mocks one layer lower at `@prisma/client` via `vi.doMock`, and
+`structured-completion-no-persistence.test.ts` only reads the module path as a
+_string_ out of source text. The container's only consumers were the
+`db:migrate:deploy` and `db:seed` steps that ran ahead of vitest and fed nothing.
 
-Measured on a 4-shard public run (#626): `Initialize containers` 22s +
-`db:migrate:deploy` 2s + `db:seed` 13s = **~37s per shard against a 143s vitest
-step**, and `test-full` pays it four times over on four separate containers.
+Both jobs keep `DATABASE_URL`, for the same reason `typecheck`, `lint` and
+`build` do: `prisma generate` runs on `postinstall` and wants the variable
+defined, without connecting.
 
-Whether those two steps should still be there is an open question rather than
-settled design — they are the only reason the container is attached, and removing
-all three would take ~2.5 job-minutes off every push. Flagged, not changed:
-dropping a database from a test job is the kind of edit that looks free until one
-fork's added test turns out to need it.
+What it cost, measured on a 4-shard public run (#626): `Initialize containers`
+22s + `db:migrate:deploy` 2s + `db:seed` 13s = **~37s per shard against a 143s
+vitest step**, paid four times over on four separate containers — ~2.5
+job-minutes on every push, and a term in the heap budget above on the runner
+where it is tightest.
+
+**Fork impact.** An unmodified fork loses nothing. A fork that has edited
+`tests/setup.ts` to point at the CI database _and_ added genuinely DB-backed
+tests will go red — re-adding the `services:` block above plus the two steps is
+the fix.
 
 ### `Secret Scan` runs two gates, not one
 

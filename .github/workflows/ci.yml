@@ -402,20 +402,15 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: sunrise_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # prisma generate (postinstall) needs DATABASE_URL defined; it does not
+    # connect, so a placeholder is fine — no Postgres service on this job.
+    #
+    # This job carried a pgvector service and ran migrate + seed against it
+    # until #629. No test could reach it: `tests/setup.ts` is a global
+    # `setupFiles` entry and overwrites DATABASE_URL with its own value, so a
+    # query would have authenticated as `test` against a database `test` that
+    # the container never created. The suite mocks the Prisma client and never
+    # constructs a real one. `smoke` is the job that talks to a real database.
     env:
       DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
       BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
@@ -428,12 +423,12 @@ jobs:
       # build). This is the only kind of job that runs several Node processes
       # at once — vitest forks roughly `cores - 1` workers — so inheriting it
       # multiplies the ceiling by the worker count. At `CI_NODE_HEAP_MB=8192`
-      # on a 4-vCPU public runner that is ~24.6GB of ceiling on 16GB of RAM,
-      # with Postgres resident as well. On a 2-vCPU/8GB private runner vitest
-      # forks about one worker, so a single 8192 cap already sits at the
-      # machine's ceiling before the OS, git and Postgres. Both turn a clean V8
-      # abort into an OS OOM kill, which is far harder to diagnose — and the
-      # documented remedy for a lint OOM is exactly what triggers it.
+      # on a 4-vCPU public runner that is ~24.6GB of ceiling on 16GB of RAM.
+      # On a 2-vCPU/8GB private runner vitest forks about one worker, so a
+      # single 8192 cap already sits at the machine's ceiling before the OS and
+      # git. Both turn a clean V8 abort into an OS OOM kill, which is far
+      # harder to diagnose — and the documented remedy for a lint OOM is
+      # exactly what triggers it.
       #
       # Empty means "no flag", so each worker takes Node's own default, which
       # is already derived from the machine's memory and therefore adapts to
@@ -454,8 +449,6 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
-      - run: npm run db:migrate:deploy
-      - run: npm run db:seed
       - run: npx vitest run --shard=${{ matrix.shard }}/4
 
   # ---- Tests (changed mode): single lean job, PRs only ----
@@ -469,20 +462,8 @@ jobs:
       needs.config.outputs.code == 'true' &&
       needs.config.outputs.test_scope == 'changed' &&
       github.event_name == 'pull_request'
-    services:
-      postgres:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: sunrise_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # No Postgres service — see the note on `test-full`. DATABASE_URL is kept
+    # for prisma generate (postinstall), which does not connect.
     env:
       DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
       BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
@@ -502,8 +483,6 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
-      - run: npm run db:migrate:deploy
-      - run: npm run db:seed
       # --passWithNoTests: a diff that touches no test-reachable code (e.g. CI
       # config) is a valid pass, not a failure.
       - run: npx vitest run --changed ${{ github.event.pull_request.base.sha }} --passWithNoTests
