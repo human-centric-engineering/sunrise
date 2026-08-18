@@ -626,10 +626,15 @@ before any of this runs.
 Small things, uniform on purpose — a fork adding a workflow should match them.
 
 **`permissions: contents: read` at file level, widened only per job.** All six
-workflows declare it. The one job needing more is CodeQL's `analyze`, which adds
-`security-events: write` (to upload to code scanning) and `actions: read` at
-_job_ level rather than relaxing the file-level default. Copy that shape: widen
-at the job, never at the top. Without an explicit block the token defaults to
+workflows declare it, and exactly two jobs need more — both widening at _job_
+level rather than relaxing the file-level default:
+
+| Job                              | Adds                                               |
+| -------------------------------- | -------------------------------------------------- |
+| `codeql.yml` → `analyze`         | `security-events: write`, `actions: read`          |
+| `dependency-review.yml` → review | `pull-requests: write` (posts the failure comment) |
+
+Copy that shape: widen at the job, never at the top. Without an explicit block the token defaults to
 whatever the repository setting says, which on an older fork can still be
 read/write across the board.
 
