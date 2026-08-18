@@ -12,7 +12,7 @@ repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 | `.github/workflows/ci.yml`                  | push to `main`, PR to `main` | Type-check, lint/format, build, tests, real-DB smoke (migration drift + erasure + subject-access export), Docker build + stack smoke, lockfile metadata |
 | `.github/workflows/codeql.yml`              | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                                                                           |
 | `.github/workflows/dependency-review.yml`   | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                                                                         |
-| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                                                                                                            |
+| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | **Two** gates: TruffleHog (diff on PR, full history on cron) **and** a Postgres DSN tripwire (see below)                                                |
 | `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                                                                      |
 | `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)                                                          |
 
@@ -289,12 +289,25 @@ These help both repo types and cost nothing, so they're always on:
 - **The docker job runs the stack, it does not just build it.** It builds the
   `runner`, `migrator` and `seeder` targets with `load: true`, asserts image
   invariants (musl-only `sharp` per #571; no Prisma CLI in the runtime image per
-  #583), brings up `db` + `migrator` + `web` from `docker-compose.prod.yml`, and
+  #583; **`prisma/seeds/data/chunks/chunks.json` present in the runtime image**),
+  brings up `db` + `migrator` + `web` from `docker-compose.prod.yml`, and
   asserts the migrator exited 0, `web` reached healthy, `/api/health` reports a
   connected database, a Prisma **model** query succeeds, and the seeder
   completes. `nginx` is never started (it binds :80/:443).
 
-  Two details of those assertions are deliberate and easy to "tidy" into
+  The `chunks.json` assertion is the least obvious of the three and the most
+  fragile. The admin knowledge-seed route reads it at
+  `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')`, and after
+  the wholesale `COPY /app/prisma` was dropped, the file survives into the image
+  **only** because Next's file tracer statically evaluated that `join`. Nothing
+  else holds it there — there is no `outputFileTracingIncludes` entry as a
+  backstop, and the stack smoke never exercises that admin-authed route. An nft
+  upgrade, or a refactor that moves the path into a variable, would ship an image
+  that 500s with `ENOENT` while every job stayed green. If you add another
+  runtime file read this way, assert it here too, or give it an explicit
+  `outputFileTracingIncludes` entry.
+
+  Two further details of those assertions are deliberate and easy to "tidy" into
   uselessness. The health check asserts `connected == true` and accepts
   `operational` **or** `degraded`, because `determineServiceStatus` downgrades
   above 500 ms latency while still returning 200 — asserting `operational`
@@ -607,6 +620,142 @@ are **separate repositories** sharing history via an `upstream` remote, not
 GitHub forks, so the "Actions is disabled by default in a fork" rule does not
 apply to them. It would apply to a true GitHub fork, which must enable Actions
 before any of this runs.
+
+### Conventions that hold across every workflow
+
+Small things, uniform on purpose — a fork adding a workflow should match them.
+
+**`permissions: contents: read` at file level, widened only per job.** All six
+workflows declare it. The one job needing more is CodeQL's `analyze`, which adds
+`security-events: write` (to upload to code scanning) and `actions: read` at
+_job_ level rather than relaxing the file-level default. Copy that shape: widen
+at the job, never at the top. Without an explicit block the token defaults to
+whatever the repository setting says, which on an older fork can still be
+read/write across the board.
+
+**`timeout-minutes` on jobs that start containers.** GitHub's default is six
+hours, which a hung health-wait will happily burn. Two jobs carry a cap:
+`ci.yml`'s `docker` job (30) and `fork-sync-integrity` (5). The other jobs run
+processes that terminate on their own, so they are deliberately uncapped — the
+rule is "cap anything that waits on something else's readiness", not "cap
+everything". Note the interaction with `ci-status`: a job killed by its own
+timeout reports `cancelled`, which the gate treats as a failure precisely so a
+timeout cannot pass as a skip.
+
+**Buildx GHA cache, written by exactly one build.** The runtime image build uses
+`cache-from: type=gha` **and** `cache-to: type=gha,mode=max`; the `migrator` and
+`seeder` builds use `cache-from` only. That asymmetry is load-bearing — buildx
+keeps one builder for the whole job, so the later targets hit its local cache and
+cost seconds anyway, while a second `cache-to` on the same scope would overwrite
+the runtime image's entry, which is the one worth keeping warm. If you add a
+build target, give it `cache-from` and leave `cache-to` alone.
+
+**`check:audit` has a severity floor.** `dependency-audit.yml` calls
+`npm run check:audit` with no arguments, which means the default floor of
+**`high`**. The script accepts `--floor=<severity>` (`low`/`moderate`/`high`/
+`critical`), so a fork with a stricter posture can tighten it in one place. It
+also distinguishes fixable from unfixable: only advisories with a reachable
+patched version gate the job — ones needing a major bump, or with no published
+fix, are reported and pass, because failing on them makes the job permanently red
+with no action available.
+
+### The Postgres service container
+
+Three jobs attach one, all with the same block:
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: sunrise_ci }
+    ports: ['5432:5432']
+    options: >-
+      --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+```
+
+**`pgvector/pgvector:pg15`, not stock `postgres`** — the schema declares a
+`vector` column and HNSW indexes for knowledge-base search, so `db:migrate:deploy`
+fails against an image without the extension. That is the constraint a fork will
+trip if it swaps the image for a plain `postgres:15`.
+
+The `pg_isready` health check is what makes the container's readiness a
+precondition of the first step rather than a race: GitHub holds the job until it
+passes, up to 5 × 10s.
+
+| Job            | Container | Does the job actually query it?                                    |
+| -------------- | --------- | ------------------------------------------------------------------ |
+| `smoke`        | yes       | **Yes** — this is the job it exists for                            |
+| `test-full`    | yes ×4    | Only `db:migrate:deploy` + `db:seed`; **vitest itself never does** |
+| `test-changed` | yes       | Same                                                               |
+
+`smoke` is the real consumer: migration drift, the erasure invariants, and the
+~28 subject-access export queries all need Postgres, because the vitest suite
+mocks Prisma and so never executes them.
+
+**The test jobs' container is not used by the tests.** `tests/setup.ts` is a
+global `setupFile` and overrides `DATABASE_URL` to
+`postgresql://test:test@localhost:5432/test` — a user and database the container
+never creates — so anything inside vitest that tried to connect would fail
+authentication rather than reach `sunrise_ci`. Nothing tries: all 266 test files
+importing `@/lib/db/client` also `vi.mock` it (0 exceptions), no test constructs
+a `PrismaClient`, and `lib/db/client.ts` does not connect at import. The only
+consumers of the container in those jobs are the two steps that precede vitest.
+
+Measured on a 4-shard public run (#626): `Initialize containers` 22s +
+`db:migrate:deploy` 2s + `db:seed` 13s = **~37s per shard against a 143s vitest
+step**, and `test-full` pays it four times over on four separate containers.
+
+Whether those two steps should still be there is an open question rather than
+settled design — they are the only reason the container is attached, and removing
+all three would take ~2.5 job-minutes off every push. Flagged, not changed:
+dropping a database from a test job is the kind of edit that looks free until one
+fork's added test turns out to need it.
+
+### `Secret Scan` runs two gates, not one
+
+The workflow is named for TruffleHog, but it has a second merge-blocking step
+that fails independently: **`Postgres DSN tripwire`**, running
+`scripts/ci/check-postgres-dsn.sh`. A PR can pass TruffleHog and still be
+blocked by it, and the failure names neither TruffleHog nor the workflow's own
+title — so it is worth knowing it exists before you meet it.
+
+**Why there are two.** TruffleHog's Postgres detector produced 27 unverified
+findings on this repo and zero verified ones — every hit a `localhost` or `db`
+fixture in a test, a doc, `.env.example`, or the CI workflow itself (#453). The
+noise failed the gate. The available fix was a path allowlist, and
+`.trufflehog-exclude.txt` duly exempts `tests/`, `.context/` and `.claude/`
+wholesale — but an exclusion is per-path, not per-detector, so it silences
+**every** detector in exactly the directories where someone is most likely to
+paste a real key. The tripwire is what buys that exclusion back for the one
+credential class provably living in those paths.
+
+**What trips it.** It ignores paths entirely and scans every tracked file, so a
+fixture cannot hide in an allowlisted directory. It fires only when a DSN pairs
+a non-placeholder credential with a non-local host — both halves are checked, so
+`postgres://user:pass@` at any host is fine, and so is any credential at
+`localhost`. Local hosts include the Compose service names this repo uses (`db`,
+`postgres`, `pgvector`), the usual placeholder words, and the RFC 2606
+`example.com/.net/.org` domains.
+
+**The fix path**, which currently exists only in the script's own failure
+output:
+
+- If it is documentation, use placeholder credentials (`user:pass`) or a local
+  host. This is almost always the right answer.
+- If the host is legitimately non-local and genuinely not a secret — a Neon
+  pooler endpoint in a deployment guide, say — add it to `LOCAL_HOSTS` in
+  `scripts/ci/check-postgres-dsn.sh`, **with a comment saying why**.
+
+**Forks inherit both gates.** Neither needs Advanced Security, so unlike
+`codeql.yml` and `dependency-review.yml` they keep working on a private fork. A
+fork that adds its own deployment docs is the most likely thing to trip the
+tripwire, and `LOCAL_HOSTS` is the seam for it.
+
+One consequence worth flagging: the script is real source, so it is deliberately
+**not** on `.trufflehog-exclude.txt`, which means it cannot contain a sample DSN
+in its own comments — a spelled-out `scheme://user:pass@host` there is itself a
+detector hit. If you edit it, do not add the illustrative example that its
+absence will tempt you to add.
 
 ## Two gotchas worth knowing
 
