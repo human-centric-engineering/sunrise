@@ -51,6 +51,17 @@ const IS_WINDOWS = process.platform === 'win32';
  * GiB across Sunrise, Hub and Daybreak — a factor of 2.4 under the default, so
  * capping it would be speculation, not a fix. Adding it later is one entry
  * here plus the script in `package.json`.
+ *
+ * BEFORE ADDING ONE, know what the argv is. Everything this wrapper spawns
+ * today takes a **static** argv from `package.json`. On Windows it runs under
+ * `shell: true` (needed for the `.cmd` shim), where Node joins the args into a
+ * single `cmd.exe` string — and only the command is quoted below, not the
+ * args. A caller whose argv contains filenames would therefore hand `cmd.exe`
+ * whatever `&` or `^` a path happened to contain. `lint-staged` is exactly
+ * that caller — its argv is git-derived filenames — which is why it keeps
+ * calling `eslint` directly rather than coming through here. Wiring it (or any
+ * other filename-passing caller) through this wrapper means quoting the
+ * passthrough args first.
  */
 export const BINS = ['eslint'];
 
@@ -141,7 +152,7 @@ export function buildEnv(env, heapMb) {
  * @param {string} bin
  * @returns {string}
  */
-function resolveBin(bin) {
+export function resolveBin(bin) {
   const local = join(ROOT, 'node_modules', '.bin', IS_WINDOWS ? `${bin}.cmd` : bin);
   const command = existsSync(local) ? local : bin;
   return IS_WINDOWS ? `"${command}"` : command;
@@ -159,6 +170,13 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     resolveCommand = resolveBin,
     error = console.error,
     exit = process.exit,
+    // Signal plumbing is injected for the same reason spawn is: the re-raise
+    // path below calls `process.kill` on this process, which under a test
+    // runner kills the runner. Injecting makes it assertable, and stops each
+    // `main()` in a test suite leaking two real listeners onto the runner.
+    onSignal = (signal, handler) => process.on(signal, handler),
+    clearSignal = (signal) => process.removeAllListeners(signal),
+    raise = (signal) => process.kill(process.pid, signal),
   } = deps;
 
   const [name, ...passthrough] = argv;
@@ -179,7 +197,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   });
 
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => child.kill(signal));
+    onSignal(signal, () => child.kill(signal));
   }
 
   child.on('error', (spawnError) => {
@@ -192,8 +210,8 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     // than exit 0. The forwarding handler has to come off first, or it catches
     // this and the wrapper never exits. (Same shape as dev-server.mjs.)
     if (signal) {
-      process.removeAllListeners(signal);
-      process.kill(process.pid, signal);
+      clearSignal(signal);
+      raise(signal);
       return;
     }
     exit(code ?? 1);

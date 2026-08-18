@@ -19,6 +19,13 @@
  * *string* and the whole point is that Node acts on it. `applies the cap to a
  * real child process` is the only proof that `NODE_OPTIONS` reaches V8.
  *
+ * Not covered here, and deliberately so: the default `clearSignal`/`raise`
+ * implementations (real `process.removeAllListeners` and `process.kill`, which
+ * under a test runner kill the runner) and the run-as-a-script guard at the
+ * bottom of the file. Both were verified by running the wrapper for real —
+ * `node scripts/run-capped.mjs eslint --version`. The `onSignal` default *is*
+ * covered, by a test that removes exactly the listeners it added.
+ *
  * @see scripts/run-capped.mjs
  */
 
@@ -35,6 +42,7 @@ import {
   hasHeapCap,
   main,
   parseRequestedMb,
+  resolveBin,
   resolveHeapMb,
 } from '@/scripts/run-capped.mjs';
 
@@ -156,6 +164,7 @@ describe('main', () => {
       env: {},
       resolveCommand: (name: string) => `/bin/${name}`,
       exit: vi.fn(),
+      onSignal: vi.fn(),
     });
 
     expect(spawnFn).toHaveBeenCalledWith(
@@ -173,6 +182,7 @@ describe('main', () => {
       env: {},
       resolveCommand: () => '/bin/eslint',
       exit: vi.fn(),
+      onSignal: vi.fn(),
     });
 
     expect(spawnFn.mock.calls[0][2].env.NODE_OPTIONS).toMatch(/--max-old-space-size=\d+/);
@@ -186,6 +196,7 @@ describe('main', () => {
       env: { NODE_OPTIONS: '--max-old-space-size=5120' },
       resolveCommand: () => '/bin/eslint',
       exit: vi.fn(),
+      onSignal: vi.fn(),
     });
 
     expect(spawnFn.mock.calls[0][2].env.NODE_OPTIONS).toBe('--max-old-space-size=5120');
@@ -199,6 +210,7 @@ describe('main', () => {
       env: { NODE_HEAP_MB: '9999' },
       resolveCommand: () => '/bin/eslint',
       exit: vi.fn(),
+      onSignal: vi.fn(),
     });
 
     // Clamped by this machine's real memory, so assert it moved off the
@@ -218,10 +230,101 @@ describe('main', () => {
       env: {},
       resolveCommand: () => '/bin/eslint',
       exit,
+      onSignal: vi.fn(),
     });
     child.emit('exit', 134, null);
 
     expect(exit).toHaveBeenCalledWith(134);
+  });
+
+  it('forwards SIGINT and SIGTERM to the child', async () => {
+    const child = fakeChild();
+    const handlers = new Map<string, () => void>();
+
+    await main(['eslint', '.'], {
+      spawnFn: vi.fn().mockReturnValue(child),
+      env: {},
+      resolveCommand: () => '/bin/eslint',
+      exit: vi.fn(),
+      onSignal: (signal: string, handler: () => void) => handlers.set(signal, handler),
+    });
+
+    expect([...handlers.keys()]).toEqual(['SIGINT', 'SIGTERM']);
+    handlers.get('SIGINT')!();
+    expect(child.kill).toHaveBeenCalledWith('SIGINT');
+  });
+
+  it('registers against the real process when nothing is injected', async () => {
+    // Every other test here injects `onSignal`, so this is the only one that
+    // exercises the default. It removes exactly the listeners it added rather
+    // than calling removeAllListeners, which would strip vitest's own.
+    const child = fakeChild();
+    const signals = ['SIGINT', 'SIGTERM'] as const;
+    const before = new Map(signals.map((s) => [s, process.listeners(s)]));
+
+    await main(['eslint', '.'], {
+      spawnFn: vi.fn().mockReturnValue(child),
+      env: {},
+      resolveCommand: () => '/bin/eslint',
+      exit: vi.fn(),
+    });
+
+    const added = signals.flatMap((s) =>
+      process
+        .listeners(s)
+        .filter((listener) => !before.get(s)!.includes(listener))
+        .map((listener) => [s, listener] as const)
+    );
+
+    try {
+      expect(added.map(([s]) => s)).toEqual(['SIGINT', 'SIGTERM']);
+      added[0][1]('SIGINT');
+      expect(child.kill).toHaveBeenCalledWith('SIGINT');
+    } finally {
+      for (const [signal, listener] of added) process.off(signal, listener);
+    }
+  });
+
+  it('re-raises the child signal instead of exiting 0', async () => {
+    // A lint killed by Ctrl-C must look killed to the shell. Getting this
+    // wrong makes an interrupted `npm run validate` report success.
+    const child = fakeChild();
+    const exit = vi.fn();
+    const clearSignal = vi.fn();
+    const raise = vi.fn();
+
+    await main(['eslint', '.'], {
+      spawnFn: vi.fn().mockReturnValue(child),
+      env: {},
+      resolveCommand: () => '/bin/eslint',
+      exit,
+      onSignal: vi.fn(),
+      clearSignal,
+      raise,
+    });
+    child.emit('exit', null, 'SIGINT');
+
+    // Order matters: the forwarding handler must come off first, or it catches
+    // the re-raise and the wrapper never exits.
+    expect(clearSignal).toHaveBeenCalledWith('SIGINT');
+    expect(raise).toHaveBeenCalledWith('SIGINT');
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('exits 1 when the child reports neither a code nor a signal', async () => {
+    const child = fakeChild();
+    const exit = vi.fn();
+
+    await main(['eslint', '.'], {
+      spawnFn: vi.fn().mockReturnValue(child),
+      env: {},
+      resolveCommand: () => '/bin/eslint',
+      exit,
+      onSignal: vi.fn(),
+    });
+    child.emit('exit', null, null);
+
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it('reports a spawn failure by name instead of a bare stack', async () => {
@@ -235,11 +338,25 @@ describe('main', () => {
       resolveCommand: () => '/bin/eslint',
       error,
       exit,
+      onSignal: vi.fn(),
     });
     child.emit('error', new Error('ENOENT'));
 
     expect(error.mock.calls[0][0]).toContain('Failed to start "eslint"');
     expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('resolveBin', () => {
+  it('resolves an installed dependency to node_modules/.bin', () => {
+    // eslint is a devDependency of this repo, so the local shim exists.
+    expect(resolveBin('eslint')).toMatch(/node_modules[/\\]\.bin[/\\]eslint/);
+  });
+
+  it('falls back to the bare name when nothing is installed locally', () => {
+    // A global install is still runnable; inventing a node_modules path that
+    // does not exist would fail with a confusing ENOENT instead.
+    expect(resolveBin('definitely-not-installed-xyz')).toBe('definitely-not-installed-xyz');
   });
 });
 

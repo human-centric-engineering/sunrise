@@ -249,6 +249,15 @@ Both are one line away in `BINS` if a fork ever measures otherwise. Re-derive by
 bisection rather than guessing: raise `--max-old-space-size` until the job stops
 aborting, then stop.
 
+**But check the argv before you add one.** Everything the wrapper spawns today
+takes a static argv from `package.json`. On Windows it runs under `shell: true`
+(the `.bin` entry is a `.cmd`), where Node joins the args into a single
+`cmd.exe` string and only the command is quoted — so a caller passing
+_filenames_ would hand `cmd.exe` any `&` or `^` a path contains. `lint-staged`
+is precisely that caller, which is the second reason it keeps calling `eslint`
+directly. Route a filename-passing caller through the wrapper only after
+quoting the passthrough args.
+
 **If a fork outgrows even this**, the lever that works is shrinking the
 TypeScript _program_, not the file list. Splitting the lint into `src` and
 `tests` invocations does nothing — `tsconfig.json` includes `**/*.ts`, so the
