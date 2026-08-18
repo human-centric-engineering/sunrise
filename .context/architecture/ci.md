@@ -409,13 +409,29 @@ resulting failure is the worse kind: an OS OOM kill of a worker rather than a
 clean V8 abort, surfacing as `Failed to start forks worker` or a shard that
 vanishes from the summary count.
 
-Both test jobs therefore set `NODE_OPTIONS: ''` at job level, opting out of the
-workflow-level ceiling entirely. Node's own default heap is derived from the
-machine's memory, so it adapts to public and private runners without a knob, and
-it is what the suite already runs under locally. **If you add a job that runs
-vitest (or anything else process-parallel), give it the same override** — a job
-that merely inherits the workflow `env:` is silently opting into `N ×
-CI_NODE_HEAP_MB`.
+Both test jobs therefore opt out of the workflow-level ceiling at job level.
+Node's own default heap is derived from the machine's memory, so it adapts to
+public and private runners without a knob, and it is what the suite already runs
+under locally. **If you add a job that runs vitest (or anything else
+process-parallel), give it the same override** — a job that merely inherits the
+workflow `env:` is silently opting into `N × CI_NODE_HEAP_MB`.
+
+### Knob 3: `CI_TEST_NODE_HEAP_MB`
+
+Unset by default, which means no `--max-old-space-size` flag on the test jobs at
+all. It exists so a fork whose workers genuinely need more than Node's default
+still has a repo-variable path — the same "don't edit the workflow, it won't
+survive a sync" rule as the other two knobs — without reaching for
+`CI_NODE_HEAP_MB`, whose entire problem is that it is sized for one process.
+
+```bash
+gh variable set CI_TEST_NODE_HEAP_MB --body 3072
+```
+
+**Size it per worker, not per runner:** `workers × value ≤ runner memory`. On a
+2-vCPU runner vitest forks roughly one worker, on 4-vCPU roughly three — so the
+same value means very different totals, and the whole-runner figure that is
+right for `CI_NODE_HEAP_MB` is wrong here.
 
 **A workflow-level `env:` does not cross into a container build.** This is the
 non-obvious part, and it produced a distinctive symptom: raising the variable

@@ -39,6 +39,7 @@ import { logger } from '@/lib/logging';
 import { getStepOutputs } from '@/lib/orchestration/engine/step-registry';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { WorkflowDefinitionHistoryPanel } from '@/components/admin/orchestration/workflow-definition-history-panel';
@@ -162,6 +163,7 @@ function WorkflowBuilderInner({
   initialTemplates,
 }: WorkflowBuilderProps) {
   const router = useRouter();
+  const schedule = useTimeout();
   const seed = useMemo(
     () => initialState(workflow, initialDefinition),
     [workflow, initialDefinition]
@@ -551,7 +553,7 @@ function WorkflowBuilderInner({
           // round-trip refresh.
           setHasDraft(true);
           setSaved(true);
-          setTimeout(() => setSaved(false), 2500);
+          schedule(() => setSaved(false), 2500);
           router.refresh();
         }
       } catch (err) {
@@ -567,7 +569,7 @@ function WorkflowBuilderInner({
         setSaving(false);
       }
     },
-    [edges, mode, nodes, router, editingWorkflowId, workflowName]
+    [edges, mode, nodes, router, editingWorkflowId, workflowName, schedule]
   );
 
   const handleSave = useCallback(() => {
@@ -601,7 +603,7 @@ function WorkflowBuilderInner({
     try {
       await apiClient.post(API.ADMIN.ORCHESTRATION.workflowSaveAsTemplate(workflow.id), {});
       setSavedAsTemplate(true);
-      setTimeout(() => setSavedAsTemplate(false), 2500);
+      schedule(() => setSavedAsTemplate(false), 2500);
     } catch (err) {
       setSaveError(
         err instanceof APIClientError
@@ -611,7 +613,7 @@ function WorkflowBuilderInner({
     } finally {
       setSavingAsTemplate(false);
     }
-  }, [workflow]);
+  }, [workflow, schedule]);
 
   const handleExecute = useCallback(() => {
     setExecutionDialogOpen(true);
@@ -681,7 +683,7 @@ function WorkflowBuilderInner({
         setHasDraft(false);
         setPublishDialogOpen(false);
         setPublished(true);
-        setTimeout(() => setPublished(false), 2500);
+        schedule(() => setPublished(false), 2500);
         router.refresh();
       } catch (err) {
         const message =
@@ -696,7 +698,7 @@ function WorkflowBuilderInner({
         setPublishing(false);
       }
     },
-    [router, workflow]
+    [router, workflow, schedule]
   );
 
   const handleDiscardDraft = useCallback(async () => {

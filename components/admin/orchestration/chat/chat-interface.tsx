@@ -1063,6 +1063,13 @@ export function ChatInterface({
             const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
             setWarning('Connection interrupted. Reconnecting...');
             await abortableDelay(delayMs, controller.signal);
+            // `abortableDelay` resolves on abort rather than rejecting, so the
+            // loop would otherwise `continue` into another `fetch`. Against the
+            // real fetch that rejects `AbortError` immediately and is harmless,
+            // but a stubbed `fetch` in a test ignores the signal and the turn
+            // proceeds to read a stream and set state after unmount — the exact
+            // post-teardown work this change set removes.
+            if (controller.signal.aborted) return;
             continue;
           }
 

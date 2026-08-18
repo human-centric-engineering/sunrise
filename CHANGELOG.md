@@ -18,8 +18,9 @@ release process.
 
 ### Fixed
 
-- **Timers are cancelled on unmount across 16 components.** Every `setTimeout`
-  in `components/**` without a matching `clearTimeout` outlived the component
+- **Timers are cancelled on unmount across 18 components.** Every unmanaged
+  `setTimeout` in `components/**` — one not stored in a ref that a cleanup
+  clears — outlived the component
   that scheduled it. The dominant case — "hide the success banner after N
   seconds" — is a state update React discards, so it looked harmless; two were
   not. `chat-interface`'s follow-up poll re-queued itself indefinitely after
@@ -48,7 +49,7 @@ release process.
 
 ### Changed
 
-- **The test suite no longer touches the network.** happy-dom loads
+- **Tests in the happy-dom environment no longer touch the network.** happy-dom loads
   `<script src>` and `<link rel=stylesheet>` for real (both flags default to
   *off*), and resolves relative URLs against its default document origin,
   `http://localhost:3000` — so a full run made ~470 failed connections to a dev

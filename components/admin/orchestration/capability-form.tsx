@@ -54,6 +54,7 @@ import { API } from '@/lib/api/endpoints';
 import { CliAuthoringHint } from '@/components/admin/orchestration/cli-authoring-hint';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
 import { jsonEquals } from '@/lib/utils/json-equal';
+import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { AiCapability } from '@/types/prisma';
 
 /**
@@ -536,6 +537,7 @@ export function CapabilityForm({
     return parsed.success ? parsed.data : undefined;
   });
   const metadataTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const schedule = useTimeout();
 
   const execConfigTimerRef = useRef<NodeJS.Timeout | null>(null);
   const jsonTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -945,7 +947,7 @@ export function CapabilityForm({
         setMetadataText(metadataParsed ? JSON.stringify(metadataParsed, null, 2) : '');
         setMetadataError(null);
         setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
+        schedule(() => setSaved(false), 2500);
       } else {
         const created = await apiClient.post<AiCapability>(API.ADMIN.ORCHESTRATION.CAPABILITIES, {
           body: payload,

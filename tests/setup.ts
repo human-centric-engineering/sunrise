@@ -85,6 +85,20 @@ import { expect, vi, afterEach } from 'vitest';
     );
   };
 
+  // Fail loud if the hook point moves. `settings.fetch.interceptor` is not a
+  // stable API across happy-dom majors, and a silently-skipped guard restores
+  // ~470 real connections per run with nothing pointing at the cause — the
+  // original #597 diagnosis took five attempts precisely because this traffic
+  // arrives unattributed. Only assert when happy-dom is actually the
+  // environment: files with `@vitest-environment node` legitimately have none.
+  if (happyDom && !happyDom.settings?.fetch) {
+    throw new Error(
+      'tests/setup.ts: happy-dom is present but `settings.fetch` is missing, so ' +
+        'the network guard did not install. The interceptor API has probably moved ' +
+        'in a happy-dom upgrade — re-point it rather than removing this check. See #597.'
+    );
+  }
+
   if (happyDom?.settings?.fetch) {
     happyDom.settings.fetch.interceptor = {
       beforeAsyncRequest: ({ request }) => refuse(request.url),

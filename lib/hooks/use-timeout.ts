@@ -29,20 +29,36 @@ import { useCallback, useEffect, useRef } from 'react';
  */
 export function useTimeout(): (callback: () => void, delayMs: number) => void {
   const pending = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const unmounted = useRef(false);
 
   useEffect(() => {
+    // Reset on mount, not just at declaration: React 19 StrictMode invokes
+    // effects mount → cleanup → mount, so a flag only ever set `true` would
+    // leave a genuinely-mounted component refusing to schedule anything.
+    unmounted.current = false;
+
     // Captured rather than read through `.current` in the cleanup: the ref
     // object is stable for the component's lifetime, but reading it at cleanup
     // time is the pattern ESLint's exhaustive-deps rule warns about, and the
     // capture is correct here precisely because the identity never changes.
     const timers = pending.current;
     return () => {
+      unmounted.current = true;
       for (const id of timers) clearTimeout(id);
       timers.clear();
     };
   }, []);
 
   return useCallback((callback: () => void, delayMs: number) => {
+    // The cleanup above runs exactly once. Anything scheduled *after* it would
+    // be added to a set nothing will ever drain again — an uncancellable timer,
+    // which is the precise failure this hook exists to prevent. It is not a
+    // corner case: almost every call site schedules from the continuation of an
+    // `await`, so a component unmounted while its request is in flight lands
+    // here. Dropping the work matches what React already does with a state
+    // update on an unmounted component.
+    if (unmounted.current) return;
+
     const id = setTimeout(() => {
       pending.current.delete(id);
       callback();

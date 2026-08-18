@@ -438,7 +438,14 @@ jobs:
       # is already derived from the machine's memory and therefore adapts to
       # public and private runners alike. The suite runs this way locally,
       # including under coverage.
-      NODE_OPTIONS: ''
+      #
+      # `CI_TEST_NODE_HEAP_MB` keeps a fork-facing knob for the case Node's own
+      # default is genuinely not enough, without reusing `CI_NODE_HEAP_MB` —
+      # whose whole problem is that it is sized for a single process. Unset (the
+      # default) means no flag at all. Size it as `workers x value <= runner
+      # memory`, not as whole-runner memory.
+      NODE_OPTIONS: >-
+        ${{ vars.CI_TEST_NODE_HEAP_MB && format('--max-old-space-size={0}', vars.CI_TEST_NODE_HEAP_MB) || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -482,7 +489,8 @@ jobs:
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
       # See the note on `test-full` — vitest is multi-process, so it opts out
       # of the workflow-level per-process heap ceiling.
-      NODE_OPTIONS: ''
+      NODE_OPTIONS: >-
+        ${{ vars.CI_TEST_NODE_HEAP_MB && format('--max-old-space-size={0}', vars.CI_TEST_NODE_HEAP_MB) || '' }}
     steps:
       - uses: actions/checkout@v7
         with:

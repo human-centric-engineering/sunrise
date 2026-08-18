@@ -97,16 +97,46 @@ describe('useTimeout', () => {
   });
 
   it('forgets a timer once it has fired, so the set does not grow unbounded', () => {
+    // Asserted through `clearTimeout` rather than `getTimerCount()`: a fired
+    // timer leaves the count at 0 whether or not the hook drops its id, and
+    // `clearTimeout` tolerates a stale id, so the obvious version of this test
+    // passes with the bookkeeping deleted. Watching *what unmount clears* is
+    // what actually pins it.
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
     const { result, unmount } = renderHook(() => useTimeout());
 
+    const setSpy = vi.spyOn(globalThis, 'setTimeout');
     act(() => result.current(vi.fn(), 100));
+    const firedId: unknown = setSpy.mock.results[0]?.value;
+
     act(() => {
       vi.advanceTimersByTime(100);
     });
     expect(vi.getTimerCount()).toBe(0);
 
-    // Nothing to clear, and unmount must not throw on an already-fired id.
-    expect(() => unmount()).not.toThrow();
+    clearSpy.mockClear();
+    unmount();
+
+    // The id is gone from the set, so unmount has nothing to clear.
+    expect(clearSpy.mock.calls.map((call) => call[0])).not.toContain(firedId);
+  });
+
+  it('ignores a schedule() issued after unmount', () => {
+    // Almost every call site schedules from the continuation of an `await`, so
+    // a component unmounted mid-request lands here. Before this was handled the
+    // timer went into a set the (already-run) cleanup would never drain again —
+    // an uncancellable timer, from the hook whose whole job is preventing them.
+    const callback = vi.fn();
+    const { result, unmount } = renderHook(() => useTimeout());
+
+    unmount();
+    act(() => result.current(callback, 3000));
+
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(callback).not.toHaveBeenCalled();
   });
 
   it('returns a stable reference across re-renders', () => {
