@@ -43,11 +43,22 @@ export default defineConfig({
     // own default sizing is right there, so this keeps CI exactly as it is.
     //
     // Expressed as a min against vitest's own default rather than a flat 4: a
-    // literal is a *floor* on a small machine, not a cap. On a 4-core laptop
-    // vitest picks 3 and a bare 4 would raise it; on a 2-core box it picks 1
-    // and a bare 4 would oversubscribe fourfold — the exact thrash this
-    // setting exists to prevent.
-    maxWorkers: process.env.CI ? undefined : Math.min(4, Math.max(1, availableParallelism() - 1)),
+    // literal is a *floor* on a small machine, not a cap. On a 4-core laptop a
+    // bare 4 would raise the count; on a 2-core box it would oversubscribe
+    // fourfold — the exact thrash this setting exists to prevent.
+    //
+    // Taken against the WATCH default specifically. Vitest has two:
+    // `max(cores - 1, 1)` for `vitest run`, and `max(floor(cores / 2), 1)` for
+    // watch (`resolveMaxWorkers`), and every local script here — `test`,
+    // `test:watch`, `test:coverage` — is watch mode on an interactive
+    // terminal. `resolveMaxWorkers` returns an explicit `maxWorkers` *before*
+    // it reaches the watch branch, so sizing against `cores - 1` still raised
+    // the count on a 4-core (2 → 3) and 6-core (3 → 4) machine. The watch
+    // default is the smaller of the two, so a min against it never raises in
+    // either mode, and still yields the measured 4 from ~8 cores up.
+    maxWorkers: process.env.CI
+      ? undefined
+      : Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2))),
 
     // happy-dom loads `<script src>` and `<link rel=stylesheet>` for real —
     // both flags default to false, i.e. loading enabled — using its own

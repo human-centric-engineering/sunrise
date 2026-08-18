@@ -34,7 +34,11 @@ import { createMockHeaders, createMockSession, delayed } from '@/tests/types/moc
 
 `tests/setup.ts` installs a happy-dom fetch interceptor that **refuses every
 real HTTP request** with the same error a genuine network failure produces — a
-`DOMException` named `NetworkError`, matching `happy-dom/lib/fetch/Fetch.js`. A component that fetches on mount, in a test that has not stubbed
+`DOMException` named `NetworkError`, matching `happy-dom/lib/fetch/Fetch.js`.
+An **aborted** request is exempt and still rejects with `AbortError`: happy-dom
+runs the interceptor before its own signal check, so without that exemption
+every `if (err.name === 'AbortError') return` branch would quietly stop working
+under test. A component that fetches on mount, in a test that has not stubbed
 `fetch`, fails immediately with the URL named:
 
 ```

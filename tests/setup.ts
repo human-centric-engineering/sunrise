@@ -76,7 +76,7 @@ import { expect, vi, afterEach } from 'vitest';
  */
 {
   interface InterceptedRequest {
-    request: { url: string };
+    request: { url: string; signal?: AbortSignal };
   }
   interface HappyDomFetchSettings {
     interceptor: {
@@ -114,10 +114,25 @@ import { expect, vi, afterEach } from 'vitest';
     );
   }
 
+  // happy-dom runs this hook BEFORE its own aborted-signal check
+  // (`Fetch.js:115` vs `:127`), so refusing unconditionally would pre-empt
+  // `AbortError` with `NetworkError` — silently disabling every
+  // `if (err.name === 'AbortError') return` branch under test, of which
+  // `chat-interface.tsx` and `approval-card.tsx` each have one. Mirror
+  // happy-dom's check first so an aborted request still rejects as an abort.
+  const refuseUnlessAborted = ({ request }: InterceptedRequest): never => {
+    if (request.signal?.aborted) {
+      throw (
+        request.signal.reason ?? new DOMException('signal is aborted without reason', 'AbortError')
+      );
+    }
+    return refuse(request.url);
+  };
+
   if (happyDom?.settings?.fetch) {
     happyDom.settings.fetch.interceptor = {
-      beforeAsyncRequest: ({ request }) => refuse(request.url),
-      beforeSyncRequest: ({ request }) => refuse(request.url),
+      beforeAsyncRequest: refuseUnlessAborted,
+      beforeSyncRequest: refuseUnlessAborted,
     };
   }
 }

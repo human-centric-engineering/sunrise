@@ -827,6 +827,15 @@ export function ChatInterface({
         }
       };
 
+      /**
+       * Every `await ensureMinThinking()` is followed by a state write. That
+       * delay now settles immediately on abort rather than running its full
+       * 1500ms, which shrinks the window but does not close it — the turn can
+       * still resume after unmount and set error state on a component that is
+       * gone. Callers check this and bail, as the reconnect path already does.
+       */
+      const abandoned = (): boolean => controller.signal.aborted;
+
       for (let attempt = 0; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
         try {
           const res = await fetch(API.ADMIN.ORCHESTRATION.CHAT_STREAM, {
@@ -848,6 +857,7 @@ export function ChatInterface({
           if (!res.ok || !res.body) {
             // HTTP-level errors are not retriable — wait for thinking to feel natural
             await ensureMinThinking();
+            if (abandoned()) return;
             if (res.status === 429) {
               setError(getUserFacingError('rate_limited'));
             } else {
@@ -982,6 +992,7 @@ export function ChatInterface({
                 const code =
                   typeof parsed.data.code === 'string' ? parsed.data.code : 'internal_error';
                 await ensureMinThinking();
+                if (abandoned()) return;
                 setError(getUserFacingError(code));
                 return;
               } else if (parsed.type === 'budget_exceeded_per_turn') {
@@ -997,6 +1008,7 @@ export function ChatInterface({
                 // where the SSE stream closes naturally on the next
                 // reader.read() returning done=true).
                 await ensureMinThinking();
+                if (abandoned()) return;
                 setError(getUserFacingError('budget_exceeded_per_turn'));
               } else if (parsed.type === 'done') {
                 setWarning(null);
@@ -1074,6 +1086,7 @@ export function ChatInterface({
           }
 
           await ensureMinThinking();
+          if (abandoned()) return;
           setError({
             title: 'Connection Lost',
             message: 'Could not reconnect to the chat stream.',

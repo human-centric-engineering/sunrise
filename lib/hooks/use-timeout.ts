@@ -19,8 +19,17 @@ import { useCallback, useEffect, useRef } from 'react';
  * window and makes it frequent.
  *
  * The returned `schedule` is stable, so it is safe in dependency arrays.
- * Behaviour is otherwise identical to `setTimeout`: scheduling twice leaves two
- * timers pending, and neither cancels the other.
+ * Scheduling twice leaves two timers pending, and neither cancels the other.
+ *
+ * **One deliberate divergence from `setTimeout`:** once the component has
+ * unmounted, `schedule()` is a silent no-op. That is what makes an
+ * uncancellable timer impossible — almost every caller schedules from the
+ * continuation of an `await`, so a component unmounted mid-request would
+ * otherwise queue work into a set the cleanup has already drained. The cost is
+ * that a deferred side effect which *should* outlive the component is dropped
+ * without warning: `accept-invite-form.tsx` defers a `router.push` by 1500ms,
+ * and if that form ever unmounts first the navigation no longer happens. Use a
+ * bare `setTimeout` (and own the cleanup) where the effect must survive.
  *
  * @example
  * const schedule = useTimeout();
