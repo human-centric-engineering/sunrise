@@ -205,7 +205,10 @@ describe('LoginForm', () => {
 
 The global test setup file (`tests/setup.ts`) runs before all tests and configures:
 
-1. **Environment Variables**: Sets required env vars (`DATABASE_URL`, `BETTER_AUTH_SECRET`, etc.) before any imports to satisfy validation
+1. **Environment Variables**: Sets required env vars (`DATABASE_URL`, `BETTER_AUTH_SECRET`,
+   `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`) before any imports to satisfy validation, plus
+   two behavioural flags: `RESEND_API_KEY=''` (no mail is ever sent) and
+   `RATE_LIMIT_BYPASS='true'` (see below — it has a real trap in it)
 2. **Next.js Mocks**: Pre-mocks `next/navigation` and `next/headers` for component testing
 3. **Analytics Mocks**: Mocks analytics hooks to allow component testing without providers
 4. **Cleanup**: Restores all mocks in `afterEach` to prevent test pollution
@@ -227,6 +230,41 @@ afterEach(() => { vi.restoreAllMocks(); });
 ```
 
 Tests can override these mocks per-file using `vi.mock()` at the top of the test file.
+
+### `RATE_LIMIT_BYPASS=true` — know this one before writing a rate-limit test
+
+`tests/setup.ts` sets it globally. `applyRateLimit()` respects the flag, so in
+every test that does not clear it, rate limiting **is a no-op**.
+
+That is the right default: unit and component tests exercise route handlers
+directly, the project-root proxy does not run, and an incidental limiter call
+should not fail an unrelated test. The hazard is narrow and specific — a test
+written to prove a limit is enforced passes against a limiter that was never
+armed. It asserts nothing and looks green.
+
+Any test about rate-limit behaviour must clear the flag itself and reset bucket
+state per test. Use `vi.stubEnv`, which both existing rate-limit suites use and
+which unwinds automatically — a direct `process.env` assignment leaks into every later file in
+the same worker:
+
+```typescript
+beforeEach(() => {
+  // tests/setup.ts sets this globally; clear it so the limiter actually runs
+  vi.stubEnv('RATE_LIMIT_BYPASS', '');
+  // plus whatever reset the store under test needs — buckets are module state
+});
+```
+
+Worked examples: `tests/unit/lib/security/rate-limit-middleware.test.ts` and
+`rate-limit-extension.test.ts:389`.
+
+This matters more here than the equivalent flag would elsewhere, because rate
+limiting in this codebase is _automatic_: section caps are applied by `proxy.ts`
+from the policy table, so a new `/api/v1/**` route inherits them with no handler
+code. There is nothing in a route file to remind you the protection exists, and
+therefore nothing to remind you it is switched off in tests.
+
+See [`.context/security/rate-limiting.md`](../security/rate-limiting.md).
 
 ## Testing Workflow Commands
 

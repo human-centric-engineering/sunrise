@@ -310,6 +310,8 @@ function makeMessage(overrides: Partial<Record<string, unknown>> = {}) {
 // Default request used across most tests
 // ---------------------------------------------------------------------------
 
+import { assertNoAttachmentPersistence } from '@/tests/helpers/no-attachment-persistence';
+
 const baseRequest = {
   message: 'Hello there',
   agentSlug: 'helper',
@@ -5015,6 +5017,60 @@ describe('attachment gate', () => {
     expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
       code: 'IMAGE_NOT_SUPPORTED',
     });
+  });
+
+  it('never persists attachment bytes on a successful attachment turn', async () => {
+    // The invariant `tests/helpers/no-attachment-persistence.ts` was written
+    // for — and, until now, was not wired to anything, so nothing enforced it.
+    //
+    // It holds today only by construction: `persistMessage` builds its `data`
+    // from a fixed allowlist (conversationId, role, content, metadata,
+    // provenance, …) with no attachment field, so bytes cannot reach
+    // `aiMessage.create`. That is exactly the kind of implicit guarantee a
+    // later contributor breaks silently — by adding `attachments` to
+    // `PersistMessageParams`, or by folding base64 into `metadata`. This test
+    // is the thing that would notice.
+    //
+    // Every other test in this block exercises a REJECTION path, which errors
+    // before any persistence happens. The turn has to succeed for the
+    // assertion to mean anything.
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ enableImageInput: true, enableDocumentInput: true })
+    );
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      imageInputGloballyEnabled: true,
+      documentInputGloballyEnabled: true,
+    });
+    (assertModelSupportsAttachments as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'I can see it.' },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(
+      streamChat({
+        ...baseRequest,
+        attachments: [imageAttachment(), pdfAttachment()],
+      })
+    );
+
+    // Guard the guard: if the turn errored, the assertion below passes
+    // vacuously because nothing was ever persisted.
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toBeUndefined();
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    expect(createCalls.some((c: any) => c[0].data.role === 'user')).toBe(true);
+
+    assertNoAttachmentPersistence(
+      prisma.aiMessage.create as unknown as { mock: { calls: unknown[][] } },
+      'prisma.aiMessage.create'
+    );
   });
 
   it('does not run the gate when there are no attachments', async () => {
