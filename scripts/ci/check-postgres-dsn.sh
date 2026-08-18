@@ -42,11 +42,17 @@ readonly PLACEHOLDER_CREDS='(user|username|myuser|postgres|admin|USER|USERNAME):
 # Matches scheme://userinfo@host, capturing userinfo and host separately so each
 # can be tested against the two allowlists above.
 #
-# Deliberately NOT illustrated with a literal example DSN here: this file is
-# real source, so it is not on .trufflehog-exclude.txt (see the scope rule in
-# that file), and a spelled-out `scheme://user:pass@host` in this comment is
-# itself a Postgres-detector hit that fails the secret-scan job. The script
-# that exists to catch committed DSNs is the one place a sample DSN cannot go.
+# Deliberately NOT illustrated with a literal example DSN here. The original
+# reason -- that this file is scanned like any other real source -- no longer
+# holds: the same commit that removed the example also added this file to
+# .trufflehog-exclude.txt, because the PR scan reads the whole commit range and
+# the history still carried the string. So TruffleHog no longer scans this file
+# and an example would not fail the job.
+#
+# It stays out anyway, as house style rather than as a gate: a realistic-looking
+# DSN in the one file whose subject is committed DSNs is confusing to every
+# later reader, and the tripwire below still scans this file like any other, so
+# anything resembling a real credential here would fire it.
 readonly DSN_RE='postgres(ql)?://[^:/@[:space:]]+:[^@[:space:]]+@[^:/[:space:]"'"'"']+'
 
 fail=0

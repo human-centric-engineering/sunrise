@@ -756,11 +756,22 @@ output:
 fork that adds its own deployment docs is the most likely thing to trip the
 tripwire, and `LOCAL_HOSTS` is the seam for it.
 
-One consequence worth flagging: the script is real source, so it is deliberately
-**not** on `.trufflehog-exclude.txt`, which means it cannot contain a sample DSN
-in its own comments — a spelled-out `scheme://user:pass@host` there is itself a
-detector hit. If you edit it, do not add the illustrative example that its
-absence will tempt you to add.
+One wrinkle, because the script's own comment still gets it wrong. That comment
+says the file "is not on `.trufflehog-exclude.txt`". It is — the last entry in
+that file names it. Both were written in the same commit (`3712a013`): a literal
+example DSN in the comment had failed the scan, so the fix removed the example
+_and_ explained the removal by saying real source is never allowlisted — then
+allowlisted it anyway, because the PR scan reads the whole commit range and the
+history still carried the string. The justification was obsolete before it was
+pushed.
+
+What is actually true: TruffleHog does not scan this one file, and the tripwire
+step does, over every tracked file regardless of path — so a real DSN pasted here
+is still caught, and what is given up is TruffleHog's _other_ detectors across 85
+lines of CI script. Adding a placeholder example back would no longer fail
+anything. Leaving it out is still the better call — a realistic-looking DSN in
+the one file whose subject is committed DSNs invites exactly the confusion this
+paragraph is untangling — but treat that as house style, not as a gate.
 
 ## Two gotchas worth knowing
 
