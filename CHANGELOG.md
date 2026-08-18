@@ -27,22 +27,30 @@ release process.
   unmount, because `streamingRef.current` freezes at its last value and nothing
   else terminated the chain, and its reconnect backoff held a timer for up to
   four seconds past teardown. A new `useTimeout()` in `lib/hooks/` schedules
-  work that is cleared on unmount; behaviour is otherwise identical to
-  `setTimeout`. **A fork that has overridden any of these components carries
-  the same defect** — the affected files are listed in the commit for #597.
+  work that is cleared on unmount. It matches `setTimeout` in one deliberate
+  respect and diverges in another: scheduling twice still leaves two independent
+  timers, but **after unmount `schedule()` is a silent no-op**. That is what
+  makes an uncancellable timer impossible, and it is the behaviour to know about
+  before reaching for the hook — an effect that genuinely must outlive its
+  component wants a bare `setTimeout` and its own cleanup. **A fork that has
+  overridden any of these components carries the same defect**; the affected
+  files are listed in [#625](https://github.com/human-centric-engineering/sunrise/pull/625).
 
 - **CI test jobs no longer inherit `CI_NODE_HEAP_MB` once per worker.**
   `NODE_OPTIONS: --max-old-space-size` is set at workflow level and is a
   **per-process** cap, but `test-full` and `test-changed` fork roughly
   `cores - 1` workers apiece — so the real ceiling was `workers × the knob`. At
-  the 5120 default that is ~15.4GB on a 4-vCPU/16GB public runner; at 8192, the
-  value the docs tell you to set when lint dies with exit 134, it is ~24.6GB on
-  the same runner. **The documented remedy for one job was the trigger for
+  the 5120 default that is ~15.4GB on a 4-vCPU/16GB public runner; at 8192 — the
+  value `ci.md`'s own worked example recommended until this release, four lines
+  above a rule forbidding it — ~24.6GB on the same runner. That example is now
+  6144, so **a fork still carrying 8192 should re-derive its floor by
+  bisection** rather than assume the value was chosen for its codebase. **The documented remedy for one job was the trigger for
   another**, and the failure it produced was an OS OOM kill rather than a clean
   V8 abort — surfacing as `Failed to start forks worker`, or as a shard quietly
   missing from the file count. Both test jobs now opt out of it, taking Node's
-  own memory-derived default; the single-process jobs the knob is actually for
-  — `typecheck`, `lint`, `build` — keep it. A new `CI_TEST_NODE_HEAP_MB` gives
+  own memory-derived default. Every other job still inherits it — the
+  single-process ones it was sized for (`typecheck`, `lint`, `build`) and the
+  rest (`smoke`, `docker`, `lockfile`), none of which fork workers. A new `CI_TEST_NODE_HEAP_MB` gives
   the test jobs their own knob for the case Node's default is not enough; unset
   (the default) means no flag at all, and it must be sized per worker rather
   than per runner. **Forks that have
@@ -64,12 +72,21 @@ release process.
   with `vi.stubGlobal('fetch', …)` or mock the module that issues it. Note this
   has to hook happy-dom's own fetch layer — it ships its own implementation
   over `node:http` and binds it before `tests/setup.ts` runs, so patching
-  `globalThis.fetch` intercepts none of it.
+  `globalThis.fetch` intercepts none of it. Two exemptions: an **aborted**
+  request still rejects with `AbortError` (happy-dom runs the interceptor before
+  its own signal check, so refusing unconditionally would silently break every
+  `if (err.name === 'AbortError')` branch), and `data:`/`blob:` URIs pass
+  through, since they open no socket.
 
-- **Vitest worker count is capped at 4 off CI.** The default of roughly
-  `cores - 1` assumes a machine running one suite; agents run this one in the
-  background behind `validate` and `/pre-pr`, often several at once against
-  different forks. Measured on a 10-core machine, the cap costs ~6% wall-clock
+- **Vitest worker count is capped off CI** — at
+  `min(4, floor(cores / 2))`, so 4 on a 10-core machine, 3 on a 6-core, 2 on a
+  4-core, 1 on a 2-core. Sized against vitest's **watch** default
+  (`floor(cores / 2)`) rather than its `run` default (`cores - 1`), because every
+  local script here is watch mode and `resolveMaxWorkers` returns an explicit
+  `maxWorkers` before it reaches the watch branch — a flat 4 would therefore
+  *raise* the count on any machine smaller than this one. The default assumes a
+  machine running one suite; agents run this one in the background behind
+  `validate` and `/pre-pr`, often several at once against different forks. Measured on a 10-core machine, the cap costs ~6% wall-clock
   (239s → 254s) while halving the aggregate work (summed in-worker test time
   860s → 326s) — the default was buying contention, not parallelism. CI is
   untouched: a shard has its runner to itself and runner size varies by fork.
