@@ -48,7 +48,7 @@ release process.
   than per runner. **Forks that have
   raised `CI_NODE_HEAP_MB` should re-read
   [`.context/architecture/ci.md`](./.context/architecture/ci.md) — and lower it
-  to fit before flipping a repo private**, where `ubuntu-latest` is 7GB.
+  to fit before flipping a repo private**, where `ubuntu-latest` is 2 vCPU / 8GB.
 
 ### Changed
 

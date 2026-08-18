@@ -3,18 +3,18 @@
 How Sunrise's GitHub Actions pipeline works, how it adapts to public vs private
 repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 **correct and fast on both** the public Sunrise repo (free Actions minutes,
-4-core/16GB runners) and private forks (capped minutes, 2-core/7GB runners).
+4-core/16GB runners) and private forks (capped minutes, 2-core/8GB runners).
 
 ## Workflows
 
-| File                                        | Trigger                      | Purpose                                                                                             |
-| ------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `.github/workflows/ci.yml`                  | push to `main`, PR to `main` | Type-check, lint/format, build, tests, erasure smoke, Docker build + stack smoke, lockfile metadata |
-| `.github/workflows/codeql.yml`              | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                       |
-| `.github/workflows/dependency-review.yml`   | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                     |
-| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                                                        |
-| `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                  |
-| `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)      |
+| File                                        | Trigger                      | Purpose                                                                                                                                                 |
+| ------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`                  | push to `main`, PR to `main` | Type-check, lint/format, build, tests, real-DB smoke (migration drift + erasure + subject-access export), Docker build + stack smoke, lockfile metadata |
+| `.github/workflows/codeql.yml`              | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                                                                           |
+| `.github/workflows/dependency-review.yml`   | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                                                                         |
+| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | TruffleHog; diff on PR, full history on cron                                                                                                            |
+| `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                                                                      |
+| `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)                                                          |
 
 ## `ci.yml` shape
 
@@ -27,7 +27,7 @@ config ──┬─ typecheck
          ├─ build
          ├─ test-full   (4-way shard matrix)   ┐ exactly one test
          ├─ test-changed (single, PR only)     ┘ job runs (see below)
-         ├─ smoke — account erasure (real DB)
+         ├─ smoke — real-DB invariants (drift + erasure + export)
          ├─ docker — build + prod-stack smoke  (parallel; gated on PRs)
          └─ lockfile — platform metadata       (PRs touching the manifest)
                                    └─ ci-status (branch-protection gate)
@@ -104,9 +104,18 @@ killed by its own `timeout-minutes` (the docker job carries 30), or a run
 cancelled while `ci-status`'s `if: always()` still fires, reported "CI passed"
 for gates that never finished.
 
+**`ci-status`'s job list is maintained by hand, in two places.** Both the
+`needs:` array and the shell loop below it enumerate every gating job
+explicitly — there is no dynamic "all jobs" expression in GitHub Actions to use
+instead. **A job you add to `ci.yml` does not gate anything until you add it to
+both.** It will run, it can fail, and `ci-status` — the single required check on
+the branch-protection rule — will still report success. Forks extending the
+pipeline are the likely victims here, since adding a fork-specific job is an
+expected thing to do. Check both lists whenever you add a job.
+
 **`ci-status` lists `config` in its `needs`.** Every other job is gated on
 `config`'s outputs, so if `config` itself fails they all resolve to `skipped` —
-and the loop fails only on the literal string `failure`. Without `config` in the
+and a loop that passed on `skipped` reported success for all of them. Without `config` in the
 list, one API hiccup in change detection produced "CI passed" with zero gates
 run: the same hole as a truncated file list, one job further up.
 
@@ -260,7 +269,7 @@ These help both repo types and cost nothing, so they're always on:
   (workflow-level) and a `NODE_HEAP_MB` build arg defaulting to 4096 in the
   Dockerfile `builder` stage. It's a **cap, not an allocation**: never
   approached on a 16GB runner, but it stops `tsc`/`next build` OOMing (exit 134)
-  on a 7GB runner where Node's default heap caps near ~2GB. The Dockerfile cap
+  on an 8GB runner where Node's default heap caps near ~2GB. The Dockerfile cap
   lives in the `builder` stage only — the `runner` stage is a fresh `FROM base`
   and doesn't inherit it, so production runtime memory is unchanged.
 - **Sharded tests** — the full suite runs as a 4-way `vitest --shard` matrix
@@ -268,10 +277,12 @@ These help both repo types and cost nothing, so they're always on:
   per-shard overhead (each shard re-pays checkout + `npm ci` + DB setup).
 - **Decoupled, gated Docker** — the `docker` job no longer waits on the checks
   (an image break surfaces in parallel). On PRs it runs only when Docker-relevant
-  files change; on push to `main` it always runs as the production-image gate.
+  files change; on push to `main` it runs as the production-image gate for any
+  change that touches code (a docs-only push still skips it).
   The path filter covers `Dockerfile`, `Dockerfile.dev`, `.dockerignore`,
-  `docker-compose*.yml`, `package.json`, `package-lock.json`, `next.config.*`,
-  `prisma.config.ts` and **`prisma/**`**. The last one means every schema or
+  `docker-compose*.yml`, `.npmrc`, `package.json`, `package-lock.json`,
+  `next.config.*`, `prisma.config.ts` and **`prisma/*`** (a single star — bash
+  `case` lets `*` cross `/`, so it matches the whole subtree). The last one means every schema or
   migration PR runs the heaviest job — deliberate, because the job now applies
   those migrations for real.
 
@@ -297,7 +308,7 @@ These help both repo types and cost nothing, so they're always on:
   all — survived four months of green Docker builds. A build-only check cannot
   catch a runtime-only fault.
 
-  Cost on a private fork (2-core/7GB): roughly +3–5 minutes, no extra `npm ci`
+  Cost on a private fork (2-core/8GB): roughly +3–5 minutes, no extra `npm ci`
   and no extra `next build`, inside a `timeout-minutes: 30` cap. There is no
   opt-out variable — unlike `CI_TEST_SCOPE` and `CI_NODE_HEAP_MB`, whose failure
   modes are opaque, this job's cost is visible and already path-gated. A fork
@@ -315,7 +326,7 @@ These help both repo types and cost nothing, so they're always on:
   **A direct downgrade reports, it does not gate.** The rule was a proxy for "a
   patched dependency returned to a vulnerable one", which `dependency-review`
   measures exactly on every PR (`fail-on-severity: high`) and `check:audit`
-  covers weekly for the standing tree. Measured across all 134 commits that
+  covers weekly for the standing tree. Measured across all 151 commits that
   touched this lockfile it would have fired twice — both deliberate pins, zero
   accidents — and the cost of that was real: a correct one-line `@types/node`
   pin needed a 250-line acknowledgement mechanism to become mergeable.
@@ -364,7 +375,7 @@ gh variable set CI_TEST_SCOPE --body full   # (or just delete the variable)
 ### Knob 2: `CI_NODE_HEAP_MB`
 
 The workflow raises Node's heap **cap** globally (a ceiling, not a reservation —
-harmless on a 16GB public runner, necessary on a 7GB private-fork runner where
+harmless on a 16GB public runner, necessary on an 8GB private-fork runner where
 Node's default caps near ~2GB):
 
 ```yaml
@@ -379,15 +390,27 @@ memory; it reads like a crashed toolchain. If a job fails with exit 134 and no
 diagnostic, raise this variable before investigating anything else.
 
 ```bash
-# Fork whose lint job OOMs at the default:
-gh variable set CI_NODE_HEAP_MB --body 8192
+# Fork whose lint job OOMs at the default. Bisect upward from 5120 rather than
+# jumping — the value you land on has to fit the SMALLEST runner the repo will
+# ever build on, and that is 8GB the day it goes private.
+gh variable set CI_NODE_HEAP_MB --body 6144
 ```
+
+**6144, not 8192, and the difference matters.** An earlier revision of this
+section used 8192 as its example, four lines above a rule forbidding it — see
+below. A fork that took the example at face value carried a cap above its own
+runner's memory, which is the one configuration this knob must never produce.
+Find the real floor by bisection: raise until lint and `next build` both pass,
+then stop. Measured on one ~2x-Sunrise fork, lint aborts at 5120 and passes at
+6144 with a 5.6 GiB peak — so the gap between "fails" and "works" is one step,
+and 8192 was never needed.
 
 Setting it as a repo variable rather than editing `ci.yml` matters: an edit to
 the workflow file is reverted by every upstream sync, so the fork rediscovers the
 same opaque failure each time. Keep the value at or below the runner's physical
 memory — a cap above available RAM just moves the failure from a clean abort to
-the OOM killer.
+the OOM killer. On a private fork that ceiling is **8GB minus the OS, git, npm
+and any service container**, so treat ~6GB as the practical maximum, not 8.
 
 **It is a _per-process_ cap, and the test jobs are the only multi-process ones.**
 `--max-old-space-size` applies to each Node process, not to the runner. Every job
@@ -403,7 +426,8 @@ workers × CI_NODE_HEAP_MB  ≤  runner memory − (OS + the Postgres service co
 At the 5120 default that is already ~15.4GB of ceiling on a 4-vCPU/16GB public
 runner. At `CI_NODE_HEAP_MB=8192` — the value this section tells you to set when
 lint dies with exit 134 — it is ~24.6GB on the same 16GB runner, and on a
-2-vCPU/7GB private runner a single worker exceeds physical memory on its own.
+2-vCPU/8GB private runner vitest forks about one worker, so a single 8192 cap
+already sits at the machine's ceiling before the OS and Postgres are counted.
 **So the documented fix for one job was the trigger for the other**, and the
 resulting failure is the worse kind: an OS OOM kill of a worker rather than a
 clean V8 abort, surfacing as `Failed to start forks worker` or a shard that
@@ -426,7 +450,7 @@ exposes it too (`NODE_HEAP_MB=${NODE_HEAP_MB:-4096}`) so a self-hosted build
 hits the same wall with the same lever (#543).
 
 The Dockerfile default stays **4096**, not the workflow's 5120: that stage is
-sized for ~7GB hosts, where a bigger cap trades a clean V8 heap error for an
+sized for ~8GB hosts, where a bigger cap trades a clean V8 heap error for an
 OS-level kill. Only a caller that knows its runner is larger asks for more.
 
 ### Knob 3: `CI_TEST_NODE_HEAP_MB`

@@ -1,11 +1,11 @@
 name: CI
 
 # Adaptive pipeline — correct and fast on BOTH public Sunrise (free minutes,
-# large runners) and private forks (capped minutes, 2-core/7GB runners).
+# large runners) and private forks (capped minutes, 2-core/8GB runners).
 #
 # Universal speedups (on for everyone): cancel-superseded runs, warm build
 # caches with a content-based cache strategy, a raised Node heap (a cap, not an
-# allocation — harmless on 16GB, necessary on 7GB), fan-out of the static checks,
+# allocation — harmless on 16GB, necessary on 8GB), fan-out of the static checks,
 # and a 4-way sharded test matrix.
 #
 # Economics knob 1 — repo variable `CI_TEST_SCOPE`:
@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Raise Node's heap cap for every job's own steps. It is a ceiling, not a
-# reservation: on a 16GB public runner it is never approached; on a 7GB
+# reservation: on a 16GB public runner it is never approached; on an 8GB
 # private-fork runner it stops `tsc` / `next build` OOMing (exit 134) when
 # Node's default heap caps near ~2GB.
 #
@@ -429,8 +429,9 @@ jobs:
       # at once — vitest forks roughly `cores - 1` workers — so inheriting it
       # multiplies the ceiling by the worker count. At `CI_NODE_HEAP_MB=8192`
       # on a 4-vCPU public runner that is ~24.6GB of ceiling on 16GB of RAM,
-      # with Postgres resident as well; on a 2-vCPU/7GB private runner a
-      # single worker already exceeds physical memory. Both turn a clean V8
+      # with Postgres resident as well. On a 2-vCPU/8GB private runner vitest
+      # forks about one worker, so a single 8192 cap already sits at the
+      # machine's ceiling before the OS, git and Postgres. Both turn a clean V8
       # abort into an OS OOM kill, which is far harder to diagnose — and the
       # documented remedy for a lint OOM is exactly what triggers it.
       #
