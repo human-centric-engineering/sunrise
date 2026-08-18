@@ -634,7 +634,15 @@ level rather than relaxing the file-level default:
 | `codeql.yml` → `analyze`         | `security-events: write`, `actions: read`          |
 | `dependency-review.yml` → review | `pull-requests: write` (posts the failure comment) |
 
-Copy that shape: widen at the job, never at the top. Without an explicit block the token defaults to
+Copy that shape: the file-level block is the floor every job gets, and anything
+only one job needs belongs on that job.
+
+`ci.yml` is itself a partial exception worth knowing about — it declares
+`pull-requests: read` at file level because the `config` job calls
+`gh api .../pulls/{n}/files` to build the changed-file list, so every other job
+in that workflow carries a read scope it never uses. Narrowing it to `config`
+would be strictly tighter; it is called out here rather than presented as the
+pattern to copy. Without an explicit block the token defaults to
 whatever the repository setting says, which on an older fork can still be
 read/write across the board.
 
@@ -756,9 +764,9 @@ output:
 fork that adds its own deployment docs is the most likely thing to trip the
 tripwire, and `LOCAL_HOSTS` is the seam for it.
 
-One wrinkle, because the script's own comment still gets it wrong. That comment
-says the file "is not on `.trufflehog-exclude.txt`". It is — the last entry in
-that file names it. Both were written in the same commit (`3712a013`): a literal
+One wrinkle, because the script's own comment got this wrong until recently and
+the reasoning is worth keeping. That comment used to say the file "is not on
+`.trufflehog-exclude.txt`". It is — the last entry in that file names it. Both were written in the same commit (`3712a013`): a literal
 example DSN in the comment had failed the scan, so the fix removed the example
 _and_ explained the removal by saying real source is never allowlisted — then
 allowlisted it anyway, because the PR scan reads the whole commit range and the
@@ -767,8 +775,8 @@ pushed.
 
 What is actually true: TruffleHog does not scan this one file, and the tripwire
 step does, over every tracked file regardless of path — so a real DSN pasted here
-is still caught, and what is given up is TruffleHog's _other_ detectors across 85
-lines of CI script. Adding a placeholder example back would no longer fail
+is still caught, and what is given up is TruffleHog's _other_ detectors over that
+one CI script. Adding a placeholder example back would no longer fail
 anything. Leaving it out is still the better call — a realistic-looking DSN in
 the one file whose subject is committed DSNs invites exactly the confusion this
 paragraph is untangling — but treat that as house style, not as a gate.

@@ -6,10 +6,17 @@
  * helper walks every recorded mock call's arguments looking for:
  *
  *   1. Direct binary types (Buffer, Uint8Array, Blob, ArrayBuffer).
- *   2. Object keys that look like audio-shaped fields (`audio`,
- *      `audioBytes`, `audioBlob`, `bytes`, `data`) — catches the case
- *      where a future contributor stuffs base64 audio into JSON
- *      metadata "for analytics".
+ *   2. Object keys that look like audio-shaped fields — see `SUSPECT_KEYS`
+ *      below for the actual list, which is `audio`-prefixed plus `rawAudio`,
+ *      `recording` and `voiceBytes`. It does NOT include bare `bytes` or
+ *      `data`, and an earlier version of this comment claimed it did — the
+ *      exact false guarantee that let a PNG through the sibling guard (#626).
+ *      Rule (3) is what covers the keys nobody enumerated.
+ *   3. **Values that look like a base64 payload, whatever the key is
+ *      called.** A key list can only enumerate the names someone already
+ *      thought of; the byte shape does not depend on naming. Normalises
+ *      `data:` URIs, base64url and MIME line-wrapping first, so the same
+ *      bytes are caught whichever layer produced them.
  *
  * The helper is permissive about depth (recursively walks objects and
  * arrays) but bounded — it caps recursion at 8 levels so a circular
@@ -42,8 +49,33 @@ const MAX_DEPTH = 8;
  */
 const BASE64_PAYLOAD_MIN_LENGTH = 256;
 
-/** Strict base64 alphabet with optional padding, no whitespace. */
-const BASE64_RE = /^[A-Za-z0-9+/]{256,}={0,2}$/;
+/**
+ * Strict base64 alphabet with optional padding. The length floor is enforced
+ * by `BASE64_PAYLOAD_MIN_LENGTH` in the caller, NOT baked in here — a `{256,}`
+ * quantifier duplicating the constant made lowering it a silent no-op.
+ */
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Strip the wrappers a base64 payload picks up in transit, so the checks below
+ * see the same bytes whatever layer produced them. All three occur in this
+ * codebase's own audio path:
+ *
+ *   - `data:<mime>;base64,` — what `FileReader.readAsDataURL` returns
+ *     (`lib/hooks/use-attachments.ts` strips it; `openai-compatible.ts`
+ *     re-adds it when formatting for the provider). Without this, persisting
+ *     either the raw reader output or the provider-formatted part evades the
+ *     guard entirely, because `:` `;` `,` are outside the base64 alphabet.
+ *   - base64url `-` / `_` — URL-safe variants of `+` / `/`.
+ *   - newlines — MIME base64 is chunked at 76 chars.
+ */
+function normaliseBase64(value: string): string {
+  return value
+    .replace(/^data:[^,]{0,120},/i, '')
+    .replace(/\s+/g, '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+}
 
 /**
  * Base64 prefixes of the magic bytes for audio container formats. A short
@@ -58,7 +90,8 @@ const MAGIC_PREFIXES = [
   '//uQ', // MPEG frame sync / bare MP3
 ];
 
-function looksLikeBase64Payload(value: string): string | null {
+function looksLikeBase64Payload(raw: string): string | null {
+  const value = normaliseBase64(raw);
   for (const prefix of MAGIC_PREFIXES) {
     if (value.startsWith(prefix)) {
       return `base64 payload with ${prefix} magic-byte prefix`;

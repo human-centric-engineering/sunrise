@@ -60,8 +60,33 @@ const MAX_DEPTH = 8;
  */
 const BASE64_PAYLOAD_MIN_LENGTH = 256;
 
-/** Strict base64 alphabet with optional padding, no whitespace. */
-const BASE64_RE = /^[A-Za-z0-9+/]{256,}={0,2}$/;
+/**
+ * Strict base64 alphabet with optional padding. The length floor is enforced
+ * by `BASE64_PAYLOAD_MIN_LENGTH` in the caller, NOT baked in here — a `{256,}`
+ * quantifier duplicating the constant made lowering it a silent no-op.
+ */
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Strip the wrappers a base64 payload picks up in transit, so the checks below
+ * see the same bytes whatever layer produced them. All three occur in this
+ * codebase's own attachment path:
+ *
+ *   - `data:<mime>;base64,` — what `FileReader.readAsDataURL` returns
+ *     (`lib/hooks/use-attachments.ts` strips it; `openai-compatible.ts`
+ *     re-adds it when formatting for the provider). Without this, persisting
+ *     either the raw reader output or the provider-formatted part evades the
+ *     guard entirely, because `:` `;` `,` are outside the base64 alphabet.
+ *   - base64url `-` / `_` — URL-safe variants of `+` / `/`.
+ *   - newlines — MIME base64 is chunked at 76 chars.
+ */
+function normaliseBase64(value: string): string {
+  return value
+    .replace(/^data:[^,]{0,120},/i, '')
+    .replace(/\s+/g, '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+}
 
 /**
  * Base64 prefixes of the magic bytes for formats this feature accepts.
@@ -76,7 +101,8 @@ const MAGIC_PREFIXES = [
   'UklGR', // WEBP (RIFF)
 ];
 
-function looksLikeBase64Payload(value: string): string | null {
+function looksLikeBase64Payload(raw: string): string | null {
+  const value = normaliseBase64(raw);
   for (const prefix of MAGIC_PREFIXES) {
     if (value.startsWith(prefix)) {
       return `base64 payload with ${prefix} magic-byte prefix`;

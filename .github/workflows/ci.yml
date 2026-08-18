@@ -568,7 +568,9 @@ jobs:
     timeout-minutes: 30
     # Decoupled from the checks so an image break surfaces in parallel rather
     # than after the long test run. On PRs it runs only when Docker-relevant
-    # files change; on push to main it always runs as the production-image gate.
+    # files change; on push to main it runs as the production-image gate whenever
+    # the push touched code at all (a docs-only push skips it — `code == 'true'`
+    # gates both branches of the condition below).
     if: >-
       needs.config.outputs.code == 'true' &&
       (github.event_name == 'push' || needs.config.outputs.docker == 'true')

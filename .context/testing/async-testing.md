@@ -61,8 +61,9 @@ The fix is not to avoid fake timers in `beforeEach`. It is one option:
 vi.useFakeTimers({ shouldAdvanceTime: true });
 ```
 
-`shouldAdvanceTime` keeps the clock advancing in real time (20ms per real
-millisecond by default) while still letting you jump it forward with
+`shouldAdvanceTime` keeps the clock advancing in step with real time (in 20ms
+increments by default — a granularity, not a speed-up; measured at a 0.93 ratio
+over a 300ms window) while still letting you jump it forward with
 `vi.advanceTimersByTime()`. `waitFor` and `userEvent` get their ticks; your
 `setTimeout(…, 3000)` still fires the instant you advance to it.
 

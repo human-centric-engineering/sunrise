@@ -45,5 +45,5 @@
 # The coverage lost is narrow and already compensated: the `Postgres DSN
 # tripwire` step below runs over EVERY tracked file regardless of path, so a real
 # DSN pasted into this script is still caught. What is genuinely given up is
-# TruffleHog's OTHER detectors on this one 70-line CI script.
+# TruffleHog's OTHER detectors on that one CI script.
 ^scripts/ci/check-postgres-dsn\.sh$

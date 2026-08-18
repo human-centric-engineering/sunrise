@@ -5074,10 +5074,22 @@ describe('attachment gate', () => {
     const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
     expect(createCalls.some((c: any) => c[0].data.role === 'user')).toBe(true);
 
-    assertNoAttachmentPersistence(
-      prisma.aiMessage.create as unknown as { mock: { calls: unknown[][] } },
-      'prisma.aiMessage.create'
-    );
+    // Every sink this turn writes to, not just the message row. The invariant
+    // in the helper's docblock is "only the user's text becomes an AiMessage,
+    // and only an aggregate cost row goes to AiCostLog" — asserting on
+    // aiMessage.create alone would leave base64 folded into a conversation
+    // title, an eval log or a logCost metadata field completely uncovered.
+    // Both existing audio-guard consumers assert over logCost for this reason.
+    const sinks: Array<[string, unknown]> = [
+      ['prisma.aiMessage.create', prisma.aiMessage.create],
+      ['prisma.aiConversation.create', prisma.aiConversation.create],
+      ['prisma.aiConversation.update', prisma.aiConversation.update],
+      ['prisma.aiEvaluationLog.create', prisma.aiEvaluationLog.create],
+      ['logCost', logCost],
+    ];
+    for (const [label, sink] of sinks) {
+      assertNoAttachmentPersistence(sink as { mock: { calls: unknown[][] } }, label);
+    }
   });
 
   it('does not run the gate when there are no attachments', async () => {

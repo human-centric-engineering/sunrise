@@ -76,6 +76,14 @@ describe('assertNoAudioPersistence', () => {
       expect(() => assertNoAudioPersistence(mock, 'probe')).toThrow(/base64-shaped string/);
     });
 
+    it('rejects a data: URI, the form a MediaRecorder blob reads back as', () => {
+      const mock = mockWithCall({
+        data: { metadata: { src: `data:audio/wav;base64,${WAV_BASE64}` } },
+      });
+
+      expect(() => assertNoAudioPersistence(mock, 'probe')).toThrow(/UklGR/);
+    });
+
     it('names the path so the failure is diagnosable', () => {
       const mock = mockWithCall({ data: { metadata: { blobs: [{ payload: WAV_BASE64 }] } } });
 
