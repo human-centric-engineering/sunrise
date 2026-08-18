@@ -33,8 +33,8 @@ import { createMockHeaders, createMockSession, delayed } from '@/tests/types/moc
 ## The network is closed
 
 `tests/setup.ts` installs a happy-dom fetch interceptor that **refuses every
-real HTTP request** with the same `TypeError` a genuine network failure
-produces. A component that fetches on mount, in a test that has not stubbed
+real HTTP request** with the same error a genuine network failure produces — a
+`DOMException` named `NetworkError`, matching `happy-dom/lib/fetch/Fetch.js`. A component that fetches on mount, in a test that has not stubbed
 `fetch`, fails immediately with the URL named:
 
 ```

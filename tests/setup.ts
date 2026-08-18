@@ -59,10 +59,20 @@ import { expect, vi, afterEach } from 'vitest';
  * is why the traffic was so hard to attribute: it appears in the output with
  * no test name attached, because it lands after the test that caused it.
  *
- * Throwing a `TypeError` is deliberately what a real network failure already
- * produced, so no test changes behaviour — the rejection is simply immediate
- * and costs no socket. A test that *wants* a response must stub it:
+ * The rejection deliberately matches what happy-dom itself throws for a failed
+ * connection — a `DOMException` named `NetworkError` (`happy-dom/lib/fetch/
+ * Fetch.js:540`), not a `TypeError` — so a test that asserts on the error shape
+ * sees no change. A test that *wants* a response must stub it:
  * `vi.stubGlobal('fetch', vi.fn())`, or mock the module that calls it.
+ *
+ * Known wart: happy-dom brackets this hook with `startTask()` / `endTask()` and
+ * no `try/finally` (same file, ~line 115), so throwing here leaks one async
+ * task. Nothing in the suite is affected — vitest tears down with `abort()`,
+ * which resets the counters — but a test that awaits
+ * `happyDOM.waitUntilComplete()` after a blocked request will hang to the 30s
+ * timeout. Returning a `Response` is the only non-throwing exit the interceptor
+ * offers, and that would turn a rejection into a success, which is the larger
+ * lie.
  */
 {
   interface InterceptedRequest {
@@ -78,10 +88,11 @@ import { expect, vi, afterEach } from 'vitest';
     .happyDOM;
 
   const refuse = (url: string): never => {
-    throw new TypeError(
+    throw new DOMException(
       `Blocked a real network request to ${url}. Tests must not reach the ` +
         `network: stub it with vi.stubGlobal('fetch', …), or mock the module ` +
-        `that issues it. See tests/setup.ts.`
+        `that issues it. See tests/setup.ts.`,
+      'NetworkError'
     );
   };
 
@@ -91,11 +102,15 @@ import { expect, vi, afterEach } from 'vitest';
   // original #597 diagnosis took five attempts precisely because this traffic
   // arrives unattributed. Only assert when happy-dom is actually the
   // environment: files with `@vitest-environment node` legitimately have none.
-  if (happyDom && !happyDom.settings?.fetch) {
+  if (typeof window !== 'undefined' && !happyDom?.settings?.fetch) {
     throw new Error(
-      'tests/setup.ts: happy-dom is present but `settings.fetch` is missing, so ' +
-        'the network guard did not install. The interceptor API has probably moved ' +
-        'in a happy-dom upgrade — re-point it rather than removing this check. See #597.'
+      'tests/setup.ts: a DOM environment is active but `window.happyDOM.settings.fetch` ' +
+        'is missing, so the network guard did not install. The hook point has probably ' +
+        'moved in a happy-dom upgrade — re-point it rather than removing this check. ' +
+        'Gated on the environment rather than on `happyDOM` existing, because if that ' +
+        'object itself is renamed the guard would otherwise skip in silence, and the ' +
+        'loader flags keep the error count at zero so nothing else would signal it. ' +
+        'See #597.'
     );
   }
 

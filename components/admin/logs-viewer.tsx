@@ -242,6 +242,17 @@ export function LogsViewer({ initialLogs, initialMeta }: LogsViewerProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Clean up the search debounce on unmount. Without this the pending
+  // timeout is only ever cleared by the *next* keystroke, so unmounting
+  // mid-debounce leaves it live and it calls `fetchLogs` — a state update
+  // on a gone component, and after teardown in a test run (#597). Matches
+  // `user-table.tsx` and every other search-debounce table.
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
+
   /**
    * Fetch logs with current filters
    */

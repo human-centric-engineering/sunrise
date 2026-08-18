@@ -18,7 +18,7 @@ release process.
 
 ### Fixed
 
-- **Timers are cancelled on unmount across 18 components.** Every unmanaged
+- **Timers are cancelled on unmount across 19 components.** Every unmanaged
   `setTimeout` in `components/**` — one not stored in a ref that a cleanup
   clears — outlived the component
   that scheduled it. The dominant case — "hide the success banner after N
@@ -55,7 +55,8 @@ release process.
   `http://localhost:3000` — so a full run made ~470 failed connections to a dev
   server that was not running. Both loaders are now disabled, and a
   `settings.fetch.interceptor` refuses any remaining request with the same
-  `TypeError` a real network failure produced. **A fork whose tests rely on a
+  error shape happy-dom itself throws for a failed connection — a `DOMException`
+  named `NetworkError`, not a `TypeError`. **A fork whose tests rely on a
   real HTTP call will now fail fast** with a message naming the URL; stub it
   with `vi.stubGlobal('fetch', …)` or mock the module that issues it. Note this
   has to hook happy-dom's own fetch layer — it ships its own implementation

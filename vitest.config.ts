@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { availableParallelism } from 'node:os';
 import { nextFontStub } from './tests/mocks/next-font-plugin';
 
 export default defineConfig({
@@ -40,7 +41,13 @@ export default defineConfig({
     // fork — `ubuntu-latest` is 4 vCPU for a public repo but 2 for a private
     // one on a free plan, where a hardcoded 4 would oversubscribe. Vitest's
     // own default sizing is right there, so this keeps CI exactly as it is.
-    maxWorkers: process.env.CI ? undefined : 4,
+    //
+    // Expressed as a min against vitest's own default rather than a flat 4: a
+    // literal is a *floor* on a small machine, not a cap. On a 4-core laptop
+    // vitest picks 3 and a bare 4 would raise it; on a 2-core box it picks 1
+    // and a bare 4 would oversubscribe fourfold — the exact thrash this
+    // setting exists to prevent.
+    maxWorkers: process.env.CI ? undefined : Math.min(4, Math.max(1, availableParallelism() - 1)),
 
     // happy-dom loads `<script src>` and `<link rel=stylesheet>` for real —
     // both flags default to false, i.e. loading enabled — using its own
