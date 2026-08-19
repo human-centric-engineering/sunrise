@@ -164,6 +164,27 @@ release process.
 
 ### Security
 
+- **`executeHttpRequest` no longer follows redirects.** The orchestration HTTP
+  executor validated its host allowlist once, against the initial URL, then
+  called `fetch()` with no `redirect` option — so undici's default `'follow'`
+  applied and every subsequent `Location` was unvalidated. It is the fifth
+  outbound-fetch site; #534 fixed the other four, and missed this one because it
+  guards with an env host allowlist (`isHostAllowed`) rather than
+  `checkSafeProviderUrl`, so it fell outside that sweep. It is the sole path for
+  the `call_external_api` capability, the workflow `external_call` step, and the
+  Twilio / WhatsApp Cloud adapters — and the capability returns the response
+  body to the model, making it a read primitive rather than a blind write.
+  Auth travelled too: `bearer` and `basic` are stripped cross-origin by the fetch
+  spec, but `api-key` with a custom header name is not, and `query-param` puts
+  the secret in the URL. Now `redirect: 'error'`, matching the three siblings.
+  **Exploitation always needed an operator to have set
+  `ORCHESTRATION_ALLOWED_HOSTS` (unset by default, fail-closed) AND an
+  allowlisted host to emit a redirect**, so this is hardening rather than an
+  open door — but the rule is stated in `lib/security/safe-url.ts` and four of
+  five sites already followed it. A newly-redirecting endpoint now fails
+  non-retriably with `fetch failed: unexpected redirect` rather than being
+  chased; re-point the URL in config.
+
 - **Minting *or revoking* an API key now requires a browser session.** `POST`
   and `DELETE` on `/api/v1/user/api-keys` used `withAuth`, which accepts a key
   of any scope. Minting was privilege laundering — a key scoped to one narrow

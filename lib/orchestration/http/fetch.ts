@@ -24,6 +24,7 @@ import {
 import { isHostAllowed, ALLOWED_HOSTS_ENV } from '@/lib/orchestration/http/allowlist';
 import { applyAuth, type HttpAuthConfig } from '@/lib/orchestration/http/auth';
 import { HttpError } from '@/lib/orchestration/http/errors';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { mergeHeaders } from '@/lib/orchestration/http/headers';
 import {
   resolveIdempotencyHeader,
@@ -179,6 +180,25 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
       headers,
       body: isBodyless ? undefined : body || undefined,
       signal: controller.signal,
+      // Refuse redirects (#628). `isHostAllowed` runs ONCE, on the pre-auth URL
+      // at the top of this function, and `safe-url.ts` states the rule that
+      // makes that insufficient: "Validation is per-URL, not per-hop … Callers
+      // must either refuse redirects or re-run this check on each hop." Without
+      // this key undici defaults to 'follow', so every `Location` after the
+      // first was unvalidated — and the response body comes back to the model
+      // via `call_external_api`, making it a read primitive rather than a blind
+      // write. `api-key` auth with a custom header name and `query-param` auth
+      // both travel to the redirect target too; only `Authorization` is stripped
+      // cross-origin by the fetch spec.
+      //
+      // 'error' rather than the revalidating loop in `knowledge/url-fetcher.ts`,
+      // matching the three siblings #534 fixed (`hooks/registry.ts`,
+      // `webhooks/dispatcher.ts`, `escalation-notifier.ts`). The split is not
+      // arbitrary: url-fetcher follows-and-revalidates because *users paste
+      // shortened links*. Everything reachable here is a **configured**
+      // integration against an operator-set host allowlist, so an endpoint that
+      // moved should be re-pointed in config, not chased at runtime.
+      redirect: 'error',
     });
   } catch (err) {
     const isAbort = err instanceof Error && err.name === 'AbortError';
@@ -187,9 +207,11 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
       : 'request_failed';
     const message = isAbort
       ? `Request timed out after ${timeoutMs}ms`
-      : err instanceof Error
-        ? err.message
-        : 'Request failed';
+      : // undici renders a refused redirect as a bare `TypeError: fetch failed`
+        // with the reason on `.cause`, which would leave an operator no way to
+        // tell "your endpoint now 301s" from "DNS is down". That is the exact
+        // gap `describeFetchFailure` exists for.
+        describeFetchFailure(err);
     throw new HttpError(code, message, false, err);
   } finally {
     clearTimeout(timer);

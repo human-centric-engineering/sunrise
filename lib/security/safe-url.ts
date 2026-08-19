@@ -41,6 +41,15 @@
  *     is unchecked. Callers must either refuse redirects (`redirect: 'error'`)
  *     or re-run this check on each hop — see `fetchRevalidatingRedirects` in
  *     `lib/orchestration/knowledge/url-fetcher.ts` for the loop.
+ *
+ *     The five outbound-fetch sites and what each chose, so the next sweep is
+ *     countable rather than remembered: `knowledge/url-fetcher.ts` revalidates
+ *     per hop (users paste shortened links); `hooks/registry.ts`,
+ *     `webhooks/dispatcher.ts`, `capabilities/built-in/escalation-notifier.ts`
+ *     and `orchestration/http/fetch.ts` all refuse. The last of those was
+ *     missed by #534's sweep because it guards with an env host allowlist
+ *     (`isHostAllowed`) rather than with this module, so it was outside the
+ *     blast radius of a grep for `checkSafeProviderUrl` — fixed in #628.
  *   - No IPv4-in-IPv6 mapping parsing beyond what `URL` exposes.
  *
  * This module is platform-agnostic — no Next.js imports.

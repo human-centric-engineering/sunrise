@@ -81,6 +81,12 @@ This lets downstream steps detect and handle transform issues without failing th
 
 All outbound URLs are validated against the `ORCHESTRATION_ALLOWED_HOSTS` environment variable (comma-separated hostnames). An empty or absent allowlist blocks all external calls. The parsed allowlist is cached in memory and refreshed when the env var value changes.
 
+**Redirects are refused, not followed** (`redirect: 'error'`, #628). `isHostAllowed` runs **once**, on the pre-auth URL — and `lib/security/safe-url.ts` states the rule that makes that insufficient on its own: _"Validation is per-URL, not per-hop … Callers must either refuse redirects or re-run this check on each hop."_ Without the refusal, undici's default `'follow'` meant every `Location` after the first was unvalidated, and the response body comes back to the model through `call_external_api`, making it a read primitive rather than a blind write. Auth travels too: the fetch spec strips `Authorization` cross-origin, so `bearer` and `basic` are safe, but `api-key` with a custom `apiKeyHeaderName` is not, and `query-param` puts the secret in the URL.
+
+`'error'` rather than the revalidating loop in `knowledge/url-fetcher.ts`, matching the three sibling sites fixed in #534 (`hooks/registry.ts`, `webhooks/dispatcher.ts`, `escalation-notifier.ts`). The split is not arbitrary: url-fetcher follows-and-revalidates because **users paste shortened links**. Everything reachable here is a _configured_ integration against an operator-set host allowlist, so an endpoint that has moved should be re-pointed in config rather than chased at runtime.
+
+**What an operator sees.** A newly-redirecting endpoint surfaces as a non-retriable `request_failed` whose message is `fetch failed: unexpected redirect` — undici reports a refused redirect as a bare `TypeError: fetch failed` with the reason on `.cause`, so `describeFetchFailure()` unwraps it. Retrying is pointless (the redirect is deterministic); the fix is to update the URL. If you hit this on a vendor that legitimately redirects, the alternative is to port `fetchRevalidatingRedirects` from `knowledge/url-fetcher.ts`, swapping `checkSafeProviderUrl` for `isHostAllowed` and re-applying `allowedUrlPrefixes` per hop — otherwise the prefix guard stays first-hop-only even once the host check does not.
+
 ### Credential handling
 
 Secrets are **never** stored in the database or workflow config. The `authSecret` field holds an environment variable _name_ (e.g., `EXTERNAL_API_TOKEN`), resolved at execution time via `process.env[authSecret]`.

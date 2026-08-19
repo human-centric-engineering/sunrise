@@ -68,6 +68,82 @@ describe('executeHttpRequest', () => {
     expect(out.transformError).toBeUndefined();
   });
 
+  // ── Redirect refusal (#628) ─────────────────────────────────────────────
+  //
+  // `isHostAllowed` runs ONCE, on the pre-auth URL. With undici's default
+  // `redirect: 'follow'` every subsequent `Location` was unvalidated — and the
+  // response body is returned to the model by `call_external_api`, so this was
+  // an SSRF *read* primitive, not a blind write. This is the fifth outbound
+  // fetch site; #534 fixed the other four.
+
+  describe('redirect handling', () => {
+    it('never lets fetch follow a redirect itself', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await executeHttpRequest({ url: 'https://api.allowed.com/v1/x', method: 'GET' });
+
+      // The load-bearing assertion. Everything else here describes how the
+      // resulting failure reads; this is the line that closes the hole.
+      expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({ redirect: 'error' });
+    });
+
+    it('surfaces a refused redirect as a non-retriable error naming the cause', async () => {
+      // undici's shape for a refused redirect: a bare `TypeError: fetch failed`
+      // with the reason on `.cause`. Without unwrapping it, an operator cannot
+      // tell "your endpoint now 301s" from "DNS is down".
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') })
+      );
+
+      await expect(
+        executeHttpRequest({ url: 'https://api.allowed.com/v1/x', method: 'GET' })
+      ).rejects.toMatchObject({
+        code: 'request_failed',
+        // Not retriable: retrying gets the same redirect. The fix is config.
+        retriable: false,
+        message: 'fetch failed: unexpected redirect',
+      });
+    });
+
+    it('sends api-key auth in a custom header — the reason refusal is required', async () => {
+      // Motivating case, not a regression test, and worth being precise about
+      // what it can show: with `fetch` mocked, redirect-following is undici's
+      // job and never happens here, so no unit test can observe a second hop.
+      // What it CAN pin is the exposure — the fetch spec strips `Authorization`
+      // cross-origin but not an arbitrary header name, so this secret would
+      // have travelled to the redirect target. Hence `redirect: 'error'`, which
+      // is what the last assertion actually enforces.
+      process.env.VENDOR_KEY = 'sk_live_secret';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await executeHttpRequest({
+        url: 'https://api.allowed.com/v1/x',
+        method: 'GET',
+        auth: { type: 'api-key', secret: 'VENDOR_KEY', apiKeyHeaderName: 'X-Vendor-Token' },
+      });
+
+      const init = fetchSpy.mock.calls[0]?.[1];
+      expect((init?.headers as Record<string, string>)['X-Vendor-Token']).toBe('sk_live_secret');
+      expect(init).toMatchObject({ redirect: 'error' });
+    });
+
+    it('still reports a timeout as a timeout, not as a redirect failure', async () => {
+      // `describeFetchFailure` is only on the non-abort branch; an AbortError
+      // must keep its own message and code.
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+      );
+
+      await expect(
+        executeHttpRequest({ url: 'https://api.allowed.com/v1/x', method: 'GET', timeoutMs: 50 })
+      ).rejects.toMatchObject({ code: 'request_timeout', message: /timed out after 50ms/ });
+    });
+  });
+
   it('throws host_not_allowed for hosts outside the allowlist', async () => {
     await expect(
       executeHttpRequest({ url: 'https://evil.com/x', method: 'GET' })
