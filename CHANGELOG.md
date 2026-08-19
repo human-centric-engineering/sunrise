@@ -167,10 +167,10 @@ release process.
 - **`executeHttpRequest` no longer follows redirects.** The orchestration HTTP
   executor validated its host allowlist once, against the initial URL, then
   called `fetch()` with no `redirect` option — so undici's default `'follow'`
-  applied and every subsequent `Location` was unvalidated. It is the fifth
-  outbound-fetch site; #534 fixed the other four, and missed this one because it
-  guards with an env host allowlist (`isHostAllowed`) rather than
-  `checkSafeProviderUrl`, so it fell outside that sweep. It is the sole path for
+  applied and every subsequent `Location` was unvalidated. #534 fixed four
+  sibling sites and missed this one, because that sweep was scoped by grepping
+  `checkSafeProviderUrl` and this site guards with an env host allowlist
+  (`isHostAllowed`) instead. It is the sole path for
   the `call_external_api` capability, the workflow `external_call` step, and the
   Twilio / WhatsApp Cloud adapters — and the capability returns the response
   body to the model, making it a read primitive rather than a blind write.
@@ -184,6 +184,18 @@ release process.
   five sites already followed it. A newly-redirecting endpoint now fails
   non-retriably with `fetch failed: unexpected redirect` rather than being
   chased; re-point the URL in config.
+
+- **Every server-side `fetch()` now declares a redirect policy, enforced by a
+  test.** `tests/unit/lib/security/outbound-fetch-redirects.test.ts` enumerates
+  the call sites mechanically and fails CI on one with no `redirect` option,
+  carrying legitimate exemptions and known gaps as pinned rows. It replaces a
+  hand-written roster which review found wrong by three — a list maintained by
+  memory has the exact failure mode it was written to prevent. Writing the check
+  turned up three further sites of the same class as this fix, now tracked as
+  **#635**: `llm/provider.ts` and `knowledge/embedder.ts` (admin-set provider
+  `baseUrl`, validated once) and the webhook **test** route, which follows
+  redirects on the same URL its production dispatcher refuses them on, carrying
+  an HMAC in a custom header the fetch spec does not strip.
 
 - **Minting *or revoking* an API key now requires a browser session.** `POST`
   and `DELETE` on `/api/v1/user/api-keys` used `withAuth`, which accepts a key

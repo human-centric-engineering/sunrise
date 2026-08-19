@@ -191,6 +191,14 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
       // both travel to the redirect target too; only `Authorization` is stripped
       // cross-origin by the fetch spec.
       //
+      // This refuses SAME-ORIGIN redirects too — an apex→www or a trailing-slash
+      // canonicalisation, where hop 2 would still satisfy `isHostAllowed` and
+      // `allowedUrlPrefixes` and nothing is actually unvalidated. That is a
+      // knowing trade, not an oversight: distinguishing them means following
+      // one hop, and a follow-then-decide loop is the machinery this choice
+      // exists to avoid. The cost is that a vendor adding a canonicalising 301
+      // breaks a configured step at runtime rather than at deploy time.
+      //
       // 'error' rather than the revalidating loop in `knowledge/url-fetcher.ts`,
       // matching the three siblings #534 fixed (`hooks/registry.ts`,
       // `webhooks/dispatcher.ts`, `escalation-notifier.ts`). The split is not
@@ -211,7 +219,18 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
         // with the reason on `.cause`, which would leave an operator no way to
         // tell "your endpoint now 301s" from "DNS is down". That is the exact
         // gap `describeFetchFailure` exists for.
-        describeFetchFailure(err);
+        //
+        // The `instanceof Error` arm is kept rather than folded in:
+        // `describeFetchFailure` falls back to `String(err)`, so a thrown plain
+        // object would reach the operator log AND the model — `call_external_api`
+        // returns this message verbatim — as "[object Object]", the exact
+        // rendering `lib/errors/fetch-error.ts` refuses to emit for causes. A
+        // null-prototype throw would make `String()` itself throw, replacing the
+        // typed HttpError with a raw TypeError that escapes the
+        // `err instanceof HttpError` mapping in `external-call.ts`.
+        err instanceof Error
+        ? describeFetchFailure(err)
+        : 'Request failed';
     throw new HttpError(code, message, false, err);
   } finally {
     clearTimeout(timer);
