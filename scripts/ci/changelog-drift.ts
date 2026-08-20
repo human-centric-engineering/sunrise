@@ -87,8 +87,15 @@ export interface DriftFinding {
 /** How a bullet's `writtenAt` position is reported when it predates the branch. */
 export const PREDATES_BRANCH = -1;
 
-/** A fenced-code delimiter, per CommonMark's ≤3-space indent allowance. */
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+/**
+ * A fenced-code delimiter, per CommonMark's ≤3-space indent allowance.
+ *
+ * Captures the info string as well as the run, because both decide whether a
+ * line opens or closes a block — see the two rules applied in
+ * {@link extractUnreleasedBullets}, which are the ones `changelog-structure.ts`
+ * already learned the hard way.
+ */
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
 /** A top-level entry: `- ` hard against the left margin. */
 const BULLET_RE = /^- +\S/;
@@ -145,19 +152,35 @@ export function extractUnreleasedBullets(source: string): ChangelogBullet[] {
     const text = lines[index];
     const line = index + 1;
 
+    // Both fence rules are lifted from `changelog-structure.ts`, which arrived
+    // at them by being wrong twice. Matching on the character alone — which an
+    // earlier version of this file did, while its comment claimed to match that
+    // parser — drops both, and each failure is SILENT: every remaining bullet
+    // falls out of the scan and nothing in the output says a fence was open.
     const fenceMatch = FENCE_RE.exec(text);
-    if (fenceMatch) {
-      // Only a delimiter of the same character closes the block, matching
-      // CommonMark and the structural parser next door.
-      if (fence === null) {
-        close();
-        fence = fenceMatch[1][0];
-      } else if (fenceMatch[1][0] === fence) {
+    if (fence !== null) {
+      // Closes only on the same character, a run at least as long, and no info
+      // string. Comparing the character alone lets an inner ``` close an outer
+      // ````, so the headings between them read as real.
+      if (
+        fenceMatch &&
+        fenceMatch[1][0] === fence[0] &&
+        fenceMatch[1].length >= fence.length &&
+        fenceMatch[2].trim() === ''
+      ) {
         fence = null;
       }
       continue;
     }
-    if (fence !== null) continue;
+    // A backtick fence may not carry backticks in its info string, so a wrapped
+    // bullet line beginning ```` ```npm run validate``` is now first ```` is a
+    // paragraph with code spans, not an opening fence. Reading it as one
+    // swallowed the rest of the file next door.
+    if (fenceMatch && !(fenceMatch[1][0] === '`' && fenceMatch[2].includes('`'))) {
+      close();
+      fence = fenceMatch[1];
+      continue;
+    }
 
     if (BULLET_RE.test(text)) {
       close();

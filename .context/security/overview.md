@@ -473,11 +473,9 @@ rather than reaching for the off switch:
    and `dependency-review`, which would otherwise catch that, is skipped on
    private repos.
 
-   **Removing one gates too**, and should: dropping an override that was
-   fixing a CVE walks the patched transitive straight back to the vulnerable
-   version, and is exactly as much of a decision as adding it was. There is no
-   acknowledgement facility — an `overrides` change is cleared by review, not by
-   a file.
+   Removing one is exactly as much of a decision as adding it was, which is why
+   the reason is required to move in either direction rather than only on the
+   way in.
 
 3. **If overriding genuinely breaks things**, there is no good option today.
    `--report` drops gating entirely and `--floor` drops a whole severity; both

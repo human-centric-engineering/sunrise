@@ -127,6 +127,61 @@ describe('extractUnreleasedBullets', () => {
     expect(extractUnreleasedBullets(source).map((b) => b.startLine)).toEqual([9]);
   });
 
+  it('does not open a fence on a wrapped line that begins with a code span', () => {
+    // A backtick fence may not carry backticks in its info string. Matching on
+    // the character alone reads this as an opening fence, and everything after
+    // it — including the next entry — falls silently out of the scan. The
+    // structural parser next door documents the same line swallowing a file.
+    const source = [
+      '## [Unreleased]',
+      '',
+      '- **First.** Something changed',
+      '  ```npm run validate``` is now first',
+      '  and `lib/a.ts` moved.',
+      '',
+      '- **Second.** About `lib/b.ts`.',
+    ].join('\n');
+
+    expect(extractUnreleasedBullets(source)).toHaveLength(2);
+  });
+
+  it('does not let a shorter inner fence close a longer outer one', () => {
+    // CommonMark closes only on a run at least as long as the opening one.
+    // Without that, the inner ``` ends the outer ````, and the lines between
+    // read as real bullets.
+    const source = [
+      '## [Unreleased]',
+      '',
+      '````',
+      '- inside a four-tick block',
+      '```',
+      '- still inside',
+      '````',
+      '',
+      '- **Real.** The only entry here.',
+    ].join('\n');
+
+    expect(extractUnreleasedBullets(source).map((b) => b.text)).toEqual([
+      '- **Real.** The only entry here.',
+    ]);
+  });
+
+  it('does not close a fence on a delimiter carrying an info string', () => {
+    const source = [
+      '## [Unreleased]',
+      '',
+      '```',
+      '- inside',
+      '``` trailing words',
+      '- still inside',
+      '```',
+      '',
+      '- **Real.**',
+    ].join('\n');
+
+    expect(extractUnreleasedBullets(source).map((b) => b.text)).toEqual(['- **Real.**']);
+  });
+
   it('excludes trailing blank lines from an entry', () => {
     const source = ['## [Unreleased]', '', '- one line', '', '', '- another'].join('\n');
 

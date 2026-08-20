@@ -387,6 +387,7 @@ Output a clear summary in this format:
 - [ ] Changed docs accuracy: {CLEAN or issues found}
 - [ ] Docs missing/outdated for code changes: {CLEAN or issues found}
 - [ ] CHANGELOG hygiene (public-surface changes): {CLEAN or N/A (no public-surface change) or "{N} file(s) touched the public surface without a CHANGELOG entry"}
+- [ ] CHANGELOG hygiene (stale `[Unreleased]` bullets, step 5e): {CLEAN, or "{N} bullet(s) this branch wrote worth re-reading, {M} inherited, {K} doomed commit reference(s)" — say which you re-read and what you concluded, since the check never gates}
 
 ### Issues to Address
 {List each issue with file path, line number, and brief description}

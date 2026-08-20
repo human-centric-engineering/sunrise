@@ -60,6 +60,8 @@ interface GitAnswers {
   blame?: string;
   /** identifier → SHAs the pickaxe reports. */
   pickaxe?: Record<string, string[]>;
+  /** Set to make `git blame` fail outright rather than return lines. */
+  blameFails?: boolean;
   /** Refs `rev-parse --verify` should fail for. */
   unknownRefs?: string[];
   /** SHAs that ARE ancestors of origin/main. */
@@ -75,6 +77,7 @@ function gitReturns(answers: GitAnswers = {}) {
     pickaxe = {},
     unknownRefs = [],
     onMain = [],
+    blameFails = false,
   } = answers;
 
   mockExecFileSync.mockImplementation((_cmd: string, args: string[]) => {
@@ -91,7 +94,7 @@ function gitReturns(answers: GitAnswers = {}) {
     }
     if (args[0] === 'show') return changelog === null ? fail() : changelog;
     if (args[0] === 'rev-list') return revList;
-    if (args[0] === 'blame') return blameOut;
+    if (args[0] === 'blame') return blameFails ? fail() : blameOut;
     if (args[0] === 'log') {
       const token = args.find((arg) => arg.startsWith('-S'))?.slice(2) ?? '';
       return (pickaxe[token] ?? []).join('\n');
@@ -165,6 +168,34 @@ describe('scripts/ci/check-changelog-drift', () => {
 
     expect(out()).not.toContain('already in [Unreleased] before this branch');
     expect(out()).toContain('1 bullet(s) this branch wrote worth re-reading, 0 inherited');
+  });
+
+  it('says blame failed rather than reporting every bullet as inherited', async () => {
+    // An empty blame result and a failed one are not the same thing. Treating
+    // the failure as empty stamps every line PREDATES_BRANCH, files every
+    // finding under "already in [Unreleased] before this branch", and reports
+    // "0 bullet(s) this branch wrote" — a confident wrong answer for a branch
+    // that wrote all of them.
+    gitReturns({ blameFails: true, pickaxe: { 'lib/thing.ts': [FIRST] } });
+
+    await run();
+
+    expect(out()).toContain('Could not run `git blame`');
+    expect(out()).toContain('says nothing about who wrote what');
+  });
+
+  it('reports a doomed SHA at its own line, not the start of the entry', async () => {
+    // Multi-line entries are the norm here, and the first line is usually prose
+    // with no SHA in it.
+    const doomed = 'd23d458';
+    gitReturns({
+      changelog: CHANGELOG.replace('leaking, see', `leaking, fixed in ${doomed}, see`),
+    });
+
+    await run();
+
+    // The SHA sits on line 8; the entry starts on line 7.
+    expect(out()).toContain(`CHANGELOG.md:8 — names commit ${doomed}`);
   });
 
   it('never gates, even with findings', async () => {

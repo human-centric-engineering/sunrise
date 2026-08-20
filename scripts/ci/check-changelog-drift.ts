@@ -91,11 +91,17 @@ function branchCommits(base: string): BranchCommit[] {
  * A line this cannot attribute is not dropped — the caller records it as
  * {@link PREDATES_BRANCH}, so an [Unreleased] bullet inherited from an earlier
  * PR is still checked against everything this branch did.
+ *
+ * Returns `null` when blame could not run at all, which is NOT the same as an
+ * empty result. An empty map means every line predates the branch, so every
+ * finding files under "already in [Unreleased] before this branch" and the
+ * summary reports "0 bullet(s) this branch wrote" — a confident, wrong answer
+ * for a branch that wrote all of them. The caller says so instead.
  */
-function blameByLine(): Map<number, string> {
+function blameByLine(): Map<number, string> | null {
   const blame = git(['blame', '--line-porcelain', 'HEAD', '--', CHANGELOG]);
   const byLine = new Map<number, string>();
-  if (blame === null) return byLine;
+  if (blame === null) return null;
   for (const line of blame.split('\n')) {
     const match = /^([0-9a-f]{40}) \d+ (\d+)/.exec(line);
     if (match) byLine.set(Number(match[2]), match[1]);
@@ -138,18 +144,24 @@ export function main(argv: string[]): number {
   }
 
   const commits = branchCommits(base);
-  const byIndex = new Map(commits.map((commit) => [commit.sha, commit]));
+  const bySha = new Map(commits.map((commit) => [commit.sha, commit]));
 
   // Where each LINE was written. A line blamed on a commit outside the branch
   // predates it, and PREDATES_BRANCH makes every branch commit count as later —
   // an inherited [Unreleased] bullet that THIS branch invalidated is the same
   // defect arriving by a different route.
   const blame = blameByLine();
+  if (blame === null) {
+    console.log(
+      `Could not run \`git blame\` on ${CHANGELOG} — every bullet reads as predating this`
+    );
+    console.log('branch, so the split below says nothing about who wrote what.');
+  }
   const writtenAt = new Map<number, number>();
   for (const bullet of bullets) {
     for (let line = bullet.startLine; line <= bullet.endLine; line += 1) {
-      const sha = blame.get(line);
-      const commit = sha === undefined ? undefined : byIndex.get(sha);
+      const sha = blame?.get(line);
+      const commit = sha === undefined ? undefined : bySha.get(sha);
       writtenAt.set(line, commit?.index ?? PREDATES_BRANCH);
     }
   }
@@ -174,7 +186,7 @@ export function main(argv: string[]): number {
       ]);
       const hits = (log ?? '')
         .split('\n')
-        .map((sha) => byIndex.get(sha.trim()))
+        .map((sha) => bySha.get(sha.trim()))
         .filter((commit): commit is BranchCommit => commit !== undefined);
       touchedBy.set(token, hits);
     }
@@ -191,10 +203,21 @@ export function main(argv: string[]): number {
   const doomed: { line: number; sha: string }[] = [];
   if (mainKnown) {
     for (const bullet of bullets) {
-      for (const candidate of shaCandidatesIn(bullet.text)) {
-        if (!gitOk(['rev-parse', '--verify', `${candidate}^{commit}`])) continue;
-        if (gitOk(['merge-base', '--is-ancestor', candidate, MAIN])) continue;
-        doomed.push({ line: bullet.startLine, sha: candidate });
+      // Per line, like the drift findings: on the multi-line entries this
+      // changelog actually uses, the bullet's first line is usually prose that
+      // does not contain the SHA, so `CHANGELOG.md:<line>` pointed at the wrong
+      // place. `shaCandidatesIn` dedupes within a call, so the bullet-wide set
+      // does it across lines.
+      const seen = new Set<string>();
+      const lines = bullet.text.split('\n');
+      for (let offset = 0; offset < lines.length; offset += 1) {
+        for (const candidate of shaCandidatesIn(lines[offset])) {
+          if (seen.has(candidate)) continue;
+          if (!gitOk(['rev-parse', '--verify', `${candidate}^{commit}`])) continue;
+          if (gitOk(['merge-base', '--is-ancestor', candidate, MAIN])) continue;
+          seen.add(candidate);
+          doomed.push({ line: bullet.startLine + offset, sha: candidate });
+        }
       }
     }
   }

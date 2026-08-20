@@ -49,9 +49,11 @@
  * shape this job exists for, a `package.json` `overrides` entry forces the
  * patched transitive past the parent's declared range and clears the finding
  * *legitimately*, because the tree actually changes. It is not a back door
- * either: `hasRisk` in `lockfile-diff.ts` gates on any `overrides` change, so
- * it lands as a reviewed decision. It can break the parent that declared the
- * range, which is precisely why it is gated rather than quiet.
+ * either: `hasRisk` in `lockfile-diff.ts` gates an `overrides` change whose
+ * `package.json` `overrideReasons` entry did not move in the same diff (#608),
+ * so it lands as a reviewed decision with the reason beside it. **Write that
+ * reason** — the gate is what makes this a decision rather than a quiet edit,
+ * and an override can break the parent that declared the range.
  *
  * If overriding genuinely breaks things, there is no good option today —
  * `--report` drops gating entirely and `--floor` drops a whole severity. The
