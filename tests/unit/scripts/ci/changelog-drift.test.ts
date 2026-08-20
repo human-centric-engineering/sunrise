@@ -77,6 +77,23 @@ describe('extractUnreleasedBullets', () => {
     expect(extractUnreleasedBullets(source).map((b) => b.text)).toEqual(['- kept']);
   });
 
+  it('ends the section at a malformed `## ` heading too, not just a valid one', () => {
+    // The structural check next door reports such a heading as a violation
+    // rather than a boundary. If this treated it as ordinary text, everything
+    // below it — the whole released history — would be read as [Unreleased].
+    const source = [
+      '## [Unreleased]',
+      '',
+      '- kept',
+      '',
+      '## Not A Valid Heading',
+      '',
+      '- belongs to whatever that is',
+    ].join('\n');
+
+    expect(extractUnreleasedBullets(source).map((b) => b.text)).toEqual(['- kept']);
+  });
+
   it('ignores bullets inside a fenced code block', () => {
     // A changelog entry quoting a shell session is sample text, not a claim.
     const source = [

@@ -160,6 +160,14 @@ merge base with `origin/main`, and **skips the history rule quietly** when that
 is unavailable — a fresh clone with no remote, a detached HEAD, or a fork whose
 upstream is named something else. CI is where that rule is enforced.
 
+`npm run check:changelog-drift` is a **separate, local-only** check and is
+deliberately not a CI job. It asks whether an `[Unreleased]` bullet is still
+true after everything else the branch did — the failure `check:changelog`'s
+structural rules cannot see, because a falsified claim leaves a perfectly
+well-formed file. Its identifier correlation is a heuristic, so it never gates
+and has no place in a pipeline that blocks merges; `/pre-pr` step 5e runs it and
+the agent judges the output (#627).
+
 > **Fork note.** The check assumes `CHANGELOG.md` carries Sunrise's release
 > history. A fork that empties the file, or renumbers it to its own app
 > versions, fails the `SUNRISE_VERSION` agreement rule on **every** PR
@@ -345,7 +353,19 @@ These help both repo types and cost nothing, so they're always on:
   pin needed a 250-line acknowledgement mechanism to become mergeable.
   `dependency-review` is **skipped on private repos**, so a private fork loses
   the per-PR enforcement; the downgrade is still printed in its own block with
-  that caveat. Lost `libc`/`os`/`cpu` and `overrides` changes still gate.
+  that caveat.
+
+  **Lost `libc`/`os`/`cpu` still gates unconditionally. An `overrides` change
+  gates only when it is unexplained** — the key's `overrideReasons` entry in
+  `package.json` has to move in the same diff (#608). Before that the rule
+  failed on every override change and ended with the word "Intentional?", which
+  is a question a build cannot be told the answer to: wired into branch
+  protection, the only routes past were bypassing the protection or weakening
+  the rule. Measured against every commit that had touched `package.json` up to
+  that point — 149 of them, at `07a14800` — the overrides block moved **once**,
+  six months before this check existed, so it had never fired in its own
+  lifetime when the fix landed. Reasons for keys a diff did not touch are never
+  read, so a fork inheriting the upstream block is unaffected.
 
   It exists because `/pre-pr` runs this check locally and **Dependabot PRs never
   run `/pre-pr`**. npm below 11.11.0 deletes `libc` from every entry it writes,

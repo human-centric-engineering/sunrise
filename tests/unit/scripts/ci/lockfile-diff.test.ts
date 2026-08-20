@@ -623,6 +623,24 @@ describe('diffLockfiles', () => {
       expect(problems(added, undefined, { 'adm-zip': value })).toEqual(['no-reason']);
     });
 
+    it.each([
+      ['a string', 'not an object at all'],
+      ['an array', ['why']],
+      ['null', null],
+      ['a number', 7],
+    ])('survives an overrideReasons block that is %s', (_label, reasons) => {
+      // `package.json` is external data reached through a bare `as Manifest`,
+      // so the block is only an object because a human wrote one. Reading a key
+      // off a string or a number yields undefined rather than throwing, but
+      // that is a property of the language, not of anything asserted elsewhere.
+      expect(() =>
+        unexplainedOverrides(added, undefined, reasons as unknown as Record<string, unknown>)
+      ).not.toThrow();
+      expect(problems(added, undefined, reasons as unknown as Record<string, unknown>)).toEqual([
+        'no-reason',
+      ]);
+    });
+
     it('carries the standing reason on the finding, so it can be printed back', () => {
       // An acknowledgement nobody reads back is a silence with extra steps.
       expect(unexplainedOverrides(repointed, { 'adm-zip': WHY }, { 'adm-zip': WHY })).toEqual([

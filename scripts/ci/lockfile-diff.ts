@@ -499,12 +499,13 @@ export function diffLockfiles(
  * Whether the diff contains anything a human has to rule on.
  *
  * `overrideChanges` is deliberately **not** what is read here —
- * {@link unexplainedOverrides} is. Measured over all 149 commits that have
- * touched `package.json`, the overrides block moved **once** (2026-02-13,
- * adding both entries), six months before this check existed. So the gate has
- * never fired in its own lifetime, and the one PR that expected to hit it
- * (#601) closed by replacing `epub2` rather than adding an override. A gate
- * with that record must not also be unanswerable when it finally does fire.
+ * {@link unexplainedOverrides} is. Measured against every commit that had
+ * touched `package.json` up to that point — 149 of them, at `07a14800` — the
+ * overrides block moved **once**, on 2026-02-13, adding both entries. That is
+ * six months before this check existed, so the gate had never fired in its own
+ * lifetime, and the one PR that expected to hit it (#601) closed by replacing
+ * `epub2` rather than adding an override. A gate with that record must not also
+ * be unanswerable when it finally does fire.
  *
  * Note what is **not** here. Added, removed and version-changed packages are
  * reported but do not make a diff notable — every dependency PR moves
