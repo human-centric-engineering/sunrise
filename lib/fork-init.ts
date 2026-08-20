@@ -76,6 +76,17 @@ export interface AppInitGateOptions<S> {
    * see, so it is named in the log).
    */
   onSuccess?: (snapshot: S) => void;
+  /**
+   * Runs after a failed init, once, with whatever was thrown — after the
+   * rollback and the log line. For a registry whose consumer needs to do more
+   * than degrade: `subject-source-registry` refuses to build an export bundle,
+   * and `capabilities/registry` re-raises rather than serving an agent whose
+   * entire toolset silently vanished.
+   *
+   * It must not throw. Anything it raises escapes `ensure()`, which every
+   * caller is entitled to treat as safe.
+   */
+  onFailure?: (err: unknown) => void;
 }
 
 /**
@@ -93,7 +104,7 @@ export interface AppInitGateOptions<S> {
  * ```
  */
 export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGate {
-  const { label, subject, init, snapshot, restore, onSuccess } = options;
+  const { label, subject, init, snapshot, restore, onSuccess, onFailure } = options;
   let ran = false;
   let succeeded = false;
 
@@ -117,6 +128,7 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
         logger.error(`${label} threw — ${subject} rolled back and disabled`, {
           error: describeThrown(err),
         });
+        onFailure?.(err);
         return false;
       }
 

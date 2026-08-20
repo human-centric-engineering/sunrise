@@ -41,6 +41,7 @@ vi.mock('@/lib/logging', () => ({
 vi.mock('@/lib/app/capabilities', () => ({ initAppCapabilities: vi.fn() }));
 
 const { prisma } = await import('@/lib/db/client');
+const { logger } = await import('@/lib/logging');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 const {
   registerBuiltInCapabilities,
@@ -154,6 +155,9 @@ beforeEach(() => {
   __resetDivergenceWarningsForTests();
   // Reinstall the default empty resolution (cleared by clearAllMocks).
   (prisma.aiCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  // `clearAllMocks` clears CALLS but not implementations, so a case that makes
+  // the fork seam throw would otherwise throw in every case after it.
+  vi.mocked(initAppCapabilities).mockReset();
 });
 
 describe('registerBuiltInCapabilities', () => {
@@ -182,6 +186,54 @@ describe('registerBuiltInCapabilities', () => {
     // top of this file, so this counts core and nothing else.
     expect(spy).toHaveBeenCalledTimes(13);
     spy.mockRestore();
+  });
+
+  it('runs a THROWING app capability seam exactly once, not on every dispatch', () => {
+    // The latch used to be set AFTER the call, so this file's own comment
+    // ("guarded so it isn't re-run on every dispatch") was false on exactly the
+    // path that mattered — measured at 2 calls for 2 dispatches, i.e. forever.
+    vi.mocked(initAppCapabilities).mockImplementation(() => {
+      throw new Error('fork boom');
+    });
+
+    expect(() => registerBuiltInCapabilities()).toThrow();
+    expect(() => registerBuiltInCapabilities()).toThrow();
+    expect(() => registerBuiltInCapabilities()).toThrow();
+
+    expect(initAppCapabilities).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps failing loudly after a throwing init, rather than degrading silently', () => {
+    // Deliberately NOT changed to match the other ten seams, and deliberately
+    // not left to fail only once. An init throw means the fork's ENTIRE
+    // capability set is rolled back — 28 tools for hce-hub, not one — so an
+    // agent would answer from its own weights with nothing marking the gap.
+    // Whether that should stay loud is a product decision the follow-up issue
+    // makes with per-item attribution in hand; until then this is the behaviour
+    // that already shipped.
+    vi.mocked(initAppCapabilities).mockImplementation(() => {
+      throw new Error('fork boom');
+    });
+
+    expect(() => registerBuiltInCapabilities()).toThrow(/initAppCapabilities/);
+    expect(() => registerBuiltInCapabilities()).toThrow(/fork boom/);
+  });
+
+  it('rolls back a PARTIAL init so nothing half-registered can reach the dispatcher', () => {
+    const orphan = makeAppCap('partial_init_orphan');
+    vi.mocked(initAppCapabilities).mockImplementation(() => {
+      registerAppCapability(orphan);
+      throw new Error('fork boom on the second');
+    });
+
+    expect(() => registerBuiltInCapabilities()).toThrow();
+    expect(capabilityDispatcher.has(orphan.slug)).toBe(false);
+
+    // `registerAppCapabilities()` is exported, so the pending map is reachable
+    // independently of the throwing path. Rollback is what makes that safe —
+    // without it this flushes a capability the log says is disabled.
+    registerAppCapabilities();
+    expect(capabilityDispatcher.has(orphan.slug)).toBe(false);
   });
 
   it('still runs the app capability seam, exactly once', () => {
@@ -270,8 +322,6 @@ describe('getCapabilityDefinitions', () => {
   });
 
   it('warns and skips capabilities with malformed functionDefinition JSON', async () => {
-    const { logger } = await import('@/lib/logging');
-
     (prisma.aiAgentCapability.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: 'aac-bad',
@@ -332,7 +382,6 @@ describe('getCapabilityDefinitions', () => {
       },
     ]);
 
-    const { logger } = await import('@/lib/logging');
     const defs = await getCapabilityDefinitions('agent-1');
     expect(defs).toHaveLength(1);
     expect(defs[0]?.name).toBe('search_knowledge_base');
@@ -587,22 +636,60 @@ describe('registerAppCapability + registerAppCapabilities', () => {
     spy.mockRestore();
   });
 
-  it('PII guard fires through the flush — a processesPii=true cap with no redactProvenance override causes registerAppCapabilities() to throw', () => {
-    // This proves the flush calls the REAL dispatcher.register(), not a stub.
-    // The guard in dispatcher.register() throws when processesPii=true but
-    // the subclass does not override redactProvenance().
-    const badCap = makeAppCapPiiNoRedact('guard');
-    registerAppCapability(badCap);
+  it('PII guard fires through the flush — but is ISOLATED to the capability that failed it', () => {
+    // This proves the flush calls the REAL dispatcher.register(), not a stub:
+    // the guard in dispatcher.register() throws when processesPii=true but the
+    // subclass does not override redactProvenance().
+    //
+    // It used to propagate, and that is the defect (#633). This guard exists to
+    // catch a FORK AUTHORING mistake, and it fires mid-loop — so one bad
+    // capability at position 12 of hce-hub's 28 left 11 in the dispatcher, 16
+    // never registered, and every dispatch path throwing. The fork's other 27
+    // tools are not implicated by one of them being misdeclared.
+    const before = makeAppCap('flush_isolation_before');
+    const bad = makeAppCapPiiNoRedact('flush_isolation');
+    const after = makeAppCap('flush_isolation_after');
+    registerAppCapability(before);
+    registerAppCapability(bad);
+    registerAppCapability(after);
 
-    // Act + Assert — flushing must propagate the register() guard throw.
-    expect(() => registerAppCapabilities()).toThrow(/processesPii=true.*redactProvenance/);
+    expect(() => registerAppCapabilities()).not.toThrow();
 
-    // A well-behaved PII cap (with redactProvenance overridden) should NOT throw.
-    __resetRegistrationForTests(); // reset so we start clean
+    // The one that failed its guard is absent; the ones on either side of it
+    // are live. Registration order matters here — `after` is the one a
+    // propagating throw skipped entirely.
+    expect(capabilityDispatcher.has(before.slug)).toBe(true);
+    expect(capabilityDispatcher.has(bad.slug)).toBe(false);
+    expect(capabilityDispatcher.has(after.slug)).toBe(true);
+
+    // Named, so a fork author can fix it without bisecting their init.
+    expect(logger.error).toHaveBeenCalledWith(
+      'capabilities: an app capability failed to register — skipping it',
+      expect.objectContaining({
+        slug: bad.slug,
+        error: expect.stringMatching(/processesPii=true.*redactProvenance/s),
+      })
+    );
+
+    // A well-behaved PII cap (with redactProvenance overridden) still registers.
+    __resetRegistrationForTests();
     const goodPiiCap = makeAppCapWithPii('guard_ok');
     registerAppCapability(goodPiiCap);
     expect(() => registerAppCapabilities()).not.toThrow();
     expect(capabilityDispatcher.has(goodPiiCap.slug)).toBe(true);
+  });
+
+  it('does not re-run the flush loop on every dispatch after skipping a failure', () => {
+    // The skip must still complete the flush, or `appRegistered` stays false and
+    // the whole loop — including the failing register() and its log line — runs
+    // again on every single dispatch.
+    registerAppCapability(makeAppCapPiiNoRedact('flush_latch'));
+
+    registerAppCapabilities();
+    registerAppCapabilities();
+    registerAppCapabilities();
+
+    expect(logger.error).toHaveBeenCalledTimes(1);
   });
 
   // Note: the "is idempotent (13 calls)" built-in test above already proves the

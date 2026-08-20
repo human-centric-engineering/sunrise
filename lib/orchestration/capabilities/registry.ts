@@ -37,6 +37,7 @@ import { RunWorkflowCapability } from '@/lib/orchestration/capabilities/built-in
 import { UploadToStorageCapability } from '@/lib/orchestration/capabilities/built-in/upload-to-storage';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import { initAppCapabilities } from '@/lib/app/capabilities';
+import { createAppInitGate, restoreMap, describeThrown } from '@/lib/fork-init';
 import type { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import type {
   CapabilityFunctionDefinition,
@@ -45,7 +46,8 @@ import type {
 
 // ─── Registration state machine ──────────────────────────────────────────────
 //
-// Three module-scoped flags drive a small lazy-flush state machine so the
+// Two module-scoped flags and one shared init gate drive a small lazy-flush
+// state machine so the
 // built-ins, the fork's auto-wired init, and any direct `registerAppCapability`
 // calls all reach the dispatcher exactly once per change — never on every
 // dispatch.
@@ -55,11 +57,13 @@ import type {
 //     inside `registerBuiltInCapabilities`. Never reset except by the test-only
 //     `__resetRegistrationForTests`. Guards the built-in flush from re-running.
 //
-//   appInited       false → true (one-shot per app file)
-//     Set after `initAppCapabilities()` (the fork's `lib/app/capabilities.ts`
-//     hook) runs. Lets the fork accumulate capabilities at module-import time
-//     by calling `registerAppCapability(...)`, without that init firing on
-//     every dispatch.
+//   appInit         the shared one-shot gate (lib/fork-init.ts)
+//     Latches BEFORE running `initAppCapabilities()` (the fork's
+//     `lib/app/capabilities.ts` hook), so the fork can accumulate capabilities
+//     at module-import time via `registerAppCapability(...)` without that init
+//     firing on every dispatch. It used to latch AFTER, which made that
+//     sentence false on the only path where it mattered: a throwing init ran
+//     again on every single dispatch, forever (#633).
 //
 //   appRegistered   true ↔ false (re-armable)
 //     Set after `registerAppCapabilities` flushes the `appCapabilities` map
@@ -70,14 +74,12 @@ import type {
 //
 // Order on every call to `registerBuiltInCapabilities`:
 //   1. Flush built-ins (gated by `registered`).
-//   2. Run app init hook (gated by `appInited`).
+//   2. Run the app init hook (gated by `appInit`; re-raises if it threw).
 //   3. Flush app capabilities (gated by `appRegistered`).
 //
-// `__resetRegistrationForTests` clears all three (and the `appCapabilities`
-// map) so each test starts from a clean slate.
+// `__resetRegistrationForTests` clears both flags, re-arms the gate, and
+// empties the `appCapabilities` map, so each test starts from a clean slate.
 let registered = false;
-/** Whether the auto-wired app capability init (`lib/app/capabilities.ts`) has run. */
-let appInited = false;
 
 // ─── App capability registration (fork-readiness seam) ───────────────────────
 
@@ -94,6 +96,42 @@ const appCapabilities = new Map<
   { capability: BaseCapability; options?: CapabilityRegisterOptions }
 >();
 let appRegistered = false;
+
+/**
+ * Whatever the fork's init threw, kept so every later caller can be told the
+ * same thing rather than a bare "no app capabilities".
+ */
+let appInitError: unknown = null;
+
+/**
+ * Run the fork's auto-wired init exactly once, lazily, rolling a partial init
+ * back — see `lib/fork-init.ts` for the shared contract.
+ *
+ * **This seam re-raises where the other ten degrade, and that is deliberate.**
+ * The rollback means an init throw costs the fork its ENTIRE capability set,
+ * not one entry — 28 tools for one of the forks that fills this seam. The
+ * others degrade to something a person notices: a missing nav section, an
+ * observer that did not fire. An agent missing its whole toolset does not go
+ * quiet; it answers from its own weights, confidently and with nothing marking
+ * the gap. Failing loudly is the behaviour that already shipped, and whether it
+ * should stay is a product decision that belongs with the per-capability
+ * attribution the follow-up issue adds, not with this fix.
+ *
+ * Note what this does NOT cover: a fork's init is a bare sequence of
+ * statements, so core has no boundary to isolate `new YourTool()` throwing
+ * halfway down it. That needs a deferred registration form. The flush below is
+ * the half that IS isolatable today.
+ */
+const appInit = createAppInitGate({
+  label: 'capabilities: initAppCapabilities',
+  subject: 'app capabilities',
+  init: initAppCapabilities,
+  snapshot: () => new Map(appCapabilities),
+  restore: (before) => restoreMap(appCapabilities, before),
+  onFailure: (err) => {
+    appInitError = err;
+  },
+});
 
 /**
  * Register an app-owned capability so it joins the dispatcher on the next
@@ -131,9 +169,32 @@ export function registerAppCapability(
  */
 export function registerAppCapabilities(): void {
   if (appRegistered) return;
-  for (const { capability, options } of appCapabilities.values()) {
-    capabilityDispatcher.register(capability, options);
+  for (const [key, { capability, options }] of appCapabilities) {
+    try {
+      capabilityDispatcher.register(capability, options);
+    } catch (err) {
+      // Isolate the failure to the capability that caused it (#633).
+      //
+      // `register()` throws on a FORK AUTHORING mistake — `processesPii = true`
+      // with no `redactProvenance()` override — and it throws mid-loop. Letting
+      // it propagate meant one bad capability at position 12 of 28 left 11 in
+      // the dispatcher, 16 never registered, and every dispatch path throwing:
+      // an arbitrary subset determined by source-code order, not by intent.
+      //
+      // Unlike the init above, this loop is core code walking items core
+      // already holds, so it HAS a boundary to isolate on. The other 27 tools
+      // are not implicated by one of them being misdeclared, and the one that
+      // is gets named — a fork author should not have to bisect their init to
+      // find it.
+      logger.error('capabilities: an app capability failed to register — skipping it', {
+        slug: key,
+        error: describeThrown(err),
+      });
+    }
   }
+  // Set even when an entry was skipped. A failure here is deterministic, so
+  // leaving this false would re-run the whole loop — and re-log the failure —
+  // on every dispatch for the life of the process.
   appRegistered = true;
 }
 
@@ -162,12 +223,18 @@ export function registerBuiltInCapabilities(): void {
   // Auto-wire the app's capability registrations (fork-readiness — the
   // `lib/app/` bootstrap surface). Runs once, here in the server route-handler
   // realm, so a fork's `registerAppCapability()` calls in `lib/app/capabilities.ts`
-  // land before the flush below — no separate wiring step. Guarded so it isn't
+  // land before the flush below — no separate wiring step. Latched so it isn't
   // re-run on every dispatch; direct `registerAppCapability()` callers still
   // flush via the `appRegistered` path.
-  if (!appInited) {
-    initAppCapabilities();
-    appInited = true;
+  if (!appInit.ensure()) {
+    // Re-raised on every call, not just the first: see the gate above. A single
+    // failure at boot followed by silence would be the worst of both — the
+    // signal appears once and the deployment then looks healthy while the
+    // fork's entire toolset is missing.
+    throw new Error(
+      `initAppCapabilities() threw, so no app capabilities are registered: ${describeThrown(appInitError)}`,
+      { cause: appInitError }
+    );
   }
   // App capabilities register on the same lazy path, right after the
   // built-ins. Cheap when already flushed (one boolean check).
@@ -182,7 +249,8 @@ export function registerBuiltInCapabilities(): void {
 export function __resetRegistrationForTests(): void {
   registered = false;
   appRegistered = false;
-  appInited = false;
+  appInit.reset();
+  appInitError = null;
   appCapabilities.clear();
 }
 
