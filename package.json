@@ -21,6 +21,7 @@
     "format:prisma:check": "tsx scripts/ci/check-prisma-format.ts",
     "check:changelog": "tsx scripts/ci/check-changelog.ts",
     "check:node-version": "tsx scripts/ci/check-node-version.ts",
+    "check:changelog-drift": "tsx scripts/ci/check-changelog-drift.ts",
     "check:lockfile": "tsx scripts/ci/check-lockfile.ts",
     "check:exports": "tsx scripts/ci/check-exports.ts",
     "check:audit": "tsx scripts/ci/check-audit.ts",

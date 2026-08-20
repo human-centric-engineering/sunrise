@@ -317,6 +317,25 @@ If no public-surface paths are in the diff, the check is silent (correct — mos
 
 This check is a **reminder, not a gate**. The agent reads the flag and decides; mechanical checks can't tell whether a `lib/auth/guards.ts` edit changed behaviour the public depends on or was an internal type tweak.
 
+**5e. CHANGELOG hygiene — an `[Unreleased]` bullet a later commit invalidated**
+
+5d stops at "is there an entry", and says so explicitly: _"If `CHANGELOG.md` IS in the diff, the check passes regardless of what was added."_ In a multi-round PR the likelier failure is the opposite — a bullet that was **accurate when written** and was falsified by a later commit on the same branch. It fired six times on #625 alone, and every one of them passed 5d.
+
+```bash
+npm run check:changelog-drift -- --base "$BASE"
+```
+
+It correlates the identifiers each bullet quotes **in backticks** against the commits that changed those strings later on the branch, per line rather than per bullet, and separately flags any commit SHA in the section that is not reachable from `origin/main` — a branch SHA stops resolving the moment the PR is squash-merged, so cite the PR or issue instead.
+
+**Read the output; it never gates.** The identifier correlation is a heuristic and will produce false positives — most often a bullet naming a file that a later commit only mentioned in a comment. Exit 1 from this command means it could not run (an unusable `--base`), never that it disapproves of a bullet. Deliberately so: an unanswerable gate is the defect #608 fixed in `check:lockfile`, and shipping one here would be absurd.
+
+**Two things it structurally cannot see**, so check them yourself rather than reading a clean run as an all-clear:
+
+- **A claim that was already wrong when written.** #625's "at 8192, the value the docs tell you to set" quoted a number an _earlier_ commit on the same branch had changed to 6144. Nothing later touched it, so nothing links it.
+- **An omission.** "`typecheck`, `lint`, `build` keep it" was stale because it left out `smoke`, `docker` and `lockfile`. No identifier changed; the missing ones were never named.
+
+**Then re-read `[Unreleased]` yourself, last.** After every other step, with the diff fresh, read the section you wrote and hunt claims your own later commits invalidated. That is what actually caught five of #625's six, and it is the half of this step no script replaces. Note that a manual pass has its own failure mode: the #625 audit introduced the sixth error while fixing the other five, by replacing a vague phrase with a branch SHA. That one the script does catch.
+
 ### Step 6: Output summary
 
 Output a clear summary in this format:
