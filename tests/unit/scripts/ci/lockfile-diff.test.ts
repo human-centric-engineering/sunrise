@@ -16,7 +16,10 @@ import {
   directDowngrades,
   hasRisk,
   isDowngrade,
+  MIN_OVERRIDE_REASON,
+  unexplainedOverrides,
   type Lockfile,
+  type OverrideChange,
 } from '@/scripts/ci/lockfile-diff';
 
 /** A native Linux package as npm writes it, metadata intact. */
@@ -34,6 +37,11 @@ const BASE: Lockfile = {
     'node_modules/@napi-rs/canvas-linux-x64-gnu': NATIVE,
   },
 };
+
+/** Two reasons that clear {@link MIN_OVERRIDE_REASON}, so length is never the
+ * incidental cause of a failure a test meant to attribute to something else. */
+const WHY = 'Dependabot alert on the transitive copy; see #601.';
+const WHY_LATER = 'Re-pointed after the parent widened its range; see #612.';
 
 /** Deep-ish clone so a test mutating its fixture cannot leak into the next. */
 function clone(lock: Lockfile): Lockfile {
@@ -96,6 +104,7 @@ describe('diffLockfiles', () => {
       gainedNativeMetadata: [],
       overridesChanged: false,
       overrideChanges: [],
+      unexplainedOverrides: [],
     });
     expect(hasRisk(diff)).toBe(false);
   });
@@ -455,7 +464,7 @@ describe('diffLockfiles', () => {
     // Read from `package.json`, never the lockfile: the word does not appear in
     // `package-lock.json` at all. The earlier fixtures put it at the lockfile
     // root, so they were green against a rule that could never fire.
-    it('gates a changed value', () => {
+    it('gates a changed value carrying no reason', () => {
       const diff = diffLockfiles(BASE, clone(BASE), {
         baseOverrides: { hono: '^4.11.7' },
         headOverrides: { hono: '^5.0.0' },
@@ -464,10 +473,24 @@ describe('diffLockfiles', () => {
       expect(hasRisk(diff)).toBe(true);
     });
 
-    it('gates a newly added override', () => {
+    it('gates a newly added override carrying no reason', () => {
       expect(
         hasRisk(diffLockfiles(BASE, clone(BASE), { headOverrides: { valibot: '^1.2.0' } }))
       ).toBe(true);
+    });
+
+    it('lets an added override through when its reason arrives with it', () => {
+      // The behaviour #608 exists for. Before this, every override change
+      // failed, so the only routes past the gate were bypassing branch
+      // protection or weakening the rule.
+      const diff = diffLockfiles(BASE, clone(BASE), {
+        headOverrides: { valibot: '^1.2.0' },
+        headOverrideReasons: { valibot: WHY },
+      });
+
+      expect(diff.overrideChanges).toHaveLength(1);
+      expect(diff.unexplainedOverrides).toEqual([]);
+      expect(hasRisk(diff)).toBe(false);
     });
 
     it('does not fire when they are merely present and unchanged', () => {
@@ -495,6 +518,134 @@ describe('diffLockfiles', () => {
       const withStray = { ...clone(BASE), overrides: { hono: '^9' } } as typeof BASE;
 
       expect(hasRisk(diffLockfiles(BASE, withStray))).toBe(false);
+    });
+
+    it('reaches unexplainedOverrides through diffLockfiles, not just directly', () => {
+      // Everything below exercises the rule in isolation. This asserts the two
+      // are actually wired together, so deleting the call in `diffLockfiles`
+      // cannot leave the suite green.
+      const diff = diffLockfiles(BASE, clone(BASE), {
+        headOverrides: { valibot: '^1.2.0' },
+      });
+
+      expect(diff.unexplainedOverrides).toEqual([
+        { key: 'valibot', from: null, to: '"^1.2.0"', problem: 'no-reason', reason: null },
+      ]);
+    });
+  });
+
+  describe('unexplainedOverrides', () => {
+    const added: OverrideChange[] = [{ key: 'adm-zip', from: null, to: '"^0.6.0"' }];
+    const repointed: OverrideChange[] = [{ key: 'adm-zip', from: '"^0.6.0"', to: '"^0.7.0"' }];
+    const removed: OverrideChange[] = [{ key: 'adm-zip', from: '"^0.6.0"', to: null }];
+
+    const problems = (...args: Parameters<typeof unexplainedOverrides>) =>
+      unexplainedOverrides(...args).map((entry) => entry.problem);
+
+    it('accepts an override whose reason arrives in the same diff', () => {
+      expect(problems(added, undefined, { 'adm-zip': WHY })).toEqual([]);
+    });
+
+    it('refuses an override with no reason at all', () => {
+      expect(problems(added, undefined, undefined)).toEqual(['no-reason']);
+    });
+
+    it('refuses a reason too short to disagree with', () => {
+      const thin = 'x'.repeat(MIN_OVERRIDE_REASON - 1);
+
+      expect(problems(added, undefined, { 'adm-zip': thin })).toEqual(['reason-thin']);
+      expect(problems(added, undefined, { 'adm-zip': `${thin}x` })).toEqual([]);
+    });
+
+    it('refuses a re-pointed override whose reason did not move', () => {
+      // The revert trap: an override walked back to a version that was once
+      // approved must still be explained NOW, in this diff.
+      expect(problems(repointed, { 'adm-zip': WHY }, { 'adm-zip': WHY })).toEqual([
+        'reason-unchanged',
+      ]);
+      expect(problems(repointed, { 'adm-zip': WHY }, { 'adm-zip': WHY_LATER })).toEqual([]);
+    });
+
+    it('accepts a removal whose reason was deleted with it', () => {
+      expect(problems(removed, { 'adm-zip': WHY }, undefined)).toEqual([]);
+    });
+
+    it('refuses a removal that left its reason standing', () => {
+      // The reason would otherwise describe an override that is no longer
+      // there, and nothing marks it as stale.
+      expect(problems(removed, { 'adm-zip': WHY }, { 'adm-zip': WHY })).toEqual([
+        'reason-outlived-override',
+      ]);
+    });
+
+    it('allows removing an override that never had a reason', () => {
+      // Documented leniency, not an oversight: a fork from before this block
+      // existed has nothing to move, and the only way to satisfy a stricter
+      // rule would be writing a reason for a key that is no longer there.
+      expect(problems(removed, undefined, undefined)).toEqual([]);
+    });
+
+    it('closes the pre-authorisation route without a ledger', () => {
+      // Landing the reason in one PR and the override in the next leaves the
+      // second PR with base === head, which fails. The mechanism this replaces
+      // needed a base-revision read, a staleness report and a path filter to
+      // close the same hole.
+      expect(problems(added, { 'adm-zip': WHY }, { 'adm-zip': WHY })).toEqual(['reason-unchanged']);
+    });
+
+    it('does not fail a fork sync that inherits the whole upstream block', () => {
+      // The defect that killed the previous attempt. A fork's merge base has
+      // never seen upstream's reasons, so every inherited entry read as "new"
+      // and the failure told maintainers to delete upstream's decisions.
+      const inherited = { hono: WHY, valibot: WHY_LATER, 'adm-zip': WHY };
+
+      expect(problems(added, undefined, inherited)).toEqual([]);
+      // ...and entries for keys this diff did not touch are never consulted.
+      expect(problems([], undefined, inherited)).toEqual([]);
+    });
+
+    it('does not fail a fork sync that skips intermediate releases', () => {
+      // Upstream changed the override twice; the fork sees one transition
+      // whose `from` matches neither. Only the reason MOVING is required, so
+      // there is nothing to match and nothing to break.
+      const acrossTwoReleases: OverrideChange[] = [{ key: 'adm-zip', from: null, to: '"^0.8.0"' }];
+
+      expect(problems(acrossTwoReleases, undefined, { 'adm-zip': WHY_LATER })).toEqual([]);
+    });
+
+    it.each([
+      ['a number', 6],
+      ['null', null],
+      ['an object', { why: WHY }],
+      ['whitespace', '   \n  '],
+      ['empty', ''],
+    ])('treats %s as no reason at all', (_label, value) => {
+      expect(problems(added, undefined, { 'adm-zip': value })).toEqual(['no-reason']);
+    });
+
+    it('carries the standing reason on the finding, so it can be printed back', () => {
+      // An acknowledgement nobody reads back is a silence with extra steps.
+      expect(unexplainedOverrides(repointed, { 'adm-zip': WHY }, { 'adm-zip': WHY })).toEqual([
+        {
+          key: 'adm-zip',
+          from: '"^0.6.0"',
+          to: '"^0.7.0"',
+          problem: 'reason-unchanged',
+          reason: WHY,
+        },
+      ]);
+    });
+
+    it('reports every unexplained key, not just the first', () => {
+      const two: OverrideChange[] = [
+        { key: 'adm-zip', from: null, to: '"^0.6.0"' },
+        { key: 'hono', from: '"^4.11.7"', to: null },
+      ];
+
+      expect(problems(two, { hono: WHY }, { hono: WHY })).toEqual([
+        'no-reason',
+        'reason-outlived-override',
+      ]);
     });
   });
 

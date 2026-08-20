@@ -145,6 +145,10 @@
     "hono": "^4.11.7",
     "valibot": "^1.2.0"
   },
+  "overrideReasons": {
+    "hono": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive hono. Nothing in the tree has declared hono since v0.8.0, so this entry currently forces nothing — kept as a floor in case it returns. Verify against the lockfile before removing.",
+    "valibot": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive valibot. @prisma/dev pins 1.4.2 today, which already satisfies this range, so the entry is a floor rather than a live force."
+  },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
     "@eslint/js": "^9.39.5",

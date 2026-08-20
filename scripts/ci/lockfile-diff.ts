@@ -35,7 +35,11 @@
  * 3. **`overrides` changes**, read from `package.json` at both revisions —
  *    npm does not write them into the lockfile. An override forces a package
  *    past a range its dependents declared. Sunrise carries two deliberately; a
- *    third appearing in a diff is a decision, not a detail.
+ *    third appearing in a diff is a decision, not a detail. What gates is not
+ *    the change but an *unexplained* one: the `overrideReasons` entry for that
+ *    key has to move in the same diff (#608). Before that, this rule asked
+ *    "Intentional?" and exited 1 with nowhere to answer, so its only outcomes
+ *    were bypassing branch protection or weakening the gate.
  * 4. **What moved at all** — added, removed, changed — so a "3 packages plus a
  *    dedupe" claim can be checked rather than believed.
  *
@@ -66,6 +70,16 @@ export interface Manifest {
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   overrides?: Record<string, unknown>;
+  /**
+   * Why each `overrides` entry exists — the answer to this check's own question.
+   *
+   * An unknown top-level key, which npm preserves and ignores (this manifest is
+   * `private`, so nothing validates it on publish). It lives in `package.json`
+   * rather than in a file of its own so that a fork resolving a merge conflict
+   * in `overrides` has the reason in the same hunk. A separate file is a second
+   * place to forget.
+   */
+  overrideReasons?: Record<string, unknown>;
 }
 
 /**
@@ -144,6 +158,100 @@ export interface OverrideChange {
   to: string | null;
 }
 
+/**
+ * The shortest `overrideReasons` text that counts as an answer.
+ *
+ * Matches `MIN_REASON` in `lib/privacy/subject-source-registry.ts` — long
+ * enough to force a sentence, short enough that a genuine one-liner fits. It
+ * is not a quality bar and cannot be: nothing here can tell a real reason from
+ * twenty characters of noise. What it buys is that the *diff* carries a
+ * sentence a reviewer can disagree with.
+ */
+export const MIN_OVERRIDE_REASON = 20;
+
+/**
+ * An `overrides` transition whose reason did not move with it.
+ *
+ * This is the whole of the gate. An override change with its reason edited in
+ * the same diff passes silently; one without it fails naming both.
+ */
+export interface UnexplainedOverride {
+  key: string;
+  from: string | null;
+  to: string | null;
+  problem: 'no-reason' | 'reason-thin' | 'reason-unchanged' | 'reason-outlived-override';
+  /** The reason standing at HEAD, printed so a reviewer sees what is claimed. */
+  reason: string | null;
+}
+
+/** An `overrideReasons` entry as text, or `null` for absent/blank/non-string. */
+function reasonText(reasons: Manifest['overrideReasons'], key: string): string | null {
+  const value = reasons?.[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * The override changes whose reason did not move in the same diff.
+ *
+ * **The rule is "the reason moved", not "a reason exists"** — and every trap
+ * this replaces is a consequence of that choice:
+ *
+ * - **A pre-authorised reason cannot let a later change through.** Landing a
+ *   reason in one PR and the override in the next leaves the second PR with
+ *   `before === after`, which fails. The mechanism this replaces
+ *   (`.lockfile-decisions`, preserved on `feat/lockfile-decisions-mechanism`)
+ *   needed a base-revision read, a staleness report and a path filter to close
+ *   the same hole; here it is closed by the comparison itself.
+ * - **A revert cannot pass by returning the block to an approved shape.** The
+ *   comparison is per key and against *this* diff's base, so re-pointing
+ *   `hono` back to a version that was once approved still demands a reason
+ *   edit now.
+ * - **A fork sync is not failed.** Nothing here reads reasons for keys the
+ *   diff did not change, so inheriting a whole upstream `overrideReasons`
+ *   block is a no-op. That was the defect that killed the previous attempt:
+ *   every inherited entry read as "new", and the failure told fork maintainers
+ *   to delete upstream's decisions. A fork merging several releases at once
+ *   sees `undefined → <the newest reason>`, which differs, so it passes.
+ *
+ * **What it deliberately does not catch.** Removing an override that never had
+ * a reason passes. There is nothing to move, and failing it would fail forks
+ * for state they inherited from before this block existed — with no fix
+ * available except writing a reason for a key that is no longer there. The
+ * removal is still *printed*; it just does not gate.
+ */
+export function unexplainedOverrides(
+  changes: readonly OverrideChange[],
+  baseReasons: Manifest['overrideReasons'],
+  headReasons: Manifest['overrideReasons']
+): UnexplainedOverride[] {
+  const unexplained: UnexplainedOverride[] = [];
+
+  for (const change of changes) {
+    const before = reasonText(baseReasons, change.key);
+    const after = reasonText(headReasons, change.key);
+    const found = (problem: UnexplainedOverride['problem']) =>
+      unexplained.push({ ...change, problem, reason: after });
+
+    // The override is gone at HEAD. The reason should have gone with it — a
+    // reason still standing for an override that no longer exists is the shape
+    // that misleads the *next* reader, who has no way to tell it is stale.
+    if (change.to === null) {
+      if (after !== null) found('reason-outlived-override');
+      continue;
+    }
+
+    // Thin before unchanged, so the message names the fixable thing: an author
+    // who wrote four characters is told the length, not told to edit again.
+    if (after === null) found('no-reason');
+    else if (after.length < MIN_OVERRIDE_REASON) found('reason-thin');
+    else if (after === before) found('reason-unchanged');
+  }
+
+  return unexplained;
+}
+
 /** A package whose platform-metadata keys changed in one direction. */
 export interface NativeMetadataChange {
   name: string;
@@ -169,6 +277,13 @@ export interface LockfileDiff {
   overridesChanged: boolean;
   /** Per-key `overrides` transitions; empty when the block did not change. */
   overrideChanges: OverrideChange[];
+  /**
+   * The subset of {@link overrideChanges} whose reason did not move with them.
+   *
+   * This is what gates; `overrideChanges` is what gets printed. An override
+   * change explained in the same diff is reported and allowed through.
+   */
+  unexplainedOverrides: UnexplainedOverride[];
 }
 
 /**
@@ -222,6 +337,17 @@ export function diffLockfiles(
      */
     baseOverrides?: Manifest['overrides'];
     headOverrides?: Manifest['overrides'];
+    /**
+     * `overrideReasons` from `package.json` at each revision.
+     *
+     * Passed separately from the overrides themselves so that a caller which
+     * cannot read one manifest disables the whole comparison rather than
+     * reading `undefined` as "the reason was deleted" — which would fail a PR
+     * for a decision it never made. See the `canCompareOverrides` guard in
+     * `check-lockfile.ts`.
+     */
+    baseOverrideReasons?: Manifest['overrideReasons'];
+    headOverrideReasons?: Manifest['overrideReasons'];
   } = {}
 ): LockfileDiff {
   const directDependencies = options.directDependencies ?? new Set<string>();
@@ -344,6 +470,8 @@ export function diffLockfiles(
     if (lost.length > 0) lostNativeMetadata.push({ name, keys: lost });
   }
 
+  const overrideChanges = diffOverrides(options.baseOverrides, options.headOverrides);
+
   changed.sort((a, b) => a.name.localeCompare(b.name));
   lostNativeMetadata.sort((a, b) => a.name.localeCompare(b.name));
   gainedNativeMetadata.sort((a, b) => a.name.localeCompare(b.name));
@@ -358,12 +486,25 @@ export function diffLockfiles(
     // a semantic change and answered with "Intentional?".
     overridesChanged:
       canonicalOverrides(options.baseOverrides) !== canonicalOverrides(options.headOverrides),
-    overrideChanges: diffOverrides(options.baseOverrides, options.headOverrides),
+    overrideChanges,
+    unexplainedOverrides: unexplainedOverrides(
+      overrideChanges,
+      options.baseOverrideReasons,
+      options.headOverrideReasons
+    ),
   };
 }
 
 /**
  * Whether the diff contains anything a human has to rule on.
+ *
+ * `overrideChanges` is deliberately **not** what is read here —
+ * {@link unexplainedOverrides} is. Measured over all 149 commits that have
+ * touched `package.json`, the overrides block moved **once** (2026-02-13,
+ * adding both entries), six months before this check existed. So the gate has
+ * never fired in its own lifetime, and the one PR that expected to hit it
+ * (#601) closed by replacing `epub2` rather than adding an override. A gate
+ * with that record must not also be unanswerable when it finally does fire.
  *
  * Note what is **not** here. Added, removed and version-changed packages are
  * reported but do not make a diff notable — every dependency PR moves
@@ -374,7 +515,7 @@ export function diffLockfiles(
  * visible; they just do not stop the run.
  */
 export function hasRisk(diff: LockfileDiff): boolean {
-  return diff.lostNativeMetadata.length > 0 || diff.overrideChanges.length > 0;
+  return diff.lostNativeMetadata.length > 0 || diff.unexplainedOverrides.length > 0;
 }
 
 /**

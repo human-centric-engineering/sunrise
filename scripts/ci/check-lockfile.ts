@@ -31,8 +31,10 @@ import {
   directDependencyKeys,
   directDowngrades,
   hasRisk,
+  MIN_OVERRIDE_REASON,
   type Lockfile,
   type Manifest,
+  type UnexplainedOverride,
 } from '@/scripts/ci/lockfile-diff';
 
 const LOCKFILE = 'package-lock.json';
@@ -87,6 +89,46 @@ function parseLockfile(source: string, label: string): Lockfile | null {
     console.error(`Could not parse ${LOCKFILE} at ${label}`);
     console.error(error instanceof Error ? error.message : String(error));
     return null;
+  }
+}
+
+/** An `overrideReasons` entry as printable text, or `null` if there is none. */
+function readReason(manifest: Manifest | null, key: string): string | null {
+  const value = manifest?.overrideReasons?.[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * What to do about one unexplained override, as printable lines.
+ *
+ * Each branch names the edit that clears it, in `package.json`, in this PR.
+ * The failure this replaces ended with the single word "Intentional?", which
+ * is a question the build cannot be told the answer to — the whole of #608.
+ */
+function remedy(unexplained: UnexplainedOverride): string[] {
+  const entry = `"overrideReasons"."${unexplained.key}"`;
+  switch (unexplained.problem) {
+    case 'no-reason':
+      return [`→ Add ${entry} to ${MANIFEST} saying why this override exists.`];
+    case 'reason-thin':
+      return [
+        `→ ${entry} is ${unexplained.reason?.length ?? 0} characters; ${MIN_OVERRIDE_REASON} is the floor.`,
+        `  A reviewer has to be able to disagree with it.`,
+      ];
+    case 'reason-unchanged':
+      return [
+        `→ ${entry} did not move with the override. Restate it: it currently`,
+        `  describes the version that was there before this PR.`,
+        ...(unexplained.reason === null ? [] : [`  It still says: ${unexplained.reason}`]),
+      ];
+    case 'reason-outlived-override':
+      return [
+        `→ The override is gone but ${entry} still stands, so the next reader`,
+        `  has no way to tell it is stale. Delete it in this PR too.`,
+        ...(unexplained.reason === null ? [] : [`  It says: ${unexplained.reason}`]),
+      ];
   }
 }
 
@@ -177,7 +219,12 @@ export function main(argv: string[]): number {
   const diff = diffLockfiles(baseLock, head, {
     directDependencies: directDependencyKeys(headManifest ?? {}),
     ...(canCompareOverrides
-      ? { baseOverrides: baseManifest?.overrides, headOverrides: headManifest?.overrides }
+      ? {
+          baseOverrides: baseManifest?.overrides,
+          headOverrides: headManifest?.overrides,
+          baseOverrideReasons: baseManifest?.overrideReasons,
+          headOverrideReasons: headManifest?.overrideReasons,
+        }
       : {}),
   });
 
@@ -236,6 +283,22 @@ export function main(argv: string[]): number {
     console.log(`  ${count} package(s) gained ${label} — platform metadata restored.`);
   }
 
+  // Every override change is printed here, whether or not it gates. An
+  // explained one used to be impossible — the rule failed on all of them — so
+  // there was no pass path to print from. Printing the standing reason is the
+  // point: an acknowledgement that is never read back is a silence with extra
+  // steps, and a reviewer who sees a reason they did not approve has caught
+  // something the diff alone would not have shown them.
+  if (diff.overrideChanges.length > 0) {
+    console.log('');
+    console.log(`${MANIFEST} "overrides" changed:`);
+    for (const change of diff.overrideChanges) {
+      console.log(`  ${change.key} ${change.from ?? 'none'} → ${change.to ?? 'none'}`);
+      const reason = readReason(headManifest, change.key);
+      if (reason !== null) console.log(`    reason: ${reason}`);
+    }
+  }
+
   // Direct downgrades are reported in their own block and do NOT gate. They
   // used to; see `directDowngrades` in `lockfile-diff.ts` for the measurement
   // that changed it. The block is deliberately prominent, because on a private
@@ -275,13 +338,17 @@ export function main(argv: string[]): number {
     console.error('    CONTRIBUTING.md, "Cutting a release that changes dependencies".');
   }
 
-  for (const change of diff.overrideChanges) {
-    const from = change.from ?? 'none';
-    const to = change.to ?? 'none';
-    console.error(`  ${MANIFEST} "overrides" changed: ${change.key} ${from} → ${to}`);
+  for (const unexplained of diff.unexplainedOverrides) {
+    console.error(
+      `  ${MANIFEST} "overrides" changed: ${unexplained.key} ${unexplained.from ?? 'none'} → ${unexplained.to ?? 'none'}`
+    );
+    for (const line of remedy(unexplained)) console.error(`    ${line}`);
+  }
+  if (diff.unexplainedOverrides.length > 0) {
     console.error('    An override forces a package past a range its dependents declared —');
     console.error('    and REMOVING one can walk a patched transitive back to a vulnerable');
-    console.error('    version. Intentional?');
+    console.error('    version. The reason is where that decision is recorded, and it has to');
+    console.error('    move in THIS diff so the reviewer sees it alongside the change.');
   }
 
   return 1;
