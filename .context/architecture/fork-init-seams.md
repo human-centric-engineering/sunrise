@@ -14,9 +14,11 @@ Sunrise does and does not promise about it.
 > ran. The log line saying the feature is disabled is literally true.
 
 That guarantee is implemented once, in [`lib/fork-init.ts`](../../lib/fork-init.ts),
-and every seam below runs through it. It was not always true: seven of the eleven
-seams caught the throw, logged "disabled", and kept every registration the init
-had already made (#633).
+and every seam below runs through it. It was not always true: **seven of the
+eleven did not provide it** (#633). Six caught the throw, logged "disabled", and
+kept every registration the init had already made. The seventh, `capabilities`,
+did not catch at all — it propagated, and latched _after_ the call, so a throwing
+init also re-ran on every dispatch for the life of the process.
 
 Three properties come with it:
 
