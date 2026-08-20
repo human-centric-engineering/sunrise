@@ -23,7 +23,7 @@
  */
 
 import type { ComponentType } from 'react';
-import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppAccountSections } from '@/lib/app/account-sections';
 
 /** The two pages that render account sections. */
@@ -55,9 +55,6 @@ export interface AccountSection {
 
 const sections = new Map<string, AccountSection>();
 
-/** Whether the auto-wired app section init has run. */
-let appInited = false;
-
 /**
  * Register an account section. Call at module-import time from
  * `lib/app/account-sections.ts`. Idempotent by `id` — re-registering the same
@@ -69,9 +66,8 @@ export function registerAccountSection(section: AccountSection): void {
 }
 
 /**
- * Run the fork's auto-wired init exactly once, lazily. Latch BEFORE running so
- * a throwing init neither retries nor propagates — a broken *registration*
- * degrades to "no app sections".
+ * Run the fork's auto-wired init exactly once, lazily, rolling a partial init
+ * back — see `lib/fork-init.ts` for the shared contract.
  *
  * **This covers registration, not render.** A section that throws while
  * rendering still fails the page, which then falls to
@@ -82,25 +78,15 @@ export function registerAccountSection(section: AccountSection): void {
  * so it would guard some sections and not others. If your section can fail on
  * data (a missing subscription row is the usual one), handle that inside it.
  */
-function ensureAppAccountSectionsInited(): void {
-  if (appInited) return;
-  appInited = true;
-
-  const before = new Map(sections);
-  try {
-    initAppAccountSections();
-  } catch (err) {
-    // Roll back rather than keeping the registrations made before the throw.
-    // Half a fork's account surface rendering on /profile and /settings, while
-    // the log says none of it did, is worse than none of it rendering.
-    sections.clear();
-    for (const [id, section] of before) sections.set(id, section);
-    logger.error(
-      'account-sections: initAppAccountSections threw — app sections rolled back and disabled',
-      { error: err instanceof Error ? err.message : String(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'account-sections: initAppAccountSections',
+  // Half a fork's account surface rendering on /profile and /settings, while
+  // the log says none of it did, is worse than none of it rendering.
+  subject: 'app sections',
+  init: initAppAccountSections,
+  snapshot: () => new Map(sections),
+  restore: (before) => restoreMap(sections, before),
+});
 
 /**
  * Sections for one surface, in `order` then first-registration order.
@@ -109,7 +95,7 @@ function ensureAppAccountSectionsInited(): void {
  * insertion order without a tiebreaker.
  */
 export function getRegisteredAccountSections(surface: AccountSurface): AccountSection[] {
-  ensureAppAccountSectionsInited();
+  appInit.ensure();
   return [...sections.values()]
     .filter((s) => (s.surfaces ?? ACCOUNT_SURFACES).includes(surface))
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -118,5 +104,5 @@ export function getRegisteredAccountSections(surface: AccountSurface): AccountSe
 /** Test-only: clear the registry and re-arm the one-shot app init. */
 export function __resetAccountSectionRegistryForTests(): void {
   sections.clear();
-  appInited = false;
+  appInit.reset();
 }

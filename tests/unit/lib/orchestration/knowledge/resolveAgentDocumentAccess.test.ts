@@ -23,6 +23,10 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('@/lib/app/knowledge-access-contributors', () => ({
+  initAppKnowledgeAccessContributors: vi.fn(),
+}));
+
 import { prisma } from '@/lib/db/client';
 import {
   resolveAgentDocumentAccess,
@@ -32,17 +36,20 @@ import {
   __resetAgentAccessContributorsForTests,
 } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { logger } from '@/lib/logging';
+import { initAppKnowledgeAccessContributors } from '@/lib/app/knowledge-access-contributors';
 
 type Mocked = ReturnType<typeof vi.fn>;
 const agentFindUnique = prisma.aiAgent.findUnique as unknown as Mocked;
 const docGrantsFindMany = prisma.aiAgentKnowledgeDocument.findMany as unknown as Mocked;
 const tagGrantsFindMany = prisma.aiAgentKnowledgeTag.findMany as unknown as Mocked;
 const docTagsFindMany = prisma.aiKnowledgeDocumentTag.findMany as unknown as Mocked;
+const initMock = initAppKnowledgeAccessContributors as unknown as Mocked;
 
 beforeEach(() => {
   vi.clearAllMocks();
   invalidateAllAgentAccess();
   __resetAgentAccessContributorsForTests();
+  initMock.mockReset().mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -355,6 +362,28 @@ describe('resolveAgentDocumentAccess', () => {
 
       if (result.mode !== 'restricted') throw new Error('expected restricted');
       expect(result.documentIds).toEqual(['new']);
+    });
+
+    it('rolls back a PARTIAL init rather than widening access from a half-loaded config', async () => {
+      restrictedWith(['doc-core']);
+      initMock.mockImplementation(() => {
+        registerAgentAccessContributor('app:registered-first', async () => ({
+          documentIds: ['doc-never-granted'],
+        }));
+        throw new Error('init boom on the second');
+      });
+
+      const result = await resolveAgentDocumentAccess('agent-partial');
+
+      // A contributor can only WIDEN a restricted agent's document set, so a
+      // partial apply hands an agent documents nobody granted it — from a config
+      // the log says is disabled.
+      if (result.mode !== 'restricted') throw new Error('expected restricted');
+      expect(result.documentIds).toEqual(['doc-core']);
+      expect(logger.error).toHaveBeenCalledWith(
+        'resolveAgentDocumentAccess: initAppKnowledgeAccessContributors threw — app access contributors rolled back and disabled',
+        expect.objectContaining({ error: 'init boom on the second' })
+      );
     });
   });
 });

@@ -22,6 +22,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppGuardFloorContributors } from '@/lib/app/guard-floor-contributors';
 
 /** The three inline guards a floor can raise. */
@@ -74,9 +75,6 @@ function rank(mode: string): number {
 
 const contributors = new Map<string, GuardFloorContributor>();
 
-/** Whether the auto-wired app contributor init has run. */
-let appInited = false;
-
 /**
  * Register a guard-floor contributor. Lets a fork mandate a stricter minimum for
  * certain turns without editing the guard sites. Idempotent by key:
@@ -95,22 +93,21 @@ export function registerGuardFloorContributor(
 
 /**
  * Run the fork's auto-wired contributor init exactly once, lazily, before the
- * first collection. Latch BEFORE running so a throwing init neither retries on
- * every turn nor propagates out to fail the chat turn — an init failure degrades
- * to "no guard-floor contributors".
+ * first collection, rolling a partial init back — see `lib/fork-init.ts` for the
+ * shared contract. A throwing init neither retries on every turn nor propagates
+ * out to fail the chat turn.
  */
-function ensureAppGuardFloorContributorsInited(): void {
-  if (appInited) return;
-  appInited = true;
-  try {
-    initAppGuardFloorContributors();
-  } catch (err) {
-    logger.error(
-      'guard-floor: initAppGuardFloorContributors threw — app guard-floor contributors disabled',
-      { error: err instanceof Error ? err.message : String(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'guard-floor: initAppGuardFloorContributors',
+  // A floor only ever RAISES, so a partial apply cannot weaken a guard. What it
+  // does instead is make WHICH guards are raised depend on where the bug sits in
+  // the fork's init — a policy the fork never wrote, under a log line saying
+  // none of it applied.
+  subject: 'app guard-floor contributors',
+  init: initAppGuardFloorContributors,
+  snapshot: () => new Map(contributors),
+  restore: (before) => restoreMap(contributors, before),
+});
 
 /**
  * Test-only: drop all registered contributors and re-arm the one-shot app init
@@ -118,7 +115,7 @@ function ensureAppGuardFloorContributorsInited(): void {
  */
 export function __resetGuardFloorContributorsForTests(): void {
   contributors.clear();
-  appInited = false;
+  appInit.reset();
 }
 
 /**
@@ -130,7 +127,7 @@ export function __resetGuardFloorContributorsForTests(): void {
  * change.
  */
 export async function collectGuardFloors(request: GuardFloorRequest): Promise<GuardFloors> {
-  ensureAppGuardFloorContributorsInited();
+  appInit.ensure();
   if (contributors.size === 0) return {};
 
   const results = await Promise.all(

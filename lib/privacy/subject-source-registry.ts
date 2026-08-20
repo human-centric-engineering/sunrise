@@ -68,6 +68,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppSubjectSources } from '@/lib/app/data-export';
 import type { SourceDisposition } from '@/lib/privacy/export-sources';
 
@@ -125,9 +126,7 @@ const excluded = new Map<string, AppExcludedSubjectSource>();
 /** Which tier registered each model, for the duplicate-across-tiers message. */
 const owners = new Map<string, string>();
 
-/** Whether the auto-wired app declaration init has run. */
-let appInited = false;
-/** Whether that init threw, leaving this tier's declarations unknown. */
+/** Whether the app declaration init threw, leaving this tier's declarations unknown. */
 let appInitFailed = false;
 
 /** Mirrors the core manifest's own guard on `description`. */
@@ -259,59 +258,38 @@ export function registerAppSubjectSources(contribution: AppSubjectSourceContribu
 }
 
 /**
- * Run the fork's auto-wired declaration init exactly once, lazily. Latch BEFORE
- * running so a throwing init neither retries nor propagates.
+ * Run the fork's auto-wired declaration init exactly once, lazily, rolling a
+ * partial init back — see `lib/fork-init.ts` for the shared contract.
  *
- * On a throw the registry is rolled back to what it held before, rather than
- * keeping the declarations made up to the throw. Half a tier's declarations
- * would leave the coverage guard green for the models that registered and red
- * for the rest — a failure list that changes with the position of a bug, which
- * is worse than the whole contribution being absent and the guard naming every
- * model in the file.
+ * Half a tier's declarations would leave the coverage guard green for the models
+ * that registered and red for the rest — a failure list that changes with the
+ * position of a bug, which is worse than the whole contribution being absent and
+ * the guard naming every model in the file.
  */
-function ensureAppSubjectSourcesInited(): void {
-  if (appInited) return;
-  appInited = true;
-
-  const beforeSources = new Map(sources);
-  const beforeExcluded = new Map(excluded);
-  const beforeOwners = new Map(owners);
-
-  try {
-    initAppSubjectSources();
-  } catch (err) {
-    appInitFailed = true;
-    sources.clear();
-    for (const [model, source] of beforeSources) sources.set(model, source);
-    excluded.clear();
-    for (const [model, entry] of beforeExcluded) excluded.set(model, entry);
-    owners.clear();
-    for (const [model, tier] of beforeOwners) owners.set(model, tier);
-
-    logger.error(
-      'subject-sources: initAppSubjectSources threw — app declarations rolled back and disabled',
-      { error: describeThrown(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'subject-sources: initAppSubjectSources',
+  subject: 'app declarations',
+  init: initAppSubjectSources,
+  snapshot: () => ({
+    sources: new Map(sources),
+    excluded: new Map(excluded),
+    owners: new Map(owners),
+  }),
+  restore: (before) => {
+    restoreMap(sources, before.sources);
+    restoreMap(excluded, before.excluded);
+    restoreMap(owners, before.owners);
+  },
+});
 
 /**
- * A log-safe description of whatever a seam threw.
- *
- * `String(err)` is the usual fallback and it can itself throw:
- * `String(Object.create(null))` raises "Cannot convert object to primitive
- * value". Here that would escape the catch, after the rollback has already run,
- * and surface as a 500 on the export route with no log line saying why — a
- * fork's bad seam turned into an unexplained failure of the thing this module
- * protects.
+ * Unlike every other seam, a failed init here is REMEMBERED rather than only
+ * logged. Rolling back and carrying on is right for a seam whose consumer can
+ * degrade — a missing nav section is visible. It is not right here: see
+ * `appSubjectDeclarationsFailed()` below.
  */
-function describeThrown(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  try {
-    return String(err);
-  } catch {
-    return 'a value that cannot be converted to a string';
-  }
+function ensureAppSubjectSourcesInited(): void {
+  if (!appInit.ensure()) appInitFailed = true;
 }
 
 /**
@@ -362,6 +340,6 @@ export function __resetAppSubjectSourceRegistryForTests(): void {
   sources.clear();
   excluded.clear();
   owners.clear();
-  appInited = false;
+  appInit.reset();
   appInitFailed = false;
 }

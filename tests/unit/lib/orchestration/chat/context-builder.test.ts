@@ -283,7 +283,7 @@ describe('registerContextContributor', () => {
     const first = await buildContext('invoice', 'A');
     expect(first).toContain("No context loader for type 'invoice'");
     expect(loggerError).toHaveBeenCalledWith(
-      'buildContext: initAppContextContributors threw — app context contributors disabled',
+      'buildContext: initAppContextContributors threw — app context contributors rolled back and disabled',
       expect.objectContaining({ error: 'init boom' })
     );
 
@@ -291,6 +291,26 @@ describe('registerContextContributor', () => {
     const second = await buildContext('invoice', 'B');
     expect(second).toContain("No context loader for type 'invoice'");
     expect(initAppContextContributorsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back a PARTIAL init rather than framing context from a half-loaded config', async () => {
+    const orphan = vi.fn(async () => 'body a fork never finished configuring');
+    initAppContextContributorsMock.mockImplementationOnce(() => {
+      registerContextContributor('invoice', orphan);
+      throw new Error('init boom on the second');
+    });
+
+    // A contributor left live by a partial init has its body framed into the
+    // system prompt of every turn using that context type — the model reads it
+    // as fact, from a config the log says did not load.
+    const body = await buildContext('invoice', 'A');
+
+    expect(orphan).not.toHaveBeenCalled();
+    expect(body).toContain("No context loader for type 'invoice'");
+    expect(loggerError).toHaveBeenCalledWith(
+      'buildContext: initAppContextContributors threw — app context contributors rolled back and disabled',
+      expect.objectContaining({ error: 'init boom on the second' })
+    );
   });
 });
 

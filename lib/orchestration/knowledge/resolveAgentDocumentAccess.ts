@@ -25,6 +25,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppKnowledgeAccessContributors } from '@/lib/app/knowledge-access-contributors';
 
 export type AgentDocumentAccess =
@@ -58,9 +59,6 @@ export type AgentAccessContributor = (agentId: string) => Promise<AgentAccessCon
 
 const accessContributors = new Map<string, AgentAccessContributor>();
 
-/** Whether the auto-wired app contributor init has run. */
-let appAccessContributorsInited = false;
-
 /**
  * Register a knowledge access contributor. Lets a fork add documents to a
  * **restricted** agent's searchable set without materialising grants or editing
@@ -81,24 +79,21 @@ export function registerAgentAccessContributor(
 
 /**
  * Run the fork's auto-wired contributor init exactly once, lazily, before the
- * first resolve. Mirrors `ensureAppContributorsInited` in the chat context
- * builder: latch BEFORE running so a throwing init neither retries on every
- * resolve nor propagates out of `resolveAgentDocumentAccess` (which is
- * documented as always-safe-to-call). An init failure degrades to "no app
- * contributors".
+ * first resolve, rolling a partial init back — see `lib/fork-init.ts` for the
+ * shared contract. A throwing init neither retries on every resolve nor
+ * propagates out of `resolveAgentDocumentAccess`, which is documented as
+ * always-safe-to-call.
  */
-function ensureAppAccessContributorsInited(): void {
-  if (appAccessContributorsInited) return;
-  appAccessContributorsInited = true;
-  try {
-    initAppKnowledgeAccessContributors();
-  } catch (err) {
-    logger.error(
-      'resolveAgentDocumentAccess: initAppKnowledgeAccessContributors threw — app access contributors disabled',
-      { error: err instanceof Error ? err.message : String(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'resolveAgentDocumentAccess: initAppKnowledgeAccessContributors',
+  // Rolled back, not just logged. A contributor can only WIDEN a restricted
+  // agent's document set, so a partial apply hands an agent documents nobody
+  // granted it — from a config the log says is disabled.
+  subject: 'app access contributors',
+  init: initAppKnowledgeAccessContributors,
+  snapshot: () => new Map(accessContributors),
+  restore: (before) => restoreMap(accessContributors, before),
+});
 
 /**
  * Consult every registered access contributor for one agent, in parallel.
@@ -165,7 +160,7 @@ export function invalidateAllAgentAccess(): void {
  */
 export function __resetAgentAccessContributorsForTests(): void {
   accessContributors.clear();
-  appAccessContributorsInited = false;
+  appInit.reset();
 }
 
 /**
@@ -207,7 +202,7 @@ export async function resolveAgentDocumentAccess(agentId: string): Promise<Agent
   // Restricted branch only — contributors run after the `full` short-circuit
   // above, so they can only WIDEN a restricted agent (never narrow, never touch
   // a `full` agent). Consulted in parallel with the core grant queries.
-  ensureAppAccessContributorsInited();
+  appInit.ensure();
 
   const [docGrants, tagGrants, contributions] = await Promise.all([
     prisma.aiAgentKnowledgeDocument.findMany({

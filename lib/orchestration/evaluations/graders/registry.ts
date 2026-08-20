@@ -23,6 +23,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppGraders } from '@/lib/app/evaluations';
 import type {
   AnyGrader,
@@ -32,51 +33,37 @@ import type {
 
 const registry = new Map<string, AnyGrader>();
 
-/** Whether the auto-wired app grader init has run. */
-let appInited = false;
-
 /**
- * Run the fork's auto-wired init exactly once, lazily, before the first
- * lookup. Latch BEFORE running so a throwing init neither retries nor
- * propagates — an init failure degrades to "no app graders", which surfaces
- * as the ordinary `No grader registered for slug` rather than as a crash
- * halfway through a paid drain.
+ * Run the fork's auto-wired init exactly once, lazily, before the first lookup,
+ * rolling a partial init back — see `lib/fork-init.ts` for the shared contract.
+ * An init failure degrades to "no app graders", which surfaces as the ordinary
+ * `No grader registered for slug` rather than as a crash halfway through a paid
+ * drain.
  *
- * The before/after slug diff is the only reason this is more than three
- * lines. Overriding a built-in slug is allowed — `registerGrader` has always
- * overwritten, and swapping in a mock is why — but a silently replaced
- * `exact_match` changes every score an admin reads while changing nothing
- * they can see, so it is named in the log.
+ * The before/after slug diff is why this one passes `onSuccess`. Overriding a
+ * built-in slug is allowed — `registerGrader` has always overwritten, and
+ * swapping in a mock is why — but a silently replaced `exact_match` changes
+ * every score an admin reads while changing nothing they can see, so it is
+ * named in the log.
  */
-function ensureAppGradersInited(): void {
-  if (appInited) return;
-  appInited = true;
-
-  const before = new Map(registry);
-  try {
-    initAppGraders();
-  } catch (err) {
-    // ROLL BACK, do not just log. An init that registers three graders and
-    // throws on the fourth would otherwise leave those three live while the log
-    // says none are — and if one of them replaced `exact_match`, the
-    // built-in-override warn below never runs, so every score silently changes
-    // with nothing anywhere saying so. All-or-nothing is also the only contract
-    // a fork author can reason about: "some of your graders applied, we will
-    // not say which" is not one.
-    registry.clear();
-    for (const [slug, grader] of before) registry.set(slug, grader);
-    logger.error('graders: initAppGraders threw — app graders rolled back and disabled', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return;
-  }
-
-  for (const [slug, grader] of before) {
-    if (registry.get(slug) !== grader) {
-      logger.warn('graders: an app grader replaced a built-in slug', { slug });
+const appInit = createAppInitGate({
+  label: 'graders: initAppGraders',
+  // A rollback matters most here for the same reason the diff below does: if a
+  // grader registered before the throw replaced `exact_match`, the
+  // built-in-override warning never runs, so every score silently changes with
+  // nothing anywhere saying so.
+  subject: 'app graders',
+  init: initAppGraders,
+  snapshot: () => new Map(registry),
+  restore: (before) => restoreMap(registry, before),
+  onSuccess: (before) => {
+    for (const [slug, grader] of before) {
+      if (registry.get(slug) !== grader) {
+        logger.warn('graders: an app grader replaced a built-in slug', { slug });
+      }
     }
-  }
-}
+  },
+});
 
 /**
  * Register a grader. Re-registering overrides the previous entry —
@@ -97,7 +84,7 @@ export function registerGrader(grader: AnyGrader): void {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getGrader(slug: string): Grader<any> {
-  ensureAppGradersInited();
+  appInit.ensure();
   const entry = registry.get(slug);
   if (!entry) {
     throw new Error(`No grader registered for slug "${slug}"`);
@@ -113,7 +100,7 @@ export function getGrader(slug: string): Grader<any> {
 /** Type-narrow lookup for pairwise graders. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getPairwiseGrader(slug: string): PairwiseGrader<any> {
-  ensureAppGradersInited();
+  appInit.ensure();
   const entry = registry.get(slug);
   if (!entry) {
     throw new Error(`No grader registered for slug "${slug}"`);
@@ -126,7 +113,7 @@ export function getPairwiseGrader(slug: string): PairwiseGrader<any> {
 
 /** Has-check used by run-creation validation before submission. */
 export function hasGrader(slug: string): boolean {
-  ensureAppGradersInited();
+  appInit.ensure();
   return registry.has(slug);
 }
 
@@ -136,13 +123,13 @@ export function hasGrader(slug: string): boolean {
  * metric picker UI.
  */
 export function listGraders(): readonly AnyGrader[] {
-  ensureAppGradersInited();
+  appInit.ensure();
   return Array.from(registry.values());
 }
 
 /** Inspect registered slugs — primarily for the parity test. */
 export function getRegisteredSlugs(): readonly string[] {
-  ensureAppGradersInited();
+  appInit.ensure();
   return Array.from(registry.keys());
 }
 
@@ -152,5 +139,5 @@ export function getRegisteredSlugs(): readonly string[] {
  */
 export function __resetGraderRegistryForTests(): void {
   registry.clear();
-  appInited = false;
+  appInit.reset();
 }

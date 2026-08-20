@@ -144,11 +144,27 @@ describe('collectGuardFloors', () => {
 
     expect(await collectGuardFloors(req)).toEqual({});
     expect(loggerError).toHaveBeenCalledWith(
-      'guard-floor: initAppGuardFloorContributors threw — app guard-floor contributors disabled',
+      'guard-floor: initAppGuardFloorContributors threw — app guard-floor contributors rolled back and disabled',
       expect.objectContaining({ error: 'init boom' })
     );
 
     await collectGuardFloors(req);
     expect(initMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back a PARTIAL init rather than enforcing half a fork policy', async () => {
+    initMock.mockImplementationOnce(() => {
+      registerGuardFloorContributor('app:registered-first', () => ({ input: 'block' }));
+      throw new Error('init boom on the second');
+    });
+
+    // A floor only ever raises, so a partial apply does not weaken a guard — it
+    // makes WHICH guards are raised depend on where the bug sits in the fork's
+    // init, under a log line saying none of it applied.
+    expect(await collectGuardFloors(req)).toEqual({});
+    expect(loggerError).toHaveBeenCalledWith(
+      'guard-floor: initAppGuardFloorContributors threw — app guard-floor contributors rolled back and disabled',
+      expect.objectContaining({ error: 'init boom on the second' })
+    );
   });
 });

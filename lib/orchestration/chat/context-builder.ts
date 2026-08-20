@@ -32,6 +32,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
 
@@ -93,14 +94,6 @@ const contributors: Map<string, ContextContributor> =
   (globalForContributors.sunriseChatContextContributors ??= new Map<string, ContextContributor>());
 
 /**
- * Whether the auto-wired app contributor init (`lib/app/context-contributors.ts`)
- * has run. Deliberately module-scoped, NOT on `globalThis`: it is a per-graph
- * "have I run the fork's init in THIS bundle yet" latch, and re-running an
- * idempotent (register-by-type) init against the shared store is harmless.
- */
-let appInited = false;
-
-/**
  * Register a prompt-context loader for a given `contextType`. Lets a fork
  * inject its own `LOCKED CONTEXT` block per turn without editing the core
  * `buildContext` switch. Idempotent by type: re-registering the same type
@@ -118,32 +111,33 @@ export function registerContextContributor(type: string, loader: ContextContribu
 }
 
 /**
- * Run the fork's auto-wired contributor init exactly once, lazily, before
- * the first lookup. Mirrors the run-once-lazily *invocation shape* of
- * `initAppCapabilities()` in `registerBuiltInCapabilities` — the fork
- * accumulates registrations at import time without a separate startup step.
- * Error handling deliberately DIFFERS from that registry: this catches init
- * throws rather than letting them propagate (see the inline comment).
+ * Run the fork's auto-wired contributor init exactly once, lazily, before the
+ * first lookup, rolling a partial init back — see `lib/fork-init.ts` for the
+ * shared contract.
+ *
+ * Error handling deliberately DIFFERS from the capability registry, which lets
+ * an init throw: `buildContext` runs on the chat-turn hot path and must not fail
+ * the turn over a fork's one-time init bug, so a failure degrades to "no app
+ * contributors" (built-in types and the placeholder path keep working),
+ * consistent with the loader-error contract in the file header.
+ *
+ * The gate's latch is module-scoped (it lives in this closure) while
+ * `contributors` above is on `globalThis`. That asymmetry is deliberate: the
+ * latch answers "have I run the fork's init in THIS bundle yet", and re-running
+ * an idempotent register-by-type init against the shared store is harmless.
+ * Snapshot/restore reads the shared store, so a second graph whose init throws
+ * rolls back to what the first graph registered rather than wiping it.
  */
-function ensureAppContributorsInited(): void {
-  if (appInited) return;
-  // Latch BEFORE running so a throwing init neither retries on every lookup nor
-  // propagates out of buildContext to fail the chat turn. An init failure is
-  // caught and degrades to "no app contributors" (built-in types and the
-  // placeholder path keep working), consistent with the loader-error contract
-  // in the file header. This deliberately diverges from the capability registry
-  // (which lets init throw): buildContext runs on the chat-turn hot path and
-  // must not fail the turn over a fork's one-time init bug.
-  appInited = true;
-  try {
-    initAppContextContributors();
-  } catch (err) {
-    logger.error(
-      'buildContext: initAppContextContributors threw — app context contributors disabled',
-      { error: err instanceof Error ? err.message : String(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'buildContext: initAppContextContributors',
+  // Rolled back, not just logged. A contributor left live by a partial init has
+  // its body framed into the system prompt of every turn using that context
+  // type — the model reads it as fact — from a config the log says did not load.
+  subject: 'app context contributors',
+  init: initAppContextContributors,
+  snapshot: () => new Map(contributors),
+  restore: (before) => restoreMap(contributors, before),
+});
 
 /**
  * Test-only: drop all registered contributors and re-arm the one-shot app
@@ -151,7 +145,7 @@ function ensureAppContributorsInited(): void {
  */
 export function __resetContextContributorsForTests(): void {
   contributors.clear();
-  appInited = false;
+  appInit.reset();
 }
 
 /**
@@ -172,7 +166,7 @@ export async function buildContext(
     return hit.value;
   }
 
-  ensureAppContributorsInited();
+  appInit.ensure();
 
   let body: string;
   // Everything caches for the TTL EXCEPT the errored-contributor placeholder:

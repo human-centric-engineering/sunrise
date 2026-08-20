@@ -26,6 +26,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 
 /** The newly created user, as better-auth passes it to the after-hook. */
@@ -54,7 +55,6 @@ export interface UserCreatedContext {
 export type UserCreatedHook = (ctx: UserCreatedContext) => Promise<void> | void;
 
 const hooks = new Map<string, UserCreatedHook>();
-let appInited = false;
 
 /**
  * Register a user-creation hook. Idempotent by `key` — re-registering the same
@@ -67,21 +67,20 @@ export function registerUserCreatedHook(key: string, hook: UserCreatedHook): voi
 
 /**
  * Run the fork's auto-wired init exactly once, lazily, before the first
- * dispatch. Latch BEFORE running so a throwing init neither retries on every
- * signup nor propagates out to fail account creation — an init failure degrades
- * to "no app user-created hooks".
+ * dispatch, rolling a partial init back — see `lib/fork-init.ts` for the shared
+ * contract. A throwing init neither retries on every signup nor propagates out
+ * to fail account creation.
  */
-function ensureAppUserCreatedHooksInited(): void {
-  if (appInited) return;
-  appInited = true;
-  try {
-    initAppUserCreatedHooks();
-  } catch (err) {
-    logger.error('user-created: initAppUserCreatedHooks threw — app hooks disabled', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
+const appInit = createAppInitGate({
+  label: 'user-created: initAppUserCreatedHooks',
+  // Rolled back, not just logged. Signup side effects are the least reversible
+  // thing a seam can do: a hook left live by a partial init provisions, emails
+  // or bills every new account from a config the log says did not load.
+  subject: 'app hooks',
+  init: initAppUserCreatedHooks,
+  snapshot: () => new Map(hooks),
+  restore: (before) => restoreMap(hooks, before),
+});
 
 /**
  * Test-only: drop all registered hooks and re-arm the one-shot app init so each
@@ -89,7 +88,7 @@ function ensureAppUserCreatedHooksInited(): void {
  */
 export function __resetUserCreatedHooksForTests(): void {
   hooks.clear();
-  appInited = false;
+  appInit.reset();
 }
 
 /**
@@ -100,7 +99,7 @@ export function __resetUserCreatedHooksForTests(): void {
  * registry short-circuits — no behaviour change for vanilla Sunrise.
  */
 export async function dispatchUserCreated(ctx: UserCreatedContext): Promise<void> {
-  ensureAppUserCreatedHooksInited();
+  appInit.ensure();
   if (hooks.size === 0) return;
 
   await Promise.all(

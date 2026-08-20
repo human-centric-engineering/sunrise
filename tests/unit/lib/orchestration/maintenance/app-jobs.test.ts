@@ -11,6 +11,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const initAppJobs = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/app/jobs', () => ({ initAppJobs }));
 
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+import { logger } from '@/lib/logging';
+
 import {
   registerAppJob,
   runDueAppJobs,
@@ -131,6 +137,38 @@ describe('runDueAppJobs', () => {
     });
 
     await expect(runDueAppJobs()).resolves.toBeUndefined();
+  });
+
+  it('rolls back a PARTIAL init rather than running a job from a config that failed to load', async () => {
+    // The shape that makes this worse than it looks: an `initAppJobs` that
+    // registers two jobs and throws on the third leaves the first two running on
+    // EVERY tick, forever, while the log says app jobs are disabled. A fork
+    // author reading that message has no reason to guard their init.
+    const orphan = vi.fn().mockResolvedValue('ran');
+    initAppJobs.mockImplementation(() => {
+      registerAppJob({ name: 'app:registered-first', intervalMs: HOUR, run: orphan });
+      throw new Error('bad init on the second');
+    });
+
+    await expect(runDueAppJobs(1_000_000)).resolves.toBeUndefined();
+    expect(orphan).not.toHaveBeenCalled();
+    expect(getAppJobs()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      'app-jobs: initAppJobs threw — app jobs rolled back and disabled',
+      { error: 'bad init on the second' }
+    );
+  });
+
+  it('leaves the idle gate free when a partial init is rolled back', async () => {
+    // `getAppJobsMinIntervalMs()` is what stops the tick's idle gate skipping
+    // ahead (#442). A rolled-back job must not keep this deployment awake — that
+    // is a permanent cost paid for a config that never loaded.
+    initAppJobs.mockImplementation(() => {
+      registerAppJob({ name: 'app:registered-first', intervalMs: 5000, run: vi.fn() });
+      throw new Error('bad init on the second');
+    });
+
+    expect(getAppJobsMinIntervalMs()).toBeNull();
   });
 
   it('runs the app init exactly once across many ticks', async () => {

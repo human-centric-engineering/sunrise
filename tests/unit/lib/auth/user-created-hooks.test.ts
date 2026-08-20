@@ -138,7 +138,7 @@ describe('dispatchUserCreated', () => {
     await expect(dispatchUserCreated(ctx)).resolves.toBeUndefined();
 
     expect(loggerError).toHaveBeenCalledWith(
-      'user-created: initAppUserCreatedHooks threw — app hooks disabled',
+      'user-created: initAppUserCreatedHooks threw — app hooks rolled back and disabled',
       expect.objectContaining({ error: 'missing STRIPE_SECRET_KEY' })
     );
   });
@@ -165,6 +165,25 @@ describe('dispatchUserCreated', () => {
 
     // Latched before running, so the failure is not re-paid per signup.
     expect(initAppUserCreatedHooks).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back a PARTIAL init rather than running half a fork signup flow', async () => {
+    const orphan = vi.fn();
+    initAppUserCreatedHooks.mockImplementation(() => {
+      registerUserCreatedHook('app:registered-first', orphan);
+      throw new Error('bad init on the second');
+    });
+
+    await dispatchUserCreated(ctx);
+
+    // Signup side effects are the least reversible thing a seam can do — a hook
+    // left live by a partial init provisions, emails or bills every new account
+    // from a config the log says is off.
+    expect(orphan).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(
+      'user-created: initAppUserCreatedHooks threw — app hooks rolled back and disabled',
+      expect.objectContaining({ error: 'bad init on the second' })
+    );
   });
 });
 

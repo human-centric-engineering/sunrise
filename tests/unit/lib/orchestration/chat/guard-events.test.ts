@@ -164,11 +164,31 @@ describe('emitGuardEvent', () => {
 
     expect(() => emitGuardEvent(ctx, 'input', 'block')).not.toThrow();
     expect(loggerError).toHaveBeenCalledWith(
-      'guard-events: initAppGuardEventContributors threw — app guard-event contributors disabled',
+      'guard-events: initAppGuardEventContributors threw — app guard-event contributors rolled back and disabled',
       expect.objectContaining({ error: 'init boom' })
     );
 
     emitGuardEvent(ctx, 'output', 'block');
     expect(initMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back a PARTIAL init rather than emitting to half a fork observer set', async () => {
+    const orphan = vi.fn();
+    initMock.mockImplementationOnce(() => {
+      registerGuardEventContributor('app:registered-first', orphan);
+      throw new Error('init boom on the second');
+    });
+
+    emitGuardEvent(ctx, 'input', 'block');
+    await flush();
+
+    // A contributor left live by a partial init observes every guard firing for
+    // the life of the process, from a config the log says did not load — and
+    // these observers notify and escalate.
+    expect(orphan).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(
+      'guard-events: initAppGuardEventContributors threw — app guard-event contributors rolled back and disabled',
+      expect.objectContaining({ error: 'init boom on the second' })
+    );
   });
 });

@@ -34,6 +34,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppJobs } from '@/lib/app/jobs';
 import { createJobClock } from '@/lib/orchestration/maintenance/job-clock';
 
@@ -61,7 +62,6 @@ const jobs = new Map<string, AppJob>();
  * `platform-jobs.ts`.
  */
 const clock = createJobClock();
-let appInited = false;
 
 /**
  * Register an app recurring job. Idempotent by `name` — re-registering replaces
@@ -82,32 +82,32 @@ export function registerAppJob(job: AppJob): void {
 }
 
 /**
- * Run the fork's auto-wired init exactly once, lazily. Latch BEFORE running so a
- * throwing init neither retries every tick nor propagates out to fail the tick —
- * an init failure degrades to "no app jobs".
+ * Run the fork's auto-wired init exactly once, lazily, rolling a partial init
+ * back — see `lib/fork-init.ts` for the shared contract. A throwing init neither
+ * retries every tick nor propagates out to fail the tick.
  */
-function ensureAppJobsInited(): void {
-  if (appInited) return;
-  appInited = true;
-  try {
-    initAppJobs();
-  } catch (err) {
-    logger.error('app-jobs: initAppJobs threw — app jobs disabled', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
+const appInit = createAppInitGate({
+  label: 'app-jobs: initAppJobs',
+  // Rolled back, not just logged. A job registered before the throw would
+  // otherwise run on EVERY tick, forever, from a config its author believes did
+  // not load — and it would hold the tick's idle gate (#442) open at its
+  // interval, so the cost is permanent rather than one-off.
+  subject: 'app jobs',
+  init: initAppJobs,
+  snapshot: () => new Map(jobs),
+  restore: (before) => restoreMap(jobs, before),
+});
 
 /** Test-only: drop all jobs, clear the clock, and re-arm the one-shot app init. */
 export function __resetAppJobsForTests(): void {
   jobs.clear();
   clock.reset();
-  appInited = false;
+  appInit.reset();
 }
 
 /** Registered jobs, in first-registration order. Exposed for the admin surface. */
 export function getAppJobs(): AppJob[] {
-  ensureAppJobsInited();
+  appInit.ensure();
   return [...jobs.values()];
 }
 
@@ -121,7 +121,7 @@ export function getAppJobs(): AppJob[] {
  * fully idle — which is what the fork asked for.
  */
 export function getAppJobsMinIntervalMs(): number | null {
-  ensureAppJobsInited();
+  appInit.ensure();
   let min: number | null = null;
   for (const job of jobs.values()) {
     if (min === null || job.intervalMs < min) min = job.intervalMs;
@@ -142,7 +142,7 @@ export function getAppJobsMinIntervalMs(): number | null {
 export async function runDueAppJobs(
   now: number = Date.now()
 ): Promise<Record<string, unknown> | undefined> {
-  ensureAppJobsInited();
+  appInit.ensure();
   if (jobs.size === 0) return undefined;
 
   const due = [...jobs.values()].filter((job) => clock.isDue(job.name, job.intervalMs, now));

@@ -21,6 +21,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppGuardEventContributors } from '@/lib/app/guard-event-contributors';
 import type { GuardKind, GuardMode } from '@/lib/orchestration/chat/guard-floor';
 
@@ -63,9 +64,6 @@ function isGuardMode(value: string): value is GuardMode {
 
 const contributors = new Map<string, GuardEventContributor>();
 
-/** Whether the auto-wired app contributor init has run. */
-let appInited = false;
-
 /**
  * Register a guard-event contributor. Lets a fork react to an inline guard
  * firing (notify / log / escalate) without editing the guard sites. Idempotent
@@ -85,21 +83,19 @@ export function registerGuardEventContributor(
 
 /**
  * Run the fork's auto-wired contributor init exactly once, lazily, before the
- * first emit. Latch BEFORE running so a throwing init neither retries nor
- * propagates — an init failure degrades to "no guard-event contributors".
+ * first emit, rolling a partial init back — see `lib/fork-init.ts` for the
+ * shared contract. A throwing init neither retries nor propagates.
  */
-function ensureAppGuardEventContributorsInited(): void {
-  if (appInited) return;
-  appInited = true;
-  try {
-    initAppGuardEventContributors();
-  } catch (err) {
-    logger.error(
-      'guard-events: initAppGuardEventContributors threw — app guard-event contributors disabled',
-      { error: err instanceof Error ? err.message : String(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'guard-events: initAppGuardEventContributors',
+  // Rolled back, not just logged. A contributor left live by a partial init
+  // observes every guard firing for the life of the process — and these
+  // observers notify, escalate and page — from a config the log says is off.
+  subject: 'app guard-event contributors',
+  init: initAppGuardEventContributors,
+  snapshot: () => new Map(contributors),
+  restore: (before) => restoreMap(contributors, before),
+});
 
 /**
  * Test-only: drop all registered contributors and re-arm the one-shot app init
@@ -107,7 +103,7 @@ function ensureAppGuardEventContributorsInited(): void {
  */
 export function __resetGuardEventContributorsForTests(): void {
   contributors.clear();
-  appInited = false;
+  appInit.reset();
 }
 
 /**
@@ -126,7 +122,7 @@ export function emitGuardEvent(
   guard: GuardKind,
   resolvedMode: string
 ): void {
-  ensureAppGuardEventContributorsInited();
+  appInit.ensure();
   if (contributors.size === 0) return;
 
   const event: GuardEvent = {

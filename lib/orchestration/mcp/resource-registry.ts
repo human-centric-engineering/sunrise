@@ -14,6 +14,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { McpResourceType } from '@/types/mcp';
 import type { McpResourceDefinition, McpResourceContent, McpResourceTemplate } from '@/types/mcp';
 import { handleKnowledgeSearch } from '@/lib/orchestration/mcp/resources/knowledge-search';
@@ -119,8 +120,6 @@ const appHandlers = new Map<string, ResourceHandler>();
  * `project_plan` handler — the exact inheritance `uriScheme` exists to prevent.
  */
 const appUriSchemes = new Map<string, string>();
-/** Whether the auto-wired app resource init has run. */
-let appInited = false;
 
 /**
  * Register an app-owned MCP resource handler. Call at module-import time from
@@ -172,34 +171,25 @@ export function registerMcpResourceHandler(registration: AppMcpResourceRegistrat
 }
 
 /**
- * Run the fork's auto-wired init exactly once, lazily, before the first read.
- * Latch BEFORE running so a throwing init neither retries nor propagates — an
- * init failure degrades to "no app resources" rather than failing an MCP call.
+ * Run the fork's auto-wired init exactly once, lazily, before the first read,
+ * rolling a partial init back — see `lib/fork-init.ts` for the shared contract.
+ * An init failure degrades to "no app resources" rather than failing an MCP
+ * call.
  */
-function ensureAppMcpResourcesInited(): void {
-  if (appInited) return;
-  appInited = true;
-
-  const beforeHandlers = new Map(appHandlers);
-  const beforeSchemes = new Map(appUriSchemes);
-  try {
-    initAppMcpResources();
-  } catch (err) {
-    // Roll back rather than keeping the registrations made before the throw.
-    // This registry has the most to lose from a partial apply: a half-registered
-    // handler still dispatches, and its scheme is still accepted at create — so
-    // a fork could expose a resource it never finished configuring, while the
-    // log claims none were registered.
-    appHandlers.clear();
-    for (const [type, handler] of beforeHandlers) appHandlers.set(type, handler);
-    appUriSchemes.clear();
-    for (const [type, scheme] of beforeSchemes) appUriSchemes.set(type, scheme);
-    logger.error(
-      'mcp-resources: initAppMcpResources threw — app MCP resources rolled back and disabled',
-      { error: err instanceof Error ? err.message : String(err) }
-    );
-  }
-}
+const appInit = createAppInitGate({
+  label: 'mcp-resources: initAppMcpResources',
+  // This registry has the most to lose from a partial apply: a half-registered
+  // handler still dispatches, and its scheme is still accepted at create — so a
+  // fork could expose a resource it never finished configuring, while the log
+  // claims none were registered.
+  subject: 'app MCP resources',
+  init: initAppMcpResources,
+  snapshot: () => ({ handlers: new Map(appHandlers), schemes: new Map(appUriSchemes) }),
+  restore: (before) => {
+    restoreMap(appHandlers, before.handlers);
+    restoreMap(appUriSchemes, before.schemes);
+  },
+});
 
 /**
  * Narrow a DB-sourced `resourceType` string to a built-in type.
@@ -221,7 +211,7 @@ function isBuiltInResourceType(resourceType: string): resourceType is McpResourc
  * types would never load the fork's registrations and so never log the refusal.
  */
 function resolveHandler(resourceType: string): ResourceHandler | undefined {
-  ensureAppMcpResourcesInited();
+  appInit.ensure();
   if (isBuiltInResourceType(resourceType)) return BUILT_IN_HANDLERS[resourceType];
   return appHandlers.get(resourceType);
 }
@@ -254,7 +244,7 @@ export function isAllowedMcpResourceUri(uri: string): boolean {
   const scheme = uriScheme(uri);
   if (scheme === null) return false;
   if (scheme === CORE_URI_SCHEME) return true;
-  ensureAppMcpResourcesInited();
+  appInit.ensure();
   return [...appUriSchemes.values()].includes(scheme);
 }
 
@@ -270,7 +260,7 @@ function uriScheme(uri: string): string | null {
  * type has no handler.
  */
 export function mcpResourceUriSchemeFor(resourceType: string): string | undefined {
-  ensureAppMcpResourcesInited();
+  appInit.ensure();
   if (isBuiltInResourceType(resourceType)) return CORE_URI_SCHEME;
   return appUriSchemes.get(resourceType);
 }
@@ -295,13 +285,13 @@ export function isUriSchemeValidForResourceType(uri: string, resourceType: strin
  * picker, and the seam's own default-empty guard.
  */
 export function listAppMcpResourceTypes(): string[] {
-  ensureAppMcpResourcesInited();
+  appInit.ensure();
   return [...appHandlers.keys()];
 }
 
 /** Every URI scheme a resource may currently use — for error messages and docs. */
 export function listAllowedMcpResourceUriSchemes(): string[] {
-  ensureAppMcpResourcesInited();
+  appInit.ensure();
   return [...new Set([CORE_URI_SCHEME, ...appUriSchemes.values()])];
 }
 
@@ -312,7 +302,7 @@ export function listAllowedMcpResourceUriSchemes(): string[] {
 export function __resetAppMcpResourcesForTests(): void {
   appHandlers.clear();
   appUriSchemes.clear();
-  appInited = false;
+  appInit.reset();
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
