@@ -17,6 +17,7 @@ import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { cuidSchema } from '@/lib/validations/common';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
@@ -142,16 +143,38 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       },
       body: payload,
       signal: controller.signal,
+      // Refuse redirects, matching `webhooks/dispatcher.ts` on the SAME value
+      // (#635). `webhook.url` is validated in the Zod refine at create/update
+      // and never again, so a redirect is an unvalidated second target — and
+      // `X-Webhook-Signature` is a CUSTOM header name, which the fetch spec
+      // does not strip cross-origin the way it strips `Authorization`. The HMAC
+      // would travel.
+      //
+      // The divergence also made this button lie: following a redirect reports
+      // the final hop's status as the endpoint's, so an endpoint that moved
+      // read as healthy here while production delivery refused it.
+      redirect: 'error',
     });
 
     clearTimeout(timeout);
     statusCode = res.status;
   } catch (err) {
+    // undici renders a refused redirect, a DNS failure and a connection reset
+    // all as a bare "fetch failed"; the reason lives on `cause`. This string is
+    // the operator's ONLY signal — it is rendered straight into the test-result
+    // panel — so without unwrapping, the redirect refusal added above would
+    // report "fetch failed" and read as the endpoint being down.
+    //
+    // Applied to `Error` only, keeping "Unknown error" for anything else.
+    // `describeFetchFailure` falls back to `String(err)`, which renders a
+    // thrown object as "[object Object]" — worse in this panel than saying
+    // nothing, and a change to behaviour this issue did not ask for. Two
+    // existing tests caught the difference.
     error =
       err instanceof Error && err.name === 'AbortError'
         ? 'Request timed out after 5 seconds'
         : err instanceof Error
-          ? err.message
+          ? describeFetchFailure(err)
           : 'Unknown error';
   }
 

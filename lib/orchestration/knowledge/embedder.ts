@@ -366,6 +366,12 @@ async function callEmbeddingApi(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    // Refuse redirects (#635). `url` is built from the embedding provider's
+    // `baseUrl` — an admin-set DB value checked once by `checkSafeProviderUrl`
+    // and never re-checked per hop. This is the ingestion path, so the body is
+    // whatever document the operator uploaded; a redirect would post that text
+    // to a host nothing validated.
+    redirect: 'error',
   });
 
   if (!response.ok) {

@@ -346,7 +346,22 @@ export async function fetchWithTimeout(
 
   const timer = setTimeout(() => controller.abort(new Error('request timeout')), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    // Refuse redirects (#635). Measured rather than taken from the issue, which
+    // said "every LLM completion goes through here": it does not. Completions
+    // use the `openai` SDK client in `openai-compatible.ts`. The two production
+    // callers are `model-registry.ts` (OpenRouter's model list) and
+    // `voyage.ts` (embedding input), and BOTH pass a hardcoded host today — so
+    // nothing here is currently operator-controlled.
+    //
+    // It is set anyway because this is an exported, generic wrapper: it is the
+    // seam a fork or a future caller reuses with a configured host, and a
+    // wrapper that silently follows is exactly the shape #534's sweep missed.
+    // Cheaper to fix the default than to re-audit each new caller.
+    //
+    // After the spread, not before: no caller passes `redirect` today, and one
+    // that wants to follow should use `fetchRevalidatingRedirects` rather than
+    // opt out of the check per-call.
+    return await fetch(url, { ...init, redirect: 'error', signal: controller.signal });
   } catch (err) {
     if (controller.signal.aborted) {
       const reason: unknown = controller.signal.reason;

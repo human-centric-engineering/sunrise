@@ -61,22 +61,8 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     reason: 'client JS emitted as a response body, not executed here',
   },
 
-  // ── KNOWN GAPS — same class as #628, tracked, not yet fixed ──────────────
-  // Found by this check while it was being written, which is the argument for
-  // having it. All three follow a redirect from an admin-configured target that
-  // was validated exactly once.
-  'lib/orchestration/knowledge/embedder.ts': {
-    count: 1,
-    reason: 'KNOWN GAP #635 — provider baseUrl validated once, then followed',
-  },
-  'lib/orchestration/llm/provider.ts': {
-    count: 1,
-    reason: 'KNOWN GAP #635 — provider baseUrl validated once, then followed',
-  },
-  'app/api/v1/admin/orchestration/webhooks/[id]/test/route.ts': {
-    count: 1,
-    reason: 'KNOWN GAP #635 — HMAC signature travels to the redirect target',
-  },
+  // The three KNOWN GAP rows that stood here were closed in #635. The table is
+  // back to genuine exemptions only — nothing in it is now a deferred fix.
 };
 
 /** Text between the parens of the call starting at `openIdx`. */

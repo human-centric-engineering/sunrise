@@ -418,6 +418,43 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
       expect(body.data.error).toBe('connect ECONNREFUSED');
     });
 
+    it('names the refused redirect instead of a bare "fetch failed"', async () => {
+      // The reason this route adopted `describeFetchFailure` (#635). undici
+      // reports a refused redirect as `TypeError: fetch failed` with the actual
+      // reason on `cause`, and this string is the operator's only signal — it
+      // renders straight into the test-result panel. Unwrapped, a webhook that
+      // started redirecting reads as one that is simply down.
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') })
+      );
+
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<{
+        data: { success: boolean; statusCode: null; error: string };
+      }>(response);
+
+      expect(body.data.success).toBe(false);
+      expect(body.data.error).toBe('fetch failed: unexpected redirect');
+    });
+
+    it('sends the ping with redirects refused, like the dispatcher does', async () => {
+      // `webhooks/dispatcher.ts` refuses redirects on this exact value; this
+      // route followed them, so the HMAC in `X-Webhook-Signature` — a custom
+      // header the fetch spec does not strip cross-origin — travelled to the
+      // redirect target, and the final hop's status was reported as the
+      // endpoint's.
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await POST(makeRequest(), makeParams());
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ redirect: 'error' })
+      );
+    });
+
     it('returns "Unknown error" when fetch throws a non-Error value', async () => {
       // Arrange: non-Error thrown (string, number, etc.)
       vi.spyOn(globalThis, 'fetch').mockRejectedValue('oops');
