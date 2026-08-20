@@ -17,10 +17,18 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { createAppInitGate, restoreMap, describeThrown } from '@/lib/fork-init';
+import type { AppInitGate, AppInitState } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
 
-/** A gate over one Map, shaped exactly like the ten production call sites. */
-function gateOver(registry: Map<string, string>, init: () => void, onSuccess?: () => void) {
+/**
+ * A gate over one Map, shaped like nine of the eleven production call sites —
+ * `mcp-resources` snapshots two maps and `subject-sources` three.
+ */
+function gateOver(
+  registry: Map<string, string>,
+  init: () => void,
+  onSuccess?: (snapshot: ReadonlyMap<string, string>) => void
+) {
   return createAppInitGate({
     label: 'probe: initAppProbe',
     subject: 'app probes',
@@ -74,7 +82,7 @@ describe('createAppInitGate', () => {
       throw new Error('boom on the third');
     });
 
-    expect(gate.ensure()).toBe(false);
+    expect(gate.ensure()).toBe('failed');
     expect([...registry.keys()]).toEqual([]);
     expect(logger.error).toHaveBeenCalledWith(
       'probe: initAppProbe threw — app probes rolled back and disabled',
@@ -104,26 +112,36 @@ describe('createAppInitGate', () => {
       throw new Error('boom');
     });
 
-    expect(ok.ensure()).toBe(true);
-    expect(ok.ensure()).toBe(true);
-    expect(bad.ensure()).toBe(false);
+    expect(ok.ensure()).toBe('ok');
+    expect(ok.ensure()).toBe('ok');
+    expect(bad.ensure()).toBe('failed');
     // Latched — the remembered verdict, not a fresh run.
-    expect(bad.ensure()).toBe(false);
+    expect(bad.ensure()).toBe('failed');
   });
 
-  it('does not recurse when the fork init reads the registry it is filling', () => {
+  it('reports a re-entrant read as RUNNING, not as a failure', () => {
     // A fork init that calls a public reader re-enters `ensure()`. Latching
-    // before running is what makes that terminate rather than blow the stack.
+    // before running is what makes that terminate rather than blow the stack —
+    // but the verdict it gets back matters just as much as terminating.
+    //
+    // This was a boolean, and `false` meant both "threw" and "still running".
+    // Both consumers that read it treated it as "threw": subject-sources marked
+    // a SUCCESSFUL init permanently failed, refusing Art. 15 subject access for
+    // the life of the process; the capability registry manufactured a throw,
+    // blamed the fork's init for it, and rolled back the fork's whole toolset.
     const registry = new Map<string, string>();
-    let reentrantResult: boolean | undefined;
-    const gate: { ensure: () => boolean; reset: () => void } = gateOver(registry, () => {
-      reentrantResult = gate.ensure();
+    let reentrant: AppInitState | undefined;
+    const gate: AppInitGate = gateOver(registry, () => {
+      reentrant = gate.ensure();
       registry.set('a', '1');
     });
 
-    expect(gate.ensure()).toBe(true);
-    // Mid-flight, the init has not completed, so the gate cannot claim it has.
-    expect(reentrantResult).toBe(false);
+    expect(gate.ensure()).toBe('ok');
+    expect(reentrant).toBe('running');
+    // Distinguishable from the failure verdict, which is the entire point.
+    expect(reentrant).not.toBe('failed');
+    expect(registry.get('a')).toBe('1');
+    // The re-entrant call must not have started a second init.
     expect(registry.get('a')).toBe('1');
   });
 
@@ -132,15 +150,21 @@ describe('createAppInitGate', () => {
     // built-in slug. It needs the contents as they were, after a successful run.
     const registry = new Map<string, string>([['exact_match', 'built-in']]);
     const onSuccess = vi.fn();
-    const gate = gateOver(
-      registry,
-      () => registry.set('exact_match', 'fork'),
-      () => onSuccess(new Map(registry))
-    );
+    const gate = gateOver(registry, () => registry.set('exact_match', 'fork'), onSuccess);
 
     gate.ensure();
 
+    // Assert the argument the GATE passed, by content.
+    //
+    // The first version of this only counted calls, and its callback rebuilt the
+    // value from the registry it was meant to be checking — so the gate could
+    // pass a POST-init snapshot, or `undefined`, and it stayed green. That is
+    // the entire property it is named for. Both sabotages now fail it.
     expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledWith(new Map([['exact_match', 'built-in']]));
+    // and before/after are genuinely distinguishable, or the check above proves
+    // nothing.
+    expect(registry.get('exact_match')).toBe('fork');
   });
 
   it('does not call onSuccess when the init throws', () => {
@@ -177,19 +201,20 @@ describe('createAppInitGate', () => {
       registry.set('a', '1');
     });
 
-    expect(gate.ensure()).toBe(false);
+    expect(gate.ensure()).toBe('failed');
     gate.reset();
     shouldThrow = false;
 
-    expect(gate.ensure()).toBe(true);
+    expect(gate.ensure()).toBe('ok');
     expect(registry.get('a')).toBe('1');
   });
 
   it('never lets a throw escape, even one that cannot be stringified', () => {
     // `String(Object.create(null))` throws. Before the shared helper only ONE of
-    // the eleven registries guarded this, so in the other ten the log call
-    // itself would throw — escaping the catch AFTER the rollback had run, and
-    // surfacing as an unexplained failure of the thing the catch protects.
+    // the eleven registries guarded this, so in the nine others that had a catch
+    // the log call itself would throw and escape it — after the rollback, in the
+    // three that had one — surfacing as an unexplained failure of the very thing
+    // the catch protects.
     const gate = gateOver(new Map(), () => {
       throw Object.create(null);
     });
@@ -219,7 +244,7 @@ describe('createAppInitGate', () => {
     expect(() => gate.ensure()).not.toThrow();
     // The init SUCCEEDED; only the after-the-fact callback failed, so the
     // registrations stand and the verdict is still true.
-    expect(gate.ensure()).toBe(true);
+    expect(gate.ensure()).toBe('ok');
     expect(registry.get('a')).toBe('1');
     expect(logger.error).toHaveBeenCalledWith(
       'probe: initAppProbe — onSuccess threw; the init itself succeeded',
@@ -244,7 +269,7 @@ describe('createAppInitGate', () => {
     });
 
     expect(() => gate.ensure()).not.toThrow();
-    expect(gate.ensure()).toBe(false);
+    expect(gate.ensure()).toBe('failed');
     // The rollback ran before the callback, so it is unaffected by it.
     expect([...registry.entries()]).toEqual([['core', 'built-in']]);
     expect(logger.error).toHaveBeenCalledWith('probe: initAppProbe — onFailure threw', {
@@ -257,13 +282,16 @@ describe('restoreMap', () => {
   it('mutates in place rather than reassigning', () => {
     // Every reader closes over the registry `const`, so a rollback that swapped
     // the reference would leave them all reading the old map.
+    // The alias stands in for the eleven registries' readers, which all close
+    // over the module-scoped `const`. A rollback that rebound the variable
+    // instead of mutating would leave every one of them on the old map.
     const registry = new Map<string, string>([['a', '1']]);
-    const alias = registry;
+    const alias: ReadonlyMap<string, string> = registry;
     registry.set('b', '2');
+    expect(alias.has('b')).toBe(true);
 
     restoreMap(registry, new Map([['a', '1']]));
 
-    expect(alias).toBe(registry);
     expect([...alias.entries()]).toEqual([['a', '1']]);
   });
 

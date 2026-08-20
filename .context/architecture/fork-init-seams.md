@@ -1,7 +1,10 @@
 # Fork Init Seams
 
-Every `lib/app/*` scaffold Sunrise ships is reached the same way: a core registry
-runs the fork's `initApp*()` function **once, lazily, before its first read**.
+Eleven of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
+core registry runs the fork's `initApp*()` function **once, lazily, before its
+first read**. (Most of `lib/app/` is not this — the majority of those files are
+value and config scaffolds with no init function at all, and two of the thirteen
+`initApp*` exports are different shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
 
@@ -51,7 +54,17 @@ Three properties come with it:
 | `mcp-resources.ts`                 | `initAppMcpResources`                | `lib/orchestration/mcp/resource-registry.ts`                | roll back, log, degrade        |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
 
-`admin-nav.ts` → `initAppNav()` is **not** in this family. It is called at module
+Two `initApp*` exports are **not** in this family, and
+`tests/unit/fork-init-seams.test.ts` pins both exemptions with their reasons
+rather than letting them be absorbed by a path prefix.
+
+`bootstrap.ts` → `initApp()` is the app **boot** hook, not a registry seam:
+`instrumentation.ts` awaits it once at startup inside its own try/catch, and it
+registers nothing itself, so there is no registry to snapshot. (It is also the
+only async one — a scanner that matched `export function` alone could not see it
+at all, which is how it went unnoticed until review.)
+
+`admin-nav.ts` → `initAppNav()` is **not** in this family either. It is called at module
 scope from `components/admin/admin-sidebar.tsx`, in the client realm, because
 module registries do not cross Next's bundle boundaries. A throw there fails the
 module's evaluation, so nothing reads the partial registry — loud, and a

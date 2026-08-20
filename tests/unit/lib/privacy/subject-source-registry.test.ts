@@ -36,6 +36,7 @@ const {
   getAppSubjectSources,
   getAppExcludedSubjectSources,
   getAccountedAppModels,
+  appSubjectDeclarationsFailed,
   __resetAppSubjectSourceRegistryForTests,
 } = await import('@/lib/privacy/subject-source-registry');
 
@@ -454,5 +455,51 @@ describe('registerAppSubjectSources', () => {
 
       expect(mockInitAppSubjectSources).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('a fork init that reads its own registry mid-flight', () => {
+  it('does not mark the tier failed when the init SUCCEEDS', () => {
+    // The documented framework-tier bridge shape, and the obvious de-dupe check,
+    // both re-enter the registry from inside the init:
+    //
+    //   registerAppSubjectSources({ tier: 'framework', ... });
+    //   if (!getAccountedAppModels().has('X')) initFrameworkExportSources();
+    //   registerAppSubjectSources({ tier: 'app', ... });
+    //
+    // Every read calls the lazy gate. A gate that cannot tell "still running"
+    // from "threw" reports the second as the first — and `appInitFailed` is
+    // sticky, so a completely successful init would leave Art. 15 subject
+    // access refusing for the life of the process, with nothing logged.
+    let observedMidFlight: readonly string[] | undefined;
+    seam(() => {
+      registerAppSubjectSources({ tier: 'framework', sources: [VALID] });
+      observedMidFlight = [...getAccountedAppModels()];
+      registerAppSubjectSources({
+        tier: 'app',
+        sources: [{ ...VALID, model: 'AppReceipt', section: 'receipts' }],
+      });
+    });
+
+    expect(
+      getAppSubjectSources()
+        .map((s) => s.model)
+        .sort()
+    ).toEqual(['AppInvoice', 'AppReceipt']);
+    // The re-entrant read saw the registrations made before it.
+    expect(observedMidFlight).toEqual(['AppInvoice']);
+    expect(appSubjectDeclarationsFailed()).toBe(false);
+    expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+
+  it('still marks the tier failed when the init actually throws', () => {
+    // The counterpart: the flag must keep working for its real purpose.
+    seam(() => {
+      registerAppSubjectSources({ tier: 'app', sources: [VALID] });
+      throw new Error('fork boom');
+    });
+
+    expect(appSubjectDeclarationsFailed()).toBe(true);
+    expect(getAppSubjectSources()).toEqual([]);
   });
 });

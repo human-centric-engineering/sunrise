@@ -219,6 +219,30 @@ describe('registerBuiltInCapabilities', () => {
     expect(() => registerBuiltInCapabilities()).toThrow(/fork boom/);
   });
 
+  it('does not treat a re-entrant call during the init as a failure', () => {
+    // `registerBuiltInCapabilities()` is the documented "call it at the top of
+    // any dispatch path" entry point, so a fork module imported from
+    // `lib/app/capabilities.ts` can perfectly reasonably call it — which
+    // re-enters while the init is still running.
+    //
+    // A gate that cannot tell "still running" from "threw" reports the second.
+    // The re-entrant call then re-raises, that throw propagates out of the
+    // FORK's init, the gate catches it as a fork failure, rolls back every
+    // capability the fork registered, and latches permanently failed. Every
+    // chat turn and workflow step then throws forever — over an error core
+    // manufactured, blamed on the fork, with `appInitError` still null.
+    const cap = makeAppCap('reentrant');
+    vi.mocked(initAppCapabilities).mockImplementation(() => {
+      registerAppCapability(cap);
+      registerBuiltInCapabilities(); // re-entrant
+    });
+
+    expect(() => registerBuiltInCapabilities()).not.toThrow();
+    expect(capabilityDispatcher.has(cap.slug)).toBe(true);
+    expect(initAppCapabilities).toHaveBeenCalledTimes(1);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
   it('rolls back a PARTIAL init so nothing half-registered can reach the dispatcher', () => {
     const orphan = makeAppCap('partial_init_orphan');
     vi.mocked(initAppCapabilities).mockImplementation(() => {

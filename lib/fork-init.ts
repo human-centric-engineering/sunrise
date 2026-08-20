@@ -3,9 +3,10 @@
  *
  * Eleven of the twelve `lib/app/*` seams are reached the same way: a core
  * registry runs the fork's init lazily, before its first read, so a fork can
- * accumulate registrations at module-import time without a startup hook. Each
- * had hand-written the same four moving parts — a latch, a try/catch, a log
- * line, and (in four of them) a rollback.
+ * accumulate registrations at module-import time without a startup hook. Ten of
+ * them had hand-written a latch, a try/catch and a log line — four of those with
+ * a rollback. The eleventh, `capabilities`, had only the latch, and it was set
+ * AFTER the call.
  *
  * The twelfth, `initAppNav`, is not one of these and does not belong here: it is
  * called at module scope from a CLIENT component, because module registries do
@@ -18,7 +19,8 @@
  * impossible:
  *
  *  1. **Seven of the eleven kept the registrations a throwing init had already
- *     made**, while logging that the feature was disabled (#633). A fork author
+ *     made** (#633). Six of those logged that the feature was disabled while
+ *     doing it; the seventh, `capabilities`, did not catch at all. A fork author
  *     reading "app jobs disabled" has no reason to guard a multi-registration
  *     init — so a job registered before the throw ran on every maintenance tick
  *     from a config its author believed had not loaded.
@@ -42,14 +44,39 @@
 
 import { logger } from '@/lib/logging';
 
+/**
+ * What the gate knows about the fork's init.
+ *
+ * **Three states, not two.** `'running'` is the one that is easy to forget and
+ * expensive to get wrong: a fork init may re-enter the gate by calling one of
+ * the registry's own public readers — the documented framework-tier bridge does
+ * exactly that, and so does any `if (!getX().has(…))` de-dupe check. `ensure()`
+ * returns `'running'` for those calls, because the init has neither succeeded
+ * nor failed yet.
+ *
+ * This was a boolean, and both consumers that read it treated `false` as
+ * "failed". The eight seams that ignore the value were unaffected; the two that
+ * read it were both wrong, which is the signal that the type was the defect
+ * rather than the callers. Collapsing `'running'` into `'failed'` cost Art. 15
+ * subject access permanently on a *successful* init, and made the capability
+ * registry manufacture a failure and blame the fork for it.
+ */
+export type AppInitState =
+  /** The init is on the stack right now; this call re-entered the gate. */
+  | 'running'
+  /** The init ran and returned. */
+  | 'ok'
+  /** The init ran and threw; the registry was rolled back. */
+  | 'failed';
+
 /** A one-shot init gate over one fork seam. */
 export interface AppInitGate {
   /**
-   * Run the fork's init exactly once. Returns whether it completed — `true` on
-   * the run that succeeded and on every call after it, `false` on the run that
-   * threw and on every call after that. Never throws.
+   * Run the fork's init exactly once and report what the gate knows. Latched:
+   * after the first run this returns the settled `'ok'` / `'failed'` verdict
+   * without re-running anything. Never throws.
    */
-  ensure(): boolean;
+  ensure(): AppInitState;
   /** Test-only: re-arm the one-shot so each test starts from a known state. */
   reset(): void;
 }
@@ -86,9 +113,14 @@ export interface AppInitGateOptions<S> {
   /**
    * Runs after a failed init, once, with whatever was thrown — after the
    * rollback and the log line. For a registry whose consumer needs to do more
-   * than degrade: `subject-source-registry` refuses to build an export bundle,
-   * and `capabilities/registry` re-raises rather than serving an agent whose
+   * than degrade: `subject-source-registry` latches a flag that makes
+   * `exportUserData()` refuse to build a bundle, and `capabilities/registry`
+   * captures the error so it can re-raise rather than serve an agent whose
    * entire toolset silently vanished.
+   *
+   * Prefer this over reading `ensure()`'s verdict for "did it fail". The verdict
+   * has three values, and `'running'` is not a failure — reading it as one is
+   * what broke Art. 15 subject access on a successful init.
    *
    * A throw here is caught and logged rather than propagated — `ensure()` is
    * documented as never throwing and callers rely on that.
@@ -112,17 +144,17 @@ export interface AppInitGateOptions<S> {
  */
 export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGate {
   const { label, subject, init, snapshot, restore, onSuccess, onFailure } = options;
-  let ran = false;
-  let succeeded = false;
+  let state: 'pending' | AppInitState = 'pending';
 
   return {
-    ensure(): boolean {
-      if (ran) return succeeded;
-      // Latch BEFORE running. A throwing init must not retry on the next read
-      // (which for several of these registries is every chat turn or every
-      // maintenance tick), and must not be re-entered by a read the init itself
-      // performs.
-      ran = true;
+    ensure(): AppInitState {
+      // Latched, and note this also covers re-entry: `state` moves off
+      // `'pending'` BEFORE the init runs, so a read the init itself performs
+      // returns `'running'` rather than starting a second one. A throwing init
+      // must not retry on the next read either — for several of these
+      // registries that is every chat turn or every maintenance tick.
+      if (state !== 'pending') return state;
+      state = 'running';
 
       const before = snapshot();
       try {
@@ -132,21 +164,21 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
         // an init made before it threw are otherwise live under a log line that
         // says the feature is off.
         restore(before);
+        state = 'failed';
         logger.error(`${label} threw — ${subject} rolled back and disabled`, {
           error: describeThrown(err),
         });
         runCallback(label, 'onFailure', () => onFailure?.(err));
-        return false;
+        return state;
       }
 
-      succeeded = true;
+      state = 'ok';
       runCallback(label, 'onSuccess', () => onSuccess?.(before), 'the init itself succeeded');
-      return true;
+      return state;
     },
 
     reset(): void {
-      ran = false;
-      succeeded = false;
+      state = 'pending';
     },
   };
 }

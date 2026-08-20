@@ -32,6 +32,12 @@ const EXEMPT = new Map<string, string>([
       "the module's evaluation, so nothing reads the partial registry — loud, and a " +
       'different shape from the lazy server-side family.',
   ],
+  [
+    'initApp',
+    'The app BOOT hook (lib/app/bootstrap.ts), not a registry seam. Called once from ' +
+      "instrumentation.ts's register(), and it is the only async one. It registers " +
+      'nothing itself, so there is no registry to snapshot or roll back.',
+  ],
 ]);
 
 /** Source files that could consume a seam. Excludes tests and the scaffolds. */
@@ -56,7 +62,12 @@ function declaredSeams(): string[] {
     const src = readFileSync(join(APP_DIR, file), 'utf8');
     // Column-anchored: `lib/app/*` scaffolds carry the same signature inside a
     // JSDoc example block, indented. Matching those would double-count.
-    for (const m of src.matchAll(/^export function (initApp\w*)\s*\(/gm)) {
+    //
+    // `async` is in the pattern because leaving it out did not narrow the check,
+    // it BLINDED it: `bootstrap.ts`'s `export async function initApp()` was
+    // invisible, so a future async seam would have been silently uncovered by
+    // the check whose whole job is to notice a new seam.
+    for (const m of src.matchAll(/^export (?:async )?function (initApp\w*)\s*\(/gm)) {
       names.add(m[1]);
     }
   }
@@ -68,13 +79,19 @@ const FILES = [
   ...sourceFiles(join(process.cwd(), 'lib')),
   ...sourceFiles(join(process.cwd(), 'components')),
   ...sourceFiles(join(process.cwd(), 'app')),
+  // Root-level, and the only consumer of the boot seam. Omitting it made
+  // `initApp` look like dead wiring rather than an exempt one.
+  join(process.cwd(), 'instrumentation.ts'),
 ].filter((f) => !f.startsWith(APP_DIR));
 
 describe('fork init seams', () => {
   it('finds the seams at all', () => {
     // The #634 lesson: an enumerating check whose scanner matches nothing goes
-    // green while looking healthy. Pin a floor so a broken regex fails loudly.
-    expect(SEAMS.length).toBeGreaterThanOrEqual(11);
+    // green while looking healthy. An EXACT count, not a floor — a floor set one
+    // below the real number lets exactly one seam drop out of the scan
+    // undetected, which is the case that matters. Update it deliberately when
+    // adding a seam.
+    expect(SEAMS.length).toBe(13);
     expect(FILES.length).toBeGreaterThan(500);
   });
 
@@ -85,7 +102,11 @@ describe('fork init seams', () => {
     // reported all eleven seams as dead wiring rather than going quietly green.
     const consumers = FILES.filter((f) => {
       const src = readFileSync(f, 'utf8');
-      return new RegExp(`import\\s*\\{[^}]*\\b${seam}\\b[^}]*\\}\\s*from`, 's').test(src);
+      // `import { X } from …` and `const { X } = await import(…)` — the boot
+      // seam uses the second form.
+      return new RegExp(`\\{[^}]*\\b${seam}\\b[^}]*\\}\\s*=?\\s*(?:from|await import)`, 's').test(
+        src
+      );
     });
 
     expect(consumers, `${seam} has no consumer — the seam is dead wiring`).not.toHaveLength(0);
@@ -93,7 +114,14 @@ describe('fork init seams', () => {
     const reason = EXEMPT.get(seam);
     for (const consumer of consumers) {
       const src = readFileSync(consumer, 'utf8');
-      const usesGate = src.includes("from '@/lib/fork-init'");
+      // Tied to THIS seam, not merely to the module. Matching any import from
+      // `@/lib/fork-init` passed a file that imports only `describeThrown` while
+      // hand-rolling its own latch — and `capabilities/registry.ts` imports
+      // exactly that alongside the gate, so the loose version was one edit away
+      // from waving through the seam it was written to watch.
+      const usesGate =
+        /import\s*\{[^}]*\bcreateAppInitGate\b[^}]*\}\s*from\s*'@\/lib\/fork-init'/s.test(src) &&
+        new RegExp(`init:\\s*${seam}\\b`).test(src);
       if (reason) {
         expect(
           usesGate,
@@ -112,7 +140,7 @@ describe('fork init seams', () => {
 
   it('the documented roster matches the code, in both directions', () => {
     const doc = readFileSync(DOC, 'utf8');
-    const documented = new Set([...doc.matchAll(/`(initApp\w+)(?:\(\))?`/g)].map((m) => m[1]));
+    const documented = new Set([...doc.matchAll(/`(initApp\w*)(?:\(\))?`/g)].map((m) => m[1]));
 
     const missing = SEAMS.filter((s) => !documented.has(s));
     expect(missing, 'seams that exist in code but not in the roster').toEqual([]);

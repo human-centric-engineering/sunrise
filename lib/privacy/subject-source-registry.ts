@@ -280,6 +280,17 @@ const appInit = createAppInitGate({
     restoreMap(excluded, before.excluded);
     restoreMap(owners, before.owners);
   },
+  // Set from `onFailure` rather than derived from `ensure()`'s verdict. The
+  // verdict has THREE values and a fork init is allowed to re-enter the
+  // registry — the documented framework-tier bridge does, and so does any
+  // `if (!getAccountedAppModels().has(…))` de-dupe. Reading "not ok" as "failed"
+  // marked a completely SUCCESSFUL init as failed, and this flag is sticky, so
+  // Art. 15 subject access refused for the life of the process with nothing
+  // logged. `onFailure` fires once, only on a real throw — the same place the
+  // hand-written `catch` used to set it.
+  onFailure: () => {
+    appInitFailed = true;
+  },
 });
 
 /**
@@ -289,7 +300,7 @@ const appInit = createAppInitGate({
  * `appSubjectDeclarationsFailed()` below.
  */
 function ensureAppSubjectSourcesInited(): void {
-  if (!appInit.ensure()) appInitFailed = true;
+  appInit.ensure();
 }
 
 /**

@@ -46,8 +46,8 @@ import type {
 
 // ─── Registration state machine ──────────────────────────────────────────────
 //
-// Two module-scoped flags and one shared init gate drive a small lazy-flush
-// state machine so the
+// Two module-scoped flags, one captured error and one shared init gate drive a
+// small lazy-flush state machine so the
 // built-ins, the fork's auto-wired init, and any direct `registerAppCapability`
 // calls all reach the dispatcher exactly once per change — never on every
 // dispatch.
@@ -65,6 +65,11 @@ import type {
 //     sentence false on the only path where it mattered: a throwing init ran
 //     again on every single dispatch, forever (#633).
 //
+//   appInitError    null → the thrown value (one-shot, cleared by the reset)
+//     Captured by the gate's `onFailure`. Only read to build the re-raise
+//     message below, so every later caller is told the same thing rather than a
+//     bare "no app capabilities".
+//
 //   appRegistered   true ↔ false (re-armable)
 //     Set after `registerAppCapabilities` flushes the `appCapabilities` map
 //     into the dispatcher. RESET back to `false` by `registerAppCapability`
@@ -77,8 +82,9 @@ import type {
 //   2. Run the app init hook (gated by `appInit`; re-raises if it threw).
 //   3. Flush app capabilities (gated by `appRegistered`).
 //
-// `__resetRegistrationForTests` clears both flags, re-arms the gate, and
-// empties the `appCapabilities` map, so each test starts from a clean slate.
+// `__resetRegistrationForTests` clears both flags and the captured error,
+// re-arms the gate, and empties the `appCapabilities` map, so each test starts
+// from a clean slate.
 let registered = false;
 
 // ─── App capability registration (fork-readiness seam) ───────────────────────
@@ -245,7 +251,8 @@ export function registerBuiltInCapabilities(): void {
   // land before the flush below — no separate wiring step. Latched so it isn't
   // re-run on every dispatch; direct `registerAppCapability()` callers still
   // flush via the `appRegistered` path.
-  if (!appInit.ensure()) {
+  const initState = appInit.ensure();
+  if (initState === 'failed') {
     // Re-raised on every call, not just the first: see the gate above. A single
     // failure at boot followed by silence would be the worst of both — the
     // signal appears once and the deployment then looks healthy while the
@@ -254,6 +261,20 @@ export function registerBuiltInCapabilities(): void {
       `initAppCapabilities() threw, so no app capabilities are registered: ${describeThrown(appInitError)}`,
       { cause: appInitError }
     );
+  }
+  if (initState === 'running') {
+    // Re-entered from inside the fork's own init — this IS a documented entry
+    // point ("call it at the top of any dispatch path"), so a fork module can
+    // reasonably call it. Return without flushing and let the outer call finish:
+    // flushing here would push a half-built set into the dispatcher that the
+    // gate's rollback could no longer reach if the init went on to throw.
+    //
+    // Treating this as a failure instead was worse still: the re-raise above
+    // fired with `appInitError` null, that throw propagated out of the fork's
+    // init, the gate caught it as a FORK failure, rolled back every capability
+    // the fork had registered, and latched permanently failed — every chat turn
+    // and workflow step throwing thereafter, over an error core manufactured.
+    return;
   }
   // App capabilities register on the same lazy path, right after the
   // built-ins. Cheap when already flushed (one boolean check).
