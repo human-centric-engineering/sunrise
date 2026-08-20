@@ -679,6 +679,38 @@ describe('registerAppCapability + registerAppCapabilities', () => {
     expect(capabilityDispatcher.has(goodPiiCap.slug)).toBe(true);
   });
 
+  it('says the PREVIOUS handler is still live when the failed registration was a replacement', () => {
+    // Raised by /security-review as a sub-threshold observation, and it is right
+    // that the shape is real: the `{ slug }` seam mounts a capability over an
+    // existing slug, optionally with a `guard` to gate it. If THAT registration
+    // is the one that fails its PII guard, the built-in it was replacing stays
+    // registered — without the fork's guard. Before per-item isolation this case
+    // failed closed by taking the whole flush with it.
+    //
+    // Not reverted (dropping the existing handler would remove a built-in from
+    // every agent over one fork authoring bug), but not described as "skipping
+    // it" either — that reads as "nothing is registered", which is the exact
+    // class of untrue log line #633 is about.
+    registerBuiltInCapabilities();
+    expect(capabilityDispatcher.has('search_knowledge_base')).toBe(true);
+
+    registerAppCapability(makeAppCapPiiNoRedact('override'), {
+      slug: 'search_knowledge_base',
+      guard: () => ({ allow: false, reason: 'fork policy' }),
+    });
+    registerAppCapabilities();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('the handler it was REPLACING is still live, without its guard'),
+      expect.objectContaining({ slug: 'search_knowledge_base' })
+    );
+    // Distinct from the plain-skip message, which would imply absence.
+    expect(logger.error).not.toHaveBeenCalledWith(
+      expect.stringContaining('skipping it'),
+      expect.anything()
+    );
+  });
+
   it('does not re-run the flush loop on every dispatch after skipping a failure', () => {
     // The skip must still complete the flush, or `appRegistered` stays false and
     // the whole loop — including the failing register() and its log line — runs

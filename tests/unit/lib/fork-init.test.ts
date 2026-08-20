@@ -200,6 +200,57 @@ describe('createAppInitGate', () => {
       { error: 'a value that cannot be converted to a string' }
     );
   });
+
+  it('does not let a throwing onSuccess escape — ensure() says it never throws', () => {
+    // `ensure()` sits at the top of every public read on eleven registries, and
+    // several of those are documented as always-safe-to-call. A callback that
+    // throws would break that contract AFTER the latch was set — the same shape
+    // of "the code does not do what its own docblock says" that this module
+    // exists to fix, so the claim is enforced rather than asserted.
+    const registry = new Map<string, string>();
+    const gate = gateOver(
+      registry,
+      () => registry.set('a', '1'),
+      () => {
+        throw new Error('the override diff blew up');
+      }
+    );
+
+    expect(() => gate.ensure()).not.toThrow();
+    // The init SUCCEEDED; only the after-the-fact callback failed, so the
+    // registrations stand and the verdict is still true.
+    expect(gate.ensure()).toBe(true);
+    expect(registry.get('a')).toBe('1');
+    expect(logger.error).toHaveBeenCalledWith(
+      'probe: initAppProbe — onSuccess threw; the init itself succeeded',
+      { error: 'the override diff blew up' }
+    );
+  });
+
+  it('does not let a throwing onFailure escape either', () => {
+    const registry = new Map<string, string>([['core', 'built-in']]);
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      init: () => {
+        registry.set('app', 'fork');
+        throw new Error('fork boom');
+      },
+      snapshot: () => new Map(registry),
+      restore: (before) => restoreMap(registry, before),
+      onFailure: () => {
+        throw new Error('the failure handler blew up');
+      },
+    });
+
+    expect(() => gate.ensure()).not.toThrow();
+    expect(gate.ensure()).toBe(false);
+    // The rollback ran before the callback, so it is unaffected by it.
+    expect([...registry.entries()]).toEqual([['core', 'built-in']]);
+    expect(logger.error).toHaveBeenCalledWith('probe: initAppProbe — onFailure threw', {
+      error: 'the failure handler blew up',
+    });
+  });
 });
 
 describe('restoreMap', () => {

@@ -186,10 +186,29 @@ export function registerAppCapabilities(): void {
       // are not implicated by one of them being misdeclared, and the one that
       // is gets named — a fork author should not have to bisect their init to
       // find it.
-      logger.error('capabilities: an app capability failed to register — skipping it', {
-        slug: key,
-        error: describeThrown(err),
-      });
+      // Two different situations, and calling both "skipping it" would repeat
+      // the mistake this whole change is about. When the key is ALREADY in the
+      // dispatcher, the fork was replacing something — the `{ slug }` seam
+      // mounts a capability over an existing slug, optionally with a `guard` to
+      // gate it — so the skip leaves the PREVIOUS handler live and un-gated,
+      // rather than leaving nothing. Before per-item isolation that case failed
+      // closed, by taking the whole flush down with it.
+      //
+      // It is not un-done here: the only lever would be dropping the existing
+      // handler, and for a built-in slug that removes the capability from every
+      // agent in the deployment over one fork authoring bug. Saying precisely
+      // what is live is the proportionate answer.
+      if (capabilityDispatcher.has(key)) {
+        logger.error(
+          'capabilities: an app capability failed to register — the handler it was REPLACING is still live, without its guard',
+          { slug: key, error: describeThrown(err) }
+        );
+      } else {
+        logger.error('capabilities: an app capability failed to register — skipping it', {
+          slug: key,
+          error: describeThrown(err),
+        });
+      }
     }
   }
   // Set even when an entry was skipped. A failure here is deterministic, so

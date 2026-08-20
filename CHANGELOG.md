@@ -203,7 +203,10 @@ release process.
   mid-flush, so a fork with 28 registrations and a bad one at position 12 got 11
   in the dispatcher, 16 never reached, and every dispatch path throwing. The
   flush now isolates per entry: the failing capability is named in the log and
-  skipped, the rest register. **A throwing `initAppCapabilities()` itself still
+  skipped, the rest register. One case is not a clean skip and says so — when the
+  failed registration was replacing an existing slug via `register(cap, { slug })`,
+  the handler it was replacing stays live *without the fork's guard*, so it logs
+  that rather than "skipping it". **A throwing `initAppCapabilities()` itself still
   re-raises** rather than degrading like the other seams — rollback costs the
   fork its whole toolset, and an agent missing every tool answers from its own
   weights with nothing marking the gap — but it is now latched before it runs,

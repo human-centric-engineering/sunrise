@@ -90,8 +90,8 @@ export interface AppInitGateOptions<S> {
    * and `capabilities/registry` re-raises rather than serving an agent whose
    * entire toolset silently vanished.
    *
-   * It must not throw. Anything it raises escapes `ensure()`, which every
-   * caller is entitled to treat as safe.
+   * A throw here is caught and logged rather than propagated — `ensure()` is
+   * documented as never throwing and callers rely on that.
    */
   onFailure?: (err: unknown) => void;
 }
@@ -135,12 +135,12 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
         logger.error(`${label} threw — ${subject} rolled back and disabled`, {
           error: describeThrown(err),
         });
-        onFailure?.(err);
+        runCallback(label, 'onFailure', () => onFailure?.(err));
         return false;
       }
 
       succeeded = true;
-      onSuccess?.(before);
+      runCallback(label, 'onSuccess', () => onSuccess?.(before), 'the init itself succeeded');
       return true;
     },
 
@@ -149,6 +149,30 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
       succeeded = false;
     },
   };
+}
+
+/**
+ * Run one of the gate's optional callbacks without letting it escape.
+ *
+ * `ensure()` documents itself as never throwing, and it sits at the top of every
+ * public read on eleven registries — several of which are separately documented
+ * as always-safe-to-call. A callback that threw would break that contract after
+ * the latch was already set, which is the same "the code does not do what its
+ * own docblock says" shape this module exists to fix. So the claim is enforced
+ * here rather than asserted in a comment.
+ *
+ * Logged rather than swallowed: the graders registry uses `onSuccess` to warn
+ * that a fork replaced a built-in slug, and losing that silently would put an
+ * admin back to reading scores changed by something nothing reported.
+ */
+function runCallback(label: string, hook: string, run: () => void, note?: string): void {
+  try {
+    run();
+  } catch (err) {
+    logger.error(`${label} — ${hook} threw${note ? `; ${note}` : ''}`, {
+      error: describeThrown(err),
+    });
+  }
 }
 
 /**

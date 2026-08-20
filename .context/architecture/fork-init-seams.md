@@ -113,6 +113,18 @@ is named in the log and skipped, and the fork's other capabilities register
 normally. Before #633 that throw propagated mid-loop, so one misdeclared
 capability at position 12 of 28 left 11 registered and 16 absent.
 
+**One case there is not a clean skip**, and the log says so. The
+`register(cap, { slug })` seam mounts a capability over an _existing_ slug,
+optionally with a `guard` to gate it. If that registration is the one that fails,
+the handler it was replacing stays live — without the fork's guard — where before
+per-item isolation the whole flush failed closed. It is not un-done, because the
+only lever is dropping the existing handler, and for a built-in slug that removes
+the capability from every agent in the deployment over one fork authoring bug. So
+that skip logs "the handler it was REPLACING is still live, without its guard"
+rather than "skipping it", which would read as absence. **If you override a
+built-in slug to restrict it, do not also misdeclare `processesPii` on that
+class** — the two together are what produces an un-gated built-in.
+
 ## Writing a new seam
 
 Use the gate; do not hand-roll the four parts.
