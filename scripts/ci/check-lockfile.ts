@@ -119,15 +119,13 @@ function remedy(unexplained: UnexplainedOverride): string[] {
       ];
     case 'reason-unchanged':
       return [
-        `→ ${entry} did not move with the override. Restate it: it currently`,
-        `  describes the version that was there before this PR.`,
-        ...(unexplained.reason === null ? [] : [`  It still says: ${unexplained.reason}`]),
+        `→ ${entry} did not move with the override. Restate it: as printed`,
+        `  above, it still describes the version that was there before this PR.`,
       ];
     case 'reason-outlived-override':
       return [
-        `→ The override is gone but ${entry} still stands, so the next reader`,
-        `  has no way to tell it is stale. Delete it in this PR too.`,
-        ...(unexplained.reason === null ? [] : [`  It says: ${unexplained.reason}`]),
+        `→ The override is gone but ${entry} still stands — printed above — so`,
+        `  the next reader has no way to tell it is stale. Delete it too.`,
       ];
   }
 }
@@ -317,9 +315,18 @@ export function main(argv: string[]): number {
 
   if (!hasRisk(diff)) {
     const transitive = diff.changed.filter((c) => c.downgrade && !c.direct).length;
+    // "no override change" was true for as long as every override change
+    // failed. Now that an explained one passes, saying it flatly denies the
+    // one thing such a PR did — the same false-statement shape this file
+    // already fixed once, where the #571 repair was reported as "no version or
+    // platform-metadata change".
+    const overrides =
+      diff.overrideChanges.length === 0
+        ? 'no override change'
+        : `${diff.overrideChanges.length} override change${diff.overrideChanges.length === 1 ? '' : 's'}, each explained above`;
     console.log('');
     console.log(
-      `Nothing needing a decision: no lost platform metadata and no override change` +
+      `Nothing needing a decision: no lost platform metadata and ${overrides}` +
         `${transitive > 0 ? ` (${transitive} transitive downgrade${transitive === 1 ? '' : 's'}, listed above)` : ''}.`
     );
     return 0;

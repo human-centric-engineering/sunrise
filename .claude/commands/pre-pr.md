@@ -60,11 +60,20 @@ npm run check:lockfile -- --base "$BASE"
 ```
 
 Exit 1 means something needs a decision: platform metadata (`libc`/`os`/`cpu`)
-lost — including across a hoist — or `overrides` changed (adding, changing OR
-removing an entry). Lost metadata is the one that has actually bitten (#571).
-The cause is almost always **npm below 11.11.0**, which deletes `libc` from
-every entry it writes on every platform; check `npm -v`, then repair with `npm
-run fix:lockfile-libc` and re-run this.
+lost — including across a hoist — or an **unexplained** `overrides` change.
+Lost metadata is the one that has actually bitten (#571). The cause is almost
+always **npm below 11.11.0**, which deletes `libc` from every entry it writes on
+every platform; check `npm -v`, then repair with `npm run fix:lockfile-libc` and
+re-run this.
+
+**Answer an overrides change in `package.json`, not here.** Adding, re-pointing
+or removing an entry passes when that key's `overrideReasons` entry moves in the
+**same diff** — write the sentence, do not look for a flag. The rule is "the
+reason moved", not "a reason exists", which is what stops a reason landed in an
+earlier PR from waving a later change through, and what makes a revert restate
+its case. Deleting an override means deleting its reason too. Every override
+change is printed either way, with its standing reason, so read that block even
+on a pass: a reason you did not approve is the thing worth catching (#608).
 
 **Downgrades do not fail this check** — neither transitive nor direct. They are
 reported, direct ones in their own block. The direct rule used to gate; over 134

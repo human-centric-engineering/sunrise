@@ -345,6 +345,10 @@ describe('scripts/ci/check-lockfile', () => {
       // Still printed. A change that passes silently is a change nobody reviews.
       expect(out()).toContain('"overrides" changed');
       expect(out()).toContain('reason: Re-pointed for the ^5 line; #612.');
+      // And the all-clear must not deny the one thing this PR did. "no
+      // override change" was true only while every override change failed.
+      expect(out()).toContain('1 override change, each explained above');
+      expect(out()).not.toContain('and no override change');
     });
 
     it('refuses a re-pointed override whose reason stayed put, and quotes it back', async () => {
@@ -357,7 +361,10 @@ describe('scripts/ci/check-lockfile', () => {
 
       expect(process.exitCode).toBe(1);
       expect(out()).toContain('did not move with the override');
-      expect(out()).toContain(`It still says: ${WHY}`);
+      // Quoted once, in the report block above the failure — not twice.
+      expect(out().match(new RegExp(WHY.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))).toHaveLength(
+        1
+      );
     });
 
     it('refuses a removal that left its reason standing', async () => {
@@ -370,7 +377,7 @@ describe('scripts/ci/check-lockfile', () => {
 
       expect(process.exitCode).toBe(1);
       expect(out()).toContain('still stands');
-      expect(out()).toContain('Delete it in this PR too');
+      expect(out()).toContain('Delete it too');
     });
 
     it('allows a removal whose reason was deleted with it', async () => {

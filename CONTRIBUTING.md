@@ -336,8 +336,11 @@ rather than trusted**:
    `set(a) & set(b)` cannot see a package that was added or dropped outright.
 
 6. **`npm run check:lockfile`** — the same rules `/pre-pr` runs, against the
-   merge base. It gates on lost metadata, a direct downgrade, or an `overrides`
-   change, and reports restored metadata without gating.
+   merge base. It gates on lost platform metadata and on an `overrides` change
+   whose `package.json` `overrideReasons` entry did **not** move in the same
+   diff. Restored metadata and downgrades — direct or transitive — are reported
+   without gating (the direct rule was retired in #584; this line used to say it
+   still gated, which is the stale-prose shape #627 exists to catch).
 7. **`npm ci --dry-run`** to confirm the lockfile is still coherent.
 
 For 0.8.1 this turned a "221 packages changed" install into a verified **3

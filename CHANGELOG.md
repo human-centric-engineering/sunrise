@@ -18,6 +18,20 @@ release process.
 
 ### Added
 
+- **`overrideReasons` in `package.json` — an `overrides` change now has somewhere
+  to answer.** `check:lockfile` gated on any change to the `overrides` block and
+  ended with the word "Intentional?", which is a question a build cannot be told
+  the answer to; wired into branch protection, its only routes past were
+  bypassing the protection or weakening the rule. A per-key override transition
+  now passes when that key's `overrideReasons` entry **moved in the same diff**.
+  "Moved", not "exists": a reason landed in an earlier PR cannot wave a later
+  change through, and a revert has to restate its case. Removing an override
+  means removing its reason too. Reasons for keys a diff did not touch are never
+  read, so a fork inheriting the whole upstream block is unaffected — the
+  fork-sync breakage that sank the previous attempt (#584) cannot recur here.
+  Forks with their own overrides should add a reason for each; nothing fails
+  until one of them next changes.
+
 - **`lib/privacy/subject-source-registry.ts` + `initAppSubjectSources()` — a
   fork tier declares its own subject-access sources.** The Art. 15 coverage
   guard scanned every `prisma/schema/*.prisma`, including the fork-reserved

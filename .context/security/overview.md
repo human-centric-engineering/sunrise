@@ -458,10 +458,20 @@ rather than reaching for the off switch:
    overrides today (`hono`, `valibot`).
 
    Adding one is deliberately not quiet: `hasRisk()` in
-   `scripts/ci/lockfile-diff.ts` fails `check:lockfile` on any `overrides`
-   change, so it arrives as a reviewed decision on a PR. That gate exists
-   because an override forces a package past a range its dependents declared,
-   which can break the dependent — test the affected path before merging one.
+   `scripts/ci/lockfile-diff.ts` fails `check:lockfile` on an `overrides` change
+   whose reason did not arrive with it, so it lands as a reviewed decision on a
+   PR. Write the reason into `package.json`'s `overrideReasons` block, keyed by
+   the same package name, in the same diff. That gate exists because an override
+   forces a package past a range its dependents declared, which can break the
+   dependent — test the affected path before merging one.
+
+   **Removing one is the direction to be careful about**, and the rule is
+   symmetric for it: deleting an override means deleting its reason too, so the
+   diff shows a reviewer exactly which protection is being dropped. An override
+   that silently disappears while resolving a `package.json` merge conflict is
+   the realistic way a patched transitive walks back to a vulnerable version —
+   and `dependency-review`, which would otherwise catch that, is skipped on
+   private repos.
 
    **Removing one gates too**, and should: dropping an override that was
    fixing a CVE walks the patched transitive straight back to the vulnerable
