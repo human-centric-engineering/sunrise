@@ -380,13 +380,33 @@ describe('scripts/ci/check-lockfile', () => {
       expect(out()).toContain('Delete it too');
     });
 
-    it('allows a removal whose reason was deleted with it', async () => {
+    it('allows a removal whose reason was deleted with it, quoting what went', async () => {
       overridesMove({ overrides: { hono: '^4' }, overrideReasons: { hono: WHY } }, {});
 
       await run();
 
       expect(process.exitCode).toBe(0);
       expect(out()).toContain('hono "^4" → none');
+      // Read back from the BASE revision: a reviewer approving a removal should
+      // see the protection being dropped, and after this diff the sentence is
+      // gone from the tree.
+      expect(out()).toContain(`reason deleted with it: ${WHY}`);
+      expect(out()).toContain('1 override change, each explained above');
+    });
+
+    it('does not call an unreasoned removal explained', async () => {
+      // The leniency path: nothing on either side ever said what the override
+      // was for, so it passes precisely BECAUSE nothing explained it. Claiming
+      // otherwise is the false-statement shape this file has already fixed
+      // twice — once for lost `libc`, once for "no override change".
+      overridesMove({ overrides: { hono: '^4' } }, {});
+
+      await run();
+
+      expect(process.exitCode).toBe(0);
+      expect(out()).toContain('no reason was ever recorded');
+      expect(out()).toContain('1 override change above, 1 of them a removal with no reason');
+      expect(out()).not.toContain('each explained above');
     });
 
     it('skips the overrides comparison when a manifest is unreadable, rather than blaming it', async () => {

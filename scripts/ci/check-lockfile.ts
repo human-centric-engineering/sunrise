@@ -287,13 +287,32 @@ export function main(argv: string[]): number {
   // point: an acknowledgement that is never read back is a silence with extra
   // steps, and a reviewer who sees a reason they did not approve has caught
   // something the diff alone would not have shown them.
+  // A removal that had no reason on either side. It passes — see the leniency
+  // note on `unexplainedOverrides` — and it is the one passing shape where
+  // nothing anywhere says what the override was for, so it gets named rather
+  // than counted as explained.
+  const unreasonedRemovals = diff.overrideChanges.filter(
+    (change) => change.to === null && readReason(baseManifest, change.key) === null
+  );
+
   if (diff.overrideChanges.length > 0) {
     console.log('');
     console.log(`${MANIFEST} "overrides" changed:`);
     for (const change of diff.overrideChanges) {
       console.log(`  ${change.key} ${change.from ?? 'none'} → ${change.to ?? 'none'}`);
       const reason = readReason(headManifest, change.key);
-      if (reason !== null) console.log(`    reason: ${reason}`);
+      const before = readReason(baseManifest, change.key);
+      if (reason !== null) {
+        console.log(`    reason: ${reason}`);
+      } else if (change.to === null && before !== null) {
+        // The protection being dropped, quoted from the base revision. Reading
+        // it back is the whole point: a reviewer approving a removal should see
+        // what it was for, and after this diff the sentence is gone.
+        console.log(`    reason deleted with it: ${before}`);
+      } else if (change.to === null) {
+        console.log('    no reason was ever recorded — allowed, but nothing says');
+        console.log('    what this override was for. Check before merging.');
+      }
     }
   }
 
@@ -320,10 +339,18 @@ export function main(argv: string[]): number {
     // one thing such a PR did — the same false-statement shape this file
     // already fixed once, where the #571 repair was reported as "no version or
     // platform-metadata change".
+    // "each explained above" was false on the leniency path — an override
+    // removed with no reason on either side is allowed precisely BECAUSE
+    // nothing explained it. Same false-statement shape this file already fixed
+    // twice, reintroduced one line over; the count is now split.
+    const count = diff.overrideChanges.length;
+    const plural = count === 1 ? '' : 's';
     const overrides =
-      diff.overrideChanges.length === 0
+      count === 0
         ? 'no override change'
-        : `${diff.overrideChanges.length} override change${diff.overrideChanges.length === 1 ? '' : 's'}, each explained above`;
+        : unreasonedRemovals.length === 0
+          ? `${count} override change${plural}, each explained above`
+          : `${count} override change${plural} above, ${unreasonedRemovals.length} of them a removal with no reason on either side`;
     console.log('');
     console.log(
       `Nothing needing a decision: no lost platform metadata and ${overrides}` +
