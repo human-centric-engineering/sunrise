@@ -86,6 +86,29 @@ from its own weights with nothing marking the gap. This is the behaviour that
 shipped, and it is re-raised on every call rather than only the first — a signal
 that appears at boot and then vanishes leaves the deployment looking healthy.
 
+### A seam must be synchronous
+
+`init: () => void` does **not** stop you writing `export async function
+initAppJobs()` — TypeScript lets a function returning anything satisfy a `void`
+return, so it compiles. The gate then sees the promise rather than the work: it
+latches `'ok'` the instant the call returns, the rollback has nothing to roll
+back, and registrations made after your first `await` land outside the gate
+entirely.
+
+This is easier to reach than it sounds, because core sets the pattern:
+`lib/app/bootstrap.ts` ships `export async function initApp()`, and every fork's
+copy is async. That one is the **boot** hook and is meant to be async; the lazy
+registry seams are not.
+
+**Lint catches this, and it is the guard to rely on**:
+`@typescript-eslint/no-misused-promises` rejects `init: <async fn>` at the gate
+call site, so an async seam fails `npm run lint` in your fork. Sunrise does not
+refuse an async seam at runtime — refusing would break a fork whose seam
+otherwise works, and rolling back mid-flight would race the continuation. It
+logs, loudly, that the guarantee does not apply, and attaches a handler so a
+rejection reaches the log rather than the process. Do the async work elsewhere
+and register synchronously.
+
 ## What this does NOT cover
 
 **A fork's init is a bare sequence of statements, and core has no boundary

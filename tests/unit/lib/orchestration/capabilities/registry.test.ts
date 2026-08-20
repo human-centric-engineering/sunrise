@@ -243,6 +243,27 @@ describe('registerBuiltInCapabilities', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
+  it('does not flush from a re-entrant call, so a later throw can still roll back', () => {
+    // The case above pins "does not throw" but CANNOT fail if the early return
+    // is deleted: the re-entrant call would flush, the outer call would
+    // short-circuit on `appRegistered`, and every observable is identical.
+    // Verified by sabotage — 28/28 green with the branch removed.
+    //
+    // This is the one that defends it. Flushing mid-init pushes a half-built set
+    // into the dispatcher, and the gate's rollback only reaches `appCapabilities`
+    // — so if the init then throws, the capability is live in the dispatcher
+    // while the log says the fork's capabilities were rolled back and disabled.
+    const cap = makeAppCap('reentrant_then_throw');
+    vi.mocked(initAppCapabilities).mockImplementation(() => {
+      registerAppCapability(cap);
+      registerBuiltInCapabilities(); // re-entrant
+      throw new Error('fork boom after re-entry');
+    });
+
+    expect(() => registerBuiltInCapabilities()).toThrow();
+    expect(capabilityDispatcher.has(cap.slug)).toBe(false);
+  });
+
   it('rolls back a PARTIAL init so nothing half-registered can reach the dispatcher', () => {
     const orphan = makeAppCap('partial_init_orphan');
     vi.mocked(initAppCapabilities).mockImplementation(() => {

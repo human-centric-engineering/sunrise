@@ -39,11 +39,12 @@ release process.
 - **`lib/fork-init.ts` — one shared gate behind the lazy `lib/app/*` init seams.**
   `createAppInitGate({ label, subject, init, snapshot, restore })` owns the
   latch, the rollback, the log line and the log-safe error description. Eleven of
-  the twelve seams run through it; the twelfth, `initAppNav`, is called at module
-  scope from a client component and fails loudly instead, which
-  `tests/unit/fork-init-seams.test.ts` pins as an exemption with its reason. That
-  test derives the seam list from `lib/app/` and fails when a new seam hand-rolls
-  the four parts, and it diffs the roster in
+  the thirteen `initApp*` seams run through it; the two that do not —
+  `initAppNav`, called at module scope from a client component, and `initApp`,
+  the boot hook that registers nothing itself — are pinned as exemptions with
+  their reasons by `tests/unit/fork-init-seams.test.ts`. That test derives the
+  seam list from `lib/app/`, fails when a new seam hand-rolls the gate, and diffs
+  the roster in
   [`.context/architecture/fork-init-seams.md`](.context/architecture/fork-init-seams.md)
   against the code in both directions rather than leaving it maintained by hand —
   a prose roster is how #633 came to name four of the seven broken seams.

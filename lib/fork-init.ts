@@ -1,19 +1,21 @@
 /**
  * Fork init gates — run a fork's `initApp*` seam once, all-or-nothing.
  *
- * Eleven of the twelve `lib/app/*` seams are reached the same way: a core
+ * Eleven of the thirteen `initApp*` seams are reached the same way: a core
  * registry runs the fork's init lazily, before its first read, so a fork can
  * accumulate registrations at module-import time without a startup hook. Ten of
  * them had hand-written a latch, a try/catch and a log line — four of those with
  * a rollback. The eleventh, `capabilities`, had only the latch, and it was set
  * AFTER the call.
  *
- * The twelfth, `initAppNav`, is not one of these and does not belong here: it is
- * called at module scope from a CLIENT component, because module registries do
- * not cross Next's bundle boundaries, so a throw fails the module's evaluation
- * and nothing reads the partial registry. `tests/unit/fork-init-seams.test.ts`
- * pins that exemption with its reason, so a new hand-rolled seam fails rather
- * than joining it.
+ * The other two do not belong here. `initAppNav` is called at module scope from
+ * a CLIENT component, because module registries do not cross Next's bundle
+ * boundaries, so a throw fails the module's evaluation and nothing reads the
+ * partial registry. `initApp` (`lib/app/bootstrap.ts`) is the app BOOT hook,
+ * awaited once by `instrumentation.ts` inside its own try/catch, and it
+ * registers nothing itself so there is no registry to snapshot.
+ * `tests/unit/fork-init-seams.test.ts` pins both exemptions with their reasons,
+ * so a new hand-rolled seam fails rather than joining them.
  *
  * Hand-writing it went wrong in two ways that this module exists to make
  * impossible:
@@ -157,8 +159,9 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
       state = 'running';
 
       const before = snapshot();
+      let returned: unknown;
       try {
-        init();
+        returned = init();
       } catch (err) {
         // Roll back, do not just log. See the module header: the registrations
         // an init made before it threw are otherwise live under a log line that
@@ -173,6 +176,7 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
       }
 
       state = 'ok';
+      warnIfAsync(label, returned);
       runCallback(label, 'onSuccess', () => onSuccess?.(before), 'the init itself succeeded');
       return state;
     },
@@ -181,6 +185,47 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
       state = 'pending';
     },
   };
+}
+
+/**
+ * Say so when a seam is async, because the guarantee does not survive it.
+ *
+ * `init: () => void` does not stop a fork writing `export async function
+ * initAppJobs()` at the TYPE level: TypeScript lets a function returning
+ * anything satisfy a `void` return, so it compiles. The gate would then see the
+ * promise, not the work — latching `'ok'` the instant the call returns, with
+ * nothing for the rollback to roll back and an unhandled rejection.
+ *
+ * **Lint is the real guard**, and it works: `@typescript-eslint/no-misused-promises`
+ * rejects `init: <async fn>` at the call site, which is where a fork's async
+ * seam would surface. This check is the backstop for a fork that does not lint,
+ * or that turns that rule off.
+ *
+ * That shape is more reachable than it looks: `lib/app/bootstrap.ts` ships
+ * `export async function initApp()`, and every fork's copy is async, so an
+ * author following the pattern core established gets a silently unguaranteed
+ * seam. This does not try to fix it — rolling back mid-flight would race the
+ * continuation, and refusing outright would break a fork whose async seam
+ * otherwise works. It removes the silence, and attaches a handler so the
+ * rejection reaches the log rather than the process.
+ *
+ * The real answer is a seam contract that cannot express this. Tracked with the
+ * rest of the registration-shape work.
+ */
+function warnIfAsync(label: string, returned: unknown): void {
+  if (typeof (returned as { then?: unknown } | null | undefined)?.then !== 'function') return;
+
+  logger.error(
+    `${label} returned a promise — this seam must be synchronous, and the all-or-nothing rollback does NOT apply to it`,
+    {
+      hint: 'Registrations made after the first await land outside the gate. Do the async work elsewhere and register synchronously.',
+    }
+  );
+  void Promise.resolve(returned).catch((err: unknown) => {
+    logger.error(`${label} rejected after returning — nothing was rolled back`, {
+      error: describeThrown(err),
+    });
+  });
 }
 
 /**

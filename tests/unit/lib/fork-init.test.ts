@@ -2,8 +2,10 @@
  * Tests for `lib/fork-init.ts` — the shared one-shot gate every `lib/app/*`
  * seam runs its fork init through.
  *
- * The gate exists because eleven registries hand-wrote the same four moving
- * parts and seven of them got the same one wrong (#633). So these tests are
+ * The gate exists because eleven registries each hand-wrote a latch, a
+ * try/catch and a log line — four of them with a rollback, and one
+ * (`capabilities`) with no catch at all and its latch set AFTER the call. Seven
+ * of the eleven kept a throwing init's registrations (#633). So these tests are
  * written against the two failures that actually happened, not just the happy
  * path: a partial init must leave nothing behind, and the latch must be set
  * BEFORE the init runs — the one registry that latched afterwards re-ran a
@@ -131,18 +133,19 @@ describe('createAppInitGate', () => {
     // blamed the fork's init for it, and rolled back the fork's whole toolset.
     const registry = new Map<string, string>();
     let reentrant: AppInitState | undefined;
-    const gate: AppInitGate = gateOver(registry, () => {
+    const init = vi.fn(() => {
       reentrant = gate.ensure();
       registry.set('a', '1');
     });
+    const gate: AppInitGate = gateOver(registry, init);
 
     expect(gate.ensure()).toBe('ok');
     expect(reentrant).toBe('running');
-    // Distinguishable from the failure verdict, which is the entire point.
-    expect(reentrant).not.toBe('failed');
     expect(registry.get('a')).toBe('1');
-    // The re-entrant call must not have started a second init.
-    expect(registry.get('a')).toBe('1');
+    // The re-entrant call must not have started a SECOND init. Asserting on the
+    // registry cannot show this — `registry.set('a','1')` is idempotent, so a
+    // double run leaves it identical. Count the calls.
+    expect(init).toHaveBeenCalledTimes(1);
   });
 
   it('passes the PRE-init snapshot to onSuccess', () => {
@@ -275,6 +278,69 @@ describe('createAppInitGate', () => {
     expect(logger.error).toHaveBeenCalledWith('probe: initAppProbe — onFailure threw', {
       error: 'the failure handler blew up',
     });
+  });
+  it('says so when a seam is async, because the guarantee does not survive it', async () => {
+    // `init: () => void` does not stop `export async function initAppJobs()` at
+    // the TYPE level — TypeScript lets any return type satisfy `void`, and
+    // eslint rejects a cast here as unnecessary, which is the hazard
+    // demonstrating itself. What does catch it is the lint rule disabled just
+    // below, `no-misused-promises`. This runtime check is the backstop for a
+    // fork that does not lint, or that turns that rule off. And it is a pattern core
+    // set: `lib/app/bootstrap.ts` ships `export async function initApp()`, and
+    // every fork's copy is async.
+    const registry = new Map<string, string>();
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the point
+      init: () => Promise.resolve(),
+      snapshot: () => new Map(registry),
+      restore: (before) => restoreMap(registry, before),
+    });
+
+    // Still reported 'ok' — the sync part ran, and refusing would break a fork
+    // whose async seam otherwise works. But it is no longer silent.
+    expect(gate.ensure()).toBe('ok');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('must be synchronous'),
+      expect.objectContaining({ hint: expect.stringContaining('after the first await') })
+    );
+  });
+
+  it("routes an async seam's rejection to the log instead of the process", async () => {
+    const registry = new Map<string, string>();
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the point
+      init: () => Promise.reject(new Error('late boom')),
+      snapshot: () => new Map(registry),
+      restore: (before) => restoreMap(registry, before),
+    });
+
+    gate.ensure();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('rejected after returning — nothing was rolled back'),
+      { error: 'late boom' }
+    );
+  });
+
+  it('does not mistake a plain object with no `then` for a promise', () => {
+    // The thenable check reads `.then` off whatever came back. A seam returning
+    // a config object (or null, or a number) must not trip it.
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      init: () => ({ registered: 3 }),
+      snapshot: () => new Map<string, string>(),
+      restore: () => {},
+    });
+
+    expect(gate.ensure()).toBe('ok');
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });
 
