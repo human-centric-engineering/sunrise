@@ -143,6 +143,30 @@ describe('scripts/ci/check-changelog-drift', () => {
     expect(out()).toContain('Still accurate?');
   });
 
+  it("files an inherited bullet behind its own heading, not in with this branch's", async () => {
+    // Dogfooded on the branch that added this check: 11 flagged bullets, all 11
+    // inherited from earlier PRs, none stale. Mixed in, they bury the one
+    // finding that was about the branch's own entry.
+    gitReturns({
+      blame: blame({ 7: BASE, 8: BASE }),
+      pickaxe: { 'lib/thing.ts': [FIRST] },
+    });
+
+    await run();
+
+    expect(out()).toContain('already in [Unreleased] before this branch');
+    expect(out()).toContain('0 bullet(s) this branch wrote worth re-reading, 1 inherited');
+  });
+
+  it("leaves the heading off entirely when every finding is the branch's own", async () => {
+    gitReturns({ pickaxe: { 'lib/thing.ts': [SECOND] } });
+
+    await run();
+
+    expect(out()).not.toContain('already in [Unreleased] before this branch');
+    expect(out()).toContain('1 bullet(s) this branch wrote worth re-reading, 0 inherited');
+  });
+
   it('never gates, even with findings', async () => {
     // A heuristic that blocks a merge is the defect #608 fixes one file over.
     gitReturns({ pickaxe: { 'lib/thing.ts': [SECOND], useThing: [SECOND] } });

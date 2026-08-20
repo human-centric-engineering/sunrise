@@ -266,6 +266,44 @@ describe('findDrift', () => {
     );
 
     expect(drift.map((finding) => finding.token)).toEqual(['lib/b.ts']);
+    // Marked, so the report can put it behind its own heading — inherited
+    // bullets are compared against every commit and dominate the output
+    // otherwise.
+    expect(drift[0].inherited).toBe(true);
+  });
+
+  it('marks a line the branch wrote as not inherited', () => {
+    const drift = findDrift(
+      [bullet],
+      new Map([
+        [10, 0],
+        [11, 0],
+      ]),
+      new Map([['lib/a.ts', [commit(1)]]])
+    );
+
+    expect(drift.map((finding) => finding.inherited)).toEqual([false]);
+  });
+
+  it('marks each line on its own, not the whole bullet', () => {
+    // A bullet an earlier PR wrote and this branch amended has lines of both
+    // kinds; collapsing them would file the amended line under "inherited".
+    const drift = findDrift(
+      [bullet],
+      new Map([
+        [10, PREDATES_BRANCH],
+        [11, 0],
+      ]),
+      new Map([
+        ['lib/a.ts', [commit(1)]],
+        ['lib/b.ts', [commit(1)]],
+      ])
+    );
+
+    expect(drift.map((finding) => [finding.token, finding.inherited])).toEqual([
+      ['lib/a.ts', true],
+      ['lib/b.ts', false],
+    ]);
   });
 
   it('reports a repeated identifier once per entry', () => {

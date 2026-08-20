@@ -70,6 +70,18 @@ export interface DriftFinding {
   token: string;
   /** The commits that changed `token` after that line was written. */
   commits: BranchCommit[];
+  /**
+   * True when the line predates the branch — an entry an earlier PR left in
+   * `[Unreleased]`.
+   *
+   * Reported separately, because *every* branch commit counts as later for
+   * these, and that makes them far noisier than a bullet this branch wrote.
+   * Measured on the branch that introduced this check: 11 flagged bullets, all
+   * 11 inherited, none of them stale. Kept rather than dropped because a PR
+   * that invalidates someone else's pending entry is the same defect, and the
+   * split costs nothing but a heading.
+   */
+  inherited: boolean;
 }
 
 /** How a bullet's `writtenAt` position is reported when it predates the branch. */
@@ -280,7 +292,13 @@ export function findDrift(
         const later = (touchedBy.get(token) ?? []).filter((commit) => commit.index > written);
         if (later.length === 0) continue;
         reported.add(token);
-        findings.push({ bullet, line, token, commits: later });
+        findings.push({
+          bullet,
+          line,
+          token,
+          commits: later,
+          inherited: written === PREDATES_BRANCH,
+        });
       }
     }
   }

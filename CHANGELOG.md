@@ -31,7 +31,10 @@ release process.
   stops resolving the moment the PR is squash-merged. It is wired into `/pre-pr`
   as step 5e and **never gates**: the correlation is a heuristic, and it cannot
   see a claim that was already wrong when written, or one that is stale by
-  omission. Both limits are stated where it is run.
+  omission, or tell a commit that *changed* an identifier from one that merely
+  mentioned it in a comment. Bullets an earlier PR left in `[Unreleased]` are
+  reported behind their own heading, because every commit on the branch counts
+  as later for those. All of it is stated where the check is run.
 
 - **`overrideReasons` in `package.json` — an `overrides` change now has somewhere
   to answer.** `check:lockfile` gated on any change to the `overrides` block and

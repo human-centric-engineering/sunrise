@@ -212,22 +212,44 @@ export function main(argv: string[]): number {
   // Grouped by bullet, because the unit a reader judges is the entry. Ungrouped,
   // #625's four bullets printed as sixteen near-identical blocks — a wall of
   // text is its own kind of unread.
-  const byBullet = new Map<number, typeof drift>();
-  for (const finding of drift) {
-    const bucket = byBullet.get(finding.bullet.startLine);
-    if (bucket) bucket.push(finding);
-    else byBullet.set(finding.bullet.startLine, [finding]);
-  }
-
-  for (const [startLine, findings] of byBullet) {
-    console.log('');
-    console.log(`${CHANGELOG}:${startLine} — "${summarise(findings[0].bullet)}"`);
-    console.log('  Later commits on this branch changed things this entry names:');
+  const group = (findings: typeof drift) => {
+    const byBullet = new Map<number, typeof drift>();
     for (const finding of findings) {
-      const commits = finding.commits.map((commit) => commit.sha.slice(0, 8)).join(', ');
-      console.log(`    L${finding.line}  \`${finding.token}\`  ← ${commits}`);
+      const bucket = byBullet.get(finding.bullet.startLine);
+      if (bucket) bucket.push(finding);
+      else byBullet.set(finding.bullet.startLine, [finding]);
     }
-    console.log('  Still accurate?');
+    return byBullet;
+  };
+
+  const written = group(drift.filter((finding) => !finding.inherited));
+  const inherited = group(drift.filter((finding) => finding.inherited));
+
+  const report = (byBullet: ReturnType<typeof group>) => {
+    for (const [startLine, findings] of byBullet) {
+      console.log('');
+      console.log(`${CHANGELOG}:${startLine} — "${summarise(findings[0].bullet)}"`);
+      console.log('  Later commits on this branch changed things this entry names:');
+      for (const finding of findings) {
+        const commits = finding.commits.map((commit) => commit.sha.slice(0, 8)).join(', ');
+        console.log(`    L${finding.line}  \`${finding.token}\`  ← ${commits}`);
+      }
+      console.log('  Still accurate?');
+    }
+  };
+
+  report(written);
+
+  // Second, and behind a heading that says what they are. Every branch commit
+  // counts as later for an inherited bullet, so these are much noisier — on the
+  // branch that added this check, all 11 flagged bullets were inherited and
+  // none was stale.
+  if (inherited.size > 0) {
+    console.log('');
+    console.log(`--- ${inherited.size} bullet(s) already in [Unreleased] before this branch ---`);
+    console.log('Lower confidence: an entry this branch did not write is compared against');
+    console.log('every commit on it. Worth a glance, not a rewrite.');
+    report(inherited);
   }
 
   if (drift.length > 0) {
@@ -247,7 +269,7 @@ export function main(argv: string[]): number {
 
   console.log('');
   console.log(
-    `${byBullet.size} bullet(s) worth re-reading (${drift.length} identifier(s)) and ${doomed.length} doomed commit reference(s).`
+    `${written.size} bullet(s) this branch wrote worth re-reading, ${inherited.size} inherited, ${doomed.length} doomed commit reference(s).`
   );
   console.log('A reminder, not a gate — the identifier correlation produces false positives.');
   return 0;

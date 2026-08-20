@@ -327,7 +327,14 @@ npm run check:changelog-drift -- --base "$BASE"
 
 It correlates the identifiers each bullet quotes **in backticks** against the commits that changed those strings later on the branch, per line rather than per bullet, and separately flags any commit SHA in the section that is not reachable from `origin/main` — a branch SHA stops resolving the moment the PR is squash-merged, so cite the PR or issue instead.
 
-**Read the output; it never gates.** The identifier correlation is a heuristic and will produce false positives — most often a bullet naming a file that a later commit only mentioned in a comment. Exit 1 from this command means it could not run (an unusable `--base`), never that it disapproves of a bullet. Deliberately so: an unanswerable gate is the defect #608 fixed in `check:lockfile`, and shipping one here would be absurd.
+**Read the output; it never gates.** Exit 1 means it could not run (an unusable `--base`), never that it disapproves of a bullet. Deliberately so: an unanswerable gate is the defect #608 fixed in `check:lockfile`, and shipping one here would be absurd.
+
+Findings come in two blocks and they do not deserve equal attention:
+
+- **Bullets this branch wrote** — the ones the check exists for. Read every one.
+- **Bullets already in `[Unreleased]`** before this branch, behind their own heading. Every branch commit counts as "later" for these, so they are much noisier. Glance, don't rewrite.
+
+**The dominant false positive is a commit that only _mentions_ the identifier** — in a docblock, a comment, or a test fixture. The pickaxe cannot tell a mention from a change. On the branch that added this check, all 11 inherited flags were of that shape, and so was its one branch-written flag: a bullet naming `check:lockfile`, linked to a commit that merely quoted the name in prose. Open the commit before believing the flag.
 
 **Two things it structurally cannot see**, so check them yourself rather than reading a clean run as an all-clear:
 
