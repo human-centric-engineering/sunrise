@@ -18,14 +18,17 @@ release process.
 
 ### Added
 
-- **`lib/fork-init.ts` — one shared gate behind every `lib/app/*` init seam.**
+- **`lib/fork-init.ts` — one shared gate behind the lazy `lib/app/*` init seams.**
   `createAppInitGate({ label, subject, init, snapshot, restore })` owns the
-  latch, the rollback, the log line and the log-safe error description; all
-  eleven seams now run through it, and `tests/unit/fork-init-seams.test.ts`
-  fails when a new one hand-rolls the four parts instead. The roster in
+  latch, the rollback, the log line and the log-safe error description. Eleven of
+  the twelve seams run through it; the twelfth, `initAppNav`, is called at module
+  scope from a client component and fails loudly instead, which
+  `tests/unit/fork-init-seams.test.ts` pins as an exemption with its reason. That
+  test derives the seam list from `lib/app/` and fails when a new seam hand-rolls
+  the four parts, and it diffs the roster in
   [`.context/architecture/fork-init-seams.md`](.context/architecture/fork-init-seams.md)
-  is checked against the code in both directions rather than maintained by hand
-  — a prose roster is how #633 came to name four of the seven broken seams.
+  against the code in both directions rather than leaving it maintained by hand —
+  a prose roster is how #633 came to name four of the seven broken seams.
 
 - **`overrideReasons` in `package.json` — an `overrides` change now has somewhere
   to answer.** `check:lockfile` gated on any change to the `overrides` block and

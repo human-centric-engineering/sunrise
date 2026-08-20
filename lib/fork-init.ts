@@ -1,11 +1,18 @@
 /**
  * Fork init gates — run a fork's `initApp*` seam once, all-or-nothing.
  *
- * Every `lib/app/*` seam is reached the same way: a core registry runs the
- * fork's init lazily, before its first read, so a fork can accumulate
- * registrations at module-import time without a startup hook. Eleven registries
- * do this, and each one had hand-written the same four moving parts — a latch, a
- * try/catch, a log line, and (in four of them) a rollback.
+ * Eleven of the twelve `lib/app/*` seams are reached the same way: a core
+ * registry runs the fork's init lazily, before its first read, so a fork can
+ * accumulate registrations at module-import time without a startup hook. Each
+ * had hand-written the same four moving parts — a latch, a try/catch, a log
+ * line, and (in four of them) a rollback.
+ *
+ * The twelfth, `initAppNav`, is not one of these and does not belong here: it is
+ * called at module scope from a CLIENT component, because module registries do
+ * not cross Next's bundle boundaries, so a throw fails the module's evaluation
+ * and nothing reads the partial registry. `tests/unit/fork-init-seams.test.ts`
+ * pins that exemption with its reason, so a new hand-rolled seam fails rather
+ * than joining it.
  *
  * Hand-writing it went wrong in two ways that this module exists to make
  * impossible:
