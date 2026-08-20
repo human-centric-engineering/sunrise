@@ -18,6 +18,12 @@ npm run validate         # CHANGELOG + Node version + type-check + lint + format
 npm run check:changelog  # CHANGELOG.md structure only (also runs inside validate)
 npm run format:prisma:check  # Prisma schema formatting only (also runs inside validate)
 npm run format:prisma    # rewrite prisma/schema with the pinned Prisma formatter
+
+# Pre-PR checks — NOT in validate. All three compare against a base revision and
+# are run by /pre-pr; each falls back to the merge base with origin/main.
+npm run check:lockfile        # lost libc/os/cpu, and an unexplained overrides change
+npm run check:exports         # symbols added/removed/renamed on a lib/**/index.ts barrel
+npm run check:changelog-drift # an [Unreleased] bullet a later commit on the branch made untrue
 ```
 
 ## Database (Prisma)
