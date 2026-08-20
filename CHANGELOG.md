@@ -254,6 +254,28 @@ release process.
 
 ### Security
 
+- **Four more outbound sites refuse redirects, closing the class #628 opened.**
+  Each validated its target exactly once and then followed `Location` headers
+  unchecked. `webhooks/[id]/test` was a one-line divergence from
+  `webhooks/dispatcher.ts` on the *same* `webhook.url`, and because
+  `X-Webhook-Signature` is a custom header name the fetch spec does not strip
+  cross-origin, the HMAC travelled — while the admin UI reported the final hop's
+  status as the endpoint's, so a moved endpoint read as healthy.
+  `knowledge/embedder.ts` would have posted uploaded document text to an
+  unvalidated host. `llm/provider.ts`'s `fetchWithTimeout` is set as
+  defence-in-depth: both its production callers pass hardcoded hosts today, but
+  it is an exported generic wrapper and so the seam a fork reuses with a
+  configured host. **And `llm/openai-compatible.ts`, which no sweep had found** —
+  it hands the admin-set `AiProvider.baseUrl` to `new OpenAI({ baseURL })`, and
+  the SDK sets no redirect policy, so undici followed every hop carrying the
+  prompt. Fixed with a `fetch` wrapper rather than by trusting SDK defaults,
+  which also returns the site to the view of
+  `tests/unit/lib/security/outbound-fetch-redirects.test.ts` — that scan sees
+  literal `fetch(` calls only, which is how the site survived three sweeps.
+  **A provider or webhook endpoint that answers 3xx now fails instead of being
+  followed; re-point it in config.** The guard's `KNOWN GAP` rows are gone, and
+  its docblock now states what it cannot see (#635).
+
 - **`executeHttpRequest` no longer follows redirects.** The orchestration HTTP
   executor validated its host allowlist once, against the initial URL, then
   called `fetch()` with no `redirect` option — so undici's default `'follow'`
