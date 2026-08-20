@@ -18,23 +18,14 @@ release process.
 
 ### Added
 
-- **`npm run check:changelog-drift` — a CHANGELOG bullet that a later commit
-  made untrue.** `/pre-pr` step 5d asks whether a public-surface change is
-  *missing* an entry and stops there; in a multi-round PR the likelier failure
-  is a bullet that was accurate when written and was falsified by a later commit
-  on the same branch. It fired six times on one PR (#625), and all six passed
-  5d because `CHANGELOG.md` was in the diff. The new check correlates the
-  identifiers a bullet quotes in backticks against the commits that changed
-  those strings afterwards — **per line, not per bullet**, so a partial rewrite
-  cannot make an older claim look fresh — and separately flags any commit SHA in
-  `[Unreleased]` that is not reachable from `origin/main`, because a branch SHA
-  stops resolving the moment the PR is squash-merged. It is wired into `/pre-pr`
-  as step 5e and **never gates**: the correlation is a heuristic, and it cannot
-  see a claim that was already wrong when written, or one that is stale by
-  omission, or tell a commit that *changed* an identifier from one that merely
-  mentioned it in a comment. Bullets an earlier PR left in `[Unreleased]` are
-  reported behind their own heading, because every commit on the branch counts
-  as later for those. All of it is stated where the check is run.
+- **`lib/fork-init.ts` — one shared gate behind every `lib/app/*` init seam.**
+  `createAppInitGate({ label, subject, init, snapshot, restore })` owns the
+  latch, the rollback, the log line and the log-safe error description; all
+  eleven seams now run through it, and `tests/unit/fork-init-seams.test.ts`
+  fails when a new one hand-rolls the four parts instead. The roster in
+  [`.context/architecture/fork-init-seams.md`](.context/architecture/fork-init-seams.md)
+  is checked against the code in both directions rather than maintained by hand
+  — a prose roster is how #633 came to name four of the seven broken seams.
 
 - **`overrideReasons` in `package.json` — an `overrides` change now has somewhere
   to answer.** `check:lockfile` gated on any change to the `overrides` block and
@@ -186,6 +177,53 @@ release process.
   literal in the component.
 
 ### Fixed
+
+- **A fork init that threw kept the registrations it had already made, while
+  logging that the feature was disabled.** Six seams — `jobs`,
+  `context-contributors`, `guard-floor-contributors`,
+  `guard-event-contributors`, `knowledge-access-contributors` and
+  `user-created` — caught the throw, said "disabled", and left everything
+  registered before it live. A job kept running on every maintenance tick (and
+  held the idle gate open at its interval) from a config its author believed had
+  not loaded; a knowledge-access contributor kept widening a restricted agent's
+  document set, which is the only direction those can move; a user-created hook
+  kept provisioning, emailing or billing every new account. All six now roll
+  back to the pre-init registry, so the message is literally true. A second
+  latent bug went with it: `String(err)` throws on a null-prototype value, and
+  only one of the eleven seams guarded it — in the other ten that throw escaped
+  the catch *after* the rollback, surfacing as an unexplained failure of the
+  thing the catch protects (#633).
+
+- **One misdeclared app capability stopped the fork's others from registering.**
+  `capabilityDispatcher.register()` throws on an authoring mistake
+  (`processesPii = true` with no `redactProvenance()` override) and it threw
+  mid-flush, so a fork with 28 registrations and a bad one at position 12 got 11
+  in the dispatcher, 16 never reached, and every dispatch path throwing. The
+  flush now isolates per entry: the failing capability is named in the log and
+  skipped, the rest register. **A throwing `initAppCapabilities()` itself still
+  re-raises** rather than degrading like the other seams — rollback costs the
+  fork its whole toolset, and an agent missing every tool answers from its own
+  weights with nothing marking the gap — but it is now latched before it runs,
+  so it no longer re-runs on every chat turn and every workflow step for the
+  life of the process (#633).
+
+- **`npm run check:changelog-drift` — a CHANGELOG bullet that a later commit
+  made untrue.** `/pre-pr` step 5d asks whether a public-surface change is
+  *missing* an entry and stops there; in a multi-round PR the likelier failure
+  is a bullet that was accurate when written and was falsified by a later commit
+  on the same branch. It fired six times on one PR (#625), and all six passed
+  5d because `CHANGELOG.md` was in the diff. The new check correlates the
+  identifiers a bullet quotes in backticks against the commits that changed
+  those strings afterwards — **per line, not per bullet**, so a partial rewrite
+  cannot make an older claim look fresh — and separately flags any commit SHA in
+  `[Unreleased]` that is not reachable from `origin/main`, because a branch SHA
+  stops resolving the moment the PR is squash-merged. It is wired into `/pre-pr`
+  as step 5e and **never gates**: the correlation is a heuristic, and it cannot
+  see a claim that was already wrong when written, or one that is stale by
+  omission, or tell a commit that *changed* an identifier from one that merely
+  mentioned it in a comment. Bullets an earlier PR left in `[Unreleased]` are
+  reported behind their own heading, because every commit on the branch counts
+  as later for those. All of it is stated where the check is run.
 
 - **Core tests a fork could not satisfy (#480, #525, #530, #533).** Filling a
   seam correctly turned the suite red in four places: the subject-access

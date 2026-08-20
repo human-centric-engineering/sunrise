@@ -362,7 +362,11 @@ the same `job-clock.ts` mechanism (#442):
 - **Failures are contained.** Jobs run in parallel; a rejection is logged, folded
   into the summary as `{ error }`, and does not affect the tick or other jobs.
 - **`initAppJobs()` runs once, lazily, latched before it runs** — a throwing init
-  degrades to "no app jobs" instead of retrying every tick.
+  degrades to "no app jobs" instead of retrying every tick, and jobs registered
+  **before** the throw are rolled back. Without that, a job registered before the
+  throw ran on every tick forever from a config its author believed had not
+  loaded, and held the idle gate open at its own interval — a permanent cost, not
+  a one-off. See [Fork Init Seams](../architecture/fork-init-seams.md).
 
 Jobs not yet due are reported as `skipped: <count>` in the summary, so the
 cadence is visible in the tick log rather than inferred from silence.

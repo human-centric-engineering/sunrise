@@ -566,7 +566,12 @@ under HMR). They run in parallel, and one rejecting does not prevent the others
 — but the dispatch is awaited, so a slow hook delays the rest; hand long work to
 a queue. `initAppUserCreatedHooks()` runs once, lazily, latched before it runs,
 so a throwing init degrades to "no app hooks" instead of retrying on every
-signup.
+signup — and it means it: hooks registered **before** the throw are rolled back,
+so an init that registers two and dies on the third leaves zero, not two. Signup
+side effects are the least reversible thing a seam can do, so a hook left live by
+a partial init would provision, email or bill every new account from a config the
+log reports as off. See
+[Fork Init Seams](../architecture/fork-init-seams.md).
 
 See [`CUSTOMIZATION.md` §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface).
 
