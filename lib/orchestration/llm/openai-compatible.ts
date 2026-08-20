@@ -159,6 +159,22 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       baseURL: options.baseUrl,
       timeout: this.timeoutMs,
       maxRetries: 0,
+      // Refuse redirects (#635). `baseURL` is an admin-set `AiProvider.baseUrl`
+      // validated once by `checkSafeProviderUrl` and never re-checked per hop,
+      // and this client carries the largest payload of the family: the prompt,
+      // with whatever conversation history and retrieved context was built into
+      // it. undici follows redirects by default and the SDK sets no policy of
+      // its own, so without this the second host receives all of it.
+      //
+      // It needs a wrapper because the SDK issues the request internally — the
+      // `redirect` option has nowhere else to go. That is also why the sweep in
+      // #534 and the guard in #634 both missed this site: neither a grep for
+      // `checkSafeProviderUrl` callers nor a scan for literal `fetch(` calls can
+      // see HTTP that a vendor client issues. Noted in that guard's docblock.
+      //
+      // `Authorization` is stripped cross-origin by the fetch spec, so the
+      // provider key does not travel; the payload does.
+      fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }),
     });
   }
 

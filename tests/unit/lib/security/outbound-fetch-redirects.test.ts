@@ -21,6 +21,32 @@
  * contain `redirect: '…'`. Client components are skipped — a browser fetch is
  * subject to the page's own origin rules, not to this module's guarantee.
  *
+ * ## What it CANNOT see, and why that matters here
+ *
+ * **Outbound HTTP issued by an SDK, not by a literal `fetch(`.** This scans
+ * source text for a call expression, so a vendor client that fetches internally
+ * is invisible to it however it is configured. That is not hypothetical: it hid
+ * the biggest site of the family until #635 went looking by hand.
+ *
+ * `lib/orchestration/llm/openai-compatible.ts` passes the admin-set
+ * `AiProvider.baseUrl` into `new OpenAI({ baseURL })`, and that client carries
+ * the prompt. The SDK sets no redirect policy and undici defaults to `follow`,
+ * so every hop after the validated one received it. Neither #534's grep for
+ * `checkSafeProviderUrl` callers nor this scan could see it.
+ *
+ * It is guarded now, and guarded in a way this scan CAN see — the fix is a
+ * `fetch` wrapper passed to the SDK, so the literal call appears here with its
+ * policy on it. That is the shape to copy for any future SDK client:
+ * **give it a wrapper rather than trusting its defaults**, and this file starts
+ * covering it for free. (`@anthropic-ai/sdk` is constructed with no `baseURL`
+ * at all, so it only ever reaches Anthropic.)
+ *
+ * The residual limit stands: a new SDK client configured with an operator-set
+ * host and no wrapper would pass this file in silence. So read the heading
+ * above as scoped to literal `fetch(` calls, not as "all outbound HTTP declares
+ * a policy" — the hand-written roster this replaced made exactly that kind of
+ * unbounded claim, which is how #628 happened.
+ *
  * ## Adding a call site
  *
  * Set `redirect` explicitly. `'error'` for a configured integration (an endpoint

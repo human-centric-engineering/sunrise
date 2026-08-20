@@ -22,13 +22,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const chatCreateMock = vi.fn();
 const embeddingsCreateMock = vi.fn();
 const modelsListMock = vi.fn();
+/** Options the SDK client was constructed with, so the wiring can be asserted. */
+const openAiConstructorArgs: Record<string, unknown>[] = [];
 
 vi.mock('openai', () => {
   class MockOpenAI {
     public chat = { completions: { create: chatCreateMock } };
     public embeddings = { create: embeddingsCreateMock };
     public models = { list: modelsListMock };
-    constructor(_opts: unknown) {}
+    constructor(opts: unknown) {
+      openAiConstructorArgs.push((opts ?? {}) as Record<string, unknown>);
+    }
   }
   return { default: MockOpenAI };
 });
@@ -48,6 +52,40 @@ beforeEach(() => {
   chatCreateMock.mockReset();
   embeddingsCreateMock.mockReset();
   modelsListMock.mockReset();
+  openAiConstructorArgs.length = 0;
+});
+
+describe('outbound redirect policy (#635)', () => {
+  // This client is invisible to `outbound-fetch-redirects.test.ts`, which scans
+  // for literal `fetch(` calls — the SDK issues the request internally. It is
+  // also the largest payload of the family: `baseURL` is an admin-set
+  // `AiProvider.baseUrl` validated once, and a followed redirect would carry
+  // the prompt to the second host.
+  it('hands the SDK a fetch that refuses redirects', async () => {
+    makeProvider();
+
+    const [opts] = openAiConstructorArgs;
+    expect(typeof opts.fetch).toBe('function');
+
+    // Assert the WRAPPER's behaviour, not merely that one was supplied: a
+    // passthrough would satisfy a presence check while following every hop.
+    const inner = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+    try {
+      await (opts.fetch as (input: string, init?: RequestInit) => Promise<Response>)(
+        'https://example.test/v1/chat/completions',
+        { method: 'POST', body: '{}' }
+      );
+
+      expect(inner).toHaveBeenCalledWith(
+        'https://example.test/v1/chat/completions',
+        expect.objectContaining({ method: 'POST', redirect: 'error' })
+      );
+    } finally {
+      inner.mockRestore();
+    }
+  });
 });
 
 /**
