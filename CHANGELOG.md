@@ -48,7 +48,9 @@ release process.
   read, so a fork inheriting the whole upstream block is unaffected — the
   fork-sync breakage that sank the previous attempt (#584) cannot recur here.
   Forks with their own overrides should add a reason for each; nothing fails
-  until one of them next changes.
+  until one of them is next added or re-pointed. Removing an override that never
+  had a reason is deliberately allowed — there is nothing to move, and failing
+  it would fail forks for state they inherited from before the block existed.
 
 - **`lib/privacy/subject-source-registry.ts` + `initAppSubjectSources()` — a
   fork tier declares its own subject-access sources.** The Art. 15 coverage
