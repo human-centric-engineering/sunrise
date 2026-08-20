@@ -195,8 +195,13 @@ export function __resetThingsForTests(): void {
 }
 ```
 
-`ensure()` returns whether the init completed, for a consumer that needs to do
-more than degrade. `onSuccess` receives the pre-init snapshot (the graders
+`ensure()` returns `'running' | 'ok' | 'failed'` — **three** states, not two.
+`'running'` means this call re-entered the gate from inside the init itself,
+which a fork is allowed to do; it is _not_ a failure, and all three values are
+truthy strings, so `if (!appInit.ensure())` is dead code on every path. For "did
+it fail", prefer the `onFailure` hook, which fires once and only on a real
+failure — reading the verdict for that question is what cost Art. 15 subject
+access during this work. `onSuccess` receives the pre-init snapshot (the graders
 registry diffs it to warn that a fork replaced a built-in slug); `onFailure`
 receives whatever was thrown, after the rollback and the log line.
 

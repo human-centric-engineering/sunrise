@@ -376,6 +376,30 @@ describe('createAppInitGate', () => {
     });
   });
 
+  it('runs onFailure when the GATE fails, not only when the init does', () => {
+    // `state === 'failed'` has to imply `onFailure` ran, because this module
+    // tells consumers to prefer the hook over the verdict for that question —
+    // and the two seams that do more than degrade both follow that advice.
+    // A gate failure that skipped the hook would reach one of them as a re-raise
+    // with a null cause and the other not at all: loud on one side, an Art. 15
+    // bundle describing declarations that never loaded on the other.
+    const onFailure = vi.fn();
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      init: () => {},
+      snapshot: () => {
+        throw new Error('snapshot blew up');
+      },
+      restore: () => {},
+      onFailure,
+    });
+
+    expect(gate.ensure()).toBe('failed');
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onFailure.mock.calls[0][0]).toBeInstanceOf(Error);
+  });
+
   it('does not mistake a plain object with no `then` for a promise', () => {
     // The thenable check reads `.then` off whatever came back. A seam returning
     // a config object (or null, or a number) must not trip it.

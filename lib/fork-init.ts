@@ -215,6 +215,25 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
         logger.error(`${label} — the gate itself threw; treating ${subject} as ${state}`, {
           error: describeThrown(err),
         });
+        // `state === 'failed'` must ALWAYS mean `onFailure` ran, because this
+        // module tells consumers to prefer the hook over the verdict for exactly
+        // that question — and the two that do more than degrade both follow it.
+        // Without this, a gate failure would reach `capabilities` (which reads
+        // the verdict) as a re-raise with a null cause, and never reach
+        // `subject-sources` at all, so an Art. 15 bundle would ship describing
+        // declarations that were never loaded. Loud on one side, silent on the
+        // other, from one event.
+        //
+        // Cannot double-fire: every abnormal exit from `runOnce` with
+        // `initReturned === false` happens before its own `onFailure` call, and
+        // once `initReturned` is true this settles to `'ok'` and skips it.
+        //
+        // The `'ok'` arm is unreachable today — everything after
+        // `initReturned = true` is either guarded (`isThenable`, `runCallback`)
+        // or a `logger.error` call. It is written this way for the code the
+        // backstop exists for, and there is deliberately no test pinning it:
+        // a test that cannot be made to fail is worse than none.
+        if (state === 'failed') runCallback(label, 'onFailure', () => onFailure?.(err));
         return state;
       }
     },
