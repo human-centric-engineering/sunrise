@@ -591,6 +591,13 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
     //     bypass the Zod layer entirely
     // The baseUrl string ends up in an outbound fetch from the OpenAI
     // SDK, so it must be re-checked at the point of use.
+    //
+    // This check is per-URL, so it covers the FIRST hop only. That was the
+    // whole of the guarantee until #635: the SDK sets no redirect policy and
+    // undici defaults to `follow`, so every later hop got the prompt with
+    // nothing having checked it. The other half now lives where it has to —
+    // the `fetch` wrapper passed to `new OpenAI()` in `openai-compatible.ts`.
+    // Both halves are needed; neither is sufficient.
     const urlCheck = checkSafeProviderUrl(config.baseUrl, { allowLoopback: config.isLocal });
     if (!urlCheck.ok) {
       logger.error('Provider baseUrl rejected by SSRF guard at build time', {
