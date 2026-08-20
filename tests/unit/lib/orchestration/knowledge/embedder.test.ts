@@ -1120,3 +1120,66 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
     expect(body.dimensions).toBeUndefined();
   });
 });
+
+describe('outbound safety at the point of use (#635)', () => {
+  // The same fixture every other describe in this file uses. Without it the
+  // active-model lookup is unmocked and the legacy provider path is never
+  // reached — which is exactly how the first version of these tests passed
+  // while asserting nothing.
+  let savedEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+    savedEnv = process.env;
+    process.env = { ...savedEnv };
+  });
+
+  afterEach(() => {
+    process.env = savedEnv;
+  });
+
+  it('refuses an unsafe baseUrl before any request leaves', async () => {
+    // Nothing on this path runs `checkSafeProviderUrl` otherwise: the config is
+    // read straight from Prisma, and the Zod refine at create/update is
+    // bypassed by seeds, imports and direct DB writes — the same reason
+    // `provider-manager.ts` re-checks at its own point of use. Without this,
+    // the ingestion path POSTs uploaded document text to hop 1 whatever it is.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({
+        id: 'evil-1',
+        isLocal: false,
+        providerType: 'openai-compatible',
+        baseUrl: 'http://169.254.169.254/latest',
+        apiKeyEnvVar: 'REMOTE_KEY',
+      }),
+    ] as never);
+    process.env['REMOTE_KEY'] = 'sk-remote';
+
+    await expect(embedText('hello')).rejects.toThrow(/unsafe/i);
+    // The redirect refusal covers hops 2+; this asserts hop 1 never happened.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('names a refused redirect rather than reporting a bare "fetch failed"', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({
+        id: 'remote-1',
+        isLocal: false,
+        providerType: 'openai-compatible',
+        baseUrl: 'https://remote.test/v1',
+        apiKeyEnvVar: 'REMOTE_KEY',
+      }),
+    ] as never);
+    process.env['REMOTE_KEY'] = 'sk-remote';
+
+    // undici's shape for a refused redirect: bare message, reason on `cause`.
+    mockFetch.mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') })
+    );
+
+    // Otherwise a provider that started redirecting is indistinguishable from
+    // one that is down, and the fix — re-point the baseUrl — is invisible.
+    await expect(embedText('hello')).rejects.toThrow('fetch failed: unexpected redirect');
+  });
+});

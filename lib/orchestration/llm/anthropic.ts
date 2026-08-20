@@ -128,6 +128,18 @@ export class AnthropicProvider implements LlmProvider {
       apiKey: config.apiKey,
       timeout: this.timeoutMs,
       maxRetries: 0,
+      // Refuse redirects (#635), for the same reason as `openai-compatible.ts`
+      // and with a sharper edge. This constructor passes no `baseURL`, which
+      // looks like "it can only reach Anthropic" — and is wrong: the SDK
+      // defaults `baseURL` to `readEnv('ANTHROPIC_BASE_URL')`, so pointing this
+      // client at a gateway (LiteLLM, a Bedrock/Vertex proxy) is a one-env-var
+      // change an operator may well have made.
+      //
+      // Worse than the OpenAI case if that host redirects: Anthropic
+      // authenticates with `x-api-key`, a CUSTOM header name, and the fetch
+      // spec strips only `Authorization`, `Cookie` and `Proxy-Authorization`
+      // cross-origin. So the second host would receive the prompt AND the key.
+      fetch: (input, init) => fetch(input, { ...init, redirect: 'error' }),
     });
   }
 

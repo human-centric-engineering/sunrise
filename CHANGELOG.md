@@ -254,7 +254,7 @@ release process.
 
 ### Security
 
-- **Four more outbound sites refuse redirects, closing the class #628 opened.**
+- **Five more outbound sites refuse redirects, closing the class #628 opened.**
   Each validated its target exactly once and then followed `Location` headers
   unchecked. `webhooks/[id]/test` was a one-line divergence from
   `webhooks/dispatcher.ts` on the *same* `webhook.url`, and because
@@ -265,16 +265,34 @@ release process.
   unvalidated host. `llm/provider.ts`'s `fetchWithTimeout` is set as
   defence-in-depth: both its production callers pass hardcoded hosts today, but
   it is an exported generic wrapper and so the seam a fork reuses with a
-  configured host. **And `llm/openai-compatible.ts`, which no sweep had found** —
-  it hands the admin-set `AiProvider.baseUrl` to `new OpenAI({ baseURL })`, and
-  the SDK sets no redirect policy, so undici followed every hop carrying the
-  prompt. Fixed with a `fetch` wrapper rather than by trusting SDK defaults,
-  which also returns the site to the view of
+  configured host.
+  **And both vendor SDK clients, which no sweep had found** — `llm/openai-compatible.ts`
+  hands the admin-set `AiProvider.baseUrl` to `new OpenAI({ baseURL })`, and
+  `llm/anthropic.ts` passes no `baseURL` at all yet the SDK defaults it to
+  `ANTHROPIC_BASE_URL`, so pointing it at a gateway is one env var away. Neither
+  SDK sets a redirect policy, so undici followed every hop carrying the prompt —
+  and Anthropic authenticates with `x-api-key`, a custom header name the spec
+  does **not** strip cross-origin, so its key travelled too. Both are fixed with
+  a `fetch` wrapper rather than by trusting SDK defaults, which also returns
+  them to the view of
   `tests/unit/lib/security/outbound-fetch-redirects.test.ts` — that scan sees
-  literal `fetch(` calls only, which is how the site survived three sweeps.
+  literal `fetch(` calls only, which is how they survived three sweeps. The
+  wiring is pinned by a per-client unit test, since deleting the wrapper would
+  remove the literal call from the scan along with it.
   **A provider or webhook endpoint that answers 3xx now fails instead of being
   followed; re-point it in config.** The guard's `KNOWN GAP` rows are gone, and
   its docblock now states what it cannot see (#635).
+
+- **The embedding path re-checks its provider URL at the point of use.**
+  `callEmbeddingApi` read `AiProviderConfig.baseUrl` straight from Prisma and
+  called it. The only other guard is the Zod refine at create/update, which
+  seeds, imports and direct DB writes bypass — which is precisely why
+  `provider-manager.ts` already re-checks at its own point of use. So a
+  seeded or imported row pointing at, say, the cloud metadata endpoint would
+  have had uploaded document text POSTed to it on the **first** hop, which no
+  redirect policy can help with. Now runs `checkSafeProviderUrl` with
+  `allowLoopback` driven by the provider's `isLocal`, and throws before any
+  request leaves (#635).
 
 - **`executeHttpRequest` no longer follows redirects.** The orchestration HTTP
   executor validated its host allowlist once, against the initial URL, then

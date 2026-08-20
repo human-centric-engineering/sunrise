@@ -12,6 +12,8 @@ import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { calculateEmbeddingCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 
 /**
  * Static fallback embedding model. Only used when neither
@@ -337,6 +339,24 @@ async function callEmbeddingApi(
   input: string | string[],
   inputType?: 'document' | 'query'
 ): Promise<{ embeddings: number[][]; inputTokens: number }> {
+  // Point-of-use SSRF re-check, mirroring `provider-manager.ts` (#635).
+  // Nothing on THIS path ran one: `resolveProvider` reads `AiProviderConfig`
+  // straight from Prisma, and the only other guard is the Zod refine at
+  // create/update — which seeds, imports and direct DB writes bypass, exactly
+  // as provider-manager's own comment says. So hop 1 was unvalidated here, and
+  // the redirect refusal below only ever covered hops 2+.
+  //
+  // An earlier version of the comment below asserted this check already
+  // happened. It did not; that claim is what surfaced the gap.
+  const urlCheck = checkSafeProviderUrl(provider.baseUrl, { allowLoopback: provider.isLocal });
+  if (!urlCheck.ok) {
+    logger.error('Embedding provider baseUrl rejected by SSRF guard at point of use', {
+      providerType: provider.providerType,
+      reason: urlCheck.reason,
+    });
+    throw new Error(`Embedding provider baseUrl is unsafe (${urlCheck.reason ?? 'blocked'})`);
+  }
+
   const url = `${provider.baseUrl.replace(/\/+$/, '')}/embeddings`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
@@ -362,17 +382,28 @@ async function callEmbeddingApi(
     body['dimensions'] = provider.dimensions;
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    // Refuse redirects (#635). `url` is built from the embedding provider's
-    // `baseUrl` — an admin-set DB value checked once by `checkSafeProviderUrl`
-    // and never re-checked per hop. This is the ingestion path, so the body is
-    // whatever document the operator uploaded; a redirect would post that text
-    // to a host nothing validated.
-    redirect: 'error',
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      // Refuse redirects (#635). `url` is built from the embedding provider's
+      // admin-set `baseUrl`, and the check above validates only that first hop.
+      // This is the ingestion path, so the body is whatever document the operator
+      // uploaded; a followed redirect would post that text to a host nothing
+      // validated.
+      redirect: 'error',
+    });
+  } catch (err) {
+    // undici renders a refused redirect, a DNS miss and a connection reset
+    // alike as a bare `TypeError: fetch failed`, with the reason on `cause`.
+    // Ingestion failures surface to the operator through this message, so
+    // without unwrapping, a provider that started redirecting is
+    // indistinguishable from one that is down — and the fix (re-point the
+    // baseUrl) is invisible. Same reasoning as the webhook test route.
+    throw new Error(`Embedding API request failed: ${describeFetchFailure(err)}`);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();

@@ -11,6 +11,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import type {
   EmbedOptions,
   LlmMessage,
@@ -375,7 +376,21 @@ export async function fetchWithTimeout(
         }
       );
     }
-    throw toProviderError(err, 'fetch failed');
+    // undici renders a refused redirect, a DNS miss and a connection reset
+    // alike as a bare `TypeError: fetch failed`, with the reason on `cause` —
+    // and `toProviderError` takes `err.message || fallback`, so the bare form
+    // is what a caller ends up logging. Describe it first.
+    //
+    // The substitution only happens when there IS a cause to add, which means a
+    // network-layer failure, which carries no `.status` — so nothing is lost
+    // from `extractStatus`, and an HTTP error passes through untouched.
+    const described = describeFetchFailure(err);
+    throw toProviderError(
+      err instanceof Error && described !== err.message
+        ? Object.assign(new Error(described), { cause: err })
+        : err,
+      'fetch failed'
+    );
   } finally {
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);

@@ -34,12 +34,25 @@
  * so every hop after the validated one received it. Neither #534's grep for
  * `checkSafeProviderUrl` callers nor this scan could see it.
  *
- * It is guarded now, and guarded in a way this scan CAN see — the fix is a
+ * Both are guarded now, and guarded in a way this scan CAN see — the fix is a
  * `fetch` wrapper passed to the SDK, so the literal call appears here with its
- * policy on it. That is the shape to copy for any future SDK client:
- * **give it a wrapper rather than trusting its defaults**, and this file starts
- * covering it for free. (`@anthropic-ai/sdk` is constructed with no `baseURL`
- * at all, so it only ever reaches Anthropic.)
+ * policy on it. That is the shape to copy for any future SDK client: **give it
+ * a wrapper rather than trusting its defaults.**
+ *
+ * But be precise about what that buys. This scan sees the wrapper only while
+ * the wrapper exists: delete the `fetch:` option and the literal call goes with
+ * it, and the file drops out of the scan **in silence**, exactly as before.
+ * What actually pins the wiring is a per-client unit test —
+ * `openai-compatible.test.ts` and `anthropic.test.ts` each assert that the
+ * supplied `fetch` sets `redirect: 'error'`, and a passthrough fails them.
+ *
+ * `@anthropic-ai/sdk` needed the same fix and for a sharper reason. Its
+ * constructor is called with no `baseURL`, which reads as "it can only reach
+ * Anthropic" — and the SDK defaults `baseURL` to `readEnv('ANTHROPIC_BASE_URL')`,
+ * so an operator pointing it at a gateway is one env var away. Anthropic also
+ * authenticates with `x-api-key`, a custom header name the fetch spec does NOT
+ * strip cross-origin, so a followed redirect would carry the key as well as the
+ * prompt.
  *
  * The residual limit stands: a new SDK client configured with an operator-set
  * host and no wrapper would pass this file in silence. So read the heading

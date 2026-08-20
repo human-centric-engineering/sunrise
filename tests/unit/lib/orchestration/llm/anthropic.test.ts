@@ -9,10 +9,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const createMock = vi.fn();
 
+/** Options the SDK client was constructed with, so the wiring can be asserted. */
+const anthropicConstructorArgs: Record<string, unknown>[] = [];
+
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages = { create: createMock };
-    constructor(_opts: unknown) {}
+    constructor(opts: unknown) {
+      anthropicConstructorArgs.push((opts ?? {}) as Record<string, unknown>);
+    }
   }
   return { default: MockAnthropic };
 });
@@ -2178,5 +2183,44 @@ describe('AnthropicProvider per-request timeout and signal', () => {
 
     // Assert — undefined, so the client's construction-time timeout still applies
     expect(createMock.mock.calls[0][1]).toBeUndefined();
+  });
+});
+
+describe('outbound redirect policy (#635)', () => {
+  // Invisible to `outbound-fetch-redirects.test.ts` without the wrapper: the
+  // SDK issues the request internally. Passing no `baseURL` reads as "this can
+  // only reach Anthropic", but the SDK defaults it to
+  // `readEnv('ANTHROPIC_BASE_URL')`, so an operator pointing it at a gateway is
+  // one env var away — and Anthropic authenticates with `x-api-key`, a custom
+  // header the fetch spec does NOT strip cross-origin. A followed redirect
+  // would hand the second host the prompt AND the key.
+  beforeEach(() => {
+    anthropicConstructorArgs.length = 0;
+  });
+
+  it('hands the SDK a fetch that refuses redirects', async () => {
+    makeProvider();
+
+    const [opts] = anthropicConstructorArgs;
+    expect(typeof opts.fetch).toBe('function');
+
+    // The wrapper's behaviour, not its presence — a passthrough would satisfy a
+    // presence check while following every hop.
+    const inner = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+    try {
+      await (opts.fetch as (input: string, init?: RequestInit) => Promise<Response>)(
+        'https://example.test/v1/messages',
+        { method: 'POST', body: '{}' }
+      );
+
+      expect(inner).toHaveBeenCalledWith(
+        'https://example.test/v1/messages',
+        expect.objectContaining({ method: 'POST', redirect: 'error' })
+      );
+    } finally {
+      inner.mockRestore();
+    }
   });
 });

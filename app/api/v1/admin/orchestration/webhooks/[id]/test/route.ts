@@ -130,10 +130,15 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   let statusCode: number | null = null;
   let error: string | null = null;
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+  // Declared outside the `try` so `finally` can clear the timer. It used to be
+  // cleared on the success line only, which `redirect: 'error'` turns from an
+  // edge case into a routine one: a redirecting endpoint would leave the timer
+  // armed to fire `controller.abort()` on a settled controller five seconds
+  // after the response went out, once per click.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
 
+  try {
     const res = await fetch(webhook.url, {
       method: 'POST',
       headers: {
@@ -156,7 +161,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       redirect: 'error',
     });
 
-    clearTimeout(timeout);
     statusCode = res.status;
   } catch (err) {
     // undici renders a refused redirect, a DNS failure and a connection reset
@@ -176,6 +180,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
         : err instanceof Error
           ? describeFetchFailure(err)
           : 'Unknown error';
+  } finally {
+    // In `finally`, not after the `await` — `redirect: 'error'` makes the throw
+    // path routine rather than exceptional, and a timer left armed there fires
+    // `controller.abort()` on a settled controller five seconds after the
+    // response has gone out. One live handle per click on a redirecting
+    // endpoint. `webhooks/dispatcher.ts` already clears its timer this way.
+    clearTimeout(timeout);
   }
 
   const durationMs = Date.now() - start;
