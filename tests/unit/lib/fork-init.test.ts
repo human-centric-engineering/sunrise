@@ -2,10 +2,10 @@
  * Tests for `lib/fork-init.ts` — the shared one-shot gate every `lib/app/*`
  * seam runs its fork init through.
  *
- * The gate exists because eleven registries each hand-wrote a latch, a
- * try/catch and a log line — four of them with a rollback, and one
- * (`capabilities`) with no catch at all and its latch set AFTER the call. Seven
- * of the eleven kept a throwing init's registrations (#633). So these tests are
+ * The gate exists because ten registries each hand-wrote a latch, a try/catch
+ * and a log line — four of those with a rollback — and an eleventh,
+ * `capabilities`, had only the latch, set AFTER the call. Seven of the eleven
+ * kept a throwing init's registrations (#633). So these tests are
  * written against the two failures that actually happened, not just the happy
  * path: a partial init must leave nothing behind, and the latch must be set
  * BEFORE the init runs — the one registry that latched afterwards re-ran a
@@ -326,6 +326,54 @@ describe('createAppInitGate', () => {
       expect.stringContaining('rejected after returning — nothing was rolled back'),
       { error: 'late boom' }
     );
+  });
+
+  it('survives a seam whose return value has a hostile `then` accessor', () => {
+    // Reading `.then` runs fork code. A Proxy trap or a throwing getter turns
+    // the promise probe into a throw out of `ensure()` — after the verdict is
+    // settled, and outside the init's own try/catch. Third recurrence of the
+    // "never throws" violation inside this one file, which is why the fix is
+    // structural rather than another guard in the spot it appeared.
+    const registry = new Map<string, string>();
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      init: () => ({
+        get then() {
+          throw new Error('hostile getter');
+        },
+      }),
+      snapshot: () => new Map(registry),
+      restore: (before) => restoreMap(registry, before),
+    });
+
+    expect(() => gate.ensure()).not.toThrow();
+    // Not a promise as far as we can tell, and not a gate failure either.
+    expect(gate.ensure()).toBe('ok');
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('never lets the GATE itself throw out of a public read', () => {
+    // The backstop, tested through the one closure a caller supplies that the
+    // gate calls before anything else. `ensure()` is at the top of every public
+    // read on eleven registries, several documented as always-safe-to-call.
+    const gate = createAppInitGate({
+      label: 'probe: initAppProbe',
+      subject: 'app probes',
+      init: () => {},
+      snapshot: () => {
+        throw new Error('snapshot blew up');
+      },
+      restore: () => {},
+    });
+
+    expect(() => gate.ensure()).not.toThrow();
+    // The fork's init never ran, so 'failed' — NOT left latched on 'running',
+    // which is the one state nothing recovers from.
+    expect(gate.ensure()).toBe('failed');
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('the gate itself threw'), {
+      error: 'snapshot blew up',
+    });
   });
 
   it('does not mistake a plain object with no `then` for a promise', () => {

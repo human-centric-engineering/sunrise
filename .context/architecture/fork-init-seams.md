@@ -33,6 +33,12 @@ Three properties come with it:
   applied, we will not say which" is not a contract a fork author can reason
   about — and which ones survive depends on where the bug sits in their file,
   not on what they meant.
+- **`ensure()` cannot throw, structurally.** Its body is wrapped, so a
+  `snapshot` or `restore` closure that fails — or anything added inside it later
+  — surfaces as a log line and a settled verdict rather than as an exception out
+  of a public read. That is a backstop rather than a rule to remember, because
+  the "never throws" contract was re-broken three times from inside the module
+  while it was being written, each time by code that was correct in isolation.
 - **The catch cannot itself throw.** `String(err)` raises on a null-prototype
   value; that would escape the catch _after_ the rollback, surfacing as an
   unexplained failure of the thing the catch protects. `describeThrown()` handles

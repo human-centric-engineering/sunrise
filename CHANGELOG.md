@@ -38,7 +38,14 @@ release process.
 
 - **`lib/fork-init.ts` — one shared gate behind the lazy `lib/app/*` init seams.**
   `createAppInitGate({ label, subject, init, snapshot, restore })` owns the
-  latch, the rollback, the log line and the log-safe error description. Eleven of
+  latch, the rollback, the log line and the log-safe error description — and
+  `ensure()` never throws, structurally: its body is wrapped, so a `snapshot` or
+  `restore` closure that fails cannot escape a public read on eleven registries,
+  several of which are documented as always-safe-to-call. A seam that returns a
+  **promise** is also called out at boot (`… must be synchronous, and the
+  all-or-nothing rollback does NOT apply`), with its rejection routed to the log;
+  `@typescript-eslint/no-misused-promises` already fails such a seam at lint, so
+  this is the backstop for a fork that does not lint. Eleven of
   the thirteen `initApp*` seams run through it; the two that do not —
   `initAppNav`, called at module scope from a client component, and `initApp`,
   the boot hook that registers nothing itself — are pinned as exemptions with

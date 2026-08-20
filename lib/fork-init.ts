@@ -147,6 +147,39 @@ export interface AppInitGateOptions<S> {
 export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGate {
   const { label, subject, init, snapshot, restore, onSuccess, onFailure } = options;
   let state: 'pending' | AppInitState = 'pending';
+  /**
+   * Whether the fork's `init()` returned normally. Tracked separately from
+   * `state` because the outer backstop needs the answer and TypeScript cannot
+   * see that `runOnce` reassigns `state` through the closure.
+   */
+  let initReturned = false;
+
+  /** The real work; `ensure()` wraps this so nothing here can escape a caller. */
+  function runOnce(): AppInitState {
+    const before = snapshot();
+    let returned: unknown;
+    try {
+      returned = init();
+    } catch (err) {
+      // Roll back, do not just log. See the module header: the registrations
+      // an init made before it threw are otherwise live under a log line that
+      // says the feature is off.
+      restore(before);
+      state = 'failed';
+      logger.error(`${label} threw — ${subject} rolled back and disabled`, {
+        error: describeThrown(err),
+      });
+      runCallback(label, 'onFailure', () => onFailure?.(err));
+      return state;
+    }
+
+    initReturned = true;
+
+    state = 'ok';
+    warnIfAsync(label, returned);
+    runCallback(label, 'onSuccess', () => onSuccess?.(before), 'the init itself succeeded');
+    return state;
+  }
 
   return {
     ensure(): AppInitState {
@@ -158,31 +191,37 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
       if (state !== 'pending') return state;
       state = 'running';
 
-      const before = snapshot();
-      let returned: unknown;
       try {
-        returned = init();
+        return runOnce();
       } catch (err) {
-        // Roll back, do not just log. See the module header: the registrations
-        // an init made before it threw are otherwise live under a log line that
-        // says the feature is off.
-        restore(before);
-        state = 'failed';
-        logger.error(`${label} threw — ${subject} rolled back and disabled`, {
+        // The gate ITSELF failed — a `snapshot`/`restore` closure threw, or
+        // something added inside `runOnce` did.
+        //
+        // This is a structural backstop, not a third patch of the same bug. The
+        // "never throws" contract had already been re-broken twice from inside
+        // this file: once by `String(err)` on a null-prototype value, once by an
+        // unguarded `onSuccess`, and then a third time by a thenable probe
+        // reading `.then` off a hostile getter — each fixed in the spot it
+        // appeared, which is why there was a third. `ensure()` sits at the top of
+        // every public read on eleven registries, several documented as
+        // always-safe-to-call, so the guarantee has to hold for code that does
+        // not exist yet.
+        //
+        // The verdict is preserved rather than overwritten: if the fork's init
+        // already returned, it really did succeed, and only the gate's own
+        // bookkeeping failed. If it had not, settle to `'failed'` — leaving
+        // `'running'` latched forever is the one state nothing recovers from.
+        state = initReturned ? 'ok' : 'failed';
+        logger.error(`${label} — the gate itself threw; treating ${subject} as ${state}`, {
           error: describeThrown(err),
         });
-        runCallback(label, 'onFailure', () => onFailure?.(err));
         return state;
       }
-
-      state = 'ok';
-      warnIfAsync(label, returned);
-      runCallback(label, 'onSuccess', () => onSuccess?.(before), 'the init itself succeeded');
-      return state;
     },
 
     reset(): void {
       state = 'pending';
+      initReturned = false;
     },
   };
 }
@@ -213,7 +252,7 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
  * rest of the registration-shape work.
  */
 function warnIfAsync(label: string, returned: unknown): void {
-  if (typeof (returned as { then?: unknown } | null | undefined)?.then !== 'function') return;
+  if (!isThenable(returned)) return;
 
   logger.error(
     `${label} returned a promise — this seam must be synchronous, and the all-or-nothing rollback does NOT apply to it`,
@@ -226,6 +265,23 @@ function warnIfAsync(label: string, returned: unknown): void {
       error: describeThrown(err),
     });
   });
+}
+
+/**
+ * Whether a seam's return value looks like a promise.
+ *
+ * Guarded, because reading `.then` runs fork code: a Proxy trap or a getter can
+ * throw, and this is called after the verdict is settled and outside the init's
+ * own try/catch. Anything unreadable is treated as not-a-promise — the outer
+ * backstop in `ensure()` would catch it either way, but a hostile accessor is
+ * not a gate failure and should not be logged as one.
+ */
+function isThenable(returned: unknown): boolean {
+  try {
+    return typeof (returned as { then?: unknown } | null | undefined)?.then === 'function';
+  } catch {
+    return false;
+  }
 }
 
 /**
