@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/v1/admin/stats/route';
+import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 /** Dummy request for handler invocation (auth is mocked via headers) */
 const dummyRequest = new NextRequest('http://localhost:3000/api/v1/admin/stats');
@@ -90,6 +91,7 @@ interface StatsResponse {
     system: {
       nodeVersion: string;
       appVersion: string;
+      sunriseVersion: string;
       environment: string;
       uptime: number;
       databaseStatus: string;
@@ -191,6 +193,9 @@ describe('GET /api/v1/admin/stats', () => {
       expect(data.data.system).toMatchObject({
         nodeVersion: expect.any(String),
         appVersion: expect.any(String),
+        // Where the platform version moved when #531 took it off the
+        // unauthenticated health payload. Other admin routes return it too.
+        sunriseVersion: SUNRISE_VERSION,
         environment: expect.any(String),
         uptime: expect.any(Number),
         databaseStatus: 'connected',

@@ -18,6 +18,27 @@ release process.
 
 ### Added
 
+- **`/admin/overview` shows which Sunrise a deployment is running.** A
+  `SystemInfo` card (`components/admin/system-info.tsx`) renders the fork's app
+  version beside the Sunrise platform release it is built on, plus Node version
+  and environment — the answer to "did that upgrade actually ship?" and to
+  "which Sunrise are you on?", which until now needed a terminal.
+  `GET /api/v1/admin/stats` gains `system.sunriseVersion` to feed it (see the
+  Security entry). The card is a
+  **server component** taking the stats payload as a prop, so the overview page's
+  existing fetch feeds it — no client bundle, no second request, no hydration —
+  and forks inherit it without editing a Sunrise-owned route.
+  The whole `system` block of the stats payload was previously API-only, so
+  `appVersion` had no UI consumer at all. Two details worth knowing if you adapt
+  the card: the platform row is labelled **"Sunrise platform"**, not "Sunrise",
+  because upstream `BRAND.name` *is* `"Sunrise"` and `APP_VERSION` equals
+  `SUNRISE_VERSION` — a bare label renders the same word over the same number
+  twice, and only a rebranded fork would ever notice; and a `null` stats payload
+  renders an explicit "unavailable" message rather than an empty card, because
+  `getStats()` returns `null` on any fetch failure and a broken stats API must
+  not look like a healthy deployment on the page an operator opens *because*
+  something is wrong. (#531)
+
 - **`npm run test:changed` / `npm run test:changed:coverage` — a scoped local
   test gate, and the new default for `/pre-pr`.** The full suite is ~1080 files
   and roughly four minutes with coverage; two of them running at once across
@@ -425,7 +446,58 @@ release process.
   [`.context/architecture/ci.md`](./.context/architecture/ci.md) — and lower it
   to fit before flipping a repo private**, where `ubuntu-latest` is 2 vCPU / 8GB.
 
+### Removed
+
+- **BREAKING: `sunrise` is gone from the `GET /api/health` response.** Also
+  removed from `HealthCheckResponse` (`lib/monitoring/types.ts`) and
+  `healthCheckResponseSchema` (`lib/validations/monitoring.ts`). Anything reading
+  `body.sunrise` from that endpoint — an uptime monitor asserting on it, a
+  deploy-verification script grepping it — breaks. Read
+  `GET /api/v1/admin/stats` (`system.sunriseVersion`) instead, or import
+  `SUNRISE_VERSION` server-side. `version` is unaffected. **Why** is under
+  Security below; this entry exists so a fork scanning `Removed` for upgrade
+  breakage finds it. (#531)
+
 ### Security
+
+- **`GET /api/health` no longer discloses the Sunrise platform version.** The
+  `sunrise` field is **removed** from the response — a breaking change to a
+  documented public surface, and the reason is that the surface was public.
+  The endpoint takes no authentication (verified: it is absent from `proxy.ts`'s
+  `protectedRoutes`, and the handler carries no guard), so the field named the
+  exact upstream release a deployment runs, and therefore the exact set of
+  published issues to try against it, to anyone who asked. Unlike a fork's own
+  app version, that answer is useful against **every** Sunrise-derived
+  deployment rather than one.
+  It is now served from `GET /api/v1/admin/stats` as `system.sunriseVersion`,
+  behind `withAdminAuth`, and rendered on `/admin/overview` — see the Added
+  entry above. `version` (the fork's `package.json` version) **stays** on the
+  health payload: it is the fork's own number to disclose, it means nothing
+  outside that fork, and container health checks and deploy-verification scripts
+  read it.
+  `HealthCheckResponse` (`lib/monitoring/types.ts`) and
+  `healthCheckResponseSchema` (`lib/validations/monitoring.ts`) drop the field
+  with it. The schema **tolerates** a payload that still carries one — Zod's
+  default object behaviour strips unknown keys — so a fork that keeps `sunrise`
+  on its own health route, and a rolling upgrade serving both shapes at once,
+  both keep working against `useHealthCheck`. **What breaks:** anything reading
+  `body.sunrise` from `/api/health` — an uptime monitor asserting on it, a
+  deploy script grepping it. Read `/api/v1/admin/stats` instead, or import
+  `SUNRISE_VERSION` server-side.
+  `tests/integration/api/health.test.ts` now asserts the **exact** top-level key
+  set rather than a list of `toHaveProperty` calls. The old form could only
+  catch a field going missing, never one appearing, which is how this one sat
+  there unquestioned; every future field is now a decision someone has to take
+  deliberately.
+  A whole-tree guard (`tests/unit/sunrise-version-disclosure.test.ts`, added to
+  `ALWAYS_RUN_TESTS`) holds the invariant that actually matters: **no
+  unauthenticated route's import graph reaches `SUNRISE_VERSION`**. Three routes
+  still return it — admin stats, the MCP settings route, and the
+  `POST /api/v1/mcp` `initialize` handshake — and all three are authenticated.
+  The guard computes that roster by walking the tree rather than listing it,
+  because the hand-written version of that roster was wrong while this very
+  change was being written: it named one route and missed two, one of them
+  reached through two hops of imports. (#531)
 
 - **Five more outbound sites refuse redirects, closing the class #628 opened.**
   Each validated its target exactly once and then followed `Location` headers

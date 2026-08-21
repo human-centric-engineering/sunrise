@@ -13,7 +13,7 @@ app/admin/
 ├── loading.tsx         # Loading skeleton UI
 ├── error.tsx           # Error boundary with recovery actions
 ├── overview/
-│   └── page.tsx        # Dashboard with stats and system status
+│   └── page.tsx        # Dashboard: user stats, health status, version info
 ├── users/
 │   ├── page.tsx        # User management tabs (users + invitations)
 │   ├── [id]/
@@ -87,12 +87,12 @@ The admin section includes a dedicated error boundary (`app/admin/error.tsx`) th
 
 ## Navigation Structure
 
-| Route             | Label         | Description                    |
-| ----------------- | ------------- | ------------------------------ |
-| `/admin/overview` | Dashboard     | System stats and health status |
-| `/admin/users`    | Users         | User and invitation management |
-| `/admin/features` | Feature Flags | Runtime feature toggles        |
-| `/admin/logs`     | Logs          | Application log viewer         |
+| Route             | Label         | Description                                                                              |
+| ----------------- | ------------- | ---------------------------------------------------------------------------------------- |
+| `/admin/overview` | Dashboard     | User stats, health status, and the app/Sunrise version pair (see [stats.md](./stats.md)) |
+| `/admin/users`    | Users         | User and invitation management                                                           |
+| `/admin/features` | Feature Flags | Runtime feature toggles                                                                  |
+| `/admin/logs`     | Logs          | Application log viewer                                                                   |
 
 ## API Endpoints
 

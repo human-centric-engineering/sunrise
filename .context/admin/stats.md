@@ -15,6 +15,47 @@ The `StatsCards` component displays four key metrics:
 | New Users (24h) | `users.recentSignups` | Signups in last 24 hours   |
 | Admin Users     | `users.byRole.ADMIN`  | Users with admin role      |
 
+## System Information
+
+The `SystemInfo` card (`components/admin/system-info.tsx`) renders the version
+pair an operator needs when triaging: the fork's app version beside the Sunrise
+platform release it's built on, plus Node version and environment.
+
+| Row                | Field                   | Source                                   |
+| ------------------ | ----------------------- | ---------------------------------------- |
+| `{BRAND.name} app` | `system.appVersion`     | `lib/app-version.ts` (fork-owned)        |
+| `Sunrise platform` | `system.sunriseVersion` | `lib/sunrise-version.ts` (Sunrise-owned) |
+| `Node`             | `system.nodeVersion`    | `process.version`                        |
+| `Environment`      | `system.environment`    | `NODE_ENV`                               |
+
+**This route is the operator-facing surface for the Sunrise version.** It used to be on the unauthenticated
+`/api/health` payload, where any anonymous caller could read which upstream
+release — and therefore which published issues — a deployment was running, while
+the operator who needed it had no way to see it from the product. #531 inverted
+that. See [`VERSIONING.md`](../../VERSIONING.md) and
+[`.context/api/utility-endpoints.md`](../api/utility-endpoints.md).
+
+Two other routes also return `SUNRISE_VERSION`, and both are authenticated —
+`GET`/`PATCH /api/v1/admin/orchestration/mcp/settings` as `serverVersion` (admin
+session), and the `POST /api/v1/mcp` `initialize` handshake as
+`serverInfo.version` (bearer API key; 401 without one). The property that
+matters when adding another is that **no unauthenticated surface carries it**,
+not that this one is unique.
+
+Two details that are easy to get wrong when adapting this card:
+
+- **The platform row is labelled "Sunrise platform", not "Sunrise".** Upstream,
+  `BRAND.name` _is_ `"Sunrise"` and `APP_VERSION` equals `SUNRISE_VERSION`, so a
+  bare label renders the same word over the same number twice. Only a rebranded
+  fork would notice.
+- **A `null` stats payload renders an explicit "unavailable" message**, not an
+  empty card. The overview page's `getStats()` returns `null` on any fetch
+  failure, and a broken stats API must not look like a healthy deployment on the
+  page an operator opens _because_ something is wrong.
+
+It is a server component: the overview page already awaits the stats it needs, so
+the card adds no client bundle, no second fetch and no hydration.
+
 ## Component
 
 ### StatsCards
@@ -84,7 +125,8 @@ interface SystemStats {
   };
   system: {
     nodeVersion: string; // e.g., "v24.9.0"
-    appVersion: string; // From package.json
+    appVersion: string; // The fork's app version, from package.json
+    sunriseVersion: string; // The Sunrise platform release (lib/sunrise-version.ts)
     environment: string; // "development" | "production"
     uptime: number; // Seconds since start
     databaseStatus: 'connected' | 'disconnected' | 'error';
@@ -118,6 +160,7 @@ Returns system statistics for the admin dashboard.
     "system": {
       "nodeVersion": "v24.9.0",
       "appVersion": "1.0.0",
+      "sunriseVersion": "0.9.0",
       "environment": "production",
       "uptime": 86400,
       "databaseStatus": "connected"

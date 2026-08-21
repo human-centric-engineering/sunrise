@@ -24,7 +24,6 @@ import type { HealthCheckResponse } from '@/lib/monitoring';
 const validOkPayload: HealthCheckResponse = {
   status: 'ok',
   version: '1.0.0',
-  sunrise: '0.1.0',
   uptime: 1234,
   timestamp: '2026-05-28T10:00:00.000Z',
   services: {
@@ -39,7 +38,6 @@ const validOkPayload: HealthCheckResponse = {
 const validErrorPayload: HealthCheckResponse = {
   status: 'error',
   version: '1.0.0',
-  sunrise: '0.1.0',
   uptime: 1234,
   timestamp: '2026-05-28T10:00:00.000Z',
   services: {
@@ -51,12 +49,15 @@ const validErrorPayload: HealthCheckResponse = {
   error: 'Database unreachable',
 };
 
-// Malformed payload: missing the `sunrise` field — the schema added in PR #268
-// will reject this, triggering the parse-failure path in fetchHealth.
+// Malformed payload: missing the required `version` field — the schema will
+// reject this, triggering the parse-failure path in fetchHealth.
+//
+// This fixture used to omit `sunrise`. #531 removed that field from the health
+// contract, which turned this payload into a perfectly valid one and would have
+// left the parse-failure test asserting against a payload that parses.
 const malformedPayload = {
   status: 'ok',
-  version: '1.0.0',
-  // sunrise omitted deliberately
+  // version omitted deliberately
   uptime: 1234,
   timestamp: '2026-05-28T10:00:00.000Z',
   services: {
@@ -128,7 +129,7 @@ describe('useHealthCheck', () => {
       });
 
       expect(result.current.isLoading).toBe(false);
-      expect(result.current.data).toMatchObject({ status: 'ok', sunrise: '0.1.0' });
+      expect(result.current.data).toMatchObject({ status: 'ok', version: '1.0.0' });
       // lastUpdated is set by the hook after a successful parse — it's not in the payload
       expect(result.current.lastUpdated).toBeInstanceOf(Date);
       expect(result.current.error).toBeNull();
@@ -183,11 +184,11 @@ describe('useHealthCheck', () => {
     });
   });
 
-  // ── Parse-failure path (PR #268 safety net) ───────────────────────────────
+  // ── Parse-failure path ────────────────────────────────────────────────────
 
   describe('parse-failure path', () => {
     it('sets an error whose message starts with "Invalid /api/health response shape:" when the payload fails schema validation', async () => {
-      // A payload missing `sunrise` passes json() but fails healthCheckResponseSchema.safeParse().
+      // A payload missing `version` passes json() but fails healthCheckResponseSchema.safeParse().
       // The hook must throw with the prefixed message — not silently render undefined.
       mockFetchOnce(malformedPayload);
 
@@ -244,7 +245,7 @@ describe('useHealthCheck', () => {
       });
 
       // data must still be the good payload; the parse failure must not wipe it
-      expect(result.current.data).toMatchObject({ status: 'ok', sunrise: '0.1.0' });
+      expect(result.current.data).toMatchObject({ status: 'ok', version: '1.0.0' });
       expect(result.current.error?.message).toMatch(/^Invalid \/api\/health response shape:/);
       // Same Date instance: proves the error-path spread preserved lastUpdated
       expect(result.current.lastUpdated).toBe(firstLastUpdated);

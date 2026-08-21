@@ -60,6 +60,19 @@ GET /api/health
 - `services.database.latency`: Query latency in milliseconds (when connected)
 - `memory`: Optional memory stats (enabled via `HEALTH_INCLUDE_MEMORY=true`)
 
+**What is deliberately NOT here.** The Sunrise platform version. This endpoint is
+unauthenticated, so everything it returns is returned to anyone — and
+`SUNRISE_VERSION` names the exact upstream release, and therefore the exact
+published issues to try, for every Sunrise-derived deployment rather than just
+this one. Read it from `GET /api/v1/admin/stats` (`system.sunriseVersion`,
+behind `withAdminAuth`) or on `/admin/overview`. `version` — the fork's own app
+version — stays: it's the fork's number to disclose, means nothing outside that
+fork, and container health checks read it. See `VERSIONING.md` (#531).
+
+Treat any field added here as a disclosure decision. The integration test
+asserts the **exact** top-level key set for that reason, so a new field fails the
+suite until someone has said out loud that an anonymous caller may have it.
+
 **Use Cases**:
 
 - Load balancer health checks

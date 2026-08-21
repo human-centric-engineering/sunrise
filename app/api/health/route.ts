@@ -4,7 +4,6 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getMemoryUsage } from '@/lib/monitoring';
 import type { HealthCheckResponse, ServiceStatus } from '@/lib/monitoring';
 import { APP_VERSION } from '@/lib/app-version';
-import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 /**
  * Check if memory should be included in health response
@@ -33,10 +32,23 @@ function determineServiceStatus(connected: boolean, latency?: number): ServiceSt
 /**
  * Build the health response payload.
  *
- * Centralises the response-shape construction so the version fields (`version`,
- * `sunrise`), uptime, timestamp, and memory toggle live in ONE place — the
- * success and error branches both call through here. Adding a new top-level
- * field to the contract means one edit, not two.
+ * Centralises the response-shape construction so `version`, uptime, timestamp,
+ * and the memory toggle live in ONE place — the success and error branches both
+ * call through here. Adding a new top-level field to the contract means one
+ * edit, not two.
+ *
+ * **The Sunrise platform version is deliberately not here.** This endpoint is
+ * unauthenticated — load balancers and container orchestrators probe it — so
+ * anything it returns is returned to anyone. `SUNRISE_VERSION` names the exact
+ * upstream release a deployment runs, and therefore the exact set of published
+ * issues to try against it, across every Sunrise-derived deployment rather than
+ * just this one. It is served from `GET /api/v1/admin/stats` instead, behind
+ * `withAdminAuth`, and rendered on `/admin/overview` — the operator who needs
+ * it can see it, and an anonymous caller cannot (#531).
+ *
+ * `version` (the fork's own `package.json` version) stays: it is the fork's
+ * number to disclose, means nothing outside that fork, and container health
+ * checks and deploy-verification scripts read it.
  */
 function buildHealthPayload(params: {
   status: 'ok' | 'error';
@@ -46,7 +58,6 @@ function buildHealthPayload(params: {
   const payload: HealthCheckResponse = {
     status: params.status,
     version: APP_VERSION,
-    sunrise: SUNRISE_VERSION,
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     services: {
@@ -74,7 +85,6 @@ function buildHealthPayload(params: {
  * {
  *   status: 'ok' | 'error',
  *   version: string,        // fork's app version (package.json)
- *   sunrise: string,        // Sunrise platform version (lib/sunrise-version.ts)
  *   uptime: number,
  *   timestamp: string,
  *   services: {

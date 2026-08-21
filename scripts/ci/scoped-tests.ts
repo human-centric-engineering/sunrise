@@ -152,6 +152,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'chain connects the two — so the guard on the list needs the same ' +
       'treatment as the things it guards.',
   },
+  {
+    path: 'tests/unit/sunrise-version-disclosure.test.ts',
+    reason:
+      'walks `app/` and `lib/` for every route whose import graph reaches ' +
+      '`SUNRISE_VERSION`, and fails if one of them is unauthenticated. The ' +
+      'change it exists to catch is a NEW route returning the platform ' +
+      'version — a file that by definition no existing import chain reaches.',
+  },
 ];
 
 /** Just the paths, for argv building and set arithmetic. */

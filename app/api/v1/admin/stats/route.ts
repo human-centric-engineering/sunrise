@@ -7,7 +7,7 @@
  *
  * Returns:
  *   - User counts (total, by role, recent signups, verified)
- *   - System info (uptime, version, environment)
+ *   - System info (uptime, app + Sunrise version, node version, environment)
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
@@ -17,6 +17,7 @@ import { getDatabaseHealth } from '@/lib/db/utils';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { APP_VERSION } from '@/lib/app-version';
+import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 import type { SystemStats } from '@/types/admin';
 
 /**
@@ -24,9 +25,23 @@ import type { SystemStats } from '@/types/admin';
  */
 const PROCESS_START_TIME = Date.now();
 
-// APP_VERSION is the fork's app version, derived from package.json via the
-// shared constant in `lib/app-version.ts`. See VERSIONING.md for why this is
-// separate from SUNRISE_VERSION.
+// Two versions, owned by different parties. APP_VERSION is the fork's app
+// version, derived from package.json via `lib/app-version.ts`; SUNRISE_VERSION
+// is the upstream platform release this checkout corresponds to. See
+// VERSIONING.md for why they are separate.
+//
+// This admin-authenticated route is the operator-facing surface for
+// SUNRISE_VERSION. It used to be on the unauthenticated `/api/health` payload
+// and nowhere an operator could see it — visible to everyone except the person
+// who needed it (#531).
+//
+// It is not the only route that returns the version, and the claim to check
+// before adding another is "is it authenticated", not "is it the only one".
+// The full set, all authenticated:
+//   - here                                        (admin session)
+//   - GET/PATCH .../orchestration/mcp/settings    (admin session)
+//   - POST /api/v1/mcp `initialize` → serverInfo  (bearer API key, 401 without)
+// No unauthenticated surface carries it.
 
 /**
  * GET /api/v1/admin/stats
@@ -86,6 +101,7 @@ export const GET = withAdminAuth(async (request, session) => {
     system: {
       nodeVersion: process.version,
       appVersion: APP_VERSION,
+      sunriseVersion: SUNRISE_VERSION,
       environment: process.env.NODE_ENV || 'development',
       uptime: Math.floor((Date.now() - PROCESS_START_TIME) / 1000),
       databaseStatus: dbHealth.connected ? 'connected' : 'error',

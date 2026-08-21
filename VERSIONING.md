@@ -41,9 +41,18 @@ some serverless runtimes). The two constants `APP_VERSION` and
 `SUNRISE_VERSION` are the canonical import sites; server-side code should
 read these rather than reaching into `package.json` or hard-coding a literal.
 
-Both are surfaced on the (public) `/api/health` endpoint as `version` and
-`sunrise` respectively, so operators and the eventual HCE Hub can ask any
-deployment which Sunrise it's on without guessing.
+**Where each is surfaced, and why they differ.** `version` is on the public
+`/api/health` endpoint — it is the fork's own number, means nothing outside that
+fork, and container health checks and deploy scripts read it. `SUNRISE_VERSION`
+is **not**: it is served from `GET /api/v1/admin/stats` as
+`system.sunriseVersion`, behind `withAdminAuth`, and rendered on
+`/admin/overview`.
+
+It used to be on the health payload too, which meant the release a deployment
+ran was disclosed to any anonymous caller — naming the published issues to try,
+across every Sunrise-derived deployment rather than just one — while the
+operator who needed it had no way to read it from the product at all. #531
+inverted that: the operator can see it; a stranger cannot.
 
 **Why two?** Because if `SUNRISE_VERSION` were derived from
 `package.json.version`, Sunrise's version would silently follow whatever the

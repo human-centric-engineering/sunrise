@@ -44,7 +44,6 @@ export const memoryUsageSchema = z.object({
 export const healthCheckResponseSchema = z.object({
   status: z.enum(['ok', 'error']),
   version: z.string(),
-  sunrise: z.string(),
   uptime: z.number(),
   timestamp: z.string(),
   services: z.object({

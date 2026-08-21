@@ -29,6 +29,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/v1/admin/stats/route';
 import type { SystemStats } from '@/types/admin';
+import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 /** Dummy request for handler invocation (auth is mocked via headers) */
 const dummyRequest = new NextRequest('http://localhost:3000/api/v1/admin/stats');
@@ -62,6 +63,18 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 // Mock database utilities
+// Pin the fork's app version to something the platform version is NOT.
+//
+// Upstream these two constants hold the SAME string — `package.json.version`
+// and `SUNRISE_VERSION` both track the release — so a test asserting only
+// `sunriseVersion === SUNRISE_VERSION` passes just as happily against a route
+// that echoed `APP_VERSION` into the field. Verified by sabotage: that swap
+// left all 42 tests green. Forcing them apart is what makes the assertion able
+// to fail, and it is also the state every fork is actually in.
+vi.mock('@/lib/app-version', () => ({
+  APP_VERSION: '42.7.1',
+}));
+
 vi.mock('@/lib/db/utils', () => ({
   getDatabaseHealth: vi.fn(),
 }));
@@ -592,9 +605,30 @@ describe('GET /api/v1/admin/stats', () => {
       const data = await parseResponse<SuccessResponse>(response);
 
       // Assert
-      expect(data.data.system.appVersion).toBeDefined();
-      expect(typeof data.data.system.appVersion).toBe('string');
-      expect(data.data.system.appVersion).toMatch(/^\d+\.\d+\.\d+$/);
+      // Against the mocked `APP_VERSION`, so this proves the route reads that
+      // constant rather than that it emitted something version-shaped.
+      expect(data.data.system.appVersion).toBe('42.7.1');
+    });
+
+    it('should include the Sunrise platform version, equal to SUNRISE_VERSION', async () => {
+      // #531 removed the platform version from the unauthenticated
+      // `/api/health` payload, where it told any anonymous caller which upstream
+      // release — and therefore which published issues — a deployment was
+      // running. This admin-authed route is where it moved to.
+      //
+      // Not "the only" surface — other admin routes return it too, and the
+      // enforceable invariant lives in
+      // `tests/unit/sunrise-version-disclosure.test.ts`, not in a count.
+      //
+      // Asserted against the imported constant, with `APP_VERSION` mocked to a
+      // different number above so "reads SUNRISE_VERSION" and "echoes whatever
+      // the app version is" are distinguishable outcomes.
+      const response = await GET(dummyRequest);
+      const data = await parseResponse<SuccessResponse>(response);
+
+      expect(response.status).toBe(200);
+      expect(data.data.system.sunriseVersion).toBe(SUNRISE_VERSION);
+      expect(data.data.system.sunriseVersion).not.toBe(data.data.system.appVersion);
     });
 
     it('should include environment in system info', async () => {

@@ -119,8 +119,13 @@ export function useHealthCheck(options: UseHealthCheckOptions = {}): UseHealthCh
       // Validate the response body against the documented shape rather than
       // a bare `as HealthCheckResponse` cast. A server returning a payload
       // that doesn't match the contract (e.g. an older deployment missing
-      // the `sunrise` field, or a stripping proxy) becomes a clear fetch
-      // error here instead of a silent `undefined` rendered in the UI.
+      // `version`, or a stripping proxy) becomes a clear fetch error here
+      // instead of a silent `undefined` rendered in the UI.
+      //
+      // The schema deliberately does NOT reject a payload carrying extra keys
+      // — Zod strips them. That is what lets this hook keep working against a
+      // fork that kept `sunrise` on its own health route, and across a rolling
+      // upgrade serving both shapes at once (#531).
       const parsed = healthCheckResponseSchema.safeParse(await response.json());
       if (!parsed.success) {
         throw new Error(`Invalid /api/health response shape: ${parsed.error.message}`);

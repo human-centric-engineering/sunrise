@@ -16,7 +16,6 @@ GET /api/health
 {
   "status": "ok",
   "version": "0.0.0",
-  "sunrise": "0.0.0",
   "uptime": 3600,
   "timestamp": "2025-01-16T10:00:00.000Z",
   "services": {
@@ -35,7 +34,6 @@ GET /api/health
 {
   "status": "ok",
   "version": "0.0.0",
-  "sunrise": "0.0.0",
   "uptime": 3600,
   "timestamp": "2025-01-16T10:00:00.000Z",
   "services": {
@@ -60,7 +58,6 @@ GET /api/health
 {
   "status": "error",
   "version": "0.0.0",
-  "sunrise": "0.0.0",
   "uptime": 3600,
   "timestamp": "2025-01-16T10:00:00.000Z",
   "services": {
@@ -75,17 +72,36 @@ GET /api/health
 
 ## Response Fields
 
-| Field               | Type   | Description                                                                                        |
-| ------------------- | ------ | -------------------------------------------------------------------------------------------------- |
-| `status`            | string | Overall status: `ok` or `error`                                                                    |
-| `version`           | string | Application version from `package.json` (in a fork, this is the fork's app version)                |
-| `sunrise`           | string | Sunrise platform version from `lib/sunrise-version.ts`. See [`VERSIONING.md`](../../VERSIONING.md) |
-| `uptime`            | number | Process uptime in seconds                                                                          |
-| `timestamp`         | string | ISO 8601 timestamp of the health check                                                             |
-| `services`          | object | Status of individual services                                                                      |
-| `services.database` | object | Database health information                                                                        |
-| `memory`            | object | Memory usage (optional, env-controlled)                                                            |
-| `error`             | string | Error message (only present on exceptions)                                                         |
+| Field               | Type   | Description                                                                         |
+| ------------------- | ------ | ----------------------------------------------------------------------------------- |
+| `status`            | string | Overall status: `ok` or `error`                                                     |
+| `version`           | string | Application version from `package.json` (in a fork, this is the fork's app version) |
+| `uptime`            | number | Process uptime in seconds                                                           |
+| `timestamp`         | string | ISO 8601 timestamp of the health check                                              |
+| `services`          | object | Status of individual services                                                       |
+| `services.database` | object | Database health information                                                         |
+| `memory`            | object | Memory usage (optional, env-controlled)                                             |
+| `error`             | string | Error message (only present on exceptions)                                          |
+
+### What is deliberately NOT here
+
+**The Sunrise platform version.** This endpoint is unauthenticated, so every
+field it returns is returned to anyone who asks, and `SUNRISE_VERSION` names the
+exact upstream release — and therefore the exact published issues to try — for
+every Sunrise-derived deployment rather than just this one. It moved to
+`GET /api/v1/admin/stats` (`system.sunriseVersion`, behind `withAdminAuth`) and
+is rendered on `/admin/overview`; see
+[`.context/admin/stats.md`](../admin/stats.md) and
+[`VERSIONING.md`](../../VERSIONING.md) (#531).
+
+`version` — the fork's own app version — stays. It's the fork's number to
+disclose, it means nothing outside that fork, and container health checks and
+deploy-verification scripts read it.
+
+Adding a field to this table is a disclosure decision. `tests/integration/api/health.test.ts`
+asserts the **exact** top-level key set rather than a list of `toHaveProperty`
+calls, so a new field fails the suite until someone has decided an anonymous
+caller may have it.
 
 ## Service Status Values
 

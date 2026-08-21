@@ -1225,26 +1225,46 @@ The two version files are deliberate siblings in `lib/`:
 
 ### Where Sunrise surfaces it
 
-Sunrise's `/api/health` endpoint already includes both versions in its
-response:
+**In the admin UI**, on `/admin/overview` — a System Information card showing
+your app version beside the Sunrise platform release it's built on. This is the
+answer to "which Sunrise is this box on?", and you inherit it for free. It reads
+`GET /api/v1/admin/stats`, whose `system` block carries both:
 
 ```json
 {
-  "status": "ok",
-  "version": "1.2.3", // your app
-  "sunrise": "0.5.0", // the platform release you're on
-  "uptime": 1234,
-  "timestamp": "2026-…"
+  "system": {
+    "appVersion": "1.2.3", // your app
+    "sunriseVersion": "0.5.0", // the platform release you're on
+    "nodeVersion": "v24.1.0",
+    "environment": "production"
+  }
 }
 ```
 
-If you keep the `/api/health` route in your fork (most do), you inherit this
-for free.
+That route is behind `withAdminAuth`. Other admin surfaces show the version too
+— the MCP settings route returns it, and the MCP dashboard renders it in the
+server's description line — and the MCP `initialize` handshake returns it to a
+bearer-key holder.
+
+Do not reason about how many surfaces there are; the count has been wrong every
+time anyone has written it down in this repo. **The property to preserve is that
+no _unauthenticated_ surface carries it**, which is what
+`tests/unit/sunrise-version-disclosure.test.ts` checks.
+
+**`/api/health` carries `version` (your app's) and not `sunrise`.** The platform
+version used to be there too, but that endpoint is unauthenticated — so it told
+any anonymous caller which upstream release, and therefore which published
+issues, a deployment was running, and it did that for every Sunrise-derived
+deployment rather than just one. Your own app version stays: it's your number to
+disclose, it means nothing outside your fork, and health checks read it (#531).
+
+If you re-add `sunrise` to your fork's health payload, understand you're making
+that disclosure decision deliberately.
 
 ### Where you might surface it in your fork
 
-Optional, not required — surface it wherever it's useful for your operators.
-Import the constants from their canonical locations:
+Optional, not required — surface it wherever else it's useful for your
+operators. Import the constants from their canonical locations:
 
 ```ts
 import { APP_VERSION } from '@/lib/app-version';
@@ -1253,13 +1273,16 @@ import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 
 Common surfaces:
 
-- **Your own health endpoint**, if you replaced Sunrise's. Add
-  `sunrise: SUNRISE_VERSION` (and optionally `version: APP_VERSION`) to the
-  payload.
-- **An admin "About" panel or sidebar footer** — one line, useful when
-  triaging issues that might be release-specific.
+- **A sidebar footer or "About" dialog**, if the overview card isn't where your
+  operators look. `components/admin/system-info.tsx` is a server component
+  taking the stats payload as a prop — copy it or render it elsewhere.
 - **Your structured-logger base context** — include both in every log
-  line so support tickets carry the version pair implicitly.
+  line so support tickets carry the version pair implicitly. Note this puts the
+  platform version in your logs; that's a different audience from an
+  unauthenticated HTTP response, but worth a moment's thought if you ship logs
+  to a third party.
+- **Your own health endpoint**, if you replaced Sunrise's — with the disclosure
+  trade-off above in mind.
 
 ### What to do when you upgrade
 

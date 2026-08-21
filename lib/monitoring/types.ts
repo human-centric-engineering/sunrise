@@ -87,15 +87,16 @@ export interface MemoryUsage {
 export interface HealthCheckResponse {
   /** Overall health status */
   status: 'ok' | 'error';
-  /** Application version from package.json (the fork's app version) */
-  version: string;
   /**
-   * Sunrise platform version this checkout corresponds to. Distinct from
-   * `version` because in a fork the two are owned by different parties:
-   * `version` is the fork's app version; `sunrise` is the upstream platform
-   * version. Sourced from `lib/sunrise-version.ts`. See `VERSIONING.md`.
+   * Application version from package.json (the fork's app version).
+   *
+   * The Sunrise platform version is **not** part of this response — it names
+   * the upstream release, and therefore the published issues, for every
+   * Sunrise-derived deployment rather than just this one, and `/api/health` is
+   * unauthenticated. Read it from `GET /api/v1/admin/stats` (`system.sunriseVersion`)
+   * or import `SUNRISE_VERSION` server-side. See `VERSIONING.md` (#531).
    */
-  sunrise: string;
+  version: string;
   /** Process uptime in seconds */
   uptime: number;
   /** Timestamp of the health check */

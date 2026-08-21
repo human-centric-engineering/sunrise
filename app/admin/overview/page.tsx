@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
 import { StatsCards } from '@/components/admin/stats-cards';
+import { SystemInfo } from '@/components/admin/system-info';
 import { StatusPage } from '@/components/status/status-page';
 import type { SystemStats } from '@/types/admin';
 
@@ -52,6 +53,11 @@ export default async function AdminOverviewPage() {
           pollingInterval={30000}
           showMemory={true}
         />
+      </section>
+
+      {/* The operator's answer to "which Sunrise is this?" — see SystemInfo */}
+      <section>
+        <SystemInfo stats={stats} />
       </section>
     </div>
   );
