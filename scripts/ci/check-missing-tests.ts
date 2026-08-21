@@ -14,9 +14,11 @@
  *
  * That asymmetry is the whole design. #641's instance was a `compgen` loop in a
  * zsh shell that printed nothing and was nearly banked as a clean tree, so
- * every way this can fail to look is a loud non-zero exit with a sentence
- * saying what it could not see. **There is no path here that prints a clean
- * result without having demonstrated it can print a dirty one.**
+ * every way the *scan* can fail to look is a loud non-zero exit with a sentence
+ * saying what it could not see; the secondary uncommitted-work check says so in
+ * the report rather than exiting, since the scan itself still ran. **There is no
+ * path here that prints a clean result without having demonstrated it can print
+ * a dirty one, and none that stays quiet about something it could not measure.**
  *
  * Usage:
  *   npm run check:missing-tests
@@ -108,7 +110,11 @@ export function parseNameStatus(output: string): {
     // it on the extension test would delete a changed file from the scan and
     // still print CLEAN: exactly the silent failure this check exists to stop.
     if (path.startsWith('"')) {
-      unreadable.push(path);
+      // Only fatal if it is TypeScript. A quoted path keeps its extension
+      // before the closing quote, so this still tests it — the first version
+      // aborted the whole scan for a `docs/notes "draft".md`, a file 4f was
+      // never going to look at.
+      if (path.endsWith('.ts"') || path.endsWith('.tsx"')) unreadable.push(path);
       continue;
     }
     if (!path.endsWith('.ts') && !path.endsWith('.tsx')) continue;
@@ -182,10 +188,13 @@ export function makeReferenceFinder(
   };
 }
 
-/** Uncommitted `.ts`/`.tsx` paths — reported as a blind spot, not scanned. */
-function uncommittedSources(): string[] {
+/**
+ * Uncommitted `.ts`/`.tsx` paths — reported as a blind spot, not scanned.
+ * `null` when git could not be asked, which is a different answer from none.
+ */
+function uncommittedSources(): string[] | null {
   const status = git(['status', '--porcelain', '--untracked-files=all']);
-  if (status === null) return [];
+  if (status === null) return null;
   return status
     .split('\n')
     .map((line) => line.slice(3).trim())
@@ -231,6 +240,14 @@ export function describe(verdict: Verdict): string {
  */
 function reportBlindSpot(): void {
   const uncommitted = uncommittedSources();
+  if (uncommitted === null) {
+    // "Could not look" is not "nothing to see". Returning `[]` on a failed
+    // `git status` printed no note at all, which reads as "everything on disk
+    // was committed and scanned" — the silence this whole check is against.
+    console.log('');
+    console.log('Note: could not check for uncommitted work (`git status` failed).');
+    return;
+  }
   if (uncommitted.length === 0) return;
   console.log('');
   console.log(

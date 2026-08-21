@@ -232,6 +232,22 @@ describe('contentExemption', () => {
     expect(contentExemption('lib/a/thing.ts', source)).toBeNull();
   });
 
+  it('does not exempt a module of bare side-effect imports', () => {
+    // `lib/orchestration/engine/executors/index.ts` is 19 of these and nothing
+    // else — each one runs `registerStepType()` on import. Treating every
+    // ImportDeclaration as emitting nothing exempted the whole registration
+    // barrel, in the direction that hides work.
+    const source = `import '@/lib/a';\nimport '@/lib/b';\n`;
+    expect(contentExemption('lib/registry/index.ts', source)).toBeNull();
+  });
+
+  it('still exempts a module whose imports are all bindings it only types with', () => {
+    // The distinction is the import CLAUSE: `import type {X}` and `import {X}`
+    // bring a name in, a bare specifier runs a module.
+    const source = `import type { X } from '@/types';\nexport interface Y {\n  x: X;\n}\n`;
+    expect(contentExemption('lib/a/types.ts', source)).toBe('declares no runtime value');
+  });
+
   it('fails closed on a file it cannot read', () => {
     // `null` means "could not look". Treating that as an exemption would let an
     // unreadable file leave the report entirely, which is the failure this
@@ -310,7 +326,7 @@ describe('classifyOne', () => {
   });
 
   it('separates "a test names it" from "a test covers it"', () => {
-    // The distinction the three-way verdict exists for: 228 files in this repo
+    // The distinction the three-way verdict exists for: 231 files in this repo
     // are in this state, and calling them all clean or all missing is wrong in
     // opposite directions.
     const verdict = classifyOne(

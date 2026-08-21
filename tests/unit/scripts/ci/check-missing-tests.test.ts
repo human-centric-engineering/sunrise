@@ -149,6 +149,15 @@ describe('scripts/ci/check-missing-tests', () => {
       expect(unreadable).toEqual(['"caf\\303\\251.ts"']);
     });
 
+    it('ignores a quoted path that is not TypeScript', () => {
+      // Quoting now only happens for a quote, backslash or control character in
+      // the name, and those turn up in docs and assets. Aborting the scan for a
+      // file 4f never looks at would be a self-inflicted COULD NOT RUN.
+      const { files, unreadable } = parseNameStatus('A\t"notes \\"draft\\".md"\nA\tlib/a.ts\n');
+      expect(unreadable).toEqual([]);
+      expect(files).toEqual([{ path: 'lib/a.ts', status: 'A' }]);
+    });
+
     it('survives a truncated rename line rather than throwing on it', () => {
       // `R100\told.ts` with no destination: reading `fields[2]` gives
       // undefined, and the extension test would throw on it — taking the whole
@@ -446,9 +455,10 @@ describe('scripts/ci/check-missing-tests', () => {
       expect(logs.join('\n')).toContain('2 uncommitted');
     });
 
-    it('does not claim a blind spot it could not measure', () => {
-      // `git status` failing must not print "0 uncommitted files", which reads
-      // as a checked all-clear.
+    it('says it could not check for uncommitted work rather than staying quiet', () => {
+      // Silence here reads as "everything on disk was committed and scanned".
+      // An earlier version returned [] on a git failure and printed nothing,
+      // and the test locked that silence in.
       gitReturns({
         'merge-base': 'abc123\n',
         'name-status': 'M\tlib/covered.ts\n',
@@ -457,7 +467,8 @@ describe('scripts/ci/check-missing-tests', () => {
       write('lib/covered.ts', 'export const x = 1;\n');
 
       expect(main([])).toBe(0);
-      expect(logs.join('\n')).not.toContain('uncommitted');
+      expect(logs.join('\n')).toContain('could not check for uncommitted work');
+      expect(logs.join('\n')).not.toMatch(/\d+ uncommitted/);
     });
 
     it('--self-test reports without touching git', () => {

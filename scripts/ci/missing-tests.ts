@@ -22,15 +22,22 @@
  * The obvious rule — mirror the source path under `tests/unit/` — is right for
  * most of this repo and **wrong often enough to matter**. Measured by running
  * {@link classify} over every tracked `.ts`/`.tsx` (`git ls-files`) at the time
- * of writing — 2301 files, 1145 of them non-exempt — **339 have no mirrored
- * test, and 230 of those are named by a test file anyway**: aspect-named suites
- * (`config-sendResetPassword.test.ts` for `lib/auth/config.ts`), enumerating
- * tests that walk a whole directory (`fork-init-seams.test.ts` over
- * `lib/app/*`), and route tests that sit a directory up. A mirror-only scanner
- * reports all 230 as findings.
+ * of writing — 2301 files, 1146 of them non-exempt:
  *
- * Re-derive rather than trust these: the denominator is the scope you scan, and
- * an unstated one is how two honest counts disagree.
+ * - **367 have no mirrored test** (1146 minus the 779 the mirror rule finds).
+ * - **258 of those are covered some other way** — 231 named by a test file, 22
+ *   by the collapsed parent of a dynamic route, 5 by an aspect-named sibling
+ *   (`config-sendResetPassword.test.ts` for `lib/auth/config.ts`). The rest of
+ *   the 231 are enumerating tests that walk a directory
+ *   (`fork-init-seams.test.ts` over `lib/app/*`) and route tests a level up.
+ * - **109 are genuine gaps.**
+ *
+ * So a mirror-only scanner reports 367 findings of which 258 are false. That
+ * ratio is the whole argument for this file.
+ *
+ * Re-derive rather than trust these numbers, and say what you counted: "no
+ * mirrored test" (367) and "no test by any rule" (340) are different questions,
+ * and an unstated denominator is how two honest counts disagree.
  *
  * So the verdict has three values, not two:
  *
@@ -42,7 +49,7 @@
  * - `missing`   — no mirrored test and no test mentions it at all.
  *
  * Collapsing `referenced` into `covered` hides genuine gaps; collapsing it into
- * `missing` produces the 240-item wall of noise that trains people to skim. The
+ * `missing` turns 109 findings into 340 and trains people to skim. The
  * distinction is the whole reason this is a module and not a `grep`.
  *
  * # Exemptions
@@ -62,7 +69,7 @@
  *   exactly why hand-rolled versions get them wrong: exempting every `index.ts`
  *   by name hides the 14 index files in this repo that carry their own code (9
  *   of which have no mirrored test), and not exempting type-only modules flags
- *   21 files that compile to nothing.
+ *   16 files that compile to nothing.
  *
  * Content rules go through the TypeScript compiler rather than a regex, for the
  * same reason `exports-diff.ts` does: a regex cannot tell `export type { X }`
@@ -321,9 +328,9 @@ export function importSpecifiers(stem: string): string[] {
  *
  * A test importing `@/prisma/seeds/data/templates` reaches every template
  * behind it without ever naming one, so a reference scan that only looks for a
- * module's own path calls all twelve untouched. Measured: 13 of the 123 files
- * this check would otherwise report as `missing` are reachable exactly this
- * way.
+ * module's own path calls all twelve untouched. Measured: 13 files are
+ * reachable exactly this way — without the rule, `missing` would be 122 rather
+ * than 109.
  *
  * **Both `import` and `export … from` count.** Restricting it to re-export
  * declarations was the first version and moved 1 of the 13: the barrels that
@@ -402,7 +409,13 @@ export function contentExemption(path: string, source: string | null): string | 
 
   const emitsNothing = (node: ts.Statement): boolean => {
     if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return true;
-    if (ts.isImportDeclaration(node)) return true;
+    // A **bare** import runs the module for its side effects, so it emits. The
+    // first version returned true for every `ImportDeclaration`, which made a
+    // file whose whole body is `import '@/…';` read as declaring nothing —
+    // and `lib/orchestration/engine/executors/index.ts` is exactly that shape:
+    // 19 imports whose only purpose is to call `registerStepType()`. Dropping
+    // or reordering one is a real regression, and it was exempt from 4f.
+    if (ts.isImportDeclaration(node)) return node.importClause !== undefined;
     if (ts.isExportDeclaration(node)) return node.isTypeOnly;
     // `declare module`, `declare global` — ambient, no emit.
     if (ts.isModuleDeclaration(node)) {
