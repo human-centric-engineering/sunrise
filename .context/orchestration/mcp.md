@@ -74,8 +74,11 @@ tells a modern-only server to answer GET and DELETE with `405` and to ignore
 `Mcp-Session-Id` — which is what `stateless` already does, down to the status
 code. The features `stateful` restores are ones the protocol has removed or
 deprecated: `logging/setLevel` is gone, Logging is deprecated, and
-`resources/subscribe` is replaced by `subscriptions/listen`. Choose `stateful`
-to serve `≤2025-11-25` clients on a single process, not to get more.
+`resources/subscribe` is replaced by `subscriptions/listen`. Choose `stateful` to serve
+handshake-era clients — those on revisions before `2026-07-28` — on a single
+process, not to get more. (Note this is about which clients can CONNECT, not
+about which protocol versions the server speaks: it supports `2025-06-18` and
+`2024-11-05`, and downgrades anything newer.)
 
 ### Choosing, and the guard
 

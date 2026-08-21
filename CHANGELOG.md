@@ -414,8 +414,8 @@ release process.
   ask. **Set `MCP_SESSION_MODE=stateful` to keep them.** That mode is a
   legacy-compatibility mode rather than a richer one: MCP revision `2026-07-28`
   removes protocol-level sessions and the `initialize` handshake outright and
-  prescribes exactly what `stateless` does, so `stateful` serves `≤2025-11-25`
-  clients only. Choosing it on a platform that announces itself (`VERCEL`,
+  prescribes exactly what `stateless` does. So `stateful` exists to serve clients
+  from the handshake era — revisions before `2026-07-28` — not to get more. Choosing it on a platform that announces itself (`VERCEL`,
   `AWS_LAMBDA_FUNCTION_NAME`) throws at startup with the fix in the message; that
   guard is a safety net, not a boundary — a multi-replica container deploy hits
   the same bug undetected (#609).
