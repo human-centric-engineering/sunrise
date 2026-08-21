@@ -200,7 +200,7 @@ export type CapabilityGuard = (
 ) => CapabilityGuardDecision | Promise<CapabilityGuardDecision>;
 
 /**
- * Options for `CapabilityDispatcher.register`. Both fields are opt-in; the
+ * Options for `CapabilityDispatcher.register`. Every field is opt-in; the
  * no-options call behaves exactly as before.
  */
 export interface CapabilityRegisterOptions {

@@ -158,7 +158,7 @@ class CapabilityDispatcher {
    * rows — silent passthrough for PII-handling capabilities is a
    * footgun, not a feature.
    *
-   * `options` is a fork seam (both fields opt-in; the no-options call is
+   * `options` is a fork seam (every field opt-in; the no-options call is
    * unchanged):
    * - `slug` overrides the handler key (defaults to `capability.slug`). See
    *   the ⚠️ contract on {@link CapabilityRegisterOptions.slug}: the override

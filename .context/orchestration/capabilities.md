@@ -119,7 +119,7 @@ export function initAppCapabilities(): void {
 - **`scopedBy`** declares which scope keys bind this capability's parameters; see [The scope binding](#the-scope-binding-scopedby-dispatch-steps-4b--7a).
 - **`guard`** is an async-capable predicate run as dispatch step 4a (after the per-agent binding, before the rate limiter). It reads the generic [`CapabilityContext.scope`](#dispatch-scope-carrier-capabilitycontextscope) carrier — core names no keys. `{ allow: false }` → `capability_guard_denied`; a guard that throws **fails closed** (denied + logged). Keyed by the same registration key as the handler, so a `slug` override guards the override key.
 
-Re-registering the same key **replaces the handler and its guard together** — a guard-less re-registration drops any prior guard on that key.
+Re-registering the same key **replaces the handler, its guard and its `scopedBy` binding together** — a re-registration without one drops any the prior registration left on that key. That matters for the binding in particular: a capability must not stay silently scoped after its author removed the declaration, and `dispatcher.test.ts` pins it.
 
 ### Dispatch scope carrier (`CapabilityContext.scope`)
 

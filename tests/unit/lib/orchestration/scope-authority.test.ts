@@ -25,9 +25,20 @@ import { sep } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 /** Builds a dispatch context: threads a scope AND reaches the dispatcher. */
-const THREADS_SCOPE = /(?:platformScope|hintScope)\(|scope:\s*\w+\.scope/;
-const DISPATCHES = /capabilityDispatcher\.dispatch|dispatchWithBudget|callMcpTool\(/;
+// `scope:` bound to ANY expression, not just `<ident>.scope` — the narrower
+// form could not see `scope: resolvedScope`, which is how a local is already
+// written elsewhere in the engine. A new caller shaped that way would have been
+// invisible while this file's own header criticised its predecessor for exactly
+// that. `dispatchWithBudget` is gone from the alternation: it matches nothing
+// in `lib/`, and a dead alternative reads as coverage.
+const THREADS_SCOPE = /(?:platformScope|hintScope)\(|\bscope:\s*[A-Za-z_$]/;
+const DISPATCHES = /capabilityDispatcher\.dispatch|callMcpTool\(/;
 
+/**
+ * Walks `lib/` only. `app/` currently holds zero dispatch sites — every route
+ * delegates into `lib/` — so this is latent rather than a live gap; widen it
+ * the day a route builds a `CapabilityContext` itself.
+ */
 function sourceFiles(): string[] {
   return readdirSync('lib', { recursive: true, encoding: 'utf8' })
     .map((entry) => `lib/${entry.split(sep).join('/')}`)

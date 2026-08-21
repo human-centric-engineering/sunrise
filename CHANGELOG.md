@@ -37,8 +37,12 @@ release process.
   second, because its `scope` comes from an untrusted request body. A mistake in
   either direction loses the binding rather than gaining one, and
   `run_workflow` drops a hint scope rather than passing it to
-  `engine.execute()`, so the persisted `AiWorkflowExecution.scope` column only
-  ever holds platform-written values.
+  `engine.execute()`, so the persisted `AiWorkflowExecution.scope` column never
+  holds a consumer's hint. Note for fork adapter authors: the inbound-trigger
+  route merges an adapter's `normalise()` scope under the operator's static
+  one, so a bound value there can originate from a verified request payload
+  rather than from config — more restrictive than no key at all, but worth
+  knowing.
 
   **The binding is declared rather than inferred**, which is the whole design.
   An earlier cut read it out of the capability's published

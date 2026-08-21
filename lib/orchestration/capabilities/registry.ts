@@ -149,7 +149,7 @@ const appInit = createAppInitGate({
  * (`options.slug ?? capability.slug`): re-registering the same key replaces
  * the prior instance.
  *
- * `options` (both fields opt-in) is forwarded verbatim to
+ * `options` (every field opt-in) is forwarded verbatim to
  * `capabilityDispatcher.register` — pass `slug` to mount one capability class
  * under a namespaced slug, and/or `guard` to gate its dispatch. See
  * {@link CapabilityRegisterOptions} for the slug↔active-row contract.

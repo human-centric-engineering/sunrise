@@ -89,6 +89,8 @@ import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { MockTracer } from '@/tests/helpers/mock-tracer';
 import { registerTracer, resetTracer } from '@/lib/orchestration/tracing/registry';
 import { SPAN_AGENT_CALL_TURN } from '@/lib/orchestration/tracing/attributes';
+import { createContext } from '@/lib/orchestration/engine/context';
+import { logger } from '@/lib/logging';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -688,6 +690,78 @@ describe('executeAgentCall', () => {
       { query: 'test' },
       { userId: 'user_1', agentId: 'agent_1', scope: { projectId: 'proj-42' } }
     );
+  });
+
+  it('forwards the authority a real ExecutionContext carries, not just the values', async () => {
+    // The sibling of `tool-call.test.ts`'s end-to-end case, and it was missing:
+    // `makeCtx` never sets `scopeIsAuthoritative`, so the test above exercises
+    // only the hint branch. Nothing covered the authoritative one — a review
+    // demonstrated that replacing this executor's forwarding with a dead
+    // `platformScope` branch left 73 tests green, on the carrier `orchestrator`
+    // also delegates through. That is the same "a hand-written fixture never
+    // had the flag to drop" gap that shipped for an hour in #586.
+    mockChat.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
+      usage: { inputTokens: 50, outputTokens: 30 },
+      finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
+    });
+    mockChat.mockResolvedValueOnce({
+      content: 'done.',
+      usage: { inputTokens: 80, outputTokens: 60 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    const real = createContext({
+      workflowId: 'wf_1',
+      executionId: 'exec_1',
+      userId: 'user_1',
+      inputData: {},
+      scope: { projectId: 'proj-42' },
+      logger,
+    });
+
+    await executeAgentCall(makeStep(), { ...real, agentId: 'agent_1' } as typeof real);
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).toMatchObject({
+      scope: { projectId: 'proj-42' },
+      scopeIsAuthoritative: true,
+    });
+  });
+
+  it('does not invent authority for a scope that arrived without it', async () => {
+    // Same executor, one fact changed — so the case above turns on the
+    // forwarding and not on a scope merely being present.
+    mockChat.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
+      usage: { inputTokens: 50, outputTokens: 30 },
+      finishReason: 'tool_use',
+      model: 'claude-sonnet-4-20250514',
+    });
+    mockChat.mockResolvedValueOnce({
+      content: 'done.',
+      usage: { inputTokens: 80, outputTokens: 60 },
+      finishReason: 'stop',
+      model: 'claude-sonnet-4-20250514',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await executeAgentCall(makeStep(), makeCtx({ scope: { projectId: 'proj-42' } }));
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).toHaveProperty('scope');
+    expect(context).not.toHaveProperty('scopeIsAuthoritative');
   });
 
   it('tool with skipFollowup returns tool result as output', async () => {

@@ -193,6 +193,24 @@ describe('foldScopeIntoArgs', () => {
     });
   });
 
+  it('returns a Map untouched instead of rewriting it to just the scope keys', () => {
+    // `isPlainObject` accepts any non-array object, so a Map reached the fill
+    // path: no key is `hasOwnProperty`-present, every pinned key read as
+    // absent, and `{ ...rawArgs }` produced an object holding ONLY the scope
+    // keys — the caller's real arguments dropped on the floor, silently, by a
+    // function whose docstring promises they pass through.
+    const args = new Map<string, unknown>([['realArg', 'keep-me']]);
+    const result = foldScopeIntoArgs(args, { tenantId: 'A' }, ['tenantId']);
+
+    expect(result.ok && result.args).toBe(args);
+    expect(args.get('realArg')).toBe('keep-me');
+    // And it is not waved through: step 7a refuses what it cannot read.
+    expect(assertScopeHeld(args, { tenantId: 'A' }, ['tenantId'])).toEqual({
+      held: false,
+      reason: 'unenforceable',
+    });
+  });
+
   it.each([
     ['a string', 'hello'],
     ['an array', [1, 2]],

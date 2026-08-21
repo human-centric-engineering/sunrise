@@ -162,12 +162,21 @@ export function createContext(params: {
     // Authoritative: persisted on the execution/schedule/trigger row by an
     // admin route and re-validated on read by `resolvePersistedScope`.
     // Authoritative by construction: this scope came off
-    // `AiWorkflow{Execution,Schedule,Trigger}.scope`, and the only writers of
-    // those columns are admin-guarded routes, the scheduler, and the inbound
-    // trigger route (operator-configured). `run_workflow` — the one path that
-    // could carry a consumer-supplied scope into `engine.execute()` — drops a
-    // non-authoritative one rather than passing it, so the column never holds
-    // a hint. If a new writer of that column appears, it must uphold this.
+    // `AiWorkflow{Execution,Schedule,Trigger}.scope`, whose writers are the
+    // admin execute/rerun routes, the scheduler, and the inbound trigger route.
+    // `run_workflow` — the one path that could carry a consumer-supplied scope
+    // into `engine.execute()` — drops a non-authoritative one rather than
+    // passing it, so the column never holds a consumer's hint. If a new writer
+    // of that column appears, it must uphold this.
+    //
+    // **One writer is not purely operator config**, and a fork adapter author
+    // should know it: the inbound route merges an adapter's `normalise()`
+    // scope UNDER the operator's static `AiWorkflowTrigger.scope`, so an
+    // adapter may contribute a key the operator did not pin — derived from the
+    // verified request payload. That is not an escalation (absent the key the
+    // binding would be `unpinned` on it, leaving the caller's own argument
+    // unchecked, so the adapter key is strictly more restrictive), but it does
+    // mean a bound value can originate from a payload rather than from config.
     ...platformScope(params.scope),
     ...(params.costLogMetadata ? { costLogMetadata: params.costLogMetadata } : {}),
   };

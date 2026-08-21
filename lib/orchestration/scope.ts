@@ -10,7 +10,16 @@
  * This helper centralises the validate-on-read contract for the workflow-side
  * columns: parse against `workflowScopeSchema`, and on failure drop to
  * unscoped (return `undefined`) with a warning rather than throwing. Callers
- * spread the result conditionally: `...(scope ? { scope } : {})`. The same
+ * spread the result conditionally: `...(scope ? { scope } : {})`.
+ *
+ * **That fail-open is now a deliberate availability-over-restriction choice,
+ * not a free one.** It was written when the carrier was inert. Since #586 an
+ * unscoped carrier means *unrestricted* for a capability that declared
+ * `scopedBy`, so a data-integrity fault degrades an authorization control. It
+ * stays because every writer of these columns validates on write, so no
+ * untrusted path can produce a malformed value — and wedging every run of a
+ * workflow on one hand-edited row is the worse failure. Revisit it if an
+ * unvalidated writer ever appears. The same
  * guard is applied to any other untrusted scope value that is about to be
  * persisted onto one of those columns — notably an inbound adapter's
  * `normalise()`-returned scope, which is derived from the request payload and
@@ -129,7 +138,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * So: the prototype must be `Object.prototype` or `null`, and every own
  * enumerable key must be a **data** property. An accessor is rejected even on
  * an otherwise-plain object, because a getter can return one value here and
- * another to `execute` — which also closes the double-read window between them.
+ * another to `execute`, which closes the double-read window for every shape a
+ * caller can produce. It is not absolute: a `Proxy` whose
+ * `getOwnPropertyDescriptor` trap reports a data descriptor while `get` serves
+ * something else still passes. Nothing a caller controls can build one — args
+ * arrive via `JSON.parse` — so the only author who could is the capability's
+ * own, who may simply ignore `args` instead.
  */
 function isReadableArgsObject(value: unknown): value is Record<string, unknown> {
   if (!isPlainObject(value)) return false;
@@ -169,7 +183,10 @@ function isAbsent(value: unknown): boolean {
  *
  * **This is half of the boundary.** It runs before `handler.validate()` and
  * cannot see what a Zod transform does afterwards — {@link assertScopeHeld} is
- * the other half, and is the one that actually holds the line.
+ * the other half, and is the one that actually holds the line. Note the
+ * asymmetry that follows: a conflict caught **here** costs no rate token
+ * (step 4b precedes the limiter), while one only visible after a transform is
+ * caught at step 7a, which does not.
  *
  * **Args that are not a plain object pass through here.** A scoped call with
  * `args: "hello"` cannot be folded; inventing an object would turn a request
@@ -190,7 +207,13 @@ export function foldScopeIntoArgs(
   const unpinned = scopedBy.filter((key) => !pinned.includes(key));
   if (pinned.length === 0) return { ok: true, args: rawArgs, filled: [], unpinned };
 
-  if (!isPlainObject(rawArgs)) return { ok: true, args: rawArgs, filled: [], unpinned };
+  // `isReadableArgsObject`, not `isPlainObject`. A `Map` is a non-array object,
+  // so the loose test let one reach the fill path — where no key is
+  // `hasOwnProperty`-present, every pinned key reads as absent, and
+  // `{ ...rawArgs }` yields an object holding ONLY the scope keys. The
+  // caller's real arguments were dropped on the floor, silently, by a function
+  // whose docstring promises such args pass through untouched.
+  if (!isReadableArgsObject(rawArgs)) return { ok: true, args: rawArgs, filled: [], unpinned };
 
   const conflicts: ScopeConflict[] = [];
   const filled: string[] = [];
