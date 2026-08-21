@@ -14,11 +14,13 @@
  * @see scripts/ci/check-missing-tests.ts
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+import type { Verdict } from '@/scripts/ci/missing-tests';
 
 const mockExecFileSync = vi.fn();
 vi.mock('node:child_process', () => ({
@@ -34,8 +36,16 @@ vi.mock('@/scripts/ci/missing-tests', async () => {
   return { ...actual, selfTestFailure: () => mockSelfTestFailure() };
 });
 
-const { main, parseBaseRef, parseNameStatus, listTestFiles, makeReferenceFinder, formatReport } =
-  await import('@/scripts/ci/check-missing-tests');
+const {
+  main,
+  parseBaseRef,
+  parseNameStatus,
+  listTestFiles,
+  makeReader,
+  makeReferenceFinder,
+  formatReport,
+  describe: describeVerdict,
+} = await import('@/scripts/ci/check-missing-tests');
 
 /** Answers `git` calls by matching the subcommand, so order does not matter. */
 function gitReturns(responses: Record<string, string | Error>): void {
@@ -123,6 +133,16 @@ describe('scripts/ci/check-missing-tests', () => {
     it('ignores blank lines rather than emitting an empty path', () => {
       expect(parseNameStatus('\n\nA\tlib/a.ts\n\n')).toHaveLength(1);
     });
+
+    it('survives a truncated rename line rather than throwing on it', () => {
+      // `R100\told.ts` with no destination: reading `fields[2]` gives
+      // undefined, and the extension test would throw on it — taking the whole
+      // check down mid-scan.
+      expect(() => parseNameStatus('R100\tlib/old.ts\nA\tlib/a.ts\n')).not.toThrow();
+      expect(parseNameStatus('R100\tlib/old.ts\nA\tlib/a.ts\n')).toEqual([
+        { path: 'lib/a.ts', status: 'A' },
+      ]);
+    });
   });
 
   describe('listTestFiles', () => {
@@ -201,12 +221,72 @@ describe('scripts/ci/check-missing-tests', () => {
       expect(lines.at(-1)).toContain('no files in scope');
     });
 
+    it('caps the named tests and says how many were left out', () => {
+      const referencedBy = ['a', 'b', 'c', 'd', 'e'].map((n) => `tests/unit/${n}.test.ts`);
+      const lines = formatReport([
+        { path: 'lib/a.ts', outcome: { kind: 'referenced', referencedBy } },
+      ]);
+      expect(lines.join('\n')).toContain('(+2 more)');
+    });
+
+    it('lists every verdict under --verbose, exempt ones included', () => {
+      const lines = formatReport(
+        [
+          { path: 'tests/unit/a.test.ts', outcome: { kind: 'exempt', reason: 'is a test' } },
+          { path: 'lib/a.ts', outcome: { kind: 'covered', testPath: 't.test.ts', via: 'mirror' } },
+        ],
+        true
+      );
+      // The non-verbose report says nothing about either of these, which is why
+      // a surprising verdict is otherwise unexplainable.
+      expect(lines.join('\n')).toContain('tests/unit/a.test.ts — exempt: is a test');
+      expect(lines.join('\n')).toContain('lib/a.ts — covered by t.test.ts (mirror)');
+    });
+
     it('names the expected path for a missing file', () => {
       const lines = formatReport([
         { path: 'lib/a.ts', outcome: { kind: 'missing', expected: ['tests/unit/lib/a.test.ts'] } },
       ]);
       expect(lines.join('\n')).toContain('tests/unit/lib/a.test.ts');
       expect(lines.at(-1)).toContain('1 missing');
+    });
+  });
+
+  describe('makeReader', () => {
+    it('reads a file inside the root', () => {
+      write('lib/a.ts', 'export const x = 1;\n');
+      expect(makeReader(dir)('lib/a.ts')).toContain('export const x');
+    });
+
+    it('refuses a path that escapes the root', () => {
+      // The escape target must EXIST, or the clamp and a plain missing-file
+      // both return null and the assertion cannot fail. It could not, the
+      // first time this was written.
+      const outside = join(dir, '..', `outside-${process.pid}.ts`);
+      writeFileSync(outside, 'export const secret = 1;\n');
+      try {
+        expect(readFileSync(outside, 'utf8')).toContain('secret');
+        expect(makeReader(dir)(`../outside-${process.pid}.ts`)).toBeNull();
+      } finally {
+        rmSync(outside, { force: true });
+      }
+    });
+
+    it('returns null rather than throwing for a file that is not there', () => {
+      expect(makeReader(dir)('lib/nope.ts')).toBeNull();
+    });
+  });
+
+  describe('describe (the --verbose line)', () => {
+    it.each([
+      [{ kind: 'exempt', reason: 'is a test' }, 'exempt: is a test'],
+      [{ kind: 'covered', testPath: 't.test.ts', via: 'aspect' }, 'covered by t.test.ts (aspect)'],
+      [{ kind: 'referenced', referencedBy: ['a.test.ts', 'b.test.ts'] }, 'referenced only, by 2'],
+      [{ kind: 'missing', expected: [] }, 'MISSING'],
+    ])('explains a %j verdict', (outcome, expected) => {
+      // `--verbose` is what step 4f tells the reader to reach for when a verdict
+      // surprises them, so every branch of it needs to say something true.
+      expect(describeVerdict({ path: 'lib/a.ts', outcome } as Verdict)).toContain(expected);
     });
   });
 
@@ -250,6 +330,19 @@ describe('scripts/ci/check-missing-tests', () => {
     ])('rejects %j', (argv, message) => {
       expect(main(argv)).toBe(1);
       expect(errors.join('\n')).toContain(message);
+    });
+
+    it('fails loudly on an explicitly requested base that does not exist', () => {
+      // The caller named a revision, so falling back to the merge base would
+      // answer a question they did not ask. It fails at `git diff`, carrying
+      // git's own message — which is why there is no separate resolve step.
+      gitReturns({ 'name-status': new Error('fatal: bad revision typo...HEAD') });
+      write('tests/unit/lib/a.test.ts');
+
+      expect(main(['--base', 'typo'])).toBe(1);
+      expect(errors.join('\n')).toContain('Could not list changed files against "typo"');
+      expect(errors.join('\n')).toContain('bad revision');
+      expect(logs.join('\n')).not.toContain('CLEAN');
     });
   });
 
@@ -296,6 +389,20 @@ describe('scripts/ci/check-missing-tests', () => {
 
       expect(main([])).toBe(0);
       expect(logs.join('\n')).toContain('2 uncommitted');
+    });
+
+    it('does not claim a blind spot it could not measure', () => {
+      // `git status` failing must not print "0 uncommitted files", which reads
+      // as a checked all-clear.
+      gitReturns({
+        'merge-base': 'abc123\n',
+        'name-status': 'M\tlib/covered.ts\n',
+        'status --porcelain': new Error('not a git repository'),
+      });
+      write('lib/covered.ts', 'export const x = 1;\n');
+
+      expect(main([])).toBe(0);
+      expect(logs.join('\n')).not.toContain('uncommitted');
     });
 
     it('--self-test reports without touching git', () => {

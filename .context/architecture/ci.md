@@ -168,6 +168,13 @@ well-formed file. Its identifier correlation is a heuristic, so it never gates
 and has no place in a pipeline that blocks merges; `/pre-pr` step 5e runs it and
 the agent judges the output (#627).
 
+`npm run check:missing-tests` is local-only for the same reason. It answers
+step 4f — did anything this branch changed arrive without a test — and a page
+can legitimately have no test, so findings are a judgement rather than a gate.
+Its exit code says only whether it could _run_: `1` means no base revision, git
+failing, or an unreadable test tree, which is a wiring problem, not a verdict on
+the branch (#641).
+
 > **Fork note.** The check assumes `CHANGELOG.md` carries Sunrise's release
 > history. A fork that empties the file, or renumbers it to its own app
 > versions, fails the `SUNRISE_VERSION` agreement rule on **every** PR

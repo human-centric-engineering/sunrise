@@ -91,7 +91,11 @@ export function parseNameStatus(output: string): ChangedFile[] {
     const letter = code.charAt(0);
     if (letter !== 'A' && letter !== 'M' && letter !== 'R') continue;
     const path = letter === 'R' ? fields[2] : fields[1];
-    if (path === undefined || path === '') continue;
+    // A truncated rename line (`R100\told` with no destination) leaves this
+    // undefined, and the extension test below would throw on it. An `=== ''`
+    // clause used to sit here too; the extension test already drops an empty
+    // path, so nothing could distinguish it and its test could not fail.
+    if (path === undefined) continue;
     if (!path.endsWith('.ts') && !path.endsWith('.tsx')) continue;
     files.push({ path, status: letter });
   }
@@ -113,8 +117,15 @@ export function listTestFiles(root = process.cwd()): string[] {
     .sort();
 }
 
-/** Reads a repo-relative path, clamped to the repo root. */
-function makeReader(root: string): (path: string) => string | null {
+/**
+ * Reads a repo-relative path, clamped to the repo root.
+ *
+ * Only verdicts reach the output, so nothing here leaks a file's contents — but
+ * a changed path arrives from git and `/pre-pr` asks for the result to be pasted
+ * into a PR summary, so a `../` escape reading a sibling checkout is not a
+ * surface this needs. Exported for its test; nothing else calls it.
+ */
+export function makeReader(root: string): (path: string) => string | null {
   const rootPrefix = resolve(root) + sep;
   return (path: string): string | null => {
     const full = resolve(root, path);
@@ -280,15 +291,15 @@ export function main(argv: string[]): number {
     return 1;
   }
 
+  // An explicit `--base` is not resolved here — a ref that does not exist fails
+  // at the `git diff` below, which reports it with git's own message. An
+  // earlier version had a branch for it anyway; `requested.ref` is non-empty by
+  // this point, so `!base` could never be true with `--base` present and the
+  // branch was unreachable. The test written for it is what said so.
   const base = requested.present
     ? requested.ref
     : git(['merge-base', 'origin/main', 'HEAD'])?.trim();
   if (!base) {
-    if (requested.present) {
-      console.error(`Could not resolve base "${requested.ref}".`);
-      console.error(`git: ${lastGitError}`);
-      return 1;
-    }
     // Not "skipped": a run that could not establish what changed has no
     // opinion about this branch, and printing one on stdout is how a blind
     // check gets copied into a summary as a pass.
