@@ -43,6 +43,7 @@ const {
   listTestFiles,
   makeReader,
   makeReferenceFinder,
+  uncommittedSources,
   formatReport,
   describe: describeVerdict,
 } = await import('@/scripts/ci/check-missing-tests');
@@ -119,6 +120,15 @@ describe('scripts/ci/check-missing-tests', () => {
     it('takes the destination of a rename, which is the file needing a test', () => {
       expect(parseNameStatus('R100\tlib/old.ts\tlib/new.ts\n').files).toEqual([
         { path: 'lib/new.ts', status: 'R' },
+      ]);
+    });
+
+    it('keeps the destination of a copy, which is a new file needing a test', () => {
+      // `diff.renames = copies` in a user's gitconfig produces these. The
+      // letter test used to accept only A/M/R, so the new file fell out with no
+      // word — the silent drop this check is against.
+      expect(parseNameStatus('C100\tlib/src.ts\tlib/dst.ts\n').files).toEqual([
+        { path: 'lib/dst.ts', status: 'A' },
       ]);
     });
 
@@ -269,6 +279,28 @@ describe('scripts/ci/check-missing-tests', () => {
       ]);
       expect(lines.join('\n')).toContain('tests/unit/lib/a.test.ts');
       expect(lines.at(-1)).toContain('1 missing');
+    });
+  });
+
+  describe('uncommittedSources', () => {
+    it('takes the destination of a rename, not the whole `old -> new` string', () => {
+      // Asserted on the paths, not the count: the report prints a count only,
+      // and a count cannot tell a rename parsed correctly from one parsed
+      // whole. The first version of this test could not fail.
+      gitReturns({ 'status --porcelain': 'R  lib/old.ts -> lib/new.ts\n?? lib/fresh.ts\n' });
+      expect(uncommittedSources()).toEqual(['lib/new.ts', 'lib/fresh.ts']);
+    });
+
+    it('ignores a source file renamed INTO tests/', () => {
+      // Taken whole the entry starts with `lib/`, so the `tests/` filter missed
+      // it and a test file was counted as uncommitted source.
+      gitReturns({ 'status --porcelain': 'R  lib/old.ts -> tests/unit/lib/old.test.ts\n' });
+      expect(uncommittedSources()).toEqual([]);
+    });
+
+    it('is null — not empty — when git could not be asked', () => {
+      gitReturns({ 'status --porcelain': new Error('not a git repository') });
+      expect(uncommittedSources()).toBeNull();
     });
   });
 
@@ -469,6 +501,19 @@ describe('scripts/ci/check-missing-tests', () => {
       expect(main([])).toBe(0);
       expect(logs.join('\n')).toContain('could not check for uncommitted work');
       expect(logs.join('\n')).not.toMatch(/\d+ uncommitted/);
+    });
+
+    it('asks git not to quote paths when checking uncommitted work either', () => {
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': '' });
+      write('tests/unit/lib/a.test.ts');
+      main([]);
+
+      const statusCall = mockExecFileSync.mock.calls.find((call) =>
+        (call[1] as string[]).includes('--porcelain')
+      );
+      expect(statusCall?.[1]).toEqual(
+        expect.arrayContaining(['-c', 'core.quotePath=false', 'status'])
+      );
     });
 
     it('--self-test reports without touching git', () => {

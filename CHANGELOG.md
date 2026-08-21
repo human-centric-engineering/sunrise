@@ -28,8 +28,8 @@ release process.
   mirror-path check gets wrong — `referenced only`, for a module no mirrored test
   covers but some test names. Measured over every tracked `.ts`/`.tsx` — 2301 files, 1146 of
   them non-exempt — **367 have no mirrored test, and 258 of those are covered
-  some other way**: 231 named by a test file, 22 by the collapsed parent of a
-  dynamic route, 5 by an aspect-named sibling. Only 109 are genuine gaps, so a
+  some other way**: 240 named by a test file, 14 by the collapsed parent of a
+  dynamic route, 4 by an aspect-named sibling. Only 109 are genuine gaps, so a
   two-answer check is wrong about 258 files in one direction or the other.
   Exemptions are decided by the TypeScript compiler where a filename cannot
   decide them — 14 `index.ts` files here carry their own code, and exempting

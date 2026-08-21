@@ -311,7 +311,9 @@ describe('classifyOne', () => {
     expect(verdict.outcome.kind).toBe('missing');
   });
 
-  it('prefers the mirror over an aspect sibling', () => {
+  it('prefers the mirror over an aspect sibling, and needs no corroboration for it', () => {
+    // A test at the mirrored path is about this module by construction, so it
+    // is the one route that is not required to name it.
     const verdict = classifyOne(
       modified('lib/a/thing.ts'),
       context({
@@ -325,8 +327,53 @@ describe('classifyOne', () => {
     });
   });
 
+  it('does not credit a collapsed-parent test that never names the module', () => {
+    // The third instance of one class, and the reason it is now a rule rather
+    // than a third guard: `collapsedDynamicCandidates` had no corroboration at
+    // all, so 8 dynamic routes in this repo were credited to a collection
+    // sibling's mirror test that does not import them.
+    const verdict = classifyOne(
+      modified('app/api/v1/foo/[id]/route.ts'),
+      context({ testFiles: ['tests/unit/app/api/v1/foo/route.test.ts'] })
+    );
+    expect(verdict.outcome.kind).toBe('missing');
+  });
+
+  it('credits the collapsed-parent test when it does name the module', () => {
+    // Same input, one fact changed — so the case above turns on corroboration
+    // and not on the path arithmetic.
+    const verdict = classifyOne(
+      modified('app/api/v1/foo/[id]/route.ts'),
+      context({
+        testFiles: ['tests/unit/app/api/v1/foo/route.test.ts'],
+        referencesOf: () => ['tests/unit/app/api/v1/foo/route.test.ts'],
+      })
+    );
+    expect(verdict.outcome).toEqual({
+      kind: 'covered',
+      testPath: 'tests/unit/app/api/v1/foo/route.test.ts',
+      via: 'collapsed-dynamic-segment',
+    });
+  });
+
+  it('demotes an uncorroborated aspect sibling to referenced, not covered', () => {
+    // It falls through rather than disappearing: another test names the module,
+    // so `referenced` is the honest tier for it.
+    const verdict = classifyOne(
+      modified('lib/a/thing.ts'),
+      context({
+        testFiles: ['tests/unit/lib/a/thing-extra.test.ts'],
+        referencesOf: () => ['tests/unit/lib/b/elsewhere.test.ts'],
+      })
+    );
+    expect(verdict.outcome).toEqual({
+      kind: 'referenced',
+      referencedBy: ['tests/unit/lib/b/elsewhere.test.ts'],
+    });
+  });
+
   it('separates "a test names it" from "a test covers it"', () => {
-    // The distinction the three-way verdict exists for: 231 files in this repo
+    // The distinction the three-way verdict exists for: 240 files in this repo
     // are in this state, and calling them all clean or all missing is wrong in
     // opposite directions.
     const verdict = classifyOne(

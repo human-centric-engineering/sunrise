@@ -96,8 +96,13 @@ export function parseNameStatus(output: string): {
     const fields = line.split('\t');
     const code = fields[0] ?? '';
     const letter = code.charAt(0);
-    if (letter !== 'A' && letter !== 'M' && letter !== 'R') continue;
-    const path = letter === 'R' ? fields[2] : fields[1];
+    // `C` is a copy — `diff.renames = copies` in a user's gitconfig turns it
+    // on, and the destination is a brand-new file needing a test. It used to
+    // fall out here with no word, which is the silent drop this check is
+    // against. `D`elete and `T`ype-change are deliberate: a deleted file cannot
+    // be missing a test.
+    if (letter !== 'A' && letter !== 'M' && letter !== 'R' && letter !== 'C') continue;
+    const path = letter === 'R' || letter === 'C' ? fields[2] : fields[1];
     // A truncated rename line (`R100\told` with no destination) leaves this
     // undefined, and the extension test below would throw on it. An `=== ''`
     // clause used to sit here too; the extension test already drops an empty
@@ -118,7 +123,7 @@ export function parseNameStatus(output: string): {
       continue;
     }
     if (!path.endsWith('.ts') && !path.endsWith('.tsx')) continue;
-    files.push({ path, status: letter });
+    files.push({ path, status: letter === 'C' ? 'A' : letter });
   }
   return { files, unreadable };
 }
@@ -191,13 +196,34 @@ export function makeReferenceFinder(
 /**
  * Uncommitted `.ts`/`.tsx` paths — reported as a blind spot, not scanned.
  * `null` when git could not be asked, which is a different answer from none.
+ *
+ * Exported for its test: the report prints a **count**, deliberately — local
+ * filenames are not something `/pre-pr` should paste into a PR summary — and a
+ * count cannot distinguish a rename parsed correctly from one parsed whole.
  */
-function uncommittedSources(): string[] | null {
-  const status = git(['status', '--porcelain', '--untracked-files=all']);
+export function uncommittedSources(): string[] | null {
+  // Same `core.quotePath=false` as the diff. Without it an uncommitted
+  // `lib/café.ts` arrives as `?? "caf\303\251.ts"`, fails the suffix test and
+  // is dropped — the note undercounting, or vanishing, about the one thing it
+  // exists to say.
+  const status = git([
+    '-c',
+    'core.quotePath=false',
+    'status',
+    '--porcelain',
+    '--untracked-files=all',
+  ]);
   if (status === null) return null;
   return status
     .split('\n')
-    .map((line) => line.slice(3).trim())
+    .map((line) => {
+      const entry = line.slice(3).trim();
+      // A staged rename prints `R  old -> new`. Taking the whole string made
+      // one "path" of both halves, and a move to a non-`.ts` destination was
+      // dropped although a TypeScript file had left the tree.
+      const arrow = entry.indexOf(' -> ');
+      return arrow === -1 ? entry : entry.slice(arrow + ' -> '.length);
+    })
     .filter((path) => path !== '' && (path.endsWith('.ts') || path.endsWith('.tsx')))
     .filter((path) => !path.startsWith('tests/'));
 }
@@ -398,4 +424,12 @@ export function main(argv: string[]): number {
   return 0;
 }
 
-process.exitCode = main(process.argv.slice(2));
+// Only when run as a CLI. The four sibling `check:*` scripts call `main` at
+// module scope unconditionally, which means importing one for a helper runs its
+// whole check — this file exports six helpers and that fired on every ad-hoc
+// script written against it, printing a stray verdict before the caller's own
+// output. Worth the one deviation; the siblings have the same shape and could
+// take the same line.
+if (process.argv[1] !== undefined && process.argv[1].endsWith('check-missing-tests.ts')) {
+  process.exitCode = main(process.argv.slice(2));
+}

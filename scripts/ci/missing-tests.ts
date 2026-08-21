@@ -25,10 +25,10 @@
  * of writing — 2301 files, 1146 of them non-exempt:
  *
  * - **367 have no mirrored test** (1146 minus the 779 the mirror rule finds).
- * - **258 of those are covered some other way** — 231 named by a test file, 22
- *   by the collapsed parent of a dynamic route, 5 by an aspect-named sibling
+ * - **258 of those are covered some other way** — 240 named by a test file, 14
+ *   by the collapsed parent of a dynamic route, 4 by an aspect-named sibling
  *   (`config-sendResetPassword.test.ts` for `lib/auth/config.ts`). The rest of
- *   the 231 are enumerating tests that walk a directory
+ *   the 240 are enumerating tests that walk a directory
  *   (`fork-init-seams.test.ts` over `lib/app/*`) and route tests a level up.
  * - **109 are genuine gaps.**
  *
@@ -36,7 +36,7 @@
  * ratio is the whole argument for this file.
  *
  * Re-derive rather than trust these numbers, and say what you counted: "no
- * mirrored test" (367) and "no test by any rule" (340) are different questions,
+ * mirrored test" (367) and "no test by any rule" (349) are different questions,
  * and an unstated denominator is how two honest counts disagree.
  *
  * So the verdict has three values, not two:
@@ -49,7 +49,7 @@
  * - `missing`   — no mirrored test and no test mentions it at all.
  *
  * Collapsing `referenced` into `covered` hides genuine gaps; collapsing it into
- * `missing` turns 109 findings into 340 and trains people to skim. The
+ * `missing` turns 109 findings into 349 and trains people to skim. The
  * distinction is the whole reason this is a module and not a `grep`.
  *
  * # Exemptions
@@ -437,7 +437,12 @@ export function contentExemption(path: string, source: string | null): string | 
  * very differently from a brand-new file with no test — and the field was
  * recorded and then never read until this said so.
  */
-export function classifyOne(file: ChangedFile, context: ClassifyContext): Verdict {
+export function classifyOne(
+  file: ChangedFile,
+  context: ClassifyContext,
+  /** Prebuilt from `context.testFiles`; `classify` builds it once for the run. */
+  testSet?: ReadonlySet<string>
+): Verdict {
   const { path, status } = file;
 
   const byPath = pathExemption(path);
@@ -450,15 +455,41 @@ export function classifyOne(file: ChangedFile, context: ClassifyContext): Verdic
   const byContent = contentExemption(path, context.readSource(path));
   if (byContent !== null) return { path, status, outcome: { kind: 'exempt', reason: byContent } };
 
-  const testSet = new Set(context.testFiles);
+  const tests = testSet ?? new Set(context.testFiles);
 
+  // The mirror is the one route that needs no corroboration: a test at exactly
+  // the mirrored path is about this module by construction.
   const mirrors = mirrorCandidates(stem, path.endsWith('.tsx') ? 'tsx' : 'ts');
-  const mirror = mirrors.find((candidate) => testSet.has(candidate));
+  const mirror = mirrors.find((candidate) => tests.has(candidate));
   if (mirror !== undefined) {
     return { path, status, outcome: { kind: 'covered', testPath: mirror, via: 'mirror' } };
   }
 
-  const collapsed = collapsedDynamicCandidates(stem).find((candidate) => testSet.has(candidate));
+  const specifiers = importSpecifiers(stem);
+  const viaBarrel = reexportingBarrelSpecifier(stem, context.readSource);
+  if (viaBarrel !== null) specifiers.push(viaBarrel);
+  const referencedBy = context.referencesOf(specifiers);
+  const names = new Set(referencedBy);
+
+  // **Every other route must be corroborated by the test naming the module.**
+  //
+  // Both fallbacks are guesses from a path, and a guess that credits the wrong
+  // test prints `covered` over something nothing tests — the silent pass this
+  // module exists to prevent. Three review rounds each found one instance of
+  // that shape before it was closed as a class rather than patched again:
+  // `aspectTestsFor` missing directory barrels, then bare side-effect imports
+  // exempting a registration barrel, then this — `collapsedDynamicCandidates`
+  // had no guard at all and credited 8 dynamic routes to a collection sibling's
+  // mirror test that never imports them.
+  //
+  // Measured at the time of writing: of the 27 credits the two fallbacks would
+  // hand out, 18 are corroborated and 9 are not. The 9 do not disappear — they fall through to
+  // `referenced`, which is the honest answer for them.
+  const corroborated = (candidate: string): boolean => names.has(candidate);
+
+  const collapsed = collapsedDynamicCandidates(stem).find(
+    (candidate) => tests.has(candidate) && corroborated(candidate)
+  );
   if (collapsed !== undefined) {
     return {
       path,
@@ -468,14 +499,11 @@ export function classifyOne(file: ChangedFile, context: ClassifyContext): Verdic
   }
 
   const aspects = aspectTestsFor(stem, context.testFiles, (p) => context.readSource(p) !== null);
-  if (aspects.length > 0) {
-    return { path, status, outcome: { kind: 'covered', testPath: aspects[0], via: 'aspect' } };
+  const aspect = aspects.find(corroborated);
+  if (aspect !== undefined) {
+    return { path, status, outcome: { kind: 'covered', testPath: aspect, via: 'aspect' } };
   }
 
-  const specifiers = importSpecifiers(stem);
-  const viaBarrel = reexportingBarrelSpecifier(stem, context.readSource);
-  if (viaBarrel !== null) specifiers.push(viaBarrel);
-  const referencedBy = context.referencesOf(specifiers);
   if (referencedBy.length > 0) {
     return {
       path,
@@ -489,7 +517,10 @@ export function classifyOne(file: ChangedFile, context: ClassifyContext): Verdic
 
 /** Runs every rule over every changed file, preserving input order. */
 export function classify(files: readonly ChangedFile[], context: ClassifyContext): Verdict[] {
-  return files.map((file) => classifyOne(file, context));
+  // Built once. `classifyOne` would otherwise rebuild a 1097-entry Set per
+  // changed file — 1.25M inserts on a whole-repo run.
+  const testSet = new Set(context.testFiles);
+  return files.map((file) => classifyOne(file, context, testSet));
 }
 
 /**
@@ -511,9 +542,11 @@ export function selfTestFailure(
   const testFiles = [
     'tests/unit/lib/sentinel/covered.test.ts',
     'tests/unit/lib/sentinel/aspect-flavour.test.ts',
+    'tests/unit/lib/sentinel/uncorroborated-flavour.test.ts',
     'tests/unit/app/api/v1/sentinel/route.test.ts',
     'tests/unit/lib/sentinel/importer.test.ts',
   ];
+
   // Only the sentinel's own sources exist. A reader that answers every path —
   // the first version here — makes every aspect candidate look like some other
   // module's mirror test, and the aspect case failed. Which is the self-test
@@ -523,17 +556,26 @@ export function selfTestFailure(
     'lib/sentinel/never-tested.ts',
     'lib/sentinel/covered.ts',
     'lib/sentinel/aspect.ts',
+    'lib/sentinel/uncorroborated.ts',
     'lib/sentinel/referenced.ts',
     'app/api/v1/sentinel/[id]/route.ts',
   ]);
+
+  // Which test files name which module. Every non-mirror credit needs one, so
+  // the sentinel has to model that rather than answer a flat yes/no.
+  const named: Record<string, string[]> = {
+    '@/lib/sentinel/aspect': ['tests/unit/lib/sentinel/aspect-flavour.test.ts'],
+    '@/lib/sentinel/referenced': ['tests/unit/lib/sentinel/importer.test.ts'],
+    '@/app/api/v1/sentinel/[id]/route': ['tests/unit/app/api/v1/sentinel/route.test.ts'],
+    // `uncorroborated` is deliberately absent: a test sits at its aspect path
+    // and never names it.
+  };
+
   const context: ClassifyContext = {
     testFiles,
     readSource: (path) =>
       sources.has(path) ? 'export function live(): number { return 1; }' : null,
-    referencesOf: (specifiers) =>
-      specifiers.includes('@/lib/sentinel/referenced')
-        ? ['tests/unit/lib/sentinel/importer.test.ts']
-        : [],
+    referencesOf: (specifiers) => specifiers.flatMap((specifier) => named[specifier] ?? []),
   };
 
   const cases: Array<{ file: ChangedFile; want: Outcome['kind']; why: string }> = [
@@ -550,7 +592,12 @@ export function selfTestFailure(
     {
       file: { path: 'lib/sentinel/aspect.ts', status: 'M' },
       want: 'covered',
-      why: 'an aspect-named sibling must satisfy the check',
+      why: 'an aspect-named sibling that names the module must satisfy the check',
+    },
+    {
+      file: { path: 'lib/sentinel/uncorroborated.ts', status: 'M' },
+      want: 'missing',
+      why: 'a test at the aspect path that never names the module must NOT count as covered',
     },
     {
       file: { path: 'app/api/v1/sentinel/[id]/route.ts', status: 'A' },

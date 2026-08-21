@@ -212,7 +212,7 @@ the point:
   finding; treat it as a gap until you have a reason.
 - **referenced only** — no mirrored test, but some test names the module.
   Weaker on purpose. Open the named test and decide whether it exercises the
-  module or merely mocks it as somebody else's dependency. 231 files in this
+  module or merely mocks it as somebody else's dependency. 240 files in this
   repo are in this state, so rounding them all up or all down is wrong in
   opposite directions.
 - **covered** — a test sits where one is expected (mirror path, an aspect-named
