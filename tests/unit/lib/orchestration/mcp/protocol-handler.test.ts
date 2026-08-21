@@ -1165,3 +1165,101 @@ describe('handleMcpRequest', () => {
     });
   });
 });
+
+// ─── MCP_SESSION_MODE=stateless (#609) ──────────────────────────────────
+
+describe('an ephemeral session refuses what it cannot carry', () => {
+  let auth: McpAuthContext;
+  let serverState: McpServerState;
+  let rateLimiter: ReturnType<typeof makeRateLimiter>;
+
+  beforeEach(() => {
+    auth = makeAuth();
+    serverState = makeServerState();
+    rateLimiter = makeRateLimiter();
+  });
+
+  // The three methods that need state to outlive the request. Everything else
+  // reads only `initialized` and `protocolVersion`, which an ephemeral session
+  // can synthesise honestly.
+  it.each([
+    ['resources/subscribe', { uri: 'sunrise://agents' }],
+    ['resources/unsubscribe', { uri: 'sunrise://agents' }],
+    ['logging/setLevel', { level: 'debug' }],
+  ])('%s refuses with STATELESS_UNSUPPORTED', async (method, params) => {
+    const session = makeSession({ ephemeral: true });
+    const req = makeRequest({ id: 1, method, params });
+
+    const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+
+    expect(result?.error?.code).toBe(JsonRpcErrorCode.STATELESS_UNSUPPORTED);
+    // Named, so an operator reading a client's error knows which knob did it.
+    expect(result?.error?.message).toContain('MCP_SESSION_MODE=stateless');
+    expect(result?.error?.message).toContain(method);
+  });
+
+  it.each([
+    ['resources/subscribe', { uri: 'sunrise://agents' }],
+    ['resources/unsubscribe', { uri: 'sunrise://agents' }],
+    ['logging/setLevel', { level: 'debug' }],
+  ])('%s still works on a durable session', async (method, params) => {
+    // The counterpart, or the test above would pass against a handler that
+    // refused these unconditionally.
+    const session = makeSession();
+    const req = makeRequest({ id: 1, method, params });
+
+    const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+
+    expect(result?.error?.code).not.toBe(JsonRpcErrorCode.STATELESS_UNSUPPORTED);
+  });
+});
+
+describe('initialize advertises only what the session mode can honour', () => {
+  let auth: McpAuthContext;
+  let serverState: McpServerState;
+  let rateLimiter: ReturnType<typeof makeRateLimiter>;
+
+  beforeEach(() => {
+    auth = makeAuth();
+    serverState = makeServerState();
+    rateLimiter = makeRateLimiter();
+  });
+
+  async function capabilitiesFor(session: McpSession): Promise<Record<string, unknown>> {
+    const req = makeRequest({
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'c', version: '1' },
+      },
+    });
+    const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+    return (result?.result as { capabilities: Record<string, unknown> }).capabilities;
+  }
+
+  it('withholds subscribe, listChanged and logging from an ephemeral session', async () => {
+    // Refusing the calls is the backstop; not advertising is the fix, because a
+    // conforming client then never asks. `toEqual` is exact-shape on purpose —
+    // an accidental re-addition fails rather than being absorbed.
+    expect(await capabilitiesFor(makeSession({ ephemeral: true }))).toEqual({
+      tools: {},
+      resources: {},
+      prompts: {},
+      // `logging: {}` IS the signal that logging/setLevel works, so it is
+      // dropped entirely rather than emptied.
+      completions: {},
+    });
+  });
+
+  it('advertises everything on a durable session', async () => {
+    expect(await capabilitiesFor(makeSession())).toEqual({
+      tools: { listChanged: true },
+      resources: { listChanged: true, subscribe: true },
+      prompts: { listChanged: true },
+      logging: {},
+      completions: {},
+    });
+  });
+});

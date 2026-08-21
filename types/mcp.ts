@@ -59,6 +59,14 @@ export const JsonRpcErrorCode = {
   SERVER_DISABLED: -32003,
   /** Application-level: per-key or global rate limit exceeded — client should back off and retry */
   RATE_LIMITED: -32004,
+  /**
+   * The method needs a session that outlives the request, and this server does
+   * not have one (`MCP_SESSION_MODE=stateless`). Distinct from METHOD_NOT_FOUND
+   * because the method exists and is implemented — it is the deployment
+   * topology that cannot carry it. A client can act on that; "no such method"
+   * would send it looking for a version mismatch that is not there.
+   */
+  STATELESS_UNSUPPORTED: -32005,
 } as const;
 export type JsonRpcErrorCode = (typeof JsonRpcErrorCode)[keyof typeof JsonRpcErrorCode];
 
@@ -323,6 +331,16 @@ export interface McpSession {
   logLevel: McpLogLevel;
   createdAt: number;
   lastActivityAt: number;
+  /**
+   * True for a session synthesised per request under
+   * `MCP_SESSION_MODE=stateless`. Nothing stores it, so anything that has to
+   * outlive one request — a subscription, a log level, an SSE sink — must
+   * refuse rather than accept work it will drop.
+   *
+   * Optional so every existing stateful path and test fixture is unchanged; the
+   * checks read `session.ephemeral` truthily.
+   */
+  ephemeral?: boolean;
 }
 
 /**

@@ -108,6 +108,23 @@ const serverEnvSchema = z.object({
         'silently run unscoped queries.'
     ),
 
+  // MCP session model (see .context/orchestration/mcp.md)
+  MCP_SESSION_MODE: z
+    .enum(['stateless', 'stateful'])
+    .default('stateless')
+    .describe(
+      'How the MCP server holds session state. "stateless" (default) holds none: every ' +
+        'request stands alone, no Mcp-Session-Id is issued, and the three methods that ' +
+        'need continuity (resources/subscribe, resources/unsubscribe, logging/setLevel) ' +
+        'refuse by name. This is the only mode that is correct where more than one ' +
+        'process serves traffic — on Vercel or any function-per-request platform the ' +
+        'handshake otherwise fails intermittently, because initialize lands on one ' +
+        "instance and the next request looks the id up in a sibling's empty map. " +
+        '"stateful" keeps an in-memory Map and is for a single long-running process ' +
+        'only; it is also a legacy-compatibility mode, since MCP revision 2026-07-28 ' +
+        'removes protocol-level sessions and the initialize handshake outright.'
+    ),
+
   // Capability authorization model (see lib/orchestration/capabilities/dispatcher.ts)
   CAPABILITY_BINDING_MODE: z
     .enum(['permissive', 'strict'])

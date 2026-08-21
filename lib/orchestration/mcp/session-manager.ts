@@ -27,6 +27,45 @@ const EVICTION_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 /** Max URIs a single session may subscribe to. */
 export const MAX_SUBSCRIPTIONS_PER_SESSION = 50;
 
+/**
+ * A session for one request, under `MCP_SESSION_MODE=stateless`.
+ *
+ * Nothing stores it and nothing looks it up. It exists because the handlers all
+ * take a session and read two things off it — `initialized` and
+ * `protocolVersion` — and synthesising those is cheaper and clearer than
+ * threading an optional session through every method.
+ *
+ * `initialized: true` because there is no handshake to remember: the client
+ * never received an `Mcp-Session-Id`, so per the Streamable HTTP transport it
+ * never sends one, and every request stands alone. Refusing them all as
+ * un-initialised would fail every client that skips `initialize` — which under
+ * MCP revision 2026-07-28 is every conforming client, since that revision
+ * removes the handshake.
+ *
+ * `ephemeral: true` is what makes the difference honest downstream: the three
+ * methods that need continuity refuse by name instead of accepting work that
+ * would be dropped when the process moves on.
+ */
+export function createEphemeralSession(
+  apiKeyId: string,
+  protocolVersion: McpProtocolVersion
+): McpSession {
+  const now = Date.now();
+  return {
+    // Prefixed rather than a bare uuid so it is obvious in a log line that this
+    // id was never registered anywhere and cannot be looked up.
+    id: `stateless-${randomUUID()}`,
+    apiKeyId,
+    initialized: true,
+    protocolVersion,
+    // The default. `logging/setLevel` refuses in this mode, so nothing can move it.
+    logLevel: 'warning',
+    createdAt: now,
+    lastActivityAt: now,
+    ephemeral: true,
+  };
+}
+
 export class McpSessionManager {
   private sessions = new Map<string, McpSession>();
   private sseListeners = new Map<string, NotificationSink>();

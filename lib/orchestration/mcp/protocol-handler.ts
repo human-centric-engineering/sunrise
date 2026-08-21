@@ -173,16 +173,19 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
 
     case 'resources/subscribe':
       requireInitialized(session);
+      requireDurableSession(session, 'resources/subscribe');
       requireScope(auth, McpScope.RESOURCES_READ);
       return handleResourcesSubscribe(request.params, session);
 
     case 'resources/unsubscribe':
       requireInitialized(session);
+      requireDurableSession(session, 'resources/unsubscribe');
       requireScope(auth, McpScope.RESOURCES_READ);
       return handleResourcesUnsubscribe(request.params, session);
 
     case 'logging/setLevel':
       requireInitialized(session);
+      requireDurableSession(session, 'logging/setLevel');
       // Logging level is a per-session knob; the spec does not require a
       // scope. Anyone with a valid session can ask for less verbose logs.
       return handleLoggingSetLevel(request.params, session);
@@ -219,7 +222,7 @@ function handleInitialize(
   params: Record<string, unknown> | undefined,
   context: HandlerContext
 ): McpInitializeResult {
-  const { serverState } = context;
+  const { serverState, session } = context;
 
   const negotiation = negotiateMcpProtocolVersion(params?.protocolVersion);
   if (!negotiation) {
@@ -242,11 +245,20 @@ function handleInitialize(
   // resources/unsubscribe and pushes notifications/resources/updated.
   // logging:{} signals logging/setLevel + notifications/message support.
   // completions:{} signals completion/complete support.
+  //
+  // Every one of those except `completions` needs a session that outlives the
+  // request, so under `MCP_SESSION_MODE=stateless` they are withheld. Refusing
+  // the calls (see `requireDurableSession`) is the backstop; not advertising is
+  // the fix, because a conforming client then never asks. `completions` stays in
+  // both modes — `completion/complete` is a plain request/response lookup.
+  const durable = !session.ephemeral;
   const capabilities: McpCapabilities = {
-    tools: { listChanged: true },
-    resources: { listChanged: true, subscribe: true },
-    prompts: { listChanged: true },
-    logging: {},
+    tools: durable ? { listChanged: true } : {},
+    resources: durable ? { listChanged: true, subscribe: true } : {},
+    prompts: durable ? { listChanged: true } : {},
+    // Dropped entirely rather than emptied: `logging: {}` IS the signal that
+    // logging/setLevel works, so an empty object would still advertise it.
+    ...(durable ? { logging: {} } : {}),
     completions: {},
   };
 
@@ -597,6 +609,28 @@ function requireInitialized(session: McpSession): void {
     throw new McpProtocolError(
       JsonRpcErrorCode.INTERNAL_ERROR,
       'Session not initialized — call initialize first'
+    );
+  }
+}
+
+/**
+ * Refuse a method that needs a session outliving the request.
+ *
+ * Under `MCP_SESSION_MODE=stateless` there is nowhere to keep a subscription or
+ * a log level, and the process that would emit the notification is not
+ * guaranteed to be the one still running. Accepting the call and returning
+ * success would be the worse failure: a subscription that never notifies looks
+ * identical to a resource that never changes, and the client has no way to tell.
+ *
+ * Named in the message so an operator reading a client's error knows which knob
+ * produced it, and distinct from METHOD_NOT_FOUND because the method exists —
+ * it is the topology that cannot carry it.
+ */
+function requireDurableSession(session: McpSession, method: string): void {
+  if (session.ephemeral) {
+    throw new McpProtocolError(
+      JsonRpcErrorCode.STATELESS_UNSUPPORTED,
+      `${method} requires a durable session; this server runs MCP_SESSION_MODE=stateless`
     );
   }
 }

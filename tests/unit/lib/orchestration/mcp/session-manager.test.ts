@@ -8,7 +8,7 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
-import { McpSessionManager } from '@/lib/orchestration/mcp/session-manager';
+import { McpSessionManager, createEphemeralSession } from '@/lib/orchestration/mcp/session-manager';
 import { logger } from '@/lib/logging';
 import type { JsonRpcNotification } from '@/types/mcp';
 
@@ -558,3 +558,51 @@ describe('McpSessionManager', () => {
 // Sentinel value: a long TTL that won't expire during the test
 // (used to test the no-eviction path without timing fragility)
 const DEFAULT_TTL_SENTINEL = 60 * 60 * 1000; // 1 hour
+
+// ─── createEphemeralSession (#609) ──────────────────────────────────────
+
+describe('createEphemeralSession', () => {
+  it('is initialized on arrival, because there is no handshake to remember', () => {
+    const session = createEphemeralSession('key-1', '2025-06-18');
+
+    // The client never received an Mcp-Session-Id, so per the transport it never
+    // sends one — every request stands alone. Treating these as un-initialised
+    // would refuse every client that skips `initialize`, which under MCP
+    // revision 2026-07-28 is every conforming client.
+    expect(session.initialized).toBe(true);
+    expect(session.ephemeral).toBe(true);
+    expect(session.apiKeyId).toBe('key-1');
+    expect(session.protocolVersion).toBe('2025-06-18');
+  });
+
+  it('carries the protocol version it was given, not a default', () => {
+    // The version comes from the request header; baking in a default here would
+    // emit annotations the client never negotiated.
+    expect(createEphemeralSession('k', '2024-11-05').protocolVersion).toBe('2024-11-05');
+    expect(createEphemeralSession('k', '2025-06-18').protocolVersion).toBe('2025-06-18');
+  });
+
+  it('defaults the log level to warning, since setLevel cannot move it', () => {
+    expect(createEphemeralSession('k', '2025-06-18').logLevel).toBe('warning');
+  });
+
+  it('mints an id that is visibly un-lookupable', () => {
+    const a = createEphemeralSession('k', '2025-06-18');
+    const b = createEphemeralSession('k', '2025-06-18');
+
+    // Prefixed so a log line makes clear this id was never registered anywhere;
+    // unique so two concurrent requests are not conflated in an audit trail.
+    expect(a.id).toMatch(/^stateless-/);
+    expect(a.id).not.toBe(b.id);
+  });
+
+  it('is not registered with any manager — the manager cannot find it', () => {
+    // The property that makes the whole mode work: nothing stores these, so
+    // there is no map for a sibling instance to miss.
+    const manager = new McpSessionManager();
+    const session = createEphemeralSession('key-1', '2025-06-18');
+
+    expect(manager.getSession(session.id)).toBeNull();
+    manager.destroy();
+  });
+});
