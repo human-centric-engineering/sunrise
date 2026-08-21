@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Test: New event subscription page
  *

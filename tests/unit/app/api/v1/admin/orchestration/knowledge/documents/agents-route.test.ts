@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Test: GET /api/v1/admin/orchestration/knowledge/documents/:id/agents
  *

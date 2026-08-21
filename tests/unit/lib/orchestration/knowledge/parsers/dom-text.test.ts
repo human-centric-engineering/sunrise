@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: shared DOM text extraction (`dom-text.ts`)
  *

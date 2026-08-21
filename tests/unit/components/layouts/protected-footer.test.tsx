@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * ProtectedFooter copyright attribution (issue #363)
  *

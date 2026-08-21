@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GA4Provider, createGA4Provider } from '@/lib/analytics/providers/ga4';
 

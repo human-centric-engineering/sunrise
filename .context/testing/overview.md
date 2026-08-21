@@ -21,7 +21,7 @@ Comprehensive testing documentation for the Sunrise project. This guide provides
 - **Modern API**: Compatible with Jest API but faster and lighter
 - **TypeScript**: First-class TypeScript support without additional config
 
-**Environment**: Uses `happy-dom` for fast DOM testing (configured in `vitest.config.ts`). Happy-dom is a lightweight alternative to jsdom with better performance for most testing scenarios.
+**Environment**: `node` by default; a file that needs a DOM opts in with a first-line `// @vitest-environment happy-dom` docblock (happy-dom being a lightweight alternative to jsdom). 605 of 1084 test files run on node. See [`environments.md`](./environments.md) — it matters for correctness as well as speed, because under happy-dom `lib/env.ts` validates only the _client_ schema.
 
 ### React Testing Library
 
@@ -382,6 +382,7 @@ The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test
 
 **See also**:
 
+- [`environments.md`](./environments.md) - node by default, happy-dom opt-in; why, and what to do when a test needs a DOM
 - [`scoped-runs.md`](./scoped-runs.md) - Running only the tests a branch needs, and the whole-tree guards no module graph reaches
 - [`patterns.md`](./patterns.md) - Best practices and patterns (AAA, type safety, async, mocking)
 - [`mocking.md`](./mocking.md) - Mock strategies by dependency (Prisma, better-auth, Next.js, logger)

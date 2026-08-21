@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * CapabilityForm — Function Definition Tab Tests
  *

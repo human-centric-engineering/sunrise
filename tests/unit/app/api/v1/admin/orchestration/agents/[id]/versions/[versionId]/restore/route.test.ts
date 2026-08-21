@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests: Admin Orchestration — Restore Agent Version
  *

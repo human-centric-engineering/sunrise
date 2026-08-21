@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Integration Test: Admin Orchestration — Evaluations List Page
  *

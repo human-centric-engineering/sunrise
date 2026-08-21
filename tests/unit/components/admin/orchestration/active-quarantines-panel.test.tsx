@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * ActiveQuarantinesPanel — render tests (item #42)
  *

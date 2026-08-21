@@ -136,6 +136,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'entry, which is why the list is written rather than derived.',
   },
   {
+    path: 'tests/unit/vitest-environment-directives.test.ts',
+    reason:
+      'reads every test file to check its environment directive is a single ' +
+      'value on line 1. Vitest matches that directive anywhere in a file, so a ' +
+      'comment merely discussing it silently moves the file to another ' +
+      'environment — and the node-to-happy-dom direction still passes. The ' +
+      'input is the whole test tree, which nothing imports.',
+  },
+  {
     path: 'tests/unit/scripts/ci/scoped-tests.test.ts',
     reason:
       'checks every path in this list still exists on disk. Renaming or ' +

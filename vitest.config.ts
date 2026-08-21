@@ -9,8 +9,46 @@ export default defineConfig({
   // at build time and Vitest therefore cannot execute. See the plugin's header.
   plugins: [react(), nextFontStub()],
   test: {
-    // Use happy-dom for fast DOM testing (alternative to jsdom)
-    environment: 'happy-dom',
+    // `node` by default; a DOM is opt-in per file via an environment docblock
+    // on line 1. 405 files carry one; 682 run on node.
+    //
+    // Vitest builds a fresh environment for every test file, and constructing a
+    // happy-dom Window means building the whole browser API surface — window,
+    // document, CSSOM, its own fetch. Measured back-to-back on `tests/unit/lib`
+    // (434 files) under identical load: 49.3s wall / 141s CPU with this split
+    // against 58.1s / 191s with happy-dom everywhere, and in-worker environment
+    // construction of 11.4s against 79.5s. Read the CPU and environment figures
+    // rather than the wall clock — wall varies with what else is running, and
+    // aggregate work is the thing this repo is short of.
+    //
+    // IT IS ALSO A CORRECTNESS FIX, which is the better half of the argument.
+    // happy-dom defines `window`, so `lib/env.ts`'s `typeof window !==
+    // 'undefined'` check selected the **client** schema and every server
+    // variable read as `undefined`. Anything branching on `TENANCY_MODE`,
+    // `CAPABILITY_BINDING_MODE` or `MCP_SESSION_MODE` was silently exercising
+    // the undefined path. 44 of the 47 test files that import `@/lib/env` now
+    // run under node and see the real server schema; the remaining three are
+    // two component tests and `env.test.ts`, which asserts on `typeof window`
+    // deliberately.
+    //
+    // GETTING IT WRONG IS ASYMMETRIC, and the docs are precise about this
+    // because an earlier draft of this comment was not. A DOM test that lands
+    // on node fails loudly (`ReferenceError: document is not defined`). A node
+    // test that picks up happy-dom **passes**, and quietly rejoins the class of
+    // test this setting exists to escape. So over-declaring is not free, and
+    // `tests/unit/vitest-environment-directives.test.ts` guards the mechanical
+    // half of it — placement, duplicate values, unknown environment names. It
+    // cannot tell you a file did not need the DOM it asked for; only running it
+    // without one can. See `.context/testing/environments.md`.
+    //
+    // WHY A DOCBLOCK AND NOT A GLOB. `environmentMatchGlobs` was removed in
+    // vitest 3 and is absent from 4. Its replacement, `test.projects`, would
+    // work — but a projects config makes `vitest list --filesOnly` prefix every
+    // line with `[name] `, and `scripts/ci/run-scoped-tests.ts` (the
+    // `npm run test:changed` gate) resolves its selection from exactly that
+    // output and refuses a line it cannot resolve to a file. Choosing projects
+    // here would have broken the gate that shipped one PR earlier.
+    environment: 'node',
 
     // Cap worker forks well below the core count.
     //
@@ -19,7 +57,8 @@ export default defineConfig({
     // execute it in the background behind `validate` and `/pre-pr`, and more
     // than one of them is often working different forks of this repo at the
     // same time. Two default runs on a 10-core box is ~18 forked processes,
-    // each with its own happy-dom, and the machine thrashes.
+    // and the machine thrashes. (Before the node-by-default split above, every
+    // one of those also built its own happy-dom.)
     //
     // The failure that produces is not a test failure and does not read like
     // one: `[vitest-pool]: Failed to start forks worker` / `Timeout waiting
@@ -60,6 +99,8 @@ export default defineConfig({
       ? undefined
       : Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2))),
 
+    // Applies to the files that opt into happy-dom above.
+    //
     // happy-dom loads `<script src>` and `<link rel=stylesheet>` for real —
     // both flags default to false, i.e. loading enabled — using its own
     // `node:http` client in `happy-dom/lib/fetch/`. Its default document URL

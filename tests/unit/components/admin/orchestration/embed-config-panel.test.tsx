@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for `components/admin/orchestration/agents/embed-config-panel.tsx`
  *

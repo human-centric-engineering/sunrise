@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * DatasetAnatomyCard component tests.
  *

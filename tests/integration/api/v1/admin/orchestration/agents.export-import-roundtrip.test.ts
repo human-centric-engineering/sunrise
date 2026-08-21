@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Integration Test: Agent Export → Import Round-Trip
  *

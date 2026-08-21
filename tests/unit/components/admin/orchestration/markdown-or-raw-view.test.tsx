@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * MarkdownOrRawView — toggleable markdown/raw renderer.
  *

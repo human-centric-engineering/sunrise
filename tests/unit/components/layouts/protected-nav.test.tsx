@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * ProtectedNav default-vs-override (issue #473)
  *

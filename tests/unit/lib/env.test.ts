@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests: Environment variable validation (lib/env.ts)
  *

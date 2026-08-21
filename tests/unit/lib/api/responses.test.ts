@@ -229,15 +229,26 @@ describe('successResponse', () => {
       expect(response.status).toBe(201);
     });
 
-    it('should accept custom status code 204', () => {
-      // Arrange
-      const data = null;
+    it('throws on a status that forbids a body, because it always builds one', () => {
+      // `successResponse` always calls `Response.json`, so it always has a
+      // body — and 204/205/304 must not have one. Node's `Response` (undici,
+      // which is what Next runs on) rejects it: "Invalid response status code
+      // 204". This test used to assert `status === 204` and passed only
+      // because happy-dom's `Response` is more lenient than the real runtime,
+      // so it was describing behaviour production cannot produce.
+      //
+      // Nothing calls it this way — every 204 in `app/` is built as
+      // `new Response(null, { status: 204 })`, correctly bodyless — so this
+      // pins the real constraint rather than papering over it. Giving
+      // `successResponse` a bodyless path is a separate change with no caller
+      // asking for it today.
+      expect(() => successResponse(null, undefined, { status: 204 })).toThrow(
+        /Invalid response status code 204/
+      );
+    });
 
-      // Act
-      const response = successResponse(data, undefined, { status: 204 });
-
-      // Assert
-      expect(response.status).toBe(204);
+    it('accepts a custom status that permits a body', () => {
+      expect(successResponse({ id: '123' }, undefined, { status: 202 }).status).toBe(202);
     });
 
     it('should default to 200 when no status provided', () => {

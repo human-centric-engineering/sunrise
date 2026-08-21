@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: AgentsListPage (app/admin/orchestration/agents/page.tsx)
  *

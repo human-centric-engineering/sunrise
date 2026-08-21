@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for Rate Limit Store Abstraction
  *

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * BrandMark slot (issue #347)
  *

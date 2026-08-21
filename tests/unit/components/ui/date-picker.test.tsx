@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * DatePicker (components/ui/date-picker.tsx) — primitive component tests
  *

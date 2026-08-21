@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: WorkflowsListPage (app/admin/orchestration/workflows/page.tsx)
  *

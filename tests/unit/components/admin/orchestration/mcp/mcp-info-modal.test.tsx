@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { describe, it, expect } from 'vitest';
 import { render, screen, waitForElementToBeRemoved, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

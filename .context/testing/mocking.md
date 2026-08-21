@@ -32,6 +32,16 @@ import { createMockHeaders, createMockSession, delayed } from '@/tests/types/moc
 
 ## The network is closed
 
+> **Two implementations, one contract.** What follows describes the happy-dom
+> half. Since the suite defaults to `node` (see
+> [`environments.md`](./environments.md)), most files get the same refusal from a
+> `globalThis.fetch` patch installed in the same block of `tests/setup.ts`. Same
+> `NetworkError`, same message, same `data:`/`blob:` and `AbortError` behaviour,
+> same `vi.stubGlobal` escape hatch — so a test asserting on the error shape does
+> not care which it got. The "why it hooks where it does" note below applies to
+> the happy-dom half only: patching `globalThis.fetch` is useless there and is
+> the whole guard on node.
+
 `tests/setup.ts` installs a happy-dom fetch interceptor that **refuses every
 real HTTP request** with the same error a genuine network failure produces — a
 `DOMException` named `NetworkError`, matching `happy-dom/lib/fetch/Fetch.js`.

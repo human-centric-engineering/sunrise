@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit tests for run-claim — lease helpers for the evaluation worker.
  *

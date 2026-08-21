@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: LearnPage
  * (app/admin/orchestration/learn/page.tsx)

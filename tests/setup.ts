@@ -89,13 +89,18 @@ import { expect, vi, afterEach } from 'vitest';
   const happyDom = (globalThis as { happyDOM?: { settings?: { fetch?: HappyDomFetchSettings } } })
     .happyDOM;
 
-  const refuse = (url: string): never => {
-    throw new DOMException(
+  const blocked = (url: string): DOMException =>
+    new DOMException(
       `Blocked a real network request to ${url}. Tests must not reach the ` +
         `network: stub it with vi.stubGlobal('fetch', …), or mock the module ` +
         `that issues it. See tests/setup.ts.`,
       'NetworkError'
     );
+
+  // happy-dom's interceptor signals refusal by throwing; node's rejects. Same
+  // error either way, built once, so the two halves cannot drift.
+  const refuse = (url: string): never => {
+    throw blocked(url);
   };
 
   // Fail loud if the hook point moves. `settings.fetch.interceptor` is not a
@@ -147,6 +152,55 @@ import { expect, vi, afterEach } from 'vitest';
     happyDom.settings.fetch.interceptor = {
       beforeAsyncRequest: refuseUnlessAborted,
       beforeSyncRequest: refuseUnlessAborted,
+    };
+  }
+
+  /**
+   * The same refusal for the node environment, which has no interceptor.
+   *
+   * The hook above is happy-dom's, so it only covers the 479 files that opt
+   * into a DOM. Since `vitest.config.ts` defaults to `node`, the other 605 ran
+   * against real undici with nothing in the way — the guard did not fail, it
+   * simply was not there, which is the quieter half of the same problem it was
+   * written for.
+   *
+   * Patching `globalThis.fetch` is right *here* and wrong for happy-dom, for
+   * the reason the comment above gives: happy-dom binds its own fetch at import
+   * time and never consults this global. Under node it is the only fetch there
+   * is.
+   *
+   * Rejects rather than throws, because `fetch` never throws synchronously and
+   * a test doing `await expect(...).rejects` should see the same shape it saw
+   * under happy-dom. `vi.stubGlobal('fetch', …)` still overrides it, which is
+   * the documented escape hatch.
+   */
+  if (!isHappyDom) {
+    const realFetch = globalThis.fetch;
+    const urlOf = (input: RequestInfo | URL): string => {
+      if (typeof input === 'string') return input;
+      if (input instanceof URL) return input.href;
+      return input.url;
+    };
+
+    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input);
+      // `data:` and `blob:` open no socket; happy-dom resolves them normally,
+      // so node must too or the two environments disagree.
+      if (/^(data|blob):/i.test(url)) return realFetch(input, init);
+
+      const signal =
+        init?.signal ?? (typeof input === 'object' && 'signal' in input ? input.signal : null);
+      if (signal?.aborted) {
+        // `reason` is `any` and a test may set it to anything; only pass it on
+        // when it is throwable, so the rejection is always an Error.
+        const reason: unknown = signal.reason;
+        return Promise.reject(
+          reason instanceof Error
+            ? reason
+            : new DOMException('signal is aborted without reason', 'AbortError')
+        );
+      }
+      return Promise.reject(blocked(url));
     };
   }
 }

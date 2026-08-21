@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * ApprovalsTabs — switches between the live pending queue and the
  * historical decision log. Verifies the default tab, the conditional

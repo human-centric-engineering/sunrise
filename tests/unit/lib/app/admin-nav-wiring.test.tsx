@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests: lib/app/ bootstrap auto-wiring (client realm — admin nav)
  *

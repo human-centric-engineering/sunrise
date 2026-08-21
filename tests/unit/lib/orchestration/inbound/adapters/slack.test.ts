@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests: SlackAdapter — HMAC-SHA256 verification + handshake + normalise.
  *

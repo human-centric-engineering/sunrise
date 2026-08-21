@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: WorkflowResourceSummary — CostBanner and defensive Array.isArray guard
  *

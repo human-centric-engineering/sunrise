@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for `components/admin/orchestration/audit-log/audit-log-view.tsx`
  *

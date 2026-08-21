@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * PublicNav default-vs-override (issue #347)
  *

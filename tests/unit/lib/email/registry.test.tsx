@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Email template resolver (issue #347)
  *

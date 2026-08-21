@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for the analytics dashboard view component.
  */

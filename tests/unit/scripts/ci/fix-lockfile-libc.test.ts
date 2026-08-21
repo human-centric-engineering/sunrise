@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for the `libc` repair CLI.
  *

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * PublicFooter default-vs-override + non-overridable consent control (issue #347)
  *

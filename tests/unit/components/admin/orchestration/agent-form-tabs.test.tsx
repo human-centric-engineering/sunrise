@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * AgentForm — Capabilities and Test Tabs Accessibility Tests
  *

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * DocumentKeywordsModal — list distinct BM25 keywords + Enrich action.
  *

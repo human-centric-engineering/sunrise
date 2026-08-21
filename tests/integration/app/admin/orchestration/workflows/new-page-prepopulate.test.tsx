@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Integration Test: New Workflow Page — Pre-population via ?definition=
  *

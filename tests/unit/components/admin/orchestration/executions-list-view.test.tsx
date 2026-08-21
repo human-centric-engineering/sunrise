@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for `ExecutionsListView` — the client shell that composes
  * the live-engine dashboard and the executions table on a single

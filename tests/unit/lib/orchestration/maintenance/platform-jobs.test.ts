@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for `lib/orchestration/maintenance/platform-jobs.ts` (#442).
  *

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { describe, it, expect } from 'vitest';
 import { render } from '@react-email/render';
 import ChangeEmailApproval from '@/emails/change-email-approval';

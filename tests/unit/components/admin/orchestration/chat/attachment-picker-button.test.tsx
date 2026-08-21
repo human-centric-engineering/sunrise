@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * AttachmentPickerButton component tests.
  *

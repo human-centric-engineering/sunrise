@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: KnowledgeTagsPage (app/admin/orchestration/knowledge/tags/page.tsx)
  *

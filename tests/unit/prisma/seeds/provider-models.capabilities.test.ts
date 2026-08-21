@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Asserts that the seed unit assigns `vision` and `documents` capabilities
  * to the right rows. Source-driven assertions — parses the seed file's

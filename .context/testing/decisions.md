@@ -145,11 +145,15 @@ filename, are documented in
 `tests/components/` for them, on the grounds that happy-dom rendering and user
 events are execution patterns worth isolating. That directory was never created
 and the argument did not survive contact: 264 component test files now sit under
-`tests/unit/components/`, and `vitest.config.ts` sets a single global
-`environment: 'happy-dom'` for the whole suite — there is no
-`environmentMatchGlobs` — so a separate directory could not have isolated the
-execution environment even in principle. Mirroring the source tree is the single
-rule; it has no exception for components.
+`tests/unit/components/`. Mirroring the source tree is the single rule; it has
+no exception for components.
+
+The environment argument has since been settled a different way. `vitest.config.ts`
+defaults to `node` and a file opts into a DOM with a first-line
+`// @vitest-environment happy-dom` docblock — per file, not per directory, because
+`environmentMatchGlobs` was removed in vitest 3 and the directory a test lives in
+was never a reliable proxy for whether it needs a DOM (51 files under
+`tests/unit/lib/` do). See [`environments.md`](./environments.md).
 
 ---
 

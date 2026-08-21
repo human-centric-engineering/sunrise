@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Evaluation101Card Component Tests
  *

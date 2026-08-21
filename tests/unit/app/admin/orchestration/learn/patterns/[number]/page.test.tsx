@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: PatternDetailPage
  * (app/admin/orchestration/learn/patterns/[number]/page.tsx)

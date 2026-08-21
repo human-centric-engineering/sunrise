@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * PerAgentCostTable Component Tests
  *

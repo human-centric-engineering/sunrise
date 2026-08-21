@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * AgentForm — Function Coverage Gap Tests (Batch 3.2)
  *

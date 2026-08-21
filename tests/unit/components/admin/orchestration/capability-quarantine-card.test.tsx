@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * CapabilityQuarantineCard component tests (item #42)
  *

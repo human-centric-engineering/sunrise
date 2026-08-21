@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 import { describe, it, expect } from 'vitest';
 import { render } from '@react-email/render';
 import ResetPasswordEmail from '@/emails/reset-password';

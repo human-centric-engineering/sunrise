@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests: MCP Sessions admin page
  *

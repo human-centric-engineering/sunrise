@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * SetupWizard Component Tests — top-level navigation and step indicator
  *

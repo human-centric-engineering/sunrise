@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Email Verification Callback Content Tests
  *

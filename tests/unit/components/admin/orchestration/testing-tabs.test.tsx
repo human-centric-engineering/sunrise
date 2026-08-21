@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * TestingTabs Component Tests
  *

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Generic multipart body-size guard — unit tests.
  *

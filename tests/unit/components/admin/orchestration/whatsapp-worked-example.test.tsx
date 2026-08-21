@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests: WhatsAppWorkedExample component on the New Trigger page.
  *

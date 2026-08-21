@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * MultiSelect — popover-based multi-pick control.
  *

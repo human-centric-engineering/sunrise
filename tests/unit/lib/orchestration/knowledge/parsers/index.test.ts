@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: Document Parser Registry (parseDocument + requiresPreview)
  *

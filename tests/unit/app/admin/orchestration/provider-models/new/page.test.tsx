@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Integration Test: Legacy "New Provider Model" Redirect
  *

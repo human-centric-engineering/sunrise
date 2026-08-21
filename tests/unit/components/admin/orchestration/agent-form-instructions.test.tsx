@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * AgentForm — Instructions Tab Tests
  *

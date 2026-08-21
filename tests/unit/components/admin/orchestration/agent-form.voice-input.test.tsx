@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * AgentForm — Voice input toggle (Tab 2, Model)
  *

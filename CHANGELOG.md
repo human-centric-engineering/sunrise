@@ -515,6 +515,46 @@ release process.
 
 ### Changed
 
+- **Tests run on `node` by default; a DOM is opt-in per file.** Vitest builds a
+  fresh environment per test file, and constructing a happy-dom Window means
+  building the whole browser API surface — which two thirds of this suite never
+  touches. A file that needs one declares it on its first line
+  (an environment docblock on line 1); 405 files carry one, 682 run on node.
+  Measured back-to-back on `tests/unit/lib` (434 files) under identical load:
+  **49.3s wall / 141s CPU** against **58.1s / 191s** with happy-dom everywhere,
+  and in-worker environment construction of **11.4s against 79.5s**. Read the
+  CPU and environment figures rather than wall clock — wall moves with whatever
+  else is running, aggregate work is what a shared machine is short of.
+  **It is also a correctness fix.** happy-dom defines `window`, so `lib/env.ts`
+  validated only the _client_ schema and every server variable read as
+  `undefined` — anything branching on `TENANCY_MODE`, `CAPABILITY_BINDING_MODE`
+  or `MCP_SESSION_MODE` was silently exercising the undefined path. 44 of the 47
+  test files importing `@/lib/env` now see the real server schema (the three
+  exceptions are two component tests and `env.test.ts`, which asserts on
+  `typeof window` deliberately). The switch
+  surfaced one such masked case: `successResponse(…, { status: 204 })` throws on
+  Node's `Response` (204 forbids a body) and only ever "passed" because
+  happy-dom's is lenient; nothing calls it that way, and the test now pins the
+  real constraint.
+  Getting it wrong is asymmetric: a DOM test on node fails loudly
+  (`ReferenceError: document is not defined`), but a node test that picks up
+  happy-dom **passes** and quietly rejoins the class of test this change exists
+  to escape. `tests/unit/vitest-environment-directives.test.ts` guards the
+  mechanical half (directive on line 1, no conflicting values, known environment
+  name) and is registered in `ALWAYS_RUN_TESTS`; it cannot tell you a file did
+  not need the DOM it asked for, and the docs say so. Vitest matches the
+  directive **anywhere in a file**, so a comment merely discussing it applies
+  it — that bit twice while writing this, once silently.
+  The node default also needed a second network guard: `tests/setup.ts` refused
+  real requests through happy-dom's fetch interceptor, which covered none of the
+  node files. Both halves now exist and both now have tests; neither did before. Chosen as a docblock rather than
+  `test.projects` because a projects config prefixes `vitest list` output with
+  `[name] `, which would break `npm run test:changed`; `environmentMatchGlobs`
+  no longer exists in vitest 4. **Forks:** the directive is per file, so it
+  merges cleanly; a new component test that dies on `document is not defined`
+  just needs the line. See
+  [`.context/testing/environments.md`](./.context/testing/environments.md).
+
 - **`MCP_SESSION_MODE` — MCP sessions are now stateless by default, so the
   handshake survives a function-per-request platform.** Sessions were held in a
   per-process `Map`: `initialize` minted an id on one instance, the client's next

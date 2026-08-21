@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * SetupWizard — Individual Step Content Tests
  *

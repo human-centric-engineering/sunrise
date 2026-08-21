@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * ApprovalsHistoryTable — historical decision log with filters, paging,
  * and CSV export.

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * QuarantinedCapabilitiesBanner — render tests (item #42)
  *

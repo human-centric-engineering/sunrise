@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Unit Tests: POST /api/v1/admin/orchestration/knowledge/documents/:id/confirm
  *

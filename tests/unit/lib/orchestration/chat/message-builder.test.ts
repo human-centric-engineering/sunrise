@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Tests for buildMessages — the pure LlmMessage[] composer used by the
  * streaming chat handler.

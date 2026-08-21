@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * LearningTabs — Quiz Tab Tests
  *

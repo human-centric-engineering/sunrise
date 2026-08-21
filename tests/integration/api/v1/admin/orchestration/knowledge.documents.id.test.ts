@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Integration Test: Admin Orchestration — Single Knowledge Document (GET + DELETE)
  *

@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Admin User Profile Page Tests
  *
