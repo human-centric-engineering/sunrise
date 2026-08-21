@@ -55,6 +55,22 @@ export interface CapabilityContext {
    */
   entityContext?: Record<string, unknown>;
   /**
+   * Whether {@link CapabilityContext.scope} came from a carrier the platform
+   * wrote, and may therefore drive the scope binding at dispatch.
+   *
+   * `true` for the persisted, admin-written carriers — an `McpApiKey.scope`, an
+   * `AiWorkflowExecution.scope`, a nested `run_workflow` inheriting its
+   * parent's. **Absent for a consumer-supplied scope**, which
+   * `POST /api/v1/chat/stream` accepts straight from an untrusted request body
+   * and whose own schema says it is "a routing/context hint, never proof of
+   * authorization".
+   *
+   * Default (absent) means **not** authoritative, so a caller added later that
+   * forgets this flag loses the binding rather than gaining one — the safe
+   * direction for both mistakes.
+   */
+  scopeIsAuthoritative?: boolean;
+  /**
    * Optional free-form scope map populated by the dispatcher's caller.
    * Generic by design — core names no keys and no core capability reads
    * it; it is purely a carrier threaded through to `execute()`.
@@ -201,4 +217,25 @@ export interface CapabilityRegisterOptions {
   slug?: string;
   /** Pre-execute guard for this registration; see {@link CapabilityGuard}. */
   guard?: CapabilityGuard;
+  /**
+   * Scope keys this capability is **bound** by — each names a parameter of the
+   * same name that carries the caller's scope value.
+   *
+   * `{ scopedBy: 'projectId' }` says: when an authoritative caller's scope pins
+   * `projectId`, supply it as the `projectId` argument if the caller omitted
+   * one, and refuse the dispatch if the caller named anything else. See
+   * `.context/orchestration/capabilities.md` for the exact guarantee.
+   *
+   * **Opt-in, and deliberately not inferred.** An earlier design derived the
+   * binding from the capability's published `functionDefinition.parameters` and
+   * switched itself on whenever a scope map was present. That is admin-editable
+   * JSON which need not agree with the Zod schema the author wrote, and "a
+   * scope map exists" is not the same question as "this tool is scoped" — three
+   * review rounds found four separate ways for that inference to be wrong
+   * (#586). Naming the binding here makes it a fact the capability author
+   * states rather than one the dispatcher guesses.
+   *
+   * A capability that declares nothing is never folded and never refused.
+   */
+  scopedBy?: string | readonly string[];
 }

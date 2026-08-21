@@ -151,7 +151,9 @@ export function createContext(params: {
     signal: params.signal,
     logger: params.logger,
     stepTelemetry: [],
-    ...(params.scope ? { scope: params.scope } : {}),
+    // Authoritative: persisted on the execution/schedule/trigger row by an
+    // admin route and re-validated on read by `resolvePersistedScope`.
+    ...(params.scope ? { scope: params.scope, scopeIsAuthoritative: true } : {}),
     ...(params.costLogMetadata ? { costLogMetadata: params.costLogMetadata } : {}),
   };
 }

@@ -629,7 +629,7 @@ describe('callMcpTool: scoped agent resolution', () => {
     );
   });
 
-  it('threads the scope carrier into the dispatch context when supplied', async () => {
+  it('threads the scope carrier into the dispatch context, marked authoritative', async () => {
     await callMcpTool(
       'search_knowledge',
       {},
@@ -640,10 +640,19 @@ describe('callMcpTool: scoped agent resolution', () => {
       }
     );
 
+    // `McpApiKey.scope` is admin-written and re-validated at auth, so it may
+    // bind the arguments of a capability that declared `scopedBy` (#586). The
+    // consumer-chat carrier deliberately does NOT carry this flag — see
+    // `tests/unit/lib/orchestration/scope-authority.test.ts`.
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'search_knowledge',
       {},
-      { userId: 'user-1', agentId: 'agent-scoped', scope: { projectId: 'proj-42' } }
+      {
+        userId: 'user-1',
+        agentId: 'agent-scoped',
+        scope: { projectId: 'proj-42' },
+        scopeIsAuthoritative: true,
+      }
     );
   });
 

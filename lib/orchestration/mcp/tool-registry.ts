@@ -180,7 +180,9 @@ export async function callMcpTool(
   const context: CapabilityContext = {
     userId: caller.userId,
     agentId,
-    ...(caller.scope ? { scope: caller.scope } : {}),
+    // Authoritative: `McpApiKey.scope` is admin-written and re-validated at
+    // auth, so it may drive a capability's declared scope binding.
+    ...(caller.scope ? { scope: caller.scope, scopeIsAuthoritative: true } : {}),
   };
 
   let result;

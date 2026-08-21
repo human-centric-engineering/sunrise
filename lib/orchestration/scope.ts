@@ -54,21 +54,35 @@ export function resolvePersistedScope(
   return undefined;
 }
 
-// ─── Scope fold ───────────────────────────────────────────────────────────
+// ─── Scope binding ────────────────────────────────────────────────────────
 //
-// Validating the carrier on read (above) is only half of what a persisted
-// scope is for. The other half is making it **ambient in a tool's arguments**:
-// a scoped caller should be able to omit the scoped parameter, and must not be
-// able to act outside its scope by naming a different value.
+// Validating the carrier on read (above) is only half of what a persisted scope
+// is for. The other half is making it **bind** a capability's arguments: a
+// scoped caller should be able to omit the scoped parameter, and must not be
+// able to act outside its scope by naming a different one.
 //
 // Before #586 the carrier reached `execute()` and stopped there, so every
 // scoped capability consumed it by hand — or a fork patched the dispatch path.
-// Both halves now live here, and the dispatcher applies the fold to every
-// carrier: MCP `tools/call`, a workflow execution, and a nested `run-workflow`.
+//
+// **The binding is declared, never inferred.** A capability says
+// `register(cap, { scopedBy: 'projectId' })`; the dispatcher does not go
+// looking. The first design read the binding out of the capability's published
+// `functionDefinition.parameters` and armed itself whenever a scope map was
+// present, and three review rounds found four separate ways that was wrong:
+// the fold ran before a Zod transform could undo it; the "fails closed" gate
+// could not tell a `Map` from a readable object; a pin the fold wrote could be
+// stripped by `z.object()` and read as "nothing to hold"; and it armed on the
+// consumer-chat scope, which arrives from an untrusted request body. Measured
+// against the fork that asked for this: the inference covered 19 of its 29
+// capabilities and silently covered none of its nine `featureId`-keyed writes.
+//
+// Declaring the binding removes the guess. `parameters` is not consulted at
+// all, so the admin-editable JSON can no longer disagree with the Zod schema
+// the author wrote.
 
 /** A scope key the caller named with a value that is not the key's scope. */
 export interface ScopeConflict {
-  /** The parameter name, which is also the scope key. */
+  /** The bound parameter name, which is also the scope key. */
   key: string;
   /** What the caller's scope pins it to. */
   expected: string;
@@ -79,12 +93,20 @@ export type ScopeFoldResult =
       ok: true;
       /** The arguments to dispatch. A new object when anything was filled. */
       args: unknown;
-      /** Scope keys supplied because the caller omitted them. */
+      /** Bound keys supplied because the caller omitted them. */
       filled: string[];
+      /** Bound keys the caller's scope does not pin — this call is unscoped on them. */
+      unpinned: string[];
     }
   | { ok: false; conflicts: ScopeConflict[] };
 
-/** A non-null, non-array object — the only shape a fold can apply to. */
+/** Normalises the `scopedBy` option to a list. */
+export function scopeKeysOf(scopedBy: string | readonly string[] | undefined): string[] {
+  if (scopedBy === undefined) return [];
+  return typeof scopedBy === 'string' ? [scopedBy] : [...scopedBy];
+}
+
+/** A non-null, non-array object. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -92,21 +114,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * An object whose properties can actually be **read** by inspection.
  *
- * Stricter than {@link isPlainObject}, and the difference is a boundary
- * bypass rather than a nicety. `typeof x === 'object'` is true of a `Map`, a
- * `URLSearchParams`, a `Date` and every class instance, and
- * `hasOwnProperty(map, 'tenantId')` is `false` for all of them — their data
- * lives in internal slots or behind accessors on the prototype. So
- * {@link assertScopeHeld} looked, saw nothing, and concluded the invariant
- * held, while `execute()` read the caller's value straight out of
- * `map.get('tenantId')` or a `get tenantId()`. A `.transform(v => new Map(…))`
- * or a "parse, don't validate" class — the shape the Zod docs encourage — was
- * enough to restore the bypass this module exists to close.
+ * `typeof x === 'object'` is true of a `Map`, a `URLSearchParams`, a `Date` and
+ * every class instance, and `hasOwnProperty(map, 'projectId')` is `false` for
+ * all of them — their data lives in internal slots or behind accessors on the
+ * prototype. A check gated on `typeof` therefore looks, sees nothing, and
+ * concludes the invariant holds while `execute()` reads the caller's value out
+ * of `map.get('projectId')`. One `.transform(v => new Map(…))`, or a "parse,
+ * don't validate" class of the kind the Zod docs encourage, was enough.
  *
  * So: the prototype must be `Object.prototype` or `null`, and every own
  * enumerable key must be a **data** property. An accessor is rejected even on
- * an otherwise-plain object, because a getter can return one value to this
- * check and another to `execute`.
+ * an otherwise-plain object, because a getter can return one value here and
+ * another to `execute` — which also closes the double-read window between them.
  */
 function isReadableArgsObject(value: unknown): value is Record<string, unknown> {
   if (!isPlainObject(value)) return false;
@@ -119,77 +138,56 @@ function isReadableArgsObject(value: unknown): value is Record<string, unknown> 
   return true;
 }
 
-/**
- * Does this tool's JSON Schema declare a property of that name?
- *
- * **`hasOwnProperty`, not `properties[key] !== undefined`.** Every object
- * literal inherits `toString`, `constructor`, `valueOf` and friends, so a
- * scope key named after one would read as "declared" by any tool in the
- * system and be folded into args that never asked for it.
- */
-function declaresProperty(parameters: unknown, key: string): boolean {
-  if (!isPlainObject(parameters)) return false;
-  const properties = parameters.properties;
-  if (!isPlainObject(properties)) return false;
-  return Object.prototype.hasOwnProperty.call(properties, key);
-}
-
 /** Missing, null, or the empty string — the caller did not supply a value. */
 function isAbsent(value: unknown): boolean {
   return value === undefined || value === null || value === '';
 }
 
 /**
- * Fold a caller's scope into a capability's arguments.
+ * Fold a caller's scope into the arguments of a capability that declared a
+ * binding for it.
  *
- * **This is half of the boundary.** It runs before `handler.validate()`, so it
- * cannot see what a Zod transform does afterwards — {@link assertScopeHeld} is
- * the other half and is the one that actually holds the line.
- *
- * For each key in `scope`, **and only if the capability's own parameter schema
- * declares a property of that name**:
+ * For each key in `scopedBy` that the caller's scope pins:
  *
  * - **fill-if-absent** — the caller omitted it, so supply the scope value;
  * - **cross-scope guard** — the caller named something else, so refuse.
  *
- * The "declares the property" gate is what keeps this domain-agnostic: a tool
- * keyed on some other id is untouched, and nothing is injected into a schema
- * that would reject the extra key. Core names no scope keys; a fork maps the
- * carrier to its own domain (`{ projectId }`, `{ tenantId }`, …).
+ * A bound key the caller's scope does **not** pin is reported in `unpinned` and
+ * left alone: an unscoped key is a deliberate configuration (Sunrise ships
+ * `McpApiKey.scope = NULL` meaning system-wide), so this is not the place to
+ * refuse it. The dispatcher logs it.
  *
- * Never mutates `rawArgs`. Returns it unchanged when nothing applies, so the
- * common case allocates nothing.
+ * Never mutates `rawArgs`, and returns it unchanged when nothing applies.
  *
- * **Args that are not a plain object pass straight through here.** A scoped
- * call with `args: "hello"` cannot be folded, and inventing an object would
- * turn a request the capability's own schema might reject into one it accepts.
- * It is not waved through: {@link assertScopeHeld} refuses it after validation,
- * because "the schema will probably reject it" is a guess and this is a
- * boundary.
+ * **This is half of the boundary.** It runs before `handler.validate()` and
+ * cannot see what a Zod transform does afterwards — {@link assertScopeHeld} is
+ * the other half, and is the one that actually holds the line.
+ *
+ * **Args that are not a plain object pass through here.** A scoped call with
+ * `args: "hello"` cannot be folded; inventing an object would turn a request
+ * the capability's schema might reject into one it accepts. It is not waved
+ * through — `assertScopeHeld` refuses it after validation, because "the schema
+ * will probably reject it" is a guess and this is a boundary.
  *
  * **Comparison is strict and never coerces.** A `projectId` of `5` is not the
- * scope's `"5"`; coercing would let `{ toString: () => 'x' }` satisfy a tenant
- * check. Scope values are strings by `capabilityScopeSchema`, so anything else
- * the caller supplies is a conflict by definition.
- *
- * @param rawArgs    Arguments as the caller supplied them.
- * @param scope      The validated carrier from `CapabilityContext.scope`.
- * @param parameters The capability's `functionDefinition.parameters` (JSON Schema).
+ * scope's `"5"`, and `{ toString: () => 'p1' }` is not `'p1'`; coercing would
+ * let any caller satisfy a tenant check.
  */
 export function foldScopeIntoArgs(
   rawArgs: unknown,
   scope: Record<string, string>,
-  parameters: unknown
+  scopedBy: readonly string[]
 ): ScopeFoldResult {
-  const applicable = Object.keys(scope).filter((key) => declaresProperty(parameters, key));
-  if (applicable.length === 0) return { ok: true, args: rawArgs, filled: [] };
+  const pinned = scopedBy.filter((key) => Object.prototype.hasOwnProperty.call(scope, key));
+  const unpinned = scopedBy.filter((key) => !pinned.includes(key));
+  if (pinned.length === 0) return { ok: true, args: rawArgs, filled: [], unpinned };
 
-  if (!isPlainObject(rawArgs)) return { ok: true, args: rawArgs, filled: [] };
+  if (!isPlainObject(rawArgs)) return { ok: true, args: rawArgs, filled: [], unpinned };
 
   const conflicts: ScopeConflict[] = [];
   const filled: string[] = [];
 
-  for (const key of applicable) {
+  for (const key of pinned) {
     const supplied = Object.prototype.hasOwnProperty.call(rawArgs, key) ? rawArgs[key] : undefined;
     if (isAbsent(supplied)) {
       filled.push(key);
@@ -201,13 +199,13 @@ export function foldScopeIntoArgs(
   // Conflicts win. Filling some keys while refusing others would dispatch a
   // partially-scoped call, which is the shape this exists to prevent.
   if (conflicts.length > 0) return { ok: false, conflicts };
-  if (filled.length === 0) return { ok: true, args: rawArgs, filled: [] };
+  if (filled.length === 0) return { ok: true, args: rawArgs, filled: [], unpinned };
 
   const args: Record<string, unknown> = { ...rawArgs };
   for (const key of filled) {
     // `defineProperty`, not `args[key] = …`. Assigning to `__proto__` sets the
-    // prototype instead of creating a property, so a tool that declared a
-    // `__proto__` parameter would be dispatched with the scope silently absent.
+    // prototype instead of creating a property, so a capability bound on a
+    // `__proto__` key would dispatch with the scope silently absent.
     Object.defineProperty(args, key, {
       value: scope[key],
       enumerable: true,
@@ -215,19 +213,19 @@ export function foldScopeIntoArgs(
       configurable: true,
     });
   }
-  return { ok: true, args, filled };
+  return { ok: true, args, filled, unpinned };
 }
 
 /** Why a validated call could not be allowed through. */
 export type ScopeAssertion =
   | { held: true }
-  /** A scope key survived validation carrying a value that is not the scope's. */
+  /** A bound key carries a value that is not the caller's scope value. */
   | { held: false; reason: 'conflict'; keys: string[] }
-  /** Validated args are not a plain object, so the invariant cannot be read. */
+  /** A bound key vanished, or the args cannot be read — the pin is unverifiable. */
   | { held: false; reason: 'unenforceable' };
 
 /**
- * Re-assert the scope on the args `execute()` will actually receive.
+ * Re-assert the binding on the args `execute()` will actually receive.
  *
  * **{@link foldScopeIntoArgs} alone is not a boundary**, and the first version
  * of this feature shipped believing it was. The fold runs before
@@ -237,68 +235,52 @@ export type ScopeAssertion =
  * object **over** the top level by design. So:
  *
  * ```
- * scope   { tenantId: 'A' }
- * args    { approvalPayload: { tenantId: 'B' } }      ← no top-level key
- * fold  → { approvalPayload: {…}, tenantId: 'A' }     ← fill-if-absent, no conflict
+ * scope   { projectId: 'A' }
+ * args    { approvalPayload: { projectId: 'B' } }     ← no top-level key
+ * fold  → { approvalPayload: {…}, projectId: 'A' }    ← fill-if-absent, no conflict
  * validate preprocess
- *       → { approvalPayload: {…}, tenantId: 'B' }     ← execute() sees B
+ *       → { approvalPayload: {…}, projectId: 'B' }    ← execute() would see B
  * ```
  *
- * No conflict was raised, because at fold time the top-level key was absent.
- * The rule that was missing: **the fold protects the args entering `validate`,
- * and the only thing that matters is the args entering `execute`.**
+ * The rule that was missing: **the fold protects the args entering `validate`;
+ * the only args that matter are the ones entering `execute`.**
  *
- * So this check is deliberately **broader than the fold**. The fold fills only
- * a key the capability declares — injecting an undeclared key would break a
- * `.strict()` schema. Verification declares nothing off-limits: any key of the
- * scope that survives validation must match, whether the capability declared it
- * or not. That also covers a capability whose Zod surface exceeds its published
- * `functionDefinition` (core's own `send_message_to_channel` accepts a
- * `forceProvider` it does not declare), and one whose schema supplies a
- * `.default()` for a key the fold therefore never filled.
+ * Because the capability **declared** the binding, this can demand more than
+ * "no conflict": every pinned key must be **present and equal**. An absent key
+ * is `unenforceable`, not held — `z.object()` strips unknown keys, so a
+ * capability that names a binding its schema does not accept would otherwise
+ * dispatch with the discriminator gone, under a boundary reporting success.
+ * The inferred design could not make that demand, because it never knew whether
+ * the capability really had the parameter.
  *
- * **Fails closed when it cannot look**, and "cannot look" is decided by
- * reachability rather than by `typeof`. A string, an array, a `Map`, a
- * `URLSearchParams`, a class instance, anything with an accessor — see
- * {@link isReadableArgsObject} — carries no invariant this can read, so a
- * scoped call to such a capability is refused rather than waved through. Core
- * has no capability of that shape, so this costs nothing today; for a fork it
- * is a loud, accurate error instead of a boundary that quietly is not one.
+ * **Fails closed when it cannot look** — see {@link isReadableArgsObject}.
  *
- * **What it does NOT cover, and cannot.** Only *top-level own* properties are
- * inspected. A capability that reads its tenant from a nested field
- * (`{ filter: { tenantId } }`) is not enforced, because nothing here can know
- * that field means a tenant. A scope key must name a **top-level parameter**;
- * the dispatcher warns when a scope key matches no declared property, which is
- * the only signal available for that mistake.
+ * **What it cannot cover.** Only top-level own properties are inspected. A
+ * capability that resolves its scope from a child id (`{ featureId }` → the
+ * feature's project) is not enforced here and must not declare `scopedBy` for
+ * it; that check belongs in `execute()`, or in a {@link CapabilityGuard}.
  */
 export function assertScopeHeld(
   validated: unknown,
   scope: Record<string, string>,
-  /** Keys {@link foldScopeIntoArgs} wrote. Each must still be there, unchanged. */
-  filled: readonly string[] = []
+  scopedBy: readonly string[]
 ): ScopeAssertion {
-  const keys = Object.keys(scope);
-  if (keys.length === 0) return { held: true };
+  const pinned = scopedBy.filter((key) => Object.prototype.hasOwnProperty.call(scope, key));
+  if (pinned.length === 0) return { held: true };
 
   if (!isReadableArgsObject(validated)) return { held: false, reason: 'unenforceable' };
 
-  const conflicts = keys.filter(
-    (key) => Object.prototype.hasOwnProperty.call(validated, key) && validated[key] !== scope[key]
-  );
+  const conflicts: string[] = [];
+  const missing: string[] = [];
+  for (const key of pinned) {
+    if (!Object.prototype.hasOwnProperty.call(validated, key)) {
+      missing.push(key);
+    } else if (validated[key] !== scope[key]) {
+      conflicts.push(key);
+    }
+  }
+
   if (conflicts.length > 0) return { held: false, reason: 'conflict', keys: conflicts };
-
-  // A key the fold WROTE must survive. An absent key is otherwise read as
-  // "this capability has no such parameter, nothing to hold" — true when the
-  // caller never had one, false when the pin was written and validation ate
-  // it. `z.object()` strips unknown keys by default, and the fold's gate reads
-  // the admin-editable `functionDefinition` row, so "declared as a parameter"
-  // and "survives validation" are unrelated facts. Without this, a row
-  // declaring `tenantId` against a schema that does not accept it dispatches
-  // with the tenant discriminator **absent** — a list capability returning
-  // every tenant's rows, under a boundary reporting success.
-  const eaten = filled.filter((key) => !Object.prototype.hasOwnProperty.call(validated, key));
-  if (eaten.length > 0) return { held: false, reason: 'unenforceable' };
-
+  if (missing.length > 0) return { held: false, reason: 'unenforceable' };
   return { held: true };
 }

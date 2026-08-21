@@ -116,6 +116,7 @@ export function initAppCapabilities(): void {
 - **`slug`** overrides the in-memory handler key (defaults to `capability.slug`).
   **⚠️ Second hard contract (#509): a namespaced slug is not advertisable to an LLM.** The slug _is_ the tool name a model sees — `getCapabilityDefinitions` sets `name` from it, because dispatch resolves the emitted name back as a slug. Provider tool names must match `^[a-zA-Z0-9_-]{1,64}$`, so `billing:lookup_order` cannot be one, and a capability whose slug fails that charset is **dropped from the agent's toolset with a warning** rather than sent to the provider — a malformed tool name fails the entire request, not just the call. Such a capability was never reachable from chat regardless (no valid tool name can resolve to a namespaced slug); **MCP is its supported surface**, since `mcp/tool-registry.ts` advertises `customName` and resolves it back to the slug before dispatch. Use an underscore-or-hyphen slug for anything an agent should call directly.
   **⚠️ Hard contract:** the override slug must correspond to an **active `AiCapability` row**. Every downstream gate — registry lookup (step 3), quarantine, per-agent binding, rate limit — looks the DB up by this same slug. An override with no active row dies at `capability_inactive` **before the handler or guard ever runs**. Forks whose module system creates the namespaced rows satisfy this automatically; a bare override with no matching row will silently never dispatch.
+- **`scopedBy`** declares which scope keys bind this capability's parameters; see [The scope binding](#the-scope-binding-scopedby-dispatch-steps-4b--7a).
 - **`guard`** is an async-capable predicate run as dispatch step 4a (after the per-agent binding, before the rate limiter). It reads the generic [`CapabilityContext.scope`](#dispatch-scope-carrier-capabilitycontextscope) carrier — core names no keys. `{ allow: false }` → `capability_guard_denied`; a guard that throws **fails closed** (denied + logged). Keyed by the same registration key as the handler, so a `slug` override guards the override key.
 
 Re-registering the same key **replaces the handler and its guard together** — a guard-less re-registration drops any prior guard on that key.
@@ -126,55 +127,51 @@ Re-registering the same key **replaces the handler and its guard together** — 
 
 **Three callers populate it**, and the fold below applies to all three because the carrier is a dispatch concept, not any one transport's: an MCP key's `McpApiKey.scope` (`lib/orchestration/mcp/tool-registry.ts`), a workflow execution's (`lib/orchestration/engine/context.ts`), and a nested `run_workflow` passing its parent's through.
 
-#### The scope fold (dispatch step 4b)
+#### The scope binding (`scopedBy`, dispatch steps 4b + 7a)
 
-Delivering the carrier to `execute()` is only half of what a persisted scope is for. The other half is making it **ambient in the arguments**, so a scoped caller can omit the scoped parameter and cannot act outside its scope by naming a different one. Before this, every scoped capability consumed the carrier by hand — or a fork patched the dispatch path (#586).
+Delivering the carrier to `execute()` is only half of what a persisted scope is for. The other half is making it **bind** the arguments, so a scoped caller can omit the scoped parameter and cannot act outside its scope by naming a different one. Before this, every scoped capability consumed the carrier by hand — or a fork patched the dispatch path (#586).
 
-For each key in `context.scope`, **and only if the capability's own `functionDefinition.parameters` declares a property of that name**:
+A capability **declares** the binding at registration:
 
-- **fill-if-absent** — the arg is missing, `null` or `''`, so the scope value is supplied;
-- **cross-scope guard** — the arg is present and is not exactly the scope value, so the dispatch is refused with `{ code: 'scope_conflict' }`. The message names the offending **keys** and never the scope **values**: it is surfaced verbatim to the client, and telling a caller which tenant its key is pinned to is not something a refusal needs to do.
-
-The "declares the property" gate is what keeps this domain-agnostic: a capability keyed on some other id is untouched, and nothing is injected into a schema that would reject the extra key.
-
-Three properties worth knowing, each of which a naive implementation gets wrong:
-
-- **Declaration is tested with `hasOwnProperty`**, not `properties[key] !== undefined`. Every object literal inherits `toString`, `constructor` and friends, so the loose test folds a scope key named after one into _every_ tool in the system.
-- **Comparison is strict and never coerces.** A `projectId` of `5` is not the scope's `"5"`, and an object with a matching `toString()` is not a match either — coercing would let any caller satisfy a tenant check.
-- **Args that are not a plain object pass straight through the fold.** A scoped call with `args: "hello"` cannot be folded, and inventing an object would turn a request the capability's schema might reject into one it accepts. It is not waved through: step 7a refuses it, because "the schema will probably reject it" is a guess and this is a boundary.
-
-The rules live in [`lib/orchestration/scope.ts`](../../lib/orchestration/scope.ts) (`foldScopeIntoArgs`, pure) — the same module that owns the validate-on-read guard for the persisted columns.
-
-##### Why the fold alone is not the boundary (step 7a)
-
-Step 4b runs **before** `handler.validate()`, and validation is a Zod _pipeline_, not a filter — it may transform. Three shipped built-ins wrap their schema in `z.preprocess(unwrapApprovalPayload, …)`, which merges an `approvalPayload` object **over** the top level by design. So a caller can hide the value there:
-
-```
-scope   { tenantId: 'A' }
-args    { approvalPayload: { tenantId: 'B' } }    ← no top-level key
-fold  → { approvalPayload: {…}, tenantId: 'A' }   ← fill-if-absent; no conflict raised
-validate preprocess
-      → { approvalPayload: {…}, tenantId: 'B' }   ← execute() would see B
+```ts
+registerAppCapability(new GetProjectCapability(), { scopedBy: 'projectId' });
 ```
 
-No conflict fired, because at fold time the top-level key was **absent** — the fill path, not the conflict path. The rule that was missing: _the fold protects the args entering `validate`; the only args that matter are the ones entering `execute`._
+That says: the scope key `projectId` binds to the parameter `projectId`. Then, on every dispatch where **both** conditions hold — the capability declared a binding, **and** the caller's scope is one the platform wrote (`CapabilityContext.scopeIsAuthoritative`) — the dispatcher:
 
-So `assertScopeHeld` re-checks at step 7a, and is deliberately **broader than the fold**:
+- **fills** the argument at step 4b when the caller omitted it (missing, `null` or `''`);
+- **refuses** with `{ code: 'scope_conflict' }` when the caller named a different value;
+- **re-asserts** at step 7a on the **validated** args, requiring each pinned key to be _present and equal_, and refusing with `{ code: 'scope_unenforceable' }` when it is gone or the args cannot be read.
 
-|            | fold (4b)                                                    | assert (7a)                                                              |
-| ---------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Applies to | keys the capability **declares**                             | **every** scope key                                                      |
-| Why        | injecting an undeclared key would break a `.strict()` schema | a value that reached `execute` is a boundary breach however it got there |
+Both conditions default to off, so a mistake in either direction loses the binding rather than gaining one.
 
-The broader check also covers a capability whose Zod surface exceeds its published `functionDefinition` — core's own `send_message_to_channel` accepts a `forceProvider` it does not declare — and one whose schema supplies a `.default()` for a key the fold therefore never filled.
+##### Why it is declared and not inferred
 
-`assertScopeHeld` also requires that every key the fold **filled** is still there. An absent key otherwise reads as "this capability has no such parameter, nothing to hold" — true when the caller never had one, false when the pin was written and validation ate it. `z.object()` strips unknown keys by default, and the fold's gate reads the admin-editable `functionDefinition` row, so _declared as a parameter_ and _accepted by the schema_ are unrelated facts. Without that rule, a row declaring `tenantId` against a schema that does not accept it dispatches with the tenant discriminator **absent** — a list capability returning every tenant's rows, under a boundary reporting success.
+The first design read the binding out of the capability's published `functionDefinition.parameters` and armed itself whenever a scope map was present. Three review rounds found four separate ways that was wrong, and they are worth keeping because each is a general trap:
 
-**It fails closed when it cannot look, and "cannot look" is reachability, not `typeof`.** A `Map`, a `URLSearchParams`, a class instance, anything behind an accessor — all are `typeof === 'object'` and all answer `hasOwnProperty('tenantId')` with **false**, so a check gated on `typeof` looks, sees nothing, and concludes the invariant holds while `execute` reads the caller's value out of `map.get(…)` or a getter. One `.transform(v => new Map(…))` or a "parse, don't validate" class — the shape the Zod docs encourage — was enough to restore the bypass. So the prototype must be `Object.prototype` or `null` and every own key must be a **data** property; anything else is `scope_unenforceable`. A null-prototype object is still read, because it genuinely is readable. No core capability has a refused shape, so this costs nothing today.
+|                                   | what went wrong                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Wrong point in the pipeline**   | The fold ran before `handler.validate()`, and validation is a Zod _pipeline_, not a filter. Three built-ins wrap their schema in `z.preprocess(unwrapApprovalPayload, …)`, which merges an `approvalPayload` object **over** the top level — so a caller hiding `{projectId:'B'}` there took the fill-if-absent path (no conflict; the top-level key was absent) and the preprocess then replaced the pin. |
+| **Verified an unreadable object** | The fail-closed gate was `typeof === 'object'`, which is true of a `Map`, a `URLSearchParams` and every class instance — all of which answer `hasOwnProperty` with `false`. It looked, saw nothing, and reported the invariant held while `execute` read the caller's value out of a getter.                                                                                                               |
+| **A pin could be silently eaten** | `z.object()` strips unknown keys, and `functionDefinition` is admin-editable JSON that need not agree with the Zod schema. A row declaring `projectId` against a schema that does not accept it dispatched with the discriminator **absent**, under a boundary reporting success.                                                                                                                          |
+| **Armed on an untrusted carrier** | `POST /api/v1/chat/stream` accepts `scope` from the request body. Arming on presence alone meant an end user posting `scope: {"priority":"high"}` set the urgency of every `escalate_to_human` call, and `{"reason":"x"}` disabled the capability outright.                                                                                                                                                |
 
-**What it does not cover, and cannot.** Only _top-level own_ properties are inspected. A capability that reads its tenant from a nested field (`{ filter: { tenantId } }`) is **not** enforced, because nothing here can know that field means a tenant. **A scope key must name a top-level parameter.** The dispatcher emits a `logger.warn` when a scope key matches no declared parameter, which is the only signal available for that mistake — the fold has nothing to write and step 7a has nothing to read, so silence is what would let an operator believe the boundary was live.
+Declaring the binding removes the guess. `parameters` is not consulted at all, so the admin-editable JSON can no longer disagree with the code; and "this tool is scoped" stops being answered by "a scope map exists".
 
-**A `guard` cannot do this.** `CapabilityGuard` receives the context and never the args, so it can decide "may this key call this tool at all" but not "does this argument agree with the key's scope". The two are complementary.
+It also makes the gaps visible. Measured against the fork that asked for this: the inferred design covered 19 of its 29 capabilities and **none** of its nine `featureId`-keyed writes, with nothing to say which were which. Under `scopedBy` those nine are a decision someone has to make out loud.
+
+##### What the binding does not cover
+
+Only **top-level own properties** are inspected. A capability that resolves its scope from a child id (`{ featureId }` → the feature's project) is not enforced here and **must not** declare `scopedBy` for it — that check belongs in `execute()`, or in a [`guard`](#app-contributed-capabilities-forks), which sees the context but not the args.
+
+Two more properties, each a bug the tests now pin:
+
+- **Comparison is strict and never coerces.** A `projectId` of `5` is not the scope's `"5"`, and `{ toString: () => 'p1' }` is not `'p1'` — coercing would let any caller satisfy a tenant check.
+- **A conflict on any key refuses the whole call.** Filling some keys while refusing others would dispatch a partially-scoped call.
+
+A declared key the caller's scope does **not** pin is left alone and logged: an unscoped service key is a deliberate configuration (`McpApiKey.scope = NULL` means system-wide), so it is not refused — but the difference between "enforced" and "not" is never silent.
+
+The rules live in [`lib/orchestration/scope.ts`](../../lib/orchestration/scope.ts) (`foldScopeIntoArgs` and `assertScopeHeld`, both pure) — the same module that owns the validate-on-read guard for the persisted columns.
 
 ### Workflow attribution (`CapabilityContext.workflowExecutionId`)
 
@@ -298,11 +295,11 @@ The registry refuses to register a capability that declares `processesPii = true
    3a. **Quarantine gate** — `resolveQuarantineState(entry)` resolves the effective state (a past `quarantineUntil` is treated as `active`). Soft → `{ code: 'capability_quarantined', skipFollowup: false, metadata: { mode, reason } }` with a "temporarily unavailable" message the agent can route around. Hard → same code with `skipFollowup: true` and a firm message that stops the model's tool loop. See the [Quarantine](#quarantine-incident-disable) section below.
 4. **Per-agent binding** — `prisma.aiAgentCapability.findMany({ agentId })`, cached per agent for 5 minutes. An explicit row with `isEnabled: false` → `{ code: 'capability_disabled_for_agent' }`. Missing row = default-allow with base-capability defaults.
    4a. **Capability guard** — if a `guard` was attached at registration (a fork seam; core attaches none), it's `await`ed here with the full `context`. `{ allow: false }` → `{ code: 'capability_guard_denied' }` (the guard's optional `reason` is folded into the client-surfaced message; no internal ids). A guard that **throws** fails **closed** — same denial, logged via `logger.error`. Placed after enablement and before the rate limiter, so a denied call consumes no rate token. See [App-contributed capabilities](#app-contributed-capabilities-forks).
-   4b. **Scope fold** — when the caller populated `context.scope`, each scope key the capability **declares as a parameter** is folded into the args: filled if the caller omitted it, and refused with `{ code: 'scope_conflict' }` if the caller named a different value. Placed beside the guard, and for the guard's reason: a cross-scope call is an authorization failure, not a malformed request, so it must not spend the legitimate tenant's rate token. Inert unless a fork populated `scope`. See [Dispatch scope carrier](#dispatch-scope-carrier-capabilitycontextscope).
+   4b. **Scope binding** — when the capability declared `scopedBy` **and** the caller's scope is authoritative, each bound key is filled if the caller omitted it and refused with `{ code: 'scope_conflict' }` if the caller named a different value. Placed beside the guard, and for the guard's reason: a cross-scope call is an authorization failure, not a malformed request, so it must not spend the legitimate tenant's rate token. Inert for a capability that declared nothing. See [The scope binding](#the-scope-binding-scopedby-dispatch-steps-4b--7a).
 5. **Rate limit** — effective limit = `binding.effectiveRateLimit ?? entry.rateLimit`. If non-null, a sliding-window `RateLimiter` keyed by slug (token = `agentId`) checks the request. Exceeded → `{ code: 'rate_limited' }`.
 6. **Approval gate** — `entry.requiresApproval: true` → `{ code: 'requires_approval', skipFollowup: true }`. The handler never runs. (The admin queue that resolves approvals is a later slice.)
 7. **Validate args** — `handler.validate(dispatchArgs)`. `CapabilityValidationError` → `{ code: 'invalid_args', message }`.
-   7a. **Re-assert the scope** — when `context.scope` is populated, the invariant is checked again on the **validated** args, the ones `execute` is about to receive. A surviving scope key whose value is not the scope's → `{ code: 'scope_conflict' }`; validated args that are not a plain object → `{ code: 'scope_unenforceable' }`. See [The scope fold](#the-scope-fold-dispatch-step-4b) for why step 4b alone is not sufficient.
+   7a. **Re-assert the binding** — the invariant is checked again on the **validated** args, the ones `execute` is about to receive. Each pinned key must be present and equal: a different value → `{ code: 'scope_conflict' }`; a stripped key, or args that cannot be read → `{ code: 'scope_unenforceable' }`. See [Why it is declared and not inferred](#why-it-is-declared-and-not-inferred) for why step 4b alone is not sufficient.
 8. **Execute** — `await handler.execute(validated, context)`. Any thrown error → `{ code: 'execution_error' }` and `logger.error`.
 9. **Log cost** — fire-and-forget `logCost({ operation: 'tool_call', model: 'n/a', provider: 'capability', inputTokens: 0, outputTokens: 0, metadata: { slug, success } })`. Not awaited: the LLM call that triggered the tool already logged its own tokens, and `logCost` returns `null` on DB failure. Capabilities that invoke their OWN LLMs internally (the `search_knowledge_base` embedding call, the rolling summariser, `run_workflow`'s child execution) issue their own `logCost` calls for that LLM spend. The chat handler's per-turn cap (improvement #39) only counts the chat-LLM rounds it sees — tool-internal LLM cost is logged to `AiCostLog` for audit but NOT counted against the per-turn cap. Documented in `.context/orchestration/chat.md`.
 10. **Return** the handler's result verbatim. One `logger.info('Capability dispatched', ...)` line with `latencyMs` rounds out each call.

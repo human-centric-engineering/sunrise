@@ -288,7 +288,15 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
           // ("refuse to run outside scope"), so inherit-by-default is the safe
           // choice; an explicit different-scope override can be added later if a
           // real case appears.
-          ...(context.scope ? { scope: context.scope } : {}),
+          // Inherits the parent's authority along with its scope — the child
+          // execution row persists it, and a nested run must not launder an
+          // unauthoritative scope into an authoritative one.
+          ...(context.scope
+            ? {
+                scope: context.scope,
+                ...(context.scopeIsAuthoritative ? { scopeIsAuthoritative: true } : {}),
+              }
+            : {}),
         }
       )) {
         if (event.type === 'workflow_started') {

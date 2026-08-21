@@ -18,56 +18,44 @@ release process.
 
 ### Added
 
-- **A persisted `scope` now constrains a tool call, not just accompanies it
+- **A capability can declare that a persisted `scope` binds its arguments
   (#586).** `CapabilityContext.scope` has shipped since 0.5.0 as a carrier —
   threaded from an MCP key, a workflow execution or a nested `run_workflow`, and
   handed to `execute()`. It could not *do* anything: every scoped capability
-  consumed it by hand, or a fork patched the dispatch path. Dispatch **step 4b**
-  now folds it into the arguments — for each scope key the capability declares
-  as a parameter, fill it when the caller omitted it, and refuse the call with
-  `{ code: 'scope_conflict' }` when the caller names a different value. So a
-  key minted with `scope: { projectId: 'x' }` makes `projectId` ambient *and*
-  makes it a boundary. The gate is "the capability declares that parameter", so
-  a tool keyed on some other id is untouched and nothing is injected into a
-  schema that would reject it; the refusal names the offending **keys** and
-  never the scope **values**, since the message reaches the client. Placed
-  beside the `guard` seam rather than next to argument validation, and for the
-  guard's reason — a cross-scope call is an authorization failure, not a
-  malformed request, so it must not spend the legitimate tenant's rate token.
-  Applies to all three carriers rather than only the MCP one, because the
-  carrier is a dispatch concept and folding at any single call site leaves the
-  others hand-consuming it. `foldScopeIntoArgs` in `lib/orchestration/scope.ts`
-  is pure and exported. Inert for an unscoped caller, which is every vanilla
-  Sunrise dispatch.
+  consumed it by hand, or a fork patched the dispatch path. Now a capability
+  opts in at registration — `register(cap, { scopedBy: 'projectId' })` — and the
+  dispatcher fills that argument when the caller omits it (step 4b) and refuses
+  with `{ code: 'scope_conflict' }` when the caller names a different value. A
+  key minted with `scope: { projectId: 'x' }` makes `projectId` ambient **and**
+  makes it a boundary.
 
-  **The fold is only half the boundary, and the other half is step 7a.** Step 4b
-  runs before `handler.validate()`, and validation is a Zod *pipeline*, not a
-  filter: three shipped built-ins wrap their schema in
+  **Two conditions, both defaulting to off.** The capability must declare the
+  binding, and the caller's scope must be one the platform wrote
+  (`scopeIsAuthoritative`, set by the MCP-key, workflow-execution and nested-run
+  carriers and **not** by `POST /api/v1/chat/stream`, whose `scope` comes from
+  an untrusted request body). A mistake in either direction loses the binding
+  rather than gaining one.
+
+  **The binding is declared rather than inferred**, which is the whole design.
+  An earlier cut read it out of the capability's published
+  `functionDefinition.parameters` and armed whenever a scope map was present;
+  that is admin-editable JSON which need not agree with the Zod schema the
+  author wrote, and "a scope map exists" is a different question from "this tool
+  is scoped". Declaring it also makes the gaps visible: measured against the
+  fork that asked for this, inference covered 19 of its 29 capabilities and none
+  of its nine `featureId`-keyed writes, with nothing to say which were which.
+
+  **The invariant is re-asserted after validation** (step 7a), on the args
+  `execute` actually receives, because `handler.validate()` is a Zod *pipeline*
+  and may transform — three built-ins wrap their schema in
   `z.preprocess(unwrapApprovalPayload, …)`, which merges an `approvalPayload`
-  object **over** the top level. A caller hiding `{ tenantId: 'B' }` there took
-  the fill-if-absent path — no conflict, because the top-level key was absent —
-  and the preprocess then replaced the value the fold had just written. So
-  `assertScopeHeld` re-checks on the **validated** args, the ones `execute`
-  receives, and is deliberately broader than the fold: it applies to every scope
-  key rather than only declared ones, which also covers a capability whose Zod
-  surface exceeds its published `functionDefinition` (core's own
-  `send_message_to_channel` accepts a `forceProvider` it does not declare) and
-  one whose schema supplies a `.default()`. It additionally requires every key
-  the fold **filled** to still be present, because `z.object()` strips unknown
-  keys and the fold's gate reads the admin-editable `functionDefinition` row —
-  so a row declaring `tenantId` against a schema that does not accept it would
-  otherwise dispatch with the tenant discriminator absent.
-
-  It **fails closed**, and "cannot look" is decided by reachability rather than
-  `typeof`: a `Map`, a `URLSearchParams`, a class instance and anything behind
-  an accessor all answer `hasOwnProperty` with `false`, so a `typeof`-gated
-  check would conclude the invariant holds while `execute` reads the caller's
-  value out of a getter. Those are refused with the second new code,
-  `scope_unenforceable`; a null-prototype object is still read. **The limit,
-  stated because it cannot be fixed:** only top-level own properties are
-  inspected, so a scope key must name a top-level parameter — a capability
-  reading its tenant from a nested field is not enforced, and the dispatcher
-  warns when a scope key matches no parameter.
+  object over the top level. Each pinned key must be **present and equal**;
+  a stripped key or unreadable args (a `Map`, a class instance, anything behind
+  an accessor — all of which answer `hasOwnProperty` with `false`) are refused
+  with the second new code, `scope_unenforceable`. **The limit, stated because
+  it cannot be fixed:** only top-level own properties are inspected, so a
+  capability resolving its scope from a child id must not declare `scopedBy` for
+  it — that check belongs in `execute()` or a `guard`.
 
 - **`npm run check:missing-tests` — `/pre-pr` step 4f stops being prose.** Twelve
   of step 4's thirteen anti-pattern checks were prose, so every agent hand-rolled
