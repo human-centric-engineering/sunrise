@@ -34,8 +34,13 @@ function sourceFiles(): string[] {
     .filter((file) => file.endsWith('.ts'));
 }
 
-/** Files that build a `CapabilityContext` for a real dispatch. */
-function dispatchContextSites(): string[] {
+/**
+ * Files that thread a scope AND reach the dispatcher. Deliberately *not*
+ * called `dispatchContextSites` — one of them (`mcp/protocol-handler.ts`)
+ * hands the scope onward rather than building a context, and a function name
+ * that overclaims what it finds is how a roster stops matching its prose.
+ */
+function scopeThreadingSites(): string[] {
   return sourceFiles()
     .filter((file) => file !== 'lib/orchestration/scope.ts')
     .filter((file) => {
@@ -70,12 +75,12 @@ describe('scope authority roster', () => {
   it('finds the call sites it is written to check', () => {
     // A scanner that matches nothing is green and looks healthy. Floor first,
     // and pinned to the derived count so a shrinking roster fails too.
-    expect(dispatchContextSites().length).toBe(
+    expect(scopeThreadingSites().length).toBe(
       AUTHORITATIVE.length + HINT_ONLY.length + DELEGATES.length
     );
   });
 
-  it('classifies every site that builds a dispatch context', () => {
+  it('classifies every site that threads a scope toward the dispatcher', () => {
     // The assertion the previous version could not make: a new caller that
     // forgets to decide shows up here rather than defaulting quietly.
     const classified = new Set<string>([
@@ -83,7 +88,7 @@ describe('scope authority roster', () => {
       ...HINT_ONLY.map(([file]) => file),
       ...DELEGATES.map(([file]) => file),
     ]);
-    expect(dispatchContextSites().filter((file) => !classified.has(file))).toEqual([]);
+    expect(scopeThreadingSites().filter((file) => !classified.has(file))).toEqual([]);
   });
 
   it.each(AUTHORITATIVE)('%s builds its context with platformScope', (file) => {
