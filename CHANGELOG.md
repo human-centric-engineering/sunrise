@@ -418,7 +418,10 @@ release process.
   older clients** — that is backwards: `stateless` dispatches `initialize`
   normally and serves every client `stateful` does, plus `2026-07-28` clients
   that `stateful` refuses with `400 Missing Mcp-Session-Id header`. Choose it
-  only for the SSE stream or the three continuity methods, on one process. Choosing it on a platform that announces itself (`VERCEL`,
+  for the SSE stream or the three continuity methods, on one process — plus one
+  smaller difference: it remembers the negotiated protocol version, so a client
+  that omits `MCP-Protocol-Version` on later requests keeps its `2025-06-18`
+  tool annotations instead of falling back to `2024-11-05`. Choosing it on a platform that announces itself (`VERCEL`,
   `AWS_LAMBDA_FUNCTION_NAME`) throws at startup with the fix in the message; that
   guard is a safety net, not a boundary — a multi-replica container deploy hits
   the same bug undetected (#609).

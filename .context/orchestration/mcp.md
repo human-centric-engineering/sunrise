@@ -76,9 +76,14 @@ code. The features `stateful` restores are ones the protocol has removed or
 deprecated: `logging/setLevel` is gone, Logging is deprecated, and
 `resources/subscribe` is replaced by `subscriptions/listen`.
 
-**Choose `stateful` only if you need the SSE stream or one of the three
-continuity methods, and you run exactly one process.** Nothing else is a reason.
-In particular it is _not_ needed to serve older clients — that gets it exactly
+**Choose `stateful` if you need the SSE stream or one of the three continuity
+methods, and you run exactly one process.** There is one further difference,
+below the fold: `stateful` remembers what `initialize` negotiated, so a client
+that omits `MCP-Protocol-Version` on later requests keeps its `2025-06-18` tool
+annotations where `stateless` falls back to `2024-11-05` — see
+[Protocol version without a session](#protocol-version-without-a-session).
+
+What is _not_ a reason is serving older clients. That gets it exactly
 backwards:
 
 | Client                                              | `stateless`                                                                                                               | `stateful`                                                                                |
@@ -86,7 +91,8 @@ backwards:
 | `2024-11-05` / `2025-06-18` (sends `initialize`)    | connects — `initialize` is dispatched normally, it just gets no session id back, and per the transport it then sends none | connects                                                                                  |
 | `2026-07-28` (sends no `initialize`, no session id) | connects                                                                                                                  | **refused** — a request with no `Mcp-Session-Id` gets `400 Missing Mcp-Session-Id header` |
 
-So `stateless` serves every client `stateful` does, plus the ones it cannot.
+So `stateless` **connects** for every client `stateful` does, plus the ones it
+cannot. (Serving is a hair different — see the annotations note above.)
 
 ### Choosing, and the guard
 
@@ -542,11 +548,11 @@ nothing to evict or terminate. See
 - Transport: Streamable HTTP
 - Protocol versions: `2025-06-18` (latest) and `2024-11-05` (back-compat). Negotiated during `initialize` in `stateful` mode; taken from the `MCP-Protocol-Version` header per request under the default `stateless` mode, since no session remembers a negotiation ([details](#protocol-version-without-a-session)).
 - Messages: JSON-RPC 2.0 (single and batch requests)
-- Capabilities advertised: `tools.listChanged`, `resources.listChanged`. `prompts.listChanged`, `resources.subscribe`, `logging`, and `completions` land in subsequent phases — the server never advertises a capability it cannot serve.
+- Capabilities advertised: in `stateful` mode, `tools.listChanged`, `resources.listChanged`, `prompts.listChanged`, `resources.subscribe`, `logging` and `completions` — all six ship today. Under the default `stateless` mode only `completions` is advertised, plus bare `tools` / `resources` / `prompts` objects with no `listChanged` or `subscribe`, because the rest need a session that outlives the request. **The server never advertises a capability it cannot serve**, which is the whole reason that list changes with the mode.
 - Resource templates: `resources/templates/list` advertises parameterized URI patterns
 - Pagination: `tools/list` and `resources/list` support cursor-based pagination (50 items/page)
 - Batch requests: JSON-RPC 2.0 array batches (max 20 requests per batch)
-- SSE notifications: `notifications/tools/list_changed` and `notifications/resources/list_changed` pushed to connected clients when admin toggles tools/resources
+- SSE notifications (`stateful` only): `notifications/tools/list_changed` and `notifications/resources/list_changed` pushed to connected clients when admin toggles tools/resources. Under the default `stateless` mode there is no SSE stream — `GET` answers `405` — so nothing is pushed and no listener is ever registered.
 - Client notifications accepted: `notifications/initialized`, `notifications/roots/list_changed`, `notifications/cancelled`
 
 ### Version negotiation
@@ -560,7 +566,7 @@ nothing to evict or terminate. See
 | A forward-dated unknown version (e.g. `2099-01-01`) | Latest supported (`2025-06-18`) | Graceful downgrade for newer clients                   |
 | Any other unknown / malformed value                 | `INVALID_PARAMS` error          | Surface mismatch rather than silently misbehave        |
 
-The negotiated version is stored on the session (`McpSession.protocolVersion`) and is available to per-call handlers for branching on features that exist only in newer revisions. The legacy `MCP_PROTOCOL_VERSION` export still resolves to the oldest supported version so downstream imports keep working.
+In `stateful` mode the negotiated version is stored on the session (`McpSession.protocolVersion`) and reused for every later request. Under the default `stateless` mode nothing is stored — the table above governs `initialize`'s response, and each subsequent request derives its own version from the `MCP-Protocol-Version` header ([details](#protocol-version-without-a-session)). Either way the value reaches per-call handlers the same way, for branching on features that exist only in newer revisions. The legacy `MCP_PROTOCOL_VERSION` export still resolves to the oldest supported version so downstream imports keep working.
 
 ### Authentication challenge (WWW-Authenticate)
 
