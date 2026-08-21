@@ -83,9 +83,17 @@ Name, Key Prefix, Scopes, Status (Active/Revoked/Expired), Expires, Rate Limit, 
 
 Displays active in-memory MCP sessions.
 
+**Empty by design under the default session mode.** `MCP_SESSION_MODE=stateless`
+(the default) holds no session state, so `getActiveSessions()` can never return a
+row and this page shows nothing even while clients are connected. Without a
+signal that reads as "nobody is connected", so the page renders an explanatory
+panel when the mode is stateless — it is a server component and reads
+`env.MCP_SESSION_MODE` directly. See
+[Session model](../orchestration/mcp.md#session-model--mcp_session_mode).
+
 - **Refresh button** — re-fetches from `/api/v1/admin/orchestration/mcp/sessions`
 - **Columns**: Session ID (truncated), API Key ID, Status (Initialized/Pending), Connected, Last Activity, Duration
-- Sessions are ephemeral — stored in-memory, expire after inactivity
+- Sessions are ephemeral — stored in-memory, expire after inactivity (stateful mode only)
 
 ## Audit Log (`mcp-audit-log.tsx`)
 
@@ -117,8 +125,15 @@ Server configuration form using `react-hook-form` + Zod validation.
 | Server Name          | string | 1-100 chars | "Sunrise MCP Server" |
 | Server Version       | string | 1-20 chars  | "1.0.0"              |
 | Global Rate Limit    | int    | 1-10,000    | 60                   |
-| Max Sessions Per Key | int    | 1-100       | 5                    |
+| Max Sessions Per Key | int    | 1-100       | 5 (see note)         |
 | Audit Retention Days | int    | 0-3,650     | 90                   |
+
+**`Max Sessions Per Key` has no effect under `MCP_SESSION_MODE=stateless`.** The
+stateless path creates no session, so the cap is never consulted — the field
+still validates and still saves, which is why the form annotates it rather than
+hiding it. The mode reaches this client component as a `sessionsAreTracked` prop
+from the page (a server component); `MCP_SESSION_MODE` is server-only and cannot
+be read here directly.
 
 - **isDirty tracking** — Save button disabled when pristine
 - **Error display** — API errors shown inline; generic fallback for non-API errors
