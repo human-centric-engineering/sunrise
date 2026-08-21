@@ -24,6 +24,13 @@ import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
 import { assertScopeHeld, foldScopeIntoArgs } from '@/lib/orchestration/scope';
+
+/** Own-property test that survives a null-prototype or unusual args object. */
+function hasOwn(value: unknown, key: string): boolean {
+  return (
+    typeof value === 'object' && value !== null && Object.prototype.hasOwnProperty.call(value, key)
+  );
+}
 import { createRateLimiter, type RateLimiter } from '@/lib/security/rate-limit';
 import { CostOperation } from '@/types/orchestration';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -430,6 +437,7 @@ class CapabilityDispatcher {
     //     tenant's rate token. Inert unless a fork populated `scope` AND the
     //     capability declares a parameter of that name — core names no keys.
     let dispatchArgs = rawArgs;
+    let scopeFilled: readonly string[] = [];
     if (context.scope && Object.keys(context.scope).length > 0) {
       const folded = foldScopeIntoArgs(
         rawArgs,
@@ -455,11 +463,27 @@ class CapabilityDispatcher {
         };
       }
       dispatchArgs = folded.args;
+      scopeFilled = folded.filled;
       if (folded.filled.length > 0) {
         logger.debug('Capability dispatch: folded scope into args', {
           slug,
           agentId: context.agentId,
           filled: folded.filled,
+        });
+      }
+      // A scope key that names no parameter of this capability is the one
+      // mistake nothing downstream can catch: the fold has nothing to write and
+      // step 7a has nothing to read, so the boundary is simply not enforced
+      // here. Say so — silence is what lets an operator believe otherwise.
+      const declared = new Set(folded.filled);
+      const unmatched = Object.keys(context.scope).filter(
+        (key) => !declared.has(key) && !hasOwn(dispatchArgs, key)
+      );
+      if (unmatched.length > 0) {
+        logger.warn('Capability dispatch: scope key matches no parameter — not enforced here', {
+          slug,
+          agentId: context.agentId,
+          keys: unmatched,
         });
       }
     }
@@ -567,7 +591,7 @@ class CapabilityDispatcher {
         //     protects the args entering `validate`; only the args entering
         //     `execute` matter, so the invariant is checked here too.
         if (context.scope && Object.keys(context.scope).length > 0) {
-          const assertion = assertScopeHeld(validated, context.scope);
+          const assertion = assertScopeHeld(validated, context.scope, scopeFilled);
           if (!assertion.held) {
             const detail =
               assertion.reason === 'conflict'

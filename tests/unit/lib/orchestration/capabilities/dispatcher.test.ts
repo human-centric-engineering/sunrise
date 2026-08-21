@@ -120,6 +120,29 @@ class TransformingScopedCapability extends BaseCapability<
   }
 }
 
+/**
+ * Declares `tenantId` in its `functionDefinition` but does NOT accept it in its
+ * Zod schema — so `z.object()` strips the pin the fold just wrote. The admin
+ * Capability form edits that JSON independently of the code, which is exactly
+ * how a fork lands here.
+ */
+class StrippingScopedCapability extends BaseCapability<{ resourceId: string }, { seen: string[] }> {
+  readonly slug = 'stripping';
+  readonly functionDefinition = {
+    name: 'stripping',
+    description: '',
+    parameters: {
+      type: 'object',
+      properties: { tenantId: { type: 'string' }, resourceId: { type: 'string' } },
+    },
+  };
+  protected readonly schema = z.object({ resourceId: z.string() });
+
+  async execute(args: { resourceId: string }) {
+    return this.success({ seen: Object.keys(args) });
+  }
+}
+
 /** Validates to a non-object, so a scoped call has no readable invariant. */
 class NonObjectCapability extends BaseCapability<string, { echoed: string }> {
   readonly slug = 'non-object';
@@ -1575,5 +1598,62 @@ describe('CapabilityDispatcher — scope re-asserted after validation (step 7a)'
     const result = await capabilityDispatcher.dispatch('non-object', 'hello', ctx);
 
     expect(result).toEqual({ success: true, data: { echoed: 'hello' } });
+  });
+});
+
+describe('CapabilityDispatcher — scope pins must survive validation', () => {
+  it('refuses when the schema strips the key the fold filled', async () => {
+    // The row declares `tenantId`, so the fold fills it; the Zod schema does
+    // not accept it, so validation strips it; `execute` would run with the
+    // tenant discriminator ABSENT — a list capability returning every tenant's
+    // rows, under a boundary reporting success.
+    const executeSpy = vi.spyOn(StrippingScopedCapability.prototype, 'execute');
+    capabilityDispatcher.register(new StrippingScopedCapability());
+    mockFindMany.mockResolvedValue([
+      makeCapabilityRow({
+        slug: 'stripping',
+        functionDefinition: {
+          name: 'stripping',
+          description: '',
+          parameters: {
+            type: 'object',
+            properties: { tenantId: { type: 'string' }, resourceId: { type: 'string' } },
+          },
+        },
+      }),
+    ]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'stripping',
+      { resourceId: 'r1' },
+      { ...ctx, scope: { tenantId: 'A' } }
+    );
+
+    expect(result.error?.code).toBe('scope_unenforceable');
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves the same capability alone for an unscoped caller', async () => {
+    capabilityDispatcher.register(new StrippingScopedCapability());
+    mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'stripping' })]);
+
+    const result = await capabilityDispatcher.dispatch('stripping', { resourceId: 'r1' }, ctx);
+
+    expect(result).toEqual({ success: true, data: { seen: ['resourceId'] } });
+  });
+
+  it('warns when a scope key names no parameter, since nothing can enforce it there', async () => {
+    // The one mistake nothing downstream catches: the fold has nothing to
+    // write and step 7a has nothing to read. Silence is what lets an operator
+    // believe the boundary is live.
+    capabilityDispatcher.register(new OkCapability());
+    mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+    await capabilityDispatcher.dispatch('ok', { n: 1 }, { ...ctx, scope: { tenantId: 'A' } });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Capability dispatch: scope key matches no parameter — not enforced here',
+      expect.objectContaining({ slug: 'ok', keys: ['tenantId'] })
+    );
   });
 });

@@ -90,6 +90,36 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * An object whose properties can actually be **read** by inspection.
+ *
+ * Stricter than {@link isPlainObject}, and the difference is a boundary
+ * bypass rather than a nicety. `typeof x === 'object'` is true of a `Map`, a
+ * `URLSearchParams`, a `Date` and every class instance, and
+ * `hasOwnProperty(map, 'tenantId')` is `false` for all of them — their data
+ * lives in internal slots or behind accessors on the prototype. So
+ * {@link assertScopeHeld} looked, saw nothing, and concluded the invariant
+ * held, while `execute()` read the caller's value straight out of
+ * `map.get('tenantId')` or a `get tenantId()`. A `.transform(v => new Map(…))`
+ * or a "parse, don't validate" class — the shape the Zod docs encourage — was
+ * enough to restore the bypass this module exists to close.
+ *
+ * So: the prototype must be `Object.prototype` or `null`, and every own
+ * enumerable key must be a **data** property. An accessor is rejected even on
+ * an otherwise-plain object, because a getter can return one value to this
+ * check and another to `execute`.
+ */
+function isReadableArgsObject(value: unknown): value is Record<string, unknown> {
+  if (!isPlainObject(value)) return false;
+  const proto = Object.getPrototypeOf(value) as object | null;
+  if (proto !== Object.prototype && proto !== null) return false;
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && !('value' in descriptor)) return false;
+  }
+  return true;
+}
+
+/**
  * Does this tool's JSON Schema declare a property of that name?
  *
  * **`hasOwnProperty`, not `properties[key] !== undefined`.** Every object
@@ -227,23 +257,48 @@ export type ScopeAssertion =
  * `forceProvider` it does not declare), and one whose schema supplies a
  * `.default()` for a key the fold therefore never filled.
  *
- * **Fails closed when it cannot look.** Validated args that are not a plain
- * object — an array, a string, whatever a `z.union` or `.transform` produced —
- * carry no readable invariant, so a scoped call to such a capability is
- * refused rather than waved through. Core has no capability of that shape, so
- * this costs nothing today; for a fork it is a loud, accurate error instead of
- * a boundary that quietly is not one.
+ * **Fails closed when it cannot look**, and "cannot look" is decided by
+ * reachability rather than by `typeof`. A string, an array, a `Map`, a
+ * `URLSearchParams`, a class instance, anything with an accessor — see
+ * {@link isReadableArgsObject} — carries no invariant this can read, so a
+ * scoped call to such a capability is refused rather than waved through. Core
+ * has no capability of that shape, so this costs nothing today; for a fork it
+ * is a loud, accurate error instead of a boundary that quietly is not one.
+ *
+ * **What it does NOT cover, and cannot.** Only *top-level own* properties are
+ * inspected. A capability that reads its tenant from a nested field
+ * (`{ filter: { tenantId } }`) is not enforced, because nothing here can know
+ * that field means a tenant. A scope key must name a **top-level parameter**;
+ * the dispatcher warns when a scope key matches no declared property, which is
+ * the only signal available for that mistake.
  */
-export function assertScopeHeld(validated: unknown, scope: Record<string, string>): ScopeAssertion {
+export function assertScopeHeld(
+  validated: unknown,
+  scope: Record<string, string>,
+  /** Keys {@link foldScopeIntoArgs} wrote. Each must still be there, unchanged. */
+  filled: readonly string[] = []
+): ScopeAssertion {
   const keys = Object.keys(scope);
   if (keys.length === 0) return { held: true };
 
-  if (!isPlainObject(validated)) return { held: false, reason: 'unenforceable' };
+  if (!isReadableArgsObject(validated)) return { held: false, reason: 'unenforceable' };
 
   const conflicts = keys.filter(
     (key) => Object.prototype.hasOwnProperty.call(validated, key) && validated[key] !== scope[key]
   );
-  return conflicts.length > 0
-    ? { held: false, reason: 'conflict', keys: conflicts }
-    : { held: true };
+  if (conflicts.length > 0) return { held: false, reason: 'conflict', keys: conflicts };
+
+  // A key the fold WROTE must survive. An absent key is otherwise read as
+  // "this capability has no such parameter, nothing to hold" — true when the
+  // caller never had one, false when the pin was written and validation ate
+  // it. `z.object()` strips unknown keys by default, and the fold's gate reads
+  // the admin-editable `functionDefinition` row, so "declared as a parameter"
+  // and "survives validation" are unrelated facts. Without this, a row
+  // declaring `tenantId` against a schema that does not accept it dispatches
+  // with the tenant discriminator **absent** — a list capability returning
+  // every tenant's rows, under a boundary reporting success.
+  const eaten = filled.filter((key) => !Object.prototype.hasOwnProperty.call(validated, key));
+  if (eaten.length > 0) return { held: false, reason: 'unenforceable' };
+
+  return { held: true };
 }

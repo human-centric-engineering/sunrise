@@ -52,10 +52,22 @@ release process.
   key rather than only declared ones, which also covers a capability whose Zod
   surface exceeds its published `functionDefinition` (core's own
   `send_message_to_channel` accepts a `forceProvider` it does not declare) and
-  one whose schema supplies a `.default()`. It **fails closed** — validated args
-  that are not a plain object carry no readable invariant, so a scoped call to
-  such a capability is refused with the second new code,
-  `scope_unenforceable`, rather than waved through.
+  one whose schema supplies a `.default()`. It additionally requires every key
+  the fold **filled** to still be present, because `z.object()` strips unknown
+  keys and the fold's gate reads the admin-editable `functionDefinition` row —
+  so a row declaring `tenantId` against a schema that does not accept it would
+  otherwise dispatch with the tenant discriminator absent.
+
+  It **fails closed**, and "cannot look" is decided by reachability rather than
+  `typeof`: a `Map`, a `URLSearchParams`, a class instance and anything behind
+  an accessor all answer `hasOwnProperty` with `false`, so a `typeof`-gated
+  check would conclude the invariant holds while `execute` reads the caller's
+  value out of a getter. Those are refused with the second new code,
+  `scope_unenforceable`; a null-prototype object is still read. **The limit,
+  stated because it cannot be fixed:** only top-level own properties are
+  inspected, so a scope key must name a top-level parameter — a capability
+  reading its tenant from a nested field is not enforced, and the dispatcher
+  warns when a scope key matches no parameter.
 
 - **`npm run check:missing-tests` — `/pre-pr` step 4f stops being prose.** Twelve
   of step 4's thirteen anti-pattern checks were prose, so every agent hand-rolled

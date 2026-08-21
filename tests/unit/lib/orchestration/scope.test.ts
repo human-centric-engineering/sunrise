@@ -274,12 +274,69 @@ describe('assertScopeHeld', () => {
     });
   });
 
-  it.each([
-    ['an array', [{ tenantId: 'B' }]],
-    ['a string', 'hello'],
-    ['null', null],
-  ])('fails closed on %s, which carries no readable invariant', (_label, validated) => {
-    expect(assertScopeHeld(validated, scope)).toEqual({ held: false, reason: 'unenforceable' });
+  describe('"cannot look" is decided by reachability, not by typeof', () => {
+    class GetterArgs {
+      readonly #tenantId: string;
+      constructor(tenantId: string) {
+        this.#tenantId = tenantId;
+      }
+      get tenantId(): string {
+        return this.#tenantId;
+      }
+    }
+
+    it.each([
+      ['an array', [{ tenantId: 'B' }]],
+      ['a string', 'hello'],
+      ['null', null],
+      // Every one of these is `typeof === 'object'` and answers
+      // `hasOwnProperty('tenantId')` with FALSE, so the first version read them
+      // as "no such key, invariant holds" while `execute` read 'B' out of them.
+      ['a Map', new Map([['tenantId', 'B']])],
+      ['a URLSearchParams', new URLSearchParams({ tenantId: 'B' })],
+      ['a class instance behind a getter', new GetterArgs('B')],
+      [
+        'a plain object with an accessor',
+        Object.defineProperty({}, 'tenantId', { get: () => 'B', enumerable: true }),
+      ],
+    ])('fails closed on %s, which carries no readable invariant', (_label, validated) => {
+      expect(assertScopeHeld(validated, scope)).toEqual({ held: false, reason: 'unenforceable' });
+    });
+
+    it('still reads a null-prototype object, which is genuinely readable', () => {
+      // `Object.create(null)` has no prototype but its own data properties are
+      // right there — refusing it would be fail-closed for no reason.
+      const args = Object.assign(Object.create(null) as Record<string, unknown>, {
+        tenantId: 'A',
+      });
+      expect(assertScopeHeld(args, scope)).toEqual({ held: true });
+    });
+  });
+
+  describe('a key the fold wrote must survive validation', () => {
+    it('refuses when validation stripped the pin the fold had written', () => {
+      // `z.object()` strips unknown keys by default, and the fold's gate reads
+      // the admin-editable `functionDefinition` row — so "declared as a
+      // parameter" and "accepted by the schema" are unrelated facts. Without
+      // this, `execute` runs with the tenant discriminator ABSENT while the
+      // boundary reports success.
+      expect(assertScopeHeld({ resourceId: 'r1' }, scope, ['tenantId'])).toEqual({
+        held: false,
+        reason: 'unenforceable',
+      });
+    });
+
+    it('holds when the pin survived', () => {
+      expect(assertScopeHeld({ resourceId: 'r1', tenantId: 'A' }, scope, ['tenantId'])).toEqual({
+        held: true,
+      });
+    });
+
+    it('holds when nothing was filled and the capability has no such parameter', () => {
+      // The absent-is-fine case this must not break: the caller never had a
+      // tenant parameter, so there is nothing to hold.
+      expect(assertScopeHeld({ resourceId: 'r1' }, scope, [])).toEqual({ held: true });
+    });
   });
 
   it('does not coerce — a number that stringifies equal is still a conflict', () => {
