@@ -18,6 +18,56 @@ release process.
 
 ### Added
 
+- **`npm run test:changed` / `npm run test:changed:coverage` — a scoped local
+  test gate, and the new default for `/pre-pr`.** The full suite is ~1080 files
+  and roughly four minutes with coverage; two of them running at once across
+  checkouts saturates a 10-core machine (measured: one run holds ~3.2 cores).
+  The scoped pair runs the tests the branch can affect — vitest's own
+  `--changed` selection against the merge base, uncommitted and untracked work
+  included — and gates coverage on the **changed source files at 80% each**
+  (`thresholds.perFile`) rather than on the repo average. Measured on a 10-core
+  machine for a 20-file selection: ~5s wall idle, ~23s with another suite
+  competing — about half of it the `vitest list` pre-pass that resolves the
+  selection. `npm run test:coverage`'s own measured figure is 254s of in-vitest
+  time. A project-wide average is the wrong question for a
+  per-PR gate — it clears comfortably while a newly added file sits at 0%; a
+  changed file with no test now reports **as 0%** rather than being absent from
+  the report.
+  The selection is unioned with `ALWAYS_RUN_TESTS` (`scripts/ci/scoped-tests.ts`),
+  the tests whose subject is the repository rather than a module —
+  `export-sources` (the Art. 15 manifest guard), `reserved-fork-tiers`, the
+  fork-init seam roster, the outbound-redirect roster, the ESLint app boundary.
+  Nothing imports `prisma/schema/*.prisma`, so no module graph reaches them and
+  `--changed` would never select them; a scoped run without that union would
+  silently stop enforcing exactly the rules this repo leans on hardest. The list
+  is hand-written with a reason per entry because all three candidate detectors
+  miss things, measured at 8167a36f — by fs-API name (22 found, misses 3), by `node:fs` import (16,
+  misses 9), by repo-rooted read (14, misses `eslint-app-boundary.test.ts`,
+  which reads the tree through ESLint and imports no filesystem module). A
+  detector runs alongside as an **advisory** that prompts you to declare a new
+  one; it is not a completeness guarantee and says so.
+  Fails loudly rather than quietly: an unresolvable base ref, a failed
+  `vitest list`, a signal-killed vitest, and a selected path that cannot be
+  passed to vitest safely all exit 1, because a stale base produces a short file
+  list and a short list is a quiet green. That last one covers two shapes a
+  security review surfaced: a filename containing a newline, which `vitest list`
+  prints across two lines so the second fragment can arrive as its own argv
+  token (vitest reads options wherever they appear, so a fragment like
+  `--config=x.test.ts` would replace the run's whole config, `setupFiles` and
+  coverage `exclude` included); and a git C-quoted path, which stops ending in
+  `.ts` and would otherwise fall out of the coverage list in silence. `origin/main` is
+  fetched by default (`--no-fetch` opts out). The full-suite scripts are
+  unchanged — a scoped run cannot prove the branch broke nothing elsewhere, and
+  CI's `test-full` job (4-way sharded, every PR and every push to `main`)
+  remains the backstop. Note for forks running `CI_TEST_SCOPE=changed`:
+  `test-full` is skipped on PRs there and the `test-changed` job runs a bare
+  `vitest --changed` with no always-run union, so the whole suite lands only
+  after merge; the docs carry the one-line workflow change that closes it.
+  Coverage includes are glob-escaped — `(protected)` and `[...all]` are
+  picomatch syntax, so an unescaped route-group path matched no file, gated
+  nothing and exited 0. See
+  [`.context/testing/scoped-runs.md`](./.context/testing/scoped-runs.md).
+
 - **A capability can declare that a persisted `scope` binds its arguments
   (#586).** `CapabilityContext.scope` has shipped since 0.5.0 as a carrier —
   threaded from an MCP key, a workflow execution or a nested `run_workflow`, and
@@ -64,6 +114,7 @@ release process.
   it cannot be fixed:** only top-level own properties are inspected, so a
   capability resolving its scope from a child id must not declare `scopedBy` for
   it — that check belongs in `execute()` or a `guard`.
+
 
 - **`npm run check:missing-tests` — `/pre-pr` step 4f stops being prose.** Twelve
   of step 4's thirteen anti-pattern checks were prose, so every agent hand-rolled

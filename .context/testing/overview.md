@@ -382,6 +382,7 @@ The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test
 
 **See also**:
 
+- [`scoped-runs.md`](./scoped-runs.md) - Running only the tests a branch needs, and the whole-tree guards no module graph reaches
 - [`patterns.md`](./patterns.md) - Best practices and patterns (AAA, type safety, async, mocking)
 - [`mocking.md`](./mocking.md) - Mock strategies by dependency (Prisma, better-auth, Next.js, logger)
 - [`decisions.md`](./decisions.md) - Architectural decisions and rationale
@@ -390,10 +391,12 @@ The test-engineer agent (`.claude/agents/test-engineer.md`) is spawned by `/test
 **npm Commands**:
 
 ```bash
-npm test                  # Run all tests
-npm run test:watch        # Watch mode for development
-npm run test:coverage     # Run with coverage report
-npm run validate          # all local gates
+npm run test:changed          # Tests this branch affects + whole-tree guards
+npm run test:changed:coverage # ...and gate coverage per changed file (≥80% each)
+npm test                      # Full suite
+npm run test:watch            # Watch mode for development
+npm run test:coverage         # Full suite with a whole-repo coverage report
+npm run validate              # all local gates
 ```
 
 **Directories**:

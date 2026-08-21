@@ -1400,7 +1400,8 @@ extension requirement, and zero-downtime patterns — lives in
 
 - [ ] Delete `tests/` directory
 - [ ] Delete `vitest.config.ts`
-- [ ] Remove test scripts from `package.json` (`test`, `test:watch`, `test:coverage`)
+- [ ] Delete `scripts/ci/scoped-tests.ts` and `scripts/ci/run-scoped-tests.ts`
+- [ ] Remove test scripts from `package.json` (`test`, `test:watch`, `test:coverage`, `test:changed`, `test:changed:coverage`)
 - [ ] Uninstall: `npm uninstall vitest @vitest/ui happy-dom @testing-library/react @testing-library/user-event`
 
 **Docker:**
