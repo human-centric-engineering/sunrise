@@ -34,10 +34,25 @@ describe('server env vars are visible under the node environment', () => {
 });
 
 describe('MCP_SESSION_MODE', () => {
-  it('defaults to stateless — the whole point of #609', () => {
-    // Unset in tests/setup.ts, so this is the shipped default, not a fixture.
-    expect(process.env.MCP_SESSION_MODE).toBeUndefined();
-    expect(env.MCP_SESSION_MODE).toBe('stateless');
+  it('defaults to stateless — the whole point of #609', async () => {
+    // Deleted and RE-IMPORTED rather than asserting `process.env` is already
+    // unset. The first version asserted `toBeUndefined()`, which made the result
+    // depend on the developer's shell: anyone with `MCP_SESSION_MODE` exported —
+    // plausible while debugging this very feature — got a red bar on a test
+    // whose subject (the schema default) was perfectly correct.
+    //
+    // Deleting before the import is what actually establishes the claim: with
+    // the variable absent, the schema supplies `stateless`.
+    const saved = process.env.MCP_SESSION_MODE;
+    try {
+      delete process.env.MCP_SESSION_MODE;
+      vi.resetModules();
+      const { env: reloaded } = await import('@/lib/env');
+      expect(reloaded.MCP_SESSION_MODE).toBe('stateless');
+    } finally {
+      if (saved !== undefined) process.env.MCP_SESSION_MODE = saved;
+      vi.resetModules();
+    }
   });
 
   it('is a closed enum, so a typo fails validation rather than silently degrading', async () => {

@@ -6,6 +6,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
+import { env } from '@/lib/env';
 
 export const metadata: Metadata = {
   title: 'MCP Settings · AI Orchestration',
@@ -49,7 +50,10 @@ export default async function McpSettingsPage() {
         </p>
       </header>
 
-      <McpSettingsForm initialSettings={settings} />
+      <McpSettingsForm
+        initialSettings={settings}
+        sessionsAreTracked={env.MCP_SESSION_MODE === 'stateful'}
+      />
     </div>
   );
 }

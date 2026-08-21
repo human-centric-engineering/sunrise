@@ -212,30 +212,44 @@ export async function POST(request: NextRequest): Promise<Response> {
     const sessionId = request.headers.get(MCP_SESSION_HEADER);
     let session;
 
+    // `initialize` must be alone in a batch, in BOTH modes.
+    //
+    // Stateful enforces it to avoid ambiguous session state. Stateless has no
+    // session state to make ambiguous — but it has a subtler version of the same
+    // problem: every request in the batch takes its protocol version from the
+    // `MCP-Protocol-Version` header, which is absent on a handshake request, so
+    // a `[initialize, tools/list]` batch would serve the `tools/list` at
+    // `2024-11-05` even though the `initialize` beside it negotiated
+    // `2025-06-18` microseconds earlier — silently dropping the tool annotations
+    // gated on `>= 2025-06-18`.
+    //
+    // Keeping the guard in both modes costs nothing (spec revision 2025-06-18
+    // removed JSON-RPC batching, and a 2026-07-28 client sends no `initialize`
+    // at all) and removes a mode-dependent behaviour difference rather than
+    // documenting one.
+    if (hasInitialize && validRequests.length > 1) {
+      const initReq = validRequests.find((r) => r.method === 'initialize');
+      return Response.json(
+        {
+          jsonrpc: '2.0',
+          id: initReq?.id ?? null,
+          error: {
+            code: JsonRpcErrorCode.INVALID_REQUEST,
+            message: 'initialize must be the only request in the batch',
+          },
+        },
+        { status: 400 }
+      );
+    }
+
     if (isStateless()) {
-      // Ahead of every other branch, so none of the session bookkeeping runs:
-      // no batch-position guard on `initialize` (there is no session to make
-      // ambiguous), no per-key session limit, no lookup that could 404. A stale
+      // Ahead of the remaining branches, so none of the session bookkeeping
+      // runs: no per-key session limit, no lookup that could 404. A stale
       // `Mcp-Session-Id` from a previous stateful deploy — or from a sibling
       // instance — is simply ignored rather than rejected.
       session = createEphemeralSession(auth.apiKeyId, statelessProtocolVersion(request));
     } else if (hasInitialize) {
-      // initialize must be the sole request in the batch — mixing it with
-      // other methods leads to ambiguous session state.
-      if (validRequests.length > 1) {
-        const initReq = validRequests.find((r) => r.method === 'initialize');
-        return Response.json(
-          {
-            jsonrpc: '2.0',
-            id: initReq?.id ?? null,
-            error: {
-              code: JsonRpcErrorCode.INVALID_REQUEST,
-              message: 'initialize must be the only request in the batch',
-            },
-          },
-          { status: 400 }
-        );
-      }
+      // The batch-position guard now runs for both modes, above.
 
       // Reject initialize when a session header is already present — prevents
       // unlimited session creation by replaying initialize-first batches.

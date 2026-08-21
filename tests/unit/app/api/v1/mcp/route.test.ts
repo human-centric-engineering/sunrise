@@ -857,6 +857,24 @@ describe('stateless mode', () => {
     expect(context.session.initialized).toBe(true);
   });
 
+  it('rejects a batched initialize here too, not just in stateful mode', async () => {
+    // Stateless has no session state to make ambiguous, but it has the subtler
+    // version: every request in the batch takes its version from the
+    // `MCP-Protocol-Version` header, absent on a handshake request — so the
+    // `tools/list` would be served at 2024-11-05 while the `initialize` beside
+    // it negotiated 2025-06-18, silently dropping the annotations gated on
+    // `>= 2025-06-18`. Same guard, both modes, rather than a documented
+    // difference.
+    const res = await POST(
+      makePostRequest([makeRpcRequest('initialize'), makeRpcRequest('tools/list', undefined, 2)])
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain('initialize must be the only request in the batch');
+    expect(handleMcpRequest).not.toHaveBeenCalled();
+  });
+
   it('answers GET with 405 and Allow: POST, not a broken SSE stream', async () => {
     const res = await GET(makeGetRequest());
 

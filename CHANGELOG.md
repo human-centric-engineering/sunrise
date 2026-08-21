@@ -421,7 +421,14 @@ release process.
   for the SSE stream or the three continuity methods, on one process — plus one
   smaller difference: it remembers the negotiated protocol version, so a client
   that omits `MCP-Protocol-Version` on later requests keeps its `2025-06-18`
-  tool annotations instead of falling back to `2024-11-05`. Choosing it on a platform that announces itself (`VERCEL`,
+  tool annotations instead of falling back to `2024-11-05`.
+  **Two operator-facing consequences of the default.** `Max sessions per key` in
+  the admin MCP settings has no effect — nothing creates a session, so there is
+  nothing to cap — and the admin Sessions page is always empty even while clients
+  are connected. Both surfaces now say so rather than reading as a broken setting
+  and an idle server. And note the startup guard fails the **whole app** build,
+  not just MCP: it sits at module scope in a file the MCP barrel re-exports, and
+  seven non-MCP admin routes reach that barrel transitively. Choosing it on a platform that announces itself (`VERCEL`,
   `AWS_LAMBDA_FUNCTION_NAME`) throws at startup with the fix in the message; that
   guard is a safety net, not a boundary — a multi-replica container deploy hits
   the same bug undetected (#609).

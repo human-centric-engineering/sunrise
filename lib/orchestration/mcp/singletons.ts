@@ -30,6 +30,15 @@ const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION
  * up in its own empty map and returns 404, and the client reports a connection
  * failure that "works on retry" purely by routing luck.
  *
+ * **This fails the whole app, not just MCP.** The throw is at module scope in a
+ * file the MCP barrel re-exports, and `resource-update-hooks.ts` pulls that
+ * barrel into seven non-MCP admin routes (agents, workflows, knowledge
+ * documents). So a misconfigured deploy fails at build — during Next's
+ * page-data collection — even if the MCP server is switched off in the database
+ * and no MCP traffic exists. That is the intent (a config that cannot work
+ * should not deploy), but it is a bigger blast radius than "the MCP endpoint
+ * degrades", so it is worth knowing before you reach for the flag.
+ *
  * **A safety net, not a boundary.** It only catches platforms that set a
  * well-known variable. A container deploy with `replicas: 2`, or a clustered
  * Node process, hits the identical bug and this will not fire — which is the

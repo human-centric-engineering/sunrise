@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { McpSessionsList } from '@/components/admin/orchestration/mcp/mcp-sessions-list';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
@@ -54,6 +55,26 @@ export default async function McpSessionsPage() {
           In-memory MCP sessions from connected clients. Sessions expire after inactivity.
         </p>
       </header>
+
+      {/*
+        Without this the page is actively misleading under the default session
+        mode: it renders an empty table while MCP traffic is flowing, which reads
+        as "nobody is connected" rather than "this deployment does not track
+        sessions". A server component, so it can read the server-only env
+        directly rather than plumbing the mode through the API.
+      */}
+      {env.MCP_SESSION_MODE === 'stateless' && (
+        <div className="border-muted-foreground/30 bg-muted/40 text-muted-foreground rounded-md border border-dashed p-4 text-sm">
+          <p className="text-foreground font-medium">This deployment does not track sessions.</p>
+          <p className="mt-1">
+            <code>MCP_SESSION_MODE=stateless</code> (the default) holds no session state, so this
+            list is always empty even while clients are connected — and{' '}
+            <strong>Max sessions per key has no effect</strong>. That is what makes MCP work where
+            more than one process serves traffic. Set <code>MCP_SESSION_MODE=stateful</code> on a
+            single long-running process to track sessions here.
+          </p>
+        </div>
+      )}
 
       <McpSessionsList initialSessions={sessions} />
     </div>
