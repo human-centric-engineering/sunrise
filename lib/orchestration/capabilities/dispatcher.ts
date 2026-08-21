@@ -23,7 +23,7 @@
 import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
-import { foldScopeIntoArgs } from '@/lib/orchestration/scope';
+import { assertScopeHeld, foldScopeIntoArgs } from '@/lib/orchestration/scope';
 import { createRateLimiter, type RateLimiter } from '@/lib/security/rate-limit';
 import { CostOperation } from '@/types/orchestration';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -555,6 +555,39 @@ class CapabilityDispatcher {
             };
           }
           throw err;
+        }
+
+        // 7a. Re-assert the scope on the args `execute` will actually receive.
+        //     Step 4b folds BEFORE validation, and validation is a Zod pipeline
+        //     that may transform — three built-ins wrap their schema in
+        //     `z.preprocess(unwrapApprovalPayload, …)`, which merges an
+        //     `approvalPayload` object over the top level. That silently
+        //     replaced a value the fold had just written, with no conflict
+        //     raised, because at fold time the key was absent. The fold
+        //     protects the args entering `validate`; only the args entering
+        //     `execute` matter, so the invariant is checked here too.
+        if (context.scope && Object.keys(context.scope).length > 0) {
+          const assertion = assertScopeHeld(validated, context.scope);
+          if (!assertion.held) {
+            const detail =
+              assertion.reason === 'conflict'
+                ? `outside its scope: ${assertion.keys.join(', ')}`
+                : 'with arguments its scope cannot be enforced on';
+            logger.warn('Capability dispatch: scope not held after validation', {
+              slug,
+              agentId: context.agentId,
+              reason: assertion.reason,
+              ...(assertion.reason === 'conflict' ? { keys: assertion.keys } : {}),
+            });
+            setSpanAttributes(span, { [SUNRISE_CAPABILITY_SUCCESS]: false });
+            return {
+              success: false,
+              error: {
+                code: assertion.reason === 'conflict' ? 'scope_conflict' : 'scope_unenforceable',
+                message: `Capability ${slug} was called ${detail}`,
+              },
+            };
+          }
         }
 
         // 8. Execute. Any unexpected throw is normalised to execution_error.

@@ -40,6 +40,23 @@ release process.
   is pure and exported. Inert for an unscoped caller, which is every vanilla
   Sunrise dispatch.
 
+  **The fold is only half the boundary, and the other half is step 7a.** Step 4b
+  runs before `handler.validate()`, and validation is a Zod *pipeline*, not a
+  filter: three shipped built-ins wrap their schema in
+  `z.preprocess(unwrapApprovalPayload, …)`, which merges an `approvalPayload`
+  object **over** the top level. A caller hiding `{ tenantId: 'B' }` there took
+  the fill-if-absent path — no conflict, because the top-level key was absent —
+  and the preprocess then replaced the value the fold had just written. So
+  `assertScopeHeld` re-checks on the **validated** args, the ones `execute`
+  receives, and is deliberately broader than the fold: it applies to every scope
+  key rather than only declared ones, which also covers a capability whose Zod
+  surface exceeds its published `functionDefinition` (core's own
+  `send_message_to_channel` accepts a `forceProvider` it does not declare) and
+  one whose schema supplies a `.default()`. It **fails closed** — validated args
+  that are not a plain object carry no readable invariant, so a scoped call to
+  such a capability is refused with the second new code,
+  `scope_unenforceable`, rather than waved through.
+
 - **`npm run check:missing-tests` — `/pre-pr` step 4f stops being prose.** Twelve
   of step 4's thirteen anti-pattern checks were prose, so every agent hand-rolled
   a scanner on every run — and a hand-rolled scanner's failure mode is *silence*,

@@ -112,6 +112,10 @@ function isAbsent(value: unknown): boolean {
 /**
  * Fold a caller's scope into a capability's arguments.
  *
+ * **This is half of the boundary.** It runs before `handler.validate()`, so it
+ * cannot see what a Zod transform does afterwards — {@link assertScopeHeld} is
+ * the other half and is the one that actually holds the line.
+ *
  * For each key in `scope`, **and only if the capability's own parameter schema
  * declares a property of that name**:
  *
@@ -126,10 +130,12 @@ function isAbsent(value: unknown): boolean {
  * Never mutates `rawArgs`. Returns it unchanged when nothing applies, so the
  * common case allocates nothing.
  *
- * **Args that are not a plain object pass straight through.** A scoped call
- * with `args: "hello"` cannot be folded, and inventing an object here would
- * turn a request the capability's own schema is about to reject into one it
- * accepts. It stays rejected, one step later, by `handler.validate`.
+ * **Args that are not a plain object pass straight through here.** A scoped
+ * call with `args: "hello"` cannot be folded, and inventing an object would
+ * turn a request the capability's own schema might reject into one it accepts.
+ * It is not waved through: {@link assertScopeHeld} refuses it after validation,
+ * because "the schema will probably reject it" is a guess and this is a
+ * boundary.
  *
  * **Comparison is strict and never coerces.** A `projectId` of `5` is not the
  * scope's `"5"`; coercing would let `{ toString: () => 'x' }` satisfy a tenant
@@ -180,4 +186,64 @@ export function foldScopeIntoArgs(
     });
   }
   return { ok: true, args, filled };
+}
+
+/** Why a validated call could not be allowed through. */
+export type ScopeAssertion =
+  | { held: true }
+  /** A scope key survived validation carrying a value that is not the scope's. */
+  | { held: false; reason: 'conflict'; keys: string[] }
+  /** Validated args are not a plain object, so the invariant cannot be read. */
+  | { held: false; reason: 'unenforceable' };
+
+/**
+ * Re-assert the scope on the args `execute()` will actually receive.
+ *
+ * **{@link foldScopeIntoArgs} alone is not a boundary**, and the first version
+ * of this feature shipped believing it was. The fold runs before
+ * `handler.validate()`, and validation is a Zod *pipeline*, not a filter — it
+ * may transform. Three shipped built-ins wrap their schema in
+ * `z.preprocess(unwrapApprovalPayload, …)`, which merges an `approvalPayload`
+ * object **over** the top level by design. So:
+ *
+ * ```
+ * scope   { tenantId: 'A' }
+ * args    { approvalPayload: { tenantId: 'B' } }      ← no top-level key
+ * fold  → { approvalPayload: {…}, tenantId: 'A' }     ← fill-if-absent, no conflict
+ * validate preprocess
+ *       → { approvalPayload: {…}, tenantId: 'B' }     ← execute() sees B
+ * ```
+ *
+ * No conflict was raised, because at fold time the top-level key was absent.
+ * The rule that was missing: **the fold protects the args entering `validate`,
+ * and the only thing that matters is the args entering `execute`.**
+ *
+ * So this check is deliberately **broader than the fold**. The fold fills only
+ * a key the capability declares — injecting an undeclared key would break a
+ * `.strict()` schema. Verification declares nothing off-limits: any key of the
+ * scope that survives validation must match, whether the capability declared it
+ * or not. That also covers a capability whose Zod surface exceeds its published
+ * `functionDefinition` (core's own `send_message_to_channel` accepts a
+ * `forceProvider` it does not declare), and one whose schema supplies a
+ * `.default()` for a key the fold therefore never filled.
+ *
+ * **Fails closed when it cannot look.** Validated args that are not a plain
+ * object — an array, a string, whatever a `z.union` or `.transform` produced —
+ * carry no readable invariant, so a scoped call to such a capability is
+ * refused rather than waved through. Core has no capability of that shape, so
+ * this costs nothing today; for a fork it is a loud, accurate error instead of
+ * a boundary that quietly is not one.
+ */
+export function assertScopeHeld(validated: unknown, scope: Record<string, string>): ScopeAssertion {
+  const keys = Object.keys(scope);
+  if (keys.length === 0) return { held: true };
+
+  if (!isPlainObject(validated)) return { held: false, reason: 'unenforceable' };
+
+  const conflicts = keys.filter(
+    (key) => Object.prototype.hasOwnProperty.call(validated, key) && validated[key] !== scope[key]
+  );
+  return conflicts.length > 0
+    ? { held: false, reason: 'conflict', keys: conflicts }
+    : { held: true };
 }

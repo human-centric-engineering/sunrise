@@ -141,9 +141,34 @@ Three properties worth knowing, each of which a naive implementation gets wrong:
 
 - **Declaration is tested with `hasOwnProperty`**, not `properties[key] !== undefined`. Every object literal inherits `toString`, `constructor` and friends, so the loose test folds a scope key named after one into _every_ tool in the system.
 - **Comparison is strict and never coerces.** A `projectId` of `5` is not the scope's `"5"`, and an object with a matching `toString()` is not a match either — coercing would let any caller satisfy a tenant check.
-- **Args that are not a plain object pass straight through.** A scoped call with `args: "hello"` cannot be folded, and inventing an object would turn a request the capability's schema is about to reject into one it accepts. It stays rejected, one step later, at step 7.
+- **Args that are not a plain object pass straight through the fold.** A scoped call with `args: "hello"` cannot be folded, and inventing an object would turn a request the capability's schema might reject into one it accepts. It is not waved through: step 7a refuses it, because "the schema will probably reject it" is a guess and this is a boundary.
 
 The rules live in [`lib/orchestration/scope.ts`](../../lib/orchestration/scope.ts) (`foldScopeIntoArgs`, pure) — the same module that owns the validate-on-read guard for the persisted columns.
+
+##### Why the fold alone is not the boundary (step 7a)
+
+Step 4b runs **before** `handler.validate()`, and validation is a Zod _pipeline_, not a filter — it may transform. Three shipped built-ins wrap their schema in `z.preprocess(unwrapApprovalPayload, …)`, which merges an `approvalPayload` object **over** the top level by design. So a caller can hide the value there:
+
+```
+scope   { tenantId: 'A' }
+args    { approvalPayload: { tenantId: 'B' } }    ← no top-level key
+fold  → { approvalPayload: {…}, tenantId: 'A' }   ← fill-if-absent; no conflict raised
+validate preprocess
+      → { approvalPayload: {…}, tenantId: 'B' }   ← execute() would see B
+```
+
+No conflict fired, because at fold time the top-level key was **absent** — the fill path, not the conflict path. The rule that was missing: _the fold protects the args entering `validate`; the only args that matter are the ones entering `execute`._
+
+So `assertScopeHeld` re-checks at step 7a, and is deliberately **broader than the fold**:
+
+|            | fold (4b)                                                    | assert (7a)                                                              |
+| ---------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Applies to | keys the capability **declares**                             | **every** scope key                                                      |
+| Why        | injecting an undeclared key would break a `.strict()` schema | a value that reached `execute` is a boundary breach however it got there |
+
+The broader check also covers a capability whose Zod surface exceeds its published `functionDefinition` — core's own `send_message_to_channel` accepts a `forceProvider` it does not declare — and one whose schema supplies a `.default()` for a key the fold therefore never filled.
+
+**It fails closed when it cannot look.** Validated args that are not a plain object carry no readable invariant, so a scoped call to such a capability is refused with `scope_unenforceable` rather than waved through. No core capability has that shape, so this costs nothing today; for a fork it is a loud, accurate error instead of a boundary that quietly is not one.
 
 **A `guard` cannot do this.** `CapabilityGuard` receives the context and never the args, so it can decide "may this key call this tool at all" but not "does this argument agree with the key's scope". The two are complementary.
 
@@ -272,7 +297,8 @@ The registry refuses to register a capability that declares `processesPii = true
    4b. **Scope fold** — when the caller populated `context.scope`, each scope key the capability **declares as a parameter** is folded into the args: filled if the caller omitted it, and refused with `{ code: 'scope_conflict' }` if the caller named a different value. Placed beside the guard, and for the guard's reason: a cross-scope call is an authorization failure, not a malformed request, so it must not spend the legitimate tenant's rate token. Inert unless a fork populated `scope`. See [Dispatch scope carrier](#dispatch-scope-carrier-capabilitycontextscope).
 5. **Rate limit** — effective limit = `binding.effectiveRateLimit ?? entry.rateLimit`. If non-null, a sliding-window `RateLimiter` keyed by slug (token = `agentId`) checks the request. Exceeded → `{ code: 'rate_limited' }`.
 6. **Approval gate** — `entry.requiresApproval: true` → `{ code: 'requires_approval', skipFollowup: true }`. The handler never runs. (The admin queue that resolves approvals is a later slice.)
-7. **Validate args** — `handler.validate(rawArgs)`. `CapabilityValidationError` → `{ code: 'invalid_args', message }`.
+7. **Validate args** — `handler.validate(dispatchArgs)`. `CapabilityValidationError` → `{ code: 'invalid_args', message }`.
+   7a. **Re-assert the scope** — when `context.scope` is populated, the invariant is checked again on the **validated** args, the ones `execute` is about to receive. A surviving scope key whose value is not the scope's → `{ code: 'scope_conflict' }`; validated args that are not a plain object → `{ code: 'scope_unenforceable' }`. See [The scope fold](#the-scope-fold-dispatch-step-4b) for why step 4b alone is not sufficient.
 8. **Execute** — `await handler.execute(validated, context)`. Any thrown error → `{ code: 'execution_error' }` and `logger.error`.
 9. **Log cost** — fire-and-forget `logCost({ operation: 'tool_call', model: 'n/a', provider: 'capability', inputTokens: 0, outputTokens: 0, metadata: { slug, success } })`. Not awaited: the LLM call that triggered the tool already logged its own tokens, and `logCost` returns `null` on DB failure. Capabilities that invoke their OWN LLMs internally (the `search_knowledge_base` embedding call, the rolling summariser, `run_workflow`'s child execution) issue their own `logCost` calls for that LLM spend. The chat handler's per-turn cap (improvement #39) only counts the chat-LLM rounds it sees — tool-internal LLM cost is logged to `AiCostLog` for audit but NOT counted against the per-turn cap. Documented in `.context/orchestration/chat.md`.
 10. **Return** the handler's result verbatim. One `logger.info('Capability dispatched', ...)` line with `latencyMs` rounds out each call.

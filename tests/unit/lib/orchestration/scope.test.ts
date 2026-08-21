@@ -25,7 +25,11 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
-import { foldScopeIntoArgs, resolvePersistedScope } from '@/lib/orchestration/scope';
+import {
+  assertScopeHeld,
+  foldScopeIntoArgs,
+  resolvePersistedScope,
+} from '@/lib/orchestration/scope';
 import { logger } from '@/lib/logging';
 
 describe('resolvePersistedScope', () => {
@@ -232,5 +236,68 @@ describe('foldScopeIntoArgs', () => {
   it('is a no-op for an empty scope', () => {
     const args = { query: 'hi' };
     expect(foldScopeIntoArgs(args, {}, parameters)).toEqual({ ok: true, args, filled: [] });
+  });
+});
+
+describe('assertScopeHeld', () => {
+  const scope = { tenantId: 'A' };
+
+  it('holds when the key survived validation unchanged', () => {
+    expect(assertScopeHeld({ tenantId: 'A', q: 'x' }, scope)).toEqual({ held: true });
+  });
+
+  it('holds when the key is absent after validation', () => {
+    // Validation dropped it, so `execute` never sees a tenant at all.
+    expect(assertScopeHeld({ q: 'x' }, scope)).toEqual({ held: true });
+  });
+
+  it('refuses a value a schema transform put back', () => {
+    // The bypass this exists for: the fold wrote 'A', a `z.preprocess` merged
+    // the caller's 'B' over it, and no conflict was raised at fold time
+    // because the top-level key had been absent.
+    expect(assertScopeHeld({ tenantId: 'B' }, scope)).toEqual({
+      held: false,
+      reason: 'conflict',
+      keys: ['tenantId'],
+    });
+  });
+
+  it('refuses a key the capability never declared', () => {
+    // Deliberately broader than the fold. A capability whose Zod surface
+    // exceeds its published `functionDefinition` — core's own
+    // `send_message_to_channel` accepts a `forceProvider` it does not declare —
+    // would otherwise pass an unguarded value straight to `execute`.
+    expect(assertScopeHeld({ tenantId: 'B' }, { tenantId: 'A' })).toEqual({
+      held: false,
+      reason: 'conflict',
+      keys: ['tenantId'],
+    });
+  });
+
+  it.each([
+    ['an array', [{ tenantId: 'B' }]],
+    ['a string', 'hello'],
+    ['null', null],
+  ])('fails closed on %s, which carries no readable invariant', (_label, validated) => {
+    expect(assertScopeHeld(validated, scope)).toEqual({ held: false, reason: 'unenforceable' });
+  });
+
+  it('does not coerce — a number that stringifies equal is still a conflict', () => {
+    // Same reasoning as the fold's comparison: coercing here would let a caller
+    // satisfy a tenant check with a value of the wrong type.
+    expect(assertScopeHeld({ tenantId: 5 }, { tenantId: '5' })).toEqual({
+      held: false,
+      reason: 'conflict',
+      keys: ['tenantId'],
+    });
+  });
+
+  it('holds for an unscoped caller whatever the args look like', () => {
+    // Vanilla Sunrise: no scope, so nothing to assert and nothing refused.
+    expect(assertScopeHeld('anything at all', {})).toEqual({ held: true });
+  });
+
+  it('does not treat an inherited property as a surviving key', () => {
+    expect(assertScopeHeld({ q: 'x' }, { toString: 'A' })).toEqual({ held: true });
   });
 });

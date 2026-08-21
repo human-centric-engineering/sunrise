@@ -49,6 +49,8 @@ const { logger } = await import('@/lib/logging');
 const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 const { BaseCapability } = await import('@/lib/orchestration/capabilities/base-capability');
+const { unwrapApprovalPayload } =
+  await import('@/lib/orchestration/capabilities/approval-payload-unwrap');
 const { CostOperation } = await import('@/types/orchestration');
 const { searchKnowledgeWithEmbedding } = await import('@/lib/orchestration/knowledge/search');
 const { SearchKnowledgeCapability } =
@@ -87,6 +89,45 @@ class ScopedCapability extends BaseCapability<{ projectId: string }, { projectId
 
   async execute(args: { projectId: string }) {
     return this.success({ projectId: args.projectId });
+  }
+}
+
+/**
+ * Declares `tenantId` AND wraps its schema in the same
+ * `z.preprocess(unwrapApprovalPayload, …)` three shipped built-ins use — which
+ * merges an `approvalPayload` object **over** the top level. This is the shape
+ * that made the fold alone insufficient: the caller hides the value there, the
+ * fold sees the top-level key absent and fills it, and the preprocess then
+ * replaces it. Reproduces the real bypass rather than modelling it.
+ */
+class TransformingScopedCapability extends BaseCapability<
+  { tenantId: string },
+  { tenantId: string }
+> {
+  readonly slug = 'transforming';
+  readonly functionDefinition = {
+    name: 'transforming',
+    description: '',
+    parameters: { type: 'object', properties: { tenantId: { type: 'string' } } },
+  };
+  protected readonly schema = z.preprocess(
+    unwrapApprovalPayload,
+    z.looseObject({ tenantId: z.string() })
+  ) as unknown as z.ZodType<{ tenantId: string }>;
+
+  async execute(args: { tenantId: string }) {
+    return this.success({ tenantId: args.tenantId });
+  }
+}
+
+/** Validates to a non-object, so a scoped call has no readable invariant. */
+class NonObjectCapability extends BaseCapability<string, { echoed: string }> {
+  readonly slug = 'non-object';
+  readonly functionDefinition = { name: 'non-object', description: '', parameters: {} };
+  protected readonly schema = z.string();
+
+  async execute(args: string) {
+    return this.success({ echoed: args });
   }
 }
 
@@ -1464,5 +1505,75 @@ describe('CapabilityDispatcher — scope fold (step 4b)', () => {
     expect(result).toEqual({ success: true, data: { doubled: 4 } });
     // Not widened: an undeclared key would break a `.strict()` schema.
     expect(executeSpy).toHaveBeenCalledWith({ n: 2 }, expect.anything());
+  });
+});
+
+describe('CapabilityDispatcher — scope re-asserted after validation (step 7a)', () => {
+  const transformingRow = () =>
+    makeCapabilityRow({
+      slug: 'transforming',
+      functionDefinition: {
+        name: 'transforming',
+        description: '',
+        parameters: { type: 'object', properties: { tenantId: { type: 'string' } } },
+      },
+    });
+
+  it('refuses a value a schema transform put back after the fold', async () => {
+    // The bypass: `approvalPayload` merges over the top level, so the caller's
+    // 'B' replaces the 'A' the fold wrote. No conflict fires at fold time
+    // because the top-level key was absent — that is the fill path.
+    const executeSpy = vi.spyOn(TransformingScopedCapability.prototype, 'execute');
+    capabilityDispatcher.register(new TransformingScopedCapability());
+    mockFindMany.mockResolvedValue([transformingRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'transforming',
+      { approvalPayload: { tenantId: 'B' } },
+      { ...ctx, scope: { tenantId: 'A' } }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('scope_conflict');
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('lets the same capability through when the payload agrees with the scope', async () => {
+    // Same path, one value changed — so the case above turns on the conflict
+    // and not on the transform merely being present.
+    capabilityDispatcher.register(new TransformingScopedCapability());
+    mockFindMany.mockResolvedValue([transformingRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'transforming',
+      { approvalPayload: { tenantId: 'A' } },
+      { ...ctx, scope: { tenantId: 'A' } }
+    );
+
+    expect(result).toEqual({ success: true, data: { tenantId: 'A' } });
+  });
+
+  it('fails closed when validated args carry no readable invariant', async () => {
+    const executeSpy = vi.spyOn(NonObjectCapability.prototype, 'execute');
+    capabilityDispatcher.register(new NonObjectCapability());
+    mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'non-object' })]);
+
+    const result = await capabilityDispatcher.dispatch('non-object', 'hello', {
+      ...ctx,
+      scope: { tenantId: 'A' },
+    });
+
+    expect(result.error?.code).toBe('scope_unenforceable');
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves the same capability alone for an unscoped caller', async () => {
+    // Vanilla Sunrise. Fail-closed must not mean fail-always.
+    capabilityDispatcher.register(new NonObjectCapability());
+    mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'non-object' })]);
+
+    const result = await capabilityDispatcher.dispatch('non-object', 'hello', ctx);
+
+    expect(result).toEqual({ success: true, data: { echoed: 'hello' } });
   });
 });
