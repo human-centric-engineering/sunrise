@@ -31,6 +31,8 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
+    "test:changed": "tsx scripts/ci/run-scoped-tests.ts",
+    "test:changed:coverage": "tsx scripts/ci/run-scoped-tests.ts --coverage",
     "test:ui": "vitest --ui",
     "test:ui:coverage": "vitest --ui --coverage",
     "email:dev": "node scripts/dev-server.mjs email-dev",

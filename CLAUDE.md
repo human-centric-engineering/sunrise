@@ -72,7 +72,9 @@ npm run db:reset               # Drop, re-migrate, re-seed from scratch
 npm run db:studio              # Open Prisma Studio
 
 # Testing
-npm run test                   # Run tests
+npm run test:changed           # Tests this branch affects + whole-tree guards (fast; what /pre-pr runs)
+npm run test:changed:coverage  # ...and gate coverage per changed file (≥80% each)
+npm run test                   # Full suite — for a merge from main, a release cut, or the whole picture
 npm run test:watch             # Watch mode
 npm run smoke:chat             # Smoke: streaming chat handler vs real dev DB
 

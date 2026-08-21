@@ -15,9 +15,56 @@ Run `npm run validate` (CHANGELOG structure + type-check + lint + format (Pretti
 
 `validate` runs the CHANGELOG check **first** and short-circuits on failure, so a structural problem in `CHANGELOG.md` will report as a failure with nothing after it — that is the check working, not the type-check being skipped. Fix it and re-run rather than working around it; the rules and their reasoning are in `scripts/ci/changelog-structure.ts`. Note the history rule needs `origin/main`, so run `git fetch origin main` first if the local ref is stale.
 
-Then run `npm run test:coverage`. This runs the full test suite and generates a coverage report at `coverage/coverage-summary.json`. Capture and report any test failures.
+Then run `npm run test:changed:coverage`. Capture and report any test failures.
+
+**This is a scoped run, not the full suite, and that is deliberate.** It runs
+the tests this branch can affect — vitest's own `--changed` selection against
+the merge base — plus the whole-tree invariants no module graph reaches
+(`ALWAYS_RUN_TESTS` in `scripts/ci/scoped-tests.ts`), and it gates coverage on
+**the changed source files, at 80% each**, rather than on the repo average. The
+question a pre-PR gate should answer is "is what I changed tested and passing",
+and a repo-wide average answers a different one: a branch can drop a new file in
+at 0% and still clear an 80% project total.
+
+Measured on this tree, on a 10-core machine, for a 20-file selection: **~5s
+wall when the machine is idle, ~23s with another suite competing.** Roughly half
+of that is the `vitest list` pre-pass that resolves the selection — it builds
+the module graph, and it is the part that suffers most under load (1.8s idle,
+~11s contended). Compare `npm run test:coverage`, whose own measured figure in
+`vitest.config.ts` is 254s of in-vitest time for a solo coverage run.
+
+Quote the wall-clock number, not vitest's `Duration` line — the latter excludes
+the pre-pass and tsx startup, and reporting it as the runtime overstated this by
+about 5x in an earlier draft of this file.
+
+What the scoped run does **not** do is prove the branch broke nothing elsewhere.
+It cannot: a test outside the changed files' import graph is not selected. CI's
+`test-full` job runs the whole suite, 4-way sharded, on every PR and every push
+to `main`, and that remains the backstop — on a fork that sets
+`CI_TEST_SCOPE=changed` it runs only after merge, which
+[`.context/testing/scoped-runs.md`](../../.context/testing/scoped-runs.md)
+explains and gives the one-line workflow fix for. Run `npm run test:coverage` yourself
+when you want the full picture locally — before a release cut, after a merge
+from `main` (scoped runs hide regressions in merged-in tests), or when the
+branch touches something central.
+
+Read the two lines the run prints before the vitest output:
+
+- **`tests selected N by module graph`** — if this is close to the whole suite, the branch
+  touched a hub module (`lib/env.ts` selects 518, `lib/logging/index.ts` 642)
+  and the scoped run is nearly a full one anyway. Nothing is wrong; it just
+  will not be fast.
+- **`Advisory: N test(s) read from the repo root…`** — tests that read the tree
+  but are not declared always-run. Not a failure. Look only if the branch added
+  a test that asserts something about the repository itself, in which case add
+  it to `ALWAYS_RUN_TESTS` with a reason.
 
 If either command fails, report the failures and stop. Do not proceed to the anti-pattern scan until automated checks pass.
+
+A run that reports it **could not** establish a base (`Could not run — no base
+revision available`) exits 1 and is not a pass. Do not work around it by running
+a bare `npx vitest run` — a scoped run against an unknown base selects a short
+file list, and a short file list is a quiet green.
 
 **Migration drift check (DB objects Prisma can't model).** Only if this branch touched `prisma/`:
 
@@ -133,18 +180,35 @@ If there are no TypeScript files and no documentation files, report "No changes 
 
 ### Step 3: Coverage analysis for changed files
 
-Parse `coverage/coverage-summary.json` (generated in Step 1) and filter it to only the TypeScript files identified in Step 2 (including test files this time — use the full list of changed `.ts`/`.tsx` files).
+**Step 1 already enforced this.** `npm run test:changed:coverage` scopes
+`--coverage.include` to the changed source files and applies the 80% floor
+**per file** (`thresholds.perFile`), so a file below the line fails the run
+rather than being averaged away. If Step 1 passed, every changed file is at or
+above 80% on all four metrics and there is nothing to re-derive here.
 
-The JSON file contains per-file entries keyed by absolute path, each with `lines`, `statements`, `branches`, and `functions` objects that have a `pct` field (percentage covered). The project thresholds are **80%** for all four metrics (defined in `vitest.config.ts`).
+What is left for this step is reading the report, not recomputing the verdict.
+Parse `coverage/coverage-summary.json` — now scoped to the changed files, not
+the whole repo — and record the per-file numbers in the Step 6 summary so the
+PR description carries them.
 
-For each changed file that appears in the coverage report:
+Two things the run itself surfaces, worth repeating in the summary:
 
-- Extract the `pct` value for lines, branches, functions, and statements
-- Flag any metric below the 80% threshold
+- **A changed file at 0%** is reported as 0%, not as absent. Scoping the include
+  list forces every changed source file into the report whether or not a test
+  touches it, which removes the old "no coverage data" category — that used to
+  be ambiguous between "no test exercises this" and "the reporter excluded it".
+- **Files `vitest.config.ts` excludes from coverage** (layouts, loading states,
+  error boundaries, `lib/env.ts`, `types/**`) never appear, because the config's
+  `exclude` still wins over a CLI `--coverage.include`. They are exempt by
+  design — do not flag them.
 
-Changed files that do **not** appear in the coverage report at all should be flagged separately as "no coverage data" — this typically means no test exercises that file. Files excluded from coverage in `vitest.config.ts` (layouts, loading states, error boundaries, type files, etc.) are exempt — do not flag these.
+If the run reported `no TypeScript sources changed — nothing to gate`, record
+"No coverable files changed" and move on.
 
-If no changed files have coverage data (e.g., all changes are in exempt files), report "No coverable files changed" and move on.
+> Historical note: this step used to parse a **whole-repo** coverage report and
+> filter it down, because Step 1 ran the full suite. That worked but answered
+> the wrong question — a project-wide 80% average clears comfortably while a new
+> file sits at 0%. The gate now lands on each changed file individually.
 
 ### Step 4: Scan for anti-patterns
 

@@ -47,10 +47,17 @@ npx prisma validate         # Validate schema syntax
 ## Testing
 
 ```bash
-npm run test             # Run tests with Vitest
-npm run test:watch       # Run tests in watch mode
-npm run test:coverage    # Run tests with coverage report
+npm run test:changed          # Tests this branch affects + whole-tree guards
+npm run test:changed:coverage # ...and gate coverage per changed file (≥80% each)
+npm run test                  # Full suite
+npm run test:watch            # Watch mode for development
+npm run test:coverage         # Full suite with a whole-repo coverage report
 ```
+
+The scoped pair is what `/pre-pr` runs; the full pair is for a merge from
+`main`, a release cut, or any time you want the whole picture. A scoped run
+cannot tell you the branch broke nothing elsewhere — CI's `test-full` job is the
+backstop. See [`testing/scoped-runs.md`](./testing/scoped-runs.md).
 
 ## Email
 

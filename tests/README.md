@@ -5,12 +5,18 @@ Quick reference for running tests. For comprehensive documentation, see [`.conte
 ## Commands
 
 ```bash
-npm test                 # Run all tests
-npm run test:watch       # Watch mode (recommended during development)
-npm run test:coverage    # Generate coverage report
-npm run test:ui          # Run with Vitest UI
-npm run validate         # all local gates (before committing)
+npm run test:changed          # Tests this branch affects + whole-tree guards
+npm run test:changed:coverage # ...and gate coverage per changed file (≥80% each)
+npm test                      # Full suite
+npm run test:watch            # Watch mode (recommended during development)
+npm run test:coverage         # Full suite with a whole-repo coverage report
+npm run test:ui               # Run with Vitest UI
+npm run validate              # all local gates (before committing)
 ```
+
+The scoped pair is the everyday one and what `/pre-pr` runs; reach for the full
+suite after merging `main`, before a release, or when you want the whole
+picture. See [`.context/testing/scoped-runs.md`](../.context/testing/scoped-runs.md).
 
 ## Directory Structure
 
