@@ -103,6 +103,14 @@ function the `initialize` path uses:
 | date-shaped, newer than our latest | **downgraded to our latest**, not floored           |
 | date-shaped, older and unknown     | oldest supported                                    |
 
+**A client that negotiated `2025-06-18` but omits the header on later requests
+gets `2024-11-05` semantics, and loses tool annotations it would have kept in
+stateful mode.** That is the correct reading — spec revision 2025-06-18 makes the
+header a MUST on every subsequent request, so a client that omits it is
+non-conforming, and there is no session here to remember what it agreed to. It
+also fails safe: MCP's defaults for an absent annotation are
+`destructiveHint: true` / `readOnlyHint: false`, the cautious assumption.
+
 The forward-dated row is the one that matters. A `2026-07-28` client understands
 strictly more than the server does; flooring it to `2024-11-05` would mean the
 newer the client, the worse it is treated — and `protocol-handler` gates tool

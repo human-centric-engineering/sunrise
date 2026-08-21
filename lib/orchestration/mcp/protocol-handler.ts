@@ -173,14 +173,14 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
 
     case 'resources/subscribe':
       requireInitialized(session);
-      requireDurableSession(session, 'resources/subscribe');
       requireScope(auth, McpScope.RESOURCES_READ);
+      requireDurableSession(session, 'resources/subscribe');
       return handleResourcesSubscribe(request.params, session);
 
     case 'resources/unsubscribe':
       requireInitialized(session);
-      requireDurableSession(session, 'resources/unsubscribe');
       requireScope(auth, McpScope.RESOURCES_READ);
+      requireDurableSession(session, 'resources/unsubscribe');
       return handleResourcesUnsubscribe(request.params, session);
 
     case 'logging/setLevel':
@@ -625,6 +625,14 @@ function requireInitialized(session: McpSession): void {
  * Named in the message so an operator reading a client's error knows which knob
  * produced it, and distinct from METHOD_NOT_FOUND because the method exists —
  * it is the topology that cannot carry it.
+ */
+/**
+ * Ordering note: this runs AFTER `requireScope` where a scope applies, so a key
+ * without permission gets the same denial in either session mode rather than
+ * being told which mode the server runs. The mode is not a secret — an
+ * authenticated caller can read it off the absent `Mcp-Session-Id` header — but
+ * mode-independent errors for an unauthorised key are the less surprising
+ * behaviour.
  */
 function requireDurableSession(session: McpSession, method: string): void {
   if (session.ephemeral) {

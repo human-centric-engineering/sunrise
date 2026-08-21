@@ -1214,6 +1214,58 @@ describe('an ephemeral session refuses what it cannot carry', () => {
   });
 });
 
+describe('an unauthorised key gets the same denial in either session mode', () => {
+  let serverState: McpServerState;
+  let rateLimiter: ReturnType<typeof makeRateLimiter>;
+
+  beforeEach(() => {
+    serverState = makeServerState();
+    rateLimiter = makeRateLimiter();
+  });
+
+  // Pins the ORDER of the two guards. `requireScope` runs first, so a key
+  // without permission is told it lacks permission rather than being told which
+  // session mode the server runs — and gets the identical error in both modes,
+  // which is the less surprising behaviour. Raised by /security-review as a
+  // sub-threshold observation; the reason it is fixed rather than noted is that
+  // `requireDurableSession`'s own docblock claims this ordering, and a comment
+  // asserting behaviour the code does not have is the defect class this
+  // codebase keeps finding.
+  it.each(['resources/subscribe', 'resources/unsubscribe'])(
+    '%s answers a scope failure, not STATELESS_UNSUPPORTED, on an ephemeral session',
+    async (method) => {
+      const auth = makeAuth({ scopes: [] });
+      const session = makeSession({ ephemeral: true });
+      const req = makeRequest({ id: 1, method, params: { uri: 'sunrise://agents' } });
+
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+
+      expect(result?.error?.code).not.toBe(JsonRpcErrorCode.STATELESS_UNSUPPORTED);
+      // `requireScope` throws INTERNAL_ERROR — asserting the message too,
+      // because that code is not scope-specific and would otherwise pass for
+      // any internal failure.
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+      expect(result?.error?.message).toContain('Insufficient scope');
+    }
+  );
+
+  it.each(['resources/subscribe', 'resources/unsubscribe'])(
+    '%s answers the SAME scope failure on a durable session',
+    async (method) => {
+      // The half that makes the assertion above mean something: the error is
+      // mode-independent, not merely different.
+      const auth = makeAuth({ scopes: [] });
+      const session = makeSession();
+      const req = makeRequest({ id: 1, method, params: { uri: 'sunrise://agents' } });
+
+      const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
+
+      expect(result?.error?.code).toBe(JsonRpcErrorCode.INTERNAL_ERROR);
+      expect(result?.error?.message).toContain('Insufficient scope');
+    }
+  );
+});
+
 describe('initialize advertises only what the session mode can honour', () => {
   let auth: McpAuthContext;
   let serverState: McpServerState;
