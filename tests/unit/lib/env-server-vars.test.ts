@@ -21,7 +21,7 @@
  * is what this file is for.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { env } from '@/lib/env';
 
 describe('server env vars are visible under the node environment', () => {
@@ -41,13 +41,43 @@ describe('MCP_SESSION_MODE', () => {
   });
 
   it('is a closed enum, so a typo fails validation rather than silently degrading', async () => {
-    const { z } = await import('zod');
-    const schema = z.enum(['stateless', 'stateful']).default('stateless');
+    // Through the REAL module. The first version of this built its own
+    // `z.enum([...])` locally and asserted on that — which tests zod, not
+    // `lib/env.ts`: loosening the real schema to `z.string()` left it green.
+    //
+    // The consequence of that gap is exactly #609 reappearing.
+    // `MCP_SESSION_MODE=statefull` would parse; `isStateless()` compares
+    // `=== 'stateless'` so the STATEFUL path runs, and the serverless guard
+    // compares `=== 'stateful'` so it never fires. Stateful sessions on Vercel
+    // with the guard silently disarmed.
+    const saved = process.env.MCP_SESSION_MODE;
+    try {
+      process.env.MCP_SESSION_MODE = 'statefull';
+      vi.resetModules();
+      await expect(import('@/lib/env')).rejects.toThrow(/Environment validation failed/);
+    } finally {
+      if (saved === undefined) delete process.env.MCP_SESSION_MODE;
+      else process.env.MCP_SESSION_MODE = saved;
+      vi.resetModules();
+    }
+  });
 
-    expect(schema.parse(undefined)).toBe('stateless');
-    expect(schema.parse('stateful')).toBe('stateful');
-    expect(() => schema.parse('statefull')).toThrow();
-    expect(() => schema.parse('')).toThrow();
+  it('accepts the two real values through the real module', async () => {
+    // The counterpart, or the rejection above would pass against a schema that
+    // rejects everything.
+    for (const mode of ['stateless', 'stateful']) {
+      const saved = process.env.MCP_SESSION_MODE;
+      try {
+        process.env.MCP_SESSION_MODE = mode;
+        vi.resetModules();
+        const { env: reloaded } = await import('@/lib/env');
+        expect(reloaded.MCP_SESSION_MODE).toBe(mode);
+      } finally {
+        if (saved === undefined) delete process.env.MCP_SESSION_MODE;
+        else process.env.MCP_SESSION_MODE = saved;
+        vi.resetModules();
+      }
+    }
   });
 });
 
@@ -56,6 +86,8 @@ describe('the sibling modes with the same blind spot', () => {
     // Named so this file is the place that notices if one of their defaults
     // moves, since no other test can currently see them at all.
     expect(env.TENANCY_MODE).toBe('single');
-    expect(env.CAPABILITY_BINDING_MODE).toBeDefined();
+    // `toBeDefined()` was here and pinned nothing — moving this default from
+    // `permissive` to `strict` left the file green.
+    expect(env.CAPABILITY_BINDING_MODE).toBe('permissive');
   });
 });

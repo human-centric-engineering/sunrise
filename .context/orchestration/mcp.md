@@ -74,11 +74,19 @@ tells a modern-only server to answer GET and DELETE with `405` and to ignore
 `Mcp-Session-Id` — which is what `stateless` already does, down to the status
 code. The features `stateful` restores are ones the protocol has removed or
 deprecated: `logging/setLevel` is gone, Logging is deprecated, and
-`resources/subscribe` is replaced by `subscriptions/listen`. Choose `stateful` to serve
-handshake-era clients — those on revisions before `2026-07-28` — on a single
-process, not to get more. (Note this is about which clients can CONNECT, not
-about which protocol versions the server speaks: it supports `2025-06-18` and
-`2024-11-05`, and downgrades anything newer.)
+`resources/subscribe` is replaced by `subscriptions/listen`.
+
+**Choose `stateful` only if you need the SSE stream or one of the three
+continuity methods, and you run exactly one process.** Nothing else is a reason.
+In particular it is _not_ needed to serve older clients — that gets it exactly
+backwards:
+
+| Client                                              | `stateless`                                                                                                               | `stateful`                                                                                |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `2024-11-05` / `2025-06-18` (sends `initialize`)    | connects — `initialize` is dispatched normally, it just gets no session id back, and per the transport it then sends none | connects                                                                                  |
+| `2026-07-28` (sends no `initialize`, no session id) | connects                                                                                                                  | **refused** — a request with no `Mcp-Session-Id` gets `400 Missing Mcp-Session-Id header` |
+
+So `stateless` serves every client `stateful` does, plus the ones it cannot.
 
 ### Choosing, and the guard
 
@@ -327,7 +335,7 @@ After creation, **`uri` and `resourceType` are immutable** — the registry rout
 
 ### Subscriptions
 
-MCP clients can call `resources/subscribe { uri }` to receive `notifications/resources/updated { uri }` whenever the underlying data changes. `resources/unsubscribe { uri }` removes the subscription. The server advertises `resources: { subscribe: true }` in `initialize` so clients know the methods are supported.
+MCP clients can call `resources/subscribe { uri }` to receive `notifications/resources/updated { uri }` whenever the underlying data changes. `resources/unsubscribe { uri }` removes the subscription. In `stateful` mode the server advertises `resources: { subscribe: true }` in `initialize` so clients know the methods are supported; under the default `stateless` mode it does not, and the methods refuse — see below.
 
 Limits and rules (enforced in the protocol handler / session manager):
 
@@ -504,6 +512,12 @@ Heuristic: if the server is expected to execute logic, call APIs, mutate state, 
 
 ## Session Management
 
+**Everything below applies to `MCP_SESSION_MODE=stateful` only.** Under the
+default (`stateless`) none of it happens: no session is created, no
+`Mcp-Session-Id` is issued, `maxSessionsPerKey` is never consulted, and there is
+nothing to evict or terminate. See
+[Session model](#session-model--mcp_session_mode).
+
 - In-memory `Map<string, McpSession>`, 1hr TTL
 - Created on `initialize`, identified by `Mcp-Session-Id` header
 - `maxSessionsPerKey` enforced per API key
@@ -526,7 +540,7 @@ Heuristic: if the server is expected to execute logic, call APIs, mutate state, 
 ## MCP Protocol Compliance
 
 - Transport: Streamable HTTP
-- Protocol versions: `2025-06-18` (latest) and `2024-11-05` (back-compat). Negotiated per session during `initialize`.
+- Protocol versions: `2025-06-18` (latest) and `2024-11-05` (back-compat). Negotiated during `initialize` in `stateful` mode; taken from the `MCP-Protocol-Version` header per request under the default `stateless` mode, since no session remembers a negotiation ([details](#protocol-version-without-a-session)).
 - Messages: JSON-RPC 2.0 (single and batch requests)
 - Capabilities advertised: `tools.listChanged`, `resources.listChanged`. `prompts.listChanged`, `resources.subscribe`, `logging`, and `completions` land in subsequent phases — the server never advertises a capability it cannot serve.
 - Resource templates: `resources/templates/list` advertises parameterized URI patterns
@@ -554,17 +568,18 @@ The negotiated version is stored on the session (`McpSession.protocolVersion`) a
 
 ### Error codes
 
-| Code   | Name              | Meaning                                                                                                  |
-| ------ | ----------------- | -------------------------------------------------------------------------------------------------------- |
-| -32700 | PARSE_ERROR       | Body is not valid JSON, or body exceeds the 1 MB size cap                                                |
-| -32600 | INVALID_REQUEST   | JSON-RPC envelope is malformed, batch is empty / too large, or `initialize` is mixed with other requests |
-| -32601 | METHOD_NOT_FOUND  | Unknown method                                                                                           |
-| -32602 | INVALID_PARAMS    | Method-specific param validation failed                                                                  |
-| -32603 | INTERNAL_ERROR    | Unhandled server error (no internals leaked)                                                             |
-| -32001 | UNAUTHORIZED      | Missing / invalid bearer token (paired with HTTP 401 + `WWW-Authenticate`)                               |
-| -32002 | SESSION_NOT_FOUND | Unknown / expired `Mcp-Session-Id`, or session belongs to a different key                                |
-| -32003 | SERVER_DISABLED   | Master `isEnabled` toggle is off                                                                         |
-| -32004 | RATE_LIMITED      | Per-key or global rate limit exceeded — client should back off and retry                                 |
+| Code   | Name                  | Meaning                                                                                                                                                                                                                |
+| ------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| -32700 | PARSE_ERROR           | Body is not valid JSON, or body exceeds the 1 MB size cap                                                                                                                                                              |
+| -32600 | INVALID_REQUEST       | JSON-RPC envelope is malformed, batch is empty / too large, or `initialize` is mixed with other requests                                                                                                               |
+| -32601 | METHOD_NOT_FOUND      | Unknown method                                                                                                                                                                                                         |
+| -32602 | INVALID_PARAMS        | Method-specific param validation failed                                                                                                                                                                                |
+| -32603 | INTERNAL_ERROR        | Unhandled server error (no internals leaked)                                                                                                                                                                           |
+| -32001 | UNAUTHORIZED          | Missing / invalid bearer token (paired with HTTP 401 + `WWW-Authenticate`)                                                                                                                                             |
+| -32002 | SESSION_NOT_FOUND     | Unknown / expired `Mcp-Session-Id`, or session belongs to a different key                                                                                                                                              |
+| -32003 | SERVER_DISABLED       | Master `isEnabled` toggle is off                                                                                                                                                                                       |
+| -32004 | RATE_LIMITED          | Per-key or global rate limit exceeded — client should back off and retry                                                                                                                                               |
+| -32005 | STATELESS_UNSUPPORTED | The method needs a session that outlives the request, and this server runs `MCP_SESSION_MODE=stateless`. Distinct from METHOD_NOT_FOUND: the method exists and is implemented, the deployment topology cannot carry it |
 
 ## Client Configuration
 

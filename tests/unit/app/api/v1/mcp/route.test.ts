@@ -821,6 +821,10 @@ describe('stateless mode', () => {
   it('issues no Mcp-Session-Id, so the client never sends one back', async () => {
     const res = await POST(makePostRequest(makeRpcRequest('tools/list')));
 
+    // The status assertion is load-bearing: in stateful mode this same request
+    // 400s, and an error response carries no session header either — so without
+    // it the test would pass in both modes for different reasons.
+    expect(res.status).toBe(200);
     // Per the Streamable HTTP transport a client sends the header only if the
     // server issued one. Withholding it is what makes the round trip work.
     expect(res.headers.get(MCP_SESSION_HEADER)).toBeNull();
@@ -862,6 +866,30 @@ describe('stateless mode', () => {
     expect(res.headers.get('Allow')).toBe('POST');
     const body = (await res.json()) as { error: { code: number } };
     expect(body.error.code).toBe(JsonRpcErrorCode.STATELESS_UNSUPPORTED);
+  });
+
+  it('still answers an UNAUTHENTICATED GET with 401, not 405', async () => {
+    // Pins the position of the stateless block inside GET. It sits after auth
+    // and after the server-enabled check deliberately, so the method is only
+    // unavailable to callers who would otherwise have been allowed it — but
+    // nothing tested that, and hoisting the block to the top of the handler
+    // passed the whole suite.
+    vi.mocked(authenticateMcpRequest).mockResolvedValue(null);
+
+    const res = await GET(makeGetRequest());
+
+    expect(res.status).toBe(401);
+  });
+
+  it('still answers GET with 503 when the MCP server is disabled', async () => {
+    vi.mocked(getMcpServerConfig).mockResolvedValue({
+      ...mockServerState,
+      isEnabled: false,
+    } as never);
+
+    const res = await GET(makeGetRequest());
+
+    expect(res.status).toBe(503);
   });
 
   it('answers DELETE with 405 but still audits what the key asked for', async () => {

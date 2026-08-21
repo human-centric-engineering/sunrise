@@ -625,14 +625,14 @@ function requireInitialized(session: McpSession): void {
  * Named in the message so an operator reading a client's error knows which knob
  * produced it, and distinct from METHOD_NOT_FOUND because the method exists —
  * it is the topology that cannot carry it.
- */
-/**
- * Ordering note: this runs AFTER `requireScope` where a scope applies, so a key
+ *
+ * **Ordering:** call this AFTER `requireScope` where a scope applies, so a key
  * without permission gets the same denial in either session mode rather than
  * being told which mode the server runs. The mode is not a secret — an
  * authenticated caller can read it off the absent `Mcp-Session-Id` header — but
  * mode-independent errors for an unauthorised key are the less surprising
- * behaviour.
+ * behaviour. Pinned by "an unauthorised key gets the same denial in either
+ * session mode" in the protocol-handler tests.
  */
 function requireDurableSession(session: McpSession, method: string): void {
   if (session.ephemeral) {
