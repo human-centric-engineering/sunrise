@@ -34,6 +34,93 @@ SSE push (notifications/{tools,resources,prompts}/list_changed,
           notifications/resources/updated, /message, /progress)
 ```
 
+## Session model — `MCP_SESSION_MODE`
+
+**`stateless` is the default, and is the only mode that is correct where more
+than one process serves traffic.**
+
+|                                                                    | `stateless` (default)                          | `stateful`                      |
+| ------------------------------------------------------------------ | ---------------------------------------------- | ------------------------------- |
+| Holds                                                              | nothing                                        | an in-memory `Map`, per process |
+| Correct on                                                         | any topology                                   | one long-running process only   |
+| Issues `Mcp-Session-Id`                                            | no                                             | yes                             |
+| `GET` (SSE stream)                                                 | `405` + `Allow: POST`                          | SSE stream                      |
+| `DELETE`                                                           | `405` (still audited)                          | `204` / `404`                   |
+| `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel` | refuse with `STATELESS_UNSUPPORTED` (`-32005`) | work                            |
+
+### The bug this exists for
+
+`initialize` mints a session on instance A and returns its id. The client's next
+call is load-balanced to instance B, which looks that id up in its **own** empty
+map and returns `404 Session not found or expired`. Observed in production on
+Vercel: one session id, one instant, three instances, two 404s and a 200. It is
+worst immediately after a deploy, when several fresh instances exist, and "works
+on retry" purely by routing luck.
+
+**No client retry recovers this.** The session is not lost — it is invisible to
+live siblings — so re-initialising repeats the race.
+
+In stateless mode the server issues no session id, and per the Streamable HTTP
+transport a client sends `Mcp-Session-Id` only if the server gave it one. There
+is nothing to look up and nothing to fail to find. A stale id from a previous
+stateful deploy is ignored rather than rejected.
+
+### `stateful` is a legacy-compatibility mode
+
+Not "the full-featured one". MCP revision
+[`2026-07-28`](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+removes protocol-level sessions and the `initialize` handshake outright, and
+tells a modern-only server to answer GET and DELETE with `405` and to ignore
+`Mcp-Session-Id` — which is what `stateless` already does, down to the status
+code. The features `stateful` restores are ones the protocol has removed or
+deprecated: `logging/setLevel` is gone, Logging is deprecated, and
+`resources/subscribe` is replaced by `subscriptions/listen`. Choose `stateful`
+to serve `≤2025-11-25` clients on a single process, not to get more.
+
+### Choosing, and the guard
+
+Selecting `stateful` on a platform that announces itself (`VERCEL`,
+`AWS_LAMBDA_FUNCTION_NAME`) **throws at startup** with the fix in the message,
+mirroring the `TENANCY_MODE` guard in `lib/db/client.ts`. That is a safety net,
+not a boundary: a container deploy with `replicas: 2`, or a clustered Node
+process, hits the identical bug and the guard will not fire. Which is the other
+half of why the default is `stateless` rather than a documented opt-in.
+
+### Protocol version without a session
+
+With no session remembering what `initialize` negotiated, the version comes from
+the client's `MCP-Protocol-Version` header (sent from spec revision 2025-06-18
+onward). The route delegates to `negotiateMcpProtocolVersion`, which is the same
+function the `initialize` path uses:
+
+| Header                             | Result                                              |
+| ---------------------------------- | --------------------------------------------------- |
+| missing / malformed                | oldest supported (`2024-11-05`) — most conservative |
+| a version we support               | itself                                              |
+| date-shaped, newer than our latest | **downgraded to our latest**, not floored           |
+| date-shaped, older and unknown     | oldest supported                                    |
+
+The forward-dated row is the one that matters. A `2026-07-28` client understands
+strictly more than the server does; flooring it to `2024-11-05` would mean the
+newer the client, the worse it is treated — and `protocol-handler` gates tool
+annotations on `>= 2025-06-18`, so the newest clients would silently lose them on
+the default path. Do not re-derive this rule at a call site; delegate to the
+function that already draws the distinction.
+
+### What `initialize` advertises
+
+Refusing the three continuity methods is the backstop; **not advertising them is
+the fix**, because a conforming client then never asks. In stateless mode
+`tools`, `resources` and `prompts` are advertised as `{}` (no `listChanged`, no
+`subscribe`) and `logging` is dropped entirely — `logging: {}` _is_ the signal
+that `logging/setLevel` works, so emptying it would still advertise it.
+`completions` is advertised in both modes; `completion/complete` is a plain
+request/response lookup that needs no continuity.
+
+Progress tokens are the deliberate exception: accepted and never delivered.
+Refusing an entire `tools/call` over an optional `_meta.progressToken` hint would
+break work that otherwise succeeds, and the spec makes progress a MAY.
+
 ## Key Files
 
 | Area          | Files                                                                                                             |
@@ -251,7 +338,9 @@ What fires an updated notification:
 
 The wiring lives in `lib/orchestration/mcp/resource-update-hooks.ts` as named helpers (`notifyMcpAgentsChanged`, `notifyMcpWorkflowsChanged`, `notifyMcpKnowledgeChanged`). Mutation routes import the named helper rather than hard-coding the URI string — one place to change if a resource URI ever moves.
 
-**Known limit — multi-process deploys:** the subscription map is per-Node.js-process, so a mutation on instance A doesn't notify subs on instance B. Acceptable for the common single-instance deploy; horizontally-scaled production would need a Redis pub/sub layer (captured as a future improvement).
+**Subscriptions need `MCP_SESSION_MODE=stateful`** — under the default they are refused with `STATELESS_UNSUPPORTED` (`-32005`) and `initialize` does not advertise `subscribe`, so a conforming client never asks. That is deliberate: a subscription that returns success and never notifies is indistinguishable, from the client's side, from a resource that never changes.
+
+**And even in `stateful`, the subscription map is per-Node.js-process**, so a mutation on instance A doesn't notify subs on instance B — which is the same defect as the session map, and why `stateful` is confined to a single long-running process.
 
 ## Progress notifications
 
