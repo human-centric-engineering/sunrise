@@ -18,6 +18,25 @@ release process.
 
 ### Added
 
+- **`npm run check:missing-tests` — `/pre-pr` step 4f stops being prose.** Twelve
+  of step 4's thirteen anti-pattern checks were prose, so every agent hand-rolled
+  a scanner on every run — and a hand-rolled scanner's failure mode is *silence*,
+  which is indistinguishable from a pass. The instance that prompted this used
+  `compgen` (a bash builtin) in a zsh agent shell: the loop printed nothing and
+  was nearly banked as a clean tree. 4f is now a tested script, and it answers in
+  **three** verdicts rather than two: `covered`, `missing`, and — the one a
+  mirror-path check gets wrong — `referenced only`, for a module no mirrored test
+  covers but some test names. 339 files in this repo have no mirrored test and
+  228 of those are named by a test anyway (aspect-named suites, enumerating
+  tests, route tests a directory up), so a two-answer check is wrong about all
+  228 in one direction or the other. Exemptions are decided by the TypeScript
+  compiler where a filename cannot decide them — 14 `index.ts` files here carry
+  their own code, and exempting every barrel by name hides 9 that have no test.
+  It **reports and never gates on a finding**; exit `1` means only that it could
+  not run, and it runs a sentinel through the classifier before every real scan,
+  so a clean result is never printed by a scanner that cannot report a dirty one
+  (#641).
+
 - **`npm run check:changelog-drift` — a CHANGELOG bullet that a later commit
   made untrue.** `/pre-pr` step 5d asks whether a public-surface change is
   *missing* an entry and stops there; in a multi-round PR the likelier failure

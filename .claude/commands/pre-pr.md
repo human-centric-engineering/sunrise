@@ -148,7 +148,34 @@ If no changed files have coverage data (e.g., all changes are in exempt files), 
 
 ### Step 4: Scan for anti-patterns
 
-Read each changed file and check for these project-specific anti-patterns:
+Two of these thirteen checks ship an executable scanner — **4f** and **4m**. The
+other eleven are prose, which means _you_ write the scanner, here, now, in
+whatever shell you happen to have. Three rules before you do. Each one exists
+because it has already cost this project a false CLEAN.
+
+**Prove the scan can report before you trust a clean result.** Append a
+known-bad sentinel — a fake filename, a line containing the very pattern you are
+grepping for — and confirm the scan flags it. Then take it out and run for real.
+A scan that cannot demonstrate it _would_ report a hit is not evidence of
+anything, because "printed nothing" and "passed" are the same output.
+
+**Never write `|| echo CLEAN`.** It is the obvious way to produce step 6's
+output token, and it collapses the two answers that must never be collapsed:
+`grep` exits **1** when it ran and found nothing, and **2** when it could not run
+— unreadable file list, bad pattern, unset variable, wrong shell. Read the exit
+code, and report a failure to run as a failure. A check that errors loudly is
+strictly better than one that passes quietly.
+
+**Assume nothing about the shell.** The agent shell is zsh on macOS and bash on
+CI, and they differ exactly where it hurts: `compgen` is a bash builtin, and a
+`compgen -G` loop under zsh printed nothing and was very nearly banked as a clean
+tree — that instance is what opened #641. `shopt`, arrays and `[[ ]]` vary too.
+This is why **4m is Python** and 4f is a Node script: neither is at the mercy of
+which shell started. If you find yourself debugging shell quoting, stop and
+rewrite it in Python. And if the check is worth keeping, it belongs in
+`scripts/ci/` with tests, not inlined here.
+
+Then, for each changed file, check for these project-specific anti-patterns:
 
 **4a. Unsafe type assertions on structured data**
 Flag `as` casts on Prisma JSON fields, API response bodies, or environment variables that are NOT accompanied by a Zod `.parse()` / `.safeParse()` or a type guard function within 5 lines. Legitimate casts (e.g., `as Record<string, unknown>` followed by a Zod parse) are fine.
@@ -166,7 +193,42 @@ Flag `console.log`, `console.warn`, `console.error`, or `console.info` in change
 For any new `page.tsx` files added under `app/`, check that the same route segment has an `error.tsx` and `loading.tsx`. Flag missing boundaries. Route groups that share a parent `error.tsx`/`loading.tsx` are fine — check parent directories.
 
 **4f. Changed code files missing tests**
-For any TypeScript files added OR modified on this branch (identified via `git diff --name-status $BASE...HEAD` — `A` or `M` status entries), check whether a corresponding test file exists. The project mirrors source paths under `tests/unit/` and `tests/integration/` with a `.test.ts` or `.test.tsx` suffix (e.g., `lib/security/rate-limit.ts` → `tests/unit/lib/security/rate-limit.test.ts`; `app/api/v1/users/route.ts` → `tests/integration/api/v1/users/...`). Flag changed files that have no corresponding test. Also accept co-located parent-directory tests for route files under dynamic segments (e.g., tests for `app/api/v1/foo/[id]/route.ts` may live in `tests/unit/app/api/v1/foo/route.test.ts`). A modified source file with no corresponding test is the same completeness gap as a newly added one — flag both. Exempt from this check: type declaration files (`*.d.ts`), configuration files, `loading.tsx`, `error.tsx`, `layout.tsx`, and barrel/index files that only re-export.
+
+```bash
+npm run check:missing-tests -- --base "$BASE"
+```
+
+Every file the branch added or modified, against the test tree. **Read the exit
+code**: `0` means it ran (findings or not), `1` means it could not run and has no
+opinion about this branch — no base revision, git failed, or it could not see
+`tests/` at all. There is no path that prints a clean result without having
+first proved, on synthetic input, that it can print a dirty one.
+
+It **reports; it never gates on a finding.** A page can legitimately have no
+test and you are the one who can say so. Three verdicts, and the middle one is
+the point:
+
+- **missing** — no test file, and no test mentions the module. The strong
+  finding; treat it as a gap until you have a reason.
+- **referenced only** — no mirrored test, but some test names the module.
+  Weaker on purpose. Open the named test and decide whether it exercises the
+  module or merely mocks it as somebody else's dependency. 228 files in this
+  repo are in this state, so rounding them all up or all down is wrong in
+  opposite directions.
+- **covered** — a test sits where one is expected (mirror path, an aspect-named
+  sibling, or the collapsed parent of a dynamic route).
+
+Add `--verbose` to see why each file landed where it did, including what was
+exempted and why — that is the first thing to reach for if a verdict surprises
+you. The exemptions (`*.d.ts`, root tool configs, App Router boundary files,
+pure barrels, modules that declare no runtime value) and the reasons this list
+deliberately differs from `vitest.config.ts`'s coverage exclusions live in
+[`scripts/ci/missing-tests.ts`](../../scripts/ci/missing-tests.ts). Do not
+re-derive them here; a test fails if the two drift apart.
+
+Note it reads **committed** work (`$BASE...HEAD`), matching step 2, and says so
+when uncommitted `.ts` files were left out. Test files are read from the working
+tree, so a test you have just written does count.
 
 **4g. Direct data imports bypassing the API**
 Flag non-type imports in pages, layouts, and components that pull data or constants from `lib/` modules when that data is seeded into the database and should be fetched via the API. The key indicator is importing runtime values (not just types) from modules whose data is also available through an API endpoint or is seeded into the database — e.g., importing `BUILTIN_WORKFLOW_TEMPLATES` from `@/lib/orchestration/workflows/templates` instead of fetching templates from the API. Type-only imports (`import type { ... }`) are fine — the concern is runtime coupling to data that should come through the API boundary. This enforces the same API-first separation as 4l below: components should fetch data from the API, not import it directly from server-side modules.
@@ -373,7 +435,7 @@ Output a clear summary in this format:
 - [ ] Duplicated auth checks: {count found or CLEAN}
 - [ ] Console usage: {count found or CLEAN}
 - [ ] Missing error/loading boundaries: {count found or CLEAN}
-- [ ] Changed files missing tests: {count found or CLEAN}
+- [ ] Changed files missing tests: {`npm run check:missing-tests` verdict — "N missing, M referenced-only", CLEAN, or COULD NOT RUN (exit 1, say why)}
 - [ ] Direct data imports bypassing API: {count found or CLEAN}
 - [ ] N+1 client-side fetches: {count found or CLEAN}
 - [ ] Relative imports: {count found or CLEAN}

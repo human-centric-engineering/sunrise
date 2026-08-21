@@ -1,0 +1,306 @@
+/**
+ * Tests for the step 4f CLI.
+ *
+ * The rules live in `missing-tests.test.ts`; this covers the wiring, and one
+ * property that is the entire reason #641 exists:
+ *
+ * > **No path that fails to look prints a clean result.**
+ *
+ * A hand-rolled version of this check printed nothing when it could not run,
+ * and nothing is indistinguishable from a pass. So every way this CLI can fail
+ * to see — no base, git erroring, an empty test tree, a broken classifier —
+ * is asserted to exit non-zero *and* to keep the word CLEAN off stdout.
+ *
+ * @see scripts/ci/check-missing-tests.ts
+ */
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const mockExecFileSync = vi.fn();
+vi.mock('node:child_process', () => ({
+  execFileSync: mockExecFileSync,
+  default: { execFileSync: mockExecFileSync },
+}));
+
+const mockSelfTestFailure = vi.fn<() => string | null>(() => null);
+vi.mock('@/scripts/ci/missing-tests', async () => {
+  const actual = await vi.importActual<typeof import('@/scripts/ci/missing-tests')>(
+    '@/scripts/ci/missing-tests'
+  );
+  return { ...actual, selfTestFailure: () => mockSelfTestFailure() };
+});
+
+const { main, parseBaseRef, parseNameStatus, listTestFiles, makeReferenceFinder, formatReport } =
+  await import('@/scripts/ci/check-missing-tests');
+
+/** Answers `git` calls by matching the subcommand, so order does not matter. */
+function gitReturns(responses: Record<string, string | Error>): void {
+  mockExecFileSync.mockImplementation((_bin: string, args: string[]) => {
+    for (const [key, value] of Object.entries(responses)) {
+      if (args.join(' ').includes(key)) {
+        if (value instanceof Error) throw value;
+        return value;
+      }
+    }
+    return '';
+  });
+}
+
+describe('scripts/ci/check-missing-tests', () => {
+  let dir: string;
+  let logs: string[];
+  let errors: string[];
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'sunrise-4f-test-'));
+    logs = [];
+    errors = [];
+    mockSelfTestFailure.mockReturnValue(null);
+    mockExecFileSync.mockReset();
+    vi.spyOn(console, 'log').mockImplementation((...parts: unknown[]) => {
+      logs.push(parts.join(' '));
+    });
+    vi.spyOn(console, 'error').mockImplementation((...parts: unknown[]) => {
+      errors.push(parts.join(' '));
+    });
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  /** Writes a file under the temp repo, creating parents. */
+  function write(relative: string, contents = '// x\n'): void {
+    const full = join(dir, relative);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, contents);
+  }
+
+  describe('parseBaseRef', () => {
+    it.each([
+      [['--base', 'main'], { present: true, ref: 'main' }],
+      [['--base=main'], { present: true, ref: 'main' }],
+      [['--base'], { present: true, ref: '' }],
+      [[], { present: false, ref: '' }],
+    ])('parses %j', (argv, expected) => {
+      expect(parseBaseRef(argv)).toEqual(expected);
+    });
+  });
+
+  describe('parseNameStatus', () => {
+    it('keeps added and modified TypeScript files', () => {
+      expect(parseNameStatus('A\tlib/a.ts\nM\tapp/b.tsx\n')).toEqual([
+        { path: 'lib/a.ts', status: 'A' },
+        { path: 'app/b.tsx', status: 'M' },
+      ]);
+    });
+
+    it('takes the destination of a rename, which is the file needing a test', () => {
+      expect(parseNameStatus('R100\tlib/old.ts\tlib/new.ts\n')).toEqual([
+        { path: 'lib/new.ts', status: 'R' },
+      ]);
+    });
+
+    it('drops deletions', () => {
+      // A deleted file cannot be missing a test, and reporting one sends the
+      // reader to write a test for a path that no longer exists.
+      expect(parseNameStatus('D\tlib/gone.ts\n')).toEqual([]);
+    });
+
+    it.each(['M\tREADME.md', 'M\tprisma/schema/app.prisma', 'M\tpackage.json'])(
+      'drops the non-TypeScript path in %j',
+      (line) => {
+        expect(parseNameStatus(`${line}\n`)).toEqual([]);
+      }
+    );
+
+    it('ignores blank lines rather than emitting an empty path', () => {
+      expect(parseNameStatus('\n\nA\tlib/a.ts\n\n')).toHaveLength(1);
+    });
+  });
+
+  describe('listTestFiles', () => {
+    it('finds both suffixes at any depth and ignores everything else', () => {
+      write('tests/unit/lib/a.test.ts');
+      write('tests/unit/components/b.test.tsx');
+      write('tests/helpers/factory.ts');
+      write('tests/README.md');
+      expect(listTestFiles(dir)).toEqual([
+        'tests/unit/components/b.test.tsx',
+        'tests/unit/lib/a.test.ts',
+      ]);
+    });
+
+    it('returns empty — not a throw — when there is no tests directory', () => {
+      // `main` turns this into a loud failure; the lister itself must not
+      // explode, or the loud failure never gets a chance to print.
+      expect(listTestFiles(dir)).toEqual([]);
+    });
+  });
+
+  describe('makeReferenceFinder', () => {
+    const sources: Record<string, string> = {
+      'tests/unit/a.test.ts': `import { escapeHtml } from '@/lib/security';`,
+      'tests/unit/b.test.ts': `import { sanitizeUrl } from '@/lib/security/sanitize';`,
+    };
+    const read = (path: string): string | null => sources[path] ?? null;
+    const files = Object.keys(sources);
+
+    it('matches the exact specifier', () => {
+      expect(makeReferenceFinder(files, read)(['@/lib/security'])).toEqual([
+        'tests/unit/a.test.ts',
+      ]);
+    });
+
+    it('does not let a barrel claim every module beneath it', () => {
+      // Without the lookahead, `@/lib/security` matches
+      // `@/lib/security/sanitize` and the barrel absorbs its whole subtree.
+      expect(makeReferenceFinder(files, read)(['@/lib/security'])).not.toContain(
+        'tests/unit/b.test.ts'
+      );
+    });
+
+    it('reads nothing until it is asked a question', () => {
+      const reader = vi.fn(read);
+      const find = makeReferenceFinder(files, reader);
+      expect(reader).not.toHaveBeenCalled();
+      find(['@/lib/security']);
+      expect(reader).toHaveBeenCalled();
+    });
+  });
+
+  describe('formatReport', () => {
+    it('says CLEAN only when nothing was found', () => {
+      const lines = formatReport([
+        { path: 'lib/a.ts', outcome: { kind: 'covered', testPath: 't.test.ts', via: 'mirror' } },
+      ]);
+      expect(lines.at(-1)).toContain('CLEAN');
+    });
+
+    it('never says CLEAN when something was referenced-only', () => {
+      // The tier that is easiest to round down to a pass.
+      const lines = formatReport([
+        { path: 'lib/a.ts', outcome: { kind: 'referenced', referencedBy: ['t.test.ts'] } },
+      ]);
+      expect(lines.join('\n')).not.toContain('CLEAN');
+      expect(lines.at(-1)).toContain('1 referenced-only');
+    });
+
+    it('distinguishes "everything was exempt" from CLEAN', () => {
+      // Nothing was examined, so there is nothing to be clean about.
+      const lines = formatReport([
+        { path: 'tests/unit/a.test.ts', outcome: { kind: 'exempt', reason: 'is a test' } },
+      ]);
+      expect(lines.join('\n')).not.toContain('CLEAN');
+      expect(lines.at(-1)).toContain('no files in scope');
+    });
+
+    it('names the expected path for a missing file', () => {
+      const lines = formatReport([
+        { path: 'lib/a.ts', outcome: { kind: 'missing', expected: ['tests/unit/lib/a.test.ts'] } },
+      ]);
+      expect(lines.join('\n')).toContain('tests/unit/lib/a.test.ts');
+      expect(lines.at(-1)).toContain('1 missing');
+    });
+  });
+
+  describe('main — the paths that must not print a clean result', () => {
+    it('refuses to run at all when the self-test fails', () => {
+      mockSelfTestFailure.mockReturnValue('sentinel file was not reported');
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'A\tlib/a.ts\n' });
+      write('tests/unit/lib/other.test.ts');
+
+      expect(main([])).toBe(1);
+      expect(logs.join('\n')).not.toContain('CLEAN');
+      expect(errors.join('\n')).toContain('sentinel file was not reported');
+    });
+
+    it('fails when there is no base revision', () => {
+      gitReturns({ 'merge-base': new Error('no upstream') });
+      expect(main([])).toBe(1);
+      expect(logs).toEqual([]);
+      expect(errors.join('\n')).toContain('no base revision');
+    });
+
+    it('fails when git cannot list the diff', () => {
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': new Error('bad revision') });
+      write('tests/unit/lib/a.test.ts');
+      expect(main([])).toBe(1);
+      expect(logs.join('\n')).not.toContain('CLEAN');
+    });
+
+    it('fails when it can see no test files at all', () => {
+      // The shape that matters most: with an empty index every file reads as
+      // missing, so silently continuing would produce a confident, wrong report.
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'A\tlib/a.ts\n' });
+      expect(main([])).toBe(1);
+      expect(errors.join('\n')).toContain('no test files');
+      expect(logs.join('\n')).not.toContain('CLEAN');
+    });
+
+    it.each([
+      [['--base', ''], 'empty value'],
+      [['--base', '--output=/tmp/x'], 'not an option'],
+    ])('rejects %j', (argv, message) => {
+      expect(main(argv)).toBe(1);
+      expect(errors.join('\n')).toContain(message);
+    });
+  });
+
+  describe('main — a run that could look', () => {
+    beforeEach(() => {
+      write('tests/unit/lib/covered.test.ts');
+    });
+
+    it('reports a changed file with no test and still exits 0', () => {
+      // Findings are a judgement for the reader, not a gate. Exit codes here
+      // mean only "could this check run".
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'A\tlib/orphan.ts\n' });
+      write('lib/orphan.ts', 'export const x = 1;\n');
+
+      expect(main([])).toBe(0);
+      expect(logs.join('\n')).toContain('lib/orphan.ts');
+      expect(logs.join('\n')).toContain('1 missing');
+    });
+
+    it('is clean when the mirrored test exists', () => {
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'M\tlib/covered.ts\n' });
+      write('lib/covered.ts', 'export const x = 1;\n');
+
+      expect(main([])).toBe(0);
+      expect(logs.join('\n')).toContain('CLEAN');
+    });
+
+    it('says so when nothing TypeScript changed', () => {
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'M\tREADME.md\n' });
+      expect(main([])).toBe(0);
+      expect(logs.join('\n')).toContain('no TypeScript files');
+      expect(logs.join('\n')).not.toContain('CLEAN');
+    });
+
+    it('warns that uncommitted files were not scanned', () => {
+      // The scan reads `base...HEAD`, so work in progress is invisible — which
+      // is the state you are most likely in when running a pre-PR check.
+      gitReturns({
+        'merge-base': 'abc123\n',
+        'name-status': 'M\tlib/covered.ts\n',
+        'status --porcelain': '?? lib/brand-new.ts\n M lib/other.ts\n',
+      });
+      write('lib/covered.ts', 'export const x = 1;\n');
+
+      expect(main([])).toBe(0);
+      expect(logs.join('\n')).toContain('2 uncommitted');
+    });
+
+    it('--self-test reports without touching git', () => {
+      expect(main(['--self-test'])).toBe(0);
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+    });
+  });
+});

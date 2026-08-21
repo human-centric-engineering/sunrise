@@ -116,6 +116,26 @@ tests/
     └── mocks.ts             # Mock type factories
 ```
 
+### The mirror is a convention, and three other shapes are legitimate
+
+**Decision**: `npm run check:missing-tests` (run by `/pre-pr` step 4f) treats a
+test as covering a source file if it sits at the mirrored path, at the mirrored
+path with `app/` stripped (`tests/integration/api/v1/users/route.test.ts`), at
+the dynamic-segment parent (`app/api/v1/foo/[id]/route.ts` →
+`tests/unit/app/api/v1/foo/route.test.ts`), or as an **aspect-named sibling** —
+`config-signup-mode.test.ts` for `lib/auth/config.ts`.
+
+**Rationale**: mirroring is the rule you should follow when writing a new
+test, and it is how 776 of this repo's source files are matched to one. But splitting a large module's suite by
+aspect is a real and useful pattern — `lib/auth/config.ts` has seven — and a
+check that only understood the mirror would call every one of those modules
+untested. The scanner reports a module that no test file covers _and_ no test
+file even names as `missing`, and one that a test names but does not mirror as
+`referenced only`, which is a prompt to look rather than a verdict. Its rules,
+including the two exemptions that need the TypeScript compiler rather than a
+filename, are documented in
+[`scripts/ci/missing-tests.ts`](../../scripts/ci/missing-tests.ts).
+
 ### Component Tests
 
 **Decision**: Component tests live in `tests/unit/components/`, mirroring

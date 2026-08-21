@@ -24,6 +24,7 @@
     "check:changelog-drift": "tsx scripts/ci/check-changelog-drift.ts",
     "check:lockfile": "tsx scripts/ci/check-lockfile.ts",
     "check:exports": "tsx scripts/ci/check-exports.ts",
+    "check:missing-tests": "tsx scripts/ci/check-missing-tests.ts",
     "check:audit": "tsx scripts/ci/check-audit.ts",
     "fix:lockfile-libc": "tsx scripts/ci/fix-lockfile-libc.ts",
     "validate": "npm run check:changelog && npm run check:node-version && npm run type-check && npm run lint && npm run format:check && npm run format:prisma:check",
