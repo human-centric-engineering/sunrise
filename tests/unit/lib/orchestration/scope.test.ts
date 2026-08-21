@@ -121,7 +121,7 @@ describe('foldScopeIntoArgs', () => {
   it('refuses a call that names a different value', () => {
     expect(foldScopeIntoArgs({ projectId: 'other' }, { projectId: 'p1' }, scopedBy)).toEqual({
       ok: false,
-      conflicts: [{ key: 'projectId', expected: 'p1' }],
+      conflicts: [{ key: 'projectId' }],
     });
   });
 

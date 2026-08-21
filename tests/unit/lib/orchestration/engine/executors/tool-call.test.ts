@@ -56,6 +56,8 @@ import {
 } from '@/lib/orchestration/engine/dispatch-cache';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { createContext } from '@/lib/orchestration/engine/context';
+import { logger } from '@/lib/logging';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -173,6 +175,46 @@ describe('executeToolCall', () => {
       { x: 1 },
       expect.objectContaining({ agentId: 'workflow:wf_tool' })
     );
+  });
+
+  it('forwards the authority a real ExecutionContext carries, not just the values', async () => {
+    // The end-to-end shape, built by the REAL `createContext` rather than by
+    // hand. Forwarding only `scope` left the scope binding disarmed for every
+    // workflow, schedule, trigger and resume while three docs and a roster test
+    // said it was wired — and a hand-written fixture could not see that,
+    // because a hand-written fixture never had the flag to drop (#586).
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    const real = createContext({
+      workflowId: 'wf_tool',
+      executionId: 'exec_1',
+      userId: 'user_1',
+      inputData: {},
+      scope: { projectId: 'proj-42' },
+      logger,
+    });
+
+    await executeToolCall(makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } }), real);
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).toMatchObject({
+      scope: { projectId: 'proj-42' },
+      scopeIsAuthoritative: true,
+    });
+  });
+
+  it('does not invent authority for a scope that arrived without it', async () => {
+    // Same executor, one fact changed. A ctx whose scope is a hint stays a hint.
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    await executeToolCall(
+      makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } }),
+      makeCtx({ scope: { projectId: 'proj-42' } })
+    );
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context).toHaveProperty('scope');
+    expect(context).not.toHaveProperty('scopeIsAuthoritative');
   });
 
   it('forwards ctx.scope into the capability dispatch context when present', async () => {

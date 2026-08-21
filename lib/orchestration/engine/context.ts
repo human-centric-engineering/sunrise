@@ -13,6 +13,7 @@
 
 import type { Logger } from '@/lib/logging';
 import type { LlmTelemetryEntry, StepResult, TurnEntry } from '@/types/orchestration';
+import { platformScope } from '@/lib/orchestration/scope';
 
 /**
  * Context passed to each step executor.
@@ -40,6 +41,13 @@ export interface ExecutionContext {
    * unchanged.
    */
   scope?: Record<string, string>;
+  /**
+   * Whether {@link ExecutionContext.scope} may bind a capability's arguments.
+   * Declared so the compiler can see it at every forwarding site — it was set
+   * on this object without being declared here, and the executors that build
+   * the real `CapabilityContext` dropped it in silence (#586).
+   */
+  scopeIsAuthoritative?: boolean;
   /** Map of `step.id` → that step's structured output so far. */
   stepOutputs: Record<string, unknown>;
   /** Free-form scratchpad for executors (planner state, loop counters, ...). */
@@ -153,7 +161,14 @@ export function createContext(params: {
     stepTelemetry: [],
     // Authoritative: persisted on the execution/schedule/trigger row by an
     // admin route and re-validated on read by `resolvePersistedScope`.
-    ...(params.scope ? { scope: params.scope, scopeIsAuthoritative: true } : {}),
+    // Authoritative by construction: this scope came off
+    // `AiWorkflow{Execution,Schedule,Trigger}.scope`, and the only writers of
+    // those columns are admin-guarded routes, the scheduler, and the inbound
+    // trigger route (operator-configured). `run_workflow` — the one path that
+    // could carry a consumer-supplied scope into `engine.execute()` — drops a
+    // non-authoritative one rather than passing it, so the column never holds
+    // a hint. If a new writer of that column appears, it must uphold this.
+    ...platformScope(params.scope),
     ...(params.costLogMetadata ? { costLogMetadata: params.costLogMetadata } : {}),
   };
 }

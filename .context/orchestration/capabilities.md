@@ -125,7 +125,9 @@ Re-registering the same key **replaces the handler and its guard together** — 
 
 `CapabilityContext.scope?: Record<string, string>` is a free-form, optional string map the dispatcher's caller can populate. It is **generic by design** — core names no keys and no built-in capability reads it; the dispatcher passes it verbatim into `execute()`. A fork uses it to let a capability refuse to run outside its intended scope (e.g. a `module` slug). In vanilla Sunrise the chat handler threads it from `ChatRequest.scope` into the dispatch context, so it stays `undefined` and inert unless a caller sets it.
 
-**Three callers populate it**, and the fold below applies to all three because the carrier is a dispatch concept, not any one transport's: an MCP key's `McpApiKey.scope` (`lib/orchestration/mcp/tool-registry.ts`), a workflow execution's (`lib/orchestration/engine/context.ts`), and a nested `run_workflow` passing its parent's through.
+**Four callers build a dispatch context that carries it**, and each answers the authority question by spreading one of two helpers from `lib/orchestration/scope.ts`: `platformScope()` for a carrier the platform wrote — `mcp/tool-registry.ts` (an `McpApiKey.scope`) and the two workflow executors, `engine/executors/tool-call.ts` and `agent-call.ts` (a persisted `AiWorkflow*.scope`) — and `hintScope()` for `chat/streaming-handler.ts`, whose `scope` arrives from an untrusted consumer request body.
+
+**The pair must travel together, and once did not.** The flag was set on the workflow engine's own `ExecutionContext` while the `CapabilityContext` was built two files away in the executors, which forwarded the values and nothing else — so the binding armed for MCP and for nothing else, while this page, the CHANGELOG and a roster test all said three carriers were wired. The helpers exist so a caller cannot supply the carrier without answering the question; `tests/unit/lib/orchestration/scope-authority.test.ts` derives the roster from `lib/` and fails on a site it cannot classify.
 
 #### The scope binding (`scopedBy`, dispatch steps 4b + 7a)
 

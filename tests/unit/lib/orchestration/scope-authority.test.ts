@@ -1,78 +1,115 @@
 /**
- * Which callers may drive a capability's declared scope binding.
+ * Which callers may bind a capability's arguments with their scope.
  *
  * `CapabilityContext.scopeIsAuthoritative` is the difference between a scope
- * the platform wrote and one an end user posted. Getting it wrong in the
- * permissive direction is a real defect, not a style slip: an earlier design of
- * this feature armed on the presence of a scope map alone, which meant
- * `POST /api/v1/chat/stream` — whose `scope` comes straight from an untrusted
- * request body, and whose own schema calls it "a routing/context hint, never
- * proof of authorization" — silently wrote core tools' arguments (#586).
+ * the platform wrote and one an end user posted, and both directions are
+ * defects: permissive lets `POST /api/v1/chat/stream` — whose `scope` comes
+ * from an untrusted request body — decide what a tool acts on; restrictive
+ * silently disables the boundary.
  *
- * That is invisible in a diff and has no natural test, so the roster is
- * **derived** and checked here rather than remembered.
+ * **The previous version of this file was green while the boundary was wired to
+ * exactly one of its three carriers.** It hardcoded a five-file `CANDIDATES`
+ * list that omitted the two executors where the `CapabilityContext` is really
+ * built, its regex alternation lacked the `ctx` those files use, and it graded
+ * `engine/context.ts` — which builds an `ExecutionContext`, not a dispatch
+ * context — as covered. It asserted that a string appeared in a file, which is
+ * not the same claim as "this boundary is enforced".
+ *
+ * So: the roster is derived by walking `lib/`, and the real check is
+ * behavioural — see `dispatcher.test.ts`, which dispatches through the
+ * executor rather than hand-writing the flag.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { sep } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
-/**
- * Files that thread a caller's `scope` onto a dispatch context. Derived, not
- * listed — a new one that forgets to make a decision fails this test.
- */
-const SCOPE_THREADING = /scope: (?:caller|params|context|request|auth)\.scope/;
+/** Builds a dispatch context: threads a scope AND reaches the dispatcher. */
+const THREADS_SCOPE = /(?:platformScope|hintScope)\(|scope:\s*\w+\.scope/;
+const DISPATCHES = /capabilityDispatcher\.dispatch|dispatchWithBudget|callMcpTool\(/;
 
-const CANDIDATES = [
+function sourceFiles(): string[] {
+  return readdirSync('lib', { recursive: true, encoding: 'utf8' })
+    .map((entry) => `lib/${entry.split(sep).join('/')}`)
+    .filter((file) => file.endsWith('.ts'));
+}
+
+/** Files that build a `CapabilityContext` for a real dispatch. */
+function dispatchContextSites(): string[] {
+  return sourceFiles()
+    .filter((file) => file !== 'lib/orchestration/scope.ts')
+    .filter((file) => {
+      const src = readFileSync(file, 'utf8');
+      return THREADS_SCOPE.test(src) && DISPATCHES.test(src);
+    })
+    .sort();
+}
+
+/** Carriers the platform wrote, which may bind arguments. */
+const AUTHORITATIVE = [
+  'lib/orchestration/engine/executors/agent-call.ts',
+  'lib/orchestration/engine/executors/tool-call.ts',
   'lib/orchestration/mcp/tool-registry.ts',
-  'lib/orchestration/engine/context.ts',
-  'lib/orchestration/capabilities/built-in/run-workflow.ts',
-  'lib/orchestration/chat/streaming-handler.ts',
-  'lib/orchestration/mcp/protocol-handler.ts',
 ] as const;
 
-/** Carriers the platform writes, and may therefore act as authorization. */
-const AUTHORITATIVE = new Set<string>([
-  // `McpApiKey.scope` — admin-written, re-validated at auth.
-  'lib/orchestration/mcp/tool-registry.ts',
-  // `AiWorkflow{Execution,Schedule,Trigger}.scope` — admin-written, re-validated on read.
-  'lib/orchestration/engine/context.ts',
-  // Inherits the parent execution's authority along with its scope.
-  'lib/orchestration/capabilities/built-in/run-workflow.ts',
-]);
+/** Carriers that are a hint only. */
+const HINT_ONLY = [
+  ['lib/orchestration/chat/streaming-handler.ts', 'untrusted request body'],
+] as const;
 
-/** Carriers that are a hint only, and must never arm the binding. */
-const UNTRUSTED = new Map<string, string>([
-  [
-    'lib/orchestration/chat/streaming-handler.ts',
-    'ChatRequest.scope arrives from an untrusted consumer request body',
-  ],
-  [
-    'lib/orchestration/mcp/protocol-handler.ts',
-    'hands the key scope to callMcpTool, which decides authority itself',
-  ],
-]);
+/**
+ * Sites that hand a scope onward to something that makes the decision, rather
+ * than building a dispatch context themselves. Found by the derivation — which
+ * is the point of deriving: this one was not on my list.
+ */
+const DELEGATES = [
+  ['lib/orchestration/mcp/protocol-handler.ts', 'hands the key scope to callMcpTool'],
+] as const;
 
 describe('scope authority roster', () => {
   it('finds the call sites it is written to check', () => {
-    // A scanner that matches nothing is green and looks healthy. Floor first.
-    const threading = CANDIDATES.filter((file) => SCOPE_THREADING.test(readFileSync(file, 'utf8')));
-    expect(threading.length).toBeGreaterThanOrEqual(4);
+    // A scanner that matches nothing is green and looks healthy. Floor first,
+    // and pinned to the derived count so a shrinking roster fails too.
+    expect(dispatchContextSites().length).toBe(
+      AUTHORITATIVE.length + HINT_ONLY.length + DELEGATES.length
+    );
   });
 
-  it.each([...AUTHORITATIVE])('%s marks its scope authoritative', (file) => {
-    expect(readFileSync(file, 'utf8')).toContain('scopeIsAuthoritative');
+  it('classifies every site that builds a dispatch context', () => {
+    // The assertion the previous version could not make: a new caller that
+    // forgets to decide shows up here rather than defaulting quietly.
+    const classified = new Set<string>([
+      ...AUTHORITATIVE,
+      ...HINT_ONLY.map(([file]) => file),
+      ...DELEGATES.map(([file]) => file),
+    ]);
+    expect(dispatchContextSites().filter((file) => !classified.has(file))).toEqual([]);
   });
 
-  it.each([...UNTRUSTED])('%s never marks its scope authoritative — %s', (file) => {
-    // The one that matters. If this ever passes a scope as authoritative, an
-    // end user picks the tenant a capability acts on.
-    expect(readFileSync(file, 'utf8')).not.toContain('scopeIsAuthoritative');
+  it.each(AUTHORITATIVE)('%s builds its context with platformScope', (file) => {
+    const src = readFileSync(file, 'utf8');
+    expect(src).toContain('platformScope(');
   });
 
-  it('accounts for every file that threads a scope onto a dispatch context', () => {
-    // Neither list may quietly gain a member: a new caller must be classified.
-    const threading = CANDIDATES.filter((file) => SCOPE_THREADING.test(readFileSync(file, 'utf8')));
-    const classified = new Set([...AUTHORITATIVE, ...UNTRUSTED.keys()]);
-    expect(threading.filter((file) => !classified.has(file))).toEqual([]);
+  it.each(HINT_ONLY)('%s never marks its scope authoritative — %s', (file) => {
+    // The one that matters. If this passes a scope as authoritative, an end
+    // user picks the tenant a capability acts on.
+    const src = readFileSync(file, 'utf8');
+    expect(src).not.toContain('platformScope(');
+    expect(src).not.toContain('scopeIsAuthoritative: true');
+  });
+
+  it.each(DELEGATES)('%s decides no authority of its own — %s', (file) => {
+    const src = readFileSync(file, 'utf8');
+    expect(src).not.toContain('platformScope(');
+    expect(src).not.toContain('scopeIsAuthoritative');
+  });
+
+  it('keeps the authority decision out of run_workflow’s reach', () => {
+    // `ExecuteOptions` has no authority field, so a scope passed to
+    // `engine.execute()` is persisted and later read back as authoritative.
+    // `run_workflow` must therefore drop a hint scope rather than forward it.
+    const src = readFileSync('lib/orchestration/capabilities/built-in/run-workflow.ts', 'utf8');
+    expect(src).toContain('context.scope && context.scopeIsAuthoritative');
   });
 });

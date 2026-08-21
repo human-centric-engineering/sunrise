@@ -31,10 +31,14 @@ release process.
 
   **Two conditions, both defaulting to off.** The capability must declare the
   binding, and the caller's scope must be one the platform wrote
-  (`scopeIsAuthoritative`, set by the MCP-key, workflow-execution and nested-run
-  carriers and **not** by `POST /api/v1/chat/stream`, whose `scope` comes from
-  an untrusted request body). A mistake in either direction loses the binding
-  rather than gaining one.
+  (`scopeIsAuthoritative`). The four sites that build a dispatch context each
+  spread `platformScope()` or `hintScope()` — the MCP key carrier and the two
+  workflow executors take the first, `POST /api/v1/chat/stream` takes the
+  second, because its `scope` comes from an untrusted request body. A mistake in
+  either direction loses the binding rather than gaining one, and
+  `run_workflow` drops a hint scope rather than passing it to
+  `engine.execute()`, so the persisted `AiWorkflowExecution.scope` column only
+  ever holds platform-written values.
 
   **The binding is declared rather than inferred**, which is the whole design.
   An earlier cut read it out of the capability's published

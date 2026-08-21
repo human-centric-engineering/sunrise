@@ -288,15 +288,16 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
           // ("refuse to run outside scope"), so inherit-by-default is the safe
           // choice; an explicit different-scope override can be added later if a
           // real case appears.
-          // Inherits the parent's authority along with its scope — the child
-          // execution row persists it, and a nested run must not launder an
-          // unauthoritative scope into an authoritative one.
-          ...(context.scope
-            ? {
-                scope: context.scope,
-                ...(context.scopeIsAuthoritative ? { scopeIsAuthoritative: true } : {}),
-              }
-            : {}),
+          // **Only an authoritative scope is inherited.** `ExecuteOptions` has
+          // no authority field — the engine persists `options.scope` onto
+          // `AiWorkflowExecution.scope` and `createContext` later reads that
+          // column back as authoritative by construction. So passing a hint
+          // scope here would launder an untrusted consumer's
+          // `ChatRequest.scope` into a durable, trusted column, and every
+          // crash-resume would re-bless it. An earlier version tried to forward
+          // the flag alongside; that field is discarded by `ExecuteOptions`,
+          // so the guard was a silent no-op. Dropping the value is the guard.
+          ...(context.scope && context.scopeIsAuthoritative ? { scope: context.scope } : {}),
         }
       )) {
         if (event.type === 'workflow_started') {

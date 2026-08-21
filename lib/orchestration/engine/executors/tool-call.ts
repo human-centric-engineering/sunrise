@@ -40,6 +40,7 @@ import {
 } from '@/lib/orchestration/engine/dispatch-cache';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
+import { platformScope, hintScope } from '@/lib/orchestration/scope';
 
 export async function executeToolCall(
   step: WorkflowStep,
@@ -127,7 +128,10 @@ export async function executeToolCall(
     // The real FK. `agentId` above is a label the dispatcher uses for scoping;
     // this is what its cost log can actually persist against.
     workflowExecutionId: ctx.executionId,
-    ...(ctx.scope ? { scope: ctx.scope } : {}),
+    // The run's scope AND its authority. Forwarding only the values left the
+    // binding disarmed for every workflow, schedule, trigger and resume while
+    // the docs said otherwise (#586).
+    ...(ctx.scopeIsAuthoritative ? platformScope(ctx.scope) : hintScope(ctx.scope)),
   });
 
   if (!result.success) {

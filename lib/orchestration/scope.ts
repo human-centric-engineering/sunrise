@@ -80,12 +80,16 @@ export function resolvePersistedScope(
 // all, so the admin-editable JSON can no longer disagree with the Zod schema
 // the author wrote.
 
-/** A scope key the caller named with a value that is not the key's scope. */
+/**
+ * A scope key the caller named with a value that is not the key's scope.
+ *
+ * The key only. It deliberately does **not** carry what the scope pins it to:
+ * the dispatcher's refusal message reaches the client, and a result object
+ * holding the tenant value is an invitation to log it by reflex.
+ */
 export interface ScopeConflict {
   /** The bound parameter name, which is also the scope key. */
   key: string;
-  /** What the caller's scope pins it to. */
-  expected: string;
 }
 
 export type ScopeFoldResult =
@@ -131,7 +135,11 @@ function isReadableArgsObject(value: unknown): value is Record<string, unknown> 
   if (!isPlainObject(value)) return false;
   const proto = Object.getPrototypeOf(value) as object | null;
   if (proto !== Object.prototype && proto !== null) return false;
-  for (const key of Object.keys(value)) {
+  // `getOwnPropertyNames`, not `Object.keys`: the latter is own **enumerable**
+  // only, so a non-enumerable getter slipped through a check whose comment
+  // claimed every accessor was rejected. Symbols are not consulted because
+  // scope keys are strings by `capabilityScopeSchema`.
+  for (const key of Object.getOwnPropertyNames(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor && !('value' in descriptor)) return false;
   }
@@ -193,7 +201,7 @@ export function foldScopeIntoArgs(
       filled.push(key);
       continue;
     }
-    if (supplied !== scope[key]) conflicts.push({ key, expected: scope[key] });
+    if (supplied !== scope[key]) conflicts.push({ key });
   }
 
   // Conflicts win. Filling some keys while refusing others would dispatch a
@@ -283,4 +291,35 @@ export function assertScopeHeld(
   if (conflicts.length > 0) return { held: false, reason: 'conflict', keys: conflicts };
   if (missing.length > 0) return { held: false, reason: 'unenforceable' };
   return { held: true };
+}
+
+/**
+ * Build the `scope` half of a dispatch context from a carrier the **platform
+ * wrote** — an `McpApiKey.scope`, a persisted `AiWorkflow*.scope`. Such a scope
+ * may bind the arguments of a capability that declared `scopedBy`.
+ *
+ * **Two fields that must travel together will be separated.** They were: the
+ * flag was set on the workflow engine's own `ExecutionContext` while the
+ * `CapabilityContext` was built two files away, in the executors, which
+ * forwarded `scope` and nothing else — so the binding armed for MCP and for
+ * nothing else, while three docs and a roster test said otherwise. Spreading
+ * one of these two helpers is the fix: you cannot supply the carrier without
+ * answering the question.
+ */
+export function platformScope(
+  values: Record<string, string> | undefined
+): { scope: Record<string, string>; scopeIsAuthoritative: true } | Record<string, never> {
+  return values ? { scope: values, scopeIsAuthoritative: true } : {};
+}
+
+/**
+ * Build the `scope` half of a dispatch context from a carrier that is a
+ * **hint only** — `ChatRequest.scope`, which arrives from an untrusted consumer
+ * request body. Capabilities still receive it in `execute()`; it never binds
+ * an argument.
+ */
+export function hintScope(
+  values: Record<string, string> | undefined
+): { scope: Record<string, string> } | Record<string, never> {
+  return values ? { scope: values } : {};
 }

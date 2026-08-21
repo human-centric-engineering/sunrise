@@ -88,6 +88,7 @@ import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages } from '@/lib/orchestration/chat/summarizer';
+import { hintScope } from '@/lib/orchestration/scope';
 import {
   GEN_AI_OPERATION_NAME,
   GEN_AI_REQUEST_MODEL,
@@ -1858,7 +1859,9 @@ export class StreamingChatHandler {
           agentId: agent.id,
           conversationId: conversation.id,
           ...(request.entityContext ? { entityContext: request.entityContext } : {}),
-          ...(request.scope ? { scope: request.scope } : {}),
+          // A HINT, never authority: `ChatRequest.scope` arrives from an
+          // untrusted consumer request body. Capabilities still receive it.
+          ...hintScope(request.scope),
         };
 
         if (toolCallArray.length === 1) {

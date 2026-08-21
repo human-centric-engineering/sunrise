@@ -388,11 +388,36 @@ describe('RunWorkflowCapability', () => {
       const cap = new RunWorkflowCapability();
       await cap.execute(
         { workflowSlug: 'refund-flow' },
-        { ...context, scope: { projectId: 'proj-42' } }
+        { ...context, scope: { projectId: 'proj-42' }, scopeIsAuthoritative: true }
       );
 
       const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
       expect(opts.scope).toEqual({ projectId: 'proj-42' });
+    });
+
+    it('drops a scope the parent held only as a hint', async () => {
+      // `ExecuteOptions` carries no authority field: the engine persists
+      // `options.scope` onto `AiWorkflowExecution.scope`, and `createContext`
+      // later reads that column back as authoritative by construction. Passing
+      // a hint scope here would launder an untrusted consumer's
+      // `ChatRequest.scope` into a durable, trusted column — and every
+      // crash-resume would re-bless it. Dropping the value IS the guard; an
+      // earlier version tried to forward a flag that `ExecuteOptions` discards.
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-11', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute(
+        { workflowSlug: 'refund-flow' },
+        { ...context, scope: { projectId: 'attacker-chosen' } }
+      );
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty('scope');
     });
 
     it('omits scope from the child when the parent is unscoped', async () => {
