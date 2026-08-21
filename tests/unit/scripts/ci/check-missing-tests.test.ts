@@ -85,6 +85,11 @@ describe('scripts/ci/check-missing-tests', () => {
     vi.restoreAllMocks();
   });
 
+  /** A verdict for `lib/a.ts`, modified, unless the test says otherwise. */
+  function verdict(outcome: Verdict['outcome'], over: Partial<Verdict> = {}): Verdict {
+    return { path: 'lib/a.ts', status: 'M', outcome, ...over };
+  }
+
   /** Writes a file under the temp repo, creating parents. */
   function write(relative: string, contents = '// x\n'): void {
     const full = join(dir, relative);
@@ -105,14 +110,14 @@ describe('scripts/ci/check-missing-tests', () => {
 
   describe('parseNameStatus', () => {
     it('keeps added and modified TypeScript files', () => {
-      expect(parseNameStatus('A\tlib/a.ts\nM\tapp/b.tsx\n')).toEqual([
+      expect(parseNameStatus('A\tlib/a.ts\nM\tapp/b.tsx\n').files).toEqual([
         { path: 'lib/a.ts', status: 'A' },
         { path: 'app/b.tsx', status: 'M' },
       ]);
     });
 
     it('takes the destination of a rename, which is the file needing a test', () => {
-      expect(parseNameStatus('R100\tlib/old.ts\tlib/new.ts\n')).toEqual([
+      expect(parseNameStatus('R100\tlib/old.ts\tlib/new.ts\n').files).toEqual([
         { path: 'lib/new.ts', status: 'R' },
       ]);
     });
@@ -120,18 +125,28 @@ describe('scripts/ci/check-missing-tests', () => {
     it('drops deletions', () => {
       // A deleted file cannot be missing a test, and reporting one sends the
       // reader to write a test for a path that no longer exists.
-      expect(parseNameStatus('D\tlib/gone.ts\n')).toEqual([]);
+      expect(parseNameStatus('D\tlib/gone.ts\n').files).toEqual([]);
     });
 
     it.each(['M\tREADME.md', 'M\tprisma/schema/app.prisma', 'M\tpackage.json'])(
       'drops the non-TypeScript path in %j',
       (line) => {
-        expect(parseNameStatus(`${line}\n`)).toEqual([]);
+        expect(parseNameStatus(`${line}\n`).files).toEqual([]);
       }
     );
 
     it('ignores blank lines rather than emitting an empty path', () => {
-      expect(parseNameStatus('\n\nA\tlib/a.ts\n\n')).toHaveLength(1);
+      expect(parseNameStatus('\n\nA\tlib/a.ts\n\n').files).toHaveLength(1);
+    });
+
+    it('collects a still-quoted path instead of dropping it', () => {
+      // `core.quotePath` C-quotes a filename containing a tab, newline or
+      // quote even with the flag the caller passes. Such a path ends in `"`,
+      // so the extension test would drop it and the report would still say
+      // CLEAN — a changed file vanishing from the scan without a word.
+      const { files, unreadable } = parseNameStatus('A\t"caf\\303\\251.ts"\nA\tlib/a.ts\n');
+      expect(files).toEqual([{ path: 'lib/a.ts', status: 'A' }]);
+      expect(unreadable).toEqual(['"caf\\303\\251.ts"']);
     });
 
     it('survives a truncated rename line rather than throwing on it', () => {
@@ -139,7 +154,7 @@ describe('scripts/ci/check-missing-tests', () => {
       // undefined, and the extension test would throw on it — taking the whole
       // check down mid-scan.
       expect(() => parseNameStatus('R100\tlib/old.ts\nA\tlib/a.ts\n')).not.toThrow();
-      expect(parseNameStatus('R100\tlib/old.ts\nA\tlib/a.ts\n')).toEqual([
+      expect(parseNameStatus('R100\tlib/old.ts\nA\tlib/a.ts\n').files).toEqual([
         { path: 'lib/a.ts', status: 'A' },
       ]);
     });
@@ -198,16 +213,14 @@ describe('scripts/ci/check-missing-tests', () => {
   describe('formatReport', () => {
     it('says CLEAN only when nothing was found', () => {
       const lines = formatReport([
-        { path: 'lib/a.ts', outcome: { kind: 'covered', testPath: 't.test.ts', via: 'mirror' } },
+        verdict({ kind: 'covered', testPath: 't.test.ts', via: 'mirror' }),
       ]);
       expect(lines.at(-1)).toContain('CLEAN');
     });
 
     it('never says CLEAN when something was referenced-only', () => {
       // The tier that is easiest to round down to a pass.
-      const lines = formatReport([
-        { path: 'lib/a.ts', outcome: { kind: 'referenced', referencedBy: ['t.test.ts'] } },
-      ]);
+      const lines = formatReport([verdict({ kind: 'referenced', referencedBy: ['t.test.ts'] })]);
       expect(lines.join('\n')).not.toContain('CLEAN');
       expect(lines.at(-1)).toContain('1 referenced-only');
     });
@@ -215,7 +228,7 @@ describe('scripts/ci/check-missing-tests', () => {
     it('distinguishes "everything was exempt" from CLEAN', () => {
       // Nothing was examined, so there is nothing to be clean about.
       const lines = formatReport([
-        { path: 'tests/unit/a.test.ts', outcome: { kind: 'exempt', reason: 'is a test' } },
+        verdict({ kind: 'exempt', reason: 'is a test' }, { path: 'tests/unit/a.test.ts' }),
       ]);
       expect(lines.join('\n')).not.toContain('CLEAN');
       expect(lines.at(-1)).toContain('no files in scope');
@@ -223,17 +236,15 @@ describe('scripts/ci/check-missing-tests', () => {
 
     it('caps the named tests and says how many were left out', () => {
       const referencedBy = ['a', 'b', 'c', 'd', 'e'].map((n) => `tests/unit/${n}.test.ts`);
-      const lines = formatReport([
-        { path: 'lib/a.ts', outcome: { kind: 'referenced', referencedBy } },
-      ]);
+      const lines = formatReport([verdict({ kind: 'referenced', referencedBy })]);
       expect(lines.join('\n')).toContain('(+2 more)');
     });
 
     it('lists every verdict under --verbose, exempt ones included', () => {
       const lines = formatReport(
         [
-          { path: 'tests/unit/a.test.ts', outcome: { kind: 'exempt', reason: 'is a test' } },
-          { path: 'lib/a.ts', outcome: { kind: 'covered', testPath: 't.test.ts', via: 'mirror' } },
+          verdict({ kind: 'exempt', reason: 'is a test' }, { path: 'tests/unit/a.test.ts' }),
+          verdict({ kind: 'covered', testPath: 't.test.ts', via: 'mirror' }),
         ],
         true
       );
@@ -245,7 +256,7 @@ describe('scripts/ci/check-missing-tests', () => {
 
     it('names the expected path for a missing file', () => {
       const lines = formatReport([
-        { path: 'lib/a.ts', outcome: { kind: 'missing', expected: ['tests/unit/lib/a.test.ts'] } },
+        verdict({ kind: 'missing', expected: ['tests/unit/lib/a.test.ts'] }),
       ]);
       expect(lines.join('\n')).toContain('tests/unit/lib/a.test.ts');
       expect(lines.at(-1)).toContain('1 missing');
@@ -277,6 +288,17 @@ describe('scripts/ci/check-missing-tests', () => {
     });
   });
 
+  describe('label', () => {
+    it('marks a rename and leaves anything else alone', () => {
+      expect(
+        describeVerdict(verdict({ kind: 'missing', expected: [] }, { status: 'R' }))
+      ).toContain('lib/a.ts (renamed)');
+      expect(
+        describeVerdict(verdict({ kind: 'missing', expected: [] }, { status: 'A' }))
+      ).not.toContain('renamed');
+    });
+  });
+
   describe('describe (the --verbose line)', () => {
     it.each([
       [{ kind: 'exempt', reason: 'is a test' }, 'exempt: is a test'],
@@ -286,7 +308,7 @@ describe('scripts/ci/check-missing-tests', () => {
     ])('explains a %j verdict', (outcome, expected) => {
       // `--verbose` is what step 4f tells the reader to reach for when a verdict
       // surprises them, so every branch of it needs to say something true.
-      expect(describeVerdict({ path: 'lib/a.ts', outcome } as Verdict)).toContain(expected);
+      expect(describeVerdict(verdict(outcome as Verdict['outcome']))).toContain(expected);
     });
   });
 
@@ -313,6 +335,31 @@ describe('scripts/ci/check-missing-tests', () => {
       write('tests/unit/lib/a.test.ts');
       expect(main([])).toBe(1);
       expect(logs.join('\n')).not.toContain('CLEAN');
+    });
+
+    it('refuses to report at all when a changed path could not be read', () => {
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'A\t"weird\\tname.ts"\n' });
+      write('tests/unit/lib/a.test.ts');
+
+      expect(main([])).toBe(1);
+      expect(errors.join('\n')).toContain('git returned them quoted');
+      expect(logs.join('\n')).not.toContain('CLEAN');
+    });
+
+    it('asks git not to quote paths in the first place', () => {
+      // Without `-c core.quotePath=false` every non-ASCII filename arrives
+      // quoted and takes the branch above, so the check would refuse to run on
+      // any repo with an accented filename.
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': '' });
+      write('tests/unit/lib/a.test.ts');
+      main([]);
+
+      const diffCall = mockExecFileSync.mock.calls.find((call) =>
+        (call[1] as string[]).includes('--name-status')
+      );
+      expect(diffCall?.[1]).toEqual(
+        expect.arrayContaining(['-c', 'core.quotePath=false', 'diff', '--name-status'])
+      );
     });
 
     it('fails when it can see no test files at all', () => {
@@ -349,6 +396,14 @@ describe('scripts/ci/check-missing-tests', () => {
   describe('main — a run that could look', () => {
     beforeEach(() => {
       write('tests/unit/lib/covered.test.ts');
+    });
+
+    it('marks a rename, so a test that did not move with it reads as one', () => {
+      gitReturns({ 'merge-base': 'abc123\n', 'name-status': 'R100\tlib/old.ts\tlib/orphan.ts\n' });
+      write('lib/orphan.ts', 'export const x = 1;\n');
+
+      expect(main([])).toBe(0);
+      expect(logs.join('\n')).toContain('lib/orphan.ts (renamed)');
     });
 
     it('reports a changed file with no test and still exits 0', () => {

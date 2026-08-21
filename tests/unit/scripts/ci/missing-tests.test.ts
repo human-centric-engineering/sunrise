@@ -149,6 +149,21 @@ describe('aspectTestsFor', () => {
     ).toEqual([]);
   });
 
+  it('does not claim a sibling whose source is a directory barrel', () => {
+    // `rate-limit-stores/` is a folder with an `index.ts`, not a flat file. The
+    // first version of the guard checked `${own}.ts` only, so this one slipped
+    // through while the flat-file case was correctly rejected — same
+    // collision, one shape further out.
+    const sources = new Set(['lib/security/rate-limit-stores/index.ts']);
+    expect(
+      aspectTestsFor(
+        'lib/security/rate-limit',
+        ['tests/unit/lib/security/rate-limit-stores.test.ts'],
+        (path) => sources.has(path)
+      )
+    ).toEqual([]);
+  });
+
   it('still matches when no such sibling source exists', () => {
     // Same input, one fact changed — proving the previous case turns on the
     // sibling's existence and not on the pattern.
@@ -341,6 +356,7 @@ describe('selfTestFailure', () => {
     // could not detect this, it would be decoration.
     const alwaysClean = (file: ChangedFile): Verdict => ({
       path: file.path,
+      status: file.status,
       outcome: { kind: 'covered', testPath: 'tests/unit/whatever.test.ts', via: 'mirror' },
     });
     expect(selfTestFailure(alwaysClean)).toMatch(/never-tested\.ts: expected `missing`/);
@@ -349,6 +365,7 @@ describe('selfTestFailure', () => {
   it('catches a classifier that reports everything as a finding', () => {
     const alwaysMissing = (file: ChangedFile): Verdict => ({
       path: file.path,
+      status: file.status,
       outcome: { kind: 'missing', expected: [] },
     });
     expect(selfTestFailure(alwaysMissing)).toMatch(/expected `covered`, got `missing`/);
@@ -356,6 +373,30 @@ describe('selfTestFailure', () => {
 });
 
 describe('the deliberate differences from vitest coverage exclusions', () => {
+  /**
+   * Trees that hold no source to test: vendored packages and build output.
+   * Not 4f's business, and not a decision anyone needs to record.
+   */
+  const BUILD_OUTPUT = ['node_modules/', '.next/', 'coverage/', 'dist'];
+
+  /**
+   * A representative path for a coverage glob. Throws on a shape it does not
+   * recognise, so a new KIND of pattern also forces a decision instead of
+   * quietly producing a path that happens to be exempt.
+   */
+  function samplePathFor(pattern: string): string {
+    if (pattern.endsWith('/')) return `${pattern}sample.ts`;
+    const concrete = pattern
+      .replace(/\*\*\//g, 'sample/')
+      .replace(/\/\*\*$/, '/sample.ts')
+      .replace(/\{[^}]*\}/, 'ts')
+      .replace(/\*/g, 'sample');
+    if (concrete.includes('*') || concrete.includes('{')) {
+      throw new Error(`Unrecognised coverage-exclude shape: ${pattern}`);
+    }
+    return concrete;
+  }
+
   /** `coverage.exclude`'s string entries, read from the config itself. */
   function coverageExclusions(): string[] {
     const config = readFileSync('vitest.config.ts', 'utf8');
@@ -385,9 +426,28 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
   it.each(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION)(
     'does not path-exempt files matching $pattern',
     ({ pattern }) => {
-      const sample = pattern.replace('**/', '').replace(/\/$/, '/sample.ts');
-      const path = sample.endsWith('.ts') ? sample : `${sample.replace(/\/?$/, '')}/sample.ts`;
-      expect(pathExemption(path)).toBeNull();
+      expect(pathExemption(samplePathFor(pattern))).toBeNull();
     }
   );
+
+  it('accounts for every coverage exclusion, so a new one forces a decision', () => {
+    // The direction that can actually drift, and the one the first version of
+    // this block did not test: it walked the four known differences and never
+    // walked the config. Adding `components/ui/` to `coverage.exclude`
+    // upstream would have passed every assertion here while silently widening
+    // what step 3 ignores and step 4f does not.
+    const declared = new Set(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((e) => e.pattern));
+    const unaccounted = coverageExclusions().filter(
+      (pattern) =>
+        !declared.has(pattern) &&
+        !BUILD_OUTPUT.includes(pattern) &&
+        pathExemption(samplePathFor(pattern)) === null
+    );
+    expect(
+      unaccounted,
+      'A coverage exclusion this check neither honours nor deliberately ignores. ' +
+        'Add it to PATH_EXEMPTIONS, to NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION with a ' +
+        'reason, or to BUILD_OUTPUT in this test.'
+    ).toEqual([]);
+  });
 });

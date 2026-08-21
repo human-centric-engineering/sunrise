@@ -26,12 +26,14 @@ release process.
   was nearly banked as a clean tree. 4f is now a tested script, and it answers in
   **three** verdicts rather than two: `covered`, `missing`, and — the one a
   mirror-path check gets wrong — `referenced only`, for a module no mirrored test
-  covers but some test names. 339 files in this repo have no mirrored test and
-  228 of those are named by a test anyway (aspect-named suites, enumerating
+  covers but some test names. Measured over every tracked `.ts`/`.tsx` — 2301 files, 1145 of them
+  non-exempt — **339 have no mirrored test and 230 of those are named by a
+  test anyway** (aspect-named suites, enumerating
   tests, route tests a directory up), so a two-answer check is wrong about all
-  228 in one direction or the other. Exemptions are decided by the TypeScript
+  230 in one direction or the other. Exemptions are decided by the TypeScript
   compiler where a filename cannot decide them — 14 `index.ts` files here carry
-  their own code, and exempting every barrel by name hides 9 that have no test.
+  their own code, and exempting every barrel by name hides 9 that have no test;
+  21 more declare no runtime value and are exempt for the opposite reason.
   It **reports and never gates on a finding**; exit `1` means only that it could
   not run, and it runs a sentinel through the classifier before every real scan,
   so a clean result is never printed by a scanner that cannot report a dirty one

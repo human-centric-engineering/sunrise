@@ -126,7 +126,7 @@ the dynamic-segment parent (`app/api/v1/foo/[id]/route.ts` →
 `config-signup-mode.test.ts` for `lib/auth/config.ts`.
 
 **Rationale**: mirroring is the rule you should follow when writing a new
-test, and it is how 776 of this repo's source files are matched to one. But splitting a large module's suite by
+test, and it is how 779 of this repo's source files are matched to one. But splitting a large module's suite by
 aspect is a real and useful pattern — `lib/auth/config.ts` has seven — and a
 check that only understood the mirror would call every one of those modules
 untested. The scanner reports a module that no test file covers _and_ no test

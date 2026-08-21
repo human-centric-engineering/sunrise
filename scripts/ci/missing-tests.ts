@@ -20,13 +20,17 @@
  * # What "has a test" means here, and why it is three answers not two
  *
  * The obvious rule — mirror the source path under `tests/unit/` — is right for
- * most of this repo and **wrong often enough to matter**. Measured over the
- * whole tree at the time of writing, 339 source files have no mirrored test,
- * and 228 of those are named by a test file anyway: aspect-named suites
+ * most of this repo and **wrong often enough to matter**. Measured by running
+ * {@link classify} over every tracked `.ts`/`.tsx` (`git ls-files`) at the time
+ * of writing — 2301 files, 1145 of them non-exempt — **339 have no mirrored
+ * test, and 230 of those are named by a test file anyway**: aspect-named suites
  * (`config-sendResetPassword.test.ts` for `lib/auth/config.ts`), enumerating
  * tests that walk a whole directory (`fork-init-seams.test.ts` over
  * `lib/app/*`), and route tests that sit a directory up. A mirror-only scanner
- * reports all 228 as findings.
+ * reports all 230 as findings.
+ *
+ * Re-derive rather than trust these: the denominator is the scope you scan, and
+ * an unstated one is how two honest counts disagree.
  *
  * So the verdict has three values, not two:
  *
@@ -58,7 +62,7 @@
  *   exactly why hand-rolled versions get them wrong: exempting every `index.ts`
  *   by name hides the 14 index files in this repo that carry their own code (9
  *   of which have no mirrored test), and not exempting type-only modules flags
- *   17 files that compile to nothing.
+ *   21 files that compile to nothing.
  *
  * Content rules go through the TypeScript compiler rather than a regex, for the
  * same reason `exports-diff.ts` does: a regex cannot tell `export type { X }`
@@ -99,6 +103,8 @@ export type Outcome =
 
 export interface Verdict {
   path: string;
+  /** What git said happened to it. Surfaced for renames — see {@link classifyOne}. */
+  status: ChangedFile['status'];
   outcome: Outcome;
 }
 
@@ -251,6 +257,13 @@ export function collapsedDynamicCandidates(stem: string): string[] {
  * has four such siblings — so the candidate's own source is checked, and if it
  * exists the test belongs to it.
  *
+ * **Including when that source is a directory barrel.** The first version
+ * checked `${own}.ts` and `${own}.tsx` only, which correctly rejected
+ * `rate-limit-policy.test.ts` (a flat file) and still credited
+ * `rate-limit-stores.test.ts` to `rate-limit.ts`, because
+ * `rate-limit-stores/` is a folder with an `index.ts`. Same collision, one
+ * shape further out.
+ *
  * Today `rate-limit.ts` has its own mirror test, which wins before this
  * function is reached; the guard is here because the next kebab-cased pair will
  * not.
@@ -270,9 +283,17 @@ export function aspectTestsFor(
     const suffix = TEST_SUFFIXES.find((candidate) => file.endsWith(candidate));
     if (suffix === undefined) return false;
     const own = file.slice(root.length, -suffix.length);
-    return ['ts', 'tsx'].some(
-      (extension) => sourceExists(`${own}.${extension}`) || sourceExists(`app/${own}.${extension}`)
-    );
+    // A **directory barrel** counts too. Checking only `${own}.ts` missed
+    // `rate-limit-stores/index.ts`, so `rate-limit.ts` was credited with
+    // `rate-limit-stores.test.ts` — the shape this guard exists to reject,
+    // slipping through because the sibling is a folder rather than a file.
+    const shapes = (stemPath: string): string[] => [
+      `${stemPath}.ts`,
+      `${stemPath}.tsx`,
+      `${stemPath}/index.ts`,
+      `${stemPath}/index.tsx`,
+    ];
+    return [...shapes(own), ...shapes(`app/${own}`)].some(sourceExists);
   };
 
   return testFiles
@@ -395,39 +416,47 @@ export function contentExemption(path: string, source: string | null): string | 
   return null;
 }
 
-/** Runs every rule over one changed file. */
+/**
+ * Runs every rule over one changed file.
+ *
+ * The verdict carries git's status through so the report can mark a **rename**.
+ * A renamed module whose test did not move with it is an ordinary gap and reads
+ * very differently from a brand-new file with no test — and the field was
+ * recorded and then never read until this said so.
+ */
 export function classifyOne(file: ChangedFile, context: ClassifyContext): Verdict {
-  const { path } = file;
+  const { path, status } = file;
 
   const byPath = pathExemption(path);
-  if (byPath !== null) return { path, outcome: { kind: 'exempt', reason: byPath } };
+  if (byPath !== null) return { path, status, outcome: { kind: 'exempt', reason: byPath } };
 
   const stem = sourceStem(path);
   if (stem === null)
-    return { path, outcome: { kind: 'exempt', reason: 'not a TypeScript source' } };
+    return { path, status, outcome: { kind: 'exempt', reason: 'not a TypeScript source' } };
 
   const byContent = contentExemption(path, context.readSource(path));
-  if (byContent !== null) return { path, outcome: { kind: 'exempt', reason: byContent } };
+  if (byContent !== null) return { path, status, outcome: { kind: 'exempt', reason: byContent } };
 
   const testSet = new Set(context.testFiles);
 
   const mirrors = mirrorCandidates(stem, path.endsWith('.tsx') ? 'tsx' : 'ts');
   const mirror = mirrors.find((candidate) => testSet.has(candidate));
   if (mirror !== undefined) {
-    return { path, outcome: { kind: 'covered', testPath: mirror, via: 'mirror' } };
+    return { path, status, outcome: { kind: 'covered', testPath: mirror, via: 'mirror' } };
   }
 
   const collapsed = collapsedDynamicCandidates(stem).find((candidate) => testSet.has(candidate));
   if (collapsed !== undefined) {
     return {
       path,
+      status,
       outcome: { kind: 'covered', testPath: collapsed, via: 'collapsed-dynamic-segment' },
     };
   }
 
   const aspects = aspectTestsFor(stem, context.testFiles, (p) => context.readSource(p) !== null);
   if (aspects.length > 0) {
-    return { path, outcome: { kind: 'covered', testPath: aspects[0], via: 'aspect' } };
+    return { path, status, outcome: { kind: 'covered', testPath: aspects[0], via: 'aspect' } };
   }
 
   const specifiers = importSpecifiers(stem);
@@ -435,10 +464,14 @@ export function classifyOne(file: ChangedFile, context: ClassifyContext): Verdic
   if (viaBarrel !== null) specifiers.push(viaBarrel);
   const referencedBy = context.referencesOf(specifiers);
   if (referencedBy.length > 0) {
-    return { path, outcome: { kind: 'referenced', referencedBy: [...referencedBy].sort() } };
+    return {
+      path,
+      status,
+      outcome: { kind: 'referenced', referencedBy: [...referencedBy].sort() },
+    };
   }
 
-  return { path, outcome: { kind: 'missing', expected: mirrors } };
+  return { path, status, outcome: { kind: 'missing', expected: mirrors } };
 }
 
 /** Runs every rule over every changed file, preserving input order. */

@@ -82,8 +82,13 @@ export function parseBaseRef(argv: string[]): { present: boolean; ref: string } 
  * so. Statuses this check does not ask about (`D`elete, `T`ype change) are
  * dropped, as are non-TypeScript paths.
  */
-export function parseNameStatus(output: string): ChangedFile[] {
+export function parseNameStatus(output: string): {
+  files: ChangedFile[];
+  /** Paths git still C-quoted, which cannot be matched against the tree. */
+  unreadable: string[];
+} {
   const files: ChangedFile[] = [];
+  const unreadable: string[] = [];
   for (const line of output.split('\n')) {
     if (line.trim() === '') continue;
     const fields = line.split('\t');
@@ -96,10 +101,20 @@ export function parseNameStatus(output: string): ChangedFile[] {
     // clause used to sit here too; the extension test already drops an empty
     // path, so nothing could distinguish it and its test could not fail.
     if (path === undefined) continue;
+    // `core.quotePath` is on by default, so `café.ts` arrives as
+    // `"caf\303\251.ts"`. The caller passes `-c core.quotePath=false`, which
+    // handles the non-ASCII case — but a tab, newline or quote in the name is
+    // still C-quoted, and such a path ends in `"` rather than `.ts`. Dropping
+    // it on the extension test would delete a changed file from the scan and
+    // still print CLEAN: exactly the silent failure this check exists to stop.
+    if (path.startsWith('"')) {
+      unreadable.push(path);
+      continue;
+    }
     if (!path.endsWith('.ts') && !path.endsWith('.tsx')) continue;
     files.push({ path, status: letter });
   }
-  return files;
+  return { files, unreadable };
 }
 
 /** Every test file under `tests/`, read from the working tree. */
@@ -178,18 +193,29 @@ function uncommittedSources(): string[] {
     .filter((path) => !path.startsWith('tests/'));
 }
 
+/**
+ * The path, marked when git called it a rename.
+ *
+ * A renamed module whose test did not move with it is an ordinary gap, and it
+ * reads very differently from a brand-new file that never had one — so the
+ * report says which it is rather than recording the status and never using it.
+ */
+export function label(verdict: Verdict): string {
+  return verdict.status === 'R' ? `${verdict.path} (renamed)` : verdict.path;
+}
+
 /** One line per verdict, for `--verbose`: why this file landed where it did. */
 export function describe(verdict: Verdict): string {
   const { outcome } = verdict;
   switch (outcome.kind) {
     case 'exempt':
-      return `${verdict.path} — exempt: ${outcome.reason}`;
+      return `${label(verdict)} — exempt: ${outcome.reason}`;
     case 'covered':
-      return `${verdict.path} — covered by ${outcome.testPath} (${outcome.via})`;
+      return `${label(verdict)} — covered by ${outcome.testPath} (${outcome.via})`;
     case 'referenced':
-      return `${verdict.path} — referenced only, by ${outcome.referencedBy.length} test file(s)`;
+      return `${label(verdict)} — referenced only, by ${outcome.referencedBy.length} test file(s)`;
     case 'missing':
-      return `${verdict.path} — MISSING`;
+      return `${label(verdict)} — MISSING`;
   }
 }
 
@@ -230,7 +256,7 @@ export function formatReport(verdicts: readonly Verdict[], verbose = false): str
     lines.push('No test file, and no test mentions the module:');
     for (const verdict of missing) {
       if (verdict.outcome.kind !== 'missing') continue;
-      lines.push(`  ${verdict.path}`);
+      lines.push(`  ${label(verdict)}`);
       lines.push(`    expected e.g. ${verdict.outcome.expected[0]}`);
     }
     lines.push('');
@@ -243,7 +269,7 @@ export function formatReport(verdicts: readonly Verdict[], verbose = false): str
       if (verdict.outcome.kind !== 'referenced') continue;
       const shown = verdict.outcome.referencedBy.slice(0, 3);
       const extra = verdict.outcome.referencedBy.length - shown.length;
-      lines.push(`  ${verdict.path}`);
+      lines.push(`  ${label(verdict)}`);
       lines.push(`    named by ${shown.join(', ')}${extra > 0 ? ` (+${extra} more)` : ''}`);
     }
     lines.push('');
@@ -308,7 +334,7 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const diff = git(['diff', '--name-status', `${base}...HEAD`]);
+  const diff = git(['-c', 'core.quotePath=false', 'diff', '--name-status', `${base}...HEAD`]);
   if (diff === null) {
     console.error(`Could not list changed files against "${base}".`);
     console.error(`git: ${lastGitError}`);
@@ -325,7 +351,17 @@ export function main(argv: string[]): number {
     return 1;
   }
 
-  const files = parseNameStatus(diff);
+  const { files, unreadable } = parseNameStatus(diff);
+  if (unreadable.length > 0) {
+    // Exit 1, not a warning alongside a verdict. The contract here is that the
+    // exit code says whether the check could *look*, and it could not look at
+    // these — so there is no honest summary line to print next to them.
+    console.error(`Could not read ${unreadable.length} changed path(s); git returned them quoted:`);
+    for (const path of unreadable) console.error(`  ${path}`);
+    console.error('A tab, newline or quote in a filename does this. Nothing was scanned.');
+    return 1;
+  }
+
   if (files.length === 0) {
     console.log(`4f: no TypeScript files added or modified vs ${base}.`);
     reportBlindSpot();
