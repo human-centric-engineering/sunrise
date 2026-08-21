@@ -18,6 +18,28 @@ release process.
 
 ### Added
 
+- **A persisted `scope` now constrains a tool call, not just accompanies it
+  (#586).** `CapabilityContext.scope` has shipped since 0.5.0 as a carrier —
+  threaded from an MCP key, a workflow execution or a nested `run_workflow`, and
+  handed to `execute()`. It could not *do* anything: every scoped capability
+  consumed it by hand, or a fork patched the dispatch path. Dispatch **step 4b**
+  now folds it into the arguments — for each scope key the capability declares
+  as a parameter, fill it when the caller omitted it, and refuse the call with
+  `{ code: 'scope_conflict' }` when the caller names a different value. So a
+  key minted with `scope: { projectId: 'x' }` makes `projectId` ambient *and*
+  makes it a boundary. The gate is "the capability declares that parameter", so
+  a tool keyed on some other id is untouched and nothing is injected into a
+  schema that would reject it; the refusal names the offending **keys** and
+  never the scope **values**, since the message reaches the client. Placed
+  beside the `guard` seam rather than next to argument validation, and for the
+  guard's reason — a cross-scope call is an authorization failure, not a
+  malformed request, so it must not spend the legitimate tenant's rate token.
+  Applies to all three carriers rather than only the MCP one, because the
+  carrier is a dispatch concept and folding at any single call site leaves the
+  others hand-consuming it. `foldScopeIntoArgs` in `lib/orchestration/scope.ts`
+  is pure and exported. Inert for an unscoped caller, which is every vanilla
+  Sunrise dispatch.
+
 - **`npm run check:missing-tests` — `/pre-pr` step 4f stops being prose.** Twelve
   of step 4's thirteen anti-pattern checks were prose, so every agent hand-rolled
   a scanner on every run — and a hand-rolled scanner's failure mode is *silence*,

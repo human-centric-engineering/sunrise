@@ -23,6 +23,7 @@
 import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
+import { foldScopeIntoArgs } from '@/lib/orchestration/scope';
 import { createRateLimiter, type RateLimiter } from '@/lib/security/rate-limit';
 import { CostOperation } from '@/types/orchestration';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -416,6 +417,53 @@ class CapabilityDispatcher {
       }
     }
 
+    // 4b. Scope fold. Makes the generic `context.scope` carrier ambient in the
+    //     capability's arguments: fill a declared parameter the caller omitted,
+    //     and refuse a call that names a different value. Applies to every
+    //     carrier — an MCP key's `scope`, a workflow execution's, a nested
+    //     `run-workflow` — because the carrier is a dispatch concept and a fold
+    //     at any one call site leaves the others hand-consuming it (#586).
+    //
+    //     Placed beside the guard rather than next to arg validation at step 7,
+    //     and for the guard's reason: a cross-scope call is an authorization
+    //     failure, not a malformed request, so it must not spend the legitimate
+    //     tenant's rate token. Inert unless a fork populated `scope` AND the
+    //     capability declares a parameter of that name — core names no keys.
+    let dispatchArgs = rawArgs;
+    if (context.scope && Object.keys(context.scope).length > 0) {
+      const folded = foldScopeIntoArgs(
+        rawArgs,
+        context.scope,
+        binding.functionDefinition.parameters
+      );
+      if (!folded.ok) {
+        const keys = folded.conflicts.map((conflict) => conflict.key);
+        // The scope VALUES are withheld. This message reaches the client, and
+        // telling a caller which tenant its key is pinned to — or worse, that
+        // some other id exists — is not something a refusal needs to do.
+        logger.warn('Capability dispatch: argument outside key scope', {
+          slug,
+          agentId: context.agentId,
+          keys,
+        });
+        return {
+          success: false,
+          error: {
+            code: 'scope_conflict',
+            message: `Capability ${slug} was called outside its scope: ${keys.join(', ')}`,
+          },
+        };
+      }
+      dispatchArgs = folded.args;
+      if (folded.filled.length > 0) {
+        logger.debug('Capability dispatch: folded scope into args', {
+          slug,
+          agentId: context.agentId,
+          filled: folded.filled,
+        });
+      }
+    }
+
     // 5. Rate limit. Effective limit is the binding override, else the
     //    base capability's `rateLimit`. `null` = unlimited.
     const effectiveLimit = binding?.effectiveRateLimit ?? entry.rateLimit;
@@ -489,7 +537,7 @@ class CapabilityDispatcher {
         // 7. Validate args.
         let validated: unknown;
         try {
-          validated = handler.validate(rawArgs);
+          validated = handler.validate(dispatchArgs);
         } catch (err) {
           if (err instanceof CapabilityValidationError) {
             logger.warn('Capability dispatch: invalid args', {

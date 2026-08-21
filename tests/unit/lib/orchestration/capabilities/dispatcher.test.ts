@@ -73,6 +73,31 @@ class OkCapability extends BaseCapability<{ n: number }, { doubled: number }> {
 }
 
 /**
+ * Declares a `projectId` parameter, so the scope fold (dispatch step 4b) has
+ * something to fold into. Echoes the args it was validated with.
+ */
+class ScopedCapability extends BaseCapability<{ projectId: string }, { projectId: string }> {
+  readonly slug = 'scoped';
+  readonly functionDefinition = {
+    name: 'scoped',
+    description: '',
+    parameters: { type: 'object', properties: { projectId: { type: 'string' } } },
+  };
+  protected readonly schema = z.object({ projectId: z.string() });
+
+  async execute(args: { projectId: string }) {
+    return this.success({ projectId: args.projectId });
+  }
+}
+
+/** The DB row shape for {@link ScopedCapability}, whose schema drives the fold. */
+const SCOPED_FUNCTION_DEFINITION = {
+  name: 'scoped',
+  description: '',
+  parameters: { type: 'object', properties: { projectId: { type: 'string' } } },
+};
+
+/**
  * Captures the `CapabilityContext` it receives so a test can assert that the
  * dispatcher passes the caller's context (including the free-form `scope`
  * carrier) through to `execute()` verbatim.
@@ -1306,5 +1331,138 @@ describe('CapabilityDispatcher', () => {
       // No override required; register succeeds.
       expect(() => capabilityDispatcher.register(new OkCapability())).not.toThrow();
     });
+  });
+});
+
+describe('CapabilityDispatcher — scope fold (step 4b)', () => {
+  const scopedRow = () =>
+    makeCapabilityRow({ slug: 'scoped', functionDefinition: SCOPED_FUNCTION_DEFINITION });
+
+  beforeEach(() => {
+    capabilityDispatcher.register(new ScopedCapability());
+  });
+
+  it('fills a declared parameter the caller omitted', async () => {
+    mockFindMany.mockResolvedValue([scopedRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'scoped',
+      {},
+      {
+        ...ctx,
+        scope: { projectId: 'p1' },
+      }
+    );
+
+    // The capability's own schema requires `projectId`; without the fold this
+    // is `invalid_args`. It reaching `execute` IS the feature.
+    expect(result).toEqual({ success: true, data: { projectId: 'p1' } });
+  });
+
+  it('leaves a matching value alone', async () => {
+    mockFindMany.mockResolvedValue([scopedRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'scoped',
+      { projectId: 'p1' },
+      {
+        ...ctx,
+        scope: { projectId: 'p1' },
+      }
+    );
+
+    expect(result).toEqual({ success: true, data: { projectId: 'p1' } });
+  });
+
+  it('refuses a call naming a different value, and never executes', async () => {
+    const executeSpy = vi.spyOn(ScopedCapability.prototype, 'execute');
+    mockFindMany.mockResolvedValue([scopedRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'scoped',
+      { projectId: 'other' },
+      {
+        ...ctx,
+        scope: { projectId: 'p1' },
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('scope_conflict');
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('withholds the scope value from the client-facing message', async () => {
+    // The message is surfaced verbatim. Naming the tenant a key is pinned to —
+    // or confirming another id exists — is not something a refusal needs to do.
+    mockFindMany.mockResolvedValue([scopedRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'scoped',
+      { projectId: 'other' },
+      {
+        ...ctx,
+        scope: { projectId: 'secret-tenant' },
+      }
+    );
+
+    expect(result.error?.message).toContain('projectId');
+    expect(result.error?.message).not.toContain('secret-tenant');
+  });
+
+  it('runs before the rate limiter — a refused call consumes no rate token', async () => {
+    // Mirrors the guard's placement test. rateLimit=1 lets exactly one call
+    // through; if the fold ran AFTER the limiter, the refused call would spend
+    // the only token and the legitimate call behind it would be rate_limited.
+    mockFindMany.mockResolvedValue([
+      makeCapabilityRow({
+        slug: 'scoped',
+        functionDefinition: SCOPED_FUNCTION_DEFINITION,
+        rateLimit: 1,
+      }),
+    ]);
+    const scope = { projectId: 'p1' };
+
+    const refused = await capabilityDispatcher.dispatch(
+      'scoped',
+      { projectId: 'other' },
+      {
+        ...ctx,
+        scope,
+      }
+    );
+    const allowed = await capabilityDispatcher.dispatch('scoped', {}, { ...ctx, scope });
+
+    expect(refused.error?.code).toBe('scope_conflict');
+    expect(allowed).toEqual({ success: true, data: { projectId: 'p1' } });
+  });
+
+  it('is inert for an unscoped caller', async () => {
+    mockFindMany.mockResolvedValue([scopedRow()]);
+
+    // No `scope` on the context — vanilla behaviour, so the missing required
+    // arg is the capability's own validation failure and nothing else.
+    const result = await capabilityDispatcher.dispatch('scoped', {}, ctx);
+
+    expect(result.error?.code).toBe('invalid_args');
+  });
+
+  it('is inert when the capability declares no parameter of that name', async () => {
+    const executeSpy = vi.spyOn(OkCapability.prototype, 'execute');
+    // `OkCapability`'s parameters are `{}` — it declares nothing.
+    mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+
+    const result = await capabilityDispatcher.dispatch(
+      'ok',
+      { n: 2 },
+      {
+        ...ctx,
+        scope: { projectId: 'p1' },
+      }
+    );
+
+    expect(result).toEqual({ success: true, data: { doubled: 4 } });
+    // Not widened: an undeclared key would break a `.strict()` schema.
+    expect(executeSpy).toHaveBeenCalledWith({ n: 2 }, expect.anything());
   });
 });

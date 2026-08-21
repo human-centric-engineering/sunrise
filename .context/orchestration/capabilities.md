@@ -124,6 +124,29 @@ Re-registering the same key **replaces the handler and its guard together** — 
 
 `CapabilityContext.scope?: Record<string, string>` is a free-form, optional string map the dispatcher's caller can populate. It is **generic by design** — core names no keys and no built-in capability reads it; the dispatcher passes it verbatim into `execute()`. A fork uses it to let a capability refuse to run outside its intended scope (e.g. a `module` slug). In vanilla Sunrise the chat handler threads it from `ChatRequest.scope` into the dispatch context, so it stays `undefined` and inert unless a caller sets it.
 
+**Three callers populate it**, and the fold below applies to all three because the carrier is a dispatch concept, not any one transport's: an MCP key's `McpApiKey.scope` (`lib/orchestration/mcp/tool-registry.ts`), a workflow execution's (`lib/orchestration/engine/context.ts`), and a nested `run_workflow` passing its parent's through.
+
+#### The scope fold (dispatch step 4b)
+
+Delivering the carrier to `execute()` is only half of what a persisted scope is for. The other half is making it **ambient in the arguments**, so a scoped caller can omit the scoped parameter and cannot act outside its scope by naming a different one. Before this, every scoped capability consumed the carrier by hand — or a fork patched the dispatch path (#586).
+
+For each key in `context.scope`, **and only if the capability's own `functionDefinition.parameters` declares a property of that name**:
+
+- **fill-if-absent** — the arg is missing, `null` or `''`, so the scope value is supplied;
+- **cross-scope guard** — the arg is present and is not exactly the scope value, so the dispatch is refused with `{ code: 'scope_conflict' }`. The message names the offending **keys** and never the scope **values**: it is surfaced verbatim to the client, and telling a caller which tenant its key is pinned to is not something a refusal needs to do.
+
+The "declares the property" gate is what keeps this domain-agnostic: a capability keyed on some other id is untouched, and nothing is injected into a schema that would reject the extra key.
+
+Three properties worth knowing, each of which a naive implementation gets wrong:
+
+- **Declaration is tested with `hasOwnProperty`**, not `properties[key] !== undefined`. Every object literal inherits `toString`, `constructor` and friends, so the loose test folds a scope key named after one into _every_ tool in the system.
+- **Comparison is strict and never coerces.** A `projectId` of `5` is not the scope's `"5"`, and an object with a matching `toString()` is not a match either — coercing would let any caller satisfy a tenant check.
+- **Args that are not a plain object pass straight through.** A scoped call with `args: "hello"` cannot be folded, and inventing an object would turn a request the capability's schema is about to reject into one it accepts. It stays rejected, one step later, at step 7.
+
+The rules live in [`lib/orchestration/scope.ts`](../../lib/orchestration/scope.ts) (`foldScopeIntoArgs`, pure) — the same module that owns the validate-on-read guard for the persisted columns.
+
+**A `guard` cannot do this.** `CapabilityGuard` receives the context and never the args, so it can decide "may this key call this tool at all" but not "does this argument agree with the key's scope". The two are complementary.
+
 ### Workflow attribution (`CapabilityContext.workflowExecutionId`)
 
 `CapabilityContext.workflowExecutionId?: string` is set by the `tool_call` executor from `ctx.executionId`, and is how a capability dispatched by a workflow gets attributed on its cost row.
@@ -246,6 +269,7 @@ The registry refuses to register a capability that declares `processesPii = true
    3a. **Quarantine gate** — `resolveQuarantineState(entry)` resolves the effective state (a past `quarantineUntil` is treated as `active`). Soft → `{ code: 'capability_quarantined', skipFollowup: false, metadata: { mode, reason } }` with a "temporarily unavailable" message the agent can route around. Hard → same code with `skipFollowup: true` and a firm message that stops the model's tool loop. See the [Quarantine](#quarantine-incident-disable) section below.
 4. **Per-agent binding** — `prisma.aiAgentCapability.findMany({ agentId })`, cached per agent for 5 minutes. An explicit row with `isEnabled: false` → `{ code: 'capability_disabled_for_agent' }`. Missing row = default-allow with base-capability defaults.
    4a. **Capability guard** — if a `guard` was attached at registration (a fork seam; core attaches none), it's `await`ed here with the full `context`. `{ allow: false }` → `{ code: 'capability_guard_denied' }` (the guard's optional `reason` is folded into the client-surfaced message; no internal ids). A guard that **throws** fails **closed** — same denial, logged via `logger.error`. Placed after enablement and before the rate limiter, so a denied call consumes no rate token. See [App-contributed capabilities](#app-contributed-capabilities-forks).
+   4b. **Scope fold** — when the caller populated `context.scope`, each scope key the capability **declares as a parameter** is folded into the args: filled if the caller omitted it, and refused with `{ code: 'scope_conflict' }` if the caller named a different value. Placed beside the guard, and for the guard's reason: a cross-scope call is an authorization failure, not a malformed request, so it must not spend the legitimate tenant's rate token. Inert unless a fork populated `scope`. See [Dispatch scope carrier](#dispatch-scope-carrier-capabilitycontextscope).
 5. **Rate limit** — effective limit = `binding.effectiveRateLimit ?? entry.rateLimit`. If non-null, a sliding-window `RateLimiter` keyed by slug (token = `agentId`) checks the request. Exceeded → `{ code: 'rate_limited' }`.
 6. **Approval gate** — `entry.requiresApproval: true` → `{ code: 'requires_approval', skipFollowup: true }`. The handler never runs. (The admin queue that resolves approvals is a later slice.)
 7. **Validate args** — `handler.validate(rawArgs)`. `CapabilityValidationError` → `{ code: 'invalid_args', message }`.
