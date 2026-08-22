@@ -97,7 +97,13 @@ describe('handleKnowledgeSearch', () => {
       apiKeyId: 'key-1',
     });
 
-    expect(searchKnowledge).toHaveBeenCalledWith('agentic patterns', undefined, 10);
+    expect(searchKnowledge).toHaveBeenCalledWith(
+      'agentic patterns',
+      undefined,
+      10,
+      undefined,
+      expect.any(Object)
+    );
   });
 
   it('maps search results to simplified shape', async () => {
@@ -231,7 +237,9 @@ describe('handleKnowledgeSearch', () => {
           documentIds: ['doc-a', 'doc-b'],
           includeSystemScope: false,
         }),
-        10
+        10,
+        undefined,
+        expect.any(Object)
       );
 
       const body = JSON.parse(result.text);
@@ -257,7 +265,13 @@ describe('handleKnowledgeSearch', () => {
       expect(vi.mocked(resolveAgentDocumentAccess)).toHaveBeenCalledWith(AGENT_ID);
 
       // Assert: searchKnowledge was called with undefined filters (no restriction)
-      expect(vi.mocked(searchKnowledge)).toHaveBeenCalledWith('open topic', undefined, 10);
+      expect(vi.mocked(searchKnowledge)).toHaveBeenCalledWith(
+        'open topic',
+        undefined,
+        10,
+        undefined,
+        expect.any(Object)
+      );
     });
 
     it('does not call resolveAgentDocumentAccess when scopedAgentId is null', async () => {

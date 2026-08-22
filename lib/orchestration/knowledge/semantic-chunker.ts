@@ -49,6 +49,17 @@ function estimateTokens(text: string): number {
 
 export interface SemanticChunkOptions {
   /**
+   * Slug of the document being chunked, tagged onto this call's `AiCostLog`
+   * row. A slug, not an `AiKnowledgeDocument.id` — named for what it is, since
+   * putting a not-quite-id where an id is expected is the mistake #654 exists
+   * to stop. It goes in `metadata`, never in a foreign-key column.
+   *
+   * Without it the sentence-embedding batch — often the LARGER of the two
+   * embedding calls an ingest makes — is the one row an operator costing a
+   * single upload cannot tie back to it.
+   */
+  documentSlug?: string;
+  /**
    * Lower bound on chunk size in tokens. Below this, neighbouring
    * chunks are merged. Default mirrors the structural chunker.
    */
@@ -74,6 +85,10 @@ interface ResolvedOptions {
   minTokens: number;
   maxTokens: number;
   breakpointPercentile: number;
+  /** Carried through rather than defaulted — there is no sensible default for
+   *  "which document is this", and its absence is meaningful (a caller with no
+   *  document, e.g. a test or an ad-hoc chunk). */
+  documentSlug?: string;
 }
 
 const DEFAULTS: ResolvedOptions = {
@@ -279,7 +294,13 @@ export async function chunkBySemanticBreakpoints(
 
   // Embed every sentence in one batched call. embedBatch handles
   // batching + provider rate limiting internally.
-  const { embeddings } = await embedBatch(sentences, undefined, 'document');
+  const { embeddings } = await embedBatch(sentences, undefined, 'document', {
+    metadata: {
+      kind: 'semantic_chunking',
+      sentenceCount: sentences.length,
+      ...(opts.documentSlug ? { documentSlug: opts.documentSlug } : {}),
+    },
+  });
   if (embeddings.length !== sentences.length) {
     throw new Error(
       `Semantic chunker: embedder returned ${embeddings.length} vectors for ${sentences.length} sentences`

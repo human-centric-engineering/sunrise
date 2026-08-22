@@ -475,7 +475,14 @@ describe('embedChunks', () => {
     const result = await embedChunks();
 
     expect(result).toEqual({ processed: 2, total: 5, alreadyEmbedded: 3 });
-    expect(embedBatch).toHaveBeenCalledWith(['Chunk 1', 'Chunk 2']);
+    expect(embedBatch).toHaveBeenCalledWith(
+      ['Chunk 1', 'Chunk 2'],
+      undefined,
+      undefined,
+      expect.objectContaining({
+        metadata: expect.objectContaining({ kind: 'knowledge_seed', chunkCount: 2 }),
+      })
+    );
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
 
     // Verify UPDATE calls

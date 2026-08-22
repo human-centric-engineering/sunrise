@@ -72,7 +72,13 @@ describe('queueMessageEmbedding', () => {
     queueMessageEmbedding('msg-2', content);
 
     await vi.waitFor(() => {
-      expect(embedText).toHaveBeenCalledWith(content, 'document');
+      expect(embedText).toHaveBeenCalledWith(
+        content,
+        'document',
+        expect.objectContaining({
+          metadata: expect.objectContaining({ kind: 'message_embedding' }),
+        })
+      );
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO ai_message_embedding'),
         'msg-2',
@@ -89,7 +95,7 @@ describe('queueMessageEmbedding', () => {
     queueMessageEmbedding('msg-3', longContent);
 
     await vi.waitFor(() => {
-      expect(embedText).toHaveBeenCalledWith(expect.any(String), 'document');
+      expect(embedText).toHaveBeenCalledWith(expect.any(String), 'document', expect.any(Object));
       const calledWith = vi.mocked(embedText).mock.calls[0][0];
       expect(calledWith.length).toBe(8000);
     });
@@ -235,5 +241,37 @@ describe('backfillMissingEmbeddings', () => {
 
     // Assert: return value reflects 1 processed and 1 failed
     expect(result).toEqual({ processed: 1, failed: 1 });
+  });
+
+  describe('cost attribution (#654)', () => {
+    it('bills the embedding to the conversation and agent when the caller has them', async () => {
+      // /code-review round 3: the last chat-path embedding sink still landing
+      // with all three FK columns null, while its only production call site had
+      // both real ids in scope.
+      // >= 20 chars, or `queueMessageEmbedding` returns before doing anything.
+      const content = 'A message long enough to be worth embedding.';
+      queueMessageEmbedding('msg-1', content, {
+        agentId: 'agent-real',
+        conversationId: 'conv-real',
+      });
+      await vi.waitFor(() => expect(embedText).toHaveBeenCalled());
+
+      expect(embedText).toHaveBeenCalledWith(
+        content,
+        'document',
+        expect.objectContaining({ agentId: 'agent-real', conversationId: 'conv-real' })
+      );
+    });
+
+    it('omits the FK columns when the caller has no ids, rather than inventing them', async () => {
+      // The backfill path has neither in scope. Absent is the other safe value;
+      // a placeholder would be rejected exactly as `'system'` was.
+      queueMessageEmbedding('msg-2', 'A message long enough to be worth embedding.');
+      await vi.waitFor(() => expect(embedText).toHaveBeenCalled());
+
+      const attribution = vi.mocked(embedText).mock.calls[0][2] as Record<string, unknown>;
+      expect(attribution).not.toHaveProperty('agentId');
+      expect(attribution).not.toHaveProperty('conversationId');
+    });
   });
 });

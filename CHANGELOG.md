@@ -376,6 +376,88 @@ release process.
 
 ### Fixed
 
+- **The rolling conversation summary was recomputed on every single turn past
+  the history window, and the cost row for each of those calls was silently
+  discarded (#654).** Two defects that concealed each other. The reuse check was
+  `conversation.summaryUpToMessageId === lastDroppedId`, where `lastDroppedId`
+  is `history[droppedCount - 1].id` — the **boundary of a sliding window**.
+  `droppedCount` grows by about two a turn (one user message, one assistant), so
+  turn 1 pinned the message at index 1 and turn 2 asked about index 3. The check
+  could not hit in normal use: past roughly 25 exchanges (`MAX_HISTORY_MESSAGES`
+  is 50 *messages* — `tool` rows count too), **every turn** paid for a fresh
+  summarisation of the whole dropped region, on the agent's own provider.
+  Meanwhile `summarizer.ts` logged that spend with `agentId: 'system'` and
+  `conversationId: 'summary'` — literal strings into two columns that are real
+  foreign keys — so each insert violated both, `logCost` caught the P2003 and
+  returned `null`, and the call was `void`-ed. Nothing on the Costs page moved;
+  the only signal was one error line per summary and the provider invoice.
+  The fix changes the model rather than the comparison. The summary covers a
+  **prefix** of the conversation, `summaryUpToMessageId` names the newest message
+  in it, and reuse asks whether that prefix already contains everything this turn
+  has to drop. Because the boundary moves every turn, staying reusable means
+  summarising **past** the requirement: `SUMMARY_LOOKAHEAD_MESSAGES` (10) buys
+  roughly five turns per call at the default cap. (Not at every cap: at
+  `maxHistoryMessages` of 1–3 the clamp below leaves a lookahead of 0 or 1, so
+  those agents still summarise every turn. Inherent — a two-message window
+  cannot both summarise ahead and keep the last exchange — and each call is now
+  a ~2-message fold rather than a full re-derivation.) The handler now passes `historyDropCount` to
+  `buildMessages` so the summary boundary **is** the drop boundary — two
+  independently-computed boundaries that had to agree is the shape that produced
+  the bug, and nothing appears in the prompt both summarised and verbatim.
+  Verbatim history consequently sits between
+  `cap - min(10, floor(cap / 2))` and `cap` messages: **the lookahead never
+  takes more than half the window.** That clamp is load-bearing, not defensive —
+  `maxHistoryMessages` is validated `min(0).max(500)`, so a cap below the
+  lookahead is supported, and an unclamped 10 summarised an agent with
+  `maxHistoryMessages: 4` down to *zero* verbatim history — losing the assistant
+  turn the user was replying to — on roughly every third turn. At the default
+  cap of 50 it is `min(10, 25)` = 10, so the reuse win is untouched.
+  `summarizeMessages` gained `previousSummary` and **extends** rather than
+  re-derives, so a call costs what was *added* since the last one, not the length
+  of the conversation. That also fixes a quieter loss: `loadHistory` returns at
+  most 200 rows, so anything older used to leave the prompt and the summary
+  together — the folded text now outlives the rows. (With one limit, pre-existing
+  and not changed here: an agent whose `maxHistoryMessages` is at or above that
+  200-row window never summarises at all, because nothing is ever dropped for
+  the cap. Those conversations lose everything past 200 rows silently, as they
+  did before. Filed as #655.)
+  Three failure-path defects found by review and fixed with it: an empty
+  completion (a content filter, or a reasoning model spending its token budget
+  before emitting text) discarded the stored summary instead of falling back to
+  it; rows whose `summary` column holds the placeholder — which the pre-fix code
+  persisted unconditionally, so they exist in the wild — were treated as real
+  and would have been folded forward indefinitely; and a stored summary whose
+  pin has scrolled past the 200-row load window is now rendered without an
+  invented count rather than dropped from the prompt entirely.
+  A `fellBack` result is never
+  persisted, which stops one transient provider error replacing a good summary
+  with `[Summary unavailable]` and recording it as covering messages nothing
+  describes.
+  Embedding cost rows were the third part: recorded, counted in global totals,
+  attributable to nothing. `embedText`/`embedBatch` take an optional
+  `EmbeddingAttribution`, filled in by the `search_knowledge_base` capability
+  (with the `isWorkflowAgentId` guard, since a workflow's `context.agentId` is a
+  synthetic label and not an `AiAgent.id`) and by the `rag_retrieve` executor
+  (`workflowExecutionId` + the carrier's `stepId`, which both execution cost
+  readers filter on). Ingestion paths stay unattributed by design — no agent or
+  conversation exists behind a document upload — and carry `metadata.kind`
+  instead. All parameters are optional; forks calling these directly are
+  unaffected.
+  This was the **third** time a non-row-id reached one of those foreign keys
+  after #599 and #600, so it also ships a guard:
+  `tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts` derives
+  every `logCost` call site in the tree and compares what each writes into
+  `agentId` / `conversationId` / `workflowExecutionId` against a written
+  allowlist, registered in `ALWAYS_RUN_TESTS`. A literal check alone would have
+  caught this one and **neither** of the other two, which passed ordinary
+  expressions that hold a workflow label on some paths — so the guard is a
+  roster compared by set equality, and a new call site fails it until someone
+  states why its value is a row id. Its limit is documented and was measured:
+  it reads `logCost` call sites, so a value reaching a foreign key one hop away
+  through a forwarding function is invisible to it — deleting the workflow guard
+  in `search-knowledge.ts` leaves it green. Each forwarding hop has its own
+  behavioural test instead.
+
 - **Workflow capability spend now shows up against the step that caused it, and
   `agent_call` tool spend shows up at all.** #599 stopped these `AiCostLog` rows
   being lost to an FK violation; they existed after it and were still invisible

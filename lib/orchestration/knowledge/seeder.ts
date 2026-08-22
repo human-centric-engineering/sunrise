@@ -249,7 +249,9 @@ export async function embedChunks(): Promise<{
   });
 
   const texts = pending.map((c) => c.content);
-  const { embeddings, provenance } = await embedBatch(texts);
+  const { embeddings, provenance } = await embedBatch(texts, undefined, undefined, {
+    metadata: { kind: 'knowledge_seed', chunkCount: pending.length },
+  });
 
   for (let i = 0; i < pending.length; i++) {
     const embeddingStr = `[${embeddings[i].join(',')}]`;

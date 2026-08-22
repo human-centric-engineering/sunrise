@@ -57,7 +57,9 @@ export async function handleKnowledgeSearch(
     });
   }
 
-  const results = await searchKnowledge(query, filters, 10);
+  const results = await searchKnowledge(query, filters, 10, undefined, {
+    metadata: { kind: 'mcp_knowledge_search' },
+  });
 
   const simplified = results.map((r) => ({
     content: r.chunk.content,

@@ -153,6 +153,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'treatment as the things it guards.',
   },
   {
+    path: 'tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts',
+    reason:
+      'walks the tree for every `logCost` call site and compares what each ' +
+      "one writes into `AiCostLog`'s foreign keys against a written " +
+      'allowlist. The change it exists to catch is a NEW call site — three ' +
+      'of those have now written a value that is not a row id (#599, #600, ' +
+      '#654), and a fourth would be in a file no import chain connects here.',
+  },
+  {
     path: 'tests/unit/sunrise-version-disclosure.test.ts',
     reason:
       'walks `app/` and `lib/` for every route whose import graph reaches ' +

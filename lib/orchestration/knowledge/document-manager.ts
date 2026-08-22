@@ -293,7 +293,9 @@ export async function uploadDocument(
 
     // Generate embeddings (external API call — kept outside transaction)
     const texts = chunks.map((c) => c.content);
-    const { embeddings, provenance } = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts, undefined, undefined, {
+      metadata: { kind: 'knowledge_ingest', documentId: document.id },
+    });
 
     const coverage = computeCoverage(content, texts);
     const coverageWarning = buildCoverageWarning(coverage);
@@ -518,7 +520,9 @@ async function uploadCsvFromParsed(
     }
 
     const texts = chunks.map((c) => c.content);
-    const { embeddings, provenance } = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts, undefined, undefined, {
+      metadata: { kind: 'knowledge_ingest', documentId: document.id },
+    });
 
     // Coverage is computed against the post-filter section text — the
     // oversize-row skip warning above already accounts for dropped rows.
@@ -800,7 +804,9 @@ export async function confirmPreview(
     }
 
     const texts = chunks.map((c) => c.content);
-    const { embeddings, provenance } = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts, undefined, undefined, {
+      metadata: { kind: 'knowledge_ingest', documentId },
+    });
 
     const coverage = computeCoverage(content, texts);
     const coverageWarning = buildCoverageWarning(coverage);
@@ -940,7 +946,9 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
 
     // Re-embed (external API call — kept outside transaction)
     const texts = chunks.map((c) => c.content);
-    const { embeddings, provenance } = await embedBatch(texts);
+    const { embeddings, provenance } = await embedBatch(texts, undefined, undefined, {
+      metadata: { kind: 'knowledge_reembed', documentId },
+    });
 
     // Coverage is recomputed against the same source the chunker ran on:
     // for CSVs that's the joined row contents (matches the upload path);

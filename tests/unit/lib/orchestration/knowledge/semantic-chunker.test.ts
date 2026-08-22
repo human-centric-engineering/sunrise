@@ -145,6 +145,66 @@ describe('chunkBySemanticBreakpoints', () => {
     expect(mockEmbedBatch).not.toHaveBeenCalled();
   });
 
+  it('tags the sentence-embedding cost row with the document it is chunking', async () => {
+    // /code-review round 2. This batch is one vector per sentence and is often
+    // the LARGER of the two embedding calls an ingest makes — and it was the
+    // only ingest sink left carrying no document identifier, which is the exact
+    // "recorded but attributable to nothing" shape #654 set out to close.
+    //
+    // `documentSlug`, not `documentId`: it is a slug, and naming it for what it
+    // is matters in a change about not putting not-quite-ids where ids belong.
+    // It rides in `metadata`, never in a foreign-key column.
+    const text = Array.from(
+      { length: 6 },
+      (_, i) => `Sentence number ${i} with enough words in it to count properly.`
+    ).join(' ');
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: clusteredVectors(2, 3),
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
+    });
+
+    await chunkBySemanticBreakpoints(text, { documentSlug: 'quarterly-report' });
+
+    expect(mockEmbedBatch).toHaveBeenCalledWith(
+      expect.any(Array),
+      undefined,
+      'document',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          kind: 'semantic_chunking',
+          documentSlug: 'quarterly-report',
+        }),
+      })
+    );
+  });
+
+  it('omits documentSlug rather than inventing one when the caller has none', async () => {
+    const text = Array.from(
+      { length: 6 },
+      (_, i) => `Sentence number ${i} with enough words in it to count properly.`
+    ).join(' ');
+    mockEmbedBatch.mockResolvedValueOnce({
+      embeddings: clusteredVectors(2, 3),
+      provenance: {
+        provider: 'mock',
+        model: 'mock',
+        dimensions: 1536,
+        embeddedAt: new Date('2024-01-01'),
+      },
+    });
+
+    await chunkBySemanticBreakpoints(text);
+
+    const attribution = mockEmbedBatch.mock.calls[0][3] as { metadata: Record<string, unknown> };
+    expect(attribution.metadata).not.toHaveProperty('documentSlug');
+    expect(attribution.metadata.kind).toBe('semantic_chunking');
+  });
+
   it('groups sentences within a cluster and breaks between clusters', async () => {
     // 2 clusters of 4 identical sentences each. Adjacent distances:
     // [0, 0, 0, 1, 0, 0, 0]. Threshold at 75th percentile = 0 (sorted

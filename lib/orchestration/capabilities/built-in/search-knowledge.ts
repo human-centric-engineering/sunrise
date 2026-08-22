@@ -15,6 +15,7 @@ import {
 } from '@/lib/orchestration/knowledge/search';
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import { isWorkflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -136,11 +137,28 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
       filters.includeSystemScope = access.includeSystemScope;
     }
 
+    // Attribute the query embedding. Same rules as the dispatcher's own cost
+    // row (#599/#600): `agentId` only when it is a real `AiAgent.id` — dispatched
+    // from a workflow step `context.agentId` is the synthetic `workflow:<id>`
+    // label, and `AiCostLog.agentId` is a foreign key — and the caller's
+    // `costLogMetadata` rides along so the row carries the `stepId` both
+    // execution cost readers filter on. Without any of this the embedding spend
+    // was recorded and attributable to nothing (#654).
     const { results, embedding } = await searchKnowledgeWithEmbedding(
       args.query,
       Object.keys(filters).length > 0 ? filters : undefined,
       DEFAULT_LIMIT,
-      DEFAULT_THRESHOLD
+      DEFAULT_THRESHOLD,
+      {
+        ...(context.agentId && !isWorkflowAgentId(context.agentId)
+          ? { agentId: context.agentId }
+          : {}),
+        ...(context.conversationId ? { conversationId: context.conversationId } : {}),
+        ...(context.workflowExecutionId
+          ? { workflowExecutionId: context.workflowExecutionId }
+          : {}),
+        metadata: { ...(context.costLogMetadata ?? {}), kind: 'knowledge_search' },
+      }
     );
 
     const sideEffectModel: SideEffectModelUsage = {

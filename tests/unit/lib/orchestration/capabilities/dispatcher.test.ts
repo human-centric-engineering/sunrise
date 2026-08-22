@@ -1233,7 +1233,20 @@ describe('CapabilityDispatcher', () => {
           },
         ],
       });
-      expect(mockSearch).toHaveBeenCalledWith('ReAct pattern', undefined, 10, 0.7);
+      // The trailing argument is the query embedding's cost attribution (#654).
+      // It reaches here through the real capability, so this is the end-to-end
+      // proof that an embedding is billed to the agent that asked for it.
+      expect(mockSearch).toHaveBeenCalledWith(
+        'ReAct pattern',
+        undefined,
+        10,
+        0.7,
+        expect.objectContaining({
+          agentId: 'agent-1',
+          conversationId: 'conv-1',
+          metadata: expect.objectContaining({ kind: 'knowledge_search' }),
+        })
+      );
     });
   });
 

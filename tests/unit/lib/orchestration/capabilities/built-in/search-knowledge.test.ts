@@ -90,7 +90,13 @@ describe('SearchKnowledgeCapability', () => {
     const result = await cap.execute({ query: 'reason + act' }, context);
 
     expect(resolveAgentDocumentAccess).toHaveBeenCalledWith('a1');
-    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith('reason + act', undefined, 10, 0.7);
+    expect(searchKnowledgeWithEmbedding).toHaveBeenCalledWith(
+      'reason + act',
+      undefined,
+      10,
+      0.7,
+      expect.any(Object)
+    );
     expect(result.success).toBe(true);
     expect(result.data).toMatchObject({
       results: [{ chunkId: 'c1', patternNumber: 1, similarity: 0.91 }],
@@ -107,7 +113,8 @@ describe('SearchKnowledgeCapability', () => {
       'plan',
       { patternNumber: 7 },
       10,
-      0.7
+      0.7,
+      expect.any(Object)
     );
   });
 
@@ -126,7 +133,8 @@ describe('SearchKnowledgeCapability', () => {
       'refund policy',
       { documentIds: ['doc-1', 'doc-2'], includeSystemScope: true },
       10,
-      0.7
+      0.7,
+      expect.any(Object)
     );
   });
 
@@ -143,7 +151,8 @@ describe('SearchKnowledgeCapability', () => {
       'clause',
       { documentId: '550e8400-e29b-41d4-a716-446655440000' },
       10,
-      0.7
+      0.7,
+      expect.any(Object)
     );
   });
 
@@ -177,7 +186,8 @@ describe('SearchKnowledgeCapability', () => {
         includeSystemScope: true,
       },
       10,
-      0.7
+      0.7,
+      expect.any(Object)
     );
   });
 
@@ -223,7 +233,8 @@ describe('SearchKnowledgeCapability', () => {
       'q',
       { documentId: '550e8400-e29b-41d4-a716-446655440000' },
       10,
-      0.7
+      0.7,
+      expect.any(Object)
     );
   });
 
@@ -269,5 +280,78 @@ describe('SearchKnowledgeCapability', () => {
 
     await expect(cap.execute({ query: 'anything' }, context)).rejects.toThrow('connection timeout');
     expect(searchKnowledgeWithEmbedding).not.toHaveBeenCalled();
+  });
+
+  // ── Cost attribution for the query embedding (#654) ──────────────────────
+  //
+  // These live here rather than relying on
+  // `tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts`, which
+  // reads `logCost` call sites statically. This capability does not call
+  // `logCost` — it hands an attribution to `searchKnowledgeWithEmbedding`,
+  // which forwards it to `embedText`, which does. The static roster cannot see
+  // one hop away, so the rule at THIS hop needs its own test. Deleting the
+  // guard below leaves that roster entirely green.
+
+  describe('embedding cost attribution', () => {
+    async function attributionFor(ctx: Record<string, unknown>) {
+      (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mockResolvedValue(
+        withEmbed([makeChunk()])
+      );
+      await new SearchKnowledgeCapability().execute({ query: 'reason + act' }, ctx as never);
+      return (searchKnowledgeWithEmbedding as ReturnType<typeof vi.fn>).mock.calls[0][4] as Record<
+        string,
+        unknown
+      >;
+    }
+
+    it('bills a real agent for its own query embedding', async () => {
+      const attribution = await attributionFor({
+        userId: 'u1',
+        agentId: 'a1',
+        conversationId: 'conv-1',
+      });
+
+      expect(attribution).toMatchObject({
+        agentId: 'a1',
+        conversationId: 'conv-1',
+        metadata: expect.objectContaining({ kind: 'knowledge_search' }),
+      });
+    });
+
+    it('omits agentId when the caller is a workflow, whose label is not an AiAgent.id', async () => {
+      // THE RULE. Dispatched from a workflow `tool_call` step, `context.agentId`
+      // is the synthetic `workflow:<executionId>` label. `AiCostLog.agentId` is
+      // a foreign key to `AiAgent.id`, so writing it is a P2003 — which
+      // `logCost` catches and turns into a silently missing row. That is
+      // precisely #599 and #600, one hop further out.
+      const attribution = await attributionFor({
+        userId: 'u1',
+        agentId: 'workflow:exec-1',
+        workflowExecutionId: 'exec-1',
+      });
+
+      expect(attribution).not.toHaveProperty('agentId');
+      // The execution is the column that models the relationship, and its FK
+      // is satisfied — the execution row exists before any step runs.
+      expect(attribution).toMatchObject({ workflowExecutionId: 'exec-1' });
+    });
+
+    it("carries the caller's costLogMetadata so the row reaches the execution panels", async () => {
+      // Both execution cost readers do `if (!stepId) continue;`, so a row
+      // without the carrier's `stepId` is dropped by the two views that would
+      // show it — the row exists and still shows up nowhere (#600).
+      const attribution = (await attributionFor({
+        userId: 'u1',
+        agentId: 'workflow:exec-1',
+        workflowExecutionId: 'exec-1',
+        costLogMetadata: { stepId: 'step-3', evaluationRunId: 'run-9' },
+      })) as { metadata: Record<string, unknown> };
+
+      expect(attribution.metadata).toMatchObject({
+        stepId: 'step-3',
+        evaluationRunId: 'run-9',
+        kind: 'knowledge_search',
+      });
+    });
   });
 });

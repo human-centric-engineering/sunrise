@@ -431,6 +431,7 @@ async function chunkGenericSection(
       const semanticBodies = await chunkBySemanticBreakpoints(body, {
         minTokens: MIN_CHUNK_TOKENS,
         maxTokens: MAX_CHUNK_TOKENS,
+        documentSlug,
       });
       if (semanticBodies.length > 1) {
         const chunkType = inferChunkType(header);

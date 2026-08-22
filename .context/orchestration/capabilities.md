@@ -214,33 +214,55 @@ Two things ride on the carrier:
 | `capabilities/built-in/run-workflow.ts` → child `ExecuteOptions`   | `context.costLogMetadata`, so a nested run inherits the tags                         |
 | `capabilities/built-in/send-message-to-channel.ts` → own `logCost` | `context.costLogMetadata`, plus the workflow-label guard                             |
 | `mcp/tool-registry.ts` → dispatch                                  | nothing, correctly: an MCP call has no execution or evaluation context               |
+| `chat/streaming-handler.ts` → `summarizeMessages`                  | `agent.id` + `conversation.id` — the only caller holding real ids (#654)             |
+| `capabilities/built-in/search-knowledge.ts` → `embedText`          | `context.costLogMetadata`, plus the workflow-label guard (#654)                      |
+| `engine/executors/rag-retrieve.ts` → `searchKnowledge`             | `{ ...ctx.costLogMetadata, stepId: step.id }` + `ctx.executionId` (#654)             |
 
 Every one of these except the MCP row was missing the carrier when #600 started. Do not reason from how many there are — reason from the question, which is _"does anything in scope here carry `costLogMetadata`?"_ If you add a boundary, the answer is usually yes.
 
 **What this roster is NOT.** It covers boundaries where a carrier is _in
 scope_ and must be passed on. It is not a list of everywhere cost is logged, and
 reading it as one is a mistake an earlier draft invited by calling itself
-"derived rather than remembered". Two live sinks have no carrier available at
-all and are therefore unattributed today:
+"derived rather than remembered".
 
-| Sink                                  | What it logs                                | Why nothing tags it                                                                                                 |
-| ------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `chat/summarizer.ts`                  | the rolling-summary LLM call                | called from deep inside the chat loop under `agentId: 'system'`, with no request or execution context threaded down |
-| `knowledge/embedder.ts` (`embedText`) | the `search_knowledge_base` query embedding | called from inside the capability, with no `agentId`, no execution link and no metadata                             |
+**The two sinks this table used to list as open are closed (#654).** The
+rolling summariser was worse than unattributed: it wrote `agentId: 'system'` and
+`conversationId: 'summary'` — literal strings into columns that are real foreign
+keys — so every insert violated both, `logCost` swallowed the P2003, and the row
+was **never written at all**. It now takes `agent.id` and `conversation.id` from
+the chat handler, the one caller that holds them. The knowledge-search query
+embedding was genuinely unattributed — the row persisted, belonging to nothing —
+and `embedText`/`embedBatch` now take an `EmbeddingAttribution` that the
+capability and the `rag_retrieve` executor fill in.
 
-So an agent evaluation whose subject uses knowledge search and crosses the
-summarisation window still produces rows attributable to neither the run nor the
-step. Closing that means threading a context into both — a wider change than
-#600, and a design question (does the summariser belong to the turn or the
-conversation?) rather than a missed line.
+**What is still deliberately unattributed**, and why:
 
-**Tracked as [#654](https://github.com/human-centric-engineering/sunrise/issues/654), and the summariser half is worse than
-"unattributable".** It writes `agentId: 'system'` and `conversationId: 'summary'`
-— both literal strings into columns that are real foreign keys — so the insert
-violates two FKs, `logCost` swallows the P2003, and **the row is never written
-at all**. That is real provider spend disappearing, and the third instance of
-the same shape after #599 and #600's `send_message_to_channel` fix. Do not read
-this table as "recorded but unlabelled" for that row.
+| Sink                                                   | What it logs                        | Why nothing tags it                                                                             |
+| ------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `knowledge/embedder.ts` via document ingestion         | the per-document embedding batch    | no agent or conversation exists behind an upload. Tagged `metadata.kind` + `documentId` instead |
+| `knowledge/keyword-enricher.ts`                        | post-upload BM25 keyword generation | same: runs against a document, from the admin UI, with no turn or execution in scope            |
+| `knowledge/seeder.ts`, `knowledge/semantic-chunker.ts` | backfill and chunking embeddings    | operator-triggered maintenance, not work done on anyone's behalf. Tagged `metadata.kind`        |
+| `chat/message-embedder.ts` backfill path only          | re-embedding older messages         | the live chat path DOES attribute (agent + conversation); the backfill has neither in scope     |
+
+These are a limit of the domain, not a missing line: there is no row to point a
+foreign key at. `metadata.kind` is what makes them separable in reporting.
+
+**The rule these three bugs share, and the guard for it.**
+`AiCostLog.agentId`, `.conversationId` and `.workflowExecutionId` are foreign
+keys, so at every call site the only two safe values are **a real row id** or
+**nothing**. A placeholder is rejected with P2003, and because `logCost` catches
+it and every caller `void`s the promise, the failure is a row that quietly never
+existed. `tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts`
+derives every `logCost` call site in the tree and compares what each writes into
+those columns against a written allowlist — so a fourth instance cannot be added
+without someone stating why its value is a row id.
+
+That guard reads `logCost` call sites, and **a value can also reach a foreign key
+one hop away**, through a function that accepts an attribution and forwards it.
+Measured, not assumed: deleting the workflow-label guard in
+`search-knowledge.ts` — reintroducing #600 exactly — leaves the roster entirely
+green. Each forwarding hop carries its own behavioural test instead; the guard's
+docblock names them.
 
 **Known exception: the judge path.** `judge_call` forwards the carrier, so an
 evaluation run's tags reach the judge's row — but that row is written by the

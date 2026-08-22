@@ -37,7 +37,9 @@ export const POST = withAdminAuth(async (request, _session) => {
     }
   }
 
-  const results = await searchKnowledge(query, filters, limit);
+  const results = await searchKnowledge(query, filters, limit, undefined, {
+    metadata: { kind: 'admin_knowledge_search' },
+  });
 
   log.info('Knowledge search completed', {
     query,

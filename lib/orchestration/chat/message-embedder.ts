@@ -19,10 +19,14 @@ import { embedText } from '@/lib/orchestration/knowledge/embedder';
  *
  * Only embeds assistant messages with meaningful content (>20 chars).
  */
-export function queueMessageEmbedding(messageId: string, content: string): void {
+export function queueMessageEmbedding(
+  messageId: string,
+  content: string,
+  attribution?: { agentId?: string; conversationId?: string }
+): void {
   if (content.length < 20) return;
 
-  void generateAndStoreEmbedding(messageId, content).catch((err: unknown) => {
+  void generateAndStoreEmbedding(messageId, content, attribution).catch((err: unknown) => {
     logger.warn('Message embedding failed', {
       messageId,
       error: err instanceof Error ? err.message : String(err),
@@ -77,11 +81,22 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
   return { processed, failed };
 }
 
-async function generateAndStoreEmbedding(messageId: string, content: string): Promise<void> {
+async function generateAndStoreEmbedding(
+  messageId: string,
+  content: string,
+  attribution?: { agentId?: string; conversationId?: string }
+): Promise<void> {
   // Truncate very long messages to save embedding costs
   const truncated = content.length > 8000 ? content.slice(0, 8000) : content;
 
-  const { embedding, model, provider, dimensions } = await embedText(truncated, 'document');
+  // Both ids are real rows when the chat handler supplies them; the backfill
+  // path has neither in scope and passes nothing, which is the other safe
+  // value. Never a placeholder — these are foreign keys (#654).
+  const { embedding, model, provider, dimensions } = await embedText(truncated, 'document', {
+    ...(attribution?.agentId ? { agentId: attribution.agentId } : {}),
+    ...(attribution?.conversationId ? { conversationId: attribution.conversationId } : {}),
+    metadata: { kind: 'message_embedding', messageId },
+  });
   const embeddingStr = `[${embedding.join(',')}]`;
 
   await prisma.$executeRawUnsafe(

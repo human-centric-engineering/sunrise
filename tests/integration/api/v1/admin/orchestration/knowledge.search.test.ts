@@ -151,7 +151,13 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
           chunkType: 'pattern_overview',
           patternNumber: 4,
         }),
-        5
+        5,
+        undefined,
+        // The query embedding's cost attribution (#654). An admin search has no
+        // agent or conversation behind it, so the kind is all there is to tag.
+        expect.objectContaining({
+          metadata: expect.objectContaining({ kind: 'admin_knowledge_search' }),
+        })
       );
     });
   });
@@ -202,7 +208,11 @@ describe('POST /api/v1/admin/orchestration/knowledge/search', () => {
           documentIds: ['doc-1', 'doc-2'],
           includeSystemScope: false,
         }),
-        expect.anything()
+        expect.anything(),
+        undefined,
+        expect.objectContaining({
+          metadata: expect.objectContaining({ kind: 'admin_knowledge_search' }),
+        })
       );
 
       expect(response.status).toBe(200);

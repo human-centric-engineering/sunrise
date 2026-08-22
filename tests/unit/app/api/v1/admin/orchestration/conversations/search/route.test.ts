@@ -176,7 +176,16 @@ describe('GET /conversations/search', () => {
 
     await GET(makeRequest({ q: 'how do I reset my password' }));
 
-    expect(embedText).toHaveBeenCalledWith('how do I reset my password', 'query');
+    // Third argument is the cost attribution (#654). An admin conversation
+    // search has no agent or conversation of its own to bill, so the kind is
+    // what keeps the row separable from an agent's own query embeddings.
+    expect(embedText).toHaveBeenCalledWith(
+      'how do I reset my password',
+      'query',
+      expect.objectContaining({
+        metadata: expect.objectContaining({ kind: 'conversation_search' }),
+      })
+    );
   });
 
   it('truncates long message content in results', async () => {

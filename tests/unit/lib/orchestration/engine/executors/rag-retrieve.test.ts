@@ -169,7 +169,7 @@ describe('executeRagRetrieve', () => {
     const step = makeStep({ query: 'q', topK: 3, similarityThreshold: 0.5 });
     await executeRagRetrieve(step, makeCtx());
 
-    expect(searchKnowledge).toHaveBeenCalledWith('q', undefined, 3, 0.5);
+    expect(searchKnowledge).toHaveBeenCalledWith('q', undefined, 3, 0.5, expect.any(Object));
   });
 
   it('uses defaults topK=5 and similarityThreshold=0.7 when not specified', async () => {
@@ -178,7 +178,13 @@ describe('executeRagRetrieve', () => {
 
     await executeRagRetrieve(makeStep(), makeCtx());
 
-    expect(searchKnowledge).toHaveBeenCalledWith(expect.any(String), undefined, 5, 0.7);
+    expect(searchKnowledge).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      5,
+      0.7,
+      expect.any(Object)
+    );
   });
 
   it('passes filters from config to searchKnowledge', async () => {
@@ -189,6 +195,52 @@ describe('executeRagRetrieve', () => {
     const step = makeStep({ query: 'q', filters });
     await executeRagRetrieve(step, makeCtx());
 
-    expect(searchKnowledge).toHaveBeenCalledWith('q', filters, 5, 0.7);
+    expect(searchKnowledge).toHaveBeenCalledWith('q', filters, 5, 0.7, expect.any(Object));
+  });
+
+  // ── Cost attribution (#654) ─────────────────────────────────────────────
+
+  it('attributes the query embedding to the execution and the step', async () => {
+    // The embedding is real spend the workflow caused. Before #654 the row
+    // landed with no execution, no step and no metadata, so it counted toward
+    // the global total and appeared against nothing an operator could open.
+    //
+    // `stepId` in particular is load-bearing: both execution cost readers do
+    // `const stepId = extractStepId(row.metadata); if (!stepId) continue;`, so a
+    // row without it is dropped by the two panels that would show it.
+    vi.mocked(interpolatePrompt).mockReturnValue('q');
+    vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+    const step = makeStep({ query: 'q' });
+    await executeRagRetrieve(step, makeCtx());
+
+    const attribution = vi.mocked(searchKnowledge).mock.calls[0][4];
+    expect(attribution).toMatchObject({
+      workflowExecutionId: 'exec_1',
+      metadata: expect.objectContaining({ stepId: step.id, kind: 'rag_retrieve' }),
+    });
+    // No `agentId`: a workflow step has no `AiAgent.id`, and the synthetic
+    // label it does have is not one — writing it would violate the FK.
+    expect(attribution).not.toHaveProperty('agentId');
+  });
+
+  it("carries the executor chain's cost metadata through, without letting it overwrite stepId", async () => {
+    // Same precedence rule as every other cost sink in the engine (#600):
+    // caller keys first, the executor's own facts last. A caller able to set
+    // `stepId` could attribute this embedding to a different step.
+    vi.mocked(interpolatePrompt).mockReturnValue('q');
+    vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+    const step = makeStep({ query: 'q' });
+    await executeRagRetrieve(
+      step,
+      makeCtx({ costLogMetadata: { evaluationRunId: 'run-9', stepId: 'somebody-elses-step' } })
+    );
+
+    const attribution = vi.mocked(searchKnowledge).mock.calls[0][4] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(attribution.metadata.evaluationRunId).toBe('run-9');
+    expect(attribution.metadata.stepId).toBe(step.id);
   });
 });

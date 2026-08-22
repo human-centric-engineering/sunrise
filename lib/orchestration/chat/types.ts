@@ -132,6 +132,27 @@ export const MAX_TOOL_ITERATIONS = 5;
 export const MAX_HISTORY_MESSAGES = 50;
 
 /**
+ * How far **past** the current drop boundary a summarisation run extends.
+ *
+ * The rolling summary covers a prefix of the conversation, and the prefix has
+ * to include everything that falls out of the {@link MAX_HISTORY_MESSAGES}
+ * window — otherwise messages leave the prompt with nothing standing in for
+ * them. That boundary advances by roughly two messages a turn (one user, one
+ * assistant), so a summary pinned exactly at it is stale on the very next turn,
+ * which is how #654 came to re-summarise every single turn.
+ *
+ * Summarising this many messages *beyond* the requirement buys reuse: the
+ * stored summary stays valid for about `SUMMARY_LOOKAHEAD_MESSAGES / 2` turns,
+ * and only then is a fresh call needed. Ten is deliberately modest — the
+ * lookahead messages are dropped from the verbatim window as well as being
+ * summarised (the summary boundary IS the drop boundary, so nothing is ever in
+ * the prompt twice), which means a larger value trades verbatim recall for
+ * fewer summariser calls. At 10 the verbatim window sits between
+ * `cap - 10` and `cap` messages.
+ */
+export const SUMMARY_LOOKAHEAD_MESSAGES = 10;
+
+/**
  * Default number of tokens to reserve for the model's response when
  * performing token-aware context window management.
  */

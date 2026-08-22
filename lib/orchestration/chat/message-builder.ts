@@ -113,6 +113,37 @@ export interface BuildMessagesArgs {
    * prior turns. `null`/`undefined` ⇒ use the platform default.
    */
   maxHistoryMessages?: number | null;
+  /**
+   * How many leading history rows the caller has already committed to
+   * dropping, because the rolling summary covers them.
+   *
+   * The summary deliberately reaches **past** the message cap so it stays
+   * reusable for several turns ({@link SUMMARY_LOOKAHEAD_MESSAGES}); the
+   * boundary it reaches is the boundary the prompt has to drop at, or the
+   * lookahead messages would appear both inside the summary and verbatim
+   * below it. So this is a *floor*, combined with the cap's own floor by
+   * `Math.max` — passing a smaller number than the cap requires can never
+   * widen the window, and passing none leaves the cap in sole charge.
+   *
+   * Only the chat handler sets it: it is the one caller that knows what the
+   * stored summary covers. See `.context/orchestration/chat.md`.
+   */
+  historyDropCount?: number;
+  /**
+   * How many of the dropped messages `conversationSummary` actually describes.
+   *
+   * Defaults to the full dropped count, which is correct on every normal path.
+   * It is smaller in two cases, and in both the difference is a **coverage
+   * gap**: the caller kept a stale summary because a fresh one could not be
+   * produced, or token-budget truncation dropped more rows than the count-based
+   * boundary the summary was built for.
+   *
+   * Worth a parameter because the label is a claim the model acts on. Saying
+   * "summary of 16 earlier messages" over text describing 12 tells it the other
+   * four are already accounted for; the uncovered remainder is announced as
+   * omitted instead, which is true.
+   */
+  conversationSummaryCovers?: number;
 }
 
 /**
@@ -184,8 +215,6 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   }
 
   const history = args.history;
-  let truncated = history;
-  let droppedCount = 0;
 
   // Resolve the message-count cap. Per-agent override wins; the platform
   // default applies when the agent leaves it unset. `0` is honoured —
@@ -195,11 +224,15 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
       ? args.maxHistoryMessages
       : MAX_HISTORY_MESSAGES;
 
-  // Hard cap to avoid loading too many messages
-  if (history.length > messageCap) {
-    droppedCount = history.length - messageCap;
-    truncated = messageCap > 0 ? history.slice(-messageCap) : [];
-  }
+  // Two independent floors on how much of the front of the history has to go:
+  // the cap ("at most this many verbatim rows") and whatever the caller's
+  // rolling summary already covers. Whichever demands more wins; `history.length`
+  // bounds both, so a caller that over-reports cannot slice past the end.
+  let droppedCount = Math.min(
+    history.length,
+    Math.max(history.length - messageCap, args.historyDropCount ?? 0, 0)
+  );
+  let truncated = history.slice(droppedCount);
 
   // Token-aware truncation: if we know the context window, calculate
   // how much budget is available for history after accounting for
@@ -238,14 +271,35 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
   }
 
   if (droppedCount > 0) {
+    // Split the dropped span into the part the summary describes and the part
+    // nothing describes. Equal on every normal path — `summarised` is
+    // `droppedCount` and the marker below never renders — so this is the same
+    // prompt it always built, with the two failure modes told truthfully
+    // instead of folded into an overstated count.
+    const summarised = args.conversationSummary
+      ? Math.min(args.conversationSummaryCovers ?? droppedCount, droppedCount)
+      : 0;
     if (args.conversationSummary) {
-      const summaryBlock = `[Conversation summary of ${droppedCount} earlier messages]\n\n${args.conversationSummary}`;
+      // A count only when the summary covers part of what is being dropped
+      // here. Zero-with-text means it describes messages older than anything
+      // still loaded — real context, but none of *this* span — and inventing a
+      // number for it would be the same overstatement in the other direction.
+      const heading =
+        summarised > 0
+          ? `[Conversation summary of ${summarised} earlier messages]`
+          : '[Conversation summary of earlier messages]';
+      const summaryBlock = `${heading}\n\n${args.conversationSummary}`;
       messages.push({ role: 'system', content: summaryBlock });
       breakdown.conversationSummary = makePart(summaryBlock, modelId);
-    } else {
+    }
+    const unsummarised = droppedCount - summarised;
+    if (unsummarised > 0) {
+      // Emitted after the summary because these are the more RECENT of the
+      // dropped messages: the summary covers a prefix, so the gap sits between
+      // its boundary and the live window.
       messages.push({
         role: 'system',
-        content: `[... ${droppedCount} older messages omitted for context window ...]`,
+        content: `[... ${unsummarised} older messages omitted for context window ...]`,
       });
     }
   }

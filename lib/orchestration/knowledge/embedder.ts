@@ -465,6 +465,37 @@ function estimateEmbeddingTokens(input: string | string[]): number {
 }
 
 /**
+ * Who to bill an embedding call to.
+ *
+ * Every field is optional and every one is omitted from the cost row when
+ * absent — `AiCostLog.agentId`, `.conversationId` and `.workflowExecutionId` are
+ * nullable foreign keys, so the choice at each call site is *a real row id* or
+ * *nothing*. A placeholder is the one thing that cannot be written: it is
+ * rejected with P2003 and `logCost` swallows the rejection, which is how three
+ * separate cost sinks came to record nothing at all (#599, #600, #654).
+ *
+ * Before this existed, every embedding row landed with all three null and no
+ * metadata: real spend, counted in the global total, attributable to nothing.
+ * Ingestion paths still pass metadata only — there is no agent or conversation
+ * behind a document upload — which is a deliberate limit, not an oversight.
+ * See `.context/orchestration/capabilities.md`.
+ */
+export interface EmbeddingAttribution {
+  /** Must be a real `AiAgent.id`. A workflow's synthetic label is not one. */
+  agentId?: string;
+  /** Must be a real `AiConversation.id`. */
+  conversationId?: string;
+  /** Must be a real `AiWorkflowExecution.id`. */
+  workflowExecutionId?: string;
+  /**
+   * Free-form tags. Carries `stepId` in from a workflow executor — without it
+   * both execution cost readers drop the row (`if (!stepId) continue;`) — and a
+   * `kind` on paths that have nothing else.
+   */
+  metadata?: Record<string, unknown>;
+}
+
+/**
  * Result of a single-text embedding call. Carries the vector plus the
  * provenance and billing data so callers (chat handler, MCP server, …)
  * can attribute the call to a turn / request without re-resolving the
@@ -495,7 +526,8 @@ export interface EmbedTextResult {
  */
 export async function embedText(
   text: string,
-  inputType?: 'document' | 'query'
+  inputType?: 'document' | 'query',
+  attribution?: EmbeddingAttribution
 ): Promise<EmbedTextResult> {
   const provider = await resolveProvider();
 
@@ -510,7 +542,20 @@ export async function embedText(
 
   // Best-effort cost log. Embeddings should never fail a caller because
   // of an accounting write.
+  //
+  // The four spreads are written out here and again in `embedBatch` rather than
+  // shared through a helper. A helper call is opaque to
+  // `tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts`, which
+  // reads these call sites statically to stop a fourth non-id reaching a
+  // foreign key — and a guard that cannot see the site it guards is the shape
+  // this whole area keeps failing at.
   void logCost({
+    ...(attribution?.agentId ? { agentId: attribution.agentId } : {}),
+    ...(attribution?.conversationId ? { conversationId: attribution.conversationId } : {}),
+    ...(attribution?.workflowExecutionId
+      ? { workflowExecutionId: attribution.workflowExecutionId }
+      : {}),
+    ...(attribution?.metadata ? { metadata: attribution.metadata } : {}),
     model: provider.model,
     provider: provider.providerType,
     inputTokens,
@@ -545,7 +590,8 @@ export interface EmbedBatchResult {
 export async function embedBatch(
   texts: string[],
   batchSize: number = DEFAULT_BATCH_SIZE,
-  inputType?: 'document' | 'query'
+  inputType?: 'document' | 'query',
+  attribution?: EmbeddingAttribution
 ): Promise<EmbedBatchResult> {
   const provider = await resolveProvider();
   const allEmbeddings: number[][] = [];
@@ -597,6 +643,12 @@ export async function embedBatch(
   // rolled-up row keeps `AiCostLog` from exploding on bulk imports.
   const cost = calculateEmbeddingCost(provider.model, totalInputTokens);
   void logCost({
+    ...(attribution?.agentId ? { agentId: attribution.agentId } : {}),
+    ...(attribution?.conversationId ? { conversationId: attribution.conversationId } : {}),
+    ...(attribution?.workflowExecutionId
+      ? { workflowExecutionId: attribution.workflowExecutionId }
+      : {}),
+    ...(attribution?.metadata ? { metadata: attribution.metadata } : {}),
     model: provider.model,
     provider: provider.providerType,
     inputTokens: totalInputTokens,

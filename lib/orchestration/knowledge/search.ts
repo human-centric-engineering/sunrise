@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { embedText } from '@/lib/orchestration/knowledge/embedder';
+import type { EmbeddingAttribution } from '@/lib/orchestration/knowledge/embedder';
 import { assertStoredVectorDimensions } from '@/lib/orchestration/knowledge/embedding-dimensions';
 import type { KnowledgeSearchResult, PatternSummary, SearchConfig } from '@/types/orchestration';
 import type { AiKnowledgeChunk } from '@/types/prisma';
@@ -178,9 +179,16 @@ export async function searchKnowledge(
   query: string,
   filters?: SearchFilters,
   limit: number = DEFAULT_LIMIT,
-  threshold: number = DEFAULT_THRESHOLD
+  threshold: number = DEFAULT_THRESHOLD,
+  attribution?: EmbeddingAttribution
 ): Promise<KnowledgeSearchResult[]> {
-  const { results } = await searchKnowledgeWithEmbedding(query, filters, limit, threshold);
+  const { results } = await searchKnowledgeWithEmbedding(
+    query,
+    filters,
+    limit,
+    threshold,
+    attribution
+  );
   return results;
 }
 
@@ -195,7 +203,8 @@ export async function searchKnowledgeWithEmbedding(
   query: string,
   filters?: SearchFilters,
   limit: number = DEFAULT_LIMIT,
-  threshold: number = DEFAULT_THRESHOLD
+  threshold: number = DEFAULT_THRESHOLD,
+  attribution?: EmbeddingAttribution
 ): Promise<KnowledgeSearchResponse> {
   logger.info('Knowledge search', { query, filters, limit, threshold });
 
@@ -204,7 +213,7 @@ export async function searchKnowledgeWithEmbedding(
   const weights = await resolveSearchWeights();
 
   // Generate query embedding (pass 'query' input type for Voyage optimisation)
-  const embedResult = await embedText(query, 'query');
+  const embedResult = await embedText(query, 'query', attribution);
   const queryEmbedding = embedResult.embedding;
   const embeddingStr = `[${queryEmbedding.join(',')}]`;
 

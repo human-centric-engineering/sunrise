@@ -35,7 +35,14 @@ export async function executeRagRetrieve(
 
   let results;
   try {
-    results = await searchKnowledge(interpolated, config.filters ?? undefined, topK, threshold);
+    // The query embedding is real spend on the execution's behalf. Carrier
+    // metadata first, `stepId` last — same precedence rule as every other cost
+    // sink in the engine (#600), and `stepId` is what both execution cost
+    // readers filter on.
+    results = await searchKnowledge(interpolated, config.filters ?? undefined, topK, threshold, {
+      workflowExecutionId: ctx.executionId,
+      metadata: { ...(ctx.costLogMetadata ?? {}), stepId: step.id, kind: 'rag_retrieve' },
+    });
   } catch (err) {
     throw new ExecutorError(
       step.id,

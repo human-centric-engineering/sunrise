@@ -197,6 +197,160 @@ describe('buildMessages', () => {
     });
   });
 
+  describe("historyDropCount (the rolling summary's own boundary)", () => {
+    // The chat handler's summary covers a prefix that deliberately reaches
+    // PAST the cap, so it stays reusable for several turns (#654). The prompt
+    // has to drop at the boundary the summary reached, or the extra messages
+    // would be inside the summary and verbatim below it at the same time.
+    const history = Array.from({ length: 20 }, (_, i) => ({
+      role: 'user',
+      content: `msg ${i}`,
+    }));
+
+    function markerOf(messages: ReturnType<typeof buildMessages>) {
+      return messages.find((m) => getTextContent(m.content).includes('older messages omitted'));
+    }
+
+    it('drops more than the cap requires when the summary covers more', () => {
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 15, // would drop 5 on its own
+        historyDropCount: 8,
+      });
+
+      expect(markerOf(messages)?.content).toContain('8 older messages omitted');
+      const verbatim = messages.filter(
+        (m) => m.role === 'user' && /^msg \d+$/.test(getTextContent(m.content))
+      );
+      expect(getTextContent(verbatim[0].content)).toBe('msg 8');
+      expect(verbatim).toHaveLength(12);
+    });
+
+    it('is a floor, not an override — the cap still wins when it demands more', () => {
+      // A caller that under-reports must never be able to widen the window
+      // past the agent's configured cap. Both numbers are floors; the larger
+      // one decides.
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 5, // demands 15 dropped
+        historyDropCount: 2,
+      });
+
+      expect(markerOf(messages)?.content).toContain('15 older messages omitted');
+    });
+
+    it('clamps to the history length rather than slicing past the end', () => {
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        historyDropCount: 999,
+      });
+
+      expect(markerOf(messages)?.content).toContain('20 older messages omitted');
+      const verbatim = messages.filter(
+        (m) => m.role === 'user' && /^msg \d+$/.test(getTextContent(m.content))
+      );
+      expect(verbatim).toHaveLength(0);
+    });
+
+    it('changes nothing when it is absent', () => {
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 15,
+      });
+
+      expect(markerOf(messages)?.content).toContain('5 older messages omitted');
+    });
+
+    it('never claims the summary covers more messages than it does', () => {
+      // Found by /code-review round 2. The label is a claim the model acts on:
+      // "summary of 8 earlier messages" over text describing 3 tells it the
+      // other five are already accounted for. That gap is reachable two ways —
+      // the handler keeping a stale summary when a fresh one could not be
+      // produced, and token-budget truncation dropping past the count-based
+      // boundary the summary was built for.
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 15,
+        historyDropCount: 8,
+        conversationSummary: 'They discussed deployment.',
+        conversationSummaryCovers: 3,
+      });
+
+      const summaryBlock = messages.find((m) =>
+        getTextContent(m.content).includes('Conversation summary of')
+      );
+      const marker = markerOf(messages);
+
+      // Three are summarised...
+      expect(summaryBlock?.content).toContain('Conversation summary of 3 earlier messages');
+      // ...and the remaining five are announced as omitted, not as covered.
+      expect(marker?.content).toContain('5 older messages omitted');
+      // Both blocks present, summary first — the gap is the MORE RECENT part of
+      // the dropped span, since the summary always covers a prefix.
+      expect(messages.indexOf(summaryBlock!)).toBeLessThan(messages.indexOf(marker!));
+    });
+
+    it('labels without a count when the summary covers none of this dropped span', () => {
+      // /code-review round 3. Zero coverage does not mean "no summary" — it is
+      // also what a summary whose pin has scrolled out of the 200-row load
+      // window looks like: real context describing messages older than anything
+      // still loaded, covering none of what is being dropped *here*. Skipping
+      // the block threw that context away; inventing a count would overstate it
+      // in the other direction. So it renders, unnumbered.
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 15,
+        conversationSummary: 'Everything from before this window.',
+        conversationSummaryCovers: 0,
+      });
+
+      const summaryBlock = messages.find((m) =>
+        getTextContent(m.content).includes('Conversation summary')
+      );
+      expect(summaryBlock?.content).toContain('[Conversation summary of earlier messages]');
+      expect(summaryBlock?.content).not.toMatch(/summary of \d+ earlier/);
+      expect(summaryBlock?.content).toContain('Everything from before this window.');
+      // ...and all five dropped messages are still announced as omitted.
+      expect(markerOf(messages)?.content).toContain('5 older messages omitted');
+    });
+
+    it('counts the wider drop in the summary block, so the label is not a lie', () => {
+      const messages = buildMessages({
+        systemInstructions: 'sys',
+        contextBlock: null,
+        history,
+        newUserMessage: 'new',
+        maxHistoryMessages: 15,
+        historyDropCount: 8,
+        conversationSummary: 'They discussed deployment.',
+      });
+
+      const summaryBlock = messages.find((m) =>
+        getTextContent(m.content).includes('Conversation summary of')
+      );
+      expect(summaryBlock?.content).toContain('Conversation summary of 8 earlier messages');
+      expect(summaryBlock?.content).toContain('They discussed deployment.');
+    });
+  });
+
   it('maps rows with toolCallId to tool-role messages when paired with an assistant tool_calls row', () => {
     const messages = buildMessages({
       systemInstructions: 'sys',

@@ -24,6 +24,7 @@ import {
   CSV_ROW_BATCH_THRESHOLD,
 } from '@/lib/orchestration/knowledge/chunker';
 import type { ParsedDocument } from '@/lib/orchestration/knowledge/parsers/types';
+import { chunkBySemanticBreakpoints } from '@/lib/orchestration/knowledge/semantic-chunker';
 
 // ── Mock logger so the info() call at the end of chunkMarkdownDocument is a no-op
 vi.mock('@/lib/logging', () => ({
@@ -726,5 +727,27 @@ describe('chunkCsvDocument', () => {
     expect(ids[0]).toContain('-row-1');
     expect(ids[1]).toContain('-row-2');
     expect(ids[2]).toContain('-row-3');
+  });
+
+  it('tells the semantic chunker which document it is chunking', () => {
+    // /code-review round 2, and the hop a sabotage found untested: the semantic
+    // chunker will happily tag its cost row with a `documentSlug`, but nothing
+    // proved `chunkGenericSection` actually hands one over. Deleting the
+    // argument left every other test in this file and the semantic chunker's
+    // own file green.
+    //
+    // The mock rejects, so this exercises the call and then falls through to the
+    // structural splitter — which is what the rest of this file asserts on.
+    const body = Array.from(
+      { length: 400 },
+      (_, i) => `Sentence ${i} carries enough words to push this section past the token cap.`
+    ).join(' ');
+
+    return chunkMarkdownDocument(`# Heading\n\n${body}`, 'quarterly-report').then(() => {
+      expect(vi.mocked(chunkBySemanticBreakpoints)).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ documentSlug: 'quarterly-report' })
+      );
+    });
   });
 });

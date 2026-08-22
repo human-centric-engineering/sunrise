@@ -239,7 +239,9 @@ describe('searchKnowledge', () => {
 
     await searchKnowledge('my search query');
 
-    expect(embedText).toHaveBeenCalledWith('my search query', 'query');
+    // Third argument is the cost attribution, forwarded from the caller —
+    // `undefined` here because this test calls the search directly.
+    expect(embedText).toHaveBeenCalledWith('my search query', 'query', undefined);
   });
 
   // ──────────────────────────────────────────────────────────────────────────
