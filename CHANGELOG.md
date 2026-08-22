@@ -18,6 +18,34 @@ release process.
 
 ### Added
 
+- **`npm run fix:dom-tests` — the migration aid for a fork merging the
+  node-by-default test environment (#649).** That change carries directives for
+  Sunrise's test files and none for a fork's own, so on the first run after
+  merging, every fork-authored component test fails with
+  `ReferenceError: document is not defined`. Measured across the five forks on
+  this machine: 1233 fork-authored test files, ~350 needing a directive — too
+  many to annotate by hand.
+  It **decides by running, not by pattern**. Sunrise's own migration used a
+  static classifier and it was wrong in both directions: it over-declared 69
+  files (matching the English words "knowledge _document_", "context _window_")
+  and missed one entirely, whose DOM need lived in the source under test behind
+  a `typeof` guard. A directive is written only for a file that **failed**, and
+  kept only if the re-run **shows that file passing** — presence in the passed
+  list, never absence from the failed one, since a path missing from a report
+  may simply not have run. Anything it cannot justify is reverted before it
+  exits, and it refuses a run that collected nothing at all
+  (`numTotalTestSuites: 0`, what a typo'd path produces): that previously
+  printed "no failure was caused by a missing browser global" and exited 0
+  having run nothing. It never edits a file that already
+  declares an environment, and it reports, without touching, the two groups it
+  is not entitled to fix: real failures (Node's `fetch`/`Response` are stricter
+  than happy-dom's, so some are bugs the old environment hid) and files that
+  already ask for a DOM and fail anyway. `--dry-run` previews.
+  `.context/testing/environments.md` gains the fork merge recipe this belongs
+  to, including the one category nothing automated finds — a test whose
+  *subject* touches the DOM behind a `typeof` guard, which passes on node while
+  silently taking the server branch.
+
 - **`/admin/overview` shows which Sunrise a deployment is running.** A
   `SystemInfo` card (`components/admin/system-info.tsx`) renders the fork's app
   version beside the Sunrise platform release it is built on, plus Node version

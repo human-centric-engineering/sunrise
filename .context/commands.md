@@ -25,6 +25,12 @@ npm run check:lockfile        # lost libc/os/cpu, and an unexplained overrides c
 npm run check:exports         # symbols added/removed/renamed on a lib/**/index.ts barrel
 npm run check:changelog-drift # an [Unreleased] bullet a later commit on the branch made untrue
 npm run check:missing-tests   # changed files with no test (add --verbose for why; --self-test to prove it reports)
+
+# Fork migration aid — not part of any gate. After merging Sunrise's
+# node-by-default test environment, adds the happy-dom directive to the
+# fork's own tests that demonstrably need one. See testing/environments.md.
+npm run fix:dom-tests         # run the suite, mark what failed for want of a DOM, confirm
+npm run fix:dom-tests -- --dry-run
 ```
 
 ## Database (Prisma)

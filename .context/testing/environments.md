@@ -132,9 +132,73 @@ have tests (`tests/unit/setup/network-guard-*.test.ts`); neither did before.
 
 ## For forks
 
+### Writing a new test
+
 The docblock is per file, so this merges cleanly — a fork's own tests carry
 their own directives and nothing upstream rewrites them. If you add a component
 test and it dies on `document is not defined`, add the line.
+
+### Merging the change for the first time
+
+This is the bigger job, and it is worth understanding before you start: **the
+merge brings directives for Sunrise's test files and none for yours.** Upstream
+commits only touch upstream files. Every test your fork wrote lands on `node`.
+
+Measured across the five forks on this machine at the time of the change:
+1233 fork-authored test files, of which roughly 350 needed a directive. Two
+files could conflict — `vitest.config.ts` and `tests/setup.ts` — and for three
+of the five forks both were byte-identical to Sunrise v0.9.0, so they merged
+clean.
+
+**Do it in this order.**
+
+**1. Merge, then let the suite tell you.** Do not try to classify your tests up
+front. A static rule is what Sunrise used and it was wrong in both directions —
+it over-declared 69 files and missed one entirely. Running the tests is exact
+for the loud category, and the loud category is most of the work:
+
+```bash
+npm run fix:dom-tests            # runs the suite, adds the directive where a
+                                 # test demonstrably failed without a DOM,
+                                 # re-runs to confirm
+npm run fix:dom-tests -- --dry-run   # see the plan first
+npm run fix:dom-tests -- tests/unit/components   # or one area at a time
+```
+
+A file only gets a directive if it **actually failed** on a missing browser
+global, so this cannot over-declare the way a pattern match can. It never edits
+a file that already carries a directive, and it re-runs what it changed rather
+than assuming.
+
+**2. Read what it could not fix.** It reports two other groups and touches
+neither:
+
+- _real failures_ — the test broke for a reason that has nothing to do with the
+  environment. Node's `fetch` and `Response` are stricter than happy-dom's, so
+  some of these are genuine bugs the old environment was hiding. Sunrise found
+  one this way (a 204 response built with a body).
+- _already declared, still failing_ — the file asks for a DOM and fails anyway.
+
+**3. Then look for the quiet category by hand.** Nothing automated finds it.
+A test whose **subject** reads `document`/`window` behind a `typeof` guard
+passes on node while silently taking the server branch. Sunrise had one
+(`console-provider.test.ts`, where `ConsoleProvider.page()` fell back to
+`'Unknown'` instead of reading `document.title`) and no static rule proposed it —
+a code review did. The set worth reading is small:
+
+```bash
+grep -rlZ "@/lib/env" tests/ | xargs -0 -r grep -L "vitest-environment"
+```
+
+Those are your tests that now see the **real server schema** instead of the
+client one — which is the point of the change, but it means their behaviour can
+differ from before. Counts at the time of writing: conquest 12, hce-hub 4,
+emerging-practices 3, daybreak 0, hce-website 0.
+
+**4. Do not bulk-add directives to make step 1 shorter.** Over-declaring is the
+silent direction: the file passes and quietly goes back to reading the client
+schema. If you are unsure about a file, delete its directive and run it — node
+is the answer unless something fails.
 
 ## See also
 
