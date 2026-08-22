@@ -43,10 +43,16 @@ export interface DriveJudgeInput {
   /** Subject brand-voice text, only honoured by `eval-judge-brand-voice`. */
   subjectBrandVoice?: string;
   /**
-   * Optional `{ evaluationRunId, role: 'judge' | 'subject' }` payload
-   * spread into the underlying chat call's `costLogMetadata`. The
-   * grader path sets it; the workflow step usually omits it because
-   * the engine already tags rows via `ExecuteOptions.costLogMetadata`.
+   * Optional `{ evaluationRunId, role: 'judge' | 'subject' }` payload spread
+   * into the underlying chat call's `costLogMetadata`.
+   *
+   * **Both callers set it.** This used to say the workflow step "usually omits
+   * it because the engine already tags rows via
+   * `ExecuteOptions.costLogMetadata`" — which was false, and was the reason the
+   * `judge_call` executor withheld it for as long as it did: nothing here logs
+   * through an executor. `driveJudgeAgent` goes to `drainStreamChat` → the
+   * streaming chat handler, whose `logCost` calls tag from
+   * `request.costLogMetadata` and from nothing else (#600).
    */
   costLogMetadata?: Record<string, unknown>;
 }

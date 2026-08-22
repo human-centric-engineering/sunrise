@@ -42,6 +42,14 @@ import {
 
 interface CostEntry {
   stepId: string;
+  /**
+   * The capability that produced this row, when it is a `tool_call`. The
+   * dispatcher writes `model: 'n/a'`, `provider: 'capability'` and 0/0/$0, so
+   * without the slug an `agent_call` step that invoked five tools renders five
+   * identical, information-free rows. Absent for LLM rows, which identify
+   * themselves by model (#600).
+   */
+  slug?: string;
   model: string;
   provider: string;
   inputTokens: number;
@@ -137,8 +145,10 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
   for (const row of costLogs) {
     const stepId = extractStepId(row.metadata);
     if (!stepId) continue;
+    const slug = extractSlug(row.metadata);
     costEntries.push({
       stepId,
+      ...(slug ? { slug } : {}),
       model: row.model,
       provider: row.provider,
       inputTokens: row.inputTokens,
@@ -207,6 +217,12 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
     currentRunningSteps,
   });
 });
+
+function extractSlug(metadata: unknown): string | null {
+  if (metadata === null || typeof metadata !== 'object') return null;
+  const value = (metadata as { slug?: unknown }).slug;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
 
 function extractStepId(metadata: unknown): string | null {
   if (metadata === null || typeof metadata !== 'object') return null;

@@ -481,6 +481,74 @@ describe('ExecutionTraceEntryRow', () => {
   });
 
   describe('per-call cost sub-table', () => {
+    it('names the capability for tool rows, which are otherwise indistinguishable', async () => {
+      // #600 made capability rows appear here at all. They are all
+      // `capability/n/a` with 0 tokens and $0, so an `agent_call` step that
+      // invoked several tools rendered several identical, information-free
+      // rows — a cost table saying nothing about cost. The slug is the only
+      // distinguishing field, and it was already in `AiCostLog.metadata`.
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          costEntries={[
+            {
+              slug: 'search_knowledge_base',
+              model: 'n/a',
+              provider: 'capability',
+              inputTokens: 0,
+              outputTokens: 0,
+              totalCostUsd: 0,
+              operation: 'tool_call',
+              createdAt: '2026-01-01T00:00:00Z',
+            },
+            {
+              slug: 'send_message_to_channel',
+              model: 'n/a',
+              provider: 'capability',
+              inputTokens: 0,
+              outputTokens: 0,
+              totalCostUsd: 0,
+              operation: 'tool_call',
+              createdAt: '2026-01-01T00:00:01Z',
+            },
+          ]}
+        />
+      );
+      await user.click(screen.getByRole('button'));
+
+      const sub = screen.getByTestId('trace-entry-cost-entries-step-1');
+      expect(sub).toHaveTextContent('search_knowledge_base');
+      expect(sub).toHaveTextContent('send_message_to_channel');
+      // And the useless label is gone, rather than sitting beside the slug.
+      expect(sub).not.toHaveTextContent('capability/n/a');
+    });
+
+    it('still identifies LLM rows by provider/model when there is no slug', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionTraceEntryRow
+          {...BASE_PROPS}
+          costEntries={[
+            {
+              model: 'gpt-4o-mini',
+              provider: 'openai',
+              inputTokens: 100,
+              outputTokens: 50,
+              totalCostUsd: 0.005,
+              operation: 'chat',
+              createdAt: '2026-01-01T00:00:00Z',
+            },
+          ]}
+        />
+      );
+      await user.click(screen.getByRole('button'));
+
+      expect(screen.getByTestId('trace-entry-cost-entries-step-1')).toHaveTextContent(
+        'openai/gpt-4o-mini'
+      );
+    });
+
     it('renders a row per cost entry when expanded', async () => {
       const user = userEvent.setup();
       render(

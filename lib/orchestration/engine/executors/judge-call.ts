@@ -24,11 +24,19 @@
  * raw score string-match `{{<this-step-id>.output.score}}` in their
  * route conditions.
  *
- * Cost: the judge call writes one `AiCostLog` row attributed to the
- * judge agent. The engine's `costLogMetadata` propagation (Phase 3) is
- * what tags rows when this step runs inside an evaluation run; outside
- * an eval, the cost rolls into the workflow execution's total via
- * `workflowExecutionId`.
+ * Cost: the judge call writes one `AiCostLog` row attributed to the judge
+ * agent, and `ctx.costLogMetadata` is forwarded so an evaluation run's tags
+ * reach it.
+ *
+ * **The row carries no `workflowExecutionId` and no `stepId`**, because it is
+ * written by the streaming chat handler rather than by an executor, and that
+ * handler sets neither. So the judge's spend does not appear against this step
+ * in the execution panels and `loadPastRuns` cannot attribute it. The step
+ * total is still correct — `StepResult.costUsd` carries it — but by a
+ * different mechanism than the one an earlier version of this comment named.
+ * Recorded as a known exception in `.context/orchestration/capabilities.md`
+ * rather than fixed here: making it true means the chat handler accepting an
+ * execution link, which is a wider change than #600.
  */
 
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
@@ -96,10 +104,21 @@ export async function executeJudgeCall(
     answer,
     ...(expectedOutput && expectedOutput.length > 0 ? { expectedOutput } : {}),
     ...(subjectBrandVoice && subjectBrandVoice.length > 0 ? { subjectBrandVoice } : {}),
-    // Don't double-tag: when the step runs inside an evaluation run,
-    // `ExecuteOptions.costLogMetadata` already tags every cost row via
-    // the executors' merged metadata. The grader path is different —
-    // it runs outside an engine context and has to tag explicitly.
+    // Forward the carrier. The comment that used to sit here said the
+    // opposite — that `ExecuteOptions.costLogMetadata` "already tags every
+    // cost row via the executors' merged metadata" — and it was wrong in a way
+    // that stopped anyone looking: `driveJudgeAgent` does not log through an
+    // executor at all. It goes to `drainStreamChat` → the streaming chat
+    // handler, whose `logCost` calls tag from `request.costLogMetadata` only.
+    // So evaluating a workflow with a `judge_call` step tagged every other
+    // step's rows and left the judge's untagged (#600).
+    // `role` is overridden, not inherited. A subject workflow's execution is
+    // stamped `role: 'subject'` (`run-cases/workflow-case.ts`), and forwarding
+    // that wholesale would tag the JUDGE agent's chat rows as subject spend —
+    // so the first role-based split of evaluation cost would bill the judge to
+    // the thing it was judging. Every other judge path sets `role: 'judge'`
+    // explicitly for this same `driveJudgeAgent` call; this one now matches.
+    ...(ctx.costLogMetadata ? { costLogMetadata: { ...ctx.costLogMetadata, role: 'judge' } } : {}),
   });
 
   const threshold = typeof config.threshold === 'number' ? config.threshold : null;

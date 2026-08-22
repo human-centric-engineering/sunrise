@@ -55,6 +55,7 @@ vi.mock('@/lib/logging', () => ({
 import { prisma } from '@/lib/db/client';
 import { getOutboundAdapter } from '@/lib/orchestration/outbound/registry';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { workflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import { OutboundSendError } from '@/lib/orchestration/outbound/types';
@@ -194,6 +195,94 @@ describe('SendMessageToChannelCapability — happy path', () => {
       expect.objectContaining({
         data: expect.objectContaining({ status: 'sent', transactionId: 'SMabc' }),
       })
+    );
+  });
+});
+
+// ─── Cost attribution from a workflow (#600) ─────────────────────────────────
+
+describe('SendMessageToChannelCapability — cost attribution', () => {
+  it('does not write a workflow label into AiCostLog.agentId', async () => {
+    // The same data loss #599 fixed at the dispatcher's own cost log, still
+    // live here because this capability writes its own. Dispatched from a
+    // workflow `tool_call` step, `context.agentId` is the synthetic
+    // `workflow:<id>` label; `AiCostLog.agentId` is a foreign key to
+    // `AiAgent.id`; `logCost` catches the P2003 and returns `null`. So every
+    // outbound message sent from a workflow recorded NO cost row at all.
+    setConversation();
+    setBinding(defaultCustomConfig());
+    vi.mocked(prisma.aiOutboundMessage.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOutboundMessage.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.aiOutboundMessage.update).mockResolvedValue({} as never);
+    stubAdapter();
+
+    await makeCapability().execute(
+      defaultArgs(),
+      makeContext({ agentId: workflowAgentId('wf_1'), workflowExecutionId: 'exec_1' })
+    );
+
+    const [params] = vi.mocked(logCost).mock.calls.at(-1) ?? [];
+    expect(params).toBeDefined();
+    // Absent entirely, not set to the label and not set to null — that is what
+    // keeps the FK satisfiable.
+    expect(params).not.toHaveProperty('agentId');
+    expect(params?.workflowExecutionId).toBe('exec_1');
+  });
+
+  it('still records a real agent id when one is dispatched normally', async () => {
+    // The guard must narrow only the workflow case. A chat dispatch has a real
+    // `AiAgent.id` and its per-agent cost breakdown depends on it.
+    setConversation();
+    setBinding(defaultCustomConfig());
+    vi.mocked(prisma.aiOutboundMessage.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOutboundMessage.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.aiOutboundMessage.update).mockResolvedValue({} as never);
+    stubAdapter();
+
+    await makeCapability().execute(defaultArgs(), makeContext({ agentId: 'agent-1' }));
+
+    const [params] = vi.mocked(logCost).mock.calls.at(-1) ?? [];
+    expect(params?.agentId).toBe('agent-1');
+    expect(params).not.toHaveProperty('workflowExecutionId');
+  });
+
+  it('carries stepId through so the row appears against its step', async () => {
+    setConversation();
+    setBinding(defaultCustomConfig());
+    vi.mocked(prisma.aiOutboundMessage.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOutboundMessage.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.aiOutboundMessage.update).mockResolvedValue({} as never);
+    stubAdapter();
+
+    await makeCapability().execute(
+      defaultArgs(),
+      makeContext({ costLogMetadata: { stepId: 'step_9', evaluationRunId: 'run_7' } })
+    );
+
+    const [params] = vi.mocked(logCost).mock.calls.at(-1) ?? [];
+    expect(params?.metadata).toEqual(
+      expect.objectContaining({ stepId: 'step_9', evaluationRunId: 'run_7', channel: 'sms' })
+    );
+  });
+
+  it("lets caller metadata not overwrite the capability's own facts", async () => {
+    // Caller keys are spread FIRST, so `channel` and `provider` — which the
+    // costs breakdown groups on — stay the capability's to state.
+    setConversation();
+    setBinding(defaultCustomConfig());
+    vi.mocked(prisma.aiOutboundMessage.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOutboundMessage.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.aiOutboundMessage.update).mockResolvedValue({} as never);
+    stubAdapter();
+
+    await makeCapability().execute(
+      defaultArgs(),
+      makeContext({ costLogMetadata: { channel: 'carrier-pigeon', provider: 'nobody' } })
+    );
+
+    const [params] = vi.mocked(logCost).mock.calls.at(-1) ?? [];
+    expect(params?.metadata).toEqual(
+      expect.objectContaining({ channel: 'sms', provider: 'twilio' })
     );
   });
 });

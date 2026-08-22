@@ -81,6 +81,15 @@ export interface RunningStep {
 
 export interface ExecutionLiveCostEntry {
   stepId: string;
+  /**
+   * The capability that produced this row, for `tool_call` spend. Must stay in
+   * step with `CostEntry` in the two execution routes and `TraceCostEntry` in
+   * `execution-trace-entry.tsx` — three declarations of one shape, and #600
+   * updated two of them. It "worked" only because `apiClient.get<T>` is an
+   * unchecked cast, so the drift would have surfaced as the capability name
+   * silently vanishing after the first poll tick.
+   */
+  slug?: string;
   model: string;
   provider: string;
   inputTokens: number;

@@ -177,13 +177,92 @@ The rules live in [`lib/orchestration/scope.ts`](../../lib/orchestration/scope.t
 
 ### Workflow attribution (`CapabilityContext.workflowExecutionId`)
 
-`CapabilityContext.workflowExecutionId?: string` is set by the `tool_call` executor from `ctx.executionId`, and is how a capability dispatched by a workflow gets attributed on its cost row.
+`CapabilityContext.workflowExecutionId?: string` is set by the `tool_call` **and** `agent_call` executors from `ctx.executionId`, and is how a capability dispatched by a workflow gets attributed on its cost row.
 
 It exists because **`agentId` cannot do that job for a workflow.** The label the executor dispatches under is not an `AiAgent.id`, and `AiCostLog.agentId` is a foreign key to one — so writing it there was rejected with P2003 (`ai_cost_log_agentId_fkey`). `logCost` swallows that rejection into an error log and returns `null`, so the symptom was not a crash but an error line per step and a **missing** cost row: the Costs page's per-tool breakdown reported zero for every capability a workflow ran.
 
 Dispatch step 9 therefore writes `agentId` only when it is a real agent, and `workflowExecutionId` otherwise. That FK is satisfied — the `AiWorkflowExecution` row exists before any step runs.
 
-**What this does and does not get you.** The row persists, is queryable by execution, and is counted by the per-capability stats route (which filters on `operation: 'tool_call'` and `metadata.slug`). It does **not** appear in the execution detail or live cost panels: both key on `metadata.stepId` and skip any row without one, and the dispatcher writes `{ slug, success }`. Capabilities dispatched from an `agent_call` step likewise still carry no `workflowExecutionId`. Both are open — see #600.
+**Where the row then shows up.** It persists, is queryable by execution, is counted by the per-capability stats route (which filters on `operation: 'tool_call'` and `metadata.slug`), **and** appears against its step in the execution detail and live cost panels — because `CapabilityContext.costLogMetadata` carries a `stepId`, which is what both readers filter on (`if (!stepId) continue;`). Before #600 the dispatcher wrote `{ slug, success }` only, so every row was dropped by both panels.
+
+`agent_call` dispatches carry `workflowExecutionId` too. Until #600 only `tool_call` did, and the asymmetry sat inside one file: the `agent_call` executor's own LLM `logCost` set it while the capability dispatch beside it did not, so a tool an agent invoked mid-workflow recorded an `agentId` and a null execution link and never appeared against the run.
+
+### The metadata carrier (`CapabilityContext.costLogMetadata`)
+
+`CapabilityContext.costLogMetadata?: Record<string, unknown>` is merged into the dispatcher's cost-row metadata **under** its own keys:
+
+```ts
+metadata: { ...(context.costLogMetadata ?? {}), slug, success: result.success }
+```
+
+Spread order is the guarantee, not a style choice. The per-capability stats route groups on `metadata.slug`, so a caller able to set it could attribute its spend to another capability, and one able to set `success` could hide its failures from the same breakdown. The executors apply the same rule one level up — `{ ...ctx.costLogMetadata, stepId: step.id }` — so a run cannot misattribute its own rows to a different step.
+
+Two things ride on the carrier:
+
+- **`stepId`**, so the row is visible per-step in the execution UI.
+- **Evaluation tags.** An evaluation run stamps `{ evaluationRunId, role }` onto `ExecuteOptions.costLogMetadata`; without a carrier those tags stopped at the capability boundary and evaluation spend that ran through a tool was untagged.
+
+**Every boundary where cost context enters a new cost-logging scope must forward the carrier.** Not just capability dispatch — the first version of this rule said "dispatch sites" and review found two more boundaries it therefore could not see. The roster, derived rather than remembered:
+
+| Boundary                                                           | Forwards                                                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `engine/executors/tool-call.ts` → dispatch                         | `{ ...ctx.costLogMetadata, stepId: step.id }`                                        |
+| `engine/executors/agent-call.ts` → dispatch                        | `{ ...ctx.costLogMetadata, stepId: step.id }`                                        |
+| `engine/executors/judge-call.ts` → `driveJudgeAgent`               | `ctx.costLogMetadata` — the judge logs through the **chat handler**, not an executor |
+| `engine/llm-runner.ts` → `logCost`                                 | `{ ...ctx.costLogMetadata, stepId }`                                                 |
+| `chat/streaming-handler.ts` → dispatch                             | `request.costLogMetadata` — no `stepId`; a chat turn is not a workflow step          |
+| `capabilities/built-in/run-workflow.ts` → child `ExecuteOptions`   | `context.costLogMetadata`, so a nested run inherits the tags                         |
+| `capabilities/built-in/send-message-to-channel.ts` → own `logCost` | `context.costLogMetadata`, plus the workflow-label guard                             |
+| `mcp/tool-registry.ts` → dispatch                                  | nothing, correctly: an MCP call has no execution or evaluation context               |
+
+Every one of these except the MCP row was missing the carrier when #600 started. Do not reason from how many there are — reason from the question, which is _"does anything in scope here carry `costLogMetadata`?"_ If you add a boundary, the answer is usually yes.
+
+**What this roster is NOT.** It covers boundaries where a carrier is _in
+scope_ and must be passed on. It is not a list of everywhere cost is logged, and
+reading it as one is a mistake an earlier draft invited by calling itself
+"derived rather than remembered". Two live sinks have no carrier available at
+all and are therefore unattributed today:
+
+| Sink                                  | What it logs                                | Why nothing tags it                                                                                                 |
+| ------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `chat/summarizer.ts`                  | the rolling-summary LLM call                | called from deep inside the chat loop under `agentId: 'system'`, with no request or execution context threaded down |
+| `knowledge/embedder.ts` (`embedText`) | the `search_knowledge_base` query embedding | called from inside the capability, with no `agentId`, no execution link and no metadata                             |
+
+So an agent evaluation whose subject uses knowledge search and crosses the
+summarisation window still produces rows attributable to neither the run nor the
+step. Closing that means threading a context into both — a wider change than
+#600, and a design question (does the summariser belong to the turn or the
+conversation?) rather than a missed line.
+
+**Tracked as [#654](https://github.com/human-centric-engineering/sunrise/issues/654), and the summariser half is worse than
+"unattributable".** It writes `agentId: 'system'` and `conversationId: 'summary'`
+— both literal strings into columns that are real foreign keys — so the insert
+violates two FKs, `logCost` swallows the P2003, and **the row is never written
+at all**. That is real provider spend disappearing, and the third instance of
+the same shape after #599 and #600's `send_message_to_channel` fix. Do not read
+this table as "recorded but unlabelled" for that row.
+
+**Known exception: the judge path.** `judge_call` forwards the carrier, so an
+evaluation run's tags reach the judge's row — but that row is written by the
+streaming chat handler, which sets neither `workflowExecutionId` nor `stepId`.
+The judge's spend therefore does not appear against its step in the execution
+panels, and `loadPastRuns` cannot attribute it. The step total stays correct
+because `StepResult.costUsd` carries it. Fixing this means the chat handler
+accepting an execution link.
+
+**Known exception: `send_message_to_channel` renders as `$0.0000`.** Its row now
+reaches the per-step cost table for the first time, and it will show zero. The
+model string it logs (`twilio-sms`, `postmark-email`) is not in the model
+registry, so `calculateCost` returns 0, and `logCost` has no cost-override
+parameter — the real figure lives only in `metadata.usdPerMessage`. A workflow
+that sends 200 SMS therefore shows 200 rows at `$0.0000` under a heading that
+says cost. Pre-existing in the cost reports; #600 is what puts it in front of an
+operator. Fixing it means `logCost` accepting an explicit cost, which is a change
+to a function 18 call sites share and wants its own review.
+
+**Known exception: orchestrator delegations.** `engine/executors/orchestrator.ts` builds a synthetic step (`${step.id}_delegate_${agentSlug}`) and hands it to `executeAgentCall`, so rows from a delegated turn are stamped with a step id that is **not in the workflow definition**. They pass the readers' `if (!stepId) continue;` and are then keyed under a step no trace row looks up, so the execution panels drop them. This predates #600 for the delegation's LLM rows; #600 extends the same keying to its tool rows rather than fixing it. Attributing them correctly means deciding whether a delegation is its own step or part of the orchestrator's — a question the trace viewer also has a stake in, so it is deliberately not settled here.
+
+**A capability that writes its own cost row must apply both rules itself** — the guard and the merge. `send_message_to_channel` is the worked example: it logs an `OUTBOUND_MESSAGE` row directly, and until #600 it wrote `agentId: context.agentId` unconditionally, so every outbound message sent from a workflow hit the same P2003 and recorded nothing. The dispatcher's guard does not cover a capability's own `logCost` call.
 
 **If you add a dispatch path that is not an agent**, carry the id of whatever real row owns the call and add a column for it, rather than encoding it into `agentId`. `workflowAgentId()` carries the same warning for the same reason.
 
@@ -303,7 +382,7 @@ The registry refuses to register a capability that declares `processesPii = true
 7. **Validate args** — `handler.validate(dispatchArgs)`. `CapabilityValidationError` → `{ code: 'invalid_args', message }`.
    7a. **Re-assert the binding** — the invariant is checked again on the **validated** args, the ones `execute` is about to receive. Each pinned key must be present and equal: a different value → `{ code: 'scope_conflict' }`; a stripped key, or args that cannot be read → `{ code: 'scope_unenforceable' }`. See [Why it is declared and not inferred](#why-it-is-declared-and-not-inferred) for why step 4b alone is not sufficient.
 8. **Execute** — `await handler.execute(validated, context)`. Any thrown error → `{ code: 'execution_error' }` and `logger.error`.
-9. **Log cost** — fire-and-forget `logCost({ operation: 'tool_call', model: 'n/a', provider: 'capability', inputTokens: 0, outputTokens: 0, metadata: { slug, success } })`. Not awaited: the LLM call that triggered the tool already logged its own tokens, and `logCost` returns `null` on DB failure. Capabilities that invoke their OWN LLMs internally (the `search_knowledge_base` embedding call, the rolling summariser, `run_workflow`'s child execution) issue their own `logCost` calls for that LLM spend. The chat handler's per-turn cap (improvement #39) only counts the chat-LLM rounds it sees — tool-internal LLM cost is logged to `AiCostLog` for audit but NOT counted against the per-turn cap. Documented in `.context/orchestration/chat.md`.
+9. **Log cost** — fire-and-forget `logCost({ operation: 'tool_call', model: 'n/a', provider: 'capability', inputTokens: 0, outputTokens: 0, metadata: { ...context.costLogMetadata, slug, success } })`. The caller's metadata is spread **first** so the dispatcher's own keys win; see the carrier section above. Not awaited: the LLM call that triggered the tool already logged its own tokens, and `logCost` returns `null` on DB failure. Capabilities that invoke their OWN LLMs internally (the `search_knowledge_base` embedding call, the rolling summariser, `run_workflow`'s child execution) issue their own `logCost` calls for that LLM spend. The chat handler's per-turn cap (improvement #39) only counts the chat-LLM rounds it sees — tool-internal LLM cost is logged to `AiCostLog` for audit but NOT counted against the per-turn cap. Documented in `.context/orchestration/chat.md`.
 10. **Return** the handler's result verbatim. One `logger.info('Capability dispatched', ...)` line with `latencyMs` rounds out each call.
 
 ### Cache semantics

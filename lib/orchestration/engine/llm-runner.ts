@@ -212,7 +212,15 @@ export async function runLlmCall(
         isLocal: cost.isLocal,
         traceId: span.traceId(),
         spanId: span.spanId(),
-        metadata: { stepId: params.stepId },
+        // `ctx.costLogMetadata` first, `stepId` last — same precedence rule as
+        // the dispatcher: the engine's own attribution key wins.
+        //
+        // #600 described this file as already forwarding the carrier. It was
+        // not: `llm_call` rows carried `stepId` and nothing else, so an
+        // evaluation run's `{ evaluationRunId, role }` tags were missing from
+        // every LLM step as well as from every tool call. Found by enumerating
+        // the `logCost` sites rather than by reading the issue.
+        metadata: { ...(ctx.costLogMetadata ?? {}), stepId: params.stepId },
       }).catch((err: unknown) => {
         logger.warn('runLlmCall: logCost rejected', {
           executionId: ctx.executionId,

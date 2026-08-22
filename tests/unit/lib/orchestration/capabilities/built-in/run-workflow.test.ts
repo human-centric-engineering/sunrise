@@ -395,6 +395,91 @@ describe('RunWorkflowCapability', () => {
       expect(opts.scope).toEqual({ projectId: 'proj-42' });
     });
 
+    it("forwards the parent's cost tags into the child execution", async () => {
+      // An evaluation whose subject workflow contains a `run_workflow` step
+      // tagged the parent's rows and none of the child's. Unlike `scope`
+      // above, this forwards wholesale — there is no authority to launder,
+      // and each child executor spreads `stepId` last so the parent's cannot
+      // misattribute a child row (#600).
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-9', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute(
+        { workflowSlug: 'refund-flow' },
+        { ...context, costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' } }
+      );
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts.costLogMetadata).toEqual({ evaluationRunId: 'run_7', role: 'subject' });
+    });
+
+    it("strips the parent's stepId so it cannot land on a child row", async () => {
+      // Every child EXECUTOR spreads `stepId` last and would overwrite it —
+      // but `judge_call` hands the metadata to the chat handler, which writes
+      // `metadata: request.costLogMetadata` verbatim with no merge and no
+      // `stepId`. So a parent step id would survive into a cost row belonging
+      // to a different execution. Stripped here rather than relied upon (#600).
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-9', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute(
+        { workflowSlug: 'refund-flow' },
+        {
+          ...context,
+          costLogMetadata: { evaluationRunId: 'run_7', stepId: 'parent_step' },
+        }
+      );
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts.costLogMetadata).toEqual({ evaluationRunId: 'run_7' });
+      expect(opts.costLogMetadata).not.toHaveProperty('stepId');
+    });
+
+    it('omits cost tags when the parent carried only a stepId', async () => {
+      // Nothing left after stripping, so the key is absent rather than `{}` —
+      // an empty object would make every child row carry a meaningless tag.
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-9', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute(
+        { workflowSlug: 'refund-flow' },
+        { ...context, costLogMetadata: { stepId: 'parent_step' } }
+      );
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty('costLogMetadata');
+    });
+
+    it('omits cost tags entirely when the parent has none', async () => {
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-9', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+
+      const cap = new RunWorkflowCapability();
+      await cap.execute({ workflowSlug: 'refund-flow' }, context);
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty('costLogMetadata');
+    });
+
     it('drops a scope the parent held only as a hint', async () => {
       // `ExecuteOptions` carries no authority field: the engine persists
       // `options.scope` onto `AiWorkflowExecution.scope`, and `createContext`

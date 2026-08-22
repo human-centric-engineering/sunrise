@@ -652,7 +652,15 @@ describe('executeAgentCall', () => {
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'search-knowledge',
       { query: 'test' },
-      { userId: 'user_1', agentId: 'agent_1' }
+      {
+        userId: 'user_1',
+        agentId: 'agent_1',
+        // The execution link this executor used to omit. Its own LLM `logCost`
+        // set it; only the capability dispatch beside it did not, so a tool an
+        // agent invoked mid-workflow never appeared against the run (#600).
+        workflowExecutionId: 'exec_1',
+        costLogMetadata: { stepId: 'step1' },
+      }
     );
     expect(result.output).toBe('Based on the search: here is the summary.');
     expect(mockChat).toHaveBeenCalledTimes(2);
@@ -690,8 +698,65 @@ describe('executeAgentCall', () => {
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'search-knowledge',
       { query: 'test' },
-      { userId: 'user_1', agentId: 'agent_1', scope: { projectId: 'proj-42' } }
+      {
+        userId: 'user_1',
+        agentId: 'agent_1',
+        scope: { projectId: 'proj-42' },
+        workflowExecutionId: 'exec_1',
+        costLogMetadata: { stepId: 'step1' },
+      }
     );
+  });
+
+  it('links a capability an agent dispatches to the workflow execution', async () => {
+    // The asymmetry #600 is about, pinned on its own rather than only as part
+    // of a larger object: this executor's LLM cost row carried
+    // `workflowExecutionId` while the capability dispatch beside it did not, so
+    // the tool's spend recorded an agentId and a null execution link and never
+    // showed against the run.
+    mockChat
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+      })
+      .mockResolvedValueOnce({
+        content: 'done',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    await executeAgentCall(makeStep({ agentId: 'agent_1' }), makeCtx());
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context.workflowExecutionId).toBe('exec_1');
+    expect(context.agentId).toBe('agent_1');
+  });
+
+  it('carries the run-level costLogMetadata into the tool dispatch', async () => {
+    mockChat
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'tc_1', name: 'search-knowledge', arguments: { query: 'test' } }],
+        usage: { inputTokens: 10, outputTokens: 5 },
+      })
+      .mockResolvedValueOnce({
+        content: 'done',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      });
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    await executeAgentCall(
+      makeStep({ agentId: 'agent_1' }),
+      makeCtx({ costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' } })
+    );
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context.costLogMetadata).toEqual({
+      evaluationRunId: 'run_7',
+      role: 'subject',
+      stepId: 'step1',
+    });
   });
 
   it('forwards the authority a real ExecutionContext carries, not just the values', async () => {

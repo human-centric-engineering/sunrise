@@ -901,6 +901,72 @@ describe('CapabilityDispatcher', () => {
       );
     });
 
+    it('merges the caller costLogMetadata into the cost row', async () => {
+      // The row already existed after #599; #600 is about it being FINDABLE.
+      // `stepId` is what both execution readers filter on — a row without one
+      // is dropped from the execution detail and live cost panels — and the
+      // evaluation tags are what make a run's spend attributable.
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockLogCost.mockResolvedValue(null);
+
+      await capabilityDispatcher.dispatch(
+        'ok',
+        { n: 5 },
+        { ...ctx, costLogMetadata: { stepId: 'step_9', evaluationRunId: 'run_7' } }
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockLogCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: { stepId: 'step_9', evaluationRunId: 'run_7', slug: 'ok', success: true },
+        })
+      );
+    });
+
+    it("refuses to let a caller's metadata overwrite slug or success", async () => {
+      // Spread ORDER is the guarantee: the dispatcher's own keys go last. The
+      // per-capability stats route groups on `operation: 'tool_call'` +
+      // `metadata.slug`, so a caller able to set `slug` could attribute its
+      // spend to another capability, and one able to set `success` could hide
+      // its failures from the same breakdown.
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockLogCost.mockResolvedValue(null);
+
+      await capabilityDispatcher.dispatch(
+        'ok',
+        { n: 5 },
+        { ...ctx, costLogMetadata: { slug: 'some-other-tool', success: false, keep: 'me' } }
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockLogCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: { keep: 'me', slug: 'ok', success: true },
+        })
+      );
+    });
+
+    it('logs the same metadata as before when no caller metadata is supplied', async () => {
+      // The unscoped path — every direct dispatch, and every fork that never
+      // sets the field. Behaviour must be byte-identical to pre-#600.
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow()]);
+      mockLogCost.mockResolvedValue(null);
+
+      expect(ctx).not.toHaveProperty('costLogMetadata');
+      await capabilityDispatcher.dispatch('ok', { n: 5 }, ctx);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockLogCost).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: { slug: 'ok', success: true } })
+      );
+    });
+
     it('passes validated args and the binding-enriched context to execute', async () => {
       const executeSpy = vi.spyOn(OkCapability.prototype, 'execute');
       capabilityDispatcher.register(new OkCapability());

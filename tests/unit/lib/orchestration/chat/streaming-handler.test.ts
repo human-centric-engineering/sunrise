@@ -584,6 +584,50 @@ describe('StreamingChatHandler', () => {
     expect(getProviderWithFallbacks).not.toHaveBeenCalled();
   });
 
+  // 8a ----------------------------------------------------------------------
+  it('forwards costLogMetadata into the dispatch context so evaluation chat tools are tagged', async () => {
+    // An agent evaluation runs its subject through THIS handler
+    // (`run-cases/agent-case.ts` sets `{ evaluationRunId, role: 'subject' }`).
+    // The handler already threaded that into its own four `logCost` calls;
+    // only the dispatch context dropped it, so the subject's LLM spend was
+    // tagged and every tool it called was not. Fourth site of the same defect
+    // in this PR — the executors and `llm-runner` were the others (#600).
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc1', name: 'search_knowledge_base', arguments: { query: 'react' } },
+        },
+        { type: 'done', usage: { inputTokens: 20, outputTokens: 3 }, finishReason: 'tool_use' },
+      ],
+      [
+        { type: 'text', content: 'answer' },
+        { type: 'done', usage: { inputTokens: 30, outputTokens: 8 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: { results: [] },
+    });
+
+    await collect(
+      streamChat({
+        ...baseRequest,
+        costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' },
+      })
+    );
+
+    const [, , context] = (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(context.costLogMetadata).toEqual({ evaluationRunId: 'run_7', role: 'subject' });
+    // No `stepId`: a chat turn is not a workflow step, so there is no step to
+    // attribute to. The dispatcher still merges `slug`/`success` over the top.
+    expect(context.costLogMetadata).not.toHaveProperty('stepId');
+  });
+
   // 8 -----------------------------------------------------------------------
   it('tool call round-trip: dispatches tool, yields capability_result, loops for follow-up', async () => {
     const provider = mockProvider([
@@ -632,6 +676,12 @@ describe('StreamingChatHandler', () => {
       { query: 'react' },
       expect.objectContaining({ userId: 'u1', agentId: 'agent-1', conversationId: 'conv-1' })
     );
+
+    // No evaluation tags on this request, so none on the dispatch context —
+    // the field is omitted entirely rather than passed as undefined.
+    const [, , plainContext] = (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(plainContext).not.toHaveProperty('costLogMetadata');
 
     // Message persistence: user + turn1 assistant + tool row + turn2 assistant = 4
     const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;

@@ -49,6 +49,29 @@ export interface CapabilityContext {
    */
   workflowExecutionId?: string;
   /**
+   * Extra keys the caller wants on this dispatch's `AiCostLog.metadata` row.
+   *
+   * Two things ride on this, and both are about where an operator can SEE the
+   * spend rather than whether it was recorded:
+   *
+   * - **`stepId`.** Both execution readers filter cost rows with
+   *   `const stepId = extractStepId(row.metadata); if (!stepId) continue;`
+   *   (`executions/[id]/route.ts` and its `live/` sibling), so a row without
+   *   one is dropped from the execution detail and live cost panels entirely.
+   *   `loadPastRuns` in `cost-estimation/workflow-cost.ts` cannot attribute it
+   *   either.
+   * - **Evaluation tags.** An evaluation run stamps
+   *   `{ evaluationRunId, role }` onto `ExecuteOptions.costLogMetadata`, and
+   *   the executors thread it into their own `logCost` calls. Without a carrier
+   *   it stops at the capability boundary, so evaluation spend that runs
+   *   through a tool is untagged.
+   *
+   * The dispatcher **merges this under its own keys** — see step 9 — so a
+   * caller cannot overwrite `slug` or `success` by supplying them here.
+   * Populated by the executors; absent on a direct dispatch. (#600)
+   */
+  costLogMetadata?: Record<string, unknown>;
+  /**
    * Free-form context from the chat handler (e.g. the current entity
    * being discussed). Capabilities can inspect but shouldn't require
    * it.

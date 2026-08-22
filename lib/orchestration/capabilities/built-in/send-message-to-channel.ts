@@ -29,6 +29,7 @@ import type {
   CapabilitySchema,
 } from '@/lib/orchestration/capabilities/types';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { isWorkflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
 import { bootstrapOutboundAdapters } from '@/lib/orchestration/outbound/bootstrap';
 import { getOutboundAdapter } from '@/lib/orchestration/outbound/registry';
 import {
@@ -471,8 +472,22 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
     // adapter validated again). Both adapters' schemas have an optional
     // `costPerMessageUsd` field at the top level.
     const costPerMessageUsd = extractCost(providerConfig);
+    // `agentId` only when it is a real `AiAgent.id`. Dispatched from a workflow
+    // `tool_call` step, `context.agentId` is the synthetic `workflow:<id>`
+    // label, `AiCostLog.agentId` is a foreign key to `AiAgent.id`, and `logCost`
+    // catches the resulting P2003 and returns `null` — so every outbound message
+    // sent from a workflow logged an error and recorded NO cost row at all.
+    //
+    // That is the same data loss #599 fixed at the dispatcher's own cost log,
+    // still live here because this capability writes its own. Found by
+    // enumerating the `logCost` call sites for #600, not by it being reported.
+    // `workflowExecutionId` is the column that models the relationship, and its
+    // FK is satisfied — the execution row exists before any step runs.
     await logCost({
-      agentId: context.agentId,
+      ...(context.agentId && !isWorkflowAgentId(context.agentId)
+        ? { agentId: context.agentId }
+        : {}),
+      ...(context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {}),
       conversationId: conv.id,
       provider: providerSlug,
       model: `${providerSlug}-${recordedChannel}`,
@@ -480,6 +495,10 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
       outputTokens: 0,
       operation: CostOperation.OUTBOUND_MESSAGE,
       metadata: {
+        // Caller keys first so the capability's own facts win, matching the
+        // dispatcher's precedence rule. Carries `stepId` in from the executor,
+        // which is what makes the row visible in the execution cost panels.
+        ...(context.costLogMetadata ?? {}),
         channel: recordedChannel,
         provider: providerSlug,
         transactionId: result.transactionId,

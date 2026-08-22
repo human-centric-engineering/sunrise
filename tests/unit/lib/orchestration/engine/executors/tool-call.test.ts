@@ -235,6 +235,7 @@ describe('executeToolCall', () => {
         agentId: 'workflow:wf_tool',
         workflowExecutionId: 'exec_1',
         scope: { projectId: 'proj-42' },
+        costLogMetadata: { stepId: 'step1' },
       }
     );
   });
@@ -253,11 +254,49 @@ describe('executeToolCall', () => {
     // `workflowExecutionId` is unconditional, unlike `scope`: it is the only FK
     // the dispatcher's cost log can persist a workflow dispatch against, since
     // the `agentId` beside it is a label rather than an `AiAgent.id`.
+    //
+    // `costLogMetadata` is unconditional too, and always carries `stepId` even
+    // when the run has no metadata of its own — that key alone is what stops
+    // both execution readers dropping the row (#600).
     expect(context).toEqual({
       userId: 'user_1',
       agentId: 'workflow:wf_tool',
       workflowExecutionId: 'exec_1',
+      costLogMetadata: { stepId: 'step1' },
     });
+  });
+
+  it('carries the run-level costLogMetadata through, with stepId added', async () => {
+    // An evaluation run stamps `{ evaluationRunId, role }` on the execution
+    // context. Without this the tags stop at the capability boundary and
+    // evaluation spend that ran through a tool is untagged.
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    const step = makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } });
+    await executeToolCall(
+      step,
+      makeCtx({ costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' } })
+    );
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context.costLogMetadata).toEqual({
+      evaluationRunId: 'run_7',
+      role: 'subject',
+      stepId: 'step1',
+    });
+  });
+
+  it('lets the run-level metadata not overwrite stepId', async () => {
+    // `stepId` is the engine's attribution key, so it is spread LAST. A run
+    // whose metadata happens to carry a `stepId` must not be able to
+    // misattribute its own cost rows to a different step.
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    const step = makeStep({ capabilitySlug: 'my-tool', args: { x: 1 } });
+    await executeToolCall(step, makeCtx({ costLogMetadata: { stepId: 'somewhere-else' } }));
+
+    const [, , context] = vi.mocked(capabilityDispatcher.dispatch).mock.calls[0];
+    expect(context.costLogMetadata).toEqual({ stepId: 'step1' });
   });
 
   it('uses argsFrom step output (object) when config.args is absent', async () => {

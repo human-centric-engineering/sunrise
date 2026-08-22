@@ -376,6 +376,86 @@ release process.
 
 ### Fixed
 
+- **Workflow capability spend now shows up against the step that caused it, and
+  `agent_call` tool spend shows up at all.** #599 stopped these `AiCostLog` rows
+  being lost to an FK violation; they existed after it and were still invisible
+  in both places an operator looks. `CapabilityContext` gains a third optional
+  carrier, `costLogMetadata`, merged **under** the dispatcher's own keys
+  (`{ ...context.costLogMetadata, slug, success }`) so a caller cannot overwrite
+  `slug` — which the per-capability stats route groups on — or hide a failure by
+  setting `success`. The executors apply the same rule one level up
+  (`{ ...ctx.costLogMetadata, stepId: step.id }`), so a run cannot misattribute
+  its own rows to a different step.
+  Two things ride on it. **`stepId`**: both execution readers do
+  `const stepId = extractStepId(row.metadata); if (!stepId) continue;`, so every
+  capability row was dropped from the execution detail and live cost panels, and
+  `loadPastRuns` could not attribute it either. **Evaluation tags**: a run stamps
+  `{ evaluationRunId, role }` on `ExecuteOptions.costLogMetadata`, and those
+  stopped at the capability boundary.
+  `agent_call` also gains `workflowExecutionId`, which it never passed. The
+  asymmetry was inside one file — that executor's own LLM `logCost` set it while
+  the capability dispatch beside it did not — so a tool an agent invoked
+  mid-workflow recorded an `agentId` and a null execution link and never
+  appeared against the run. (#600)
+
+- **`llm_call` cost rows were untagged too, and `send_message_to_channel` was
+  still losing rows outright.** Both found by enumerating every `logCost` call
+  site rather than by reading #600, which named neither — it asserted
+  `llm-runner.ts` already forwarded the carrier, and it does not.
+  `runLlmCall` wrote `metadata: { stepId }` and nothing else, so an evaluation
+  run's tags were missing from every LLM step, not just from tool calls.
+  `send_message_to_channel` writes its own `OUTBOUND_MESSAGE` cost row and did
+  so with `agentId: context.agentId` unconditionally — which from a workflow
+  `tool_call` step is the synthetic `workflow:<id>` label, not an `AiAgent.id`.
+  That is the identical P2003 data loss #599 fixed at the dispatcher, still live
+  in a built-in because the dispatcher's guard does not cover a capability's own
+  `logCost` call: **every outbound message sent from a workflow recorded no cost
+  row at all.** Both now apply the guard and the merge.
+  Three more boundaries turned up the same way, each found by checking a site
+  rather than reading the issue. `chat/streaming-handler.ts` threaded
+  `request.costLogMetadata` into its own four `logCost` calls but not into the
+  dispatch context, so an agent evaluation — which runs its subject through that
+  handler — tagged the subject's LLM spend and left every tool it called
+  untagged. `engine/executors/judge-call.ts` **deliberately** withheld it, under
+  a comment asserting the executors already tag those rows; they do not, because
+  `driveJudgeAgent` logs through the chat handler rather than an executor, so
+  evaluating a workflow with a `judge_call` step tagged every step except the
+  judge. And `run-workflow` did not pass it to the child execution, so a nested
+  workflow's rows were untagged.
+  `.context/orchestration/capabilities.md` now carries the full roster of
+  boundaries and what each owes — including the one that correctly forwards
+  nothing, and the orchestrator-delegation case that remains unattributed. The
+  rule is stated as a question to ask at a new boundary, not as a count, because
+  the count has been wrong every time anyone has written one down. (#600)
+
+- **A zero-token cost row can no longer capture a workflow step's model
+  fingerprint.** `loadPastRuns` picks each step's dominant model with
+  `bestTokens = -1` and `>`, so when every candidate ties at zero the winner is
+  whichever row was inserted first. Giving `agent_call` dispatches a `stepId`
+  puts the dispatcher's `model: 'n/a'`, 0-in/0-out row under the same step id as
+  that step's LLM rows — and if those turns also reported zero usage, an `'n/a'`
+  winner made `runMatchesFingerprint` reject the **entire** past run, silently
+  degrading the estimator to heuristic once enough runs fell below
+  `EMPIRICAL_MIN_SAMPLES`. Zero-token rows are now skipped, which is safer
+  rather than merely narrower: a step left with no fingerprint entry is treated
+  as no signal and skipped, not as a mismatch. (#600)
+
+- **A capability cost row now says which capability it was.** The execution
+  detail and live panels project `metadata.slug` into their `CostEntry`, and the
+  per-call cost table renders it in place of the model column. Capability rows
+  are all `capability/n/a` with 0 tokens and $0, so making them visible without
+  this turned an `agent_call` step that invoked five tools into five identical,
+  information-free rows — a cost table saying nothing about cost. LLM rows are
+  unchanged and still identify themselves by `provider/model`.
+  Three cases are documented as **known exceptions** rather than fixed, in
+  `.context/orchestration/capabilities.md`: the judge path's row carries no
+  execution link because the chat handler sets none; orchestrator delegations
+  stamp a synthetic step id no panel can match; and
+  `send_message_to_channel` renders `$0.0000` because its model string is not in
+  the registry and `logCost` takes no cost override. Each needs a wider change
+  than this one. (#600)
+
+
 - **A fork init that threw kept the registrations it had already made, while
   logging that the feature was disabled.** Six seams — `jobs`,
   `context-contributors`, `guard-floor-contributors`,

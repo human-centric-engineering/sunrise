@@ -168,6 +168,12 @@ type Status = ExecutionTraceEntry['status'] | 'running';
  * `costEntries[]` payload returned by `GET /executions/:id`.
  */
 export interface TraceCostEntry {
+  /**
+   * The capability that produced the row, for `tool_call` spend. Capability
+   * rows are `capability/n/a` with 0 tokens and $0, so the slug is the only
+   * thing distinguishing one from another in this table (#600).
+   */
+  slug?: string;
   model: string;
   provider: string;
   inputTokens: number;
@@ -646,7 +652,7 @@ export function ExecutionTraceEntryRow({
                       className="border-border/40 border-b last:border-b-0"
                     >
                       <td className="py-0.5 pr-2 font-mono">
-                        {entry.provider}/{entry.model}
+                        {entry.slug ?? `${entry.provider}/${entry.model}`}
                       </td>
                       <td className="py-0.5 pr-2">{entry.inputTokens.toLocaleString()}</td>
                       <td className="py-0.5 pr-2">{entry.outputTokens.toLocaleString()}</td>

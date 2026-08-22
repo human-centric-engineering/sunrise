@@ -304,6 +304,47 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.currentRunningSteps.map((r) => r.stepId)).toEqual(['branch_a', 'branch_b']);
   });
 
+  it('projects metadata.slug onto a capability cost row, and omits it for LLM rows', async () => {
+    // Capability rows are `capability/n/a` with 0 tokens and $0, so without the
+    // slug an `agent_call` step that invoked several tools renders several
+    // identical, information-free rows in the per-call cost table. The slug was
+    // already in `AiCostLog.metadata` and only needed projecting (#600).
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);
+    vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue([
+      {
+        model: 'n/a',
+        provider: 'capability',
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCostUsd: 0,
+        operation: 'tool_call',
+        metadata: { stepId: 'step1', slug: 'search_knowledge_base', success: true },
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+      },
+      {
+        model: 'gpt-4o-mini',
+        provider: 'openai',
+        inputTokens: 100,
+        outputTokens: 50,
+        totalCostUsd: 0.005,
+        operation: 'chat',
+        metadata: { stepId: 'step1' },
+        createdAt: new Date('2025-01-01T00:00:01Z'),
+      },
+    ] as never);
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const data = await parseJson<{
+      data: { costEntries: Array<{ slug?: string; operation: string }> };
+    }>(response);
+
+    const [toolRow, llmRow] = data.data.costEntries;
+    expect(toolRow?.slug).toBe('search_knowledge_base');
+    // Absent, not `undefined`-valued — an LLM row identifies itself by model.
+    expect(llmRow).not.toHaveProperty('slug');
+  });
+
   it('returns costEntries from AiCostLog, keyed by metadata.stepId', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecution() as never);

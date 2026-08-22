@@ -1003,6 +1003,20 @@ async function loadPastRuns(
       let bestModel = '';
       let bestTokens = -1;
       for (const [modelId, tokens] of modelMap) {
+        // A zero-token row carries no model signal and must never win the
+        // dominant-model tie-break. The dispatcher's capability row is
+        // `model: 'n/a'` with 0 in and 0 out; before #600 those rows had no
+        // `stepId` so they never reached here, and now an `agent_call` step's
+        // tool rows land under its id alongside its LLM rows. If that step's
+        // turns ever reported zero usage, both candidates tied at 0, insertion
+        // order decided it, and a winning `'n/a'` made `runMatchesFingerprint`
+        // reject the ENTIRE past run — silently degrading the estimator to
+        // heuristic once enough runs fell below `EMPIRICAL_MIN_SAMPLES`.
+        //
+        // Skipping is safe rather than merely narrower: a step left with no
+        // entry is `undefined` in the fingerprint, and that path `continue`s
+        // instead of rejecting.
+        if (tokens === 0) continue;
         if (tokens > bestTokens) {
           bestTokens = tokens;
           bestModel = modelId;

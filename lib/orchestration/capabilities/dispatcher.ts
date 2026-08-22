@@ -651,6 +651,13 @@ class CapabilityDispatcher {
         //    breakdown under-reported workflow tool usage to zero.
         //    `workflowExecutionId` is the column that models this properly, and
         //    its FK is satisfied — the execution row exists before any step runs.
+        //
+        //    `context.costLogMetadata` rides along so the row can be ATTRIBUTED
+        //    once it exists: without a `stepId` in it, both execution readers
+        //    drop the row (`if (!stepId) continue;`) and the step shows no cost
+        //    at all, and an evaluation run's `{ evaluationRunId, role }` tags
+        //    stop at this boundary. #599 stopped the rows being lost; this is
+        //    where they become findable (#600).
         void logCost({
           ...(context.agentId && !isWorkflowAgentId(context.agentId)
             ? { agentId: context.agentId }
@@ -666,7 +673,12 @@ class CapabilityDispatcher {
           outputTokens: 0,
           traceId: span.traceId(),
           spanId: span.spanId(),
-          metadata: { slug, success: result.success },
+          // Caller keys first, the dispatcher's own last: `slug` and `success`
+          // are what the per-capability stats route groups on, so a caller must
+          // not be able to overwrite them by passing either in
+          // `costLogMetadata`. Spread order IS the guarantee here — reversing
+          // these two lines silently hands a caller control of the analytics.
+          metadata: { ...(context.costLogMetadata ?? {}), slug, success: result.success },
         }).catch((err) => {
           logger.error('Capability dispatch: logCost rejected', {
             slug,

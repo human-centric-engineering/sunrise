@@ -132,6 +132,11 @@ export async function executeToolCall(
     // binding disarmed for every workflow, schedule, trigger and resume while
     // the docs said otherwise (#586).
     ...(ctx.scopeIsAuthoritative ? platformScope(ctx.scope) : hintScope(ctx.scope)),
+    // What makes the resulting cost row findable. `stepId` is what both
+    // execution readers filter on — without it the row exists and this step
+    // still shows no cost — and `ctx.costLogMetadata` carries an evaluation
+    // run's tags across the capability boundary (#600).
+    costLogMetadata: { ...(ctx.costLogMetadata ?? {}), stepId: step.id },
   });
 
   if (!result.success) {

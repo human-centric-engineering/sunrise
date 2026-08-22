@@ -1862,6 +1862,17 @@ export class StreamingChatHandler {
           // A HINT, never authority: `ChatRequest.scope` arrives from an
           // untrusted consumer request body. Capabilities still receive it.
           ...hintScope(request.scope),
+          // Evaluation tags, so a tool dispatched during an evaluation CHAT
+          // turn is attributable like one dispatched from a workflow step.
+          // This handler already threads `request.costLogMetadata` into its own
+          // four `logCost` calls; only the dispatch context dropped it, so
+          // `run-cases/agent-case.ts` produced subject rows tagged for the LLM
+          // spend and untagged for every tool it called.
+          //
+          // No `stepId` here — a chat turn is not a workflow step. The
+          // dispatcher merges this under its own `slug`/`success` regardless
+          // (#600).
+          ...(request.costLogMetadata ? { costLogMetadata: request.costLogMetadata } : {}),
         };
 
         if (toolCallArray.length === 1) {

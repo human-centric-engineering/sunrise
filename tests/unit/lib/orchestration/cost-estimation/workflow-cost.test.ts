@@ -306,6 +306,61 @@ describe('estimateWorkflowCost — empirical mode', () => {
     expect(estimate.midUsd).toBeCloseTo(0.048, 3);
   });
 
+  it("lets a zero-token capability row not capture a step's model fingerprint", async () => {
+    // #600 gave `agent_call` capability dispatches a `stepId`, so the
+    // dispatcher's `model: 'n/a'`, 0-in/0-out row now lands under the same step
+    // id as that step's LLM rows. When that step's turns also report zero usage
+    // — a cached or refused completion — both candidates tie at 0, and the
+    // tie-break (`bestTokens = -1`, `>`) is decided by insertion order. An
+    // `'n/a'` winner makes `runMatchesFingerprint` reject the ENTIRE past run,
+    // so the estimator silently degrades to heuristic once enough runs fall
+    // below the sample floor.
+    //
+    // The run survives the `totals === 0` guard because a SECOND step carries
+    // real usage — which is what makes the scenario reachable rather than
+    // theoretical.
+    mockWorkflow(makeDefinition(['llm_call', 'evaluate']));
+    seedPastRuns([
+      { executionId: 'e1', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
+      { executionId: 'e2', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
+      { executionId: 'e3', itemCount: 0, supervisor: false, workInput: 6_000, workOutput: 2_000 },
+    ]);
+
+    // Per run: step s0 has only zero-token rows, `'n/a'` inserted FIRST (the
+    // order that used to win); step s1 carries the real usage.
+    const seeded = ['e1', 'e2', 'e3'].flatMap((id) => [
+      {
+        workflowExecutionId: id,
+        inputTokens: 0,
+        outputTokens: 0,
+        metadata: { stepId: 's0' },
+        model: 'n/a',
+      },
+      {
+        workflowExecutionId: id,
+        inputTokens: 0,
+        outputTokens: 0,
+        metadata: { stepId: 's0' },
+        model: CHAT_MODEL.id,
+      },
+      {
+        workflowExecutionId: id,
+        inputTokens: 6_000,
+        outputTokens: 2_000,
+        metadata: { stepId: 's1' },
+        model: CHAT_MODEL.id,
+      },
+    ]);
+    vi.mocked(prisma.aiCostLog.findMany).mockResolvedValue(seeded as never);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    // Empirical survives: the `'n/a'` row did not become s0's fingerprint and
+    // therefore did not disqualify the run.
+    expect(estimate.basedOn).toBe('empirical');
+    expect(estimate.modelUsed).toBe(CHAT_MODEL.id);
+  });
+
   it('reprices empirical tokens at the current registry rate when the model is unchanged', async () => {
     // Same modelId in past runs and current shape — fingerprint matches.
     // The registry's per-token rate is the *current* rate, so a price

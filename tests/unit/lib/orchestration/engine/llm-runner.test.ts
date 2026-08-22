@@ -511,6 +511,56 @@ describe('runLlmCall', () => {
       expect(logCost).toHaveBeenCalled();
     });
   });
+
+  it('tags the cost row with the run-level costLogMetadata as well as stepId', async () => {
+    // #600 described this file as already forwarding the carrier. It was not:
+    // `llm_call` rows carried `stepId` and nothing else, so an evaluation run's
+    // `{ evaluationRunId, role }` tags were missing from every LLM step — not
+    // just from tool calls, which is all the issue claimed. Found by
+    // enumerating the `logCost` sites rather than by reading the issue.
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockResolvedValue({
+        content: 'answer',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }),
+    } as any);
+    vi.mocked(calculateCost).mockReturnValue({ totalCostUsd: 0.001, isLocal: false } as any);
+    vi.mocked(logCost).mockResolvedValue(null);
+
+    const ctx = makeCtx({ costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' } });
+    await runLlmCall(ctx, { stepId: 's7', prompt: 'hi', modelOverride: 'gpt-4' });
+
+    await vi.waitFor(() => {
+      expect(logCost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowExecutionId: 'exec_1',
+          metadata: { evaluationRunId: 'run_7', role: 'subject', stepId: 's7' },
+        })
+      );
+    });
+  });
+
+  it('lets the run-level metadata not overwrite stepId', async () => {
+    // `stepId` is the engine's attribution key and is spread LAST, so a run
+    // cannot misattribute its own LLM spend to a different step.
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockResolvedValue({
+        content: 'answer',
+        usage: { inputTokens: 10, outputTokens: 5 },
+      }),
+    } as any);
+    vi.mocked(calculateCost).mockReturnValue({ totalCostUsd: 0.001, isLocal: false } as any);
+    vi.mocked(logCost).mockResolvedValue(null);
+
+    const ctx = makeCtx({ costLogMetadata: { stepId: 'somewhere-else' } });
+    await runLlmCall(ctx, { stepId: 's8', prompt: 'hi', modelOverride: 'gpt-4' });
+
+    await vi.waitFor(() => {
+      expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ metadata: { stepId: 's8' } }));
+    });
+  });
 });
 
 // ─── interpolatePrompt ───────────────────────────────────────────────────────

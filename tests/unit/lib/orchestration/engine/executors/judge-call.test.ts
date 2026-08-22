@@ -84,6 +84,59 @@ describe('executeJudgeCall', () => {
     vi.clearAllMocks();
   });
 
+  it("forwards the run's cost tags to the judge, which does NOT log through an executor", async () => {
+    // A comment here used to assert the opposite — that
+    // `ExecuteOptions.costLogMetadata` "already tags every cost row via the
+    // executors' merged metadata". It does not: `driveJudgeAgent` goes to
+    // `drainStreamChat` → the streaming chat handler, whose `logCost` calls
+    // tag from `request.costLogMetadata` only. Evaluating a workflow with a
+    // `judge_call` step therefore tagged every other step and left the
+    // judge's spend untagged (#600).
+    mockedDrive.mockResolvedValueOnce(driveResult());
+
+    await executeJudgeCall(
+      makeStep(),
+      makeCtx({ costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' } })
+    );
+
+    // `evaluationRunId` survives — that is the tag this test is about. `role`
+    // is deliberately overridden to `'judge'`; the test below covers why.
+    expect(mockedDrive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costLogMetadata: expect.objectContaining({ evaluationRunId: 'run_7' }),
+      })
+    );
+  });
+
+  it("tags the judge as 'judge' even inside a run stamped 'subject'", async () => {
+    // A subject workflow's execution carries `role: 'subject'`
+    // (`run-cases/workflow-case.ts`). Forwarding that wholesale would tag the
+    // JUDGE agent's chat rows as subject spend, so the first role-based split
+    // of evaluation cost would bill the judge to the thing it judged. Every
+    // other judge path sets `role: 'judge'` explicitly (#600).
+    mockedDrive.mockResolvedValueOnce(driveResult());
+
+    await executeJudgeCall(
+      makeStep(),
+      makeCtx({ costLogMetadata: { evaluationRunId: 'run_7', role: 'subject' } })
+    );
+
+    expect(mockedDrive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costLogMetadata: { evaluationRunId: 'run_7', role: 'judge' },
+      })
+    );
+  });
+
+  it('omits the tags entirely when the run carries none', async () => {
+    mockedDrive.mockResolvedValueOnce(driveResult());
+
+    await executeJudgeCall(makeStep(), makeCtx());
+
+    const [input] = mockedDrive.mock.calls[0] as [Record<string, unknown>];
+    expect(input).not.toHaveProperty('costLogMetadata');
+  });
+
   it('drives the judge with interpolated question + answer, returns score + passed=true when score >= threshold', async () => {
     mockedDrive.mockResolvedValueOnce(driveResult());
 
