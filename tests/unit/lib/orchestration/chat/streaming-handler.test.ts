@@ -3795,6 +3795,163 @@ describe('rolling conversation summarization', () => {
     expect(events[events.length - 1]).toMatchObject({ type: 'done' });
   });
 
+  it('re-summarises on the very next turn — the reuse cache cannot hit in normal use', async () => {
+    // The reuse test below hand-builds a matching `summaryUpToMessageId`, which
+    // proves the branch WORKS but not that a real turn ever produces a matching
+    // id. This runs two consecutive turns and carries turn 1's persisted value
+    // into turn 2, which is what actually happens in production.
+    //
+    // `lastDroppedId` is `history[droppedCount - 1].id`, and `droppedCount`
+    // grows by 2 each turn (one user message, one assistant). So turn 1 pins
+    // the message at index 1 and turn 2 asks about index 3 — a different
+    // message, so the check misses and the summariser runs again.
+    const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+    const answer = () =>
+      mockProvider([
+        [
+          { type: 'text', content: 'Answer.' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]);
+
+    summarize.mockResolvedValue({
+      summary: 'summary-text',
+      fellBack: false,
+      model: 'claude-haiku-4-5',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0,
+    });
+
+    // ── Turn 1: 52 messages, no prior summary ────────────────────────────
+    const turn1History = makeHistoryMessages(52);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...turn1History].reverse()
+    );
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({ id: 'conv-two-turn', summary: null, summaryUpToMessageId: null })
+    );
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: answer(),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-two-turn' }));
+
+    expect(summarize).toHaveBeenCalledTimes(1);
+
+    // What turn 1 actually persisted — read back, not assumed.
+    const updateCalls = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls;
+    const persisted = updateCalls
+      .map((c: unknown[]) => (c[0] as { data?: Record<string, unknown> }).data)
+      .find((d) => d && 'summaryUpToMessageId' in d) as
+      { summary: string; summaryUpToMessageId: string } | undefined;
+    expect(persisted).toBeDefined();
+    expect(persisted!.summaryUpToMessageId).toBe(turn1History[1].id);
+
+    // ── Turn 2: the same conversation, two messages later ────────────────
+    summarize.mockClear();
+    (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mockClear();
+
+    const turn2History = makeHistoryMessages(54);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...turn2History].reverse()
+    );
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({
+        id: 'conv-two-turn',
+        summary: persisted!.summary,
+        summaryUpToMessageId: persisted!.summaryUpToMessageId,
+      })
+    );
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: answer(),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-two-turn' }));
+
+    // THE FINDING: the cache carried forward faithfully and still missed.
+    expect(summarize).toHaveBeenCalledTimes(1);
+
+    // And why: turn 2 wants a different message pinned than turn 1 wrote.
+    const turn2Persisted = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => (c[0] as { data?: Record<string, unknown> }).data)
+      .find((d) => d && 'summaryUpToMessageId' in d) as
+      { summaryUpToMessageId: string } | undefined;
+    expect(turn2Persisted!.summaryUpToMessageId).toBe(turn2History[3].id);
+    expect(turn2Persisted!.summaryUpToMessageId).not.toBe(persisted!.summaryUpToMessageId);
+  });
+
+  it('CONTROL: the same two-turn setup DOES reuse when no messages were added', async () => {
+    // The control for the test above. Without it, "the summariser ran again"
+    // could just mean this harness never reuses at all, and the finding would
+    // be an artefact. Identical setup, one difference: turn 2 sees the same 52
+    // messages, so `droppedCount` is unchanged and the pinned id still matches.
+    const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+    const answer = () =>
+      mockProvider([
+        [
+          { type: 'text', content: 'Answer.' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]);
+
+    summarize.mockResolvedValue({
+      summary: 'summary-text',
+      fellBack: false,
+      model: 'claude-haiku-4-5',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0,
+    });
+
+    const history = makeHistoryMessages(52);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...history].reverse()
+    );
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({ id: 'conv-control', summary: null, summaryUpToMessageId: null })
+    );
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: answer(),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-control' }));
+    expect(summarize).toHaveBeenCalledTimes(1);
+
+    const persisted = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls
+      .map((c: unknown[]) => (c[0] as { data?: Record<string, unknown> }).data)
+      .find((d) => d && 'summaryUpToMessageId' in d) as
+      { summary: string; summaryUpToMessageId: string } | undefined;
+
+    // Turn 2 — SAME history length, so the pinned id is still correct.
+    summarize.mockClear();
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...history].reverse()
+    );
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({
+        id: 'conv-control',
+        summary: persisted!.summary,
+        summaryUpToMessageId: persisted!.summaryUpToMessageId,
+      })
+    );
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: answer(),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-control' }));
+
+    // Zero. The cache CAN hit — so the miss above is caused by the two new
+    // messages, not by the harness.
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
   it('reuses existing conversation.summary when summaryUpToMessageId matches the last dropped message id', async () => {
     // Arrange: seed 52 messages; conversation already has a summary covering the
     // first 2 dropped messages (droppedCount = 52 - 50 = 2 → lastDropped = history[1]).
