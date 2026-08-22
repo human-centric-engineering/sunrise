@@ -66,6 +66,7 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **Add environment var**                             | `environment/overview.md`                        | `environment/reference.md`                |
 | **Deploy to production**                            | `deployment/overview.md`                         | `environment/overview.md`                 |
 | **Tune CI / fix a private-fork CI failure**         | `architecture/ci.md`                             | `environment/overview.md`                 |
+| **Write or review an automated check / gate**       | `architecture/checks.md`                         | `architecture/ci.md`                      |
 | **Add error handling**                              | `errors/overview.md`                             | `logging/overview.md`                     |
 | **Add logging**                                     | `logging/overview.md`                            | `logging/request-context.md`              |
 | **Add rate limiting**                               | `security/rate-limiting.md`                      | `security/overview.md`                    |
