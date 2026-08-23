@@ -192,6 +192,20 @@ const PATH_EXEMPTIONS: ReadonlyArray<{ test: (path: string) => boolean; reason: 
     test: (p) => /^app\/(?:.*\/)?(layout|loading|error|not-found)\.tsx$/.test(p),
     reason: 'App Router boundary file',
   },
+  {
+    // Fork-owned placeholder marketing copy. Every fork rewrites or deletes
+    // this page, so a core test pinning its sections, tiers or FAQ items is a
+    // core test a fork cannot satisfy — the #480 / #525 / #530 / #533 class.
+    // Excluded from coverage for the same reason; the two must agree, which is
+    // what the accounting check in missing-tests.test.ts enforces.
+    //
+    // The real exposure — this file being overwritten wholesale by another
+    // route module, which has happened — is covered structurally by
+    // `tests/unit/app/route-module-distinctness.test.ts`, with no opinion about
+    // what the page says.
+    test: (p) => p === 'app/(public)/page.tsx',
+    reason: 'fork-owned placeholder page (see its docblock)',
+  },
 ];
 
 /** `lib/x/y.tsx` → `lib/x/y`; `null` for anything that is not a TS source. */

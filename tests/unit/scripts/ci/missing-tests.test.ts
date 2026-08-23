@@ -450,6 +450,11 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
   function samplePathFor(pattern: string): string {
     if (pattern.endsWith('/')) return `${pattern}sample.ts`;
     const concrete = pattern
+      // A literal path may be glob-escaped in the config — `app/(public)/…` is
+      // extglob syntax, so the parens have to be escaped there or the pattern
+      // matches nothing. Undo that first, or the sample path carries the
+      // backslashes and matches no exemption rule.
+      .replace(/\\+(.)/g, '$1')
       .replace(/\*\*\//g, 'sample/')
       .replace(/\/\*\*$/, '/sample.ts')
       .replace(/\{[^}]*\}/, 'ts')
