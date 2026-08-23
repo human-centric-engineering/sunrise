@@ -376,6 +376,33 @@ release process.
 
 ### Fixed
 
+- **The public landing page was serving the About page.**
+  `app/(public)/page.tsx` had been replaced wholesale with a byte-identical copy
+  of `app/(public)/about/page.tsx`, so `/` and `/about` rendered the same hero,
+  the same body copy and the same `title: 'About'`. `Pricing` and `FAQ` were
+  left exported from `components/marketing/index.ts` and rendered by nothing.
+  The landing page is restored and its metadata now carries the change the
+  clobbering commit intended but did not apply: `title: 'Home'`, with
+  `description` from `BRAND.description` (`NEXT_PUBLIC_APP_DESCRIPTION`) rather
+  than a hardcoded starter blurb. The `openGraph`/`twitter` blocks deliberately
+  declare **no** title of their own — `(public)/layout.tsx` supplies the
+  template `%s - ${BRAND.name}` and Next applies it to those titles too, so
+  naming the brand in any of them renders it twice.
+  **Forks:** if you merged the affected range and had not yet rewritten your
+  landing page, take this file wholesale; if you had, keep yours — the body is
+  fork-owned copy either way.
+  A new whole-tree guard
+  (`tests/unit/app/route-module-distinctness.test.ts`, registered in
+  `ALWAYS_RUN_TESTS`) fails when **any** two `page`/`layout`/`route` modules
+  under `app/` are byte-identical, across all 315 of them. It is written as the
+  general rule rather than as "`/` is not `/about`" because pinning the pair
+  that broke passes the moment the next pair breaks, and two routes serving
+  identical source is always one having overwritten the other — sharing an
+  implementation is spelled by importing a component, never by copying a file.
+  Nothing existing could have caught this: no test rendered the landing page,
+  and `layout-metadata.test.ts` passed correctly, because a guard against
+  *leaking the starter identity* is not a guard against *being the wrong page*.
+
 - **The rolling conversation summary was recomputed on every single turn past
   the history window, and the cost row for each of those calls was silently
   discarded (#654).** Two defects that concealed each other. The reuse check was

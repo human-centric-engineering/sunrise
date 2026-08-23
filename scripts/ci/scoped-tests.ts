@@ -129,6 +129,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the step registry. A seed-data edit changes the answer.',
   },
   {
+    path: 'tests/unit/app/route-module-distinctness.test.ts',
+    reason:
+      'globs `app/**` for page/layout/route modules and fails if two are ' +
+      'byte-identical. Its input is the set of files on disk; the clobber it ' +
+      'exists for (a landing page overwritten with the about page) is exactly ' +
+      'the change no import chain connects to a test.',
+  },
+  {
     path: 'tests/unit/eslint-app-boundary.test.ts',
     reason:
       'runs ESLint over the tree, so its input is every source file. It ' +
