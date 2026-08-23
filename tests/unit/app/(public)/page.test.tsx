@@ -30,11 +30,38 @@
  * @see app/(public)/page.tsx · tests/unit/app/route-module-distinctness.test.ts
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import type { Metadata } from 'next';
 
 import LandingPage, { metadata } from '@/app/(public)/page';
-import { BRAND } from '@/lib/brand';
+
+/**
+ * Re-import the page's metadata with `NEXT_PUBLIC_APP_DESCRIPTION` set to
+ * `value` (or unset when `undefined`).
+ *
+ * The description assertions have to go through this rather than reading the
+ * statically-imported `metadata`, because in the default test environment the
+ * seam and the brand name are **the same string**: `BRAND.description` falls
+ * back to `productName`, which is also `BRAND.name`. A plain
+ * `expect(metadata.description).toBe(BRAND.description)` therefore holds even
+ * if the page were changed to `BRAND.name` — verified by mutation, 24/24 green
+ * — so it could not fail for the confusion it named. Two constants that
+ * coincide make an equality assertion blind.
+ */
+async function metadataWithDescription(value: string | undefined): Promise<Metadata> {
+  vi.resetModules();
+  if (value === undefined) vi.stubEnv('NEXT_PUBLIC_APP_DESCRIPTION', '');
+  else vi.stubEnv('NEXT_PUBLIC_APP_DESCRIPTION', value);
+
+  const mod: { metadata: Metadata } = await import('@/app/(public)/page');
+  return mod.metadata;
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
 
 describe('LandingPage', () => {
   describe('metadata', () => {
@@ -57,8 +84,41 @@ describe('LandingPage', () => {
       expect(metadata.twitter?.title).toBeUndefined();
     });
 
-    it('describes itself from the BRAND seam rather than a hardcoded blurb', () => {
-      expect(metadata.description).toBe(BRAND.description);
+    it("uses the fork's own description when it has set one", async () => {
+      const sentinel = 'Zzyzx Industries coordinates municipal drainage.';
+      const resolved = await metadataWithDescription(sentinel);
+
+      expect(resolved.description).toBe(sentinel);
+      expect(resolved.openGraph?.description).toBe(sentinel);
+      expect(resolved.twitter?.description).toBe(sentinel);
+    });
+
+    it('falls back to a sentence, not to the bare product name', async () => {
+      const resolved = await metadataWithDescription(undefined);
+      const description = resolved.description;
+
+      // The regression this guards: `BRAND.description` defaults to the
+      // product name, so taking the seam directly shipped a one-word
+      // <meta description> on the most-indexed page in the app.
+      expect(typeof description).toBe('string');
+      expect((description as string).split(/\s+/).length).toBeGreaterThan(3);
+      expect(description).toMatch(/\.$/);
+    });
+
+    it('never hardcodes the product identity in any metadata string', async () => {
+      // #519's actual rule. Held here as well as in layout-metadata.test.ts
+      // because this page now composes its own fallback sentence, which that
+      // file's brand stub would not catch on its own.
+      const resolved = await metadataWithDescription(undefined);
+      const strings: string[] = [];
+      const walk = (value: unknown): void => {
+        if (typeof value === 'string') strings.push(value);
+        else if (Array.isArray(value)) value.forEach(walk);
+        else if (value !== null && typeof value === 'object') Object.values(value).forEach(walk);
+      };
+      walk(resolved);
+
+      expect(strings.filter((v) => /starter template|Next\.js Starter/i.test(v))).toEqual([]);
     });
 
     it('declares the website OpenGraph type a landing page needs', () => {

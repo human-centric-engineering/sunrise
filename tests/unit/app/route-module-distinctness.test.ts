@@ -67,8 +67,18 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { globSync } from 'tinyglobby';
 
-/** The three file kinds Next resolves as a route's own module. */
-const ROUTE_MODULE_GLOB = 'app/**/{page,layout,route}.{ts,tsx}';
+/**
+ * Every file kind Next resolves as a route segment's own module.
+ *
+ * The full set, not the three obvious ones: the docblock's rationale — "a
+ * copied layout silently gives a route group another group's chrome" — applies
+ * verbatim to a copied `error.tsx` or `not-found.tsx`, and a guard that calls
+ * itself exhaustive should not stop at the kinds that happened to break.
+ * `template` and `default` match nothing in this tree today and are listed so
+ * that adding one is covered on arrival rather than on the next review.
+ */
+const ROUTE_MODULE_GLOB =
+  'app/**/{page,layout,route,error,loading,not-found,template,default,global-error}.{ts,tsx}';
 
 /** Every route module under `app/`, repo-relative, sorted for stable output. */
 function routeModules(): string[] {
@@ -77,11 +87,19 @@ function routeModules(): string[] {
 
 describe('route module distinctness', () => {
   it('finds the route modules it is supposed to be checking', () => {
-    // Guards the guard: a glob that matches nothing passes every assertion
-    // below in silence, which is the failure mode this whole file is about.
-    // The floor is deliberately far under the real count (315 at the time of
-    // writing) so it asserts "the glob works", not "the tree has not grown".
-    expect(routeModules().length).toBeGreaterThan(100);
+    // Guards the guard: a glob that matches nothing passes the duplicate
+    // assertion below in silence, which is the failure mode this whole file is
+    // about.
+    //
+    // Anchored on the root layout rather than on a count. Next requires
+    // `app/layout.tsx` in every App Router application, so this holds for the
+    // smallest possible fork; a numeric floor would not. An earlier draft used
+    // `> 100` against a then-current 315 — a leaf fork that strips the
+    // orchestration admin surface (228 of the route files here are under it)
+    // drops below that and gets a red test saying nothing true about its tree.
+    const modules = routeModules();
+
+    expect(modules).toContain('app/layout.tsx');
   });
 
   it('has no two route modules with identical source', () => {

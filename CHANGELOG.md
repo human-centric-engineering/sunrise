@@ -382,9 +382,15 @@ release process.
   the same body copy and the same `title: 'About'`. `Pricing` and `FAQ` were
   left exported from `components/marketing/index.ts` and rendered by nothing.
   The landing page is restored and its metadata now carries the change the
-  clobbering commit intended but did not apply: `title: 'Home'`, with
-  `description` from `BRAND.description` (`NEXT_PUBLIC_APP_DESCRIPTION`) rather
-  than a hardcoded starter blurb. The `openGraph`/`twitter` blocks deliberately
+  clobbering commit intended but did not apply: `title: 'Home'`, and a
+  `description` that prefers the fork's own `NEXT_PUBLIC_APP_DESCRIPTION` and
+  otherwise falls back to a `BRAND.name`-interpolated sentence. Deliberately
+  **not** `BRAND.description`, which defaults to the bare product name: that is
+  right for the root layout ("a wrong sentence is worse than a short one") and
+  wrong for the one page whose `<meta name="description">` is what every search
+  result and shared link renders — it would have shipped a one-word snippet
+  under `Home - ${BRAND.name}`. The sentence names nothing product-specific, so
+  #519's rule holds. The `openGraph`/`twitter` blocks deliberately
   declare **no** title of their own, so Next copies the already-resolved
   `Home - ${BRAND.name}` into both cards — one string to keep correct rather
   than three. (Not because the layout's title template would double a card
@@ -397,8 +403,11 @@ release process.
   fork-owned copy either way.
   A new whole-tree guard
   (`tests/unit/app/route-module-distinctness.test.ts`, registered in
-  `ALWAYS_RUN_TESTS`) fails when **any** two `page`/`layout`/`route` modules
-  under `app/` are byte-identical, across all 315 of them. It is written as the
+  `ALWAYS_RUN_TESTS`) fails when **any** two route-segment modules under `app/`
+  are byte-identical, across all 325 of them — `page`, `layout` and `route`,
+  but also `error`, `loading`, `not-found`, `template` and `default`, since a
+  copied `error.tsx` hands one route group another group's failure UI just as
+  silently. It is written as the
   general rule rather than as "`/` is not `/about`" because pinning the pair
   that broke passes the moment the next pair breaks, and two routes serving
   identical source is always one having overwritten the other — sharing an
