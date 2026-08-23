@@ -19,18 +19,13 @@ import { BRAND } from '@/lib/brand';
 // `twitter` and is never rendered on the page, so the fork-owned-copy exemption
 // that covers the JSX below does not apply to it (#519).
 //
-// A fork's own `NEXT_PUBLIC_APP_DESCRIPTION` wins. Without one we fall back to
-// a sentence rather than to `BRAND.description`, because that seam defaults to
-// the bare product name — deliberately, for the root layout, where "a wrong
-// sentence is worse than a short one" (`lib/brand.ts`). On the landing page a
-// one-word `<meta name="description">` is what a search result and every shared
-// link render, so the trade lands the other way. The sentence interpolates
-// `BRAND.name` and describes nothing product-specific, so it satisfies #519's
-// actual rule — do not hardcode the starter identity — rather than only its
-// letter.
-const homeDescription =
-  process.env.NEXT_PUBLIC_APP_DESCRIPTION?.trim() ||
-  `Build production-ready applications faster with ${BRAND.name}.`;
+// `BRAND.tagline`, not `BRAND.description`: the latter falls back to the bare
+// product name, which is right for the root layout ("a wrong sentence is worse
+// than a short one") and wrong here, where this string IS the search result and
+// the shared-link card. Both read the same `NEXT_PUBLIC_APP_DESCRIPTION` with
+// the same precedence — only the fallback differs — and the read lives in
+// `lib/brand.ts` so this page does not become a second consumer of that var.
+const homeDescription = BRAND.tagline;
 
 export const metadata: Metadata = {
   // `(public)/layout.tsx` supplies the template `%s - ${BRAND.name}`, so the

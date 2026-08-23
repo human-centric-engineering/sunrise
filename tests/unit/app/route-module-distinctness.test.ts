@@ -25,13 +25,16 @@
  * ## Why the rule is "no duplicates anywhere" and not "/ is not /about"
  *
  * Pinning the one pair that broke would pass the moment the next pair breaks,
- * and there are 315 route modules. The property that actually holds of this
+ * and there are 325 route modules. The property that actually holds of this
  * tree is the general one: **two routes that serve identical source are two
  * routes where one has overwritten the other**, because a route module is
  * defined by the URL it answers. Deliberately sharing an implementation is
  * spelled by importing a shared component, never by copying a file. There is
- * therefore no exemption list here — one would rot, and today's 315 modules
- * have no duplicate pair even under whitespace normalisation.
+ * therefore nothing exempt upstream: today's 325 modules have no duplicate pair
+ * even under whitespace normalisation, and {@link ALLOWED_IDENTICAL_GROUPS}
+ * ships empty. It exists so that a fork with a genuine collision appends a row
+ * instead of editing this file's logic — the same additive-merge convention
+ * `ALWAYS_RUN_TESTS` documents in `scripts/ci/scoped-tests.ts`.
  *
  * That makes it exhaustive rather than enumerated: it fails on the next
  * clobber, not on a re-run of the last one.
@@ -43,13 +46,16 @@
  * covers the one page most worth covering, and no guard covers the rest at
  * that granularity.
  *
- * **A legitimate collision is conceivable**, even if the tree has none: two
+ * **A legitimate collision is conceivable**, even if this tree has none: two
  * route groups whose `layout.tsx` are both the trivial `{children}`
  * pass-through, or two `route.ts` that only re-export the same handler, are
- * identical without either having overwritten anything. If that ever lands,
- * add a reasoned exemption here — do **not** perturb bytes to green the run,
- * because a comment added to silence a guard is indistinguishable from the
- * clobber it was meant to catch.
+ * identical without either having overwritten anything. A fork is the likely
+ * place — there are already four `loading.tsx` here, and adding a fifth by
+ * copying an existing spinner is the natural way to do it.
+ *
+ * Declare it in {@link ALLOWED_IDENTICAL_GROUPS} with a reason. Do **not**
+ * perturb bytes to green the run: a comment added to silence a guard is
+ * indistinguishable from the clobber it was meant to catch.
  *
  * `layout.tsx` and `route.ts` are covered for the same reason — a copied layout
  * silently gives a route group another group's chrome, and a copied handler
@@ -80,6 +86,22 @@ import { globSync } from 'tinyglobby';
 const ROUTE_MODULE_GLOB =
   'app/**/{page,layout,route,error,loading,not-found,template,default,global-error}.{ts,tsx}';
 
+/**
+ * Groups of route modules that are allowed to be byte-identical.
+ *
+ * **Empty upstream, and Sunrise must keep it that way** — a core entry would
+ * mean core had a clobber it decided to live with. It is exported and declared
+ * here so a fork appends rather than edits: additive on merge, the convention
+ * `ALWAYS_RUN_TESTS` (`scripts/ci/scoped-tests.ts`) already sets for whole-tree
+ * invariants a fork has to extend.
+ *
+ * Each entry is the full set of paths permitted to share content, plus why.
+ * Listing a pair does not weaken the rule for anything else: a third file that
+ * matches a declared group still fails, because the group is compared by exact
+ * membership.
+ */
+export const ALLOWED_IDENTICAL_GROUPS: readonly { paths: readonly string[]; reason: string }[] = [];
+
 /** Every route module under `app/`, repo-relative, sorted for stable output. */
 function routeModules(): string[] {
   return globSync([ROUTE_MODULE_GLOB], { cwd: process.cwd() }).sort();
@@ -95,8 +117,11 @@ describe('route module distinctness', () => {
     // `app/layout.tsx` in every App Router application, so this holds for the
     // smallest possible fork; a numeric floor would not. An earlier draft used
     // `> 100` against a then-current 315 — a leaf fork that strips the
-    // orchestration admin surface (228 of the route files here are under it)
-    // drops below that and gets a red test saying nothing true about its tree.
+    // orchestration admin surface (248 of the 325 route modules here sit under
+    // it) drops below that and gets a red test saying nothing true about its
+    // tree. 228 appeared here in an earlier draft — that is the number of
+    // `route.ts` files in the whole tree, a different measurement that happened
+    // to look plausible.
     const modules = routeModules();
 
     expect(modules).toContain('app/layout.tsx');
@@ -115,7 +140,15 @@ describe('route module distinctness', () => {
       else byContent.set(content, [file]);
     }
 
-    const duplicates = [...byContent.values()].filter((group) => group.length > 1);
+    const allowed = new Set(
+      ALLOWED_IDENTICAL_GROUPS.map((group) => [...group.paths].sort().join('\u0000'))
+    );
+
+    const duplicates = [...byContent.values()]
+      .filter((group) => group.length > 1)
+      // Exact membership, not subset: a third file joining a declared pair is a
+      // new collision and must still fail.
+      .filter((group) => !allowed.has([...group].sort().join('\u0000')));
 
     // Report the paths, not a count: the fix needs to know which file to
     // restore and which one it was overwritten with.

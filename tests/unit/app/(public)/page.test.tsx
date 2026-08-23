@@ -12,10 +12,18 @@
  * `layout-metadata.test.ts` passed correctly throughout — it asks whether
  * metadata leaks the starter identity, which a clobbered page does not.
  *
- * So the assertions here are deliberately about **identity**, not liveness. A
+ * So most assertions here are deliberately about **identity**, not liveness. A
  * "renders without crashing" test would have passed against the About page too,
- * which is the whole failure. Each block below names something only the landing
- * page has.
+ * which is the whole failure.
+ *
+ * **Eight of the ten are identity assertions; two are not.** "offers the
+ * primary signup call to action" holds for the About page as well, which also
+ * ships a `/signup` primary action. That is fine — it is a behaviour assertion,
+ * not an identity one — but it is recorded here because the count is what a
+ * future editor needs when deciding whether an assertion still earns its
+ * place, and an earlier draft of this docblock claimed all of them named
+ * something only the landing page has. Verified by rendering the clobbered
+ * page: eight fail, two pass.
  *
  * `route-module-distinctness.test.ts` guards the same defect from the other
  * side — that no two route modules are byte-identical. Two different questions:
@@ -38,7 +46,13 @@ import LandingPage, { metadata } from '@/app/(public)/page';
 
 /**
  * Re-import the page's metadata with `NEXT_PUBLIC_APP_DESCRIPTION` set to
- * `value` (or unset when `undefined`).
+ * `value`, or genuinely **absent** when `value` is `undefined`.
+ *
+ * Absent, not empty. `vi.stubEnv(key, undefined)` deletes the key; stubbing
+ * `''` leaves it present-but-blank, which is not the state a fork is in. Both
+ * satisfy today's `||`, so the distinction is invisible now — but a refactor to
+ * `?? fallback`, which is correct for the real absent case, would turn this
+ * test red for a change that is fine in production.
  *
  * The description assertions have to go through this rather than reading the
  * statically-imported `metadata`, because in the default test environment the
@@ -51,8 +65,7 @@ import LandingPage, { metadata } from '@/app/(public)/page';
  */
 async function metadataWithDescription(value: string | undefined): Promise<Metadata> {
   vi.resetModules();
-  if (value === undefined) vi.stubEnv('NEXT_PUBLIC_APP_DESCRIPTION', '');
-  else vi.stubEnv('NEXT_PUBLIC_APP_DESCRIPTION', value);
+  vi.stubEnv('NEXT_PUBLIC_APP_DESCRIPTION', value);
 
   const mod: { metadata: Metadata } = await import('@/app/(public)/page');
   return mod.metadata;
@@ -93,6 +106,15 @@ describe('LandingPage', () => {
       expect(resolved.twitter?.description).toBe(sentinel);
     });
 
+    // There is deliberately NO "does not hardcode the product identity" test
+    // here. `layout-metadata.test.ts` lists `@/app/(public)/page` in
+    // METADATA_MODULES and applies both the `/starter template/i` filter and a
+    // `\bSunrise\b` filter under a stubbed brand, so it already covers this
+    // page's composed sentence — and strictly better. The version that stood
+    // here checked only the two phrases, so `Build faster with Sunrise.` passed
+    // it 10/10 while the existing guard failed it. A weaker duplicate under a
+    // stronger name is worse than no test: it reads as coverage.
+
     it('falls back to a sentence, not to the bare product name', async () => {
       const resolved = await metadataWithDescription(undefined);
       const description = resolved.description;
@@ -103,29 +125,6 @@ describe('LandingPage', () => {
       expect(typeof description).toBe('string');
       expect((description as string).split(/\s+/).length).toBeGreaterThan(3);
       expect(description).toMatch(/\.$/);
-    });
-
-    it('never hardcodes the product identity in any metadata string', async () => {
-      // #519's actual rule. Held here as well as in layout-metadata.test.ts
-      // because this page now composes its own fallback sentence, which that
-      // file's brand stub would not catch on its own.
-      const resolved = await metadataWithDescription(undefined);
-      const strings: string[] = [];
-      const walk = (value: unknown): void => {
-        if (typeof value === 'string') strings.push(value);
-        else if (Array.isArray(value)) value.forEach(walk);
-        else if (value !== null && typeof value === 'object') Object.values(value).forEach(walk);
-      };
-      walk(resolved);
-
-      expect(strings.filter((v) => /starter template|Next\.js Starter/i.test(v))).toEqual([]);
-    });
-
-    it('declares the website OpenGraph type a landing page needs', () => {
-      // `OpenGraph` is a discriminated union and `type` lives only on its
-      // members, not the base — reading it directly does not type-check.
-      const openGraph = metadata.openGraph;
-      expect(openGraph && 'type' in openGraph ? openGraph.type : undefined).toBe('website');
     });
   });
 

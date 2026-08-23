@@ -359,10 +359,18 @@ release process.
   credit. The **Cookie Preferences** control is unaffected and remains
   non-overridable.
 
-- **`BRAND.description`, backed by `NEXT_PUBLIC_APP_DESCRIPTION`.** The root
-  `<meta name="description">` for any page that does not set its own. Defaults
-  to the product name rather than a sentence — a wrong sentence is worse than a
-  short one.
+- **`BRAND.description` and `BRAND.tagline`, both backed by
+  `NEXT_PUBLIC_APP_DESCRIPTION`.** `description` is the root
+  `<meta name="description">` for any page that does not set its own; it
+  defaults to the product name rather than a sentence, because a wrong sentence
+  is worse than a short one.
+  `tagline` is the same value with the opposite fallback — a sentence naming the
+  product — for the surfaces where terse reads as broken. The landing page is
+  the one that needs it: its description *is* the search result and the
+  shared-link card, so `Home - ${BRAND.name}` over a one-word snippet is not the
+  trade the root layout is making. A fork setting the env var gets it on both;
+  only the fallback differs, and both read the variable in one place so the two
+  cannot drift.
 
 - **`ChatInterface` endpoint props: `streamEndpoint`, `transcribeEndpoint`,
   `deleteConversationEndpoint`.** All default to today's admin routes, so
@@ -412,10 +420,14 @@ release process.
   that broke passes the moment the next pair breaks, and two routes serving
   identical source is always one having overwritten the other — sharing an
   implementation is spelled by importing a component, never by copying a file.
+  A fork with a genuine collision — two trivial `{children}` pass-through
+  layouts, say — appends to the exported `ALLOWED_IDENTICAL_GROUPS` rather than
+  editing the guard, keeping the merge additive the way `ALWAYS_RUN_TESTS`
+  already is. It ships empty upstream, and a third file joining a declared
+  group still fails.
   Its reach is **byte-identity**, and no further: a copy that renames the
-  default export or edits one literal is a clobber this guard does not see.
-  That is the price of a rule with no exemption list, and the render test below
-  is what covers the one page most worth covering.
+  default export or edits one literal is a clobber this guard does not see, and
+  the render test below is what covers the one page most worth covering.
   Nothing existing could have caught this: no test rendered the landing page,
   and `layout-metadata.test.ts` passed correctly, because a guard against
   *leaking the starter identity* is not a guard against *being the wrong page*.
