@@ -15,35 +15,20 @@ import {
 import { Hero, Section, Features, Pricing, FAQ, CTA } from '@/components/marketing';
 import { BRAND } from '@/lib/brand';
 
-// Metadata, not body copy — this const feeds `description`, `openGraph` and
-// `twitter` and is never rendered on the page, so the fork-owned-copy exemption
-// that covers the JSX below does not apply to it (#519).
-//
-// `BRAND.tagline`, not `BRAND.description`: the latter falls back to the bare
-// product name, which is right for the root layout ("a wrong sentence is worse
-// than a short one") and wrong here, where this string IS the search result and
-// the shared-link card. Both read the same `NEXT_PUBLIC_APP_DESCRIPTION` with
-// the same precedence — only the fallback differs — and the read lives in
-// `lib/brand.ts` so this page does not become a second consumer of that var.
-const homeDescription = BRAND.tagline;
+// Placeholder copy, like the rest of this page — you are expected to rewrite or
+// delete it. It reads `BRAND.name` rather than naming the product, so a fork
+// that has set NEXT_PUBLIC_APP_NAME but not yet rewritten this file still
+// advertises itself rather than Sunrise (#519). A full sentence rather than
+// `BRAND.description`, whose fallback is the bare product name: that is the
+// right trade for the root layout and the wrong one here, where this string is
+// the search-result snippet and the shared-link card.
+const homeDescription = `Build production-ready applications faster with ${BRAND.name}.`;
 
 export const metadata: Metadata = {
-  // `(public)/layout.tsx` supplies the template `%s - ${BRAND.name}`, so the
-  // page declares the bare segment and the brand is appended once.
-  //
-  // Neither block below sets a `title`, and the reason is *inheritance*, not
-  // the template: with no `openGraph.title`/`twitter.title` of their own, Next
-  // copies the already-resolved page title ("Home - Acme") into both cards, so
-  // there is one string to keep correct instead of three.
-  //
-  // The template itself does NOT reach a page-level card title — Next derives
-  // `titleTemplates.openGraph` from an *ancestor* segment's `openGraph.title`,
-  // and `createDefaultMetadata()` starts it at `null` while neither
-  // `app/layout.tsx` nor `(public)/layout.tsx` declares an `openGraph` block.
-  // `about/page.tsx` is the standing proof: it ships an explicit
-  // `openGraph.title` of `About - ${BRAND.name}` and renders exactly that, not
-  // the doubled form. Stated because an earlier draft of this comment claimed
-  // the opposite, which would send a fork looking for a bug that is not there.
+  // `(public)/layout.tsx` supplies the template `%s - ${BRAND.name}`, so this
+  // declares the bare segment and the brand is appended once. The cards below
+  // set no title of their own, so Next copies the resolved "Home - <brand>"
+  // into both — one string to keep correct rather than three.
   title: 'Home',
   description: homeDescription,
   openGraph: {
@@ -213,6 +198,20 @@ const faqItems = [
  *
  * Public landing page showcasing Sunrise features and encouraging adoption.
  * Uses reusable marketing components for consistent styling.
+ *
+ * **Fork-owned placeholder.** Every fork rewrites or deletes this page, so
+ * Sunrise deliberately ships **no test asserting its content** — section ids,
+ * copy, pricing tiers and FAQ items are all a fork's to change, and a core test
+ * pinning them is a core test a fork cannot satisfy (the #480 / #525 / #530 /
+ * #533 class). Do not add one.
+ *
+ * That leaves one real exposure, and it has bitten: this file was once
+ * overwritten wholesale with `about/page.tsx`, and `/` served the About page
+ * through a release. Nothing content-shaped could have caught that without
+ * becoming a fork's problem, so the guard is structural instead —
+ * `tests/unit/app/route-module-distinctness.test.ts` fails when any two route
+ * modules under `app/` are byte-identical, which needs no opinion about what
+ * this page says.
  *
  * Phase 3.5: Landing Page & Marketing
  */

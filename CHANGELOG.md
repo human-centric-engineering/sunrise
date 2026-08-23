@@ -359,18 +359,10 @@ release process.
   credit. The **Cookie Preferences** control is unaffected and remains
   non-overridable.
 
-- **`BRAND.description` and `BRAND.tagline`, both backed by
-  `NEXT_PUBLIC_APP_DESCRIPTION`.** `description` is the root
-  `<meta name="description">` for any page that does not set its own; it
-  defaults to the product name rather than a sentence, because a wrong sentence
-  is worse than a short one.
-  `tagline` is the same value with the opposite fallback — a sentence naming the
-  product — for the surfaces where terse reads as broken. The landing page is
-  the one that needs it: its description *is* the search result and the
-  shared-link card, so `Home - ${BRAND.name}` over a one-word snippet is not the
-  trade the root layout is making. A fork setting the env var gets it on both;
-  only the fallback differs, and both read the variable in one place so the two
-  cannot drift.
+- **`BRAND.description`, backed by `NEXT_PUBLIC_APP_DESCRIPTION`.** The root
+  `<meta name="description">` for any page that does not set its own. Defaults
+  to the product name rather than a sentence — a wrong sentence is worse than a
+  short one.
 
 - **`ChatInterface` endpoint props: `streamEndpoint`, `transcribeEndpoint`,
   `deleteConversationEndpoint`.** All default to today's admin routes, so
@@ -389,53 +381,43 @@ release process.
   of `app/(public)/about/page.tsx`, so `/` and `/about` rendered the same hero,
   the same body copy and the same `title: 'About'`. `Pricing` and `FAQ` were
   left exported from `components/marketing/index.ts` and rendered by nothing.
-  The landing page is restored and its metadata now carries the change the
-  clobbering commit intended but did not apply: `title: 'Home'`, and a
-  `description` from the new **`BRAND.tagline`** (see Added). Deliberately not
-  `BRAND.description`, which falls back to the bare product name: right for the
-  root layout ("a wrong sentence is worse than a short one"), wrong for the one
-  page whose `<meta name="description">` is what every search result and shared
-  link renders — it would have shipped a one-word snippet under
-  `Home - ${BRAND.name}`. The tagline names nothing product-specific, so #519's
-  rule holds. The `openGraph`/`twitter` blocks deliberately
-  declare **no** title of their own, so Next copies the already-resolved
-  `Home - ${BRAND.name}` into both cards — one string to keep correct rather
-  than three. (Not because the layout's title template would double a card
-  title: it would not. Next derives `titleTemplates.openGraph` from an
-  *ancestor* segment's `openGraph.title` and starts it `null`, and no layout
-  here declares an `openGraph` block — which is why `about/page.tsx` ships an
-  explicit `openGraph.title` and renders it verbatim.)
-  **Forks:** if you merged the affected range and had not yet rewritten your
-  landing page, take this file wholesale; if you had, keep yours — the body is
-  fork-owned copy either way.
-  A new whole-tree guard
+  It shipped to `main` and would have shipped in this release.
+  The page is restored, and its metadata carries the change the clobbering
+  commit intended but did not apply: `title: 'Home'`, with the layout's
+  `%s - ${BRAND.name}` template supplying the brand once.
+
+  **How it happened, because the mechanism recurs.** A flat backup directory
+  keyed by **basename**. In an App Router tree `page.tsx` and `route.ts` are not
+  distinctive names — this repo has 82 of the first and 228 of the second — so
+  `cp <several paths> "$TMP"/` keeps exactly one of each, and the restore writes
+  it back over every path it came from. The commit that did it was editing
+  `page.tsx` and `about/page.tsx` together: the small intended edit to
+  `about/page.tsx` landed (6 lines), and `page.tsx` received about's whole file
+  (331 lines) instead of its own 3-line change.
+  The same mechanism hit `app/api/health/route.ts` two days later, which took
+  the **stats** route's content and became an admin-guarded endpoint returning
+  user counts. Both were verified after restoring — by diffing against the
+  backup, which is corrupted-compared-against-corrupted, an assertion that
+  cannot fail in the one place whose job is to notice. `npm run validate` passes
+  either way: a clobbered route is a real, valid module, just the wrong one.
+
+  **The guard is structural, not content-shaped**
   (`tests/unit/app/route-module-distinctness.test.ts`, registered in
-  `ALWAYS_RUN_TESTS`) fails when **any** two route-segment modules under `app/`
-  are byte-identical, across all 325 of them — `page`, `layout` and `route`,
-  but also `error`, `loading`, `not-found`, `template`, `default` and
-  `global-error`, since a copied `error.tsx` hands one route group another
-  group's failure UI just as silently. It is written as the
-  general rule rather than as "`/` is not `/about`" because pinning the pair
-  that broke passes the moment the next pair breaks, and two routes serving
-  identical source is always one having overwritten the other — sharing an
-  implementation is spelled by importing a component, never by copying a file.
-  A fork with a genuine collision — two trivial `{children}` pass-through
-  layouts, say — appends to the exported `ALLOWED_IDENTICAL_GROUPS` rather than
-  editing the guard, keeping the merge additive the way `ALWAYS_RUN_TESTS`
-  already is. It ships empty upstream, and a third file joining a declared
-  group still fails.
-  Its reach is **byte-identity**, and no further: a copy that renames the
-  default export or edits one literal is a clobber this guard does not see, and
-  the render test below is what covers the one page most worth covering.
-  Nothing existing could have caught this: no test rendered the landing page,
-  and `layout-metadata.test.ts` passed correctly, because a guard against
-  *leaking the starter identity* is not a guard against *being the wrong page*.
-  That first gap is closed too — `tests/unit/app/(public)/page.test.tsx` now
-  renders the page and asserts its **identity** rather than its liveness (a
-  "renders without crashing" test passes against the About page, which is the
-  whole failure). It anchors on the section ids and on what `Pricing` and `FAQ`
-  themselves emit — a CTA link per tier, Radix's `aria-expanded` accordion
-  triggers — never on the prose, which is fork-owned copy a fork rewrites.
+  `ALWAYS_RUN_TESTS`): no two route-segment modules under `app/` may be
+  byte-identical — `page`, `layout`, `route`, `error`, `loading`, `not-found`,
+  `template`, `default` and `global-error`, 325 of them today. It catches both
+  incidents above and needs no opinion about what any page *says*, which matters
+  because the marketing pages are fork-owned placeholders: a core test pinning
+  their content would be a core test a fork cannot satisfy, the #480 / #525 /
+  #530 / #533 class this release closes four instances of. That is also why
+  Sunrise still ships **no** content test for the landing page, and says so in
+  the file. A fork with a genuine collision appends to the exported
+  `ALLOWED_IDENTICAL_GROUPS` rather than editing the guard, so the merge stays
+  additive the way `ALWAYS_RUN_TESTS` already is; it ships empty upstream, and a
+  third file joining a declared group still fails. Its reach is byte-identity
+  and no further — a copy that renames the default export passes.
+  **Forks:** if you merged the affected range and had not yet rewritten your
+  landing page, take this file wholesale; if you had, keep yours.
 
 - **The rolling conversation summary was recomputed on every single turn past
   the history window, and the cost row for each of those calls was silently

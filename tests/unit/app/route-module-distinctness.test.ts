@@ -12,7 +12,11 @@
  * It shipped to `main` and survived a release cut. Nothing in the suite could
  * see it:
  *
- *   - **No test rendered the landing page**, so its body was unasserted.
+ *   - **No test rendered the landing page**, and deliberately so: it is a
+ *     placeholder every fork rewrites or deletes, and a core test pinning its
+ *     content is a core test a fork cannot satisfy (#480, #525, #530, #533).
+ *     That is a correct decision which happens to leave whole-file overwrites
+ *     invisible — hence a structural guard here rather than a content one.
  *   - **`layout-metadata.test.ts` passed**, and correctly. It stubs the brand
  *     and asks whether any metadata string still says "Sunrise" — the clobbered
  *     page says "About" and reads `BRAND.name`, so it is clean by that
@@ -42,9 +46,10 @@
  * ## What it does not claim
  *
  * **Byte-identity is the whole rule.** A copy that renames the default export
- * or edits a single literal passes here; `(public)/page.test.tsx` is what
- * covers the one page most worth covering, and no guard covers the rest at
- * that granularity.
+ * or edits a single literal passes here, and nothing else covers that — the
+ * marketing pages under `(public)/` are fork-owned placeholders that Sunrise
+ * deliberately does not pin with content tests, so a whole-file overwrite is
+ * the shape this can catch and a near-copy is not.
  *
  * **A legitimate collision is conceivable**, even if this tree has none: two
  * route groups whose `layout.tsx` are both the trivial `{children}`

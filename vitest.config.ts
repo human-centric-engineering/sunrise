@@ -166,6 +166,12 @@ export default defineConfig({
         'app/**/loading.tsx', // Exclude loading states
         'app/**/error.tsx', // Exclude error boundaries
         'app/**/not-found.tsx', // Exclude 404 pages
+        // Fork-owned placeholder marketing copy, not logic. Every fork rewrites
+        // or deletes it, so a core test pinning its content would be a core test
+        // a fork cannot satisfy — see the docblock in the file. The overwrite
+        // risk that remains is covered structurally by
+        // tests/unit/app/route-module-distinctness.test.ts.
+        'app/\\(public\\)/page.tsx', // parens are picomatch syntax — escape or it matches nothing
         'lib/env.ts', // Exclude env validation
       ],
       // Coverage thresholds
