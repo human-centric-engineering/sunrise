@@ -385,9 +385,13 @@ release process.
   clobbering commit intended but did not apply: `title: 'Home'`, with
   `description` from `BRAND.description` (`NEXT_PUBLIC_APP_DESCRIPTION`) rather
   than a hardcoded starter blurb. The `openGraph`/`twitter` blocks deliberately
-  declare **no** title of their own — `(public)/layout.tsx` supplies the
-  template `%s - ${BRAND.name}` and Next applies it to those titles too, so
-  naming the brand in any of them renders it twice.
+  declare **no** title of their own, so Next copies the already-resolved
+  `Home - ${BRAND.name}` into both cards — one string to keep correct rather
+  than three. (Not because the layout's title template would double a card
+  title: it would not. Next derives `titleTemplates.openGraph` from an
+  *ancestor* segment's `openGraph.title` and starts it `null`, and no layout
+  here declares an `openGraph` block — which is why `about/page.tsx` ships an
+  explicit `openGraph.title` and renders it verbatim.)
   **Forks:** if you merged the affected range and had not yet rewritten your
   landing page, take this file wholesale; if you had, keep yours — the body is
   fork-owned copy either way.
@@ -399,14 +403,19 @@ release process.
   that broke passes the moment the next pair breaks, and two routes serving
   identical source is always one having overwritten the other — sharing an
   implementation is spelled by importing a component, never by copying a file.
+  Its reach is **byte-identity**, and no further: a copy that renames the
+  default export or edits one literal is a clobber this guard does not see.
+  That is the price of a rule with no exemption list, and the render test below
+  is what covers the one page most worth covering.
   Nothing existing could have caught this: no test rendered the landing page,
   and `layout-metadata.test.ts` passed correctly, because a guard against
   *leaking the starter identity* is not a guard against *being the wrong page*.
   That first gap is closed too — `tests/unit/app/(public)/page.test.tsx` now
   renders the page and asserts its **identity** rather than its liveness (a
   "renders without crashing" test passes against the About page, which is the
-  whole failure). It anchors on the section ids and on the two marketing
-  components this page alone consumes, not on the prose, which is fork-owned.
+  whole failure). It anchors on the section ids and on what `Pricing` and `FAQ`
+  themselves emit — a CTA link per tier, Radix's `aria-expanded` accordion
+  triggers — never on the prose, which is fork-owned copy a fork rewrites.
 
 - **The rolling conversation summary was recomputed on every single turn past
   the history window, and the cost row for each of those calls was silently

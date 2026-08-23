@@ -29,12 +29,27 @@
  * tree is the general one: **two routes that serve identical source are two
  * routes where one has overwritten the other**, because a route module is
  * defined by the URL it answers. Deliberately sharing an implementation is
- * spelled by importing a shared component, never by copying a file — so this
- * rule has no legitimate exception to carve out, and needs no exemption list
- * that could rot.
+ * spelled by importing a shared component, never by copying a file. There is
+ * therefore no exemption list here — one would rot, and today's 315 modules
+ * have no duplicate pair even under whitespace normalisation.
  *
- * That also makes it exhaustive rather than enumerated: it fails on the next
+ * That makes it exhaustive rather than enumerated: it fails on the next
  * clobber, not on a re-run of the last one.
+ *
+ * ## What it does not claim
+ *
+ * **Byte-identity is the whole rule.** A copy that renames the default export
+ * or edits a single literal passes here; `(public)/page.test.tsx` is what
+ * covers the one page most worth covering, and no guard covers the rest at
+ * that granularity.
+ *
+ * **A legitimate collision is conceivable**, even if the tree has none: two
+ * route groups whose `layout.tsx` are both the trivial `{children}`
+ * pass-through, or two `route.ts` that only re-export the same handler, are
+ * identical without either having overwritten anything. If that ever lands,
+ * add a reasoned exemption here — do **not** perturb bytes to green the run,
+ * because a comment added to silence a guard is indistinguishable from the
+ * clobber it was meant to catch.
  *
  * `layout.tsx` and `route.ts` are covered for the same reason — a copied layout
  * silently gives a route group another group's chrome, and a copied handler
