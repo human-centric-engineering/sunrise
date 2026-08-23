@@ -936,9 +936,16 @@ release process.
   carry a patch here.** Next resolves metadata at the nearest segment that
   defines a field, so any route group declaring `description` overrides the root
   outright — all four of Sunrise's do. `tests/unit/app/layout-metadata.test.ts`
-  now scans every `export const metadata` block under `app/` rather than
-  checking the root object, because the first version of that test passed while
-  the blurb was still live.
+  is now on its **third** shape, because the first two both passed while the
+  blurb was still live: v1 asserted on the root `metadata` object, which cannot
+  see a route group's override, and v2 text-scanned
+  `export const metadata[^;]*?;`, which any value hoisted into a module const
+  escapes — exactly what the two remaining offenders did. Both guessed at
+  *where* a leak might be written. v3 does not guess: it stubs
+  `NEXT_PUBLIC_APP_NAME` to a value no fixture would produce, re-imports each
+  metadata module, and reads the strings Next would actually serve. Anything
+  still naming the product after that is hardcoded by definition — however it
+  was spelled, hoisted, interpolated or computed.
 
   Page **body copy** remains fork-owned and deliberately out of scope — the seam
   covers the brand name, not marketing prose (see `lib/brand.ts`).
