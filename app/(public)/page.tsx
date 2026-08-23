@@ -22,11 +22,22 @@ import { BRAND } from '@/lib/brand';
 const homeDescription = BRAND.description;
 
 export const metadata: Metadata = {
-  // `(public)/layout.tsx` applies the title template `%s - ${BRAND.name}`, and
-  // Next applies it to the `openGraph`/`twitter` titles too — so naming the
-  // brand in any of them renders it twice ("Acme - Acme"). Declare the bare
-  // page title once and let the template and both cards resolve from it; that
-  // is also why neither block below sets a `title` of its own.
+  // `(public)/layout.tsx` supplies the template `%s - ${BRAND.name}`, so the
+  // page declares the bare segment and the brand is appended once.
+  //
+  // Neither block below sets a `title`, and the reason is *inheritance*, not
+  // the template: with no `openGraph.title`/`twitter.title` of their own, Next
+  // copies the already-resolved page title ("Home - Acme") into both cards, so
+  // there is one string to keep correct instead of three.
+  //
+  // The template itself does NOT reach a page-level card title — Next derives
+  // `titleTemplates.openGraph` from an *ancestor* segment's `openGraph.title`,
+  // and `createDefaultMetadata()` starts it at `null` while neither
+  // `app/layout.tsx` nor `(public)/layout.tsx` declares an `openGraph` block.
+  // `about/page.tsx` is the standing proof: it ships an explicit
+  // `openGraph.title` of `About - ${BRAND.name}` and renders exactly that, not
+  // the doubled form. Stated because an earlier draft of this comment claimed
+  // the opposite, which would send a fork looking for a bug that is not there.
   title: 'Home',
   description: homeDescription,
   openGraph: {

@@ -43,11 +43,16 @@ describe('LandingPage', () => {
       expect(metadata.title).toBe('Home');
     });
 
-    it('does not name the brand in any title the layout template will append to', () => {
-      // `(public)/layout.tsx` declares `template: '%s - ${BRAND.name}'`, and
-      // Next applies it to the openGraph/twitter titles too — so a title
-      // naming the brand renders it twice. Declaring none is how this page
-      // opts into the template for all three.
+    it('lets both social cards inherit the resolved page title', () => {
+      // With no title of their own, Next copies the already-resolved
+      // "Home - <brand>" into openGraph and twitter — one string to keep
+      // correct rather than three.
+      //
+      // NOT because the layout's `%s - ${BRAND.name}` template would double a
+      // card title: it would not. Next derives `titleTemplates.openGraph` from
+      // an ancestor's `openGraph.title`, and no ancestor here declares an
+      // `openGraph` block at all. `about/page.tsx` ships an explicit
+      // `openGraph.title` and renders it verbatim.
       expect(metadata.openGraph?.title).toBeUndefined();
       expect(metadata.twitter?.title).toBeUndefined();
     });
@@ -57,7 +62,10 @@ describe('LandingPage', () => {
     });
 
     it('declares the website OpenGraph type a landing page needs', () => {
-      expect(metadata.openGraph?.type).toBe('website');
+      // `OpenGraph` is a discriminated union and `type` lives only on its
+      // members, not the base — reading it directly does not type-check.
+      const openGraph = metadata.openGraph;
+      expect(openGraph && 'type' in openGraph ? openGraph.type : undefined).toBe('website');
     });
   });
 
@@ -76,10 +84,32 @@ describe('LandingPage', () => {
       // `Pricing` and `FAQ` are exported from `components/marketing/index.ts`
       // and rendered by this page alone. When it was clobbered both became
       // orphaned exports, which nothing else in the suite would have noticed.
-      render(<LandingPage />);
+      //
+      // These assertions must reach INSIDE the sections. The first version of
+      // this test matched "Simple, Transparent Pricing" and "Frequently Asked
+      // Questions" — both `<Section title>` props, rendered by `Section`, not
+      // by `Pricing` or `FAQ`. Deleting both components from the page left all
+      // eight tests passing, so the half of the defect this test names was
+      // entirely unguarded. Found by /code-review, confirmed by that mutation.
+      //
+      // Structure, not copy: a fork rewrites its tiers and questions, so this
+      // asserts on what the two components emit — a CTA link per pricing tier,
+      // and Radix's `aria-expanded` accordion triggers — never on the prose.
+      const { container } = render(<LandingPage />);
 
-      expect(screen.getByText('Simple, Transparent Pricing')).toBeInTheDocument();
-      expect(screen.getByText('Frequently Asked Questions')).toBeInTheDocument();
+      const pricing = container.querySelector('#pricing');
+      expect(pricing).not.toBeNull();
+      expect(
+        pricing!.querySelectorAll('a[href]').length,
+        'no tier CTA links inside #pricing — is <Pricing> still rendered?'
+      ).toBeGreaterThan(0);
+
+      const faq = container.querySelector('#faq');
+      expect(faq).not.toBeNull();
+      expect(
+        faq!.querySelectorAll('[aria-expanded]').length,
+        'no accordion triggers inside #faq — is <FAQ> still rendered?'
+      ).toBeGreaterThan(0);
     });
 
     it('offers the primary signup call to action', () => {
