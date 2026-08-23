@@ -402,6 +402,11 @@ release process.
   Nothing existing could have caught this: no test rendered the landing page,
   and `layout-metadata.test.ts` passed correctly, because a guard against
   *leaking the starter identity* is not a guard against *being the wrong page*.
+  That first gap is closed too — `tests/unit/app/(public)/page.test.tsx` now
+  renders the page and asserts its **identity** rather than its liveness (a
+  "renders without crashing" test passes against the About page, which is the
+  whole failure). It anchors on the section ids and on the two marketing
+  components this page alone consumes, not on the prose, which is fork-owned.
 
 - **The rolling conversation summary was recomputed on every single turn past
   the history window, and the cost row for each of those calls was silently
