@@ -63,18 +63,9 @@ describe('PublicFooter', () => {
     expect(screen.getByRole('button', { name: 'Cookie Preferences' })).toBeInTheDocument();
   });
 
-  it('attributes the copyright to NEXT_PUBLIC_LEGAL_NAME, not the product name (#363)', async () => {
-    vi.resetModules();
-    vi.stubEnv('NEXT_PUBLIC_APP_NAME', 'ConQuest');
-    vi.stubEnv('NEXT_PUBLIC_LEGAL_NAME', 'All Too Human Ltd');
-    const { PublicFooter } = await import('@/components/layouts/public-footer');
-    render(React.createElement(PublicFooter));
-
-    const copyright = screen.getByText(/^©/);
-    expect(copyright).toHaveTextContent('All Too Human Ltd');
-    // The copyright line names the legal entity, NOT the product.
-    expect(copyright).not.toHaveTextContent('ConQuest');
-  });
+  // Fork-brand cases live in tests/unit/brand-fork-surfaces.test.tsx, which
+  // mocks the seam HOISTED. Driving a brand from here needs doMock +
+  // resetModules + re-import, which races the module graph and failed on CI.
 
   // ---- footerCopyright seam (#561) --------------------------------------
 

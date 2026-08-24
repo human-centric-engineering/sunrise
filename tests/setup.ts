@@ -250,6 +250,41 @@ vi.mock('next/headers', () => ({
 }));
 
 /**
+ * Pin the brand seam to "unconfigured", for every test file (#661).
+ *
+ * `BRAND` resolves from `lib/app/brand.ts`, a committed file a fork edits. That
+ * means a fork's brand changes what `BRAND.name` returns inside the CORE test
+ * suite, and dozens of core tests assert brand-derived copy ("Sign in to your
+ * Sunrise account", "You've been invited to join Sunrise"). Every one of them
+ * would fail in a fork that had done nothing wrong — the "core test a fork
+ * cannot satisfy" class #660 is about.
+ *
+ * Enumerating those call sites was tried twice and was the wrong shape both
+ * times: it fixed the files a review named while nothing stopped the next
+ * brand-asserting test being written. Filling the seam and running the whole
+ * suite gave the real number — seven files, nine cases — so this is global and
+ * by construction instead.
+ *
+ * A test that needs a brand VALUE overrides this with its own HOISTED
+ * `vi.mock` — see tests/unit/brand-fork-surfaces.test.tsx, which is the one file
+ * that fills the seam and renders every brand-bearing surface with it. Do NOT
+ * drive a brand with `vi.doMock` + `vi.resetModules()` + a re-import: the seam is
+ * read at module scope, so that races the module graph and failed CI twice. The
+ * one test that must read the real scaffold
+ * uses `vi.importActual` (tests/unit/lib/app/defaults.test.ts), which is what
+ * keeps the "seams ship empty" contract able to fail in a fork rather than
+ * being mocked into always passing. Never `vi.doUnmock` this — that REMOVES the
+ * pin rather than restoring it; defaults.test.ts fails if any file does.
+ */
+vi.mock('@/lib/app/brand', async (importOriginal) => {
+  // DERIVED from the real module's export list, not a hand-written triple. A
+  // fourth brand field added later would otherwise read `undefined` in every
+  // test file — silently, since nothing links this factory to the seam.
+  const actual = await importOriginal<Record<string, unknown>>();
+  return Object.fromEntries(Object.keys(actual).map((key) => [key, null]));
+});
+
+/**
  * Mock Analytics
  *
  * Analytics hooks require AnalyticsProvider context.

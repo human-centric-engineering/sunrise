@@ -1,42 +1,69 @@
 /**
- * Brand seam — the app's display name.
+ * Brand seam — the app's display name, legal entity and meta description.
  *
- * Drives user-facing brand strings (layout `<title>` metadata, email
- * templates) so a fork can rename the app with a single env var instead of
- * editing platform-maintained files.
+ * Drives every user-facing brand string (layout `<title>` metadata, the root
+ * meta description, the header `<BrandMark>`, both footers, email templates) so
+ * a fork rebrands in one place instead of editing platform-maintained files.
  *
- * Reads `NEXT_PUBLIC_APP_NAME` directly from `process.env` rather than via
- * `lib/env` (which is server-only) so this module is safe to import from BOTH
- * server and client components — Next.js statically inlines the `NEXT_PUBLIC_`
- * value at build time. The var is also registered in `lib/env.ts` for
- * validation/documentation; consume the brand through this constant.
+ * Values come from `lib/app/brand.ts`, a committed fork-owned scaffold. The
+ * `NEXT_PUBLIC_APP_NAME` / `NEXT_PUBLIC_LEGAL_NAME` / `NEXT_PUBLIC_APP_DESCRIPTION`
+ * env vars this used to read were **removed** in the same change that added the
+ * scaffold: `NEXT_PUBLIC_*` is inlined at build time and no container build
+ * delivered them, so they were a mechanism that silently did nothing on the
+ * deployment path most forks use (#661).
  *
- * Default `'Sunrise'` — unset (or whitespace-only) leaves every surface
- * unchanged, so vanilla Sunrise is byte-for-byte identical.
+ * Unset (or whitespace-only) leaves every surface reading "Sunrise", so vanilla
+ * Sunrise is byte-for-byte unchanged.
  *
- * Scope: the brand *name* only. Marketing-page body copy is a separate concern
- * (see `CUSTOMIZATION.md`), and `SUNRISE_VERSION` / internal platform
+ * Scope: the product name, legal entity and root description — nothing else. A
+ * header logo is a render concern, so that seam is the
+ * `components/brand/brand-mark.tsx` scaffold; marketing body copy is fork-owned
+ * via the thin-shim pattern; `SUNRISE_VERSION` and internal platform
  * identifiers deliberately do NOT use this seam.
  *
- * `legalName` is the copyright holder / registered legal entity — frequently
- * NOT the product (e.g. product "ConQuest" © "All Too Human Ltd"). It defaults
- * to the product name, so a fork that only sets `NEXT_PUBLIC_APP_NAME` keeps
- * today's output; set `NEXT_PUBLIC_LEGAL_NAME` to attribute legal surfaces (the
- * footer copyright today, Terms/Privacy boilerplate later) to the company.
- *
- * `description` is the root `<meta name="description">` — what search results
- * and social cards show for any page that does not set its own. It defaults to
- * the product name rather than to a sentence, because a wrong sentence is worse
- * than a short one: the previous hardcoded default advertised "a production-ready
- * Next.js starter template" from every fork that had not edited the platform's
- * root layout (#519).
+ * @see lib/app/brand.ts · CUSTOMIZATION.md §2
  */
-// Resolve the product name once so the `.trim()` and `'Sunrise'` default live in
-// a single place; `legalName` falls back to it rather than re-deriving it.
-const productName = process.env.NEXT_PUBLIC_APP_NAME?.trim() || 'Sunrise';
+import { appBrandName, appBrandLegalName, appBrandDescription } from '@/lib/app/brand';
 
-export const BRAND = {
-  name: productName,
-  legalName: process.env.NEXT_PUBLIC_LEGAL_NAME?.trim() || productName,
-  description: process.env.NEXT_PUBLIC_APP_DESCRIPTION?.trim() || productName,
-} as const;
+/** The three fields a fork sets in `lib/app/brand.ts`. */
+export interface BrandSeam {
+  name: string | null;
+  legalName: string | null;
+  description: string | null;
+}
+
+/** The resolved brand: what every surface actually renders. */
+export interface ResolvedBrand {
+  name: string;
+  legalName: string;
+  description: string;
+}
+
+/**
+ * Resolve a seam to the brand, applying the trim and the `'Sunrise'` default.
+ *
+ * Exported as a PURE function so it can be tested by calling it, rather than by
+ * mocking `lib/app/brand.ts` and re-importing this module. That distinction is
+ * not stylistic. The seam is read at module scope, so driving a different brand
+ * through the loader needs `vi.resetModules()` plus a dynamic re-import, which
+ * races whatever already holds an evaluated copy — it failed roughly one run in
+ * three locally and turned two CI shards red. Pure input, pure output, no
+ * registry involved.
+ *
+ * `legalName` and `description` fall back to the RESOLVED product name, not to
+ * the raw seam value, so a fork that sets only the name gets it everywhere.
+ */
+export function resolveBrand(seam: BrandSeam): ResolvedBrand {
+  const name = seam.name?.trim() || 'Sunrise';
+  return {
+    name,
+    legalName: seam.legalName?.trim() || name,
+    description: seam.description?.trim() || name,
+  };
+}
+
+export const BRAND: ResolvedBrand = resolveBrand({
+  name: appBrandName,
+  legalName: appBrandLegalName,
+  description: appBrandDescription,
+});

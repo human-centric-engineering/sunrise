@@ -16,6 +16,46 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`lib/app/brand.ts` — brand identity as committed code** (issue [#661]). A
+  fork-owned scaffold exporting `appBrandName`, `appBrandLegalName` and
+  `appBrandDescription`, all `null` upstream, read by `lib/brand.ts`. Vanilla
+  Sunrise is byte-for-byte unchanged; a fork sets three values in one committed
+  file and every brand surface follows — page titles, both footers, the header
+  `<BrandMark>`, the root meta description, and every transactional email.
+
+  Note `appBrandDescription` reaches fewer surfaces than you might expect: every
+  shipped *page* and route-group layout declares its own `description`, so the
+  root fallback is what `app/not-found.tsx` and the root `error.tsx` /
+  `global-error.tsx` serve — the 404 and error pages — plus any page a fork adds
+  that declares none. Worth setting: those are precisely the pages nobody thinks
+  to check.
+
+### Removed
+
+- **BREAKING: `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_LEGAL_NAME` and
+  `NEXT_PUBLIC_APP_DESCRIPTION`** (issue [#661]). Setting them now does nothing;
+  brand identity comes from `lib/app/brand.ts`.
+
+  **To upgrade:** move the three values from your `.env` into `lib/app/brand.ts`
+  and delete the env vars. That is the whole migration.
+
+  These are removed rather than deprecated because they were never a working
+  mechanism with a gap in it. `NEXT_PUBLIC_*` is inlined by the compiler at build
+  time, `.dockerignore` excludes `.env` and `.env.*`, and the Dockerfile forwards
+  only the four build args whose absence *fails* the build — the brand vars are
+  optional, so their absence was silent. On a container build they delivered
+  nothing at all, and every affected fork was already shipping `© <year> Sunrise`
+  while believing itself configured. Keeping them as a fallback would have meant
+  documenting, in five files, an escape hatch that silently fails on the
+  deployment path most forks use.
+
+  A deploy-time-varying brand — a staging name distinct from production — is no
+  longer supported. That case was already broken everywhere except Vercel.
+
+[#661]: https://github.com/human-centric-engineering/sunrise/issues/661
+
 ## [0.10.0] — 2026-08-24
 
 > **Alpha release.** Thirteenth tagged Sunrise release. **MINOR bump** — the

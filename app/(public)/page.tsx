@@ -17,8 +17,8 @@ import { BRAND } from '@/lib/brand';
 
 // Placeholder copy, like the rest of this page — you are expected to rewrite or
 // delete it. It reads `BRAND.name` rather than naming the product, so a fork
-// that has set NEXT_PUBLIC_APP_NAME but not yet rewritten this file still
-// advertises itself rather than Sunrise (#519). A full sentence rather than
+// that has set `appBrandName` in lib/app/brand.ts but not yet rewritten this
+// file still advertises itself rather than Sunrise (#519). A full sentence rather than
 // `BRAND.description`, whose fallback is the bare product name: that is the
 // right trade for the root layout and the wrong one here, where this string is
 // the search-result snippet and the shared-link card.

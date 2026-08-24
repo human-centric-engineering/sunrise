@@ -188,31 +188,58 @@ The rule underneath: a real environment variable always beats a file, and
 
 ## 2. Branding & theming
 
-**App name (the brand seam):**
+**App name, legal entity, meta description — edit `lib/app/brand.ts`:**
 
-- Set **`NEXT_PUBLIC_APP_NAME`** in your `.env` — this renames the app across
-  page-title metadata (all layouts + auth pages), the settings and knowledge-base
-  **tab titles** (written straight to `document.title`, so they would otherwise
-  override the layout template), the legal/contact pages' metadata
-  (`privacy`, `terms`, `contact`), the **header/footer brand**, and the email
-  templates in one place, no file edits. Defaults to `"Sunrise"` when unset.
-  Consumed via `lib/brand.ts` (`BRAND.name`); import that constant if you add new
-  brand-bearing surfaces. Marketing-page **body copy** (`app/(public)/*`,
-  including `about/`'s description of the template itself) is not driven by this
-  seam — re-skin it with the thin-shim pattern in
-  [§6](#6-landing-page--routes) so your content stays sync-safe.
+```ts
+// lib/app/brand.ts — fork-owned scaffold, ships null upstream
+export const appBrandName: string | null = 'ConQuest';
+export const appBrandLegalName: string | null = 'All Too Human Ltd';
+export const appBrandDescription: string | null = 'Everything your team needs, in one place';
+```
 
-**Legal entity / copyright holder (`BRAND.legalName`):**
+That is the whole change — no other file moves.
 
-- Set **`NEXT_PUBLIC_LEGAL_NAME`** when the copyright is held by a company whose
-  name differs from the product — the public footer copyright (`© YEAR …`)
-  attributes to this value, not the product name. Defaults to
-  `NEXT_PUBLIC_APP_NAME` (then `"Sunrise"`), so a fork that only sets the app
-  name keeps today's output. Consumed via `lib/brand.ts` (`BRAND.legalName`);
-  it's deliberately broader than "copyright holder" so it can later drive other
-  legal surfaces (Terms/Privacy boilerplate, email footers). Example: product
-  `"ConQuest"` with `NEXT_PUBLIC_LEGAL_NAME="All Too Human Ltd"` →
+- **`appBrandName`** renames the app across page-title metadata (all layouts +
+  auth pages), the settings and knowledge-base **tab titles** (written straight
+  to `document.title`, so they would otherwise override the layout template), the
+  legal/contact pages' metadata (`privacy`, `terms`, `contact`), the
+  **header/footer brand**, and the email templates. Defaults to `"Sunrise"`.
+- **`appBrandLegalName`** is the copyright holder when it differs from the
+  product — the public footer copyright (`© YEAR …`) attributes to this value.
+  Defaults to the product name, so a fork that only renames the app keeps today's
+  output. It is deliberately broader than "copyright holder" so it can later
+  drive other legal surfaces (Terms/Privacy boilerplate, email footers). Example:
+  product `"ConQuest"` with legal name `"All Too Human Ltd"` →
   `© 2026 All Too Human Ltd. All rights reserved.`
+- **`appBrandDescription`** is the root `<meta name="description">` — what search
+  results and social cards show for any page that does not set its own. Defaults
+  to the product name rather than to a sentence, because a wrong sentence is
+  worse than a short one. **It reaches fewer surfaces than you might expect**:
+  every shipped page and route-group layout declares its own `description`, so
+  the root fallback is what the 404 (`app/not-found.tsx`) and the root error
+  pages serve, plus any page _you_ add that declares none. Set it anyway — those
+  are exactly the pages nobody checks.
+
+All three are consumed via `lib/brand.ts` (`BRAND.name`, `BRAND.legalName`,
+`BRAND.description`); import that constant if you add new brand-bearing surfaces.
+Marketing-page **body copy** (`app/(public)/*`, including `about/`'s description
+of the template itself) is not driven by this seam — re-skin it with the
+thin-shim pattern in [§6](#6-landing-page--routes) so your content stays
+sync-safe.
+
+> **Why code rather than `.env`, and why the env vars are gone.**
+> `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_LEGAL_NAME` and
+> `NEXT_PUBLIC_APP_DESCRIPTION` were **removed** — setting them now does nothing.
+> `NEXT_PUBLIC_*` is inlined by the compiler at **build time**, so the value has
+> to be present in the environment running `next build`; `.dockerignore` excludes
+> `.env*` and the Dockerfile forwarded only the four build args whose absence
+> fails the build. A container build therefore saw none of them, and forks with
+> the legal entity correctly configured still shipped `© <year> Sunrise` (#661).
+> They were not a working mechanism with a gap — on the deployment path most
+> forks use they did nothing at all, silently. Brand identity is also a
+> **constant of the fork**: the same in every environment, not a secret, and
+> better off visible in review. **Upgrading:** move your three `NEXT_PUBLIC_*`
+> values into `lib/app/brand.ts` and delete them from `.env`.
 
 **Header / footer brand — the `<BrandMark>` slot:**
 
@@ -372,34 +399,35 @@ the export name and signature; everything inside is free to change. (Detailed
 examples live here in this guide, not in the files, precisely so the files stay
 small and conflict-free.)
 
-| Edit this file                             | To register                                        | Auto-wired by (runtime)                                               |
-| ------------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------- |
-| `lib/app/env.ts`                           | server env vars (`appEnvSchema`)                   | `lib/env.ts` startup parse (server)                                   |
-| `lib/app/rate-limit.ts`                    | rate-limit tiers / rules                           | rate-limit middleware (middleware runtime)                            |
-| `lib/app/protected-routes.ts`              | extra authed route prefixes (append)               | `proxy.ts` edge redirect-to-login (proxy runtime)                     |
-| `lib/app/capabilities.ts`                  | agent capabilities (tools)                         | the capability registry (server route-handler)                        |
-| `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)      | the chat context builder (server route-handler)                       |
-| `lib/app/admin-nav.ts`                     | admin sidebar sections                             | `admin-sidebar.tsx` (client)                                          |
-| `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                       | `scripts/db/check-drift.ts` (CI / `/pre-pr`)                          |
-| `lib/app/public-nav.ts`                    | public nav / footer link lists                     | `public-nav.tsx`, `public-footer.tsx` (client)                        |
-| `lib/app/protected-nav.ts`                 | authenticated nav link list                        | `protected-nav.tsx` (client)                                          |
-| `lib/app/auth-landing.ts`                  | where a signed-in user lands, and its label        | `lib/auth-landing/route.ts` → a dozen sites (proxy + server + client) |
-| `lib/app/emails.ts`                        | auth email template overrides                      | `lib/email/registry.ts` (server)                                      |
-| `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)              | `instrumentation.ts` `register()` (server, all envs)                  |
-| `lib/app/user-created.ts`                  | react to a new account (`initAppUserCreatedHooks`) | better-auth `user.create.after` (server)                              |
-| `lib/app/jobs.ts`                          | recurring background work (`initAppJobs`)          | the maintenance tick (server)                                         |
-| `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)         | root `eslint.config.mjs` spread (lint)                                |
-| `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent                  | `resolveAgentDocumentAccess()` (server route-handler)                 |
-| `lib/app/guard-floor-contributors.ts`      | per-turn minimum for inline chat guards            | the chat handler's `collectGuardFloors()` (server route-handler)      |
-| `lib/app/guard-event-contributors.ts`      | observe an inline chat guard firing                | the chat handler's `emitGuardEvent()` (server route-handler)          |
-| `lib/app/csp.ts`                           | extra CSP `frame-src` origins                      | `lib/security/headers.ts` → `proxy.ts` (middleware runtime)           |
-| `lib/app/agent-fields.ts`                  | extra `AiAgent` config fields                      | the agent field registry (server + agent form)                        |
-| `lib/app/surface.ts`                       | which URLs count as `admin` vs `consumer`          | `proxy.ts` classification + `<SurfaceSync>` (proxy + client)          |
-| `lib/app/data-export.ts`                   | subject-access export: tables + declarations       | `exportUserData()` + the coverage guard (server + test)               |
-| `lib/app/mcp-resources.ts`                 | app-owned MCP resource types + URI scheme          | the MCP resource registry (server route-handler)                      |
-| `lib/app/evaluations.ts`                   | app evaluation graders (`initAppGraders`)          | the grader registry (server route-handler)                            |
-| `lib/app/account-sections.ts`              | extra sections on `/profile` + `/settings`         | `<AccountSections/>` on both account pages (server)                   |
-| `lib/app/api-key-scopes.ts`                | extra API-key scopes (`APP_API_KEY_SCOPES`)        | `lib/auth/api-key-scopes.ts` + `createApiKeySchema` (server + client) |
+| Edit this file                             | To register                                        | Auto-wired by (runtime)                                                     |
+| ------------------------------------------ | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| `lib/app/env.ts`                           | server env vars (`appEnvSchema`)                   | `lib/env.ts` startup parse (server)                                         |
+| `lib/app/rate-limit.ts`                    | rate-limit tiers / rules                           | rate-limit middleware (middleware runtime)                                  |
+| `lib/app/protected-routes.ts`              | extra authed route prefixes (append)               | `proxy.ts` edge redirect-to-login (proxy runtime)                           |
+| `lib/app/capabilities.ts`                  | agent capabilities (tools)                         | the capability registry (server route-handler)                              |
+| `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)      | the chat context builder (server route-handler)                             |
+| `lib/app/admin-nav.ts`                     | admin sidebar sections                             | `admin-sidebar.tsx` (client)                                                |
+| `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                       | `scripts/db/check-drift.ts` (CI / `/pre-pr`)                                |
+| `lib/app/public-nav.ts`                    | public nav / footer link lists                     | `public-nav.tsx`, `public-footer.tsx` (client)                              |
+| `lib/app/protected-nav.ts`                 | authenticated nav link list                        | `protected-nav.tsx` (client)                                                |
+| `lib/app/auth-landing.ts`                  | where a signed-in user lands, and its label        | `lib/auth-landing/route.ts` → a dozen sites (proxy + server + client)       |
+| `lib/app/emails.ts`                        | auth email template overrides                      | `lib/email/registry.ts` (server)                                            |
+| `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)              | `instrumentation.ts` `register()` (server, all envs)                        |
+| `lib/app/user-created.ts`                  | react to a new account (`initAppUserCreatedHooks`) | better-auth `user.create.after` (server)                                    |
+| `lib/app/jobs.ts`                          | recurring background work (`initAppJobs`)          | the maintenance tick (server)                                               |
+| `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)         | root `eslint.config.mjs` spread (lint)                                      |
+| `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent                  | `resolveAgentDocumentAccess()` (server route-handler)                       |
+| `lib/app/guard-floor-contributors.ts`      | per-turn minimum for inline chat guards            | the chat handler's `collectGuardFloors()` (server route-handler)            |
+| `lib/app/guard-event-contributors.ts`      | observe an inline chat guard firing                | the chat handler's `emitGuardEvent()` (server route-handler)                |
+| `lib/app/csp.ts`                           | extra CSP `frame-src` origins                      | `lib/security/headers.ts` → `proxy.ts` (middleware runtime)                 |
+| `lib/app/agent-fields.ts`                  | extra `AiAgent` config fields                      | the agent field registry (server + agent form)                              |
+| `lib/app/surface.ts`                       | which URLs count as `admin` vs `consumer`          | `proxy.ts` classification + `<SurfaceSync>` (proxy + client)                |
+| `lib/app/data-export.ts`                   | subject-access export: tables + declarations       | `exportUserData()` + the coverage guard (server + test)                     |
+| `lib/app/mcp-resources.ts`                 | app-owned MCP resource types + URI scheme          | the MCP resource registry (server route-handler)                            |
+| `lib/app/evaluations.ts`                   | app evaluation graders (`initAppGraders`)          | the grader registry (server route-handler)                                  |
+| `lib/app/account-sections.ts`              | extra sections on `/profile` + `/settings`         | `<AccountSections/>` on both account pages (server)                         |
+| `lib/app/api-key-scopes.ts`                | extra API-key scopes (`APP_API_KEY_SCOPES`)        | `lib/auth/api-key-scopes.ts` + `createApiKeySchema` (server + client)       |
+| `lib/app/brand.ts`                         | product name, legal entity, meta description       | `lib/brand.ts` → metadata, footers, `<BrandMark>`, emails (server + client) |
 
 > **Filling a seam is expected to fail one row of a core test.**
 > `tests/unit/lib/app/defaults.test.ts` asserts every seam ships empty — that

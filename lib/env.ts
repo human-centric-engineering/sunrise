@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { appBrandName, appBrandLegalName, appBrandDescription } from '@/lib/app/brand';
 import { appEnvSchema } from '@/lib/app/env';
 
 /**
@@ -227,30 +228,6 @@ const clientEnvSchema = z.object({
       'NEXT_PUBLIC_APP_URL must be a valid URL (embedded at build time, must match BETTER_AUTH_URL for consistency)',
   }),
 
-  // Brand display name (optional - defaults to "Sunrise"). Consumed via
-  // `lib/brand.ts` (`BRAND.name`), which reads process.env directly so it is
-  // client-safe; registered here for validation/documentation.
-  NEXT_PUBLIC_APP_NAME: z
-    .string()
-    .optional()
-    .describe('Display name for the app brand (layout titles, emails). Defaults to "Sunrise".'),
-
-  // Consumed via `lib/brand.ts` (`BRAND.legalName`), same client-safe pattern as
-  // NEXT_PUBLIC_APP_NAME. Copyright holder / legal entity for the footer
-  // copyright (and future legal surfaces); defaults to the product name.
-  NEXT_PUBLIC_LEGAL_NAME: z
-    .string()
-    .optional()
-    .describe('Legal entity / copyright holder for the footer. Defaults to NEXT_PUBLIC_APP_NAME.'),
-
-  // Consumed via `lib/brand.ts` (`BRAND.description`), same client-safe pattern.
-  // Root <meta name="description"> for any page that does not set its own;
-  // defaults to the product name rather than a sentence (#519).
-  NEXT_PUBLIC_APP_DESCRIPTION: z
-    .string()
-    .optional()
-    .describe('Root meta description for search/social cards. Defaults to NEXT_PUBLIC_APP_NAME.'),
-
   // Analytics (optional - auto-detected based on available credentials)
   NEXT_PUBLIC_ANALYTICS_PROVIDER: z
     .enum(['ga4', 'posthog', 'plausible', 'console'])
@@ -335,9 +312,6 @@ const isBrowser = typeof window !== 'undefined';
 const parsed = isBrowser
   ? clientEnvSchema.safeParse({
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-      NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
-      NEXT_PUBLIC_LEGAL_NAME: process.env.NEXT_PUBLIC_LEGAL_NAME,
-      NEXT_PUBLIC_APP_DESCRIPTION: process.env.NEXT_PUBLIC_APP_DESCRIPTION,
       // Analytics (optional)
       NEXT_PUBLIC_ANALYTICS_PROVIDER: process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER,
       NEXT_PUBLIC_GA4_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,
@@ -377,6 +351,66 @@ if (!parsed.success) {
  * ```
  */
 export const env = parsed.data as Env;
+
+/**
+ * Warn when a fork upgrades but leaves the REMOVED brand env vars in place (#661).
+ *
+ * `clientEnvSchema` is not strict, so Zod strips these rather than rejecting
+ * them: no validation error, no build warning, no runtime log. A fork on Vercel
+ * — where `NEXT_PUBLIC_*` genuinely did reach the build, so these genuinely did
+ * work — can merge the release, watch `validate`, the suite and CI all pass, and
+ * find its titles, footer copyright and transactional email silently back to
+ * "Sunrise". That is the same invisible brand regression this change set out to
+ * end, relocated from the deploy path to the upgrade path, so it gets the same
+ * treatment: make it say something.
+ *
+ * Only fires for a field the seam has NOT taken over — a fork that migrated and
+ * left a stale line in `.env` is already correct and does not need telling.
+ */
+/**
+ * Which removed brand env vars are set while the matching seam field is empty.
+ *
+ * PURE, and exported, so the behaviour is tested by calling it rather than by
+ * mocking the seam and re-importing this module — a mechanism that raced its own
+ * static imports and failed on CI. Takes the reader and the seam as arguments
+ * for the same reason.
+ *
+ * Only reports a field the seam has NOT taken over: a fork that migrated and
+ * left a stale line in `.env` is already correct, and warning at it every boot
+ * is how a real warning gets tuned out.
+ */
+export function findOrphanedBrandEnvVars(
+  readEnv: (name: string) => string | undefined,
+  seam: { name: string | null; legalName: string | null; description: string | null }
+): string[] {
+  return (
+    [
+      ['NEXT_PUBLIC_APP_NAME', seam.name],
+      ['NEXT_PUBLIC_LEGAL_NAME', seam.legalName],
+      ['NEXT_PUBLIC_APP_DESCRIPTION', seam.description],
+    ] as const
+  )
+    .filter(([name, seamValue]) => readEnv(name)?.trim() && !seamValue?.trim())
+    .map(([name]) => name);
+}
+
+if (!isBrowser) {
+  const orphaned = findOrphanedBrandEnvVars((name) => process.env[name], {
+    name: appBrandName,
+    legalName: appBrandLegalName,
+    description: appBrandDescription,
+  });
+
+  if (orphaned.length > 0) {
+    // eslint-disable-next-line no-console -- Startup logging before logger is initialized
+    console.warn(
+      `⚠️  ${orphaned.join(', ')} ${orphaned.length === 1 ? 'is' : 'are'} set but no longer read. ` +
+        'Brand identity moved to lib/app/brand.ts in #661; these env vars were removed. ' +
+        'Your brand is currently falling back to "Sunrise" — move the values into ' +
+        'lib/app/brand.ts (see CUSTOMIZATION.md §2) and delete them from .env.'
+    );
+  }
+}
 
 // Log successful validation in development (server-side only)
 if (!isBrowser && env.NODE_ENV === 'development') {

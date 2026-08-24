@@ -10,7 +10,7 @@
  * @see lib/constants/settings.ts
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import {
   SETTINGS_TAB_VALUES,
@@ -35,22 +35,6 @@ describe('SETTINGS_TAB_TITLES', () => {
     expect(SETTINGS_TAB_TITLES[DEFAULT_SETTINGS_TAB]).toBeDefined();
   });
 
-  // #432: these are written straight to document.title, overriding the layout's
-  // `%s - ${BRAND.name}` template, so a hardcoded name shows the fork "Sunrise"
-  it('carries the fork brand name, not a hardcoded "Sunrise"', async () => {
-    const original = process.env.NEXT_PUBLIC_APP_NAME;
-    process.env.NEXT_PUBLIC_APP_NAME = 'Acme';
-    vi.resetModules();
-
-    const { SETTINGS_TAB_TITLES: forked, SETTINGS_TAB_VALUES: values } =
-      await import('@/lib/constants/settings');
-
-    for (const tab of values) {
-      expect(forked[tab]).toContain('Acme');
-      expect(forked[tab]).not.toContain('Sunrise');
-    }
-
-    process.env.NEXT_PUBLIC_APP_NAME = original;
-    vi.resetModules();
-  });
+  // The brand case moved to tab-titles-brand.test.ts — it needs a hoisted mock,
+  // which cannot work in a file that statically imports the module under test.
 });

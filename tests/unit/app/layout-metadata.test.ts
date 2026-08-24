@@ -25,11 +25,25 @@
  * @see app/layout.tsx · lib/brand.ts
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Metadata } from 'next';
 
 /** A brand no fixture would produce by accident. */
-const STUB_BRAND = 'Zzyzx Industries';
+const { STUB_BRAND } = vi.hoisted(() => ({ STUB_BRAND: 'Zzyzx Industries' }));
+
+// HOISTED, so every module imported below is BUILT with the stub brand.
+//
+// This used to stub per-case with `vi.doMock` + `vi.resetModules()` and a dynamic
+// re-import. Route modules read `@/lib/brand` at module scope, so that races
+// whatever already holds an evaluated copy — it passed locally every time and
+// failed CI shard 3, reporting the ROOT LAYOUT as hardcoding "Sunrise" when the
+// stub simply had not arrived. There is now nothing to re-import and nothing to
+// race.
+vi.mock('@/lib/app/brand', () => ({
+  appBrandName: STUB_BRAND,
+  appBrandLegalName: STUB_BRAND,
+  appBrandDescription: STUB_BRAND,
+}));
 
 /**
  * Every module under `app/` that declares metadata. Hand-listed because a glob
@@ -46,17 +60,8 @@ const METADATA_MODULES = [
   '@/app/admin/layout',
 ] as const;
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-  vi.resetModules();
-});
-
 /** Import `spec` with the brand stubbed, and flatten its metadata to strings. */
 async function metadataStringsWithStubbedBrand(spec: string): Promise<string[]> {
-  vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_APP_NAME', STUB_BRAND);
-  vi.stubEnv('NEXT_PUBLIC_LEGAL_NAME', STUB_BRAND);
-
   const mod: { metadata?: Metadata } = await import(/* @vite-ignore */ spec);
   const out: string[] = [];
   const walk = (value: unknown): void => {
@@ -69,6 +74,17 @@ async function metadataStringsWithStubbedBrand(spec: string): Promise<string[]> 
 }
 
 describe('metadata is driven by the BRAND seam, not hardcoded', () => {
+  it('the brand stub reaches BRAND through the seam', async () => {
+    // CONTROL for stubBrand(): if the mock silently failed to intercept, every
+    // row below would read the real (null) seam, resolve to "Sunrise", and the
+    // leak filters would report nothing — a green file asserting nothing.
+
+    const { BRAND } = await import('@/lib/brand');
+    expect(BRAND.name).toBe(STUB_BRAND);
+    expect(BRAND.legalName).toBe(STUB_BRAND);
+    expect(BRAND.description).toBe(STUB_BRAND);
+  });
+
   it('the module list has not gone stale', () => {
     // A shrunken list is how this test quietly stops covering things. If you
     // add a layout or page with metadata, add it above.
@@ -89,7 +105,7 @@ describe('metadata is driven by the BRAND seam, not hardcoded', () => {
       `${spec} still says "Sunrise" with the brand stubbed to "${STUB_BRAND}", so the value is ` +
         `hardcoded rather than read from BRAND. Metadata is what a fork ships to search results ` +
         `and social cards without ever seeing it. (Page *body copy* is fork-owned and out of ` +
-        `scope — see lib/brand.ts, "Scope: the brand name only".)`
+        `scope — see lib/brand.ts, "Scope".)`
     ).toEqual([]);
   });
 
@@ -109,8 +125,6 @@ describe('metadata is driven by the BRAND seam, not hardcoded', () => {
     // `(public)/layout.tsx` declares `template: '%s - ${BRAND.name}'`, so a page
     // whose own title also starts with the brand renders "Acme - … - Acme".
     // TITLES only — a description may legitimately open with the brand name.
-    vi.resetModules();
-    vi.stubEnv('NEXT_PUBLIC_APP_NAME', STUB_BRAND);
     const layout: { metadata?: Metadata } = await import('@/app/(public)/layout');
     const template =
       typeof layout.metadata?.title === 'object' && layout.metadata.title !== null
@@ -118,8 +132,6 @@ describe('metadata is driven by the BRAND seam, not hardcoded', () => {
         : undefined;
     expect(template, 'the (public) layout should declare a title template').toContain('%s');
 
-    vi.resetModules();
-    vi.stubEnv('NEXT_PUBLIC_APP_NAME', STUB_BRAND);
     const page: { metadata?: Metadata } = await import('@/app/(public)/page');
     const titles = [
       page.metadata?.title,

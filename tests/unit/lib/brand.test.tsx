@@ -1,153 +1,122 @@
-// @vitest-environment happy-dom
-
 /**
- * Brand seam (issue #305)
+ * Brand seam resolution (#305, #519, #661)
  *
- * `BRAND.name` is read from `NEXT_PUBLIC_APP_NAME` at module load, so each case
- * stubs the env and re-imports the module (and any consumer) fresh. Covers the
- * default/fallback, a custom value, trimming, and — to prove the wiring is real,
- * not just the constant — that an actual email template renders the custom name.
+ * `BRAND` resolves from `lib/app/brand.ts`, a committed fork-owned file. The
+ * `NEXT_PUBLIC_*` vars this used to read were removed in #661 — inlined at build
+ * time, delivered by no container build, so a configured fork still shipped
+ * "Sunrise".
+ *
+ * ## Why these call a function instead of mocking a module
+ *
+ * The seam is read at module scope, so an earlier version of this file drove each
+ * case with `vi.doMock` + `vi.resetModules()` + a dynamic re-import. That races
+ * whatever already holds an evaluated copy of `@/lib/brand`: it failed about one
+ * run in three locally and took out a CI shard. `resolveBrand()` is the same
+ * logic as a pure function, so these are deterministic by construction.
+ *
+ * The wiring — that `BRAND` really is `resolveBrand()` applied to the seam, and
+ * that the result reaches a rendered surface — lives in
+ * `tests/unit/emails/brand-wiring.test.tsx`, which mocks the seam to a
+ * distinctive value. Asserting it here under the suite-wide null pin would only
+ * have shown that `resolveBrand(nulls)` returns the defaults.
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { resolveBrand } from '@/lib/brand';
 
-async function loadBrandName(value: string): Promise<string> {
-  vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_APP_NAME', value);
-  const { BRAND } = await import('@/lib/brand');
-  return BRAND.name;
-}
-
-// legalName derives from NEXT_PUBLIC_LEGAL_NAME, then NEXT_PUBLIC_APP_NAME, then
-// "Sunrise" — so both vars matter. Empty string == unset-equivalent (the seam
-// uses `?.trim() ||`).
-async function loadLegalName(legal: string, appName: string): Promise<string> {
-  vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_APP_NAME', appName);
-  vi.stubEnv('NEXT_PUBLIC_LEGAL_NAME', legal);
-  const { BRAND } = await import('@/lib/brand');
-  return BRAND.legalName;
-}
-
-// description derives from NEXT_PUBLIC_APP_DESCRIPTION, then the product name.
-// Deliberately NOT a sentence default — see the seam docblock and #519.
-async function loadDescription(description: string, appName: string): Promise<string> {
-  vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_APP_NAME', appName);
-  vi.stubEnv('NEXT_PUBLIC_APP_DESCRIPTION', description);
-  const { BRAND } = await import('@/lib/brand');
-  return BRAND.description;
-}
-
-async function renderWelcomeWith(value: string): Promise<string> {
-  vi.resetModules();
-  vi.stubEnv('NEXT_PUBLIC_APP_NAME', value);
-  const React = await import('react');
-  const { render } = await import('@react-email/render');
-  const { default: WelcomeEmail } = await import('@/emails/welcome');
-  return render(
-    React.createElement(WelcomeEmail, {
-      userName: 'Test User',
-      userEmail: 'test@example.com',
-      baseUrl: 'https://example.com',
-    })
-  );
-}
-
-describe('BRAND.name', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
+describe('resolveBrand — name', () => {
+  it('falls back to "Sunrise" when the seam is null', () => {
+    expect(resolveBrand({ name: null, legalName: null, description: null }).name).toBe('Sunrise');
   });
 
-  it('falls back to "Sunrise" when the env var is empty (unset-equivalent)', async () => {
-    expect(await loadBrandName('')).toBe('Sunrise');
+  it('falls back to "Sunrise" when the seam is only whitespace', () => {
+    expect(resolveBrand({ name: '   ', legalName: null, description: null }).name).toBe('Sunrise');
   });
 
-  it('falls back to "Sunrise" when the env var is only whitespace', async () => {
-    expect(await loadBrandName('   ')).toBe('Sunrise');
+  it('uses a custom name verbatim', () => {
+    expect(resolveBrand({ name: 'Acme', legalName: null, description: null }).name).toBe('Acme');
   });
 
-  it('uses a custom NEXT_PUBLIC_APP_NAME verbatim', async () => {
-    expect(await loadBrandName('Acme')).toBe('Acme');
-  });
-
-  it('trims surrounding whitespace from a custom value', async () => {
-    expect(await loadBrandName('  Acme Corp  ')).toBe('Acme Corp');
+  it('trims surrounding whitespace', () => {
+    expect(resolveBrand({ name: '  Acme Corp  ', legalName: null, description: null }).name).toBe(
+      'Acme Corp'
+    );
   });
 });
 
-describe('BRAND.description', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
+describe('resolveBrand — legalName', () => {
+  it('uses the legal name verbatim when set, distinct from the product', () => {
+    expect(
+      resolveBrand({ name: 'ConQuest', legalName: 'All Too Human Ltd', description: null })
+        .legalName
+    ).toBe('All Too Human Ltd');
   });
 
-  it('uses NEXT_PUBLIC_APP_DESCRIPTION verbatim when set', async () => {
-    expect(await loadDescription('Everything your team needs', 'Acme')).toBe(
-      'Everything your team needs'
+  it('trims surrounding whitespace', () => {
+    expect(
+      resolveBrand({ name: 'ConQuest', legalName: '  All Too Human Ltd  ', description: null })
+        .legalName
+    ).toBe('All Too Human Ltd');
+  });
+
+  it('falls back to the RESOLVED product name when unset', () => {
+    expect(resolveBrand({ name: 'ConQuest', legalName: null, description: null }).legalName).toBe(
+      'ConQuest'
     );
   });
 
-  it('falls back to the product name, not to a sentence', async () => {
-    expect(await loadDescription('', 'Acme')).toBe('Acme');
+  it('falls back to the resolved product name when only whitespace', () => {
+    expect(resolveBrand({ name: 'ConQuest', legalName: '   ', description: null }).legalName).toBe(
+      'ConQuest'
+    );
   });
 
-  it('never returns the starter blurb (#519 — the whole point of the seam)', async () => {
+  it('falls back to the TRIMMED name — the resolved value, not the raw seam', () => {
+    // The distinguishing case. Every other fallback row uses an already-trimmed
+    // name, so they cannot tell `|| name` (resolved) from `|| seam.name` (raw) —
+    // a mutation to the latter passed all of them. Both derived fields inherit
+    // the trim precisely because they fall back to the resolved product name.
+    const brand = resolveBrand({ name: '  Acme Corp  ', legalName: null, description: null });
+    expect(brand.legalName).toBe('Acme Corp');
+    expect(brand.description).toBe('Acme Corp');
+  });
+
+  it('falls back to "Sunrise" when neither is set', () => {
+    expect(resolveBrand({ name: null, legalName: null, description: null }).legalName).toBe(
+      'Sunrise'
+    );
+  });
+});
+
+describe('resolveBrand — description', () => {
+  it('uses the description verbatim when set', () => {
+    expect(
+      resolveBrand({ name: 'Acme', legalName: null, description: 'Everything your team needs' })
+        .description
+    ).toBe('Everything your team needs');
+  });
+
+  it('falls back to the product name, not to a sentence', () => {
+    expect(resolveBrand({ name: 'Acme', legalName: null, description: null }).description).toBe(
+      'Acme'
+    );
+  });
+
+  it('never returns the starter blurb (#519 — the whole point of the seam)', () => {
     // The old hardcoded root description shipped from every fork that had not
-    // edited app/layout.tsx. Assert on the substring, not the whole sentence,
-    // so a reworded blurb cannot sneak back in.
-    expect(await loadDescription('', 'Acme')).not.toMatch(/starter template/i);
-    expect(await loadDescription('', '')).not.toMatch(/starter template/i);
+    // edited app/layout.tsx. Assert on the substring, not the whole sentence, so
+    // a reworded blurb cannot sneak back in.
+    for (const seam of [
+      { name: 'Acme', legalName: null, description: null },
+      { name: null, legalName: null, description: null },
+    ]) {
+      expect(resolveBrand(seam).description).not.toMatch(/starter template/i);
+    }
   });
 
-  it('trims surrounding whitespace', async () => {
-    expect(await loadDescription('  Spaced out  ', 'Acme')).toBe('Spaced out');
-  });
-});
-
-describe('BRAND.legalName', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
-  it('uses NEXT_PUBLIC_LEGAL_NAME verbatim when set (distinct from the product name)', async () => {
-    expect(await loadLegalName('All Too Human Ltd', 'ConQuest')).toBe('All Too Human Ltd');
-  });
-
-  it('trims surrounding whitespace from the legal name', async () => {
-    expect(await loadLegalName('  All Too Human Ltd  ', 'ConQuest')).toBe('All Too Human Ltd');
-  });
-
-  it('falls back to the product name when the legal name is unset', async () => {
-    expect(await loadLegalName('', 'ConQuest')).toBe('ConQuest');
-  });
-
-  it('falls back to the product name when the legal name is only whitespace', async () => {
-    expect(await loadLegalName('   ', 'ConQuest')).toBe('ConQuest');
-  });
-
-  it('falls back to "Sunrise" when both legal name and product name are unset', async () => {
-    expect(await loadLegalName('', '')).toBe('Sunrise');
-  });
-});
-
-describe('brand seam is wired into templates', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.resetModules();
-  });
-
-  it('renders the default brand in the welcome email when unset', async () => {
-    const html = await renderWelcomeWith('');
-    expect(html).toContain('Welcome to Sunrise!');
-    expect(html).not.toContain('Welcome to Acme!');
-  });
-
-  it('renders the custom brand in the welcome email when set', async () => {
-    const html = await renderWelcomeWith('Acme');
-    expect(html).toContain('Welcome to Acme!');
-    expect(html).not.toContain('Welcome to Sunrise!');
+  it('trims surrounding whitespace', () => {
+    expect(
+      resolveBrand({ name: 'Acme', legalName: null, description: '  Spaced out  ' }).description
+    ).toBe('Spaced out');
   });
 });

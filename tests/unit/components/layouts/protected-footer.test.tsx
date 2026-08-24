@@ -44,17 +44,9 @@ describe('ProtectedFooter', () => {
     expect(screen.getByText(/©/)).toHaveTextContent('Sunrise');
   });
 
-  it('attributes the copyright to NEXT_PUBLIC_LEGAL_NAME, not the product name (#363)', async () => {
-    vi.resetModules();
-    vi.stubEnv('NEXT_PUBLIC_APP_NAME', 'ConQuest');
-    vi.stubEnv('NEXT_PUBLIC_LEGAL_NAME', 'All Too Human Ltd');
-    const { ProtectedFooter } = await import('@/components/layouts/protected-footer');
-    render(React.createElement(ProtectedFooter));
-
-    const copyright = screen.getByText(/©/);
-    expect(copyright).toHaveTextContent('All Too Human Ltd');
-    expect(copyright).not.toHaveTextContent('ConQuest');
-  });
+  // Fork-brand cases live in tests/unit/brand-fork-surfaces.test.tsx, which
+  // mocks the seam HOISTED. Driving a brand from here needs doMock +
+  // resetModules + re-import, which races the module graph and failed on CI.
 
   // ---- footerCopyright seam (#561) --------------------------------------
   // The seam exists on BOTH footers precisely so they cannot drift apart on
