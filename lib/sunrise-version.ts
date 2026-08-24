@@ -29,4 +29,4 @@
  *   and both are authenticated. Keep it that way: the invariant is that no
  *   unauthenticated surface carries it (#531).
  */
-export const SUNRISE_VERSION = '0.9.0';
+export const SUNRISE_VERSION = '0.10.0';

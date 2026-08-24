@@ -16,6 +16,78 @@ release process.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-08-24
+
+> **Alpha release.** Thirteenth tagged Sunrise release. **MINOR bump** — the
+> fork-seam release. Five new `lib/app/*` seams (API-key scopes, account
+> sections, evaluation graders, MCP resources, the footer attribution line),
+> `components/app/**` and `components/framework/**` reserved and enforced, a
+> fork tier able to declare its own Art. 15 subject-data sources, and one
+> shared init gate behind the lazy seams so a fork's failing `initApp*()` can
+> no longer leave half its registrations live.
+>
+> **No migration.** Zero migrations and no `prisma/schema/` change since 0.9.0,
+> so a fork takes this with a plain `git merge v0.10.0` and no database step.
+>
+> **Security — read this section even if you skip the rest.** The
+> outbound-redirect class that #628 opened is now closed. Five more sites
+> validated their target exactly once and then followed `Location` unchecked —
+> among them the webhook **test** route, which carried its HMAC to the final
+> hop and reported that hop's status as the endpoint's, and the knowledge
+> embedder, which would have posted uploaded document text to an unvalidated
+> host. `executeHttpRequest` no longer follows redirects either, and every
+> server-side `fetch()` must now declare a `redirect` policy, enforced by a
+> guard that enumerates the call sites mechanically — the hand-written roster
+> it replaced was wrong by three, which is the failure mode such a roster
+> exists to prevent. Separately, **minting *or revoking* an API key now
+> requires a browser session**: both verbs accepted a key of any scope, so a
+> narrowly-scoped key could mint a `chat` key and reach every authenticated
+> route as its owner, or enumerate and revoke its owner's keys including
+> `admin`. And `GET /api/health` no longer discloses the Sunrise platform
+> version — unauthenticated, it named the exact upstream release, and therefore
+> the exact set of published issues, for *every* Sunrise-derived deployment
+> rather than one.
+>
+> **Breaking-in-`0.x` changes — read before you merge.** `sunrise` is **gone**
+> from the `GET /api/health` response; read `system.sunriseVersion` from
+> `GET /api/v1/admin/stats`, or import `SUNRISE_VERSION` server-side. **MCP
+> sessions are stateless by default** — the old per-process session `Map` meant
+> `initialize` minted an id on one instance and the next call 404'd on another,
+> unrecoverable by retry; set `MCP_SESSION_MODE=stateful` if you need the SSE
+> stream or the three continuity methods on a single long-running process.
+> **Tests run on `node` by default**, with a DOM opt-in per file, so a fork's
+> own component tests fail with `ReferenceError: document is not defined` on
+> the first run after merging — `npm run fix:dom-tests` migrates them by
+> running them rather than by pattern-matching. **A fork-owned schema file must
+> now account for every model it declares**, each one named as a subject-data
+> source or excluded with a reason. `ApiKeyScope` is an open type and
+> `validateScopes` returns a plain `boolean`;
+> `CreateExposedResource['resourceType']` is now `string`.
+>
+> **If you took any 0.10.0 pre-release commit, check your landing page.** For
+> five days `main` shipped `app/(public)/page.tsx` as a byte-identical copy of
+> `app/(public)/about/page.tsx`, so `/` served the About page. It is fixed
+> here, and the cause is worth knowing because it is not page-specific: a flat
+> backup directory keyed by **basename**, in a tree with 82 files called
+> `page.tsx` and 228 called `route.ts`. The same mechanism made
+> `/api/health` return the admin stats payload two days later. A structural
+> guard now fails when any two route modules under `app/` are byte-identical.
+>
+> **Cost attribution.** Four fixes, all the same shape — spend that was
+> recorded but not attributable. Workflow capability spend sat against no step,
+> `llm_call` rows were untagged, a zero-token row could capture a step's model,
+> and a capability row did not say which capability it was. Separately, the
+> rolling chat summary was being **recomputed on every turn** past the history
+> window — a fresh summarisation of the whole dropped region, on the agent's own
+> provider — and its cost row discarded by a double foreign-key violation, so
+> nothing on the Costs page moved. Repeated and invisible at the same time.
+>
+> **Testing and CI, for anyone who runs the suite.** `npm run test:changed` is
+> the new `/pre-pr` default: it runs what the branch can affect and gates
+> coverage per changed file at 80%, rather than on a repo average that clears
+> while a new file sits at 0%. The full suite is unchanged and remains CI's
+> backstop.
+
 ### Added
 
 - **`npm run fix:dom-tests` — the migration aid for a fork merging the
@@ -289,7 +361,7 @@ release process.
   a key of any scope, so the key on someone's phone reached every authenticated
   route as them. `{ scope }` applies to API-key callers only — a browser session
   is the full user — and is opt-in per route, so no shipped endpoint changes.
-  `GET /api/v1/user/api-keys` now also returns `availableScopes`.
+  `GET /api/v1/user/api-keys` now also returns `availableScopes`. (#542)
 
 - **`lib/auth/api-key-scopes.ts`** — the scope vocabulary
   (`CORE_API_KEY_SCOPES`, `validateScopes`, `hasScope`, `listValidApiKeyScopes`,
@@ -306,7 +378,7 @@ release process.
   both, the default); `Component` receives `{ userId }`. The account-surface
   analogue of `lib/admin-nav/registry.ts`. Empty registry renders no node at
   all, so vanilla Sunrise is unchanged, and a throwing init rolls back anything
-  it had already registered rather than half-rendering the account surface.
+  it had already registered rather than half-rendering the account surface. (#595)
 
 - **`lib/app/evaluations.ts` — fork-owned evaluation graders.** The grader
   registry advertised pluggability that only held for core: `registerGrader` was
@@ -319,7 +391,7 @@ release process.
   built-in slug still works (that is how a mock is swapped in) but is now logged
   at warn. A throwing init **rolls back** the registrations it had already
   made — otherwise a grader that had shadowed `exact_match` would keep rescoring
-  every run while the log said none were registered.
+  every run while the log said none were registered. (#541)
 
 - **`lib/app/mcp-resources.ts` — fork-owned MCP resource handlers.** MCP *tools*
   had a fork seam (`lib/app/capabilities.ts`); *resources* did not, so a
@@ -335,7 +407,7 @@ release process.
   inverse (`isUriSchemeValidForResourceType`, `mcpResourceUriSchemeFor`). A
   throwing init rolls back its own partial registrations, so a half-configured
   resource is never left dispatchable. Rows still default to
-  `isEnabled: false`.
+  `isEnabled: false`. (#563)
 
 - **`components/app/**` and `components/framework/**` are now reserved fork
   tiers.** Sunrise creates nothing under either, so a fork's own React
@@ -348,7 +420,7 @@ release process.
   you invent the structure. It exists because `lib/app/**` must stay
   framework-agnostic (no runtime framework imports, no `react-dom`), so every
   seam there is data and a component cannot live there. Enforced by
-  `tests/unit/reserved-fork-tiers.test.ts`.
+  `tests/unit/reserved-fork-tiers.test.ts`. (#561)
 
 - **`lib/app/footer.ts` — `footerCopyright`.** The footer attribution line is now
   fork-owned: `null` keeps the platform default (`© {year} {BRAND.legalName}`),
@@ -357,12 +429,12 @@ release process.
   white-label case — a public surface that is an end-user artefact rather than a
   marketing site, where naming the platform operator is a leak rather than a
   credit. The **Cookie Preferences** control is unaffected and remains
-  non-overridable.
+  non-overridable. (#561)
 
 - **`BRAND.description`, backed by `NEXT_PUBLIC_APP_DESCRIPTION`.** The root
   `<meta name="description">` for any page that does not set its own. Defaults
   to the product name rather than a sentence — a wrong sentence is worse than a
-  short one.
+  short one. (#519)
 
 - **`ChatInterface` endpoint props: `streamEndpoint`, `transcribeEndpoint`,
   `deleteConversationEndpoint`.** All default to today's admin routes, so
@@ -372,7 +444,7 @@ release process.
   (`showInlineTrace`, the cost/token strip, approval cards) so a fork can decide
   what to turn off rather than concluding it must rebuild. `CHAT_TRANSCRIBE` is
   now registered in `lib/api/endpoints.ts` rather than living as a string
-  literal in the component.
+  literal in the component. (#526)
 
 ### Fixed
 
@@ -4059,7 +4131,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.7.0...v0.8.0
