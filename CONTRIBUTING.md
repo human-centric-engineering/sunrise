@@ -202,6 +202,29 @@ public-surface contract behind the bump decision lives in
    > shape and on the other ways this file can go wrong. CI runs it too, on
    > every PR including docs-only ones.
 
+   **Then retarget the two link definitions at the foot of the file — both, not
+   one.** This is the step the recipe was missing, and it has been missed at two
+   consecutive cuts:
+
+   ```diff
+   -[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...HEAD
+   +[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...HEAD
+   +[0.10.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...v0.10.0
+   ```
+
+   A `## [X.Y.Z]` heading with no matching definition renders as **literal
+   text** — brackets and all — beside a dozen headings that are links. An
+   `[Unreleased]` still pointing at the previous tag renders perfectly while
+   showing the entire release you just cut as unreleased.
+
+   Neither is visible in a diff: the heading is byte-identical either way, and
+   the definitions live 1,000 lines below the entries you were editing. Local
+   validation passes, CI passes, and the damage shows up only on the rendered
+   Releases page. **Nothing checks this — the step is the safeguard**, which is
+   why it is spelled out rather than left as a convention. 0.9.0's cut fixed
+   exactly this and recorded the invariant in its commit message, where nobody
+   cutting 0.10.0 would ever see it; 0.10.0 then made the same omission.
+
 5. **Run the gates locally.** `npm run validate`, full test suite, then
    `/pre-pr` and `/security-review`.
 
