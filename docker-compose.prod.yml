@@ -27,6 +27,18 @@ services:
         - BETTER_AUTH_URL=${BETTER_AUTH_URL}
         - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
         - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+        # NEXT_PUBLIC_* is inlined at build time, so these have to arrive HERE,
+        # not through the runtime `env_file` below — that is #662. Compose reads
+        # them from the same .env the runtime block uses, so setting one there is
+        # enough; it just has to be forwarded across the build boundary as well.
+        - NEXT_PUBLIC_ANALYTICS_PROVIDER=${NEXT_PUBLIC_ANALYTICS_PROVIDER}
+        - NEXT_PUBLIC_GA4_MEASUREMENT_ID=${NEXT_PUBLIC_GA4_MEASUREMENT_ID}
+        - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
+        - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
+        - NEXT_PUBLIC_PLAUSIBLE_DOMAIN=${NEXT_PUBLIC_PLAUSIBLE_DOMAIN}
+        - NEXT_PUBLIC_PLAUSIBLE_HOST=${NEXT_PUBLIC_PLAUSIBLE_HOST}
+        - NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+        - NEXT_PUBLIC_COOKIE_CONSENT_ENABLED=${NEXT_PUBLIC_COOKIE_CONSENT_ENABLED}
         # Raise if `next build` OOMs here (FATAL ERROR: Reached heap limit) —
         # the wall #543 was about. Note this default is NOT what CI builds at:
         # CI passes `vars.CI_NODE_HEAP_MB || 5120`, so it always overrides the

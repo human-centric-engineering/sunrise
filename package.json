@@ -28,7 +28,7 @@
     "check:audit": "tsx scripts/ci/check-audit.ts",
     "fix:lockfile-libc": "tsx scripts/ci/fix-lockfile-libc.ts",
     "fix:dom-tests": "tsx scripts/ci/mark-dom-tests.ts",
-    "validate": "npm run check:changelog && npm run check:node-version && npm run type-check && npm run lint && npm run format:check && npm run format:prisma:check",
+    "validate": "npm run check:changelog && npm run check:node-version && npm run check:client-env && npm run type-check && npm run lint && npm run format:check && npm run format:prisma:check",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
@@ -59,7 +59,8 @@
     "smoke:erasure": "tsx --env-file=.env.local scripts/smoke/erasure.ts",
     "smoke:export": "tsx --env-file=.env.local scripts/smoke/export.ts",
     "postinstall": "prisma generate",
-    "prepare": "husky"
+    "prepare": "husky",
+    "check:client-env": "tsx scripts/ci/check-client-env-delivery.ts"
   },
   "repository": {
     "type": "git",

@@ -592,11 +592,25 @@ jobs:
           # NODE_OPTIONS above does not cross into a container build, so
           # without this the builder stage stays pinned at its 4096 default
           # while every runner-side job honours the variable.
+          # Client vars are inlined at build time (#662). Passed empty on purpose:
+          # the point is that the CHANNEL exists and the build accepts them, not
+          # that CI configures analytics. NOTE these lines sit OUTSIDE the block
+          # scalar below — inside it, `#` is literal content, and every such line
+          # would be handed to buildx as a --build-arg. Harmless while they carry
+          # no `=`, but the first one that did would become a real build arg.
           build-args: |
             DATABASE_URL=postgresql://postgres:postgres@localhost:5432/sunrise
             BETTER_AUTH_URL=http://localhost:3000
             BETTER_AUTH_SECRET=ci-build-secret-not-for-production-use
             NEXT_PUBLIC_APP_URL=http://localhost:3000
+            NEXT_PUBLIC_ANALYTICS_PROVIDER=
+            NEXT_PUBLIC_GA4_MEASUREMENT_ID=
+            NEXT_PUBLIC_POSTHOG_KEY=
+            NEXT_PUBLIC_POSTHOG_HOST=
+            NEXT_PUBLIC_PLAUSIBLE_DOMAIN=
+            NEXT_PUBLIC_PLAUSIBLE_HOST=
+            NEXT_PUBLIC_SENTRY_DSN=
+            NEXT_PUBLIC_COOKIE_CONSENT_ENABLED=
             NODE_HEAP_MB=${{ vars.CI_NODE_HEAP_MB || 5120 }}
 
       # The migrator and seeder derive from `deps`, which the build above just

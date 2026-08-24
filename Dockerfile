@@ -56,17 +56,53 @@ COPY --from=deps /app/prisma ./prisma
 # Copy application source
 COPY . .
 
-# Build arguments for environment variables needed at build time
-# These are required for Next.js build and environment validation
+# Build arguments for environment variables needed at build time.
+#
+# TWO SEPARATE REASONS, and the second one is why #662 happened.
+#
+# The first four are REQUIRED by `lib/env.ts`, which is validated during
+# `next build` — leave one out and the build fails loudly. That is the rule the
+# original list was built on: "forward what fails the build".
+#
+# Everything below them is a `NEXT_PUBLIC_*` var, which the compiler INLINES at
+# build time. Nothing can supply one afterwards: setting it in the runtime
+# environment of a built image does nothing, and .dockerignore excludes .env and
+# .env.*, so a build arg is the only channel there is. They are all optional, so
+# their absence never tripped the "fails the build" rule — analytics and error
+# reporting were simply off on every self-hosted deploy, regardless of what the
+# operator had configured, with nothing to say so.
+#
+# `scripts/ci/check-client-env-delivery.ts` now derives this list from the source
+# and fails if one is missing, so it cannot go stale the way the first one did.
+#
+# Server-side secrets are deliberately NOT here. RESEND_API_KEY and the AI
+# provider keys are runtime reads that docker-compose.prod.yml supplies via
+# `env_file`; baking them into an image layer would be worse than the status quo.
 ARG DATABASE_URL
 ARG BETTER_AUTH_URL
 ARG BETTER_AUTH_SECRET
 ARG NEXT_PUBLIC_APP_URL
+ARG NEXT_PUBLIC_ANALYTICS_PROVIDER
+ARG NEXT_PUBLIC_GA4_MEASUREMENT_ID
+ARG NEXT_PUBLIC_POSTHOG_KEY
+ARG NEXT_PUBLIC_POSTHOG_HOST
+ARG NEXT_PUBLIC_PLAUSIBLE_DOMAIN
+ARG NEXT_PUBLIC_PLAUSIBLE_HOST
+ARG NEXT_PUBLIC_SENTRY_DSN
+ARG NEXT_PUBLIC_COOKIE_CONSENT_ENABLED
 
 ENV DATABASE_URL=$DATABASE_URL
 ENV BETTER_AUTH_URL=$BETTER_AUTH_URL
 ENV BETTER_AUTH_SECRET=$BETTER_AUTH_SECRET
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_ANALYTICS_PROVIDER=$NEXT_PUBLIC_ANALYTICS_PROVIDER
+ENV NEXT_PUBLIC_GA4_MEASUREMENT_ID=$NEXT_PUBLIC_GA4_MEASUREMENT_ID
+ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
+ENV NEXT_PUBLIC_PLAUSIBLE_DOMAIN=$NEXT_PUBLIC_PLAUSIBLE_DOMAIN
+ENV NEXT_PUBLIC_PLAUSIBLE_HOST=$NEXT_PUBLIC_PLAUSIBLE_HOST
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_COOKIE_CONSENT_ENABLED=$NEXT_PUBLIC_COOKIE_CONSENT_ENABLED
 
 # Set environment variables for build
 # Next.js collects anonymous telemetry data about general usage.

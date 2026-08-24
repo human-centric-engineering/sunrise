@@ -70,6 +70,26 @@ STORAGE_PROVIDER=s3  # Options: s3, vercel-blob, local
 # See .env.example for full S3/Vercel Blob configuration
 ```
 
+**Client-side variables must be set BEFORE the build.** `NEXT_PUBLIC_*` is inlined
+by the compiler during `next build`, so setting one on an already-built image or
+service does nothing — there is no runtime lookup to intercept. That covers
+analytics, error reporting and the consent toggle:
+
+```bash
+NEXT_PUBLIC_ANALYTICS_PROVIDER      # ga4 | posthog | plausible | console
+NEXT_PUBLIC_GA4_MEASUREMENT_ID
+NEXT_PUBLIC_POSTHOG_KEY
+NEXT_PUBLIC_POSTHOG_HOST
+NEXT_PUBLIC_PLAUSIBLE_DOMAIN
+NEXT_PUBLIC_PLAUSIBLE_HOST
+NEXT_PUBLIC_SENTRY_DSN
+NEXT_PUBLIC_COOKIE_CONSENT_ENABLED  # "false" disables the banner
+```
+
+Absence is silent: `detectProvider()` simply returns `null` in production and no
+analytics is sent, with nothing logged above `debug`. If you set a key and see no
+data, check it reached the build before checking the provider (#662).
+
 ### 4. Configure Build & Deploy
 
 In Web Service > Settings:

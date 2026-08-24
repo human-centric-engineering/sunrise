@@ -55,6 +55,22 @@ release process.
   fails if you declare a tier you have left empty, so the declaration is
   self-cleaning rather than accumulating.
 
+- **`npm run check:client-env` — a delivery guard for client variables** (issue
+  [#662]), wired into `npm run validate`. Scans the source for
+  `process.env.NEXT_PUBLIC_*` and fails when one lacks an `ARG`/`ENV` pair in the
+  `Dockerfile` or a build arg in `docker-compose.prod.yml`.
+
+  It keys on **"is it `NEXT_PUBLIC_`"** rather than "is it required", which is what
+  the old hand-maintained list got wrong. The scan is also co-extensive with what
+  Next actually inlines: the compiler needs the static `process.env.NEXT_PUBLIC_X`
+  form, so anything the regex misses the compiler misses too and was never
+  delivered anyway. Bracket-access reads are reported separately, since a build arg
+  cannot help them.
+
+  Fork-tolerant by design: a missing `Dockerfile` or `docker-compose.prod.yml` is
+  skipped rather than failed, so a fork that deploys only to a dashboard platform
+  is not handed one more core check it cannot satisfy.
+
 ### Changed
 
 - **`tests/unit/app/layout-metadata.test.ts` derives its module list instead of
@@ -106,7 +122,46 @@ release process.
   A deploy-time-varying brand — a staging name distinct from production — is no
   longer supported. That case was already broken everywhere except Vercel.
 
+### Fixed
+
+- **`NEXT_PUBLIC_*` variables now reach a container build** (issue [#662]). Eight
+  of the nine could not, so **analytics and error reporting were off on every
+  self-hosted deploy regardless of configuration** — no error, nothing above
+  `debug`, and nothing visible in CI.
+
+  `NEXT_PUBLIC_*` is inlined by the compiler during `next build`; setting one on a
+  built image does nothing, and `.dockerignore` excludes `.env` and `.env.*`, so a
+  build arg is the only channel. The Dockerfile's own comment stated the rule that
+  produced the gap — *"required for Next.js build and environment validation"*,
+  i.e. **forward what fails the build**. That is right for every variable except
+  the class whose absence fails *silently*: client vars are all optional, so
+  exactly one was forwarded, and only because it happened to also be required.
+  Server-side secrets were never affected — they are runtime reads that `env_file`
+  supplies, and they must not become build args.
+
+  The eight are now wired through `Dockerfile`, `docker-compose.prod.yml` and CI,
+  and `NEXT_PUBLIC_SENTRY_DSN` / `NEXT_PUBLIC_COOKIE_CONSENT_ENABLED` are
+  registered in `lib/env.ts`, having been read straight from `process.env` and
+  declared nowhere.
+
+- **Blank environment values are treated as unset.** Found by building the image
+  rather than by any test: a Dockerfile `ENV VAR=$VAR` whose `ARG` was not passed
+  materialises as the **empty string**, and Zod's `.optional()` accepts `undefined`
+  but rejects `''`. Wiring the client vars therefore broke `next build` outright
+  for anyone who had not set all nine — which is every fork — on `"Invalid URL"`
+  for the two `.url()` hosts. `lib/env.ts` now drops blank values before parsing.
+
+  **Scoped to `NEXT_PUBLIC_*` deliberately.** Blank-is-unset is right where Docker
+  gives no way to distinguish the two, and wrong everywhere else: applying it to
+  the whole environment would have turned `SIGNUP_MODE=""` — what a deploy
+  template produces from an unset source — from a boot refusal into a silent
+  `.default('open')`, so an invite-only deployment would have come up accepting
+  public signups. `TENANCY_MODE`, `MCP_SESSION_MODE` and `CAPABILITY_BINDING_MODE`
+  had the same exposure. Server vars still fail loudly on a blank.
+
+
 [#660]: https://github.com/human-centric-engineering/sunrise/issues/660
+[#662]: https://github.com/human-centric-engineering/sunrise/issues/662
 [#661]: https://github.com/human-centric-engineering/sunrise/issues/661
 
 ## [0.10.0] — 2026-08-24

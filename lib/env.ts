@@ -255,6 +255,20 @@ const clientEnvSchema = z.object({
     .url()
     .optional()
     .describe('Plausible host URL (defaults to https://plausible.io)'),
+
+  // Registered late (#662): both were read straight from `process.env` and
+  // declared nowhere, so `.env.example` and the env reference described a
+  // surface the schema did not know about. Registration is documentation — it
+  // does not deliver the value; the Dockerfile build args do that.
+  NEXT_PUBLIC_SENTRY_DSN: z
+    .string()
+    .optional()
+    .describe('Sentry DSN. Absent = error tracking stays in no-op mode.'),
+
+  NEXT_PUBLIC_COOKIE_CONSENT_ENABLED: z
+    .string()
+    .optional()
+    .describe('Set to "false" to disable the cookie consent banner. Any other value enables it.'),
 });
 
 // Combined schema for type inference.
@@ -299,6 +313,46 @@ const envSchema = serverEnvSchema.merge(appEnvSchema).merge(clientEnvSchema);
 export type Env = z.infer<typeof envSchema>;
 
 // Check if we're running in a browser
+/**
+ * Drop blank `NEXT_PUBLIC_*` values, so "set but empty" means "unset" (#662).
+ *
+ * A Dockerfile `ENV VAR=$VAR` whose `ARG VAR` was not passed materialises as the
+ * EMPTY STRING, not as absent. Zod's `.optional()` accepts `undefined` and
+ * rejects `''`, so forwarding the client vars as build args — the thing that
+ * makes them deliverable at all — turned every unset one into a hard build
+ * failure:
+ *
+ *     ❌ Invalid environment variables:
+ *     { "NEXT_PUBLIC_POSTHOG_HOST": ["Invalid URL"] }
+ *
+ * That broke `next build` for any fork that had not set all nine, which is all
+ * of them. Neither the unit tests nor the delivery check could see it; only an
+ * actual container build did.
+ *
+ * SCOPED TO `NEXT_PUBLIC_` ON PURPOSE, and the scope is the load-bearing part.
+ * An earlier version stripped every blank value, which silently widened the
+ * change to the server schema's `.default()` enums: `SIGNUP_MODE=""` — the shape
+ * a deploy template produces when it interpolates an unset source — stopped
+ * failing the enum and started resolving to `.default('open')`. An invite-only
+ * deployment would have booted with open signups and said nothing. The same
+ * applied to `TENANCY_MODE`, `MCP_SESSION_MODE` and `CAPABILITY_BINDING_MODE`.
+ *
+ * Blank-is-unset is right for a var we forward as a build arg, because Docker
+ * gives us no way to distinguish the two. It is wrong for a server var, where a
+ * blank means someone templated it incorrectly and should hear about it.
+ */
+export function withoutBlankClientValues(
+  env: Record<string, string | undefined>
+): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = { ...env };
+  for (const [key, value] of Object.entries(out)) {
+    if (key.startsWith('NEXT_PUBLIC_') && typeof value === 'string' && value.trim() === '') {
+      delete out[key];
+    }
+  }
+  return out;
+}
+
 const isBrowser = typeof window !== 'undefined';
 
 // Parse and validate environment variables
@@ -310,17 +364,21 @@ const isBrowser = typeof window !== 'undefined';
 // (e.g., process.env.NEXT_PUBLIC_APP_URL), not when passing the entire
 // process.env object to a function.
 const parsed = isBrowser
-  ? clientEnvSchema.safeParse({
-      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-      // Analytics (optional)
-      NEXT_PUBLIC_ANALYTICS_PROVIDER: process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER,
-      NEXT_PUBLIC_GA4_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,
-      NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
-      NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-      NEXT_PUBLIC_PLAUSIBLE_DOMAIN: process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN,
-      NEXT_PUBLIC_PLAUSIBLE_HOST: process.env.NEXT_PUBLIC_PLAUSIBLE_HOST,
-    })
-  : envSchema.safeParse(process.env);
+  ? clientEnvSchema.safeParse(
+      withoutBlankClientValues({
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+        // Analytics (optional)
+        NEXT_PUBLIC_ANALYTICS_PROVIDER: process.env.NEXT_PUBLIC_ANALYTICS_PROVIDER,
+        NEXT_PUBLIC_GA4_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,
+        NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
+        NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+        NEXT_PUBLIC_PLAUSIBLE_DOMAIN: process.env.NEXT_PUBLIC_PLAUSIBLE_DOMAIN,
+        NEXT_PUBLIC_PLAUSIBLE_HOST: process.env.NEXT_PUBLIC_PLAUSIBLE_HOST,
+        NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN,
+        NEXT_PUBLIC_COOKIE_CONSENT_ENABLED: process.env.NEXT_PUBLIC_COOKIE_CONSENT_ENABLED,
+      })
+    )
+  : envSchema.safeParse(withoutBlankClientValues(process.env));
 
 if (!parsed.success) {
   // eslint-disable-next-line no-console -- Startup logging before logger is initialized
