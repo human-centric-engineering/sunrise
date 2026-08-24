@@ -86,6 +86,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/app/layout-metadata.test.ts',
+    reason:
+      'walks `app/` off disk to derive the route modules it checks for a leaked ' +
+      'brand, so its input is the presence of files. Adding a page with hardcoded ' +
+      'metadata is exactly the change no import chain connects to this test.',
+  },
+  {
     path: 'tests/unit/reserved-fork-tiers.test.ts',
     reason:
       'walks `lib/`, `components/`, `.context/` and `prisma/schema/` to hold ' +

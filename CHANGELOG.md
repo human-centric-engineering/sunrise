@@ -32,6 +32,58 @@ release process.
   that declares none. Worth setting: those are precisely the pages nobody thinks
   to check.
 
+- **`lib/app/reserved-tiers.ts` — a fork declares which reserved tiers it occupies**
+  (issue [#660]). Ships `[]` upstream, so `tests/unit/reserved-fork-tiers.test.ts`
+  runs all five rows against Sunrise itself exactly as before.
+
+  That test enforces "Sunrise core creates nothing under the `/app` and
+  `/framework` tiers" by asserting the directories are empty. Upstream that is the
+  promise being kept. In a fork the same directories are the space the fork was
+  *told* to fill, so the assertion is unsatisfiable and the failure message blames
+  core for files core never created. **Four of the five known forks fail it on
+  `git merge v0.10.0`** — and not only on the `/app` rows: Daybreak is a
+  framework-layer fork and fails the two `/framework` rows for the same reason, so
+  this was never a leaf-fork-only concern. `reserved-fork-tiers.test.ts` is in
+  `ALWAYS_RUN_TESTS`, so a fork's suite is red from the merge commit onward until
+  it edits a Sunrise-owned test file. (`layout-metadata.test.ts` is added to that
+  list by this release — on v0.10.0 it surfaces only in a full run, not in a
+  scoped pre-flight.)
+
+  Declaring subtracts only the tiers you occupy, so the rest keep guarding. The
+  test rejects a name that is not a reserved tier — a typo would otherwise read as
+  a working declaration while the row it was meant to silence still failed — and
+  fails if you declare a tier you have left empty, so the declaration is
+  self-cleaning rather than accumulating.
+
+### Changed
+
+- **`tests/unit/app/layout-metadata.test.ts` derives its module list instead of
+  hand-listing it** (issue [#660]). The list was seven literal module specs behind
+  a `length >= 7` staleness floor, and both halves were wrong. It was **already
+  incomplete upstream** — `(public)/contact`, `(public)/privacy` and
+  `(public)/terms` all export metadata and none were listed, so the floor guarded a
+  list that had never been complete. And it was **unfixable in a fork**: deleting
+  the placeholder About page, which `CUSTOMIZATION.md` §6 explicitly invites and
+  two forks have already done, produced an unresolvable import rather than an
+  assertion failure, after which removing the dead row broke the floor. Reading
+  `app/` off disk takes the modules actually checked from 7 to **76** — 87 route
+  modules are discovered, of which 76 export a static `metadata` object — and
+  retires the floor, since a derived list cannot go stale. The remaining 11
+  include four that use `generateMetadata`, which needs route params and a live
+  database; the hand-listed version did not cover those either, and the test says
+  so rather than counting them.
+
+  Two rows are now fork-aware. The brand-leak row skips a route module that
+  re-exports from a tier declared in `lib/app/reserved-tiers.ts` — metadata reached
+  through a fork's own tier is its copy, not a leak of ours — and it is
+  deliberately the only row exempted: the starter-template row runs everywhere,
+  because no fork means to advertise a starter template. Measuring the forks says
+  that split is right, since two of them are shipping exactly that text today from
+  an About page they never rewrote. The title-doubling row now respects Next's own
+  `title.absolute` semantics, which opt a page out of the parent template — a fork
+  that ships its own home page commonly uses it, and the row was unsatisfiable for
+  them.
+
 ### Removed
 
 - **BREAKING: `NEXT_PUBLIC_APP_NAME`, `NEXT_PUBLIC_LEGAL_NAME` and
@@ -54,6 +106,7 @@ release process.
   A deploy-time-varying brand — a staging name distinct from production — is no
   longer supported. That case was already broken everywhere except Vercel.
 
+[#660]: https://github.com/human-centric-engineering/sunrise/issues/660
 [#661]: https://github.com/human-centric-engineering/sunrise/issues/661
 
 ## [0.10.0] — 2026-08-24

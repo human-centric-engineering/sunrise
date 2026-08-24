@@ -93,6 +93,43 @@ is where a fork's own frames, pages and widgets belong. A framework fork owns
 `/framework` and re-exposes `/app` to _its_ leaf forks; boot both through the
 `lib/app/bootstrap.ts` seam ([§4](#4-configuration--environment--the-libapp-surface)).
 
+**Once you put files in a reserved tier, say so in `lib/app/reserved-tiers.ts`:**
+
+```ts
+// leaf fork with its own components and docs
+export const occupiedTiers: readonly string[] = ['components/app', '.context/app'];
+
+// framework-layer fork (e.g. Daybreak)
+export const occupiedTiers: readonly string[] = ['lib/framework', '.context/framework'];
+```
+
+`tests/unit/reserved-fork-tiers.test.ts` enforces "Sunrise core creates nothing
+here" by asserting those directories are empty. Upstream that is the promise
+being kept; in your fork it is a property only vanilla Sunrise can satisfy, and
+the failure blames core for files core never created. Declaring subtracts the
+tiers you occupy so the rest keep guarding — which is why you list only what you
+actually fill, and why the test fails if you declare a tier you have left empty.
+
+The declaration is read in one other place: the brand-leak row in
+`tests/unit/app/layout-metadata.test.ts` skips a route module that re-exports
+from a tier you have declared, since metadata reached through your own tier is
+your copy rather than a leak of ours. The starter-template row in the same file
+has no exemption and runs everywhere — no fork means to advertise a starter
+template.
+
+**Then pin it**, exactly as for every other seam: `tests/unit/lib/app/defaults.test.ts`
+asserts each one ships empty, so its `lib/app/reserved-tiers.ts` row fails the
+moment you declare a tier. Change that row to your value rather than deleting it
+— see the FORK NOTE at the top of that file and [§4](#4-configuration--environment--the-libapp-surface).
+Declaring without pinning swaps one red always-run test for another, which is
+not the trade this is offering.
+
+**What you give up:** a declared tier is not checked at all in your checkout, so
+if a future Sunrise release did add a file there you would meet it as a merge
+conflict rather than a test failure. That is the right way round — a conflict is
+visible and recoverable, whereas a permanently-red suite trains people to ignore
+the test.
+
 ---
 
 ## 1. First steps
@@ -428,6 +465,7 @@ small and conflict-free.)
 | `lib/app/account-sections.ts`              | extra sections on `/profile` + `/settings`         | `<AccountSections/>` on both account pages (server)                         |
 | `lib/app/api-key-scopes.ts`                | extra API-key scopes (`APP_API_KEY_SCOPES`)        | `lib/auth/api-key-scopes.ts` + `createApiKeySchema` (server + client)       |
 | `lib/app/brand.ts`                         | product name, legal entity, meta description       | `lib/brand.ts` → metadata, footers, `<BrandMark>`, emails (server + client) |
+| `lib/app/reserved-tiers.ts`                | which reserved tiers THIS checkout occupies        | `tests/unit/reserved-fork-tiers.test.ts` + the metadata guard (test)        |
 
 > **Filling a seam is expected to fail one row of a core test.**
 > `tests/unit/lib/app/defaults.test.ts` asserts every seam ships empty — that

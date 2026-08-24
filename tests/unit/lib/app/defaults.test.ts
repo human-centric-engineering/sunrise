@@ -49,6 +49,7 @@ import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
 import { appFrameSrc } from '@/lib/app/csp';
+import { occupiedTiers } from '@/lib/app/reserved-tiers';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
@@ -286,6 +287,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // …and the union it feeds is exactly core, by value not just by length.
       expect(listValidApiKeyScopes()).toEqual([...CORE_API_KEY_SCOPES]);
     },
+  },
+  {
+    seam: 'lib/app/reserved-tiers.ts',
+    risk: 'a stray entry would switch OFF the guard that keeps a reserved tier empty — and it is upstream, where core is the only thing that could put a file there, that the guard is the promise rather than a formality',
+    assert: () => expect(occupiedTiers).toEqual([]),
   },
   {
     seam: 'lib/app/brand.ts',
