@@ -30,6 +30,7 @@
  *   npx tsx --env-file=.env.local scripts/smoke/export.ts
  */
 
+import { CREDENTIAL_ACCOUNT_ISSUER } from '@/lib/auth/constants';
 import { prisma } from '@/lib/db/client';
 import { exportUserData, SubjectNotFoundError } from '@/lib/privacy/export-user';
 import { SUBJECT_DATA_SOURCES } from '@/lib/privacy/export-sources';
@@ -156,6 +157,9 @@ async function main(): Promise<void> {
     await prisma.account.create({
       data: {
         userId: subject.id,
+        // better-auth >= 1.7 keys identity on (issuer, accountId); a credential
+        // row must carry this issuer and the owning user's id.
+        issuer: CREDENTIAL_ACCOUNT_ISSUER,
         accountId: subject.id,
         providerId: 'credential',
         password: PASSWORD_HASH,

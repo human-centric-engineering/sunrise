@@ -232,6 +232,14 @@ export function OAuthButtons({ callbackUrl }: { callbackUrl?: string }) {
 }
 ```
 
+### 5. Decide the provider's `issuer`
+
+New providers need no schema change, but if you are migrating a database that
+already holds rows for the new provider, extend
+`20260825120000_add_account_issuer` first — it raises on a `providerId` whose
+issuer it does not know, rather than guessing one.
+See [Account Identity](#account-identity-issuer-accountid).
+
 ## OAuth Flow
 
 1. User clicks "Continue with Google"
@@ -243,6 +251,41 @@ export function OAuthButtons({ callbackUrl }: { callbackUrl?: string }) {
    - Links account if existing user
    - Creates session
 6. User redirected to callback URL (dashboard)
+
+## Account Identity: `(issuer, accountId)`
+
+Since better-auth 1.7, an `Account` row is identified by the pair
+**`(issuer, accountId)`** — enforced by `@@unique([issuer, accountId])`.
+`providerId` is local configuration only and is **never** an identity key.
+
+| Account kind                   | `issuer`                           | `accountId`              |
+| ------------------------------ | ---------------------------------- | ------------------------ |
+| Email/password                 | `local:credential`                 | the owning `User.id`     |
+| Google (and any OIDC provider) | `https://accounts.google.com`      | the verified `sub` claim |
+| OAuth2 provider with no issuer | `local:oauth:<encoded providerId>` | the provider's subject   |
+
+`issuer` names the authority that vouched for the subject, so two providers can
+never collide on a subject string. better-auth derives it from the provider's
+`accountIssuer`; `lib/auth/constants.ts` exports `CREDENTIAL_ACCOUNT_ISSUER`
+for the credential case.
+
+**Anything that writes an `Account` outside better-auth — a smoke fixture, a
+seed, a fork's importer — must set `issuer`,** and a credential row must also
+set `accountId` to the owning user's id. Sign-in checks all three; a row that
+disagrees simply cannot be signed in to.
+
+### Adding a provider that is not in the table above
+
+The migration `20260825120000_add_account_issuer` deliberately **refuses to
+guess**: it raises if it meets a `providerId` whose issuer it does not know.
+A fork adding an OIDC provider must extend it with that provider's verified
+issuer (Microsoft, for example, is
+`https://login.microsoftonline.com/<tenant>/v2.0`), because an issuer cannot be
+derived from a provider's name. A plain OAuth2 provider with no issuer of its
+own uses `local:oauth:` + the percent-encoded `providerId`.
+
+Getting this wrong does not fail loudly at runtime — it strands the affected
+users at the login screen — which is why the migration stops instead.
 
 ## Linking Social Accounts
 

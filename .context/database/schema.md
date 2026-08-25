@@ -29,6 +29,7 @@ erDiagram
     Account {
         string id PK
         string userId FK
+        string issuer
         string accountId
         string providerId
         string accessToken
@@ -294,7 +295,7 @@ Indexes speed up queries but slow down writes. Index fields that are:
 @@index([email])          // Fast user lookup by email
 @@index([role])           // Fast filtering by role
 @@index([userId])         // Fast joins and foreign key lookups
-@@index([provider, providerAccountId])  // Compound index for OAuth
+@@unique([issuer, accountId]) // Compound OAuth identity (see Account)
 ```
 
 **Query Performance**:
@@ -306,7 +307,7 @@ Indexes speed up queries but slow down writes. Index fields that are:
 
 ```prisma
 email String @unique              // Single field unique
-@@unique([provider, providerAccountId])  // Composite unique
+@@unique([issuer, accountId])  // Compound unique — one external identity per (issuer, subject)
 ```
 
 **Purpose**:

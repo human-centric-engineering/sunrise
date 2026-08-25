@@ -86,6 +86,16 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/prisma/auth-schema-parity.test.ts',
+    reason:
+      'reads `prisma/schema/auth.prisma` off disk and compares it against ' +
+      "better-auth's own `getAuthTables()`. Its real input is the installed " +
+      'better-auth version, so the change that must trigger it is a bump in ' +
+      '`package.json` — which reaches no test through the module graph. That ' +
+      'is how 0.11.0 shipped a 1.7 upgrade without `Account.issuer` and broke ' +
+      'every sign-in.',
+  },
+  {
     path: 'tests/unit/app/layout-metadata.test.ts',
     reason:
       'walks `app/` off disk to derive the route modules it checks for a leaked ' +

@@ -32,3 +32,20 @@ export const SYSTEM_USER_EMAIL = 'system@sunrise.local';
  * check would leave open.
  */
 export const AUTH_BOOTSTRAP_ID = 'singleton';
+
+/**
+ * Issuer of a local email/password account, as better-auth ≥ 1.7 writes it
+ * (`createLocalAccountIssuer('credential')` in `@better-auth/core/db`).
+ *
+ * Since 1.7 an `Account` row is identified by `(issuer, accountId)`, not by
+ * `(providerId, accountId)` — `providerId` is local configuration and is never
+ * an identity key. For a credential account better-auth additionally requires
+ * `accountId` to be the owning `User.id`; the sign-in path checks all three and
+ * answers "invalid email or password" if any of them disagree.
+ *
+ * Anything writing a credential `Account` outside better-auth (smoke fixtures,
+ * seeds) must set this issuer, or the row it creates cannot be signed in to.
+ * Social accounts use their provider's own issuer instead — Google's is
+ * `https://accounts.google.com` — so they have no constant here.
+ */
+export const CREDENTIAL_ACCOUNT_ISSUER = 'local:credential';

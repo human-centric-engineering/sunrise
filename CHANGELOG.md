@@ -16,6 +16,41 @@ release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sign-in was broken in 0.11.0 for every user — Google *and* email/password.**
+  0.11.0 bumped better-auth 1.6.29 → 1.7.1 ([#665]), which re-keyed account
+  identity from `(providerId, accountId)` to `(issuer, accountId)`, but the
+  `Account` model was never given the new `issuer` column. Every 1.7 sign-in
+  path selects it, so both flows failed closed against a 0.11.0 database: the
+  Google callback threw `Unknown argument 'issuer'` out of
+  `findAccountOwnerByKey`, and email/password sign-in failed on the same missing
+  column. Local `.test` development did not catch it because `.test` domains
+  cannot be used with Google, and a stale `node_modules` was still serving
+  1.6.29.
+
+### Added
+
+- `Account.issuer` (`String`, required) with `@@unique([issuer, accountId])`,
+  matching better-auth ≥ 1.7. `issuer` is the authority that vouched for the
+  subject — `local:credential` for email/password, the verified OIDC issuer
+  (`https://accounts.google.com`) for Google, `local:oauth:<encoded providerId>`
+  for an OAuth2 provider with none of its own. `providerId` remains a column but
+  is local configuration and is **no longer an identity key**. Migration
+  `20260825120000_add_account_issuer` backfills existing rows.
+- `CREDENTIAL_ACCOUNT_ISSUER` in `lib/auth/constants.ts` — the issuer any code
+  writing a credential `Account` outside better-auth must set.
+
+> **Fork action.** Applying the migration is enough if you run stock Sunrise
+> (Google and/or email/password). **If you configured any other social provider,
+> extend `20260825120000_add_account_issuer` before deploying** — it raises on a
+> `providerId` whose issuer it does not know rather than guessing one, because a
+> wrong issuer does not fail loudly, it just strands those users at the login
+> screen. It also raises if two rows would collide on `(issuer, accountId)`.
+> See [`.context/auth/oauth.md`](./.context/auth/oauth.md#account-identity-issuer-accountid).
+
+[#665]: https://github.com/human-centric-engineering/sunrise/issues/665
+
 ## [0.11.0] — 2026-08-25
 
 > **Alpha release.** Fourteenth tagged Sunrise release. **MINOR bump** — the

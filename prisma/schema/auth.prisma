@@ -104,7 +104,16 @@ model Session {
 
 // Better Auth Account model
 model Account {
-  id                    String    @id @default(cuid())
+  id String @id @default(cuid())
+
+  // better-auth >= 1.7 identifies an external account by (issuer, accountId),
+  // not by (providerId, accountId). `issuer` names the authority that minted
+  // the subject: the verified OIDC issuer for OIDC providers
+  // ("https://accounts.google.com"), "local:credential" for email/password,
+  // and the synthetic "local:oauth:<encoded providerId>" for OAuth providers
+  // that have no issuer of their own. `providerId` is now local config only —
+  // never an identity key. See .context/auth/oauth.md.
+  issuer                String
   accountId             String
   providerId            String
   userId                String
@@ -120,6 +129,7 @@ model Account {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([issuer, accountId])
   @@index([userId])
   @@map("account")
 }
