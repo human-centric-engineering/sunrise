@@ -106,8 +106,16 @@ drift from the config.
 
 Selection and the floor deliberately use **different** file lists. Selection
 uses the whole diff, because a merge really can break upstream's tests and
-those should run. The floor uses only what the branch authored — commits on its
-own first-parent line, excluding merges, plus staged and working-tree files.
+those should run. The floor uses only what the branch **authored**: the diff of
+its own first-parent line with merges shown as `--diff-merges=dense-combined`,
+plus staged and working-tree files.
+
+That flag is load-bearing. A merge then contributes only the hunks differing
+from _every_ parent — **conflict resolutions** — and nothing either side merely
+carried along. Hand-resolved hunks are the one part of a sync a fork really
+writes, exist in no other commit, and are the likeliest part of the merge to be
+wrong, so `--no-merges` (which drops them) would have been the worst possible
+exemption.
 
 This is what a sync merge needs (#671). The floor asks "is what you changed
 tested", and on a sync merge a fork changed nothing: every file in the diff was
@@ -122,10 +130,13 @@ the two counts differ the run prints `not authored here N`, because a floor that
 quietly stops applying reads the same as one that passed.
 
 **The trade-off, stated:** writing code on one branch and merging it into
-another before opening the PR moves those files out of the floor's reach. That
-is deliberate evasion rather than an accident, `test-full` still runs the whole
-suite in CI, and the alternative was a gate that is wrong for every fork on
-every sync.
+another before opening the PR moves those files out of the floor's reach — a
+clean merge of your own branch resolves nothing, so it authors nothing. That is
+deliberate evasion rather than an accident, but be clear that nothing downstream
+catches it: **no CI job runs coverage.** `test-full` is `vitest run --shard`,
+`test-changed` is `vitest run --changed`, and neither passes `--coverage`. This
+local floor is the only place the per-file rule is applied, so what it skips is
+skipped. The alternative was a gate that is wrong for every fork on every sync.
 
 ### Coverage debt is invisible from a full run
 
@@ -205,9 +216,11 @@ skipping it quietly, so it will tell you.
 
 **On a sync merge**, `npm run test:changed:coverage` runs every test the merge
 can affect but holds only your own files to the 80% floor, so a clean sync
-passes without you writing tests for Sunrise's code. Files you author in the
-same branch as the merge are still gated — the exemption follows authorship,
-not the presence of a merge.
+passes without you writing tests for Sunrise's code. The exemption follows
+authorship, not the presence of a merge: files you commit alongside the merge
+are gated, and so are **conflict hunks you resolved by hand inside the merge
+commit itself** — those are yours, and they are the part of a sync most worth
+gating.
 
 ## See also
 

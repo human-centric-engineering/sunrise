@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import { alwaysRunPaths } from '@/scripts/ci/scoped-tests';
 import {
+  authoredPaths,
   changedPaths,
   countOverlap,
   gitErrorMessage,
@@ -520,5 +521,134 @@ describe('main', () => {
     const absent = alwaysRunPaths().filter((path) => !ALWAYS_RUN_FIXTURES.includes(path));
     expect(absent.length).toBeGreaterThan(0);
     expect(warned).toContain(absent[0]);
+  });
+
+  describe('authoredPaths — what the coverage floor is entitled to gate', () => {
+    /**
+     * A throwaway repo shaped like a fork: `main` is the fork, `upstream` is
+     * Sunrise, and the branch under test merges the latter into the former.
+     * Returned as [repo, forkMainSha].
+     */
+    function forkRepo(): [string, string] {
+      const dir = mkdtempSync(join(tmpdir(), 'authored-'));
+      git(['init', '--initial-branch=main'], dir);
+      git(['config', 'user.email', 'test@example.com'], dir);
+      git(['config', 'user.name', 'Test'], dir);
+      writeFileSync(join(dir, 'shared.ts'), 'export const v = 0;\n');
+      writeFileSync(join(dir, 'theirs.ts'), 'export const t = 0;\n');
+      git(['add', '.'], dir);
+      git(['commit', '-m', 'base'], dir);
+
+      git(['checkout', '-b', 'upstream'], dir);
+      writeFileSync(join(dir, 'shared.ts'), 'export const v = 1; // upstream\n');
+      writeFileSync(join(dir, 'theirs.ts'), 'export const t = 1; // upstream\n');
+      git(['commit', '-am', 'upstream work'], dir);
+
+      git(['checkout', 'main'], dir);
+      writeFileSync(join(dir, 'shared.ts'), 'export const v = 2; // fork\n');
+      git(['commit', '-am', 'fork work'], dir);
+      return [dir, git(['rev-parse', 'HEAD'], dir).trim()];
+    }
+
+    it('exempts everything a clean sync merge brought in', () => {
+      // The regression #671 is about. `changedPaths` still sees upstream's
+      // files, because those tests should run; the floor must not.
+      const [dir, forkMain] = forkRepo();
+      git(['checkout', '-b', 'sync'], dir);
+      git(['merge', '-X', 'theirs', '--no-edit', 'upstream'], dir);
+
+      expect(changedPaths(forkMain, dir).paths).toEqual(['shared.ts', 'theirs.ts']);
+      expect(authoredPaths(forkMain, dir).paths).toEqual([]);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('gates a conflict this branch resolved by hand inside the merge commit', () => {
+      // The hunk exists in no other commit, so `--no-merges` misses it — and it
+      // is the one part of a sync the fork actually wrote.
+      const [dir, forkMain] = forkRepo();
+      git(['checkout', '-b', 'sync'], dir);
+      try {
+        git(['merge', '--no-edit', 'upstream'], dir);
+      } catch {
+        // Expected: shared.ts conflicts.
+      }
+      writeFileSync(join(dir, 'shared.ts'), 'export const v = 3; // resolved by hand\n');
+      git(['add', '.'], dir);
+      git(['commit', '--no-edit'], dir);
+
+      const authored = authoredPaths(forkMain, dir).paths;
+      expect(authored).toContain('shared.ts');
+      // ...and only that: `theirs.ts` merged cleanly, so upstream wrote it.
+      expect(authored).not.toContain('theirs.ts');
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('gates work committed alongside a sync merge', () => {
+      const [dir, forkMain] = forkRepo();
+      git(['checkout', '-b', 'sync'], dir);
+      git(['merge', '-X', 'theirs', '--no-edit', 'upstream'], dir);
+      writeFileSync(join(dir, 'mine.ts'), 'export const m = 1;\n');
+      git(['add', '.'], dir);
+      git(['commit', '-m', 'my own work'], dir);
+
+      expect(authoredPaths(forkMain, dir).paths).toEqual(['mine.ts']);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('gates everything on an ordinary branch, exactly as before', () => {
+      // The half that must NOT change: no merges means nothing is exempt, so
+      // this stays as strict as it was before the narrowing existed.
+      const [dir, forkMain] = forkRepo();
+      git(['checkout', '-b', 'feature'], dir);
+      writeFileSync(join(dir, 'feat.ts'), 'export const f = 1;\n');
+      git(['add', '.'], dir);
+      git(['commit', '-m', 'feature work'], dir);
+
+      expect(authoredPaths(forkMain, dir).paths).toEqual(changedPaths(forkMain, dir).paths);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('main() gates only the authored file on a sync merge that also has own work', () => {
+      // The wiring, not just the helper. Inverting the filter in `main` — gate
+      // what you did NOT author — passes every assertion above, so this is the
+      // one that catches it: upstream's file must be absent from the include
+      // list and the fork's own file must be present.
+      const [dir, forkMain] = forkRepo();
+      mkdirSync(join(dir, 'node_modules/vitest'), { recursive: true });
+      writeFileSync(join(dir, 'node_modules/vitest/vitest.mjs'), STUB);
+      mkdirSync(join(dir, 'tests/unit'), { recursive: true });
+      writeFileSync(join(dir, 'tests/unit/stub-a.test.ts'), '');
+      writeFileSync(join(dir, 'tests/unit/stub-b.test.ts'), '');
+      writeFileSync(join(dir, '.gitignore'), 'node_modules/\n');
+
+      git(['checkout', '-b', 'sync'], dir);
+      git(['merge', '-X', 'theirs', '--no-edit', 'upstream'], dir);
+      writeFileSync(join(dir, 'mine.ts'), 'export const m = 1;\n');
+      git(['add', '.'], dir);
+      git(['commit', '-m', 'my own work'], dir);
+
+      const previousHome = process.env.SCOPED_STUB_HOME;
+      process.env.SCOPED_STUB_HOME = dir;
+      try {
+        expect(main(['--base', forkMain, '--no-fetch', '--coverage'], dir)).toBe(0);
+        const argv = JSON.parse(readFileSync(join(dir, RUN_LOG), 'utf8')) as string[];
+        expect(argv).toContain('--coverage.include=mine.ts');
+        expect(argv).not.toContain('--coverage.include=theirs.ts');
+        expect(argv).not.toContain('--coverage.include=shared.ts');
+      } finally {
+        if (previousHome === undefined) delete process.env.SCOPED_STUB_HOME;
+        else process.env.SCOPED_STUB_HOME = previousHome;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('reports failure rather than an empty answer when git cannot run', () => {
+      // An empty list means "gate nothing", so a failure that looked like one
+      // would silently switch the floor off. `main` falls back to gating
+      // everything on `failed`.
+      const dir = mkdtempSync(join(tmpdir(), 'authored-nogit-'));
+      expect(authoredPaths('HEAD', dir).failed).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    });
   });
 });

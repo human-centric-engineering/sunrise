@@ -155,38 +155,57 @@ export function changedPaths(base: string, cwd: string): { paths: string[]; fail
  * with the distance from the fork point, so the friction is worst for exactly
  * the forks with the most merging to do.
  *
- * Authorship is read off git's own history rather than inferred: commits on
- * the branch's **first-parent line, excluding merges**. A merge contributes
- * nothing, so a pure sync merge authors nothing; an ordinary feature branch
- * has no merges and authors all of it, leaving that gate exactly as strict as
- * before. Staged and working-tree files are always included — uncommitted work
- * is by definition yours.
+ * Authorship is read off git's own history rather than inferred: the diff of
+ * the branch's **first-parent line**, with merges shown as
+ * `--diff-merges=dense-combined`. That combination is doing two jobs:
+ *
+ * - An ordinary commit contributes its files, so a feature branch authors all
+ *   of its work and is gated exactly as strictly as before.
+ * - A merge contributes only the hunks that differ from **every** parent —
+ *   i.e. **conflict resolutions**, and nothing either side merely brought
+ *   along. A clean sync merge therefore authors nothing, while a sync merge
+ *   whose conflicts were resolved by hand authors exactly those resolutions.
+ *
+ * That second case is the reason `--no-merges` is wrong here, and it is not a
+ * corner: hand-resolved conflict hunks are the one part of a sync a fork
+ * really does write, they exist in no other commit, and they are the most
+ * likely part of the merge to be wrong. Exempting them would have been the
+ * worst possible exemption.
+ *
+ * Staged and working-tree files are always included — uncommitted work is by
+ * definition yours.
  *
  * **Known trade-off.** Writing code on one branch and merging it into another
- * before opening the PR moves those files out of the floor's reach. That is a
- * deliberate evasion rather than a thing anyone does by accident, the full
- * suite still runs in CI either way, and the alternative — the gate being
- * wrong for every fork on every sync — is a cost paid constantly by people who
+ * before opening the PR moves those files out of the floor's reach, because a
+ * clean merge of your own branch resolves nothing. That is deliberate evasion
+ * rather than something anyone does by accident — but note it is not caught
+ * downstream either: no CI job runs coverage (`test-full` and `test-changed`
+ * both run plain `vitest run`), so this floor is the only thing that applies
+ * it, and what it skips is skipped. The alternative was a gate that is wrong
+ * for every fork on every sync, which is a cost paid constantly by people who
  * did nothing wrong.
  */
 export function authoredPaths(base: string, cwd: string): { paths: string[]; failed: boolean } {
   const quiet = ['-C', cwd, '-c', 'core.quotePath=false'];
-  const own = git([
+  const authored = git([
     ...quiet,
     'log',
     '--first-parent',
-    '--no-merges',
+    // Not `--no-merges`: that drops hand-resolved conflict hunks, which are
+    // the one thing a fork authors during a sync. `dense-combined` shows a
+    // merge as only what differs from all parents.
+    '--diff-merges=dense-combined',
     '--name-only',
     '--pretty=format:',
     `${base}..HEAD`,
   ]);
-  if (own === null) return { paths: [], failed: true };
+  if (authored === null) return { paths: [], failed: true };
   const staged = git([...quiet, 'diff', '--cached', '--name-only']);
   if (staged === null) return { paths: [], failed: true };
   const working = git([...quiet, 'ls-files', '--others', '--modified', '--exclude-standard']);
   if (working === null) return { paths: [], failed: true };
   return {
-    paths: [...new Set([...lines(own), ...lines(staged), ...lines(working)])].sort(),
+    paths: [...new Set([...lines(authored), ...lines(staged), ...lines(working)])].sort(),
     failed: false,
   };
 }
@@ -398,8 +417,8 @@ export function main(
       console.warn(`Could not tell which files this branch authored (${lastGitError}).`);
       console.warn('Holding every changed file to the coverage floor, which may over-ask.');
     } else {
-      const own = new Set(authored.paths);
-      gateable = paths.filter((path) => own.has(path));
+      const authoredSet = new Set(authored.paths);
+      gateable = paths.filter((path) => authoredSet.has(path));
       notAuthored = paths.length - gateable.length;
     }
   }
@@ -433,8 +452,14 @@ export function main(
   // coverage gate, so applying it to a plain `test:changed` bricked the run
   // over an unrelated repo file with a tab in its name and no gate to drop out
   // of — a refusal wider than its own reason.
+  //
+  // `gateable`, not `paths`: the justification is that these drop out of the
+  // coverage gate in silence, and a file this branch did not author no longer
+  // enters that gate at all. Left on `paths`, a sync merge that merely carried
+  // in a filename containing a tab would abort the whole run for a reason that
+  // no longer applied to it.
   const quotedSources = wantsCoverage
-    ? paths.filter(
+    ? gateable.filter(
         (path) => path.startsWith('"') && (path.endsWith('.ts"') || path.endsWith('.tsx"'))
       )
     : [];
@@ -484,7 +509,11 @@ export function main(
     );
     console.log("                    (vitest.config.ts's coverage.exclude may drop some)");
     if (coverage.length === 0) {
-      console.log('    (no TypeScript sources changed — nothing to gate)');
+      console.log(
+        notAuthored > 0
+          ? '    (no TypeScript sources authored on this branch — nothing to gate)'
+          : '    (no TypeScript sources changed — nothing to gate)'
+      );
     }
   }
 

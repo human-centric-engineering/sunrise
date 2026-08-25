@@ -506,18 +506,27 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     expect(start).toBeGreaterThan(-1);
     const block = config.slice(config.indexOf('exclude: [', start));
     const body = block.slice('exclude: ['.length, block.indexOf(']'));
-    // Drop whole-line `//` comments before reading string literals. Each entry
-    // in that list carries a prose reason above it, and an apostrophe in one
-    // ("a fork's sync merge") would otherwise open a string literal and hand
-    // back paragraphs of comment as if they were patterns. It fails loudly
-    // rather than silently, but it has misfired twice now, and the fix belongs
-    // here rather than in a rule about how comments may be written.
+    // Strip `//` to end of line before reading string literals. Entries in that
+    // list carry prose reasons both ABOVE them and TRAILING on the same line
+    // (`'app/**/layout.tsx', // Exclude layouts from coverage`), and an
+    // apostrophe in either ("a fork's sync merge") would otherwise open a
+    // string literal and hand back paragraphs of comment as if they were
+    // patterns. Dropping only whole-line comments — the first attempt at this —
+    // left the trailing ones live. Safe to strip to end of line because no
+    // pattern in the list contains `//`, which the assertion below pins.
     const source = body
       .split('\n')
-      .filter((line) => !line.trim().startsWith('//'))
+      .map((line) => line.replace(/\/\/.*$/, ''))
       .join('\n');
     return Array.from(source.matchAll(/'([^']+)'/g)).map((match) => match[1]);
   }
+
+  it('no exclusion pattern contains `//`, which the comment stripper assumes', () => {
+    // The stripper cuts at the first `//` on a line. That is only safe while no
+    // pattern contains one; if a fork adds a URL-ish entry this fails here
+    // rather than silently truncating that pattern.
+    for (const pattern of coverageExclusions()) expect(pattern).not.toContain('//');
+  });
 
   it('reads the real exclusion list', () => {
     // A parse that silently returns [] would make every assertion below vacuous.
