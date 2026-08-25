@@ -16,6 +16,35 @@ release process.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-08-25
+
+> **Alpha release.** Fifteenth tagged Sunrise release. **PATCH bump** — a
+> same-day hotfix. 0.11.0 shipped better-auth 1.7.1 without the column that
+> version requires, and took sign-in down for **every** user on **every**
+> provider: Google and email/password alike. Nothing about it was visible from
+> inside the codebase, and it passed a green test suite, a green CI run and a
+> successful deploy on its way out.
+>
+> ## What a fork has to do
+>
+> **Take this before anyone tries to log in.** If you are on 0.11.0, new
+> sign-ins are failing right now. Existing sessions are not — session validation
+> never reads `account` — so the damage is bounded to people logging in, which
+> is also why it can go unnoticed for a while.
+>
+> **Applying the migration is the whole upgrade** if you run stock Sunrise.
+> Deployments that run migrations for you (Vercel, the #583 Docker migrator)
+> need nothing further.
+>
+> **If you configured a social provider other than Google, read the fork note
+> below before you deploy** — the migration deliberately refuses to guess that
+> provider's issuer, and a refusal leaves a failed migration that blocks every
+> later deploy until it is cleared.
+>
+> **Your sync merge should also stop failing its own coverage gate** ([#671]).
+> That was Sunrise's debt being billed to you, and the floor now measures what
+> you wrote rather than what the merge carried in.
+
 ### Fixed
 
 - **Sign-in was broken in 0.11.0 for every user — Google *and* email/password.**
@@ -4385,7 +4414,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.8.1...v0.9.0
