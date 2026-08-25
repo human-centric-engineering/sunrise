@@ -16,6 +16,51 @@ release process.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-08-25
+
+> **Alpha release.** Fourteenth tagged Sunrise release. **MINOR bump** — the
+> fork-friction release. Every defect here was found by merging a real fork or by
+> building a real container image; none of them was visible from inside the
+> codebase, and several passed a green test suite while shipping.
+>
+> ## What a fork has to do
+>
+> **BREAKING: three env vars are removed.** `NEXT_PUBLIC_APP_NAME`,
+> `NEXT_PUBLIC_LEGAL_NAME` and `NEXT_PUBLIC_APP_DESCRIPTION` no longer do
+> anything. Move the values into `lib/app/brand.ts`. If you miss it, a boot
+> warning names each variable still set, so the migration announces itself rather
+> than quietly reverting your brand to "Sunrise".
+>
+> **Then pin what you filled**, as for any seam — `tests/unit/lib/app/defaults.test.ts`
+> asserts each one ships empty, so its `lib/app/brand.ts` row fails the moment you
+> set a value. Change the row rather than deleting it; see the FORK NOTE at the
+> top of that file.
+>
+> **If you have files under `/app` or `/framework`**, declare those tiers in
+> `lib/app/reserved-tiers.ts` and pin that row in `defaults.test.ts` too. That is
+> the fix for the two 0.10.0 tests four of the five known forks failed on merge —
+> including on the `/framework` rows, which the issue had assumed were safe
+> because a leaf fork does not use them, but Daybreak is the framework-layer fork
+> and fails exactly those.
+>
+> So: **two edits if you only rebrand, four if you also occupy a tier.** Measured
+> by doing it, not estimated. Nothing else in the release asks anything of a fork.
+>
+> **No migration.** Zero migrations and no `prisma/schema/` change since 0.10.0,
+> so the code side is a plain `git merge v0.11.0`.
+>
+> ## Read this if you deploy with Docker
+>
+> Two defects were invisible from inside the codebase and showed up only in a real
+> container build. Brand identity reached no build at all, so a fork with its legal
+> entity correctly configured still shipped `© <year> Sunrise` in both footers —
+> proved by building 0.10.0, where the configured name appears zero times and
+> "Sunrise" 74 times in the server bundle. And eight of nine `NEXT_PUBLIC_*`
+> variables had no delivery path, so **analytics and error reporting were off on
+> every self-hosted deploy regardless of configuration**, with no error, nothing
+> above `debug`, and nothing visible in CI. Both are fixed, and both are now
+> guarded so the class cannot return silently.
+
 ### Added
 
 - **`lib/app/brand.ts` — brand identity as committed code** (issue [#661]). A
@@ -4279,7 +4324,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.8.0...v0.8.1
