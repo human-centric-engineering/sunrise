@@ -173,6 +173,14 @@ export default defineConfig({
         // `scripts/ci/**` is deliberately NOT excluded: that code is ordinary
         // production tooling and is unit-tested.
         'scripts/smoke/!(*-assertions).ts',
+        // Same category, same shape: `scripts/db/check-drift.ts` is a CLI
+        // entrypoint that probes a live database for the objects Prisma cannot
+        // model. Nothing imports it, so it is absent from a full coverage run
+        // altogether and only materialises at 0% when a scoped run forces it
+        // in — which is why a fork's sync merge met it and upstream never did
+        // (#671). `*-assertions.ts` is spared here too, so pure logic extracted
+        // from a probe script stays gated.
+        'scripts/db/!(*-assertions).ts',
         '**/*.d.ts',
         '*.config.{js,ts,mjs,cjs}', // root-level tool configs only (next.config.ts, tailwind.config.ts, etc.)
         '**/types/**',

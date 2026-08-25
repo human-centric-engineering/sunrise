@@ -137,6 +137,60 @@ export function changedPaths(base: string, cwd: string): { paths: string[]; fail
   };
 }
 
+/**
+ * The changed paths this branch actually **authored**, which is what the
+ * per-file coverage floor is entitled to ask about.
+ *
+ * {@link changedPaths} answers "what does this branch touch" and is right for
+ * test *selection*: a sync merge really can break upstream's tests, and those
+ * tests should run. It is the wrong question for the coverage *floor*, which
+ * asks "is what you changed tested". On a sync merge the answer is that the
+ * fork changed nothing — every file in the diff was written upstream — so the
+ * floor was demanding a fork either fail its own gate or write tests for
+ * platform code it does not own, and `CUSTOMIZATION.md` asks it to do neither
+ * (#671).
+ *
+ * Measured on this tree at the time of writing: a fork syncing from v0.9.0 hit
+ * 6 such files, from v0.7.0 about 15, from v0.5.0 about 16 — the count grows
+ * with the distance from the fork point, so the friction is worst for exactly
+ * the forks with the most merging to do.
+ *
+ * Authorship is read off git's own history rather than inferred: commits on
+ * the branch's **first-parent line, excluding merges**. A merge contributes
+ * nothing, so a pure sync merge authors nothing; an ordinary feature branch
+ * has no merges and authors all of it, leaving that gate exactly as strict as
+ * before. Staged and working-tree files are always included — uncommitted work
+ * is by definition yours.
+ *
+ * **Known trade-off.** Writing code on one branch and merging it into another
+ * before opening the PR moves those files out of the floor's reach. That is a
+ * deliberate evasion rather than a thing anyone does by accident, the full
+ * suite still runs in CI either way, and the alternative — the gate being
+ * wrong for every fork on every sync — is a cost paid constantly by people who
+ * did nothing wrong.
+ */
+export function authoredPaths(base: string, cwd: string): { paths: string[]; failed: boolean } {
+  const quiet = ['-C', cwd, '-c', 'core.quotePath=false'];
+  const own = git([
+    ...quiet,
+    'log',
+    '--first-parent',
+    '--no-merges',
+    '--name-only',
+    '--pretty=format:',
+    `${base}..HEAD`,
+  ]);
+  if (own === null) return { paths: [], failed: true };
+  const staged = git([...quiet, 'diff', '--cached', '--name-only']);
+  if (staged === null) return { paths: [], failed: true };
+  const working = git([...quiet, 'ls-files', '--others', '--modified', '--exclude-standard']);
+  if (working === null) return { paths: [], failed: true };
+  return {
+    paths: [...new Set([...lines(own), ...lines(staged), ...lines(working)])].sort(),
+    failed: false,
+  };
+}
+
 /** The vitest CLI entry point, or `null` if dependencies are not installed. */
 export function vitestEntry(root: string): string | null {
   const entry = resolve(root, 'node_modules/vitest/vitest.mjs');
@@ -329,11 +383,32 @@ export function main(
   const alwaysRun = alwaysRunPaths().filter((path) => existsSync(resolve(root, path)));
   const missingAlways = alwaysRunPaths().filter((path) => !alwaysRun.includes(path));
 
+  // The floor lands on what this branch authored, not on what a merge dragged
+  // in — see `authoredPaths`. Selection above still uses the full diff, so a
+  // sync merge runs every test it can affect; only the 80% floor narrows.
+  //
+  // If git cannot answer, gate the full diff as before. That is the stricter
+  // reading, and a gate that quietly stops gating is worse than one that asks
+  // too much.
+  let gateable = paths;
+  let notAuthored = 0;
+  if (wantsCoverage) {
+    const authored = authoredPaths(base, root);
+    if (authored.failed) {
+      console.warn(`Could not tell which files this branch authored (${lastGitError}).`);
+      console.warn('Holding every changed file to the coverage floor, which may over-ask.');
+    } else {
+      const own = new Set(authored.paths);
+      gateable = paths.filter((path) => own.has(path));
+      notAuthored = paths.length - gateable.length;
+    }
+  }
+
   // Deleted paths are in the diff and must not be gated: `--coverage.include`
   // for a file that no longer exists matches nothing, so it would inflate the
   // printed count while gating nothing.
   const coverage = wantsCoverage
-    ? coverageTargets(paths).filter((path) => existsSync(resolve(root, path)))
+    ? coverageTargets(gateable).filter((path) => existsSync(resolve(root, path)))
     : [];
 
   // Refuse rather than filter, and only for the paths that actually become
@@ -390,6 +465,11 @@ export function main(
 
   console.log(`Scoped run vs ${base}`);
   console.log(`  changed paths     ${paths.length}`);
+  if (notAuthored > 0) {
+    console.log(
+      `  not authored here ${notAuthored} (from a merge — not held to the coverage floor)`
+    );
+  }
   console.log(`  tests selected    ${selection.files.length} by module graph`);
   console.log(`  always-run added  ${alwaysRun.length - countOverlap(selection.files, alwaysRun)}`);
   console.log(`  test files to run ${total}`);

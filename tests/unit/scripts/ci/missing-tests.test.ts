@@ -458,6 +458,7 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
    */
   const SAMPLE_PATH_OVERRIDES: Readonly<Record<string, string>> = {
     'scripts/smoke/!(*-assertions).ts': 'scripts/smoke/export.ts',
+    'scripts/db/!(*-assertions).ts': 'scripts/db/check-drift.ts',
   };
 
   function samplePathFor(pattern: string): string {
@@ -505,7 +506,17 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     expect(start).toBeGreaterThan(-1);
     const block = config.slice(config.indexOf('exclude: [', start));
     const body = block.slice('exclude: ['.length, block.indexOf(']'));
-    return Array.from(body.matchAll(/'([^']+)'/g)).map((match) => match[1]);
+    // Drop whole-line `//` comments before reading string literals. Each entry
+    // in that list carries a prose reason above it, and an apostrophe in one
+    // ("a fork's sync merge") would otherwise open a string literal and hand
+    // back paragraphs of comment as if they were patterns. It fails loudly
+    // rather than silently, but it has misfired twice now, and the fix belongs
+    // here rather than in a rule about how comments may be written.
+    const source = body
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+    return Array.from(source.matchAll(/'([^']+)'/g)).map((match) => match[1]);
   }
 
   it('reads the real exclusion list', () => {
