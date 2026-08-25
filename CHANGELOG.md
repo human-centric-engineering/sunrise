@@ -25,9 +25,10 @@ release process.
   path selects it, so both flows failed closed against a 0.11.0 database: the
   Google callback threw `Unknown argument 'issuer'` out of
   `findAccountOwnerByKey`, and email/password sign-in failed on the same missing
-  column. Local `.test` development did not catch it because `.test` domains
-  cannot be used with Google, and a stale `node_modules` was still serving
-  1.6.29.
+  column. Existing sessions were unaffected — session validation never reads
+  `account` — so the failure was confined to new sign-ins. Local `.test`
+  development did not catch it because `.test` domains cannot be used with
+  Google, and a stale `node_modules` was still serving 1.6.29.
 
 ### Added
 
