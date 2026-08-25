@@ -154,6 +154,15 @@ export default defineConfig({
       exclude: [
         'node_modules/',
         'tests/',
+        // Smoke scripts are a test tier, not production code — standalone tsx
+        // harnesses that exercise a slice against the real dev database (see
+        // scripts/smoke/README.md). vitest never executes them, so their
+        // coverage is structurally 0% and every edit to one would fail the
+        // per-file gate that #647 added. Their testable logic is extracted to
+        // pure siblings that ARE covered — scripts/smoke/export-assertions.ts
+        // is the worked example. `scripts/ci/**` is deliberately NOT excluded:
+        // that code is ordinary production tooling and is unit-tested.
+        'scripts/smoke/**',
         '**/*.d.ts',
         '*.config.{js,ts,mjs,cjs}', // root-level tool configs only (next.config.ts, tailwind.config.ts, etc.)
         '**/types/**',

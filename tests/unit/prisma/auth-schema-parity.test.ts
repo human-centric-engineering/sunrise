@@ -39,9 +39,15 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { getAuthTables } from '@better-auth/core/db';
+import { getAuthTables, createLocalAccountIssuer } from '@better-auth/core/db';
+import { google } from '@better-auth/core/social-providers';
+import { CREDENTIAL_ACCOUNT_ISSUER } from '@/lib/auth/constants';
 
 const SCHEMA_PATH = path.join(process.cwd(), 'prisma/schema/auth.prisma');
+const MIGRATION_PATH = path.join(
+  process.cwd(),
+  'prisma/migrations/20260825120000_add_account_issuer/migration.sql'
+);
 
 interface ParsedModel {
   /** Prisma model name, e.g. `Account`. */
@@ -146,5 +152,47 @@ describe('Account identity is keyed on (issuer, accountId)', () => {
       account?.uniques.some((group) => group.includes('providerId')),
       'providerId is local configuration in better-auth >= 1.7, never an identity key'
     ).toBe(false);
+  });
+});
+
+describe('the issuer values we write match the ones better-auth writes', () => {
+  // The migration backfills existing rows; better-auth writes every row after
+  // it. If the two disagree, an existing user's row stops matching the identity
+  // better-auth looks up and they simply cannot sign in — silently, with a
+  // "invalid email or password" for credential users and a fresh duplicate
+  // account for social ones. Neither value is derivable, so both are pinned to
+  // better-auth's own source rather than to a copy of the string.
+  const migration = readFileSync(MIGRATION_PATH, 'utf8');
+
+  /** providerId -> the issuer literal the migration backfills for it. */
+  const backfilled = new Map(
+    [
+      ...migration.matchAll(
+        /UPDATE "account" SET "issuer" = '([^']+)' WHERE "providerId" = '([^']+)'/g
+      ),
+    ].map(([, issuer, providerId]) => [providerId, issuer])
+  );
+
+  it('extracted the backfill statements (guards the regex against a rewrite)', () => {
+    // Without this, a reworded migration would empty the map and every
+    // assertion below would compare undefined to undefined... loudly, since
+    // toBe would fail — but the failure would blame better-auth rather than
+    // the parse. Name the real cause up front.
+    expect([...backfilled.keys()].sort()).toEqual(['credential', 'google']);
+  });
+
+  it("backfills credential accounts with better-auth's credential issuer", () => {
+    expect(backfilled.get('credential')).toBe(createLocalAccountIssuer('credential'));
+  });
+
+  it('backfills google accounts with the issuer the google provider declares', () => {
+    const provider = google({ clientId: 'test-client-id', clientSecret: 'test-client-secret' });
+    expect(backfilled.get('google')).toBe(provider.accountIssuer);
+  });
+
+  it("CREDENTIAL_ACCOUNT_ISSUER is better-auth's value, not a copy that can drift", () => {
+    expect(CREDENTIAL_ACCOUNT_ISSUER).toBe(createLocalAccountIssuer('credential'));
+    // And the migration and the constant cannot disagree with each other.
+    expect(backfilled.get('credential')).toBe(CREDENTIAL_ACCOUNT_ISSUER);
   });
 });
