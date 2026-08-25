@@ -49,11 +49,19 @@ const MIGRATION_PATH = path.join(
   'prisma/migrations/20260825120000_add_account_issuer/migration.sql'
 );
 
+/** What better-auth can require of a single column, read off the Prisma field. */
+interface ParsedColumn {
+  /** `true` when the Prisma type carries `?`. better-auth's `required` is its inverse. */
+  optional: boolean;
+  /** Inline `@unique`. Table-level `@@unique([one])` is folded in below. */
+  unique: boolean;
+}
+
 interface ParsedModel {
   /** Prisma model name, e.g. `Account`. */
   name: string;
-  /** Database column names, honouring `@map`. */
-  columns: Set<string>;
+  /** Column name (honouring `@map`) -> what the schema says about it. */
+  columns: Map<string, ParsedColumn>;
   /**
    * Field groups from `@@unique([...])`, as raw Prisma field names — which is
    * what better-auth's `index.fields` is compared against.
@@ -68,15 +76,19 @@ function parseModelsByTable(source: string): Map<string, ParsedModel> {
 
   for (const [, name, body] of source.matchAll(modelBlock)) {
     const table = /@@map\("([^"]+)"\)/.exec(body)?.[1] ?? name;
-    const columns = new Set<string>();
+    const columns = new Map<string, ParsedColumn>();
 
     for (const rawLine of body.split('\n')) {
       const line = rawLine.trim();
       // Skip attributes, comments, blanks, and closing braces.
       if (!line || line.startsWith('@@') || line.startsWith('//')) continue;
-      const field = /^(\w+)\s+\S/.exec(line)?.[1];
+      const field = /^(\w+)\s+(\S+)/.exec(line);
       if (!field) continue;
-      columns.add(/@map\("([^"]+)"\)/.exec(line)?.[1] ?? field);
+      const [, fieldName, fieldType] = field;
+      columns.set(/@map\("([^"]+)"\)/.exec(line)?.[1] ?? fieldName, {
+        optional: fieldType.endsWith('?'),
+        unique: /(^|\s)@unique(\s|$|\()/.test(line),
+      });
     }
 
     // Not `\]\)` — `@@unique([a, b], map: "…")` is a form this repo already
@@ -85,6 +97,15 @@ function parseModelsByTable(source: string): Map<string, ParsedModel> {
     const uniques = [...body.matchAll(/@@unique\(\[([^\]]+)\]/g)].map(([, group]) =>
       group.split(',').map((f) => f.trim())
     );
+
+    // A single-column `@@unique([x])` constrains x exactly as inline `@unique`
+    // does, and this schema uses both spellings — `User.email` is table-level,
+    // `Session.token` is inline. Fold them together so the check below reads
+    // the constraint rather than the syntax.
+    for (const [only] of uniques.filter((group) => group.length === 1).map((g) => g)) {
+      const column = columns.get(only);
+      if (column) column.unique = true;
+    }
 
     byTable.set(table, { name, columns, uniques });
   }
@@ -117,17 +138,39 @@ describe('prisma/schema/auth.prisma satisfies better-auth', () => {
     });
 
     // `fieldName` is the column name when it differs from the field key.
-    it.each(Object.entries(table.fields).map(([field, attr]) => attr.fieldName ?? field))(
-      'declares column %s',
-      (fieldName) => {
+    // Presence is only one of the three things better-auth declares per field:
+    // a column that exists but is nullable where better-auth requires a value,
+    // or non-unique where it requires uniqueness, fails at runtime just as a
+    // missing one does. Checking only presence is what would let a release
+    // that TIGHTENS an existing column land exactly the way 1.7 did.
+    it.each(
+      Object.entries(table.fields).map(([field, attr]) => [attr.fieldName ?? field, attr] as const)
+    )('declares column %s as better-auth requires', (fieldName, attr) => {
+      const column = model?.columns.get(fieldName);
+      expect(
+        column,
+        `${model?.name ?? table.modelName} is missing "${fieldName}", which better-auth ` +
+          `${key === 'account' ? 'selects on every sign-in' : 'reads'}. Add the field and a ` +
+          `backfilling migration.`
+      ).toBeDefined();
+
+      if (attr.required) {
         expect(
-          model?.columns.has(fieldName),
-          `${model?.name ?? table.modelName} is missing "${fieldName}", which better-auth ` +
-            `${key === 'account' ? 'selects on every sign-in' : 'reads'}. Add the field and a ` +
-            `backfilling migration.`
+          column?.optional,
+          `${model?.name ?? table.modelName}.${fieldName} is optional, but better-auth ` +
+            `declares it required. Drop the \`?\` and backfill existing rows.`
+        ).toBe(false);
+      }
+
+      if (attr.unique) {
+        expect(
+          column?.unique,
+          `${model?.name ?? table.modelName}.${fieldName} is not unique, but better-auth ` +
+            `declares it unique — it relies on that to keep one row per value. Add ` +
+            `\`@unique\` (or \`@@unique([${fieldName}])\`) and de-duplicate first.`
         ).toBe(true);
       }
-    );
+    });
 
     for (const index of table.indexes ?? []) {
       if (!index.unique) continue;

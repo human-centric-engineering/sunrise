@@ -24,7 +24,15 @@
 -- Docker migrator from #583 -- will keep failing until that is run.
 
 -- 1. Add the column nullable so existing rows survive long enough to backfill.
-ALTER TABLE "account" ADD COLUMN "issuer" TEXT;
+--
+-- IF NOT EXISTS because the likeliest reader of this file is an operator whose
+-- sign-in is currently down, and the obvious emergency patch is to add the
+-- nullable column by hand -- at which point better-auth 1.7 starts writing
+-- `issuer` itself and service recovers. Without the guard, THIS release then
+-- dies on 42701 (column already exists), is recorded as failed, and P3009s
+-- every later deploy: the one migration meant to end the outage would extend
+-- it. Steps 3-6 still repair and enforce such a database correctly.
+ALTER TABLE "account" ADD COLUMN IF NOT EXISTS "issuer" TEXT;
 
 -- 2. Refuse to guess. Sunrise ships exactly two providers, and only their
 --    issuers are known here. An OIDC provider carries an issuer of its own
@@ -61,14 +69,24 @@ UPDATE "account" SET "issuer" = 'https://accounts.google.com' WHERE "providerId"
 
 -- 5. Report identity collisions by name before the unique index reports them
 --    as an opaque constraint violation. Two rows sharing (issuer, accountId)
---    mean two local users claim one external identity; that has to be resolved
---    by a human, not by this migration.
+--    have two quite different causes, and the message distinguishes them: two
+--    local users claiming one external identity is a decision only a human can
+--    make, whereas two credential rows for the SAME user -- which step 3 can
+--    itself bring into view, by collapsing a hand-written accountId onto the
+--    owner's id -- is just a stale row to delete. Neither is something this
+--    migration should decide.
 DO $$
 DECLARE
   collisions TEXT;
 BEGIN
-  SELECT string_agg(format('(%s, %s) held by %s rows across %s users',
-                           issuer, "accountId", row_count, user_count), '; ')
+  SELECT string_agg(
+           format('(%s, %s): %s rows across %s user(s) — %s',
+                  issuer, "accountId", row_count, user_count,
+                  CASE WHEN user_count = 1
+                       THEN 'duplicate rows for ONE user, which step 3 can also collapse into view; delete the stale row'
+                       ELSE 'DISTINCT users claiming one external identity; a human has to decide which keeps it'
+                  END),
+           '; ')
     INTO collisions
     FROM (
       SELECT "issuer", "accountId",
@@ -81,7 +99,7 @@ BEGIN
 
   IF collisions IS NOT NULL THEN
     RAISE EXCEPTION
-      'account rows share an (issuer, accountId) identity and cannot be made unique: %. Two local users claim one external identity; a human has to decide which keeps it. RECOVERY: this abort leaves the migration recorded as FAILED, and every later deploy then stops with P3009 until you run: prisma migrate resolve --rolled-back 20260825120000_add_account_issuer (on Neon, prefix PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true). Resolve the duplicates, then deploy again.',
+      'account rows share an (issuer, accountId) identity and cannot be made unique: %. Read the per-row note: duplicates belonging to one user are a stale row to delete, not an identity to adjudicate. RECOVERY: this abort leaves the migration recorded as FAILED, and every later deploy then stops with P3009 until you run: prisma migrate resolve --rolled-back 20260825120000_add_account_issuer (on Neon, prefix PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true). Resolve the duplicates, then deploy again.',
       collisions;
   END IF;
 END $$;
@@ -90,4 +108,4 @@ END $$;
 --    providerId set is exactly the one step 4 covers.
 ALTER TABLE "account" ALTER COLUMN "issuer" SET NOT NULL;
 
-CREATE UNIQUE INDEX "account_issuer_accountId_key" ON "account"("issuer", "accountId");
+CREATE UNIQUE INDEX IF NOT EXISTS "account_issuer_accountId_key" ON "account"("issuer", "accountId");

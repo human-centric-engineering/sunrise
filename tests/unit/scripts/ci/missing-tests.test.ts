@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 import {
   aspectTestsFor,
@@ -447,8 +447,33 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
    * recognise, so a new KIND of pattern also forces a decision instead of
    * quietly producing a path that happens to be exempt.
    */
+  /**
+   * Real in-tree files standing in for patterns a synthetic sample cannot
+   * represent. An extglob's whole point is that some names match and others do
+   * not, so substituting a token into it yields a path like
+   * `scripts/smoke/!(sample-assertions).ts` — not a file, matching no exemption
+   * rule, and proving nothing about the harness it is meant to stand for.
+   *
+   * Each value is asserted to exist below, so an entry cannot rot into fiction.
+   */
+  const SAMPLE_PATH_OVERRIDES: Readonly<Record<string, string>> = {
+    'scripts/smoke/!(*-assertions).ts': 'scripts/smoke/export.ts',
+  };
+
   function samplePathFor(pattern: string): string {
+    const override = SAMPLE_PATH_OVERRIDES[pattern];
+    if (override) return override;
     if (pattern.endsWith('/')) return `${pattern}sample.ts`;
+    // Extglobs (`!(…)`, `@(…)`, `+(…)`) select by name, so no token
+    // substitution represents them — they need an override above. Reject them
+    // before the replacements below quietly turn one into a plausible-looking
+    // non-path.
+    if (/[!@+?][(]/.test(pattern)) {
+      throw new Error(
+        `Extglob coverage-exclude needs a SAMPLE_PATH_OVERRIDES entry naming a ` +
+          `real file it matches: ${pattern}`
+      );
+    }
     const concrete = pattern
       // A literal path may be glob-escaped in the config — `app/(public)/…` is
       // extglob syntax, so the parens have to be escaped there or the pattern
@@ -464,6 +489,14 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     }
     return concrete;
   }
+
+  it('every SAMPLE_PATH_OVERRIDES entry names a file that still exists', () => {
+    // Without this the override could outlive the file it points at, and the
+    // assertion it feeds would go back to proving nothing.
+    for (const [pattern, sample] of Object.entries(SAMPLE_PATH_OVERRIDES)) {
+      expect(existsSync(sample), `${pattern} -> ${sample} no longer exists`).toBe(true);
+    }
+  });
 
   /** `coverage.exclude`'s string entries, read from the config itself. */
   function coverageExclusions(): string[] {
