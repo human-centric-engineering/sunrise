@@ -29,6 +29,24 @@ release process.
   `account` — so the failure was confined to new sign-ins. Local `.test`
   development did not catch it because `.test` domains cannot be used with
   Google, and a stale `node_modules` was still serving 1.6.29.
+- **A fork's sync merge no longer fails `npm run test:changed:coverage` on
+  Sunrise's own coverage debt** ([#671]). The per-file 80% floor asks "is what
+  you changed tested" — but on a sync merge the fork changed nothing, so it was
+  demanding a fork either fail its own pre-PR gate or write tests for platform
+  files `CUSTOMIZATION.md` asks it not to diverge on. Measured against 0.11.0:
+  6 such files syncing from v0.9.0, ~15 from v0.7.0, ~16 from v0.5.0. The floor
+  now lands on what the branch **authored** (its own first-parent, non-merge
+  commits, plus staged and working-tree files); test *selection* still uses the
+  whole diff, so a merge that breaks upstream's tests still fails. An ordinary
+  feature branch has no merges and is gated exactly as before, and the run
+  prints `not authored here N` rather than narrowing in silence.
+- `scripts/ci/check-client-env-delivery.ts` had no test — the one exception to
+  `scripts/ci/`'s 24-of-24 convention, and it shipped in the same release as the
+  check that flags exactly this shape. Now covered at the wiring level.
+- `scripts/db/**` joins `scripts/smoke/**` in the coverage `exclude`. Both are
+  CLI entrypoints that talk to a live database; nothing imports them, so they
+  are absent from a full coverage run entirely and surface at 0% only when a
+  scoped run forces them in. `*-assertions.ts` stays gated in both trees.
 
 ### Added
 
@@ -57,6 +75,7 @@ release process.
 > See [`.context/auth/oauth.md`](./.context/auth/oauth.md#account-identity-issuer-accountid).
 
 [#665]: https://github.com/human-centric-engineering/sunrise/issues/665
+[#671]: https://github.com/human-centric-engineering/sunrise/issues/671
 
 ## [0.11.0] — 2026-08-25
 

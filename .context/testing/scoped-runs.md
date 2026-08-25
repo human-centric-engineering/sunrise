@@ -102,6 +102,46 @@ report used to have.
 `types/**` and the rest stay exempt without a second exclusion list here to
 drift from the config.
 
+### The floor lands on what you authored, not on what a merge brought in
+
+Selection and the floor deliberately use **different** file lists. Selection
+uses the whole diff, because a merge really can break upstream's tests and
+those should run. The floor uses only what the branch authored — commits on its
+own first-parent line, excluding merges, plus staged and working-tree files.
+
+This is what a sync merge needs (#671). The floor asks "is what you changed
+tested", and on a sync merge a fork changed nothing: every file in the diff was
+written upstream. Holding it to the floor left a fork choosing between failing
+its own gate and writing tests for platform code
+[`CUSTOMIZATION.md`](../../CUSTOMIZATION.md) asks it not to diverge on. Measured
+against v0.11.0, that was 6 files for a fork syncing from v0.9.0, ~15 from
+v0.7.0 and ~16 from v0.5.0 — the cost grows with distance from the fork point.
+
+An ordinary feature branch has no merges, so it is gated exactly as before. When
+the two counts differ the run prints `not authored here N`, because a floor that
+quietly stops applying reads the same as one that passed.
+
+**The trade-off, stated:** writing code on one branch and merging it into
+another before opening the PR moves those files out of the floor's reach. That
+is deliberate evasion rather than an accident, `test-full` still runs the whole
+suite in CI, and the alternative was a gate that is wrong for every fork on
+every sync.
+
+### Coverage debt is invisible from a full run
+
+A file no test imports is **absent from `npm run test:coverage` altogether** —
+not reported at 0%, simply not there. It only materialises when a scoped run
+forces it in with `--coverage.include`. That is why `scripts/ci/check-client-env-delivery.ts`
+and `scripts/db/check-drift.ts` reached a fork's sync merge without upstream
+ever seeing them, and why CLI entrypoints that talk to a live database or
+provider are excluded in `vitest.config.ts` by name rather than left to sit at
+an unowned 0%.
+
+Measured at the time of writing: **76 files** in the tree are below the per-file
+floor on at least one metric. Upstream's own gates do not surface them, because
+`test:coverage` gates on the repo average and `test:changed:coverage` only sees
+what a branch touched.
+
 ## What a scoped run does not tell you
 
 **That the branch broke nothing elsewhere.** A test outside the changed files'
@@ -162,6 +202,12 @@ whole-tree invariants, and upstream changes stay merge-clean because Sunrise
 only ever adds entries of its own. If you delete one of Sunrise's tests, remove
 its entry too — the runner warns about an entry it cannot find rather than
 skipping it quietly, so it will tell you.
+
+**On a sync merge**, `npm run test:changed:coverage` runs every test the merge
+can affect but holds only your own files to the 80% floor, so a clean sync
+passes without you writing tests for Sunrise's code. Files you author in the
+same branch as the merge are still gated — the exemption follows authorship,
+not the presence of a merge.
 
 ## See also
 
