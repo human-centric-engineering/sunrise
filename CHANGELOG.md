@@ -48,6 +48,12 @@ release process.
 > `providerId` whose issuer it does not know rather than guessing one, because a
 > wrong issuer does not fail loudly, it just strands those users at the login
 > screen. It also raises if two rows would collide on `(issuer, accountId)`.
+> Either abort leaves the migration recorded as failed, so every later deploy
+> stops with P3009 until you clear it with
+> `prisma migrate resolve --rolled-back 20260825120000_add_account_issuer` (on
+> Neon, prefix `PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true`) — worth knowing if
+> your platform runs migrations as part of the deploy. Adding a provider *after*
+> the migration has run needs no change at all; never edit an applied migration.
 > See [`.context/auth/oauth.md`](./.context/auth/oauth.md#account-identity-issuer-accountid).
 
 [#665]: https://github.com/human-centric-engineering/sunrise/issues/665

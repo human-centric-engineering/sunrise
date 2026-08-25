@@ -295,7 +295,7 @@ Indexes speed up queries but slow down writes. Index fields that are:
 @@index([email])          // Fast user lookup by email
 @@index([role])           // Fast filtering by role
 @@index([userId])         // Fast joins and foreign key lookups
-@@unique([issuer, accountId]) // Compound OAuth identity (see Account)
+@@index([agentId, createdAt])  // Compound index for filter-then-sort queries
 ```
 
 **Query Performance**:

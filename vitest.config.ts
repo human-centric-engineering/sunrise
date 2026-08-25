@@ -154,15 +154,25 @@ export default defineConfig({
       exclude: [
         'node_modules/',
         'tests/',
-        // Smoke scripts are a test tier, not production code — standalone tsx
-        // harnesses that exercise a slice against the real dev database (see
-        // scripts/smoke/README.md). vitest never executes them, so their
+        // Smoke *harnesses* are a test tier, not production code — standalone
+        // tsx entry points that exercise a slice against the real dev database
+        // (see scripts/smoke/README.md). vitest never executes them, so their
         // coverage is structurally 0% and every edit to one would fail the
-        // per-file gate that #647 added. Their testable logic is extracted to
-        // pure siblings that ARE covered — scripts/smoke/export-assertions.ts
-        // is the worked example. `scripts/ci/**` is deliberately NOT excluded:
-        // that code is ordinary production tooling and is unit-tested.
-        'scripts/smoke/**',
+        // per-file gate that #647 added.
+        //
+        // The extglob excludes the harnesses and deliberately does NOT exclude
+        // `*-assertions.ts`, the convention for the pure logic a harness
+        // extracts to make it testable. Excluding the tree wholesale — the
+        // first version of this line — swallowed
+        // `scripts/smoke/export-assertions.ts`, which has its own test, and
+        // made the gate vacuous for the one file in here it should apply to:
+        // coverage reported `0/0 Unknown%` and exited 0. Note that the vitest
+        // coverage `exclude` option does not honour `!`-negated entries, so the
+        // re-include has to be expressed inside the pattern.
+        //
+        // `scripts/ci/**` is deliberately NOT excluded: that code is ordinary
+        // production tooling and is unit-tested.
+        'scripts/smoke/!(*-assertions).ts',
         '**/*.d.ts',
         '*.config.{js,ts,mjs,cjs}', // root-level tool configs only (next.config.ts, tailwind.config.ts, etc.)
         '**/types/**',

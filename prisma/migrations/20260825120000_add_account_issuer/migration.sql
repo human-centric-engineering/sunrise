@@ -13,6 +13,15 @@
 --
 -- Upstream guide:
 -- https://better-auth.com/docs/guides/1-7-upgrade-guide#account-identity-is-scoped-by-issuer
+--
+-- Two steps below abort deliberately rather than guess (step 2) or merge two
+-- people's identities (step 5). Aborting is the right answer, but be aware of
+-- what it costs: `prisma migrate deploy` records a failed migration, and every
+-- later deploy stops with P3009 until it is cleared with
+-- `prisma migrate resolve --rolled-back 20260825120000_add_account_issuer`.
+-- Both RAISE messages say so; this note is here for whoever reads the file
+-- first. Deployments that run migrations automatically -- Vercel here, and the
+-- Docker migrator from #583 -- will keep failing until that is run.
 
 -- 1. Add the column nullable so existing rows survive long enough to backfill.
 ALTER TABLE "account" ADD COLUMN "issuer" TEXT;
@@ -34,7 +43,7 @@ BEGIN
 
   IF unknown_providers IS NOT NULL THEN
     RAISE EXCEPTION
-      'account.issuer backfill does not know these providerId values: %. Extend this migration before deploying: an OIDC provider uses its verified issuer (e.g. Microsoft uses https://login.microsoftonline.com/<tenant>/v2.0), and a plain OAuth2 provider without an issuer uses ''local:oauth:'' || <percent-encoded providerId>. See https://better-auth.com/docs/guides/1-7-upgrade-guide#account-identity-is-scoped-by-issuer',
+      'account.issuer backfill does not know these providerId values: %. Extend this migration before deploying: an OIDC provider uses its verified issuer (e.g. Microsoft uses https://login.microsoftonline.com/<tenant>/v2.0), and a plain OAuth2 provider without an issuer uses ''local:oauth:'' || <percent-encoded providerId>. See https://better-auth.com/docs/guides/1-7-upgrade-guide#account-identity-is-scoped-by-issuer -- RECOVERY: this abort leaves the migration recorded as FAILED, and every later deploy then stops with P3009 until you run: prisma migrate resolve --rolled-back 20260825120000_add_account_issuer (on Neon, prefix PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true).',
       unknown_providers;
   END IF;
 END $$;
@@ -72,7 +81,7 @@ BEGIN
 
   IF collisions IS NOT NULL THEN
     RAISE EXCEPTION
-      'account rows share an (issuer, accountId) identity and cannot be made unique: %. Resolve the duplicate identities, then re-run this migration.',
+      'account rows share an (issuer, accountId) identity and cannot be made unique: %. Two local users claim one external identity; a human has to decide which keeps it. RECOVERY: this abort leaves the migration recorded as FAILED, and every later deploy then stops with P3009 until you run: prisma migrate resolve --rolled-back 20260825120000_add_account_issuer (on Neon, prefix PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true). Resolve the duplicates, then deploy again.',
       collisions;
   END IF;
 END $$;

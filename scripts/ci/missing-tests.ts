@@ -165,15 +165,15 @@ export const NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION: ReadonlyArray<{
       'because it needs no test — it has three.',
   },
   {
-    pattern: 'scripts/smoke/**',
+    pattern: 'scripts/smoke/!(*-assertions).ts',
     reason:
-      'coverage skips the tree because vitest never executes these standalone ' +
-      'tsx harnesses, so their 0% is structural rather than a gap — but the ' +
-      'pure logic smoke scripts extract to be testable lives in the same ' +
-      'directory, and `scripts/smoke/export-assertions.ts` has a test under ' +
-      '`tests/unit/scripts/smoke/`. Exempting the tree wholesale would stop ' +
-      '4f asking about the next one. 4f reports and never gates, so the ' +
-      'harnesses themselves are answered in the PR rather than silenced here.',
+      'coverage skips the harnesses because vitest never executes these ' +
+      'standalone tsx entry points, so their 0% is structural rather than a ' +
+      'gap. 4f still asks about them: it reports and never gates, so a ' +
+      'harness is answered in review rather than silenced here. Note the ' +
+      'coverage pattern deliberately spares `*-assertions.ts` — the pure ' +
+      'logic a harness extracts to be testable, which is covered and gated ' +
+      'like any other source file.',
   },
 ];
 

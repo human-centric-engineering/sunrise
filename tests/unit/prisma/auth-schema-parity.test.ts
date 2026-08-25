@@ -54,7 +54,10 @@ interface ParsedModel {
   name: string;
   /** Database column names, honouring `@map`. */
   columns: Set<string>;
-  /** Field groups from `@@unique([...])`, each normalised to column names. */
+  /**
+   * Field groups from `@@unique([...])`, as raw Prisma field names — which is
+   * what better-auth's `index.fields` is compared against.
+   */
   uniques: string[][];
 }
 
@@ -76,7 +79,10 @@ function parseModelsByTable(source: string): Map<string, ParsedModel> {
       columns.add(/@map\("([^"]+)"\)/.exec(line)?.[1] ?? field);
     }
 
-    const uniques = [...body.matchAll(/@@unique\(\[([^\]]+)\]\)/g)].map(([, group]) =>
+    // Not `\]\)` — `@@unique([a, b], map: "…")` is a form this repo already
+    // uses, and requiring the close paren would report a present constraint as
+    // absent the moment someone pins its name.
+    const uniques = [...body.matchAll(/@@unique\(\[([^\]]+)\]/g)].map(([, group]) =>
       group.split(',').map((f) => f.trim())
     );
 
