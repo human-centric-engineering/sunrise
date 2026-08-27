@@ -1,0 +1,69 @@
+# Reclaims the Actions cache a pull request leaves behind.
+#
+# GitHub scopes a cache to the ref that wrote it and never reclaims one when
+# the PR closes, so every PR run leaves its entries sitting against the repo's
+# 10GB quota until the 7-day idle timer or LRU eviction removes them. Measured
+# on 2026-08-27: two already-merged PRs held 4.58GB, 48% of the used quota,
+# and the pressure was evicting the caches that actually shorten a run — the
+# 437MB `next-*` build cache survived only 5 of 11 runs since 08-25.
+#
+# The write rate is the cause, so deleting by hand only ever buys time. This
+# does it on the event that makes the entries dead.
+name: PR Cache Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+# Nothing here reads the repository. The job needs `actions: write` and nothing
+# else, and it is granted at the job rather than here.
+permissions: {}
+
+jobs:
+  cleanup:
+    name: Delete this PR's caches
+    runs-on: ubuntu-latest
+    # A pull_request event from a FORK carries a read-only token, and
+    # `actions: write` cannot be granted to it — so this step would fail and
+    # put a red X on every fork PR. It is also unnecessary: a fork PR cannot
+    # write a cache either, so it leaves nothing of its own behind. Guarding on
+    # same-repo therefore costs no coverage. Deliberately NOT solved with
+    # `pull_request_target`, which would hand a privileged token to a workflow
+    # triggered by an outside contributor for no gain.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      actions: write
+    steps:
+      - name: Delete caches scoped to refs/pull/N/merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          set -euo pipefail
+
+          # `select(.ref == env.REF)` reads the variable through jq rather than
+          # interpolating it into the program text — a ref is not attacker-shaped
+          # here, but building jq source by string concatenation is a habit worth
+          # not having.
+          entries=$(gh api "repos/$REPO/actions/caches?per_page=100" --paginate \
+            --jq '.actions_caches[] | select(.ref == env.REF) | "\(.id)\t\(.size_in_bytes)\t\(.key)"')
+
+          if [ -z "$entries" ]; then
+            echo "No caches scoped to $REF — nothing to reclaim."
+            exit 0
+          fi
+
+          freed=0
+          count=0
+          while IFS=$'\t' read -r id size key; do
+            # A delete that fails must be visible. Reporting "reclaimed 0 bytes"
+            # as a success is how a cleanup job quietly stops cleaning up.
+            gh api -X DELETE "repos/$REPO/actions/caches/$id" --silent
+            freed=$((freed + size))
+            count=$((count + 1))
+            echo "  deleted $key ($((size / 1024 / 1024))MB)"
+          done <<< "$entries"
+
+          echo "Reclaimed $((freed / 1024 / 1024))MB across $count cache entries for $REF."
+          echo "### Reclaimed $((freed / 1024 / 1024))MB across $count cache entries" >> "$GITHUB_STEP_SUMMARY"

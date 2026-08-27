@@ -15,6 +15,7 @@ repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 | `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | **Two** gates: TruffleHog (diff on PR, full history on cron) **and** a Postgres DSN tripwire (see below)                                                |
 | `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                                                                      |
 | `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)                                                          |
+| `.github/workflows/pr-cache-cleanup.yml`    | PR closed                    | Reclaims the Actions cache a merged/closed PR leaves scoped to its own ref (see below)                                                                  |
 
 ## `ci.yml` shape
 
@@ -285,6 +286,20 @@ These help both repo types and cost nothing, so they're always on:
   strategy keys on mtime, which a fresh CI checkout resets — so the restored
   cache never hit and lint re-ran fully every time (~220s). Content hashing fixes
   that (lint ~220s→~2s, format ~62s→~8s warm).
+- **PR caches are reclaimed when the PR closes** — `pr-cache-cleanup.yml`.
+  GitHub scopes each cache to the ref that wrote it and never reclaims one when
+  a PR closes, so entries sit against the repo's **10GB quota** until the 7-day
+  idle timer or LRU eviction takes them. Measured 2026-08-27: two already-merged
+  PRs held **4.58GB, 48% of the used quota**, and the pressure was evicting the
+  entries that actually shorten a run — only 5 of the 437MB `next-*` build
+  caches survived 11 runs. Roughly 1.4–1.9GB of each PR's footprint is Docker
+  buildkit (`cache-to: type=gha,mode=max` exports every layer of every stage);
+  the rest is `next-*` plus the ~452MB npm cache. The cleanup runs on
+  `pull_request: closed` and deletes only `refs/pull/N/merge`, which is safe in
+  a direction worth understanding: a PR can read its own scope **and** the base
+  branch's, but never the reverse — so a manifest `main` wrote can only
+  reference blobs in `main`'s own scope, and removing a PR's entries cannot
+  orphan it.
 - **Raised Node heap** — `NODE_OPTIONS=--max-old-space-size=5120`
   (workflow-level) and a `NODE_HEAP_MB` build arg defaulting to 4096 in the
   Dockerfile `builder` stage. It's a **cap, not an allocation**: never
@@ -675,6 +690,7 @@ level rather than relaxing the file-level default:
 | -------------------------------- | -------------------------------------------------- |
 | `codeql.yml` → `analyze`         | `security-events: write`, `actions: read`          |
 | `dependency-review.yml` → review | `pull-requests: write` (posts the failure comment) |
+| `pr-cache-cleanup.yml` → cleanup | `actions: write` (deletes the PR's cache entries)  |
 
 Copy that shape: the file-level block is the floor every job gets, and anything
 only one job needs belongs on that job.
