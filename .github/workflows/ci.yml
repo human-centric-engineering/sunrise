@@ -249,12 +249,20 @@ jobs:
       # The eslint/prettier caches use the `content` strategy (see package.json),
       # so a fresh checkout's reset mtimes don't invalidate them — but the cache
       # files still have to survive between runs, which is what this does.
+      #
+      # These live at the repo root, NOT under `.next/cache` (#677). Two
+      # reasons: `rm -rf .next` is the standard first move for a stale-build
+      # symptom and would silently cost the next lint a cold run (measured on a
+      # 4,414-file fork: 2.5s -> 5.5min, 0.46GB -> 3.3GB peak RSS, close enough
+      # to the heap ceiling to abort); and the build job below caches
+      # `.next/cache` wholesale, so nesting these inside it gave two cache
+      # entries with different keys and lifecycles writing overlapping trees.
       - name: Cache eslint / prettier results
         uses: actions/cache@v6
         with:
           path: |
-            .next/cache/eslint
-            .next/cache/.prettiercache
+            .eslintcache
+            .prettiercache
           key: lint-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
           restore-keys: |
             lint-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-

@@ -10,6 +10,8 @@ dist
 # Caches
 .cache
 .turbo
+.eslintcache
+.prettiercache
 
 # Package manager files
 package-lock.json

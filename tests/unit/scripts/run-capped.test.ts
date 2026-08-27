@@ -159,7 +159,7 @@ describe('main', () => {
   it('passes the remaining argv through to the bin untouched', async () => {
     const spawnFn = vi.fn().mockReturnValue(fakeChild());
 
-    await main(['eslint', '.', '--cache', '--cache-location', '.next/cache/eslint/'], {
+    await main(['eslint', '.', '--cache', '--cache-strategy', 'content'], {
       spawnFn,
       env: {},
       resolveCommand: (name: string) => `/bin/${name}`,
@@ -169,7 +169,7 @@ describe('main', () => {
 
     expect(spawnFn).toHaveBeenCalledWith(
       '/bin/eslint',
-      ['.', '--cache', '--cache-location', '.next/cache/eslint/'],
+      ['.', '--cache', '--cache-strategy', 'content'],
       expect.objectContaining({ stdio: 'inherit' })
     );
   });

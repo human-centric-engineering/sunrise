@@ -134,6 +134,9 @@ pids
 # Optional eslint cache
 .eslintcache
 
+# Prettier cache (see package.json `format` scripts)
+.prettiercache
+
 # Optional stylelint cache
 .stylelintcache
 

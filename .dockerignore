@@ -104,6 +104,12 @@ temp
 *.temp
 .cache
 
+# Toolchain caches. At the repo root so a `rm -rf .next` cannot take them
+# (#677) — which also puts them in the build context, where a lint run
+# would otherwise invalidate the `COPY . .` layer and rerun `next build`.
+.eslintcache
+.prettiercache
+
 # OS
 Thumbs.db
 ehthumbs.db

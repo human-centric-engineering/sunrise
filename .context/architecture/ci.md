@@ -271,10 +271,15 @@ These help both repo types and cost nothing, so they're always on:
 
 - **Concurrency cancel** — superseded PR runs are cancelled (`cancel-in-progress`
   on PRs only; `main` runs are never cancelled — they're the post-merge record).
-- **Warm build caches** — `actions/cache` persists `.next/cache` (Next build +
-  ESLint cache), the Prettier cache, and `tsconfig.tsbuildinfo` (incremental
-  `tsc`). Each fan-out job caches **its own** artifact under its own key — a
-  shared key would let the first job to finish overwrite the others' caches.
+- **Warm build caches** — `actions/cache` persists `.next/cache` (the Next
+  build cache), the ESLint and Prettier caches (`.eslintcache` /
+  `.prettiercache`, both at the repo root), and `tsconfig.tsbuildinfo`
+  (incremental `tsc`). Each fan-out job caches **its own** artifact under its
+  own key — a shared key would let the first job to finish overwrite the
+  others' caches. The lint caches deliberately sit **outside** `.next/`: nested
+  there they were both destroyed by a routine `rm -rf .next` and subsumed by
+  the build job's `.next/cache` entry, which is two cache keys owning one tree
+  (#677).
 - **Content-based cache strategy** — `eslint`/`prettier` run with
   `--cache-strategy content` (see `package.json`). The default `metadata`
   strategy keys on mtime, which a fresh CI checkout resets — so the restored

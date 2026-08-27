@@ -384,6 +384,12 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 - Run `npm run type-check` for errors
 - Run `npx prisma generate` after schema changes
 
+**Lint dies with ENOENT before reading any source file:**
+
+- Stale paths in the ESLint cache (see the `coverage/**` note in `eslint.config.mjs`)
+- Run `npm run clean:cache` — the toolchain caches are `.eslintcache` and
+  `.prettiercache` at the repo root, so `rm -rf .next` no longer clears them (#677)
+
 **Auth not working:**
 
 - Verify `BETTER_AUTH_SECRET` is set

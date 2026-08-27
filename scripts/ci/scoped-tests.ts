@@ -194,6 +194,20 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'change it exists to catch is a NEW route returning the platform ' +
       'version — a file that by definition no existing import chain reaches.',
   },
+  {
+    path: 'tests/unit/toolchain-cache-location.test.ts',
+    reason:
+      'reads `package.json`, `.lintstagedrc.json`, `.gitignore` and ' +
+      '`.github/workflows/ci.yml` as text to hold the eslint/prettier caches ' +
+      'at the repo root and keep the CI cache paths equal to what those ' +
+      'scripts write. Its whole input is config files no module imports — a ' +
+      'workflow-only edit is precisely the change that must trigger it (#677). ' +
+      "FORK NOTE: half its subject is upstream's `.github/workflows/ci.yml`. " +
+      'A fork that owns that file — renaming the lint-cache step, or folding ' +
+      'lint into a workflow of its own — should delete this entry and keep its ' +
+      'own version of the guard, rather than carry a red suite about a file it ' +
+      'no longer shares.',
+  },
 ];
 
 /** Just the paths, for argv building and set arithmetic. */

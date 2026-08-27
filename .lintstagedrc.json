@@ -1,6 +1,6 @@
 {
   "*.{js,jsx,ts,tsx,mjs,cjs}": [
-    "eslint --fix --cache --cache-location .next/cache/eslint/",
+    "eslint --fix --cache --cache-strategy content",
     "prettier --write"
   ],
   "*.{json,md,yml,yaml}": ["prettier --write"],
