@@ -130,7 +130,7 @@ describe('undeclaredRepoRootedTests', () => {
 });
 
 describe('coverageTargets', () => {
-  it('keeps TypeScript sources and drops everything else', () => {
+  it('keeps JS and TS sources and drops everything else', () => {
     expect(
       coverageTargets([
         'lib/a.ts',
@@ -141,6 +141,46 @@ describe('coverageTargets', () => {
         'prisma/schema/app.prisma',
       ])
     ).toEqual(['components/b.tsx', 'lib/a.ts']);
+  });
+
+  it('gates .mjs sources, which bypassed the coverage floor entirely until #687', () => {
+    // This filter read `.ts`/`.tsx` only, so every `.mjs` in the tree fell out
+    // of the per-file floor #647 added — silently, which is the failure this
+    // whole runner is written against. `scripts/ci/**` is deliberately NOT
+    // excluded from coverage and these are ordinary unit-tested tooling, so the
+    // gate simply could not see them. The fork that found it measured a new
+    // `.mjs` at 78.66% lines with `/pre-pr` reporting PASS.
+    expect(
+      coverageTargets([
+        'scripts/ci/chunked-lint.mjs',
+        'scripts/run-capped.mjs',
+        'scripts/dev-server.mjs',
+        'next.config.js',
+        'lib/legacy.cjs',
+      ])
+    ).toEqual([
+      'lib/legacy.cjs',
+      'next.config.js',
+      'scripts/ci/chunked-lint.mjs',
+      'scripts/dev-server.mjs',
+      'scripts/run-capped.mjs',
+    ]);
+  });
+
+  it('still leaves the non-production .mjs exclusions to vitest.config.ts', () => {
+    // Widening the extension filter made two files reachable that are
+    // structurally 0% and are not production code: the fork-owned ESLint config
+    // seam (Sunrise ships it as `export default []`) and the standalone DB
+    // spike. Both are excluded in `vitest.config.ts`, the single authority —
+    // NOT re-filtered here, where the duplicate rule would be free to drift.
+    // The seam is the load-bearing one: a fork editing its own
+    // `lib/app/eslint.config.mjs` must not fail a coverage gate on a file it is
+    // explicitly invited to edit.
+    const config = readFileSync(resolve(process.cwd(), 'vitest.config.ts'), 'utf8');
+
+    expect(coverageTargets(['lib/app/eslint.config.mjs'])).toEqual(['lib/app/eslint.config.mjs']);
+    expect(config).toContain("'lib/app/eslint.config.mjs'");
+    expect(config).toContain("'scripts/spikes/**'");
   });
 
   it('drops a colocated test file, not just the tests/ tree', () => {

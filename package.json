@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "node scripts/dev-server.mjs next-start",
     "lint": "node scripts/run-capped.mjs eslint . --cache --cache-strategy content",
+    "lint:ci": "node scripts/ci/chunked-lint.mjs --cache --cache-strategy content",
     "lint:fix": "node scripts/run-capped.mjs eslint . --fix --cache --cache-strategy content",
     "lint:staged": "lint-staged",
     "clean:cache": "node -e \"for (const f of ['.eslintcache', '.prettiercache']) require('node:fs').rmSync(f, { force: true })\"",

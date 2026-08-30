@@ -258,15 +258,36 @@ is precisely that caller, which is the second reason it keeps calling `eslint`
 directly. Route a filename-passing caller through the wrapper only after
 quoting the passthrough args.
 
-**If a fork outgrows even this**, the lever that works is shrinking the
-TypeScript _program_, not the file list. Splitting the lint into `src` and
-`tests` invocations does nothing — `tsconfig.json` includes `**/*.ts`, so the
-project service builds the same whole-repo program whichever files you pass
-(Sunrise src-only, 1,188 files, measured _higher_ than all 2,262). A
+**If a fork outgrows even this**, there are two levers, and they attack
+different halves of the cost. Roughly **56% of a lint is a floor** — the
+TypeScript program, which type-aware rules need before they can check a single
+line (linting ONE file costs 2.64 GiB). The other 44% is marginal per-file work:
+typescript-eslint re-materialising TypeScript's AST into ESTree, a second AST per
+file, with scope analysis on top.
+
+**Lever 1 — divide the marginal 44%: `CI_LINT_CHUNKS`.** `npm run lint:ci`
+(`scripts/ci/chunked-lint.mjs`) runs the same file set as N **separate
+sequential processes**. Each one's memory is released when it exits, so the
+job's peak becomes the largest chunk rather than the whole tree: measured on
+ConQuest at a 6144 cap, 1 chunk peaks at 6.36 GiB and OOMs where 4 chunks
+completes at 5.20 GiB. It buys that with wall-clock, because every chunk rebuilds
+the program floor. See [`ci.md`](./ci.md) Knob 4.
+
+Note carefully what this does **not** contradict: passing fewer files to a
+_single_ run still does nothing, because `tsconfig.json` includes `**/*.ts` and
+the project service builds the same whole-repo program whichever files you hand
+it — Sunrise src-only, 1,188 files, measured _higher_ than all 2,262. Separate
+processes are the mechanism; a shorter file list on its own is not.
+
+**Lever 2 — shrink the floor itself: a narrower program.** A
 `tsconfig.lint.json` that excludes `tests/**`, with `project:` in place of
 `projectService: true`, took ConQuest from 5.61 GiB / 209s to 4.30 GiB / 81s.
 The cost is that test files lose the type-aware rules they still have —
 including `no-floating-promises`, so price it before taking it.
+
+The two compose: chunking divides what the floor does not cover, and a narrower
+program lowers the floor every chunk re-pays. Reach for Lever 1 first — it is a
+repo variable and costs only time, where Lever 2 gives up real coverage.
 
 ## Backlog (post-fork-readiness, not blockers)
 

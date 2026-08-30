@@ -183,6 +183,18 @@ export default defineConfig({
         'scripts/db/!(*-assertions).ts',
         '**/*.d.ts',
         '*.config.{js,ts,mjs,cjs}', // root-level tool configs only (next.config.ts, tailwind.config.ts, etc.)
+        // The pattern above is root-level ONLY, by design, so this seam needs
+        // naming. `lib/app/eslint.config.mjs` is fork-owned scaffold that
+        // Sunrise ships as `export default []` — a flat-config array, not
+        // logic, and nothing imports it into a test. It became reachable when
+        // `coverageTargets` stopped filtering to `.ts`/`.tsx` (#687); without
+        // this line a fork editing its OWN seam file would fail a coverage gate
+        // on a file it is explicitly invited to edit.
+        'lib/app/eslint.config.mjs',
+        // Same category as `scripts/smoke/**` above: a standalone probe, run by
+        // hand against a real database, that vitest never executes. Structurally
+        // 0%, so the per-file gate would fail on any edit to it.
+        'scripts/spikes/**',
         '**/types/**',
         '.next/',
         'coverage/',

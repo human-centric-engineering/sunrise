@@ -358,7 +358,8 @@ These help both repo types and cost nothing, so they're always on:
 
   Cost on a private fork (2-core/8GB): roughly +3–5 minutes, no extra `npm ci`
   and no extra `next build`, inside a `timeout-minutes: 30` cap. There is no
-  opt-out variable — unlike `CI_TEST_SCOPE` and `CI_NODE_HEAP_MB`, whose failure
+  opt-out variable — unlike `CI_TEST_SCOPE`, `CI_NODE_HEAP_MB` and
+  `CI_LINT_CHUNKS`, whose failure
   modes are opaque, this job's cost is visible and already path-gated. A fork
   that must drop it edits the one `if:` line, and accepts that the compose stack
   is then unverified. Watch disk rather than minutes: three loaded images.
@@ -539,6 +540,82 @@ gh variable set CI_TEST_NODE_HEAP_MB --body 3072
 2-vCPU runner vitest forks roughly one worker, on 4-vCPU roughly three — so the
 same value means very different totals, and the whole-runner figure that is
 right for `CI_NODE_HEAP_MB` is wrong here.
+
+### Knob 4: `CI_LINT_CHUNKS`
+
+Knob 2 raises the ceiling. This one lowers what lint needs to fit under it, and
+it is the lever for **after Knob 2 runs out of room** — because the ceiling
+eventually is the machine. A private `ubuntu-latest` is an 8GB box, and a cap
+above physical RAM converts a clean V8 abort into an OOM kill, so ~6144 is the
+practical maximum.
+
+Defaults to **1**, which is exactly a whole-tree `eslint .` — base Sunrise
+(~2,300 lintable files) has never approached its heap ceiling and should not buy
+headroom it does not need. Raise it when the lint job aborts with **exit 134**:
+
+```bash
+gh variable set CI_LINT_CHUNKS --body 4
+```
+
+`npm run lint:ci` (`scripts/ci/chunked-lint.mjs`) lints the identical file set as
+N sequential eslint processes, so the job's peak is the **largest chunk** rather
+than the whole tree. Measured on a downstream fork of 4,527 lintable files
+(~2× base Sunrise), 4-core runner, cap 6144, cold — these are that fork's
+numbers, not Sunrise's:
+
+| `LINT_CHUNKS` | peak    | result | wall |
+| ------------- | ------- | ------ | ---- |
+| 1             | 6.36 GB | OOM    | 387s |
+| 2             | 5.75 GB | ok     | 304s |
+| **4**         | 5.20 GB | ok     | 339s |
+| 6             | 4.98 GB | ok     | 391s |
+
+**The failure this fixes is intermittent in the worst way.** Ordinary branches
+pass on a warm ESLint cache; the run that dies is the cold one. ESLint keys cache
+entries on the resolved config, so a **`typescript-eslint` bump invalidates every
+entry** — which means the PR that breaks CI is a Dependabot dev-dependency bump,
+and no amount of reading it explains why.
+
+**A changed-files filter does not solve it**, which is worth saying because it is
+the obvious first idea: that bump changes only `package.json` /
+`package-lock.json`, so a diff filter lints **nothing**, while the entire risk of
+a linter bump is that it changes results on any file. The complete lint has to
+run _and_ fit.
+
+**Chunking is not free.** ~56% of the cost is a floor it cannot touch: linting
+ONE file costs 2.64GB, because type-aware rules need the whole project's type
+graph before they can check a line — for scale, `tsc --noEmit` type-checks that
+entire repo in 2.26GB, so ESLint costs more to lint one file than TypeScript does
+to check everything. Every chunk rebuilds that Program, which took the fork's
+cold lint from 1m23s to 6m51s (unchanged on ordinary warm-cache branches). It
+also flattens returns hard past 6.
+
+**Sequential chunks in one job, not a matrix of N jobs.** A matrix pays N
+checkouts and N `npm ci`s, and Actions bills **per job, rounded up to the
+minute** — so on a private repo a shard fan-out costs real money for setup it
+throws away. This trades wall clock instead, the cheaper currency.
+
+**Chunks are whole directories, deliberately.** A chunk costs its _import
+closure_, not its file count — `eslint prisma` lints 98 files for 1.92GB while a
+single file in `lib/api` costs 2.64GB. An earlier revision striped files
+round-robin to balance chunk sizes and measured **worse than not chunking at
+all** (3.98GB against 3.28GB), because striping puts a slice of every directory
+in every chunk and each one then loads nearly the whole type graph.
+
+**Re-measure rather than reason.** `.github/workflows/lint-memory-probe.yml` is
+dispatch-only, gates nothing, and reproduces the table above on your own runner
+and tree. Two traps make armchair tuning unreliable: peak RSS is partly a
+function of the cap (V8 grows into available headroom, so the same run peaks at
+5.50GB under 8192 and 4.35GB under 5120 — measuring above your real ceiling
+overstates what a run needs at it), and a developer laptop cannot reproduce these
+numbers at all: three runs of one identical command spanned 1.31GB there, against
+a saving worth ~1.5GB.
+
+**A malformed value says so.** `CI_LINT_CHUNKS=six` logs a warning naming the
+variable and falls back to 1 rather than failing the run — refusing to lint over
+a malformed unrelated variable trades a small problem for a bigger one. The
+warning matters because the fallback here is the _unchunked_ case: silence would
+let a fork believe it had fixed its OOM and then meet the identical failure.
 
 ## Private-fork correctness (GHAS-dependent jobs)
 

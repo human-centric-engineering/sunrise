@@ -268,9 +268,38 @@ jobs:
             lint-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
             lint-${{ runner.os }}-
       - run: npm ci
+      # Chunked, but at ONE chunk by default — which is exactly a whole-tree
+      # `eslint .`, the same cost base Sunrise pays today. `lint:ci` runs the
+      # identical file set as N sequential eslint processes, so the job's peak
+      # becomes the LARGEST chunk instead of the whole tree.
+      #
+      # Upstream does not need that: base Sunrise (~2,300 lintable files) has
+      # never approached `CI_NODE_HEAP_MB`. A fork can, and this is the lever for
+      # after Knob 2 runs out of room — because the ceiling eventually IS the
+      # machine (a private `ubuntu-latest` is an 8GB box). A downstream fork of
+      # ~4,500 files peaked at 6.36GB and OOM'd at a 6144 cap; at 4 chunks it
+      # completes at 5.20GB.
+      #
+      # Chunking is NOT free — each chunk rebuilds the ~2.6GB TypeScript Program,
+      # which took that fork's cold lint from 1m23s to 6m51s. So it defaults off
+      # and a fork turns it on when its lint aborts with exit 134:
+      #
+      #     gh variable set CI_LINT_CHUNKS --body 4
+      #
+      # Sequential chunks in ONE job rather than a matrix of N jobs, deliberately:
+      # Actions bills per job rounded up to the minute, so a fan-out pays N
+      # checkouts and N `npm ci`s for setup it throws away. This trades
+      # wall-clock instead, the cheaper currency.
+      #
+      # `.github/workflows/lint-memory-probe.yml` re-measures on a runner. Re-run
+      # it rather than reasoning about it: peak RSS is partly a function of the
+      # cap, and a developer laptop cannot reproduce these numbers.
+      # See `.context/architecture/ci.md` Knob 4.
       - name: ESLint (code changes only)
         if: needs.config.outputs.code == 'true'
-        run: npm run lint
+        env:
+          LINT_CHUNKS: ${{ vars.CI_LINT_CHUNKS || 1 }}
+        run: npm run lint:ci
       - run: npm run format:check
       # CHANGELOG.md is the one file a fork reads before deciding what an
       # upgrade will cost it, and the release process edits it by text

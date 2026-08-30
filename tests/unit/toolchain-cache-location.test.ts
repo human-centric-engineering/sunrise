@@ -34,13 +34,16 @@
  * ---------------------------------------------------------------------------
  * WHAT THIS DOES NOT CATCH
  * ---------------------------------------------------------------------------
- *   • Cache locations set anywhere other than the four call sites read here
+ *   • Cache locations set anywhere other than the call sites read here
  *     (`package.json` scripts, `.lintstagedrc.json`) — an `.eslintrc`-style
- *     config key, a `NODE_OPTIONS`-ish env var, or a fork's own wrapper script.
+ *     config key, or a `NODE_OPTIONS`-ish env var. A fork's own *wrapper* script
+ *     IS covered as of #687: a `--cache` command that names no tool is resolved
+ *     by reading the script it runs (see `toolFor`), which is how `lint:ci`'s
+ *     `node scripts/ci/chunked-lint.mjs` is classified as an eslint site.
  *   • Whether the cache is *effective*. A location can be correct and the
  *     strategy still wrong; `--cache-strategy content` is what makes a fresh
  *     checkout's reset mtimes not invalidate it, and that is asserted here only
- *     to the extent that both eslint call sites must agree on it.
+ *     to the extent that every eslint call site must agree on it.
  *   • Any other `actions/cache` entry in the workflow. The build job's
  *     `.next/cache` is deliberately unconstrained — that one *is* build output.
  *
@@ -103,9 +106,45 @@ function cachingCallSites(): { site: string; command: string }[] {
       }))
   );
 
-  return [...scripts, ...lintStaged].filter(
-    ({ command }) => /\b(eslint|prettier)\b/.test(command) && command.includes('--cache')
-  );
+  // ANY command passing a bare `--cache` is a caching call site, whatever it
+  // spells the tool. The previous rule required the word `eslint` or `prettier`
+  // in the command itself, which stopped being total the moment `lint:ci`
+  // started invoking eslint through a wrapper: `node scripts/ci/chunked-lint.mjs
+  // --cache …` contains neither word, so the guard would have skipped a real
+  // caching site in silence — the exact shape of drift it exists to catch.
+  return [...scripts, ...lintStaged].filter(({ command }) => /(^|\s)--cache(\s|$)/.test(command));
+}
+
+/**
+ * Which tool a caching command actually runs: `'prettier'` or `'eslint'`.
+ *
+ * Derived, not rostered. A command naming the tool answers directly; one that
+ * shells out to a local script (`node scripts/ci/chunked-lint.mjs`) is answered
+ * by READING that script and seeing which tool it drives. That keeps a future
+ * wrapper working without an edit here, which a hardcoded list of wrapper names
+ * would not.
+ *
+ * Returns `null` when it cannot tell, and the caller fails on that rather than
+ * guessing. Defaulting an unrecognised command to eslint would hand it
+ * `.eslintcache` — a root-level answer that passes every rule below while
+ * describing a file the command may never write.
+ */
+function toolFor(command: string): 'prettier' | 'eslint' | null {
+  if (/\bprettier\b/.test(command)) return 'prettier';
+  if (/\beslint\b/.test(command)) return 'eslint';
+
+  const script = /\bnode\s+(\S+\.[cm]?js)\b/.exec(command)?.[1];
+  if (!script) return null;
+  const source = (() => {
+    try {
+      return read(script);
+    } catch {
+      return '';
+    }
+  })();
+  if (/\bprettier\b/.test(source)) return 'prettier';
+  if (/\beslint\b/.test(source)) return 'eslint';
+  return null;
 }
 
 /**
@@ -126,7 +165,14 @@ function cachingCallSites(): { site: string; command: string }[] {
 function cacheFileFor(command: string): string {
   const explicit = /--cache-location[= ]+(\S+)/.exec(command)?.[1];
   if (explicit) return explicit.replace(/\/$/, '');
-  return /\bprettier\b/.test(command) ? PRETTIER_DEFAULT_CACHE : ESLINT_DEFAULT_CACHE;
+
+  const tool = toolFor(command);
+  expect(
+    tool,
+    `cannot tell which tool "${command}" caches with, so cannot tell where it writes`
+  ).not.toBeNull();
+
+  return tool === 'prettier' ? PRETTIER_DEFAULT_CACHE : ESLINT_DEFAULT_CACHE;
 }
 
 /** The `path:` entries of the lint job's `actions/cache` step, as written. */
@@ -159,6 +205,7 @@ describe('toolchain cache locations', () => {
     expect(sites).toEqual(
       expect.arrayContaining([
         'package.json "lint"',
+        'package.json "lint:ci"',
         'package.json "lint:fix"',
         'package.json "format"',
         'package.json "format:check"',
@@ -183,9 +230,16 @@ describe('toolchain cache locations', () => {
   it('keeps both eslint call sites on the same cache strategy', () => {
     // They share one cache file, so a metadata-strategy writer and a
     // content-strategy writer would fight over the same entries.
-    const eslintSites = cachingCallSites().filter(({ command }) => /\beslint\b/.test(command));
+    // Selected by DERIVED tool, so a wrapper that spawns eslint is held to the
+    // same rule as one that names it — `lint:ci` is the first such site.
+    const eslintSites = cachingCallSites().filter(({ command }) => toolFor(command) === 'eslint');
 
     expect(eslintSites.length).toBeGreaterThan(1);
+    // `lint:ci` reaches eslint through a wrapper, so it is only in this set if
+    // `toolFor` read the script. Named explicitly because a silently-empty
+    // classification would leave the loop below asserting over three sites
+    // instead of four and still pass.
+    expect(eslintSites.map(({ site }) => site)).toContain('package.json "lint:ci"');
     for (const { site, command } of eslintSites) {
       expect(command, `${site} must pass --cache-strategy content`).toContain(
         '--cache-strategy content'

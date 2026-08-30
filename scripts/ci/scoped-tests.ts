@@ -312,12 +312,29 @@ function hasControlCharacter(value: string): boolean {
 /**
  * Changed paths worth asking for coverage on.
  *
- * Deliberately thin: TypeScript sources, minus tests and type declarations.
- * Everything else — layouts, `lib/env.ts`, `types/**`, `emails/**` — is left to
- * `vitest.config.ts`'s own `coverage.exclude`, which still applies over a CLI
- * `--coverage.include` (verified against vitest 4.1.10). One source of truth
- * for what coverage ignores, so this cannot drift away from the config the way
- * a second copied exclusion list would.
+ * Deliberately thin: JavaScript and TypeScript sources, minus tests and type
+ * declarations. Everything else — layouts, `lib/env.ts`, `types/**`,
+ * `emails/**` — is left to `vitest.config.ts`'s own `coverage.exclude`, which
+ * still applies over a CLI `--coverage.include` (verified against vitest
+ * 4.1.10). One source of truth for what coverage ignores, so this cannot drift
+ * away from the config the way a second copied exclusion list would.
+ *
+ * **`.mjs` counts, and used not to.** This filter read `.ts`/`.tsx` only, so
+ * every `.mjs` in the tree bypassed the per-file floor #647 added — silently,
+ * which is the failure mode this whole runner is written against. It is not a
+ * hypothetical corner: `scripts/ci/**` is deliberately NOT excluded from
+ * coverage, and `scripts/run-capped.mjs`, `scripts/dev-server.mjs` and
+ * `scripts/ci/chunked-lint.mjs` are ordinary unit-tested tooling that the gate
+ * simply could not see. The fork that found it measured a new `.mjs` at 78.66%
+ * lines with `/pre-pr` reporting PASS.
+ *
+ * The extension list is the one `vitest.config.ts` already instruments (the v8
+ * provider handles `.mjs`/`.cjs` exactly like `.ts`), so widening it here needed
+ * two matching `coverage.exclude` entries there — `lib/app/eslint.config.mjs`
+ * and `scripts/spikes/**`, both structurally 0% and neither production code.
+ * The fork-owned config seam is the load-bearing one: without its exclusion a
+ * fork editing its own `lib/app/eslint.config.mjs` would fail a coverage gate
+ * on a file Sunrise ships as `export default []`.
  *
  * Note the asymmetry with `scripts/ci/missing-tests.ts`, which keeps its own
  * exemption list on purpose: that check asks "should a human have written a
@@ -328,7 +345,7 @@ function hasControlCharacter(value: string): boolean {
 export function coverageTargets(changed: readonly string[]): string[] {
   return (
     changed
-      .filter((path) => path.endsWith('.ts') || path.endsWith('.tsx'))
+      .filter((path) => /\.[cm]?[jt]sx?$/.test(path))
       .filter((path) => !path.endsWith('.d.ts'))
       .filter((path) => !path.startsWith('tests/'))
       // Colocated tests too, not just the `tests/` tree. The selection side was

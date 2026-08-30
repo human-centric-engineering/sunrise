@@ -16,6 +16,44 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`CI_LINT_CHUNKS` — a repo variable that lowers what lint *needs*, once
+  raising `CI_NODE_HEAP_MB` has run out of room.** Knob 2 raises the ceiling;
+  this is the lever for after the ceiling becomes the machine, since a private
+  `ubuntu-latest` is an 8GB box and a cap above physical RAM turns a clean V8
+  abort into an OOM kill. `npm run lint:ci`
+  (`scripts/ci/chunked-lint.mjs`) lints the identical file set as N sequential
+  eslint processes, so the job's peak is the largest chunk rather than the whole
+  tree. **Defaults to 1 — exactly today's whole-tree `eslint .`** — because base
+  Sunrise has never approached its heap ceiling and each chunk re-pays the ~2.6GB
+  TypeScript Program. A downstream fork of 4,527 lintable files peaked at 6.36GB
+  and OOM'd at a 6144 cap; at 4 chunks it completes at 5.20GB. Raise it with
+  `gh variable set CI_LINT_CHUNKS --body 4` when lint aborts with exit 134.
+  Sequential chunks in one job rather than a job matrix, because Actions bills
+  per job rounded up to the minute and a fan-out pays N checkouts and N
+  `npm ci`s for setup it throws away. `npm run lint` is unchanged for local use.
+  A dispatch-only `lint-memory-probe.yml` re-measures the table on your own
+  runner. See [`.context/architecture/ci.md`](./.context/architecture/ci.md)
+  Knob 4.
+
+### Fixed
+
+- **`.mjs` files bypassed the per-file coverage floor entirely.** The scoped
+  test runner's `coverageTargets` filtered changed paths to `.ts`/`.tsx`, so
+  every `.mjs` in the tree fell out of the ≥80% per-file gate #647 added —
+  silently, which is the failure mode that runner is written against.
+  `scripts/ci/**` is deliberately *not* excluded from coverage, so
+  `scripts/run-capped.mjs`, `scripts/dev-server.mjs` and the new
+  `scripts/ci/chunked-lint.mjs` are ordinary unit-tested tooling the gate simply
+  could not see; the fork that found it measured a new `.mjs` at 78.66% lines
+  with `/pre-pr` reporting PASS. Widening the filter made two structurally-0%
+  files reachable, so both are now named in `vitest.config.ts`'s
+  `coverage.exclude`: `scripts/spikes/**`, and — load-bearing for forks —
+  `lib/app/eslint.config.mjs`, the fork-owned ESLint seam Sunrise ships as
+  `export default []`, which a fork must be able to edit without failing a
+  coverage gate.
+
 ## [0.11.1] — 2026-08-25
 
 > **Alpha release.** Fifteenth tagged Sunrise release. **PATCH bump** — a

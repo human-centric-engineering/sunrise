@@ -1,0 +1,142 @@
+# Measures peak lint memory ON A RUNNER, which is the only place the number
+# means anything.
+#
+# WHY THIS EXISTS. `CI_NODE_HEAP_MB` (Knob 2) raises the lint job's ceiling, and
+# it works until the ceiling is the machine: a private-fork `ubuntu-latest` is an
+# 8GB box, so ~6144 is the practical maximum and "raise the heap" stops being
+# available. `CI_LINT_CHUNKS` (Knob 4) is the lever for after that, and choosing
+# a value for it needs a number.
+#
+# A DEVELOPER LAPTOP CANNOT SUPPLY THAT NUMBER. Three runs of the IDENTICAL
+# command on the machine this was designed on spanned 3.39-4.70GB — a 1.31GB
+# spread, against a saving worth ~1.5GB. Every local A/B was therefore
+# unfalsifiable, and the local->CI factor turned out to be 1.54x, not the 1.3x
+# first assumed. A runner is isolated, single-tenant, and is the environment that
+# actually has to hold.
+#
+# KEPT, not deleted, and shipped upstream even though base Sunrise does not need
+# it. It was written to settle one question and it did — see the table below —
+# but the question RECURS for every fork, at a different tree size, on a
+# different runner. Re-run it rather than reasoning about it. Two traps make
+# armchair tuning unreliable: peak RSS is partly a function of the CAP (V8 grows
+# lazily into available headroom and collects harder when it is scarce, so the
+# same 8-chunk run peaks at 5.50GB under 8192 and 4.35GB under 5120 — measuring
+# above your real ceiling systematically OVERSTATES what a run needs at it), and
+# the laptop problem above.
+#
+# Results from the downstream fork this was measured on, 28 Aug 2026, 4-core
+# runner, 4,527 lintable files (~2x base Sunrise), cold (`--no-cache`):
+#
+#     cap 6144   1 chunk  6.36GB  OOM
+#                2        5.75GB  ok  304s
+#                4        5.20GB  ok  339s
+#                6        4.98GB  ok  391s
+#     cap 5120   8        4.35GB  ok  436s
+#               16        3.95GB  ok  621s
+#               24        3.91GB  ok  821s
+#
+# Returns flatten hard past 6 because ~56% of the cost is a floor chunking cannot
+# touch: type-aware rules need the whole project's type graph before checking a
+# line, so every chunk rebuilds the TypeScript Program (2.64GB to lint ONE file).
+#
+# Reads `Maximum resident set size` from GNU `/usr/bin/time -v` (the runner is
+# Linux; the `-l` form used locally is BSD/macOS). That field is in KILOBYTES.
+name: Lint memory probe
+
+on:
+  # Dispatch only. It gates nothing, runs on no PR, and costs nothing until
+  # someone asks a question with it.
+  workflow_dispatch:
+    inputs:
+      chunks:
+        description: 'Comma-separated LINT_CHUNKS values to measure (1 = control, no chunking)'
+        required: false
+        default: '1,2,4,6'
+      heap:
+        description: 'V8 old-space cap in MB. Set this to the ceiling you actually have to survive, not above it.'
+        required: false
+        default: '6144'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Peak RSS per chunk count
+    runs-on: ubuntu-latest
+    # Generous: the control arm is a whole-tree lint, and a chunked arm pays the
+    # TypeScript Program once per chunk, so 8 chunks is meaningfully slower.
+    timeout-minutes: 60
+    env:
+      # Defaults to a realistic private-runner ceiling, NOT something above it.
+      # An earlier draft capped at 8192 to "measure the peak, not be killed at
+      # it" — but peak RSS is partly a function of the cap (see the header), so a
+      # measurement taken above the ceiling overstates what a run needs at it.
+      # Survival at the real cap is the verdict; an arm that OOMs says so in its
+      # own row rather than aborting the table.
+      #
+      # Bound through `env:` rather than interpolated into the `run:` block
+      # below. `${{ … }}` is substituted as literal text BEFORE the shell parses
+      # it, so a quote in a dispatch input would escape the string and execute —
+      # the standard Actions script-injection shape. Dispatch already needs write
+      # access so this is not a privilege boundary, but the pattern costs nothing
+      # to avoid and should not be copied from here into somewhere it matters.
+      HEAP_MB: ${{ inputs.heap || '6144' }}
+      ARMS_RAW: ${{ inputs.chunks || '1,2,4,6' }}
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Runner facts
+        run: |
+          echo "cores:  $(nproc)"
+          echo "memory: $(free -g | awk '/^Mem:/{print $2}') GB"
+          echo "files:  $(node --input-type=module -e "
+            import {lintTargets} from './scripts/ci/chunked-lint.mjs';
+            console.log((await lintTargets()).length);")"
+
+      - name: Measure
+        run: |
+          # `--no-cache` everywhere: a warm cache would measure a cache hit, and
+          # the run that has to survive is the COLD one. ESLint keys cache
+          # entries on the resolved config, so a `typescript-eslint` bump
+          # invalidates every entry — which is why the PR that breaks CI is
+          # usually a Dependabot dev-dependency bump.
+          IFS=',' read -ra ARMS <<< "$ARMS_RAW"
+          # Fenced: $GITHUB_STEP_SUMMARY renders as Markdown, so an unfenced
+          # printf table loses its column alignment and the rows run together
+          # into one paragraph — unreadable in exactly the place the result is
+          # meant to be read.
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "heap cap: ${HEAP_MB} MB" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '%-8s %-12s %-7s %s\n' "chunks" "peak" "result" "seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+          for n in "${ARMS[@]}"; do
+            start=$(date +%s)
+            # `|| true` — a lint ERROR is not a probe failure. We are measuring
+            # memory, and stopping on a rule violation would abandon the
+            # remaining arms and produce a partial table.
+            LINT_CHUNKS="$n" NODE_OPTIONS="--max-old-space-size=${HEAP_MB}" /usr/bin/time -v \
+              node scripts/ci/chunked-lint.mjs --no-cache \
+              > "/tmp/lint-$n.log" 2> "/tmp/time-$n.log" || true
+            kb=$(grep "Maximum resident set size" "/tmp/time-$n.log" | grep -oE '[0-9]+$')
+            # SURVIVAL is the real verdict at a realistic cap: a V8 abort prints
+            # this and exits 134, which `|| true` would otherwise hide.
+            if grep -qE "JavaScript heap out of memory|Allocation failed" "/tmp/time-$n.log" "/tmp/lint-$n.log"; then
+              verdict="OOM"
+            else
+              verdict="ok"
+            fi
+            printf '%-8s %-12s %-7s %s\n' \
+              "$n" \
+              "$(awk -v k="${kb:-0}" 'BEGIN{printf "%.2f GB", k/1048576}')" \
+              "$verdict" \
+              "$(( $(date +%s) - start ))" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Set the winning value with: gh variable set CI_LINT_CHUNKS --body <n>" >> "$GITHUB_STEP_SUMMARY"
