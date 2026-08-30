@@ -504,21 +504,29 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     const config = readFileSync('vitest.config.ts', 'utf8');
     const start = config.indexOf('coverage: {');
     expect(start).toBeGreaterThan(-1);
+    // Strip `//` to end of line FIRST, before either finding the closing bracket
+    // or reading string literals. Entries in that list carry prose reasons both
+    // ABOVE them and TRAILING on the same line (`'app/**/layout.tsx', // Exclude
+    // layouts from coverage`), and an apostrophe in either ("a fork's sync
+    // merge") would otherwise open a string literal and hand back paragraphs of
+    // comment as if they were patterns. Dropping only whole-line comments — the
+    // first attempt at this — left the trailing ones live. Safe to strip to end
+    // of line because no pattern in the list contains `//`, which the assertion
+    // below pins.
+    //
+    // Stripping BEFORE `indexOf(']')` is what #687 had to fix. The bracket
+    // search used to run against the raw text, so a `]` written inside one of
+    // those prose reasons — an exclusion explained as "Sunrise ships this as
+    // `export default []`" — ended the list early and silently handed back the
+    // first six patterns. The parse still looked healthy; it just described a
+    // shorter config than the one on disk.
     const block = config.slice(config.indexOf('exclude: [', start));
-    const body = block.slice('exclude: ['.length, block.indexOf(']'));
-    // Strip `//` to end of line before reading string literals. Entries in that
-    // list carry prose reasons both ABOVE them and TRAILING on the same line
-    // (`'app/**/layout.tsx', // Exclude layouts from coverage`), and an
-    // apostrophe in either ("a fork's sync merge") would otherwise open a
-    // string literal and hand back paragraphs of comment as if they were
-    // patterns. Dropping only whole-line comments — the first attempt at this —
-    // left the trailing ones live. Safe to strip to end of line because no
-    // pattern in the list contains `//`, which the assertion below pins.
-    const source = body
+    const stripped = block
       .split('\n')
       .map((line) => line.replace(/\/\/.*$/, ''))
       .join('\n');
-    return Array.from(source.matchAll(/'([^']+)'/g)).map((match) => match[1]);
+    const body = stripped.slice('exclude: ['.length, stripped.indexOf(']'));
+    return Array.from(body.matchAll(/'([^']+)'/g)).map((match) => match[1]);
   }
 
   it('no exclusion pattern contains `//`, which the comment stripper assumes', () => {
@@ -533,6 +541,11 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     const exclusions = coverageExclusions();
     expect(exclusions.length).toBeGreaterThan(10);
     expect(exclusions).toContain('tests/');
+    // The LAST entry specifically. A truncating parse keeps the early ones and
+    // loses the tail, so asserting only on `tests/` (the second entry) passes
+    // happily against a list cut off six patterns in — which is exactly how the
+    // `]`-in-a-comment bug reached a full suite run before anything noticed.
+    expect(exclusions).toContain('lib/env.ts');
   });
 
   it.each(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((entry) => entry.pattern))(

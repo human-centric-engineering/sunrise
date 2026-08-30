@@ -176,6 +176,26 @@ export const NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION: ReadonlyArray<{
       'pure logic of its own, the `*-assertions.ts` convention keeps it gated.',
   },
   {
+    pattern: 'lib/app/eslint.config.mjs',
+    reason:
+      'coverage skips the fork-owned ESLint seam because Sunrise ships it as ' +
+      '`export default []` and nothing imports it into a test, so its 0% is ' +
+      'structural — and a fork editing its OWN seam must not fail a coverage ' +
+      'gate on the file it is invited to edit. 4f still asks, and should: the ' +
+      'seam is a named public surface, and the moment a fork puts real ' +
+      'flat-config blocks there the question is a fair one. What upstream ' +
+      'guarantees about it is asserted by `tests/unit/eslint-app-boundary.test.ts`.',
+  },
+  {
+    pattern: 'scripts/spikes/**',
+    reason:
+      'same category as the smoke harnesses below: `rls-isolation-spike.mjs` ' +
+      'is a standalone entry point run by hand against a real database, so ' +
+      'vitest never executes it and its 0% is structural rather than a gap. ' +
+      '4f still asks — it reports and never gates, so a spike is answered in ' +
+      'review rather than silenced here.',
+  },
+  {
     pattern: 'scripts/smoke/!(*-assertions).ts',
     reason:
       'coverage skips the harnesses because vitest never executes these ' +
