@@ -458,13 +458,17 @@ export function main(
   // enters that gate at all. Left on `paths`, a sync merge that merely carried
   // in a filename containing a tab would abort the whole run for a reason that
   // no longer applied to it.
+  //
+  // The extension test MUST track `coverageTargets`'s own, and did not: that
+  // widened to every JS/TS extension (#687) while this stayed on `.ts`/`.tsx`,
+  // so a C-quoted `scripts/ci/new\ttool.mjs` dropped out of the coverage gate
+  // AND slipped past the guard that exists to make that drop loud — the same
+  // silent bypass #687 was fixing, just relocated to the new extensions.
   const quotedSources = wantsCoverage
-    ? gateable.filter(
-        (path) => path.startsWith('"') && (path.endsWith('.ts"') || path.endsWith('.tsx"'))
-      )
+    ? gateable.filter((path) => path.startsWith('"') && /\.[cm]?[jt]sx?"$/.test(path))
     : [];
   if (quotedSources.length > 0) {
-    console.error(`Could not read ${quotedSources.length} changed TypeScript path(s):`);
+    console.error(`Could not read ${quotedSources.length} changed source path(s):`);
     for (const path of quotedSources) console.error(`  ${path}`);
     console.error('git C-quotes a filename containing a tab, newline or quote. Nothing was run,');
     console.error('because these would drop out of the coverage gate in silence.');

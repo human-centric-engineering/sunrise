@@ -346,7 +346,12 @@ export function coverageTargets(changed: readonly string[]): string[] {
   return (
     changed
       .filter((path) => /\.[cm]?[jt]sx?$/.test(path))
-      .filter((path) => !path.endsWith('.d.ts'))
+      // `.d.mts` / `.d.cts` too, not just `.d.ts`. The extension filter above
+      // now admits `.mts`/`.cts`, and `vitest.config.ts` excludes only
+      // `**/*.d.ts` — so a fork's `lib/foo.d.mts` would reach
+      // `--coverage.include` under `perFile` and fail the 80% floor on a file
+      // with no executable code in it at all.
+      .filter((path) => !/\.d\.[cm]?ts$/.test(path))
       .filter((path) => !path.startsWith('tests/'))
       // Colocated tests too, not just the `tests/` tree. The selection side was
       // deliberately widened to accept a fork's `.spec.ts` files, so this side

@@ -58,6 +58,17 @@
 // PLAIN .mjs, NO BUILD STEP — same rule as `run-capped.mjs` and
 // `dev-server.mjs`. It runs from `npm run lint:ci` in a fresh checkout.
 //
+// POSIX AND CI ONLY, and this is the one place that matters. Every file is
+// passed as argv, which on this tree is 2,340 paths / ~125,000 characters —
+// four times Windows' 32,767-character `CreateProcess` limit, and `shell: false`
+// does not help. So `lint:ci` cannot run on Windows below roughly five chunks,
+// and should not be relied on there at any count. `resolveEslintCommand` is
+// still written Windows-correctly (see its `.cmd`/CVE-2024-27980 note) because
+// being half-portable is not a reason to be casually wrong; but the file list
+// is the hard limit. Windows developers use `npm run lint`, which passes `.`
+// and is unaffected. If a fork ever needs this on Windows, the fix is a
+// temp-file list, not more chunks.
+//
 // NOT ROUTED THROUGH `run-capped.mjs`, deliberately. That wrapper spawns with
 // `shell: true` on Windows and quotes only the command, so a caller whose argv
 // is filenames hands `cmd.exe` whatever `&` or `^` a path contains — its own
@@ -67,10 +78,23 @@
 // otherwise have done for it.
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { constants } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 import { ESLint } from 'eslint';
+
+// Relative, not `@/` — this file is plain .mjs executed by node before anything
+// is compiled, so the alias would not resolve at runtime.
+//
+// Importing PURE HELPERS from the wrapper is not the same as routing through
+// it: the header above explains why this script must not hand its argv to
+// `run-capped.mjs` (that wrapper spawns with `shell: true` on Windows and our
+// argv is filenames). `resolveHeapMb` and `buildEnv` spawn nothing. Sharing
+// them is what stops this file's cap drifting from the one the rest of the
+// toolchain uses — which it had already done: it applied a flat 6144 while
+// claiming in a comment to "match run-capped.mjs", which clamps.
+import { buildEnv, resolveHeapMb, DEFAULT_HEAP_MB } from '../run-capped.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IS_WINDOWS = process.platform === 'win32';
@@ -113,10 +137,6 @@ export const LINTABLE = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '
  * 4 -> 5.20GB, 6 -> 4.98GB. See `.context/architecture/ci.md` Knob 4.
  */
 export const DEFAULT_CHUNKS = 1;
-
-/** Cap applied when the environment carries none. Matches `run-capped.mjs`'s
- * value, and comfortably clears the measured 2.64GB floor. */
-export const DEFAULT_HEAP_MB = 6144;
 
 /**
  * Parse `LINT_CHUNKS`. A garbage value falls back rather than failing the run —
@@ -357,19 +377,27 @@ export function resolveEslintCommand() {
  * reproducing a CI lint failure, a fork on a different runner) there is nothing
  * else to supply one.
  *
- * Matches `run-capped.mjs`: append to `NODE_OPTIONS` rather than passing
- * `--max-old-space-size` on the command line, and only when no cap is already
- * present, so an explicit value always wins.
+ * Delegates to `run-capped.mjs` rather than restating it, so "matches
+ * run-capped" is enforced by construction instead of by a comment. It appends
+ * to `NODE_OPTIONS` rather than passing `--max-old-space-size` on the command
+ * line, and only when no cap is already present, so an explicit value wins.
+ *
+ * THE CLAMP IS THE PART THAT WAS MISSING. `resolveHeapMb` reduces the request
+ * to 75% of physical memory, floored at whatever Node would have picked
+ * unaided. Without it this handed every machine a flat 6144 — and the very user
+ * this function exists for, a developer reproducing a CI lint failure on an 8GB
+ * laptop or in a 4GB container, got a ceiling the box cannot back. That turns
+ * the readable `JavaScript heap out of memory` abort into an opaque OS OOM
+ * kill, which is the trade `run-capped.mjs` documents and refuses.
  *
  * @param {Record<string, string | undefined>} env
+ * @param {{ heapMb?: number }} [deps] `heapMb` injected so a test can assert an
+ *   exact value without depending on the machine it runs on.
  * @returns {Record<string, string | undefined>}
  */
-export function withHeapCap(env) {
-  if (/(^|\s)--max[-_]old[-_]space[-_]size(\s|=|$)/.test(env.NODE_OPTIONS ?? '')) {
-    return { ...env };
-  }
-  const existing = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ` : '';
-  return { ...env, NODE_OPTIONS: `${existing}--max-old-space-size=${DEFAULT_HEAP_MB}` };
+export function withHeapCap(env, deps = {}) {
+  const { heapMb = resolveHeapMb({ requestedMb: DEFAULT_HEAP_MB }) } = deps;
+  return buildEnv(env, heapMb);
 }
 
 /**
@@ -416,7 +444,26 @@ export function runChunk(files, passthrough, deps = {}) {
       console.error(`Failed to start eslint: ${error.message}`);
       resolveCode(1);
     });
-    child.on('exit', (code) => resolveCode(code ?? 1));
+    child.on('exit', (code, signal) => {
+      // A V8 heap abort raises SIGABRT, so `code` is null and `signal` carries
+      // the answer. Collapsing that to 1 — which this did — destroys the ONE
+      // diagnostic the docs hand a fork: `ci.md` Knob 4, the `ci.yml` step
+      // comment and the CHANGELOG all say "raise this when lint aborts with
+      // exit 134". Reporting 1 for the exact failure the knob exists to fix
+      // means the documented trigger never appears.
+      //
+      // `128 + signum` is the shell's own convention for a signalled child, so
+      // SIGABRT (6) surfaces as 134 exactly as an unwrapped `eslint` would.
+      // `run-capped.mjs` re-raises the signal instead; that is right for a
+      // single-child wrapper but wrong here, because re-raising mid-plan would
+      // abandon the remaining chunks and report a fraction of the problems.
+      if (signal) {
+        const signum = constants.signals[signal];
+        resolveCode(signum ? 128 + signum : 1);
+        return;
+      }
+      resolveCode(code ?? 1);
+    });
   });
 }
 
@@ -462,4 +509,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   process.exit(await main());
 }
 
-export { ROOT };
+// Re-exported so this module stays self-describing: a reader (and its test)
+// asks chunked-lint what cap it uses without having to know it borrows the
+// number from `run-capped.mjs`.
+export { ROOT, DEFAULT_HEAP_MB };

@@ -23,6 +23,8 @@
  * @see .context/architecture/ci.md § Knob 4: CI_LINT_CHUNKS
  */
 
+import { totalmem } from 'node:os';
+
 import { describe, it, expect, vi } from 'vitest';
 
 // Plain .mjs with no type declarations, by design: it must run from
@@ -334,35 +336,54 @@ describe('lintTargets against the real tree', () => {
   });
 
   it('covers every extension the real ESLint config actually configures', async () => {
-    // LINTABLE is a roster, and this file's whole thesis is that a roster is how
-    // files go missing. So it is checked against ESLint itself rather than
-    // against a second hand-written list: for each candidate extension, ask
-    // whether the flat config supplies rules for a file of that shape. If it
-    // does and LINTABLE omits it, that file type would be dropped from every
-    // plan in silence.
+    // LINTABLE is a roster, and this file's thesis is that a roster is how files
+    // go missing. So the extensions are read out of the CONFIG, never out of a
+    // candidate list written here.
     //
-    // Both shapes are probed because `eslint.config.mjs` configures
-    // `*.config.{ts,mts,js,mjs,cjs}` — `.mts` is reachable ONLY as a config
-    // filename, which a bare `probe.mts` would miss. That is exactly the case
-    // this guard was written for.
-    const { ESLint } = await import('eslint');
-    const eslint = new ESLint();
-    const candidates = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
+    // The first version of this test did keep such a list — and a review caught
+    // that it was a verbatim copy of LINTABLE, which made the assertion
+    // `LINTABLE ⊇ (a subset of LINTABLE)`: vacuous for the one case that
+    // matters. A fork adding `files: ['**/*.vue']` would never put `.vue` in the
+    // candidate list, so the probe would never report it, and every `.vue` file
+    // would drop out of the plan in silence — the exact 139-file failure this
+    // module's header is written against.
+    //
+    // Reading `eslint.config.mjs`'s resolved array covers a fork automatically,
+    // because the root config spreads `lib/app/eslint.config.mjs` (the fork-owned
+    // seam) into the same array.
+    const config = (await import('@/eslint.config.mjs')).default as { files?: unknown }[];
+    const globs = config
+      .flatMap((block) => (Array.isArray(block?.files) ? block.files : []))
+      .filter((glob): glob is string => typeof glob === 'string');
 
-    const configured: string[] = [];
-    for (const ext of candidates) {
-      for (const probe of [`probe${ext}`, `probe.config${ext}`]) {
-        const config = await eslint.calculateConfigForFile(probe);
-        if (Object.keys(config?.rules ?? {}).length > 0) {
-          configured.push(ext);
-          break;
-        }
+    const configured = new Set<string>();
+    for (const glob of globs) {
+      // `**/*.{ts,tsx}` and `*.config.{ts,mts,js,mjs,cjs}` -> the braced list;
+      // `**/*.tsx` -> the single trailing extension.
+      const braced = /\.\{([^}]+)\}$/.exec(glob);
+      if (braced) {
+        for (const ext of braced[1].split(',')) configured.add(`.${ext.trim()}`);
+        continue;
       }
+      const single = /\.([A-Za-z0-9]+)$/.exec(glob);
+      if (single) configured.add(`.${single[1]}`);
     }
 
-    // Guard the guard: if this found nothing it is proving nothing.
-    expect(configured.length).toBeGreaterThan(3);
-    expect(LINTABLE).toEqual(expect.arrayContaining(configured));
+    // Guard the guard: an empty or tiny set would make the assertion vacuous
+    // all over again, which is the bug this rewrite exists to fix.
+    expect(globs.length).toBeGreaterThan(5);
+    expect(configured.size).toBeGreaterThan(3);
+    expect(configured).toContain('.tsx');
+    // `.mts` is reachable ONLY through `*.config.{ts,mts,…}` — the case that
+    // was actually missing from LINTABLE, and proof the parse reads braces.
+    expect(configured).toContain('.mts');
+
+    const uncovered = [...configured].filter((ext) => !LINTABLE.includes(ext));
+    expect(
+      uncovered,
+      `eslint.config.mjs configures ${uncovered.join(', ')}, which LINTABLE omits — ` +
+        `every such file would be dropped from the lint plan in silence`
+    ).toEqual([]);
   });
 
   it('plans a real run that still partitions the real file list exactly', async () => {
@@ -396,10 +417,33 @@ describe('runChunk', () => {
   });
 
   it('treats a signal-killed child as a failure', async () => {
-    // A chunk OOM-killed by the runner exits with a null code. Coercing that to
-    // 0 would report success for the exact failure this script exists to avoid.
+    // A chunk killed with no code and no signal name is still a failure.
+    // Coercing that to 0 would report success for the exact failure this script
+    // exists to avoid.
     const spawnFn = vi.fn(() => fakeChild((h) => h.exit?.(null as never)));
     await expect(runChunk(['a.ts'], [], { spawnFn, command: ['eslint'] })).resolves.toBe(1);
+  });
+
+  it('surfaces a V8 heap abort as exit 134, the code the docs tell forks to look for', async () => {
+    // A V8 OOM raises SIGABRT, so `code` is null and the signal carries the
+    // answer. This used to collapse to 1 — which silently broke the ONE
+    // diagnostic on offer: `ci.md` Knob 4, the ci.yml step comment and the
+    // CHANGELOG all say "raise CI_LINT_CHUNKS when lint aborts with exit 134".
+    // Reporting 1 for precisely the failure the knob fixes means the documented
+    // trigger never appears, and the fork is left with an unexplained red job.
+    const spawnFn = vi.fn(() =>
+      fakeChild((h) => (h.exit as unknown as (c: null, s: string) => void)?.(null, 'SIGABRT'))
+    );
+    await expect(runChunk(['a.ts'], [], { spawnFn, command: ['eslint'] })).resolves.toBe(134);
+  });
+
+  it('maps an interrupt to 130 rather than pretending it lints', async () => {
+    // Same rule, different signal: SIGINT (2) -> 130. Guards against the fix
+    // above being special-cased to SIGABRT alone.
+    const spawnFn = vi.fn(() =>
+      fakeChild((h) => (h.exit as unknown as (c: null, s: string) => void)?.(null, 'SIGINT'))
+    );
+    await expect(runChunk(['a.ts'], [], { spawnFn, command: ['eslint'] })).resolves.toBe(130);
   });
 
   it('never spawns through a shell — the argv is filenames', async () => {
@@ -473,9 +517,36 @@ describe('withHeapCap', () => {
     // Without this, `lint:ci` outside CI inherits Node's default heap (~2GB on
     // an 8GB box), which is BELOW the 2.64GB floor one chunk needs — so every
     // chunk aborts with exit 134, the failure this script exists to prevent.
-    expect((withHeapCap({}) as { NODE_OPTIONS: string }).NODE_OPTIONS).toBe(
-      `--max-old-space-size=${DEFAULT_HEAP_MB}`
+    //
+    // `heapMb` is injected rather than asserted against `DEFAULT_HEAP_MB`,
+    // because the real value is CLAMPED to the machine — a 4GB CI runner
+    // resolves 3072, and a test pinning 6144 would pass here and fail there.
+    expect((withHeapCap({}, { heapMb: 6144 }) as { NODE_OPTIONS: string }).NODE_OPTIONS).toBe(
+      '--max-old-space-size=6144'
     );
+  });
+
+  it('never hands the machine a ceiling it cannot back', () => {
+    // The divergence a review caught: this applied a flat 6144 while its own
+    // comment claimed to match `run-capped.mjs`, which clamps to 75% of
+    // physical memory. On the box this function is written for — a developer
+    // reproducing a CI lint failure on 8GB, or a 4GB container — an unbacked
+    // ceiling turns a readable V8 abort into an opaque OS OOM kill.
+    //
+    // Asserted as a PROPERTY against this machine's own memory, so it holds on
+    // any runner rather than encoding one box's answer.
+    const applied = Number(
+      /--max-old-space-size=(\d+)/.exec(
+        (withHeapCap({}) as { NODE_OPTIONS: string }).NODE_OPTIONS
+      )?.[1]
+    );
+    const affordable = Math.floor((totalmem() * 0.75) / (1024 * 1024));
+
+    // Two invariants, both load-bearing: never above what the machine can
+    // back, and never above what was asked for.
+    expect(applied).toBeGreaterThan(0);
+    expect(applied).toBeLessThanOrEqual(affordable);
+    expect(applied).toBeLessThanOrEqual(DEFAULT_HEAP_MB);
   });
 
   it("defers to a cap already set, so CI's value always wins", () => {
@@ -495,10 +566,10 @@ describe('withHeapCap', () => {
   });
 
   it('appends rather than replacing other NODE_OPTIONS', () => {
-    const out = withHeapCap({ NODE_OPTIONS: '--enable-source-maps' }) as {
+    const out = withHeapCap({ NODE_OPTIONS: '--enable-source-maps' }, { heapMb: 6144 }) as {
       NODE_OPTIONS: string;
     };
-    expect(out.NODE_OPTIONS).toBe(`--enable-source-maps --max-old-space-size=${DEFAULT_HEAP_MB}`);
+    expect(out.NODE_OPTIONS).toBe('--enable-source-maps --max-old-space-size=6144');
   });
 
   it('leaves the rest of the environment alone', () => {

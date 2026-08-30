@@ -123,7 +123,12 @@ jobs:
             LINT_CHUNKS="$n" NODE_OPTIONS="--max-old-space-size=${HEAP_MB}" /usr/bin/time -v \
               node scripts/ci/chunked-lint.mjs --no-cache \
               > "/tmp/lint-$n.log" 2> "/tmp/time-$n.log" || true
-            kb=$(grep "Maximum resident set size" "/tmp/time-$n.log" | grep -oE '[0-9]+$')
+            # `|| true` is load-bearing: GitHub runs `run:` under `bash -e`, so
+            # a grep that matches nothing would exit the STEP and abandon every
+            # remaining arm — leaving a partial table that looks like a
+            # completed one. The `${kb:-0}` fallback below was written to print
+            # a 0.00 GB row and carry on, and without this it never runs.
+            kb=$(grep "Maximum resident set size" "/tmp/time-$n.log" | grep -oE '[0-9]+$') || true
             # SURVIVAL is the real verdict at a realistic cap: a V8 abort prints
             # this and exits 134, which `|| true` would otherwise hide.
             if grep -qE "JavaScript heap out of memory|Allocation failed" "/tmp/time-$n.log" "/tmp/lint-$n.log"; then
