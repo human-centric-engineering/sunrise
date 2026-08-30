@@ -75,8 +75,28 @@ import { ESLint } from 'eslint';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IS_WINDOWS = process.platform === 'win32';
 
-/** Extensions the flat config has `files` blocks for. */
-export const LINTABLE = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx'];
+/**
+ * Extensions the flat config has `files` blocks for.
+ *
+ * `.mts`/`.cts` are here for `eslint.config.mjs`'s `files:
+ * ['*.config.{ts,mts,js,mjs,cjs}']` block. The tree contains no such file today,
+ * so leaving them out changed nothing measurable — which is exactly why it was
+ * worth adding: a fork that lands a root `foo.config.mts` would otherwise have
+ * it dropped from the plan **in silence**, the one failure mode this script
+ * exists to prevent.
+ *
+ * Widening this cannot fail a run. A file no `files` block matches is reported
+ * by ESLint as `File ignored because no matching configuration was supplied` —
+ * a warning, exit 0 (verified against 9.39). So the cost of listing an extension
+ * the config does not configure is a visible line saying so, and the cost of
+ * omitting one it does configure is an unlinted file nobody hears about. Those
+ * are not symmetric, and this list errs toward the loud one.
+ *
+ * `tests/unit/scripts/ci/chunked-lint.test.ts` derives the set ESLint actually
+ * configures and asserts this covers it, so the roster cannot quietly fall
+ * behind a fork's config.
+ */
+export const LINTABLE = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
 
 /**
  * Chunks when nothing asks for a number: ONE, i.e. exactly today's behaviour.
@@ -256,8 +276,18 @@ export function chunk(items, count) {
  */
 export async function lintTargets(deps = {}) {
   const {
+    // `-z` (NUL-delimited), not newline-delimited. Without it `git ls-files`
+    // C-QUOTES any path containing a control character — wrapping it in `"` and
+    // escaping the byte — so the line no longer ends in a lintable extension and
+    // the file falls out of the plan without a word. `core.quotePath=false` does
+    // NOT cover this: it suppresses escaping of bytes >= 0x80 (non-ASCII names),
+    // not of control characters. It is kept for the non-ASCII half.
+    //
+    // `scripts/ci/scoped-tests.ts` treats a C-quoted path as "could not look"
+    // and refuses to proceed, for the same reason. Splitting on NUL means the
+    // path arrives verbatim and simply gets linted.
     listFiles = () =>
-      execFileSync('git', ['-C', ROOT, '-c', 'core.quotePath=false', 'ls-files'], {
+      execFileSync('git', ['-C', ROOT, '-c', 'core.quotePath=false', 'ls-files', '-z'], {
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
       }),
@@ -267,9 +297,15 @@ export async function lintTargets(deps = {}) {
     exists = existsSync,
   } = deps;
 
+  // Split on NUL and NOTHING ELSE. Tolerating `\n` as a second separator — the
+  // first version of this line, so test fixtures could stay readable — reopened
+  // the exact hole `-z` was added to close, by tearing a path containing a
+  // newline into two paths that do not exist.
+  //
+  // No trimming either: a path may legitimately begin or end with whitespace,
+  // and trimming would hand eslint a path that is not there.
   const candidates = listFiles()
-    .split('\n')
-    .map((line) => line.trim())
+    .split('\0')
     .filter((line) => line !== '' && LINTABLE.some((ext) => line.endsWith(ext)));
 
   const kept = [];
@@ -342,6 +378,24 @@ export function withHeapCap(env) {
  * failing chunk reports a fraction of the problems and sends the author round
  * the loop again for each one.
  *
+ * ARGV ORDER IS A SECURITY BOUNDARY, not a style choice: passthrough flags
+ * first, then `--`, then filenames. Everything after `--` is a file pattern to
+ * eslint, verified against 9.39 — `eslint -- --fix` reports *No files matching
+ * the pattern "--fix"* rather than enabling autofix.
+ *
+ * Without the terminator this script would hand eslint a list of paths as bare
+ * argv, so a TRACKED FILE whose name begins with `-` becomes a flag. That is a
+ * surface `eslint .` never had, because it passes one dot. `--fix` would rewrite
+ * the tree mid-CI; worse, a file named `--config` consumes the NEXT argv entry
+ * as its value, and the list is sorted, so a name can be chosen to make eslint
+ * load an attacker-supplied JS config — which eslint executes. The blast radius
+ * is a CI job rather than production, but it is code execution and it costs one
+ * argument to remove.
+ *
+ * This is the same class of hazard as the `shell: false` rule below, one level
+ * up: that one stops a shell interpreting a path, this one stops *eslint*
+ * interpreting one.
+ *
  * @param {readonly string[]} files
  * @param {readonly string[]} passthrough
  * @param {object} [deps]
@@ -351,7 +405,7 @@ export function runChunk(files, passthrough, deps = {}) {
   const { spawnFn = spawn, env = process.env, command = resolveEslintCommand() } = deps;
   const [bin, ...leading] = command;
   return new Promise((resolveCode) => {
-    const child = spawnFn(bin, [...leading, ...files, ...passthrough], {
+    const child = spawnFn(bin, [...leading, ...passthrough, '--', ...files], {
       cwd: ROOT,
       env: withHeapCap(env),
       stdio: 'inherit',

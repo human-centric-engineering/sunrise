@@ -222,7 +222,7 @@ describe('lintTargets', () => {
 
   it('keeps only lintable extensions', async () => {
     const listFiles = () =>
-      ['a.ts', 'b.tsx', 'c.js', 'd.mjs', 'e.cjs', 'f.jsx', 'g.md', 'h.json', 'i.css'].join('\n');
+      ['a.ts', 'b.tsx', 'c.js', 'd.mjs', 'e.cjs', 'f.jsx', 'g.md', 'h.json', 'i.css'].join('\0');
 
     const out = await lintTargets({ listFiles, eslint: eslintStub(), exists: () => true });
 
@@ -234,7 +234,7 @@ describe('lintTargets', () => {
     // The flat config's `ignores` (coverage/**, .next/**, …) must be honoured
     // without this script re-deriving them, which is where a hand-rolled
     // equivalent silently drifts from the real config.
-    const listFiles = () => ['keep.ts', 'coverage/skip.js'].join('\n');
+    const listFiles = () => ['keep.ts', 'coverage/skip.js'].join('\0');
 
     const out = await lintTargets({
       listFiles,
@@ -246,7 +246,7 @@ describe('lintTargets', () => {
   });
 
   it('is deterministic, so the same commit chunks the same way on every runner', async () => {
-    const listFiles = () => ['z.ts', 'a.ts', 'm.ts'].join('\n');
+    const listFiles = () => ['z.ts', 'a.ts', 'm.ts'].join('\0');
     const out = await lintTargets({ listFiles, eslint: eslintStub(), exists: () => true });
     expect(out).toEqual(['a.ts', 'm.ts', 'z.ts']);
   });
@@ -256,7 +256,7 @@ describe('lintTargets', () => {
     // exists exits 2 ("No files matching the pattern") and fails the whole chunk
     // for a reason unrelated to lint — the state a developer is in while
     // reproducing a CI failure locally.
-    const listFiles = () => ['kept.ts', 'deleted.ts'].join('\n');
+    const listFiles = () => ['kept.ts', 'deleted.ts'].join('\0');
     const out = await lintTargets({
       listFiles,
       eslint: eslintStub(),
@@ -266,8 +266,29 @@ describe('lintTargets', () => {
     expect(out).toEqual(['kept.ts']);
   });
 
-  it('ignores blank lines from git output', async () => {
-    const listFiles = () => 'a.ts\n\n  \nb.ts\n';
+  it('splits NUL-delimited git output, so a control-character path is not lost', async () => {
+    // `git ls-files -z` emits NUL separators precisely so a path containing a
+    // newline stays one record. Splitting on newline alone would tear it in two
+    // and produce two paths that do not exist; C-quoting (what git does WITHOUT
+    // `-z`) would instead wrap it in quotes so it no longer ends in `.ts` and it
+    // would vanish from the plan in silence.
+    const listFiles = () => 'lib/a.ts\0lib/we\nird.ts\0lib/b.ts\0';
+    const out = await lintTargets({ listFiles, eslint: eslintStub(), exists: () => true });
+
+    expect(out).toContain('lib/we\nird.ts');
+    expect(out).toHaveLength(3);
+  });
+
+  it('does not trim, because a path may legitimately end in whitespace', async () => {
+    // Trimming would hand eslint a path that does not exist, failing the whole
+    // chunk for a reason unrelated to lint.
+    const listFiles = () => ' lib/spaced .ts\0';
+    const out = await lintTargets({ listFiles, eslint: eslintStub(), exists: () => true });
+    expect(out).toEqual([' lib/spaced .ts']);
+  });
+
+  it('ignores the empty records NUL-delimited output ends with', async () => {
+    const listFiles = () => 'a.ts\0\0b.ts\0';
     const out = await lintTargets({ listFiles, eslint: eslintStub(), exists: () => true });
     expect(out).toEqual(['a.ts', 'b.ts']);
   });
@@ -310,6 +331,38 @@ describe('lintTargets against the real tree', () => {
     // nothing from an ignored tree should appear.
     expect(targets.filter((f: string) => f.startsWith('coverage/'))).toEqual([]);
     expect(targets.filter((f: string) => f.startsWith('.next/'))).toEqual([]);
+  });
+
+  it('covers every extension the real ESLint config actually configures', async () => {
+    // LINTABLE is a roster, and this file's whole thesis is that a roster is how
+    // files go missing. So it is checked against ESLint itself rather than
+    // against a second hand-written list: for each candidate extension, ask
+    // whether the flat config supplies rules for a file of that shape. If it
+    // does and LINTABLE omits it, that file type would be dropped from every
+    // plan in silence.
+    //
+    // Both shapes are probed because `eslint.config.mjs` configures
+    // `*.config.{ts,mts,js,mjs,cjs}` — `.mts` is reachable ONLY as a config
+    // filename, which a bare `probe.mts` would miss. That is exactly the case
+    // this guard was written for.
+    const { ESLint } = await import('eslint');
+    const eslint = new ESLint();
+    const candidates = ['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.mts', '.cts'];
+
+    const configured: string[] = [];
+    for (const ext of candidates) {
+      for (const probe of [`probe${ext}`, `probe.config${ext}`]) {
+        const config = await eslint.calculateConfigForFile(probe);
+        if (Object.keys(config?.rules ?? {}).length > 0) {
+          configured.push(ext);
+          break;
+        }
+      }
+    }
+
+    // Guard the guard: if this found nothing it is proving nothing.
+    expect(configured.length).toBeGreaterThan(3);
+    expect(LINTABLE).toEqual(expect.arrayContaining(configured));
   });
 
   it('plans a real run that still partitions the real file list exactly', async () => {
@@ -358,9 +411,32 @@ describe('runChunk', () => {
 
     expect(spawnFn).toHaveBeenCalledWith(
       'eslint',
-      ['a.ts', '--cache'],
+      ['--cache', '--', 'a.ts'],
       expect.objectContaining({ shell: false })
     );
+  });
+
+  it('puts filenames after `--`, so a flag-shaped filename cannot become a flag', async () => {
+    // `eslint .` passes one dot and has no such surface; this script passes a
+    // list of paths as bare argv, so without the terminator a TRACKED file named
+    // `--fix` is parsed as a flag and rewrites the tree mid-CI. Worse, `--config`
+    // consumes the next argv entry as its value, and the list is sorted — so a
+    // filename can be chosen to make eslint load, and execute, an
+    // attacker-supplied JS config.
+    //
+    // Verified against eslint 9.39: `eslint -- --fix` reports *No files matching
+    // the pattern "--fix"*, i.e. it is read as a path.
+    const spawnFn = vi.fn((_bin: string, _args: string[]) =>
+      fakeChild((h) => h.exit?.(0 as never))
+    );
+    await runChunk(['--fix', 'lib/a.ts'], ['--cache'], { spawnFn, command: ['eslint'] });
+
+    const argv = spawnFn.mock.calls[0]?.[1] ?? [];
+    const terminator = argv.indexOf('--');
+    expect(terminator, 'no `--` terminator in the argv').toBeGreaterThan(-1);
+    // Every filename lands after it; every flag before it.
+    expect(argv.slice(terminator + 1)).toEqual(['--fix', 'lib/a.ts']);
+    expect(argv.slice(0, terminator)).toEqual(['--cache']);
   });
 
   it('passes the heap cap down to the child, where the memory is actually spent', async () => {
@@ -539,7 +615,7 @@ describe('main', () => {
     const log = vi.fn();
     await main([], deps({ targets: ['a/1.ts', 'b/1.ts'], chunks: 2, log }));
 
-    const output = log.mock.calls.map((c) => String(c[0])).join('\n');
+    const output = log.mock.calls.map((c) => String(c[0])).join('\0');
     expect(output).toContain('2 files in 2 sequential chunk(s)');
     expect(output).toContain('chunk 1/2');
     expect(output).toContain('chunk 2/2');
