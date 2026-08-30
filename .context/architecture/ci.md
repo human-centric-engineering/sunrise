@@ -557,9 +557,18 @@ headroom it does not need. Raise it when the lint job aborts with **exit 134**:
 gh variable set CI_LINT_CHUNKS --body 4
 ```
 
-`npm run lint:ci` (`scripts/ci/chunked-lint.mjs`) lints the identical file set as
-N sequential eslint processes, so the job's peak is the **largest chunk** rather
-than the whole tree. Measured on a downstream fork of 4,527 lintable files
+`npm run lint:ci` (`scripts/ci/chunked-lint.mjs`) lints the same file set as N
+sequential eslint processes, so the job's peak is the **largest chunk** rather
+than the whole tree. Verified on this tree: the list it derives is exactly what
+`eslint .` lints — 2,340 files, none lost, none gained.
+
+One deliberate difference, and it does not apply in CI: the list comes from
+`git ls-files`, so it covers **tracked** files, where `eslint .` would also lint
+an untracked one. A CI checkout has nothing untracked, so the two are the same
+run there. Locally, a brand-new file is linted once you `git add` it — and
+`npm run lint` (unchanged) and the pre-commit hook both cover it regardless.
+
+Measured on a downstream fork of 4,527 lintable files
 (~2× base Sunrise), 4-core runner, cap 6144, cold — these are that fork's
 numbers, not Sunrise's:
 

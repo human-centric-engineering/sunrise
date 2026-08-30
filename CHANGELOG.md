@@ -23,9 +23,11 @@ release process.
   this is the lever for after the ceiling becomes the machine, since a private
   `ubuntu-latest` is an 8GB box and a cap above physical RAM turns a clean V8
   abort into an OOM kill. `npm run lint:ci`
-  (`scripts/ci/chunked-lint.mjs`) lints the identical file set as N sequential
+  (`scripts/ci/chunked-lint.mjs`) lints the same file set as N sequential
   eslint processes, so the job's peak is the largest chunk rather than the whole
-  tree. **Defaults to 1 — exactly today's whole-tree `eslint .`** — because base
+  tree — verified against this tree as exactly what `eslint .` lints, 2,340
+  files, none lost or gained. (It enumerates *tracked* files via `git ls-files`;
+  a CI checkout has nothing untracked, so the two runs are identical there.) **Defaults to 1 — exactly today's whole-tree `eslint .`** — because base
   Sunrise has never approached its heap ceiling and each chunk re-pays the ~2.6GB
   TypeScript Program. A downstream fork of 4,527 lintable files peaked at 6.36GB
   and OOM'd at a 6144 cap; at 4 chunks it completes at 5.20GB. Raise it with
