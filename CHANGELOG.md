@@ -26,7 +26,7 @@ release process.
 >
 > ## What a fork has to do
 >
-> **Nothing is required, but read the third item if you have `.mjs` files.**
+> **Nothing is required, but read item 3 if you have `.mjs` files.**
 >
 > **1. Your lint and format caches moved to the repo root** (#677). They were
 > under `.next/cache/`, which meant `rm -rf .next` — the reflex fix for any
@@ -68,7 +68,18 @@ release process.
 > deliberately in `vitest.config.ts` — `scripts/spikes/**`, and
 > **`lib/app/eslint.config.mjs`, the fork-owned ESLint seam**, so that editing
 > your own seam cannot fail a coverage gate on a file Sunrise ships empty.
-
+>
+> **4. Two new workflow files arrive; neither needs anything from you.**
+> `pr-cache-cleanup.yml` (#681) deletes the Actions caches a closed PR leaves
+> behind, which otherwise sit against the repo's cache quota until they age out,
+> evicting entries `main` still wants. `lint-memory-probe.yml` (#687) is
+> dispatch-only and gates nothing. Called out because the first is the kind of
+> file a fork notices while auditing workflow permissions: it declares top-level
+> `permissions: {}` and grants `actions: write` to its single job, because
+> deleting a cache entry is the one thing it does. It is gated to same-repo pull
+> requests, since a fork PR's token is read-only and cannot be granted that
+> scope — deliberately **not** solved with `pull_request_target`, which would
+> hand a privileged token to a workflow triggered by an untrusted branch.
 
 ### Added
 
