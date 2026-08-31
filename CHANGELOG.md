@@ -16,6 +16,60 @@ release process.
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-08-31
+
+> **Alpha release.** Sixteenth tagged Sunrise release. **PATCH bump** — a
+> developer-experience patch, and the first cut since 0.11.1 that changes no
+> runtime behaviour at all. Everything here is toolchain: the local lint/format
+> caches, the CI lint job, and a coverage gate that was quietly not applying to
+> a whole class of file. No migration, no schema change, no public API change.
+>
+> ## What a fork has to do
+>
+> **Nothing is required, but read the third item if you have `.mjs` files.**
+>
+> **1. Your lint and format caches moved to the repo root** (#677). They were
+> under `.next/cache/`, which meant `rm -rf .next` — the reflex fix for any
+> stale-build symptom — silently destroyed them and bought you a cold run
+> later, somewhere else. They are now `.eslintcache` and `.prettiercache`, both
+> gitignored and dockerignored, and `npm run clean:cache` clears them
+> deliberately. Measured on a 4,414-file fork: a cold `npm run lint` is 5.5
+> minutes against 2.5s warm. **If you own your own `ci.yml`**, update the lint
+> job's `actions/cache` paths to match, or CI pays for a cold run forever
+> without ever failing.
+>
+> **2. `CI_LINT_CHUNKS` is available if your lint job OOMs** (#687). It defaults
+> to `1`, which is exactly the whole-tree `eslint .` you already run, so doing
+> nothing changes nothing. It exists for after `CI_NODE_HEAP_MB` runs out of
+> room — a private `ubuntu-latest` is an 8GB box, so ~6144 is the ceiling, and a
+> cap above physical RAM turns a clean V8 abort into an OS OOM kill. `npm run
+> lint:ci` runs the same file set as N sequential eslint processes, so the job's
+> peak is the largest chunk rather than the whole tree. Measured on a
+> 4,527-file fork at cap 6144, cold: 1 chunk **6.36GB, OOM**; 4 chunks 5.20GB,
+> fine. Raise it when lint aborts with **exit 134**:
+>
+> ```bash
+> gh variable set CI_LINT_CHUNKS --body 4
+> ```
+>
+> The cost is wall-clock, not money — every chunk rebuilds the ~2.6GB TypeScript
+> program, which took that fork's cold lint from 1m23s to 6m51s and left warm
+> runs unchanged. `.github/workflows/lint-memory-probe.yml` re-measures the
+> table on your own runner; a laptop cannot, since three runs of one identical
+> command there spanned 1.31GB.
+>
+> **3. `.mjs` files are now covered by the per-file 80% coverage floor, and were
+> not before.** This is the one item that can newly fail a PR of yours. The
+> scoped test runner filtered changed paths to `.ts`/`.tsx`, so every `.mjs` in
+> the tree bypassed the gate #647 added — silently, which is the failure mode
+> that runner exists to prevent. If your fork has `.mjs` under a path coverage
+> does not exclude, the first PR that touches one will now be held to 80%. Two
+> upstream files that would otherwise have been caught by this are excluded
+> deliberately in `vitest.config.ts` — `scripts/spikes/**`, and
+> **`lib/app/eslint.config.mjs`, the fork-owned ESLint seam**, so that editing
+> your own seam cannot fail a coverage gate on a file Sunrise ships empty.
+
+
 ### Added
 
 - **`CI_LINT_CHUNKS` — a repo variable that lowers what lint *needs*, once
@@ -4454,7 +4508,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.9.0...v0.10.0
