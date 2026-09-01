@@ -8,8 +8,10 @@
  *
  * Auto-wired: the rate-limit middleware imports and calls this once at module
  * load (middleware runtime). Add `registerRateLimitTier()` /
- * `registerRateLimitRule()` calls — registration is namespace-scoped and fails
- * fast (it throws if a rule could shadow a Sunrise-protected surface).
+ * `registerRateLimitKeyResolver()` / `registerRateLimitRule()` calls —
+ * registration is namespace-scoped and fails fast (it throws if a rule could
+ * shadow a Sunrise-protected surface, or names a custom key whose resolver
+ * hasn't been registered yet — resolvers first, then rules).
  *
  * Full guide + example: CUSTOMIZATION.md §4 · .context/security/rate-limiting.md
  */

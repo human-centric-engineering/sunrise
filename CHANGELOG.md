@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- `registerRateLimitKeyResolver(key, resolver)` in `lib/security/rate-limit-policy.ts`
+  opens the rate-limit **key** space to forks the way `registerRateLimitTier` opens
+  the tier space: a fork can bucket requests by anything it can derive from the
+  request (an org, a workspace, a device id) instead of only the four built-in
+  strategies. `RateLimitRule.key` widens to `RateLimitKey | (string & {})` to
+  match; a rule naming a custom key with no registered resolver throws at
+  registration, and built-in strategies cannot be overridden. This closes the
+  "a registry seam is only as open as its narrowest type" gap the multi-tenancy
+  research called out — per-org quotas become expressible without editing
+  `lib/security/`.
 - `rlsEnabled(table, { requireForced? })` and `policyExists(table, policy)` probe
   factories in `lib/db/drift-probes.ts` (the drift-probe registry's primitives).
   A fork running the multi-tenancy retrofit can now assert its Row-Level-Security

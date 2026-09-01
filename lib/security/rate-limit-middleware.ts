@@ -34,8 +34,9 @@ import {
 import {
   findRateLimitRule,
   getEffectiveRateLimitPolicy,
+  isBuiltInRateLimitKey,
   pathMatchesRule,
-  type RateLimitKey,
+  resolveAppRateLimitKeyResolver,
   type RateLimitRule,
 } from '@/lib/security/rate-limit-policy';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
@@ -244,8 +245,37 @@ async function buildToken(rule: RateLimitRule, request: NextRequest): Promise<st
  * if we can't identify the caller more precisely, we still want *some* bucket
  * rather than letting the request through unlimited.
  */
-async function resolveIdentifier(key: RateLimitKey, request: NextRequest): Promise<string> {
+async function resolveIdentifier(key: RateLimitRule['key'], request: NextRequest): Promise<string> {
   const ip = getClientIP(request);
+
+  // App-defined key strategies (registerRateLimitKeyResolver). The rule
+  // registry guarantees a rule naming a custom key had a resolver at
+  // registration, so the unknown-key branch is defence in depth (a resolver
+  // reset in tests, or a future ordering bug) — it logs loudly and falls back
+  // to a per-IP bucket rather than failing open with no cap at all. A
+  // resolver that throws gets the same treatment: rate limiting is
+  // best-effort protection, and a fork bug in a resolver must not take the
+  // whole API surface down with it — but it must not be silent either.
+  if (!isBuiltInRateLimitKey(key)) {
+    const resolver = resolveAppRateLimitKeyResolver(key);
+    if (!resolver) {
+      logger.error('rate-limit middleware: no resolver registered for custom key', {
+        key,
+        fix: 'registerRateLimitKeyResolver() must run before rules using the key are evaluated.',
+      });
+      return `ip:${ip}`;
+    }
+    try {
+      const id = await resolver(request);
+      if (id) return id;
+    } catch (error) {
+      logger.error('rate-limit middleware: custom key resolver threw; falling back to IP', {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return `ip:${ip}`;
+  }
 
   switch (key) {
     case 'ip':

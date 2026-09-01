@@ -102,6 +102,8 @@ How the dispatcher identifies the caller when building the bucket token. Token f
 
 **Why fallbacks exist.** Rate-limiting is best-effort defense in depth — if we can't identify the caller more precisely (auth provider down, session not yet established, missing header), we still want _some_ bucket rather than letting the request through unlimited. The fallback to IP gives unauthenticated/can't-resolve traffic a per-IP cap without changing the rule's intent for authenticated callers.
 
+**The key space is open to forks.** These four are the built-in strategies; an app/fork registers its own (an org, a workspace, a device id) via `registerRateLimitKeyResolver()` — see [App / Fork Extension](#app--fork-extension). A custom resolver returns the identifier segment (`org:123`) or `null` for the same IP fallback as the built-ins; a resolver that throws is logged as an error and falls back to IP (a fork bug must be loud, but must not fail open or take the API down).
+
 **Session resolution failure is a behaviour, not a panic.** When `auth.api.getSession` throws (DB outage, etc.), the dispatcher catches the error and falls back to IP keying — it does NOT propagate the auth error as the request's response. Route handlers that require authentication surface their own 401 downstream.
 
 ## Per-Flow Sub-Caps (handler-applied)
@@ -280,7 +282,10 @@ The three edits above ("Adding a New Tier") are how **Sunrise itself** adds a bu
 ```typescript
 // lib/app/rate-limit.ts
 import { createRateLimiter, registerRateLimitTier } from '@/lib/security/rate-limit';
-import { registerRateLimitRule } from '@/lib/security/rate-limit-policy';
+import {
+  registerRateLimitKeyResolver,
+  registerRateLimitRule,
+} from '@/lib/security/rate-limit-policy';
 import { SECURITY_CONSTANTS } from '@/lib/security/constants';
 
 export function registerAppRateLimits(): void {
@@ -294,8 +299,15 @@ export function registerAppRateLimits(): void {
     })
   );
 
-  // 2. point an app path at it (or at a built-in tier)
-  registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'session-user' });
+  // 2. (optional) register a custom key strategy — BEFORE any rule that uses it.
+  //    Return the identifier segment, or null to fall back to a per-IP bucket.
+  registerRateLimitKeyResolver('org', (request) => {
+    const org = request.headers.get('x-org-id');
+    return org ? `org:${org}` : null;
+  });
+
+  // 3. point an app path at a tier (built-in or app) and a key (built-in or app)
+  registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'billing', key: 'org' });
 }
 ```
 
@@ -307,6 +319,8 @@ export function registerAppRateLimits(): void {
 
 - **`registerRateLimitTier` cannot override a built-in tier.** Registering `'admin'`, `'auth'`, `'mcp'`, etc. (or a duplicate app name) throws. The collision check is case-insensitive — `'Admin'` is also rejected so a confusable can't ship alongside the real lowercase tier. A fork cannot silently swap the 30/min `admin` limiter for a looser one.
 - **`registerRateLimitRule` cannot match a Sunrise-protected namespace.** A rule whose matcher could fire for an arbitrary path under `/api/v1/admin/**`, `/api/auth/**`, `/api/v1/auth/**`, or `/api/v1/mcp/**` is rejected — so an overly-broad matcher like `/^\/api\/v1\//` throws at registration. Matchers nested _deeper_ than a Sunrise namespace (e.g. a regex targeting `/api/v1/admin/orchestration/...` specifically) slip past the guard but are still protected by **first-match ordering**: app rules are spliced after every Sunrise rule, so Sunrise's narrower rule for that sub-path always wins before the fork's rule is evaluated. The registration guard catches the broad-shadow case loudly; ordering catches everything else.
+- **`registerRateLimitKeyResolver` cannot override a built-in strategy.** Registering `'ip'`, `'session-user'`, `'api-key'` or `'embed-token'` (case-insensitively, or a duplicate app key under a different function) throws — re-keying `'session-user'` would change who shares a bucket on every Sunrise rule.
+- **A rule naming a custom key with no registered resolver throws at registration.** Register the resolver first; otherwise the middleware could not identify callers for the rule. (Defence in depth: if a custom key somehow reaches the dispatcher unresolved, it logs an error and applies a per-IP bucket rather than failing open.)
 - **Boot fails if any rule references an unresolved tier.** After `registerAppRateLimits()` runs, the middleware walks the effective policy and throws if any rule's `tier` doesn't resolve via `resolveRateLimitTier`. A typo like `tier: 'billling'` would otherwise type-check cleanly (the rule shape widens to `RateLimitTier | (string & {})` for fork ergonomics) and silently fail open at request time — no limiter found means no rate limit applied. The boot-time integrity check converts that runtime hole into a clear startup error naming the rule and the unresolved tier.
 
 App tiers/rules are developer config applied at startup — not attacker-reachable input. The guard exists so a fork author can't _accidentally_ weaken an auth/admin cap, not as a defense against a malicious operator (who owns the process anyway).
