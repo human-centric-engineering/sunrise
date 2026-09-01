@@ -16,6 +16,16 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- `rlsEnabled(table, { requireForced? })` and `policyExists(table, policy)` probe
+  factories in `lib/db/drift-probes.ts` (the drift-probe registry's primitives).
+  A fork running the multi-tenancy retrofit can now assert its Row-Level-Security
+  posture per table as registry one-liners instead of hand-rolled `pg_policies`
+  catalog SQL. `rlsEnabled` requires `FORCE ROW LEVEL SECURITY` by default,
+  because an unforced table fails open for its owner — waive it per table with
+  `{ requireForced: false }`.
+
 ### Fixed
 
 - `VERSIONING.md`'s public-surface list named the tenancy seam as `TENANCY_MODE` +

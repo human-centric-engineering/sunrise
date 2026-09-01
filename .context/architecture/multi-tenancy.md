@@ -385,24 +385,24 @@ above is missed, and it is the cheapest thing on the list.
 registry that already exists for the pgvector indexes: `lib/app/db-drift.ts` is
 fork-owned scaffold, `registerAppDriftProbe()` accepts any
 `Probe` (`() => Promise<{ ok, note? }>`), and `npm run db:drift-check` runs in CI
-and in `/pre-pr`. No `policyExists` factory ships in
-[`lib/db/drift-probes.ts`](../../lib/db/drift-probes.ts) today, so write the
-catalog query yourself:
+and in `/pre-pr`. [`lib/db/drift-probes.ts`](../../lib/db/drift-probes.ts) ships
+`rlsEnabled(table)` and `policyExists(table, policy)` factories, so each
+protected table is two one-liners — register **both**: a policy can exist while
+RLS is disabled, and RLS can be enabled with the policy dropped.
 
 ```typescript
 // lib/app/db-drift.ts — fork-owned scaffold, merges cleanly forever
 registerAppDriftProbe({
+  name: 'RLS enabled+forced on AiConversation',
+  kind: 'RLS posture',
+  table: 'AiConversation',
+  probe: rlsEnabled('AiConversation'), // asserts ENABLE and FORCE; see its JSDoc to waive FORCE
+});
+registerAppDriftProbe({
   name: 'RLS org_isolation on AiConversation',
   kind: 'RLS policy',
   table: 'AiConversation',
-  probe: async () => {
-    const rows = await prisma.$queryRaw<Array<{ n: bigint }>>`
-      SELECT count(*)::bigint AS n
-      FROM pg_policies
-      WHERE tablename = 'AiConversation' AND policyname = 'org_isolation'
-    `;
-    return { ok: Number(rows[0]?.n ?? 0n) === 1 };
-  },
+  probe: policyExists('AiConversation', 'org_isolation'),
 });
 ```
 

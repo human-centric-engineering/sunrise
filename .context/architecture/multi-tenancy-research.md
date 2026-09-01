@@ -1466,7 +1466,7 @@ would otherwise be a core edit:
 | `lib/app/bootstrap.ts` (`initApp`)                 | Wiring your tenant registries at boot                                             | Runs after env validation; no request context                                                                                       |
 | `lib/app/jobs.ts` (`registerAppJob`)               | Tenant-aware periodic work on the existing tick                                   | The tick supplies **no** tenant context — iterate orgs yourself ([§5A.1](#5a1-the-prerequisite-there-is-no-tenant-context-to-pass)) |
 | `lib/app/data-export.ts` (`collectAppSubjectData`) | Art. 15 coverage for your org-owned tables                                        | Keyed on `userId`; no org dimension ([§5B](#portability-the-cheap-substitute-for-rungs-34))                                         |
-| `lib/app/db-drift.ts` (`registerAppDriftProbe`)    | CI proof that policies survived the last `migrate dev` and the last sync          | No `policyExists` / `rlsEnabled` probe factory ships — write the `pg_policies` query yourself                                       |
+| `lib/app/db-drift.ts` (`registerAppDriftProbe`)    | CI proof that policies survived the last `migrate dev` and the last sync          | `rlsEnabled` / `policyExists` factories ship as of 2026-09-01 — a probe is a one-liner                                              |
 | `lib/app/rate-limit.ts`                            | Org-scoped rules and tiers                                                        | The **key** union is closed — see below                                                                                             |
 | `lib/app/admin-nav.ts`, `protected-routes.ts`      | Tenant-admin navigation and route gating                                          | The console split itself is platform-tier                                                                                           |
 
@@ -1543,7 +1543,7 @@ site.
 
 | Provision                                                                                            | The fork conflict it removes                                                                                                      | Size                   |
 | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `rlsEnabled(table)` / `policyExists(table, policy)` factories in `lib/db/drift-probes.ts`            | Hand-written `pg_policies` SQL re-derived in every fork                                                                           | Hours                  |
+| `rlsEnabled(table)` / `policyExists(table, policy)` factories in `lib/db/drift-probes.ts`            | Hand-written `pg_policies` SQL re-derived in every fork — **shipped 2026-09-01**                                                  | Hours                  |
 | Org (or install) id in `getFullContext()` (`lib/logging/context.ts`)                                 | `lib/logging/context.ts`                                                                                                          | Hours                  |
 | Correct `VERSIONING.md`'s tenancy-seam path (see below)                                              | A fork looking for a module that was never shipped                                                                                | Minutes                |
 | Widen `RateLimitKey` and add a key-resolver registry                                                 | `rate-limit-policy.ts` + `rate-limit-middleware.ts`                                                                               | Small                  |
@@ -1823,7 +1823,7 @@ shape applies here:
 - A `policyExists` / `rlsEnabled` probe factory in `lib/db/drift-probes.ts`, so
   a fork's per-table policy assertions are a one-liner in `lib/app/db-drift.ts`
   instead of hand-rolled catalog SQL
-  ([§8](#provisions-upstream-should-ship)).
+  ([§8](#provisions-upstream-should-ship)) — **shipped 2026-09-01**.
 
 All three are cheap, all three fail loudly, and all three survive the author
 leaving. **They are worth more to forks than to the platform** — upstream is
