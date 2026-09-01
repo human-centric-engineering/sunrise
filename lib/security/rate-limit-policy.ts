@@ -489,6 +489,12 @@ export function __resetAppRateLimitRules(): void {
  * stay portable across the proxy's possible runtimes. Resolvers run on the
  * request hot path — keep them cheap, and prefer reading a header or cookie
  * over a database lookup.
+ *
+ * Derive the identifier from something the caller cannot freely choose (an
+ * authenticated principal, a verified token), or composite it with the IP the
+ * way the built-in `embed-token` strategy does. A resolver that echoes a raw
+ * client-supplied header lets a caller mint a fresh bucket per request and
+ * walk straight past the cap it exists to enforce.
  */
 export type RateLimitKeyResolver = (request: Request) => string | null | Promise<string | null>;
 

@@ -301,9 +301,14 @@ export function registerAppRateLimits(): void {
 
   // 2. (optional) register a custom key strategy — BEFORE any rule that uses it.
   //    Return the identifier segment, or null to fall back to a per-IP bucket.
+  //    Derive the identifier from something the caller CANNOT freely choose —
+  //    an authenticated principal, a verified token — or composite it with the
+  //    IP the way the built-in embed-token strategy does. A resolver that
+  //    echoes a raw client-supplied header lets a caller mint a fresh bucket
+  //    per request and walk straight past the cap.
   registerRateLimitKeyResolver('org', (request) => {
     const org = request.headers.get('x-org-id');
-    return org ? `org:${org}` : null;
+    return org ? `org:${org}:${request.headers.get('x-forwarded-for') ?? ''}` : null;
   });
 
   // 3. point an app path at a tier (built-in or app) and a key (built-in or app)
