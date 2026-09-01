@@ -10,8 +10,9 @@
 > Companions: [`multi-tenancy.md`](./multi-tenancy.md) (the RLS playbook — the
 > proven policy pattern and its gotchas) and
 > [`multi-tenancy-research.md`](./multi-tenancy-research.md) (the gap analysis
-> this capability answers). Where this document and the research disagree, this
-> document is the decision and the research is the survey it was made from.
+> this capability answers). Where this document and either companion disagree,
+> this document is the decision; the research is the survey it was made from,
+> and the playbook is the recipe it builds with.
 
 ## Who this is for
 
@@ -24,7 +25,7 @@
 ## The decisions (2026-08-27)
 
 Four gating decisions, recorded with their reasoning so they are not re-derived
-per session. They answer the research doc's §6 decision gate and §13 Q0/Q2/Q8.
+per session. They answer the research doc's §6 decision gate and §13 Q0/Q1/Q2.
 
 | #   | Decision              | Choice                                                        | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | --- | --------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -91,11 +92,14 @@ sync conflict is a "keep both", not a re-read.
 
 ## Target architecture
 
-> **Target state, not current state.** None of the modules, schema files or
-> scripts named in this section exist yet (verified at v0.11.2) — they are the
-> agreed shape the Hub features build toward. The Hub phase tracks what has
-> actually landed; a path here becomes a real reference only when its feature
-> ships.
+> **Target state, not current state.** The tenancy pieces named in this
+> section — `lib/tenancy/context.ts`, `prisma/schema/tenancy.prisma`,
+> `lib/auth/authorization.ts`, `lib/auth/roles.ts`, `lib/app/authorization.ts`,
+> `lib/app/tenant-resolver.ts`, `db:tenancy:enable` — do not exist yet
+> (verified at v0.11.2); they are the agreed shape the Hub features build
+> toward. The chokepoints they attach to (`proxy.ts`, `lib/auth/guards.ts`,
+> `lib/db/client.ts`, the maintenance tick) all exist today. A tenancy path
+> here becomes a real reference only when its feature ships.
 
 Request path at `multi` — at `single` the same components run with the install
 org as the only answer:
@@ -224,9 +228,10 @@ A fork owns:
 ## Merge impact, for forks
 
 - The identity release carries one migration (two tables + install-org seed +
-  membership backfill). The row-isolation release carries the big one: `orgId`
-  - index across the tenant-owned core models, plus the dormant policies. Both
-    are mechanical to fold; sync **before** they land rather than across them.
+  membership backfill). The row-isolation release carries the big one — an
+  `orgId` column and index on every tenant-owned core model, plus the dormant
+  policies. Both are mechanical to fold; sync **before** they land rather than
+  across them.
 - Single-tenant forks feel no behaviour change at any point; the install org is
   invisible to their operators.
 - The per-sync tenancy checklist in the playbook shrinks to what the tests

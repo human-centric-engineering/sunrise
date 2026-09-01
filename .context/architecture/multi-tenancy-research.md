@@ -1797,11 +1797,11 @@ nothing to fix now and becomes a compliance finding later.
 
 Three concrete drifts found while verifying, and one recommendation.
 
-| Drift                                                                                                                                                                                               | Where                    | Status               |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | -------------------- |
-| "The schema has **60 models**" — it now has **61**                                                                                                                                                  | `multi-tenancy.md`       | **Fixed** 2026-08-07 |
-| Raw-SQL table lists 6 files; Appendix A found 3 more, and by v0.11.2 the app-layer inventory had grown again (~15 request-path sites) — the allowlist guard test, once landed, is the living record | `multi-tenancy.md:47-54` | Open                 |
-| `lib/tenancy/client.ts` named as a covered seam; the file does not exist (the seam is `lib/db/client.ts`)                                                                                           | `VERSIONING.md:75`       | **Fixed** 2026-09-01 |
+| Drift                                                                                                                                                                                                                    | Where                    | Status               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ | -------------------- |
+| "The schema has **60 models**" — it now has **61**                                                                                                                                                                       | `multi-tenancy.md`       | **Fixed** 2026-08-07 |
+| Raw-SQL table lists 6 files; Appendix A found 3 more, and by v0.11.2 the inventory had grown again (15 files under `lib/`+`app/`, 12 of them request-path) — the allowlist guard test, once landed, is the living record | `multi-tenancy.md:47-54` | Open                 |
+| `lib/tenancy/client.ts` named as a covered seam; the file does not exist (the seam is `lib/db/client.ts`)                                                                                                                | `VERSIONING.md`          | **Fixed** 2026-09-01 |
 
 None is serious in isolation. Together they make the point: **a hand-maintained
 inventory of security-relevant sites drifts within months** — the model count

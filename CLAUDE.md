@@ -56,14 +56,12 @@ Use for: diagnostics, route inspection, runtime errors, browser automation, Next
 
 Use for external library docs: `resolve-library-id` → `query-docs`. Essential for current Next.js/Prisma/Tailwind patterns.
 
-## Project Coordination (HCE Hub)
-
-> **Applies only when the `hce-hub` MCP server is configured for this
-> checkout.** Sunrise is open source: if you have forked it, or are
-> contributing without access to the HCE Hub, this whole section is not for
-> you — skip it and ignore the block's "fix your MCP config" instruction.
-> Nothing else in this file depends on it; the development workflow without
-> the Hub is [`.context/workflow.md`](./.context/workflow.md).
+> **The next section applies only when the `hce-hub` MCP server is configured
+> for this checkout.** Sunrise is open source: if you have forked it, or are
+> contributing without access to the HCE Hub, skip the whole section that
+> follows — including its "fix your MCP config" instruction. Nothing else in
+> this file depends on it; the development workflow without the Hub is
+> [`.context/workflow.md`](./.context/workflow.md).
 
 <!-- hce-hub:bootstrap — regenerate with the Hub's `get_project_bootstrap` tool and replace everything between these markers -->
 
