@@ -16,6 +16,13 @@ release process.
 
 ## [Unreleased]
 
+### Fixed
+
+- `VERSIONING.md`'s public-surface list named the tenancy seam as `TENANCY_MODE` +
+  `lib/tenancy/client.ts` — a file that has never existed. The covered seam is, and
+  always was, `TENANCY_MODE` + the `lib/db/client.ts` chokepoint. Forks that went
+  looking for `lib/tenancy/` were chasing a phantom module.
+
 ## [0.11.2] — 2026-08-31
 
 > **Alpha release.** Sixteenth tagged Sunrise release. **PATCH bump** — a

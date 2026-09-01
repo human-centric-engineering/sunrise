@@ -422,7 +422,7 @@ For each changed file from Step 2, decide whether it touches the public surface 
   - `lib/app/capabilities.ts`, `lib/app/admin-nav.ts`, `lib/app/env.ts`, `lib/app/rate-limit.ts`, `lib/app/db-drift.ts` (registry entry points)
   - `lib/db/drift-probes.ts` (drift-probe primitives + registry consumed by `lib/app/db-drift.ts`)
   - `lib/privacy/erasure-hooks.ts` (erasure-hook registry)
-  - `lib/tenancy/client.ts`, anything referencing the `TENANCY_MODE` env (tenancy seam)
+  - `lib/db/client.ts`, anything referencing the `TENANCY_MODE` env (tenancy seam chokepoint)
   - `eslint.config.mjs` blocks scoped to `lib/app/**` (app-boundary configuration)
 - **Documented public APIs** — flag if any of these change:
   - `lib/auth/guards.ts` (withAuth / withAdminAuth signatures)

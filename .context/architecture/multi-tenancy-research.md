@@ -9,6 +9,12 @@
 > `b7e30f06` (main) on 2026-08-01. Part II and §14 were verified at `c6b3e441`
 > on 2026-08-07, and re-checked the Part I claims they depend on. Line
 > references drift; the appendices carry the raw evidence.
+>
+> **Decisions taken 2026-08-27.** The topology, scope, org-model and
+> tenant-resolution questions this document left open are now decided — Sunrise
+> ships multi-tenancy as an opt-in platform capability. The binding design is
+> [`multi-tenancy-design.md`](./multi-tenancy-design.md); where it and this
+> survey disagree, the design document wins.
 
 ## How to read this
 
@@ -195,8 +201,8 @@ Verified by search at `b7e30f06`:
 - **No `orgId` or `tenantId` on any of the 61 Prisma models.** Zero occurrences
   across `prisma/schema/*.prisma`.
 - **No `Org`, `OrgMembership`, `Team`, or `Workspace` model.**
-- **No `lib/tenancy/` directory** (despite `VERSIONING.md:75` naming
-  `lib/tenancy/client.ts` as a covered seam — see [§12](#12-documentation-drift)).
+- **No `lib/tenancy/` directory** (`VERSIONING.md` named `lib/tenancy/client.ts`
+  as the covered seam until the 2026-09-01 fix — see [§12](#12-documentation-drift)).
 - **No billing, plan, subscription or metering code.** No payment provider
   integration of any kind.
 - **No better-auth plugins.** `lib/auth/config.ts` registers none; `role` is the
@@ -1556,9 +1562,9 @@ one to do first if only one gets done.
 **Publish each in `VERSIONING.md`'s public surface as it lands.** An undocumented
 seam is one a fork cannot rely on across releases, and a fork that cannot rely on
 a seam copies the file instead — which is the outcome all of this exists to
-avoid. **One correction to make before any of it:** `VERSIONING.md:75` names the
-tenancy seam `lib/tenancy/client.ts`; that file has never existed and the seam is
-`lib/db/client.ts` ([§12](#12-documentation-drift)).
+avoid. **One correction that preceded all of it (fixed 2026-09-01):**
+`VERSIONING.md` named the tenancy seam `lib/tenancy/client.ts`; that file never
+existed and the seam is `lib/db/client.ts` ([§12](#12-documentation-drift)).
 
 ### The standing obligation after MT ships in a fork
 
@@ -1791,11 +1797,11 @@ nothing to fix now and becomes a compliance finding later.
 
 Three concrete drifts found while verifying, and one recommendation.
 
-| Drift                                                                                                     | Where                    | Status               |
-| --------------------------------------------------------------------------------------------------------- | ------------------------ | -------------------- |
-| "The schema has **60 models**" — it now has **61**                                                        | `multi-tenancy.md`       | **Fixed** 2026-08-07 |
-| Raw-SQL table lists 6 files; there are 3 further app-layer sites (Appendix A)                             | `multi-tenancy.md:47-54` | Open                 |
-| `lib/tenancy/client.ts` named as a covered seam; the file does not exist (the seam is `lib/db/client.ts`) | `VERSIONING.md:75`       | Open                 |
+| Drift                                                                                                                                                                                                                    | Where                    | Status               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ | -------------------- |
+| "The schema has **60 models**" — it now has **61**                                                                                                                                                                       | `multi-tenancy.md`       | **Fixed** 2026-08-07 |
+| Raw-SQL table lists 6 files; Appendix A found 3 more, and by v0.11.2 the inventory had grown again (15 files under `lib/`+`app/`, 12 of them request-path) — the allowlist guard test, once landed, is the living record | `multi-tenancy.md:47-54` | Open                 |
+| `lib/tenancy/client.ts` named as a covered seam; the file does not exist (the seam is `lib/db/client.ts`)                                                                                                                | `VERSIONING.md`          | **Fixed** 2026-09-01 |
 
 None is serious in isolation. Together they make the point: **a hand-maintained
 inventory of security-relevant sites drifts within months** — the model count

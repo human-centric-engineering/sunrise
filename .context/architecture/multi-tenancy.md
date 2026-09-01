@@ -1,5 +1,12 @@
 # Multi-Tenancy Playbook
 
+> **Update 2026-08-27 — partially superseded.** Sunrise has since decided to
+> ship multi-tenancy as an **opt-in platform capability**; the binding design is
+> [`multi-tenancy-design.md`](./multi-tenancy-design.md), and where the two
+> disagree the design document wins. This playbook remains the proven data-plane
+> recipe (the RLS pattern, the gotchas, the model inventory) and will be
+> rewritten as the enablement guide when row isolation lands.
+>
 > **TL;DR — MT-possible, not MT-baked.** Sunrise ships **single-tenant by
 > default** and contains **zero** tenancy machinery: no `Org` table, no `orgId`
 > columns, no row-level security, no dormant fields. The one concession to
@@ -12,7 +19,8 @@
 > [The proof](#the-proof-runnable)); the empty-string footgun it caught is why
 > the policy uses `NULLIF`.
 >
-> **Whoever runs this recipe is a fork.** Sunrise core never will. So each step
+> **Until the capability lands, whoever runs this recipe is a fork** (see the
+> update above). So each step
 > below also says where the artefact lives in your tier and whether it touches a
 > Sunrise-owned file — see
 > [Where a fork's tenancy code lives](#where-a-forks-tenancy-code-lives) and
