@@ -59,8 +59,9 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **Add API endpoint**                                | `api/endpoints.md`                               | `api/headers.md`                          |
 | **Add protected page**                              | `architecture/overview.md`                       | `auth/integration.md`                     |
 | **Add database model**                              | `database/schema.md`                             | `database/migrations.md`                  |
-| **Make the template multi-tenant**                  | `architecture/multi-tenancy.md`                  | `database/schema.md`                      |
+| **Make the template multi-tenant**                  | `architecture/multi-tenancy.md`                  | `architecture/multi-tenancy-design.md`    |
 | **Scope multi-tenancy work / assess the gap**       | `architecture/multi-tenancy-research.md`         | `architecture/multi-tenancy.md`           |
+| **Build the tenancy capability (design record)**    | `architecture/multi-tenancy-design.md`           | `architecture/multi-tenancy.md`           |
 | **Add OAuth provider**                              | `auth/oauth.md`                                  | `auth/security.md`                        |
 | **Protect a route**                                 | `auth/integration.md`                            | `auth/sessions.md`                        |
 | **Add environment var**                             | `environment/overview.md`                        | `environment/reference.md`                |

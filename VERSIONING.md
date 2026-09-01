@@ -81,7 +81,7 @@ covered by the version contract.
   - rate-limit registry (`lib/app/rate-limit.ts` → `registerRateLimitTier()` / `registerRateLimitRule()`)
   - drift-probe registry (`lib/app/db-drift.ts` → `registerAppDriftProbe()`, primitives in `lib/db/drift-probes.ts`)
   - context-contributor registry (`lib/app/context-contributors.ts` → `registerContextContributor()`)
-  - tenancy seam (`TENANCY_MODE` + `lib/tenancy/client.ts`)
+  - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)
 - **Documented public APIs** —
   - `withAuth()`, `withAdminAuth()` from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
   - `successResponse()`, `errorResponse()` from `lib/api/responses.ts`
