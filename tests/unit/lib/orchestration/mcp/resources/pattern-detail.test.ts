@@ -45,6 +45,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -56,6 +57,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/abc', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -68,6 +70,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(result.mimeType).toBe('application/json');
@@ -77,7 +80,11 @@ describe('handlePatternDetail', () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([makeChunk()] as never);
 
     const uri = 'sunrise://knowledge/patterns/3';
-    const result = await handlePatternDetail(uri, null, { scopedAgentId: null, apiKeyId: 'key-1' });
+    const result = await handlePatternDetail(uri, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+      userId: null,
+    });
 
     expect(result.uri).toBe(uri);
   });
@@ -88,6 +95,7 @@ describe('handlePatternDetail', () => {
     await handlePatternDetail('sunrise://knowledge/patterns/7', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
@@ -103,6 +111,7 @@ describe('handlePatternDetail', () => {
     await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
@@ -118,6 +127,7 @@ describe('handlePatternDetail', () => {
     await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(prisma.aiKnowledgeChunk.findMany).toHaveBeenCalledWith(
@@ -138,6 +148,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/99', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -152,6 +163,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/1', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -174,6 +186,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/2', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -190,6 +203,7 @@ describe('handlePatternDetail', () => {
     const result = await handlePatternDetail('sunrise://knowledge/patterns/5', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -204,7 +218,7 @@ describe('handlePatternDetail', () => {
       handlePatternDetail(
         'sunrise://knowledge/patterns/1',
         { someConfig: true },
-        { scopedAgentId: null, apiKeyId: 'key-1' }
+        { scopedAgentId: null, apiKeyId: 'key-1', userId: null }
       )
     ).resolves.not.toThrow();
   });

@@ -363,6 +363,7 @@ async function handleResourcesRead(
   const content = await readMcpResource(parsed.data.uri, {
     scopedAgentId: auth.scopedAgentId,
     apiKeyId: auth.apiKeyId,
+    userId: auth.createdBy,
   });
   if (!content) {
     throw new McpProtocolError(

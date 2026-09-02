@@ -21,9 +21,16 @@ release process.
 - `AiCostLog.userId` — a nullable `User` foreign key (`onDelete: SetNull`,
   indexed) so cost attribution survives the agent, the conversation and the user
   it was recorded against. Threaded from every `logCost` call site that has a
-  session user: chat turns and their rolling summaries, per-message and
-  knowledge-search embeddings, capability dispatches, workflow steps,
-  evaluation runs and the admin routes. `EmbeddingAttribution`
+  session user **on the request paths**: chat turns and their rolling
+  summaries, per-message and knowledge-search embeddings (including the MCP
+  knowledge resource, which attributes to the API key's owner as its tool calls
+  already did), capability dispatches, workflow steps, evaluation runs and the
+  admin routes. **Document ingestion is a deliberate exception** — `embedBatch`
+  is called there with metadata only, and although `AiKnowledgeDocument`
+  records an `uploadedBy`, upload embedding stays operator maintenance rather
+  than spend on a person's behalf, which is the policy
+  `.context/orchestration/capabilities.md` already recorded and this change
+  does not revisit. `EmbeddingAttribution`
   (`lib/orchestration/knowledge/embedder.ts`) gains `userId` for the same
   reason its other three keys exist — the embedding a chat turn causes is that
   turn's spend, and attributing the chat row while leaving the embedding row
