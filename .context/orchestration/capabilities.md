@@ -237,16 +237,30 @@ capability and the `rag_retrieve` executor fill in.
 
 **What is still deliberately unattributed**, and why:
 
-| Sink                                                   | What it logs                        | Why nothing tags it                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `knowledge/embedder.ts` via ingestion/seeding/chunking | the per-document embedding batch    | those callers pass metadata only. No agent or conversation exists behind an upload; a user does (`AiKnowledgeDocument.uploadedBy`) but ingestion is operator maintenance, not spend on a person's behalf — deliberate, not an oversight. Tagged `metadata.kind` + `documentId` |
-| `knowledge/keyword-enricher.ts`                        | post-upload BM25 keyword generation | same: runs against a document, from the admin UI, with no turn or execution in scope                                                                                                                                                                                           |
-| `knowledge/seeder.ts`, `knowledge/semantic-chunker.ts` | backfill and chunking embeddings    | operator-triggered maintenance, not work done on anyone's behalf. Tagged `metadata.kind`                                                                                                                                                                                       |
-| `chat/message-embedder.ts` backfill path only          | re-embedding older messages         | the live chat path DOES attribute (agent + conversation + user); the backfill has none in scope                                                                                                                                                                                |
-| any embed-widget turn, for `userId` only               | the visitor's chat spend            | an embed visitor is a synthetic `embed_<hash>`, not a `User` row. Agent + conversation still tag it                                                                                                                                                                            |
+| Sink                                                   | What it logs                        | Why nothing tags it                                                                                                                                                                                                                                   |
+| ------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge/embedder.ts` via ingestion/seeding/chunking | the per-document embedding batch    | those callers pass metadata only. No agent or conversation exists behind an upload, and the user who does (`AiKnowledgeDocument.uploadedBy`) is acting on the org's behalf, not their own — see the note below. Tagged `metadata.kind` + `documentId` |
+| `knowledge/keyword-enricher.ts`                        | post-upload BM25 keyword generation | same: runs against a document, from the admin UI, with no turn or execution in scope                                                                                                                                                                  |
+| `knowledge/seeder.ts`, `knowledge/semantic-chunker.ts` | backfill and chunking embeddings    | operator-triggered maintenance, not work done on anyone's behalf. Tagged `metadata.kind`                                                                                                                                                              |
+| `chat/message-embedder.ts` backfill path only          | re-embedding older messages         | the live chat path DOES attribute (agent + conversation + user); the backfill has none in scope                                                                                                                                                       |
+| any embed-widget turn, for `userId` only               | the visitor's chat spend            | an embed visitor is a synthetic `embed_<hash>`, not a `User` row. Agent + conversation still tag it                                                                                                                                                   |
 
-These are a limit of the domain, not a missing line: there is no row to point a
-foreign key at. `metadata.kind` is what makes them separable in reporting.
+Most of these are a limit of the domain, not a missing line: there is no row to
+point a foreign key at. `metadata.kind` is what makes them separable in
+reporting.
+
+**Ingestion is the exception, and it is a judgement rather than a limit** — a
+`User` _is_ available there (`AiKnowledgeDocument.uploadedBy`), so leaving
+`userId` unset is a choice that has to be defended. It is defended on the same
+line the subject-export manifest draws between `export` and `attribution`: a
+knowledge document is **org config**, and an admin uploading a corpus is doing
+the organisation's work, not incurring personal usage. Attributing it would put
+org-wide corpus spend inside one person's Art. 15 export and make whoever loaded
+the biggest document look like the platform's heaviest user — both of which
+misdescribe what happened. The rule that follows: **attribute spend to a person
+when they are the one who asked for the work, not merely when a `User` id is in
+scope.** A chat turn, a knowledge search and an MCP resource read are somebody
+asking; an upload, a seed and a re-chunk are the org maintaining itself.
 
 **The rule these three bugs share, and the guard for it.**
 `AiCostLog.agentId`, `.conversationId`, `.workflowExecutionId` and `.userId` are

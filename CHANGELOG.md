@@ -25,12 +25,13 @@ release process.
   summaries, per-message and knowledge-search embeddings (including the MCP
   knowledge resource, which attributes to the API key's owner as its tool calls
   already did), capability dispatches, workflow steps, evaluation runs and the
-  admin routes. **Document ingestion is a deliberate exception** — `embedBatch`
-  is called there with metadata only, and although `AiKnowledgeDocument`
-  records an `uploadedBy`, upload embedding stays operator maintenance rather
-  than spend on a person's behalf, which is the policy
-  `.context/orchestration/capabilities.md` already recorded and this change
-  does not revisit. `EmbeddingAttribution`
+  admin routes. **Document ingestion is a deliberate exception**, on the
+  same line the export manifest draws between a subject's own data and org
+  config they authored: a knowledge document is org config, so an admin
+  uploading a corpus is doing the organisation's work rather than incurring
+  personal usage. Attributing it would put org-wide corpus spend inside one
+  person's subject export. The rule is *attribute to whoever asked for the
+  work*, not *whenever a `User` id is in scope*. `EmbeddingAttribution`
   (`lib/orchestration/knowledge/embedder.ts`) gains `userId` for the same
   reason its other three keys exist — the embedding a chat turn causes is that
   turn's spend, and attributing the chat row while leaving the embedding row

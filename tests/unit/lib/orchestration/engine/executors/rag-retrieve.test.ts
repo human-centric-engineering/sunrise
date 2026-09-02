@@ -217,6 +217,11 @@ describe('executeRagRetrieve', () => {
     const attribution = vi.mocked(searchKnowledge).mock.calls[0][4];
     expect(attribution).toMatchObject({
       workflowExecutionId: 'exec_1',
+      // Whoever triggered the run pays for the step's query embedding. Safe
+      // without a guard: the engine writes this same value to
+      // `AiWorkflowExecution.userId`, itself a `user` FK, so a run that got
+      // here at all has a real id or null.
+      userId: 'user_1',
       metadata: expect.objectContaining({ stepId: step.id, kind: 'rag_retrieve' }),
     });
     // No `agentId`: a workflow step has no `AiAgent.id`, and the synthetic
