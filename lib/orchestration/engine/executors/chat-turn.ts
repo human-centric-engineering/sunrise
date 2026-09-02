@@ -237,6 +237,7 @@ export async function executeChatTurn(
     agentId: agent.id,
     conversationId,
     workflowExecutionId: ctx.executionId,
+    userId: ctx.userId,
     operation: CostOperation.CHAT,
     provider: providerSlug,
     model,

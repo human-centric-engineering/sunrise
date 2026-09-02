@@ -116,10 +116,16 @@ identity and date and nothing else.
 
 **Exclusions are not an escape hatch.** `EXCLUDED_SOURCES` is for tables a
 reader would reasonably wonder about — message embeddings (numeric vectors
-derived from message text that is already in the bundle), short-lived
-verification tokens, agent-attributed cost telemetry. A test asserts that
-nothing in the exclusion list has a `User` FK, so it cannot be used to write off
-a table the coverage rule covers.
+derived from message text that is already in the bundle) and short-lived
+verification tokens. A test asserts that nothing in the exclusion list has a
+`User` FK, so it cannot be used to write off a table the coverage rule covers.
+
+`AiCostLog` is the worked example of that rule biting. It sat in this list on
+the stated grounds that it "carries no user link" — true when written. Adding
+`AiCostLog.userId` made it false, the coverage guard started requiring the
+model, and it moved to `SUBJECT_DATA_SOURCES` as an `export` source. That is the
+intended direction of travel: an exclusion is only as good as its reason, and
+the guard re-checks the reason rather than trusting the entry.
 
 ## `omit`, Not `select`
 

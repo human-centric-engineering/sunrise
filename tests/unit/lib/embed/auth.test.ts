@@ -29,7 +29,12 @@ vi.mock('@/lib/logging', () => ({
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
-import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
+import {
+  isEmbedUserId,
+  EMBED_USER_ID_PREFIX,
+  resolveEmbedToken,
+  isOriginAllowed,
+} from '@/lib/embed/auth';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -173,5 +178,29 @@ describe('isOriginAllowed', () => {
     const allowed = ['https://example.com'];
 
     expect(isOriginAllowed(null, allowed)).toBe(false);
+  });
+});
+
+describe('isEmbedUserId', () => {
+  // The predicate exists so nothing writes a synthetic visitor id into a
+  // foreign key to `user`. Both directions matter: a false negative discards a
+  // cost row (P2003, swallowed), a false positive silently stops attributing
+  // real users' spend.
+  it('recognises the id resolveEmbedToken actually mints', () => {
+    expect(isEmbedUserId(`${EMBED_USER_ID_PREFIX}0123456789abcdef`)).toBe(true);
+  });
+
+  it('does not claim a real user id, a cuid, or an empty/absent value', () => {
+    expect(isEmbedUserId('cm3x9k2p40000abcd1234efgh')).toBe(false);
+    expect(isEmbedUserId('u1')).toBe(false);
+    expect(isEmbedUserId('')).toBe(false);
+    expect(isEmbedUserId(null)).toBe(false);
+    expect(isEmbedUserId(undefined)).toBe(false);
+  });
+
+  it('does not match a user id that merely contains the prefix later on', () => {
+    // startsWith, not includes — a real id happening to contain "embed_" is a
+    // real user and must keep its attribution.
+    expect(isEmbedUserId('user_embed_123')).toBe(false);
   });
 });

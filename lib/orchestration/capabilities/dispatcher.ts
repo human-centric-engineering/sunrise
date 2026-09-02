@@ -21,6 +21,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
 import { assertScopeHeld, foldScopeIntoArgs, scopeKeysOf } from '@/lib/orchestration/scope';
@@ -666,6 +667,7 @@ class CapabilityDispatcher {
             ? { workflowExecutionId: context.workflowExecutionId }
             : {}),
           ...(context.conversationId ? { conversationId: context.conversationId } : {}),
+          ...(context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}),
           operation: CostOperation.TOOL_CALL,
           model: 'n/a',
           provider: 'capability',

@@ -15,6 +15,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -489,6 +490,7 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
         : {}),
       ...(context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {}),
       conversationId: conv.id,
+      ...(context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}),
       provider: providerSlug,
       model: `${providerSlug}-${recordedChannel}`,
       inputTokens: 0,

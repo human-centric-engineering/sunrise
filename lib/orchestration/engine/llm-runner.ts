@@ -204,6 +204,7 @@ export async function runLlmCall(
       // step failure — accounting is best-effort.
       void logCost({
         workflowExecutionId: ctx.executionId,
+        userId: ctx.userId,
         model: modelId,
         provider: modelInfo.provider,
         inputTokens: response.usage.inputTokens,

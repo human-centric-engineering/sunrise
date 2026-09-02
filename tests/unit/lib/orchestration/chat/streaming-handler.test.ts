@@ -1200,6 +1200,55 @@ describe('StreamingChatHandler', () => {
     expect(logCost).toHaveBeenCalledTimes(1);
   });
 
+  // 14a-i -------------------------------------------------------------------
+  it('attributes the cost row to the caller when they are a real user', async () => {
+    const provider1 = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 3, outputTokens: 3 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: provider1,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: 'u1' }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1' }));
+  });
+
+  // 14a-ii ------------------------------------------------------------------
+  it('does NOT put an embed visitor id in the cost row — it is not a User row', async () => {
+    // `AiCostLog.userId` is a foreign key to `user`. This one handler serves the
+    // admin, consumer AND embed routes; the embed route passes the synthetic
+    // `embed_<hash>` visitor id minted by `resolveEmbedToken`, which has no
+    // `User` behind it. Writing it here raises P2003, and because `logCost`
+    // swallows write failures the entire cost row is discarded — every embed
+    // chat's spend recorded nowhere. Exactly #599/#600/#654, one column over.
+    //
+    // Asserting `userId: null` rather than merely "not the visitor id": the
+    // column must be explicitly unattributed, not carrying some other value.
+    const provider1 = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 3, outputTokens: 3 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: provider1,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: 'embed_deadbeefdeadbeef' }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logCost).toHaveBeenCalledTimes(1);
+    expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ userId: null }));
+    // And specifically not the visitor id, which is the value that would have
+    // been written before the guard existed.
+    expect(logCost).not.toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'embed_deadbeefdeadbeef' })
+    );
+  });
+
   // 14b ---------------------------------------------------------------------
   it('logCost called once per turn — twice for a two-turn tool-call round-trip', async () => {
     // Arrange: turn 1 (tool call) + turn 2 (final) both reach a done chunk

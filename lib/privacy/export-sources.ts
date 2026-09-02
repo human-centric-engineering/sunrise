@@ -257,6 +257,28 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
         orderBy: byCreatedAt,
       }),
   },
+  {
+    model: 'AiCostLog',
+    section: 'usageCosts',
+    disposition: 'export',
+    description:
+      'AI usage recorded against the subject: the model and provider used, token counts, and the cost of each request they caused.',
+    // Was in EXCLUDED_SOURCES until this column existed, on the stated grounds
+    // that it "carries no user link". That was true and is not any more, so the
+    // exclusion went with it. `export` rather than `attribution`: attribution is
+    // for org config the subject authored, where the fact of authorship is
+    // theirs and the contents are not. This is the inverse — the rows ARE a
+    // record of the subject's own activity, so they get the rows.
+    //
+    // Rows from before the column existed, and rows from user-less paths
+    // (ingestion, scheduled runs, embed traffic), carry NULL and so are
+    // correctly absent from any subject's export rather than misattributed.
+    fetch: ({ userId }) =>
+      prisma.aiCostLog.findMany({
+        where: { userId },
+        orderBy: byCreatedAt,
+      }),
+  },
 
   // ---------------------------------------------------------------------
   // Attribution — org config the subject created. Identity of the thing,
@@ -546,11 +568,6 @@ export const EXCLUDED_SOURCES: ExcludedSource[] = [
     model: 'Verification',
     reason:
       'Short-lived email verification and password-reset tokens. Live credential material, deleted on use or expiry, and never retained as a record.',
-  },
-  {
-    model: 'AiCostLog',
-    reason:
-      'Per-request billing telemetry attributed to an agent or workflow, not to a person; it carries no user link.',
   },
 ];
 

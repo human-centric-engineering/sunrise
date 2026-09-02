@@ -88,6 +88,7 @@ import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages, isPlaceholderSummary } from '@/lib/orchestration/chat/summarizer';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import { hintScope } from '@/lib/orchestration/scope';
 import {
   GEN_AI_OPERATION_NAME,
@@ -301,6 +302,21 @@ interface PersistMessageParams {
   modelId?: string;
   providerSlug?: string;
   provenance?: MessageProvenance;
+}
+
+/**
+ * The caller's id, but only when it is a real `User` row.
+ *
+ * This handler serves three routes and two of them pass `session.user.id`; the
+ * embed route passes a synthetic `embed_<hash>` visitor id, which is not a
+ * `User` and must never reach a foreign key to one. `AiCostLog.userId` is such
+ * a key, and `logCost` swallows write failures — so passing the visitor id
+ * would discard the cost row for every embed chat, silently. Conversation and
+ * memory scoping still use `request.userId` itself; only FK attribution goes
+ * through here.
+ */
+function attributableUserId(userId: string): string | null {
+  return isEmbedUserId(userId) ? null : userId;
 }
 
 interface WriteEvaluationLogParams {
@@ -683,6 +699,7 @@ export class StreamingChatHandler {
         void logCost({
           agentId: agent.id,
           conversationId: conversation.id,
+          userId: attributableUserId(request.userId),
           model: resolvedModel,
           provider: resolvedBinding.providerSlug,
           inputTokens: 0,
@@ -935,6 +952,10 @@ export class StreamingChatHandler {
               // summary's cost row was rejected and swallowed — see #654.
               agentId: agent.id,
               conversationId: conversation.id,
+              // The summary is spend this user's turn caused, so it is
+              // attributed to them like the turn itself — see #654 for what
+              // happens when this boundary drops a cost row's real keys.
+              userId: attributableUserId(request.userId),
             }
           );
           conversationSummary = summarizeResult.summary;
@@ -1375,6 +1396,7 @@ export class StreamingChatHandler {
                   void logCost({
                     agentId: agent.id,
                     conversationId: conversation.id,
+                    userId: attributableUserId(request.userId),
                     model: resolvedModel,
                     provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
                     inputTokens: errUsage.inputTokens,
@@ -1807,6 +1829,7 @@ export class StreamingChatHandler {
             void logCost({
               agentId: agent.id,
               conversationId: conversation.id,
+              userId: attributableUserId(request.userId),
               model: resolvedModel,
               provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
               inputTokens: u.inputTokens,
@@ -1900,6 +1923,7 @@ export class StreamingChatHandler {
           void logCost({
             agentId: agent.id,
             conversationId: conversation.id,
+            userId: attributableUserId(request.userId),
             model: resolvedModel,
             provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             inputTokens: turnUsage.inputTokens,

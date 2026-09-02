@@ -18,6 +18,24 @@ release process.
 
 ### Added
 
+- `AiCostLog.userId` — a nullable `User` foreign key (`onDelete: SetNull`,
+  indexed) so cost attribution survives the agent, the conversation and the user
+  it was recorded against. Threaded from every `logCost` call site that has a
+  session user: chat turns and their rolling summaries, capability dispatches,
+  workflow steps, evaluation runs and the two admin routes. **NULL is a correct
+  value**, not a backfill gap — knowledge ingestion, keyword enrichment,
+  scheduled and trigger-driven runs, and embed-widget traffic have no `User`
+  behind them, as do all rows written before this column. A data subject's
+  export now includes their own usage rows: `AiCostLog` moves out of
+  `EXCLUDED_SOURCES` (whose stated reason, "it carries no user link", this
+  change falsified) into `SUBJECT_DATA_SOURCES` with disposition `export`.
+- `isEmbedUserId()` and `EMBED_USER_ID_PREFIX` in `lib/embed/auth.ts` — the
+  predicate for "this id is a synthetic embed visitor, not a `User` row".
+  Anything writing a caller's id into a foreign key to `user` must check it: an
+  embed visitor id there raises P2003, and because `logCost` swallows write
+  failures the whole cost row is discarded. Mirrors `isWorkflowAgentId`, which
+  exists for the identical reason on `agentId`.
+
 - `registerRateLimitKeyResolver(key, resolver)` in `lib/security/rate-limit-policy.ts`
   opens the rate-limit **key** space to forks the way `registerRateLimitTier` opens
   the tier space: a fork can bucket requests by anything it can derive from the

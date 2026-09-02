@@ -19,16 +19,30 @@ model AiCostLog {
   // tracing is not registered (default no-op tracer returns empty IDs).
   traceId             String?
   spanId              String?
+  // Who incurred this cost, when a person did. Nullable and SetNull for the
+  // same reason the other FKs here are: attribution must outlive the thing it
+  // points at. A cost row is a billing record — deleting the agent, the
+  // conversation, or erasing the user must not silently subtract spend that
+  // actually happened.
+  //
+  // NULL is a correct and expected value, not a gap to backfill. Paths that
+  // genuinely have no session user: knowledge ingestion and embedding,
+  // keyword enrichment, scheduled and trigger-driven workflow runs, and
+  // embed-widget traffic (an embed token resolves to an agent, never to a
+  // User). Legacy rows written before this column are also NULL.
+  userId              String?
   createdAt           DateTime @default(now())
 
   // Relations
   agent             AiAgent?             @relation(fields: [agentId], references: [id], onDelete: SetNull)
   conversation      AiConversation?      @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   workflowExecution AiWorkflowExecution? @relation(fields: [workflowExecutionId], references: [id], onDelete: SetNull)
+  user              User?                @relation("AiCostLogUser", fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([agentId])
   @@index([conversationId])
   @@index([workflowExecutionId])
+  @@index([userId])
   @@index([provider])
   @@index([operation])
   @@index([createdAt])

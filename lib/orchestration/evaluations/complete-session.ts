@@ -180,6 +180,7 @@ export async function completeEvaluationSession(
     metadata: { phase: 'summary' },
   };
   if (session.agentId) costParams.agentId = session.agentId;
+  costParams.userId = params.userId;
   void logCost(costParams).catch((err) => {
     logger.error('Failed to log evaluation cost', {
       sessionId: session.id,

@@ -134,6 +134,14 @@ export interface SummarizeOptions {
    * see — the #600 class, one boundary further out.
    */
   costLogMetadata?: Record<string, unknown>;
+  /**
+   * The user whose turn triggered this summarisation. The summariser has no
+   * session of its own — it runs as a side effect of someone else's chat
+   * turn — so attribution has to be handed in, exactly like `agentId` and
+   * `conversationId` above. Without it a summary's spend is the one part of
+   * a conversation's cost with no one attached to it.
+   */
+  userId?: string | null;
 }
 
 /**
@@ -209,6 +217,7 @@ export async function summarizeMessages(
         void logCost({
           ...(options.agentId ? { agentId: options.agentId } : {}),
           ...(options.conversationId ? { conversationId: options.conversationId } : {}),
+          ...(options.userId ? { userId: options.userId } : {}),
           model,
           provider: usedSlug,
           inputTokens: response.usage.inputTokens,

@@ -582,6 +582,46 @@ describe('getAgentCosts — date range branches', () => {
   });
 });
 
+describe('logCost — user attribution', () => {
+  const base = {
+    model: 'claude-sonnet-4-6',
+    provider: 'anthropic',
+    inputTokens: 10,
+    outputTokens: 5,
+    operation: 'chat' as const,
+  };
+
+  const dataOf = () => (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+
+  it('writes userId when the caller supplies one', async () => {
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    await logCost({ ...base, userId: 'user-1' });
+    expect(dataOf().userId).toBe('user-1');
+  });
+
+  it('omits userId entirely for a user-less path rather than writing a falsy FK', async () => {
+    // Scheduled and trigger-driven runs, ingestion and embed traffic all reach
+    // logCost with no user. `userId` must be ABSENT from the create payload,
+    // not present-and-falsy: `''` is not a valid `user.id`, so it would raise
+    // P2003 and — since logCost swallows write errors — discard the whole row.
+    for (const userless of [null, undefined, '']) {
+      (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockClear();
+      (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+      await logCost({ ...base, ...(userless === undefined ? {} : { userId: userless }) });
+      expect(dataOf()).not.toHaveProperty('userId');
+    }
+  });
+
+  it('still writes the row when there is no user — attribution is optional, the cost is not', async () => {
+    // The point of the column is durable attribution, not gating: a row with
+    // no user is a correct row, and dropping it would lose real spend.
+    (prisma.aiCostLog.create as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'r' });
+    const row = await logCost({ ...base, userId: null });
+    expect(row).toEqual({ id: 'r' });
+    expect(dataOf().totalCostUsd).toBeGreaterThan(0);
+  });
+});
+
 describe('logCost — trace correlation', () => {
   it('omits traceId from the Prisma write when traceId is an empty string', async () => {
     // Arrange: empty string is the sentinel returned by NOOP_SPAN.traceId()
