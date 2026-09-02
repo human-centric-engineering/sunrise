@@ -45,15 +45,23 @@ export type RateLimitKey = 'ip' | 'session-user' | 'api-key' | 'embed-token';
 
 /**
  * The built-in key strategies, as a value the middleware and the registration
- * guard can iterate. Kept adjacent to {@link RateLimitKey} so adding a
- * built-in updates both or fails the `satisfies` check.
+ * guard can iterate. Derived from a `Record` keyed by {@link RateLimitKey}
+ * rather than a bare array: `satisfies readonly RateLimitKey[]` would only
+ * check MEMBERSHIP (no wrong entries), while the Record shape also checks
+ * COMPLETENESS — adding a member to the union without a row here is a compile
+ * error, so a new built-in can never silently route into the app-resolver
+ * branch at request time.
  */
-export const BUILT_IN_RATE_LIMIT_KEYS = [
-  'ip',
-  'session-user',
-  'api-key',
-  'embed-token',
-] as const satisfies readonly RateLimitKey[];
+const BUILT_IN_RATE_LIMIT_KEY_MAP = {
+  ip: true,
+  'session-user': true,
+  'api-key': true,
+  'embed-token': true,
+} as const satisfies Record<RateLimitKey, true>;
+
+export const BUILT_IN_RATE_LIMIT_KEYS = Object.keys(
+  BUILT_IN_RATE_LIMIT_KEY_MAP
+) as readonly RateLimitKey[];
 
 /** True when `key` is one of the four built-in strategies the middleware resolves itself. */
 export function isBuiltInRateLimitKey(key: string): key is RateLimitKey {
@@ -91,9 +99,12 @@ export interface RateLimitRule {
    * Built-in Sunrise rules use a {@link RateLimitKey} literal. App-registered
    * rules may name a key created via {@link registerRateLimitKeyResolver} —
    * the widening to `string` mirrors `tier` above, and the literal union is
-   * kept for editor autocomplete on the built-in names. A rule naming a
-   * custom key is rejected at registration until its resolver exists, so an
-   * unknown key can never reach the middleware through this table.
+   * kept for editor autocomplete on the built-in names. Two guards keep an
+   * unknown key from surviving to request time: app rules naming a custom key
+   * are rejected at registration until the resolver exists, and the
+   * middleware's boot-time integrity walk re-checks EVERY rule in the
+   * effective policy — including Sunrise's own literals here, which never
+   * pass through the registration guard.
    */
   key: RateLimitKey | (string & {});
 

@@ -175,6 +175,11 @@ describe('rlsEnabled', () => {
     expect(result).toEqual({ ok: true });
     expect(lastSql()).toContain('pg_class');
     expect(lastSql()).toContain('relrowsecurity');
+    // Scoped to the live schema and admitting partitioned parents: a same-named
+    // table in a backup schema must not answer for the real one (rows[0] would
+    // make that a silent green), and relkind 'p' supports RLS fully.
+    expect(lastSql()).toContain('relnamespace = current_schema()::regnamespace');
+    expect(lastSql()).toContain("relkind IN ('r', 'p')");
     expect(lastValues()).toEqual(['AiConversation']);
   });
 
@@ -228,6 +233,9 @@ describe('policyExists', () => {
 
     expect(result).toEqual({ ok: true });
     expect(lastSql()).toContain('pg_policies');
+    // Same-schema scoping: a same-named policy in a backup schema must neither
+    // stand in for a dropped live policy nor inflate the exact ===1 count.
+    expect(lastSql()).toContain('schemaname = current_schema()');
     expect(lastValues()).toEqual(['AiConversation', 'org_isolation']);
   });
 

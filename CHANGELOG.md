@@ -27,7 +27,9 @@ release process.
   registration, and built-in strategies cannot be overridden. This closes the
   "a registry seam is only as open as its narrowest type" gap the multi-tenancy
   research called out — per-org quotas become expressible without editing
-  `lib/security/`.
+  `lib/security/`. `getClientIP()` now accepts anything headers-bearing
+  (`{ headers: Headers }`, so plain `Request` too) so resolvers can composite
+  identifiers with the validated IP instead of echoing raw forwarding headers.
 - `rlsEnabled(table, { requireForced? })` and `policyExists(table, policy)` probe
   factories in `lib/db/drift-probes.ts` (the drift-probe registry's primitives).
   A fork running the multi-tenancy retrofit can now assert its Row-Level-Security

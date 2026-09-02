@@ -50,7 +50,10 @@ import {
   type RateLimitRule,
 } from '@/lib/security/rate-limit-policy';
 import { logger } from '@/lib/logging';
-import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
+import {
+  applyRateLimit,
+  assertRateLimitPolicyIntegrity,
+} from '@/lib/security/rate-limit-middleware';
 
 function makeLimiter(maxRequests: number) {
   return createRateLimiter({ interval: 60_000, maxRequests });
@@ -599,5 +602,33 @@ describe('applyRateLimit — enforces a custom-key rule through its resolver', (
     );
     const blocked = await applyRateLimit(make('192.0.2.40', 'acme'));
     expect(blocked?.status).toBe(429);
+  });
+});
+
+// ─── Boot-time integrity walk (tier AND key halves) ──────────────────────────
+
+describe('assertRateLimitPolicyIntegrity', () => {
+  it('passes on the shipped base policy', () => {
+    expect(() => assertRateLimitPolicyIntegrity()).not.toThrow();
+  });
+
+  it('throws naming an unresolvable tier (the fail-open typo)', () => {
+    const policy: RateLimitRule[] = [{ match: /^\/api\/v1\/x\//, tier: 'billling', key: 'ip' }];
+    expect(() => assertRateLimitPolicyIntegrity(policy)).toThrow(/unknown tier.*billling/is);
+  });
+
+  it('throws naming an unresolvable key — including a mistyped built-in in the base table', () => {
+    // The half the tier walk never covered: Sunrise's own RATE_LIMIT_POLICY is
+    // a literal array that never passes through registerRateLimitRule's guard,
+    // so `key: 'sesion-user'` used to type-check, boot, and silently degrade
+    // every matching request to per-IP buckets with a hot-path error log.
+    const policy: RateLimitRule[] = [{ match: /^\/api\/v1\/x\//, tier: 'api', key: 'sesion-user' }];
+    expect(() => assertRateLimitPolicyIntegrity(policy)).toThrow(/unknown key.*sesion-user/is);
+  });
+
+  it('passes for a custom key once its resolver is registered', () => {
+    registerRateLimitKeyResolver('org', () => 'org:acme');
+    const policy: RateLimitRule[] = [{ match: /^\/api\/v1\/x\//, tier: 'api', key: 'org' }];
+    expect(() => assertRateLimitPolicyIntegrity(policy)).not.toThrow();
   });
 });

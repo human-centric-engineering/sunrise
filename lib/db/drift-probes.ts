@@ -144,9 +144,14 @@ export function generatedColumnExists(tableName: string, columnName: string): Pr
  * `{ requireForced: false }` only for a table you deliberately left unforced
  * (e.g. the app role can never own it), and say why at the registration site.
  *
- * Like the other probes here, lookup is by table name alone (no schema
- * qualifier) — matching a single-schema Sunrise database. RLS being enabled
- * says nothing about which policies exist; pair with `policyExists`.
+ * Lookup is scoped to `current_schema()` — unlike the count-based probes
+ * above, this one reads `rows[0]`, and a same-named table in a backup or
+ * shadow schema could otherwise answer for the live one (a silent GREEN over
+ * an unprotected table, the worst failure mode a drift check can have).
+ * Partitioned parents (`relkind 'p'`) count: they support RLS fully, and
+ * excluding them would misreport a partitioned tenant table as missing. RLS
+ * being enabled says nothing about which policies exist; pair with
+ * `policyExists`.
  */
 export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }): Probe {
   const requireForced = opts?.requireForced ?? true;
@@ -155,7 +160,8 @@ export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }
       SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced
       FROM pg_class c
       WHERE c.relname = ${tableName}
-        AND c.relkind = 'r'
+        AND c.relkind IN ('r', 'p')
+        AND c.relnamespace = current_schema()::regnamespace
     `;
     const row = rows[0];
     if (!row) return { ok: false, note: 'table missing entirely' };
@@ -183,13 +189,16 @@ export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }
  * for them exactly as it does for the HNSW indexes this registry was built
  * around. A policy can also exist while RLS is disabled (`CREATE POLICY` on an
  * un-enabled table is inert), so register both probes per protected table.
+ * Scoped to `current_schema()` so a same-named policy in a backup schema can
+ * neither answer for a dropped live policy nor inflate the count past 1.
  */
 export function policyExists(tableName: string, policyName: string): Probe {
   return async () => {
     const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT count(*)::bigint AS count
       FROM pg_policies
-      WHERE tablename = ${tableName}
+      WHERE schemaname = current_schema()
+        AND tablename = ${tableName}
         AND policyname = ${policyName}
     `;
     return { ok: Number(rows[0]?.count ?? 0n) === 1 };

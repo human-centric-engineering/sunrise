@@ -58,29 +58,51 @@ import { registerAppRateLimits } from '@/lib/app/rate-limit';
 // making the debugging trail hard to follow. We MUST re-throw — fail-fast is
 // the intended behaviour for a misconfigured rate-limit registration; logging
 // and continuing would let the misconfiguration ship.
-try {
-  registerAppRateLimits();
-  // Integrity check (fork-readiness finding #6): the rule shape widens `tier`
-  // to `RateLimitTier | (string & {})` so forks can name custom tiers as
-  // bare strings without TS module-augmentation gymnastics. The trade-off is
-  // that a typo (`tier: 'billling'`) type-checks cleanly — and would silently
-  // fail open at request time (no limiter resolves → no rate limit applied).
-  // Convert that runtime fail-open into a boot-time throw: every rule's tier
-  // MUST resolve once the auto-wire is done. If a fork's rule names a tier
-  // it never registered, refuse to boot rather than ship the request-time
-  // hole. Sunrise's built-in rules always resolve (covered by the type union),
-  // so this check is load-bearing only for the app-extended slice.
-  const unresolved = getEffectiveRateLimitPolicy().filter(
-    (rule) => resolveRateLimitTier(rule.tier) === undefined
-  );
-  if (unresolved.length > 0) {
-    const details = unresolved.map((r) => `${String(r.match)} → "${r.tier}"`).join(', ');
+/**
+ * Boot-time integrity walk over the effective policy. The rule shape widens
+ * both `tier` and `key` to `… | (string & {})` so forks can name custom
+ * values without TS module-augmentation gymnastics; the trade-off is that a
+ * typo (`tier: 'billling'`, `key: 'sesion-user'`) type-checks cleanly and
+ * would degrade silently at request time — an unresolved tier fails OPEN (no
+ * limiter → no cap), an unresolved key falls back to per-IP buckets with a
+ * hot-path error log. Convert both into a boot-time throw.
+ *
+ * The key half is load-bearing for Sunrise's own `RATE_LIMIT_POLICY` too, not
+ * just the app-extended slice: built-in rules are a literal array that never
+ * passes through `registerRateLimitRule`'s guard, so before this walk a
+ * mistyped built-in key in the table would have shipped. Exported so tests
+ * exercise both failure modes directly instead of through module re-import.
+ */
+export function assertRateLimitPolicyIntegrity(
+  policy: readonly RateLimitRule[] = getEffectiveRateLimitPolicy()
+): void {
+  const unresolvedTiers = policy.filter((rule) => resolveRateLimitTier(rule.tier) === undefined);
+  if (unresolvedTiers.length > 0) {
+    const details = unresolvedTiers.map((r) => `${String(r.match)} → "${r.tier}"`).join(', ');
     throw new Error(
-      `Rate-limit policy references ${unresolved.length} unknown tier(s): ${details}. ` +
+      `Rate-limit policy references ${unresolvedTiers.length} unknown tier(s): ${details}. ` +
         'Either register the tier(s) via registerRateLimitTier(...) in lib/app/rate-limit.ts, ' +
         'or fix the typo in the rule. Boot is aborted rather than shipping silent fail-open.'
     );
   }
+  const unresolvedKeys = policy.filter(
+    (rule) =>
+      !isBuiltInRateLimitKey(rule.key) && resolveAppRateLimitKeyResolver(rule.key) === undefined
+  );
+  if (unresolvedKeys.length > 0) {
+    const details = unresolvedKeys.map((r) => `${String(r.match)} → "${r.key}"`).join(', ');
+    throw new Error(
+      `Rate-limit policy references ${unresolvedKeys.length} unknown key strategy(ies): ${details}. ` +
+        'Either register the resolver via registerRateLimitKeyResolver(...) in ' +
+        'lib/app/rate-limit.ts, or fix the typo in the rule. Boot is aborted rather than ' +
+        'shipping per-IP fallback buckets and a hot-path error log.'
+    );
+  }
+}
+
+try {
+  registerAppRateLimits();
+  assertRateLimitPolicyIntegrity();
 } catch (error) {
   logger.error('Failed to register app rate limits from lib/app/rate-limit.ts', {
     error: error instanceof Error ? error.message : String(error),

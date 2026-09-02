@@ -41,7 +41,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /** Matches an actual raw-SQL member call, not a prose mention. */
-const RAW_SQL_CALL = /\.\$(queryRaw|executeRaw)(Unsafe)?\b/g;
+const RAW_SQL_CALL = /\.\$(queryRaw|executeRaw)(Unsafe|Typed)?\b/g;
 
 /**
  * Every admitted raw-SQL file, with its exact call-site count and the reason
@@ -168,10 +168,11 @@ describe('raw-SQL allowlist guard', () => {
       'const rows = await prisma.$queryRaw<Row[]>`SELECT 1`;',
       'await tx.$executeRawUnsafe(sql);',
       'return client.$queryRawUnsafe(q, ...params);',
+      'await prisma.$queryRawTyped(getUsers());', // TypedSQL preview — still a raw query
       '// a comment mentioning $queryRaw and `$executeRawUnsafe` in prose',
       ' * docblock prose: prefer $queryRaw over string interpolation',
     ].join('\n');
-    expect(countRawSqlCalls(fixture)).toBe(3);
+    expect(countRawSqlCalls(fixture)).toBe(4);
     expect(countRawSqlCalls('// nothing raw here')).toBe(0);
   });
 
