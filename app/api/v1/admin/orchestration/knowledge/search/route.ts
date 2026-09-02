@@ -17,7 +17,7 @@ import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowled
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { knowledgeSearchSchema } from '@/lib/validations/orchestration';
 
-export const POST = withAdminAuth(async (request, _session) => {
+export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, knowledgeSearchSchema);
 
@@ -38,6 +38,7 @@ export const POST = withAdminAuth(async (request, _session) => {
   }
 
   const results = await searchKnowledge(query, filters, limit, undefined, {
+    userId: session.user.id,
     metadata: { kind: 'admin_knowledge_search' },
   });
 

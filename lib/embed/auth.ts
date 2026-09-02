@@ -20,11 +20,20 @@ export const EMBED_USER_ID_PREFIX = 'embed_';
 /**
  * True when an id is a synthetic embed visitor rather than a real `User.id`.
  *
- * Anything writing a caller's id into a **foreign key to `user`** must check
- * this first. `AiCostLog.userId` is the case that found it: passing an embed
- * visitor there raises P2003, and because `logCost` swallows write failures by
- * design, the whole cost row is discarded — spend that happened, recorded
- * nowhere. Same failure as #599/#600/#654, one column over.
+ * Anything writing a caller's id into a **foreign key to `user`** ought to
+ * check this first. `AiCostLog.userId` is the case that found it: passing an
+ * embed visitor there raises P2003, and because `logCost` swallows write
+ * failures by design, the whole cost row is discarded — spend that happened,
+ * recorded nowhere. Same failure as #599/#600/#654, one column over.
+ *
+ * **Applied to the cost-log and embedding-attribution paths only.** Other
+ * writers of a `user` FK from a caller id — `AiUserMemory.userId` in the
+ * `user-memory` capability, `AiWorkflowExecution.userId` via `run-workflow` —
+ * are deliberately NOT guarded here. They fail loudly rather than silently, and
+ * what a visitor's memory or sub-workflow should even do is a question about
+ * visitor identity, not about cost attribution. Both are recorded on #705,
+ * which owns that decision. Do not read this predicate's existence as a claim
+ * that every `user` FK in the tree is covered.
  *
  * Mirrors `isWorkflowAgentId` in the capability dispatcher, which exists for
  * the identical reason on `agentId`.

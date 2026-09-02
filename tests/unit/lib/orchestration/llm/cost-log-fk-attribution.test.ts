@@ -318,15 +318,22 @@ const ALLOWED_CALL_SITES: readonly string[] = [
   // subject can be a workflow instead — hence the guard. `run.userId` needs
   // none: it is NOT NULL on `AiEvaluationRun` and a FK to `user` already.
   'lib/orchestration/evaluations/run-worker.ts | agentId=spread((run.agentId ? { agentId: run.agentId } : {})) | conversationId=— | workflowExecutionId=— | userId=run.userId',
-  // #654 part 3. Both embedder rows now take whatever the caller could supply.
-  // The guards are load-bearing for the same reason as the capability entries:
+  // #654 part 3. Both embedder rows take whatever the caller could supply, and
+  // the guards are load-bearing for the same reason as the capability entries:
   // `search_knowledge_base` dispatched from a workflow step holds a
   // `workflow:<id>` label in `context.agentId`, and passes it only when it is
-  // not one. Ingestion callers supply metadata alone — there is no agent or
-  // conversation behind a document upload — which is recorded in
-  // `.context/orchestration/capabilities.md`. No user either: ingestion is not
-  // a person's request, so `userId` is unwritten.
-  'lib/orchestration/knowledge/embedder.ts | agentId=spread((attribution?.agentId ? { agentId: attribution.agentId } : {})) | conversationId=spread((attribution?.conversationId ? { conversationId: attribution.conversationId } : {})) | workflowExecutionId=spread((attribution?.workflowExecutionId ? { workflowExecutionId: attribution.workflowExecutionId } : {})) | userId=—',
+  // not one.
+  //
+  // `userId` is forwarded, NOT unwritten — an earlier version of this entry
+  // said "ingestion is not a person's request, so userId is unwritten", which
+  // read the site as if ingestion were its only caller. It is not: the
+  // per-message embedder runs inside a chat turn and the knowledge-search
+  // paths run inside somebody's request, so leaving it unset recorded spend a
+  // user caused against nobody — and dropped it from that user's Art. 15
+  // export while the chat row for the SAME turn appeared in it. Ingestion
+  // callers pass no attribution at all, so they still land NULL, which is what
+  // `.context/orchestration/capabilities.md` records.
+  'lib/orchestration/knowledge/embedder.ts | agentId=spread((attribution?.agentId ? { agentId: attribution.agentId } : {})) | conversationId=spread((attribution?.conversationId ? { conversationId: attribution.conversationId } : {})) | workflowExecutionId=spread((attribution?.workflowExecutionId ? { workflowExecutionId: attribution.workflowExecutionId } : {})) | userId=spread((attribution?.userId ? { userId: attribution.userId } : {}))',
   // Keyword enrichment runs post-upload against a document, with no agent,
   // conversation or user in scope. Deliberate — see the doc note above.
   'lib/orchestration/knowledge/keyword-enricher.ts | agentId=— | conversationId=— | workflowExecutionId=— | userId=—',

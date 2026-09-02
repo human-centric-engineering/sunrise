@@ -488,6 +488,18 @@ export interface EmbeddingAttribution {
   /** Must be a real `AiWorkflowExecution.id`. */
   workflowExecutionId?: string;
   /**
+   * Must be a real `User.id`. Null/absent for work no person requested —
+   * document ingestion, seeding, chunking — which is most callers here.
+   *
+   * NOT most of them, though, and that is the trap: the per-message embedder
+   * and the knowledge-search paths run inside somebody's chat turn, so leaving
+   * this unset there records spend a user caused against nobody, and drops it
+   * from their Art. 15 export while the chat row for the SAME turn appears.
+   * An embed visitor is not a `User` — guard with `isEmbedUserId` before
+   * forwarding one (see `lib/embed/auth.ts`).
+   */
+  userId?: string | null;
+  /**
    * Free-form tags. Carries `stepId` in from a workflow executor — without it
    * both execution cost readers drop the row (`if (!stepId) continue;`) — and a
    * `kind` on paths that have nothing else.
@@ -555,6 +567,7 @@ export async function embedText(
     ...(attribution?.workflowExecutionId
       ? { workflowExecutionId: attribution.workflowExecutionId }
       : {}),
+    ...(attribution?.userId ? { userId: attribution.userId } : {}),
     ...(attribution?.metadata ? { metadata: attribution.metadata } : {}),
     model: provider.model,
     provider: provider.providerType,
@@ -648,6 +661,7 @@ export async function embedBatch(
     ...(attribution?.workflowExecutionId
       ? { workflowExecutionId: attribution.workflowExecutionId }
       : {}),
+    ...(attribution?.userId ? { userId: attribution.userId } : {}),
     ...(attribution?.metadata ? { metadata: attribution.metadata } : {}),
     model: provider.model,
     provider: provider.providerType,

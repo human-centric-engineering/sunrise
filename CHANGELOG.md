@@ -21,8 +21,13 @@ release process.
 - `AiCostLog.userId` — a nullable `User` foreign key (`onDelete: SetNull`,
   indexed) so cost attribution survives the agent, the conversation and the user
   it was recorded against. Threaded from every `logCost` call site that has a
-  session user: chat turns and their rolling summaries, capability dispatches,
-  workflow steps, evaluation runs and the two admin routes. **NULL is a correct
+  session user: chat turns and their rolling summaries, per-message and
+  knowledge-search embeddings, capability dispatches, workflow steps,
+  evaluation runs and the admin routes. `EmbeddingAttribution`
+  (`lib/orchestration/knowledge/embedder.ts`) gains `userId` for the same
+  reason its other three keys exist — the embedding a chat turn causes is that
+  turn's spend, and attributing the chat row while leaving the embedding row
+  unattributed would split one turn's cost across two owners. **NULL is a correct
   value**, not a backfill gap — knowledge ingestion, keyword enrichment,
   scheduled and trigger-driven runs, and embed-widget traffic have no `User`
   behind them, as do all rows written before this column. A data subject's
@@ -31,13 +36,16 @@ release process.
   change falsified) into `SUBJECT_DATA_SOURCES` with disposition `export`.
 - `isEmbedUserId()` and `EMBED_USER_ID_PREFIX` in `lib/embed/auth.ts` — the
   predicate for "this id is a synthetic embed visitor, not a `User` row".
-  Anything writing a caller's id into a foreign key to `user` must check it: an
-  embed visitor id there raises P2003, and because `logCost` swallows write
-  failures the cost row is discarded. Mirrors `isWorkflowAgentId`, which exists
-  for the identical reason on `agentId`. Note this is a guard against a failure
-  that is not currently reachable — an embed turn already fails earlier, at
-  conversation-create, for the same reason (#705) — so its value is that the
-  cost-row loss cannot appear unnoticed when #705 is fixed.
+  Applied to the cost-attribution paths, where an embed visitor id would raise
+  P2003 and — because `logCost` swallows write failures — silently discard the
+  cost row. Mirrors `isWorkflowAgentId`, which exists for the identical reason
+  on `agentId`. Two caveats worth stating plainly: the failure is not currently
+  reachable (an embed turn already fails earlier, at conversation-create, for
+  the same reason — #705), so the guard's value is that the loss cannot appear
+  unnoticed when #705 is fixed; and other `user`-FK writers reached from a
+  caller id (`AiUserMemory`, `AiWorkflowExecution` via `run-workflow`) are
+  deliberately not guarded — they fail loudly, and how a visitor should behave
+  there belongs to #705.
 
 - `registerRateLimitKeyResolver(key, resolver)` in `lib/security/rate-limit-policy.ts`
   opens the rate-limit **key** space to forks the way `registerRateLimitTier` opens

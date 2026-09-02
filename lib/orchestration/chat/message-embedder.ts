@@ -22,7 +22,7 @@ import { embedText } from '@/lib/orchestration/knowledge/embedder';
 export function queueMessageEmbedding(
   messageId: string,
   content: string,
-  attribution?: { agentId?: string; conversationId?: string }
+  attribution?: { agentId?: string; conversationId?: string; userId?: string | null }
 ): void {
   if (content.length < 20) return;
 
@@ -84,7 +84,7 @@ export async function backfillMissingEmbeddings(batchSize: number = 25): Promise
 async function generateAndStoreEmbedding(
   messageId: string,
   content: string,
-  attribution?: { agentId?: string; conversationId?: string }
+  attribution?: { agentId?: string; conversationId?: string; userId?: string | null }
 ): Promise<void> {
   // Truncate very long messages to save embedding costs
   const truncated = content.length > 8000 ? content.slice(0, 8000) : content;
@@ -95,6 +95,7 @@ async function generateAndStoreEmbedding(
   const { embedding, model, provider, dimensions } = await embedText(truncated, 'document', {
     ...(attribution?.agentId ? { agentId: attribution.agentId } : {}),
     ...(attribution?.conversationId ? { conversationId: attribution.conversationId } : {}),
+    ...(attribution?.userId ? { userId: attribution.userId } : {}),
     metadata: { kind: 'message_embedding', messageId },
   });
   const embeddingStr = `[${embedding.join(',')}]`;

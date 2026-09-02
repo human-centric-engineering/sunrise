@@ -4274,10 +4274,44 @@ describe('rolling conversation summarization', () => {
 
     await collect(streamChat({ ...baseRequest, conversationId: 'conv-embed' }));
 
+    // Exact object, not objectContaining: the point is that the embedding
+    // carries the SAME three attributions as the turn's own cost row. A key
+    // silently going missing here is how the embedding spend for a turn ends
+    // up owned by nobody while the chat row for that turn is owned by someone.
     expect(vi.mocked(queueMessageEmbedding)).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      { agentId: 'agent-1', conversationId: 'conv-embed' }
+      { agentId: 'agent-1', conversationId: 'conv-embed', userId: 'u1' }
+    );
+  });
+
+  it('does not attribute an embedding to an embed visitor', async () => {
+    // Mirrors the cost-row case: `userId` reaches `AiCostLog` through the
+    // embedder too, so the visitor id has to be reduced to null on this path
+    // as well or the guard only covers half the spend a turn produces.
+    mockSummariser();
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [
+          { type: 'text', content: 'An answer long enough to be worth embedding at all.' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(
+      streamChat({
+        ...baseRequest,
+        conversationId: 'conv-embed',
+        userId: 'embed_deadbeefdeadbeef',
+      })
+    );
+
+    expect(vi.mocked(queueMessageEmbedding)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      { agentId: 'agent-1', conversationId: 'conv-embed', userId: null }
     );
   });
 

@@ -1782,6 +1782,10 @@ export class StreamingChatHandler {
           queueMessageEmbedding(assistantMsg.id, assistantText, {
             agentId: agent.id,
             conversationId: conversation.id,
+            // Same turn, same payer: without this the turn's chat row is
+            // attributed and its embedding row is not, and the subject's
+            // export shows one but not the other.
+            userId: attributableUserId(request.userId),
           });
           emitHookEvent('message.created', {
             conversationId: conversation.id,
