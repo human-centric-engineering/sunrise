@@ -359,7 +359,13 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
     return row;
   } catch (err) {
     logger.error('Failed to persist AiCostLog row', {
+      // All four foreign keys, because the commonest cause of this line is a
+      // P2003 on one of them and the operator cannot tell which from the
+      // Prisma message alone. Naming only agentId cost time on #599/#600/#654.
       agentId: params.agentId,
+      conversationId: params.conversationId,
+      workflowExecutionId: params.workflowExecutionId,
+      userId: params.userId,
       model: params.model,
       error: err instanceof Error ? err.message : String(err),
     });

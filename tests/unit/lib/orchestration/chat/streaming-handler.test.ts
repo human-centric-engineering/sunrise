@@ -1223,8 +1223,13 @@ describe('StreamingChatHandler', () => {
     // admin, consumer AND embed routes; the embed route passes the synthetic
     // `embed_<hash>` visitor id minted by `resolveEmbedToken`, which has no
     // `User` behind it. Writing it here raises P2003, and because `logCost`
-    // swallows write failures the entire cost row is discarded — every embed
-    // chat's spend recorded nowhere. Exactly #599/#600/#654, one column over.
+    // swallows write failures the entire cost row is discarded. Exactly
+    // #599/#600/#654, one column over.
+    //
+    // This asserts the guard, not a bug currently reachable in production: an
+    // embed turn dies earlier, at conversation-create, for the same reason
+    // (#705). The test is still worth having — it is what stops the cost-row
+    // loss from silently arriving with #705's fix.
     //
     // Asserting `userId: null` rather than merely "not the visitor id": the
     // column must be explicitly unattributed, not carrying some other value.

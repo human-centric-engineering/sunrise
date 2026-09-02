@@ -20,11 +20,19 @@
  *     long conversation.
  *   - t-655 — adding `userId` wired `request.userId` into the new FK at every
  *     chat call site. That handler serves the embed route too, which passes a
- *     synthetic `embed_<hash>` visitor id, so every embed chat's cost row
- *     would have been discarded. Caught by extending this roster to the new
- *     column rather than by anyone reading the diff — which is the whole
- *     argument for adding a field here the moment the column exists, not after
- *     the first incident on it.
+ *     synthetic `embed_<hash>` visitor id: not a `User`, so the row would be
+ *     discarded on write. Caught by extending this roster to the new column
+ *     rather than by anyone reading the diff — the argument for adding a field
+ *     here the moment the column exists, not after the first incident on it.
+ *
+ *     Be precise about the blast radius, because it is smaller than it looks
+ *     and overstating it is how a guard gets trusted for the wrong reason: no
+ *     embed turn reaches `logCost` today at all. `AiConversation.userId` is
+ *     also a FK to `user`, nothing mints a `User` for a visitor, so a
+ *     visitor's first message already dies at conversation-create (see #705).
+ *     This guard is therefore correct and forward-looking rather than
+ *     currently load-bearing — it stops the cost-row loss from appearing the
+ *     moment #705 is fixed, which is exactly when nobody would be looking.
  *
  * ## Why this is a roster and not a pattern match
  *

@@ -262,7 +262,7 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     section: 'usageCosts',
     disposition: 'export',
     description:
-      'AI usage recorded against the subject: the model and provider used, token counts, and the cost of each request they caused.',
+      'AI usage recorded against the subject: the model and provider used, token counts, and the cost of each request they caused. Usage is attributed to an account only from 2026-09-02, when cost logging gained a user link; earlier activity, and activity from paths with no signed-in user (document ingestion, scheduled runs, the embeddable widget), carries no attribution and appears here for nobody.',
     // Was in EXCLUDED_SOURCES until this column existed, on the stated grounds
     // that it "carries no user link". That was true and is not any more, so the
     // exclusion went with it. `export` rather than `attribution`: attribution is

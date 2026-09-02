@@ -102,9 +102,13 @@ async function main(): Promise<void> {
         provider: 'smoke-provider',
         inputTokens: 1,
         outputTokens: 1,
-        inputCostUsd: 0,
-        outputCostUsd: 0,
-        totalCostUsd: 0,
+        // Non-zero on purpose. The assertion below is that erasure does not
+        // subtract spend; with a zeroed fixture it would read 0 === 0 and pass
+        // even if erasure zeroed the column, which is the failure it exists to
+        // catch.
+        inputCostUsd: 0.25,
+        outputCostUsd: 0.75,
+        totalCostUsd: 1,
         operation: 'chat',
       },
     });
@@ -236,7 +240,7 @@ async function main(): Promise<void> {
     const costAfter = await prisma.aiCostLog.findUnique({ where: { id: costLog.id } });
     check(costAfter !== null, 'cost row retained (billing record, not personal data)');
     check(costAfter?.userId === null, 'cost.userId nulled (SetNull)');
-    check(costAfter?.totalCostUsd === 0, 'cost amount unchanged by erasure');
+    check(costAfter?.totalCostUsd === 1, 'cost amount unchanged by erasure (1.0, as created)');
 
     // Evaluations: dataset retained + de-attributed; run cascade-deleted.
     const datasetAfter = await prisma.aiDataset.findUnique({ where: { id: dataset.id } });

@@ -310,10 +310,17 @@ interface PersistMessageParams {
  * This handler serves three routes and two of them pass `session.user.id`; the
  * embed route passes a synthetic `embed_<hash>` visitor id, which is not a
  * `User` and must never reach a foreign key to one. `AiCostLog.userId` is such
- * a key, and `logCost` swallows write failures — so passing the visitor id
- * would discard the cost row for every embed chat, silently. Conversation and
- * memory scoping still use `request.userId` itself; only FK attribution goes
- * through here.
+ * a key, and `logCost` swallows write failures — so the visitor id would be
+ * rejected and the cost row silently discarded. Conversation and memory
+ * scoping still use `request.userId` itself; only FK attribution goes here.
+ *
+ * Note what this does NOT currently prevent: no embed turn reaches `logCost`
+ * at all, because `AiConversation.userId` is a FK to `user` too and nothing
+ * mints a `User` for a visitor, so the first message dies at
+ * conversation-create (#705). This is a guard against the failure that appears
+ * when #705 is fixed — not one that is firing today. Kept deliberately rather
+ * than deferred: the two fixes land separately, and this is the half nobody
+ * would think to add while fixing the other.
  */
 function attributableUserId(userId: string): string | null {
   return isEmbedUserId(userId) ? null : userId;

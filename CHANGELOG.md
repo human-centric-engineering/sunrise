@@ -33,8 +33,11 @@ release process.
   predicate for "this id is a synthetic embed visitor, not a `User` row".
   Anything writing a caller's id into a foreign key to `user` must check it: an
   embed visitor id there raises P2003, and because `logCost` swallows write
-  failures the whole cost row is discarded. Mirrors `isWorkflowAgentId`, which
-  exists for the identical reason on `agentId`.
+  failures the cost row is discarded. Mirrors `isWorkflowAgentId`, which exists
+  for the identical reason on `agentId`. Note this is a guard against a failure
+  that is not currently reachable — an embed turn already fails earlier, at
+  conversation-create, for the same reason (#705) — so its value is that the
+  cost-row loss cannot appear unnoticed when #705 is fixed.
 
 - `registerRateLimitKeyResolver(key, resolver)` in `lib/security/rate-limit-policy.ts`
   opens the rate-limit **key** space to forks the way `registerRateLimitTier` opens

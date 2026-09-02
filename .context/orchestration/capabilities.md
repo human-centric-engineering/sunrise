@@ -262,10 +262,17 @@ without someone stating why its value is a row id.
 handler's `request.userId` into it looked obviously correct, but that one handler
 serves the admin, consumer **and** embed routes, and the embed route passes the
 synthetic `embed_<hash>` visitor id from `resolveEmbedToken` — no `User` row
-behind it. Every embed chat's cost row would have been discarded. It was caught
-by adding the column to the guard, not by review, which is the argument for
+behind it, so the row would be rejected and discarded on write. It was caught by
+adding the column to the guard, not by review, which is the argument for
 extending that roster the moment a foreign key appears rather than after the
-first incident on it. `isEmbedUserId` (`lib/embed/auth.ts`) is the predicate,
+first incident on it.
+
+**The reach is narrower than that sounds, and saying so matters.** No embed turn
+reaches `logCost` today: `AiConversation.userId` is a foreign key to `user` as
+well, nothing mints a `User` row for a visitor, and so an embed visitor's first
+message already fails at conversation-create ([#705](https://github.com/human-centric-engineering/sunrise/issues/705)).
+The guard is correct and forward-looking, not currently load-bearing — its value
+is that the cost-row loss cannot appear the moment #705 is fixed. `isEmbedUserId` (`lib/embed/auth.ts`) is the predicate,
 and it sits next to the mint so the prefix has one definition; the chat handler
 reduces a visitor to `null` through its own `attributableUserId`.
 
