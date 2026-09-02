@@ -28,8 +28,12 @@
  *
  * Matcher notes: the leading `.` requires an actual member call
  * (`prisma.$queryRaw`, `tx.$executeRawUnsafe`), so prose mentions of
- * `$queryRaw` in docblocks and comments do not count. Test files are
- * excluded — a mocked `$queryRaw` in a test is not a database query.
+ * `$queryRaw` in docblocks and comments do not count. `*.test.ts(x)` files are
+ * excluded — a mocked `$queryRaw` in a test is not a database query — and that
+ * is the ONLY exclusion, because every name this scan skips is a place a real
+ * call can hide. A fork using a different test convention under `lib/` or
+ * `app/` will see a violation naming the file, and should widen the filter in
+ * `listSourceFiles` rather than add the file to `ALLOWLIST`.
  *
  * Registered in ALWAYS_RUN_TESTS (`scripts/ci/scoped-tests.ts`): adding a raw
  * call in some far-off module is exactly the change whose import graph never
@@ -148,15 +152,22 @@ function listSourceFiles(repoRoot: string, dir: string): string[] {
   for (const entry of readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
     const rel = `${dir}/${entry.name}`;
     if (entry.isDirectory()) {
-      if (entry.name === '__tests__' || entry.name === '__mocks__') continue;
       out.push(...listSourceFiles(repoRoot, rel));
     } else if (
       /\.tsx?$/.test(entry.name) &&
-      // "Test files are excluded" must mean every convention a fork may use,
-      // not just Sunrise's own. This guard runs in every fork on every PR, so
-      // a colocated foo.spec.ts or a __mocks__/prisma.ts with a mocked
-      // $queryRaw would otherwise be scanned as production source.
-      !/\.(test|spec)\.tsx?$/.test(entry.name) &&
+      // ONLY `*.test.ts(x)`, deliberately. An earlier version also skipped
+      // `.spec.`, `__tests__/` and `__mocks__/` "for forks that use those
+      // conventions" — measured afterwards, no such file exists anywhere:
+      // not in Sunrise, not in any of the five forks, all of which inherit the
+      // top-level `tests/` layout. It was a hole cut for nobody.
+      //
+      // And a hole is what it is. This guard exists to catch a raw-SQL site
+      // "that nobody notices"; every name it declines to read is a place one
+      // can hide. The asymmetry settles it: a fork that DOES colocate tests
+      // gets a loud, self-explaining failure here and can widen this line in
+      // seconds, whereas a silently skipped file is exactly the outcome the
+      // guard exists to prevent. Prefer the false alarm.
+      !/\.test\.tsx?$/.test(entry.name) &&
       !entry.name.endsWith('.d.ts')
     ) {
       out.push(rel);
