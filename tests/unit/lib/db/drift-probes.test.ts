@@ -7,6 +7,9 @@
  *   `predicateContains` definition assertion);
  * - `generatedColumnExists` separates "missing" from "present but not
  *   GENERATED" — the second is the case `columnExists` cannot see;
+ * - `rlsEnabled` separates "missing table" / "RLS off" / "enabled but not
+ *   FORCED" — the last fails open for the table owner, which is why FORCE is
+ *   the default requirement — and `policyExists` finds one named policy;
  * - the app registry adds in order, returns a defensive copy, rejects duplicate
  *   names, and resets;
  * - `mergeDriftProbes` concatenates platform + app and refuses an app probe that
@@ -45,6 +48,8 @@ import {
   getAppDriftProbes,
   indexExists,
   mergeDriftProbes,
+  policyExists,
+  rlsEnabled,
   registerAppDriftProbe,
   resetAppDriftProbes,
   type DriftObject,
@@ -158,6 +163,98 @@ describe('generatedColumnExists', () => {
       ok: false,
       note: 'column missing entirely',
     });
+  });
+});
+
+describe('rlsEnabled', () => {
+  it('queries pg_class by table name and reports ok when RLS is enabled AND forced', async () => {
+    queryRaw.mockResolvedValue([{ enabled: true, forced: true }]);
+
+    const result = await rlsEnabled('AiConversation')();
+
+    expect(result).toEqual({ ok: true });
+    expect(lastSql()).toContain('pg_class');
+    expect(lastSql()).toContain('relrowsecurity');
+    // Scoped to the live schema and admitting partitioned parents: a same-named
+    // table in a backup schema must not answer for the real one (rows[0] would
+    // make that a silent green), and relkind 'p' supports RLS fully.
+    // The scoping is a pg_namespace join comparing nspname, NOT a
+    // `current_schema()::regnamespace` cast: that cast re-parses the schema
+    // name as an identifier and down-cases it, so a mixed-case schema makes
+    // the cast RAISE and the probe throw instead of returning a ProbeResult.
+    expect(lastSql()).toContain('JOIN pg_namespace n ON n.oid = c.relnamespace');
+    expect(lastSql()).toContain('n.nspname = current_schema()');
+    expect(lastSql()).not.toContain('::regnamespace');
+    expect(lastSql()).toContain("relkind IN ('r', 'p')");
+    expect(lastValues()).toEqual(['AiConversation']);
+  });
+
+  it('reports not-ok, and says so, when RLS is enabled but NOT forced (the default posture)', async () => {
+    // The whole reason FORCE is the default. An unforced table fails OPEN for
+    // its owner: every query works, nothing errors, and the drift check is the
+    // only thing that can say the boundary has a hole in it.
+    queryRaw.mockResolvedValue([{ enabled: true, forced: false }]);
+
+    const result = await rlsEnabled('AiConversation')();
+
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain('not FORCED');
+    expect(result.note).toContain('owner bypasses');
+  });
+
+  it('accepts enabled-but-unforced when requireForced is explicitly waived', async () => {
+    queryRaw.mockResolvedValue([{ enabled: true, forced: false }]);
+
+    const result = await rlsEnabled('AiConversation', { requireForced: false })();
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('reports not-ok when RLS is not enabled at all, whatever the force flag says', async () => {
+    queryRaw.mockResolvedValue([{ enabled: false, forced: false }]);
+
+    const result = await rlsEnabled('AiConversation')();
+
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain('not enabled');
+  });
+
+  it('distinguishes a missing table from a table without RLS', async () => {
+    // Different remediation — the table was dropped/renamed vs RLS was never
+    // (or no longer is) enabled — so the note must say which.
+    queryRaw.mockResolvedValue([]);
+
+    const result = await rlsEnabled('gone')();
+
+    expect(result.ok).toBe(false);
+    expect(result.note).toBe('table missing entirely');
+  });
+});
+
+describe('policyExists', () => {
+  it('queries pg_policies by table + policy name and reports ok on exactly one row', async () => {
+    queryRaw.mockResolvedValue([{ count: 1n }]);
+
+    const result = await policyExists('AiConversation', 'org_isolation')();
+
+    expect(result).toEqual({ ok: true });
+    expect(lastSql()).toContain('pg_policies');
+    // Same-schema scoping: a same-named policy in a backup schema must neither
+    // stand in for a dropped live policy nor inflate the exact ===1 count.
+    expect(lastSql()).toContain('schemaname = current_schema()');
+    expect(lastValues()).toEqual(['AiConversation', 'org_isolation']);
+  });
+
+  it('reports not-ok when the policy is absent (count 0)', async () => {
+    // The DROP POLICY case: `prisma migrate dev` emits it for any policy, the
+    // same way it drops the HNSW indexes this registry was built around.
+    queryRaw.mockResolvedValue([{ count: 0n }]);
+    expect(await policyExists('AiConversation', 'org_isolation')()).toEqual({ ok: false });
+  });
+
+  it('treats an empty result set as absent rather than crashing', async () => {
+    queryRaw.mockResolvedValue([]);
+    expect(await policyExists('t', 'p')()).toEqual({ ok: false });
   });
 });
 

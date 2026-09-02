@@ -8,6 +8,16 @@
  * that could bypass rate limiting (e.g., attacker sends a unique
  * X-Forwarded-For value with each request to get a fresh rate limit bucket).
  *
+ * Typed against `{ headers: Headers }` — the only part of the request it
+ * reads — so it accepts a `NextRequest`, a plain `Request`, or anything
+ * headers-bearing. That is deliberate: rate-limit key resolvers
+ * (`registerRateLimitKeyResolver`) receive a plain `Request`, and this is the
+ * validated IP primitive they should use instead of parsing a raw forwarding
+ * header themselves — both for the `null` fallback bucket and wherever an
+ * identifier legitimately includes the IP. It does NOT make an unverified
+ * identifier safe: compositing bounds who shares a bucket, not how many
+ * buckets one caller can mint. See {@link RateLimitKeyResolver}.
+ *
  * IMPORTANT: In production, ensure your reverse proxy (nginx, Cloudflare, etc.)
  * strips and re-sets the X-Forwarded-For header to prevent client spoofing.
  * Without this, clients can still send valid-looking IPs to bypass rate limits.
@@ -23,8 +33,6 @@
  * }
  * ```
  */
-
-import type { NextRequest } from 'next/server';
 
 /** Fallback IP for development / when no valid IP is found */
 const DEFAULT_IP = '127.0.0.1';
@@ -63,10 +71,10 @@ export function isValidIP(value: string): boolean {
  *
  * Falls back to `127.0.0.1` if no valid IP is found in headers.
  *
- * @param request - The incoming NextRequest
+ * @param request - Anything headers-bearing (`NextRequest`, plain `Request`)
  * @returns Client IP address string
  */
-export function getClientIP(request: NextRequest): string {
+export function getClientIP(request: { headers: Headers }): string {
   const forwarded = request.headers.get('x-forwarded-for');
   if (forwarded) {
     // X-Forwarded-For format: "client, proxy1, proxy2"

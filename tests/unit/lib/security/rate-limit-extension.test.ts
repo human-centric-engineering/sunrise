@@ -38,15 +38,22 @@ import {
 } from '@/lib/security/rate-limit';
 import {
   registerRateLimitRule,
+  registerRateLimitKeyResolver,
+  resolveAppRateLimitKeyResolver,
   getEffectiveRateLimitPolicy,
   findRateLimitRule,
   pathMatchesRule,
   RATE_LIMIT_POLICY,
   CATCH_ALL_RULE,
   __resetAppRateLimitRules,
+  __resetAppRateLimitKeyResolvers,
   type RateLimitRule,
 } from '@/lib/security/rate-limit-policy';
-import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
+import { logger } from '@/lib/logging';
+import {
+  applyRateLimit,
+  assertRateLimitPolicyIntegrity,
+} from '@/lib/security/rate-limit-middleware';
 
 function makeLimiter(maxRequests: number) {
   return createRateLimiter({ interval: 60_000, maxRequests });
@@ -54,6 +61,7 @@ function makeLimiter(maxRequests: number) {
 
 afterEach(() => {
   __resetAppRateLimitRules();
+  __resetAppRateLimitKeyResolvers();
   __resetAppRateLimitTiers();
 });
 
@@ -433,5 +441,194 @@ describe('applyRateLimit — enforces an app-registered tier + rule', () => {
     // Assert — under cap, passes; the app rule didn't perturb Sunrise routing.
     expect(res).toBeNull();
     RATE_LIMIT_TIERS.admin.reset(`mw:admin:session-user:user:${userId}`);
+  });
+});
+
+// ─── Key-resolver registry — opening the key space ───────────────────────────
+
+describe('registerRateLimitKeyResolver / resolveAppRateLimitKeyResolver', () => {
+  const resolver = (): string | null => 'org:acme';
+
+  it('registers an app key and resolves it to the same function', () => {
+    registerRateLimitKeyResolver('org', resolver);
+    expect(resolveAppRateLimitKeyResolver('org')).toBe(resolver);
+  });
+
+  it('returns undefined for an unknown key name', () => {
+    expect(resolveAppRateLimitKeyResolver('does-not-exist')).toBeUndefined();
+  });
+
+  it.each(['ip', 'session-user', 'api-key', 'embed-token'])(
+    'refuses to override the built-in %s strategy',
+    (builtIn) => {
+      // Re-keying 'session-user' would change who shares a bucket on every
+      // Sunrise rule that uses it — the registry must reject it.
+      expect(() => registerRateLimitKeyResolver(builtIn, resolver)).toThrow(/built-in|collides/i);
+      expect(resolveAppRateLimitKeyResolver(builtIn)).toBeUndefined();
+    }
+  );
+
+  it('rejects a confusable case-variant of a built-in key (case-insensitive guard)', () => {
+    // Mirrors registerRateLimitTier's guard: 'IP' as a separate strategy is a
+    // key operators reading tokens would mistake for the real per-IP bucket.
+    expect(() => registerRateLimitKeyResolver('IP', resolver)).toThrow(/built-in|collides/i);
+    expect(() => registerRateLimitKeyResolver('Session-User', resolver)).toThrow(
+      /built-in|collides/i
+    );
+    expect(resolveAppRateLimitKeyResolver('IP')).toBeUndefined();
+  });
+
+  it('rejects an empty key name', () => {
+    expect(() => registerRateLimitKeyResolver('', resolver)).toThrow();
+  });
+
+  it('is idempotent when the SAME resolver function is re-registered (HMR-safe)', () => {
+    registerRateLimitKeyResolver('org', resolver);
+    expect(() => registerRateLimitKeyResolver('org', resolver)).not.toThrow();
+    expect(resolveAppRateLimitKeyResolver('org')).toBe(resolver);
+  });
+
+  it('still throws when re-registering with a DIFFERENT resolver function', () => {
+    // Idempotence is by reference identity. A second distinct function under
+    // the same key would silently shadow the first — surface it instead.
+    const second = (): string | null => 'org:other';
+    registerRateLimitKeyResolver('org', resolver);
+    expect(() => registerRateLimitKeyResolver('org', second)).toThrow(/already registered/i);
+    expect(resolveAppRateLimitKeyResolver('org')).toBe(resolver);
+  });
+});
+
+describe('registerRateLimitRule — custom-key fail-fast', () => {
+  it('rejects a rule naming a custom key with no registered resolver', () => {
+    // The boot-time half of the contract: a half-wired registration (rule
+    // before resolver) must fail at registerAppRateLimits() time, not at
+    // request time when the middleware discovers it cannot identify callers.
+    expect(() =>
+      registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'api', key: 'org' })
+    ).toThrow(/resolver/i);
+    // The rejected rule was NOT added.
+    expect(getEffectiveRateLimitPolicy()).toBe(RATE_LIMIT_POLICY);
+  });
+
+  it('accepts the same rule once its resolver is registered first', () => {
+    registerRateLimitKeyResolver('org', () => 'org:acme');
+    registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'api', key: 'org' });
+    expect(getEffectiveRateLimitPolicy()).not.toBe(RATE_LIMIT_POLICY);
+  });
+});
+
+// ─── End-to-end: middleware buckets on an app-resolved key ───────────────────
+
+describe('applyRateLimit — enforces a custom-key rule through its resolver', () => {
+  beforeEach(() => {
+    vi.stubEnv('RATE_LIMIT_BYPASS', '');
+    vi.clearAllMocks();
+  });
+
+  function registerOrgRule(cap: number): void {
+    registerRateLimitKeyResolver('org', (request) => {
+      const org = request.headers.get('x-test-org');
+      return org ? `org:${org}` : null;
+    });
+    registerRateLimitTier('org-tier', makeLimiter(cap));
+    registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'org-tier', key: 'org' });
+  }
+
+  const make = (ip: string, org?: string): NextRequest =>
+    new NextRequest('http://localhost:3000/api/v1/billing/charge', {
+      headers: { 'x-forwarded-for': ip, ...(org ? { 'x-test-org': org } : {}) },
+    });
+
+  it('buckets by the resolver identity, not by IP: same org across IPs shares one bucket', async () => {
+    registerOrgRule(2);
+
+    // Two requests from DIFFERENT IPs but the same org consume one bucket...
+    expect(await applyRateLimit(make('192.0.2.10', 'acme'))).toBeNull();
+    expect(await applyRateLimit(make('192.0.2.11', 'acme'))).toBeNull();
+
+    // ...so the third same-org request is rejected at the cap of 2, from yet
+    // another IP. (Against the pre-seam middleware this fails: an unresolvable
+    // key collapsed every caller into one token, so 'globex' below would be
+    // blocked too.)
+    const blocked = await applyRateLimit(make('192.0.2.12', 'acme'));
+    expect(blocked?.status).toBe(429);
+    expect(blocked?.headers.get('X-RateLimit-Limit')).toBe('2');
+
+    // A different org is a different bucket and still passes.
+    expect(await applyRateLimit(make('192.0.2.12', 'globex'))).toBeNull();
+  });
+
+  it('falls back to a per-IP bucket when the resolver returns null', async () => {
+    registerOrgRule(1);
+
+    // No x-test-org header → resolver returns null → per-IP bucket, same as
+    // the built-in strategies' fallback: some cap rather than none.
+    expect(await applyRateLimit(make('192.0.2.20'))).toBeNull();
+    const blockedSameIp = await applyRateLimit(make('192.0.2.20'));
+    expect(blockedSameIp?.status).toBe(429);
+    // A different IP is a different fallback bucket.
+    expect(await applyRateLimit(make('192.0.2.21'))).toBeNull();
+  });
+
+  it('logs loudly and falls back to IP when the resolver throws (fork bug ≠ open API)', async () => {
+    registerRateLimitKeyResolver('org', () => {
+      throw new Error('resolver exploded');
+    });
+    registerRateLimitTier('org-tier', makeLimiter(1));
+    registerRateLimitRule({ match: /^\/api\/v1\/billing\//, tier: 'org-tier', key: 'org' });
+
+    expect(await applyRateLimit(make('192.0.2.30', 'acme'))).toBeNull();
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringContaining('resolver threw'),
+      expect.objectContaining({ key: 'org' })
+    );
+    // The cap still applies on the IP fallback — a throwing resolver must not
+    // fail open.
+    const blocked = await applyRateLimit(make('192.0.2.30', 'acme'));
+    expect(blocked?.status).toBe(429);
+  });
+
+  it('defence in depth: a rule whose resolver has vanished logs an error and keeps a per-IP cap', async () => {
+    // Registration order makes this unreachable in production (the rule guard
+    // throws first); simulate the impossible state via the test-only reset so
+    // the middleware branch is proven, not assumed.
+    registerOrgRule(1);
+    __resetAppRateLimitKeyResolvers();
+
+    expect(await applyRateLimit(make('192.0.2.40', 'acme'))).toBeNull();
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringContaining('no resolver registered'),
+      expect.objectContaining({ key: 'org' })
+    );
+    const blocked = await applyRateLimit(make('192.0.2.40', 'acme'));
+    expect(blocked?.status).toBe(429);
+  });
+});
+
+// ─── Boot-time integrity walk (tier AND key halves) ──────────────────────────
+
+describe('assertRateLimitPolicyIntegrity', () => {
+  it('passes on the shipped base policy', () => {
+    expect(() => assertRateLimitPolicyIntegrity()).not.toThrow();
+  });
+
+  it('throws naming an unresolvable tier (the fail-open typo)', () => {
+    const policy: RateLimitRule[] = [{ match: /^\/api\/v1\/x\//, tier: 'billling', key: 'ip' }];
+    expect(() => assertRateLimitPolicyIntegrity(policy)).toThrow(/unknown tier.*billling/is);
+  });
+
+  it('throws naming an unresolvable key — including a mistyped built-in in the base table', () => {
+    // The half the tier walk never covered: Sunrise's own RATE_LIMIT_POLICY is
+    // a literal array that never passes through registerRateLimitRule's guard,
+    // so `key: 'sesion-user'` used to type-check, boot, and silently degrade
+    // every matching request to per-IP buckets with a hot-path error log.
+    const policy: RateLimitRule[] = [{ match: /^\/api\/v1\/x\//, tier: 'api', key: 'sesion-user' }];
+    expect(() => assertRateLimitPolicyIntegrity(policy)).toThrow(/unknown key.*sesion-user/is);
+  });
+
+  it('passes for a custom key once its resolver is registered', () => {
+    registerRateLimitKeyResolver('org', () => 'org:acme');
+    const policy: RateLimitRule[] = [{ match: /^\/api\/v1\/x\//, tier: 'api', key: 'org' }];
+    expect(() => assertRateLimitPolicyIntegrity(policy)).not.toThrow();
   });
 });

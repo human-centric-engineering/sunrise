@@ -84,7 +84,7 @@ are a leaf fork, `lib/app/` is yours.
 | Org-aware periodic work                | `lib/app/jobs.ts` (`registerAppJob`)                                        | No — existing registry seam                                                                                                    |
 | Art. 15 export of your org-owned rows  | `lib/app/data-export.ts` (`collectAppSubjectData`)                          | No — existing registry seam                                                                                                    |
 | CI assertion that policies still exist | `lib/app/db-drift.ts` (`registerAppDriftProbe`)                             | No — existing registry seam                                                                                                    |
-| Org-scoped rate-limit rules            | `lib/app/rate-limit.ts`                                                     | No — but the **key** union is closed; see the research note below                                                              |
+| Org-scoped rate-limit rules and keys   | `lib/app/rate-limit.ts`                                                     | No — `registerRateLimitKeyResolver` opened the **key** space on 2026-09-01                                                     |
 | Tenant-admin nav and route gating      | `lib/app/admin-nav.ts`, `lib/app/protected-routes.ts`                       | No — but the admin console split itself is platform-tier                                                                       |
 
 **Exactly two sanctioned core edits**: the `withOrg` wrapper in
@@ -92,7 +92,7 @@ are a leaf fork, `lib/app/` is yours.
 reaches into `lib/auth/`, `lib/security/`, `lib/orchestration/`, `lib/storage/`
 or `proxy.ts` becomes a conflict on every upstream sync.
 [Research §8](./multi-tenancy-research.md#the-merge-conflict-surface-concretely)
-lists the twenty files concerned, which of the `lib/app/*` seams above absorb
+lists the eighteen files concerned, which of the `lib/app/*` seams above absorb
 work you would otherwise do in core, and
 [which provisions upstream should ship](./multi-tenancy-research.md#provisions-upstream-should-ship)
 so the rest stop being conflicts. Check that list before you copy a core file —
@@ -345,11 +345,21 @@ LEVEL SECURITY`, so do not let the app role own the tenant tables.
   one `withOrg` transaction per org. The path of least resistance is to run jobs
   on the bypass role; that silently undoes the isolation guarantee for the half
   of the system that runs unattended, and nothing detects it.
+- **Per-tenant quotas: register a key resolver, don't fork the middleware.**
+  `registerRateLimitKeyResolver('org', ...)` in `lib/app/rate-limit.ts` buckets
+  requests by anything you can derive from the request, so an org-scoped _key_
+  needs no edit to `lib/security/`. Derive the identifier from an authenticated
+  principal, or from a value the resolver verifies — a caller who controls the
+  identifier mints a fresh bucket per request and walks past the cap.
+  Compositing with `getClientIP()` is not a substitute: it bounds who _shares_
+  a bucket, not how many one caller can _mint_. See
+  [rate limiting → custom keys](../security/rate-limiting.md).
 - **Fork gotcha: a registry seam is only as open as its narrowest type.**
-  `lib/app/rate-limit.ts` lets you register org-scoped _rules_, but
-  `RateLimitKey` is a closed union consumed by a `switch`, so you cannot express
-  an org-scoped _key_ — the exact thing per-tenant quotas need. Audit the other
-  seams you plan to lean on for the same shape before you commit to them
+  The case above was this shape until 2026-09-01: `lib/app/rate-limit.ts` let
+  you register org-scoped _rules_ while `RateLimitKey` stayed a closed union, so
+  the seam looked open and the thing per-tenant quotas actually need was
+  unreachable. That instance is fixed; the shape is not rare. Audit the other
+  seams you plan to lean on for it before you commit to them
   ([research §8](./multi-tenancy-research.md#the-ratelimitkey-case-study)).
 
 ## Keeping the retrofit alive across upstream syncs
@@ -385,24 +395,24 @@ above is missed, and it is the cheapest thing on the list.
 registry that already exists for the pgvector indexes: `lib/app/db-drift.ts` is
 fork-owned scaffold, `registerAppDriftProbe()` accepts any
 `Probe` (`() => Promise<{ ok, note? }>`), and `npm run db:drift-check` runs in CI
-and in `/pre-pr`. No `policyExists` factory ships in
-[`lib/db/drift-probes.ts`](../../lib/db/drift-probes.ts) today, so write the
-catalog query yourself:
+and in `/pre-pr`. [`lib/db/drift-probes.ts`](../../lib/db/drift-probes.ts) ships
+`rlsEnabled(table)` and `policyExists(table, policy)` factories, so each
+protected table is two one-liners — register **both**: a policy can exist while
+RLS is disabled, and RLS can be enabled with the policy dropped.
 
 ```typescript
 // lib/app/db-drift.ts — fork-owned scaffold, merges cleanly forever
 registerAppDriftProbe({
+  name: 'RLS enabled+forced on AiConversation',
+  kind: 'RLS posture',
+  table: 'AiConversation',
+  probe: rlsEnabled('AiConversation'), // asserts ENABLE and FORCE; see its JSDoc to waive FORCE
+});
+registerAppDriftProbe({
   name: 'RLS org_isolation on AiConversation',
   kind: 'RLS policy',
   table: 'AiConversation',
-  probe: async () => {
-    const rows = await prisma.$queryRaw<Array<{ n: bigint }>>`
-      SELECT count(*)::bigint AS n
-      FROM pg_policies
-      WHERE tablename = 'AiConversation' AND policyname = 'org_isolation'
-    `;
-    return { ok: Number(rows[0]?.n ?? 0n) === 1 };
-  },
+  probe: policyExists('AiConversation', 'org_isolation'),
 });
 ```
 
@@ -466,7 +476,7 @@ declaration.
   [sync checklist](#keeping-the-retrofit-alive-across-upstream-syncs) above is
   the tenancy-specific addition to it.
 - [`multi-tenancy-research.md` §8](./multi-tenancy-research.md#8-downstream-fork-considerations)
-  — **the fork contract.** The twenty-file merge surface, the `lib/app/*` seams
+  — **the fork contract.** The eighteen-file merge surface, the `lib/app/*` seams
   that absorb MT work today, the provisions upstream should ship to shrink that
   surface, and the seam-design principles to follow if you build one locally
   first.

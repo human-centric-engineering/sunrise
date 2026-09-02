@@ -44,6 +44,31 @@ import type { RateLimitTier } from '@/lib/security/rate-limit';
 export type RateLimitKey = 'ip' | 'session-user' | 'api-key' | 'embed-token';
 
 /**
+ * The built-in key strategies, as a value the middleware and the registration
+ * guard can iterate. Derived from a `Record` keyed by {@link RateLimitKey}
+ * rather than a bare array: `satisfies readonly RateLimitKey[]` would only
+ * check MEMBERSHIP (no wrong entries), while the Record shape also checks
+ * COMPLETENESS — adding a member to the union without a row here is a compile
+ * error, so a new built-in can never silently route into the app-resolver
+ * branch at request time.
+ */
+const BUILT_IN_RATE_LIMIT_KEY_MAP = {
+  ip: true,
+  'session-user': true,
+  'api-key': true,
+  'embed-token': true,
+} as const satisfies Record<RateLimitKey, true>;
+
+export const BUILT_IN_RATE_LIMIT_KEYS = Object.keys(
+  BUILT_IN_RATE_LIMIT_KEY_MAP
+) as readonly RateLimitKey[];
+
+/** True when `key` is one of the four built-in strategies the middleware resolves itself. */
+export function isBuiltInRateLimitKey(key: string): key is RateLimitKey {
+  return (BUILT_IN_RATE_LIMIT_KEYS as readonly string[]).includes(key);
+}
+
+/**
  * One rule in the rate-limit policy table.
  *
  * Rules are evaluated in declaration order. **First match wins** — list the
@@ -68,8 +93,20 @@ export interface RateLimitRule {
    */
   tier: RateLimitTier | (string & {});
 
-  /** How to identify the caller. See {@link RateLimitKey}. */
-  key: RateLimitKey;
+  /**
+   * How to identify the caller. See {@link RateLimitKey}.
+   *
+   * Built-in Sunrise rules use a {@link RateLimitKey} literal. App-registered
+   * rules may name a key created via {@link registerRateLimitKeyResolver} —
+   * the widening to `string` mirrors `tier` above, and the literal union is
+   * kept for editor autocomplete on the built-in names. Two guards keep an
+   * unknown key from surviving to request time: app rules naming a custom key
+   * are rejected at registration until the resolver exists, and the
+   * middleware's boot-time integrity walk re-checks EVERY rule in the
+   * effective policy — including Sunrise's own literals here, which never
+   * pass through the registration guard.
+   */
+  key: RateLimitKey | (string & {});
 
   /**
    * Optional predicate. When it returns `true`, skip rate-limiting for this
@@ -379,6 +416,13 @@ export function registerRateLimitRule(rule: RateLimitRule): void {
       );
     }
   }
+  if (!isBuiltInRateLimitKey(rule.key) && !appKeyResolvers.has(rule.key)) {
+    throw new Error(
+      `registerRateLimitRule: rule key "${rule.key}" is not a built-in strategy and has no ` +
+        'registered resolver. Call registerRateLimitKeyResolver() BEFORE registering any rule ' +
+        'that uses the key — otherwise the middleware could not identify callers for this rule.'
+    );
+  }
   // Dedupe by reference — Next.js HMR re-evaluates the middleware module on
   // file changes and re-runs `registerAppRateLimits()`. Without this, every
   // hot-reload would append another copy of the same rule, growing the policy
@@ -436,4 +480,110 @@ export function getEffectiveRateLimitPolicy(): readonly RateLimitRule[] {
 export function __resetAppRateLimitRules(): void {
   appRules.length = 0;
   effectivePolicyCache = null;
+}
+
+// =============================================================================
+// App-Extensible Key Resolvers
+// =============================================================================
+
+/**
+ * Resolve one request to the identifier a custom key strategy buckets on.
+ *
+ * Return the identifier segment of the rate-limit token (e.g. `org:123`) —
+ * the middleware namespaces it as `mw:${tier}:${key}:${identifier}`, so the
+ * value only needs to be stable per caller, not globally unique. Return
+ * `null` when the request carries nothing to key on; the middleware then
+ * falls back to a per-IP bucket, exactly as the built-in strategies do, so an
+ * unidentifiable caller still gets *some* cap instead of none.
+ *
+ * Takes the plain `Request` (like {@link RateLimitRule.skip}) so resolvers
+ * stay portable across the proxy's possible runtimes. Resolvers run on the
+ * request hot path — keep them cheap, and prefer reading a header or cookie
+ * over a database lookup.
+ *
+ * Derive the identifier from something the caller cannot freely choose — an
+ * authenticated principal, or a value the resolver itself verifies (the
+ * built-in `session-user` strategy is the model: it resolves the session
+ * rather than trusting a header). A resolver that echoes a raw client-supplied
+ * header lets a caller mint a fresh bucket per request and walk straight past
+ * the cap it exists to enforce.
+ *
+ * Compositing with the client IP is NOT a substitute for verifying the label.
+ * It bounds who shares a bucket, not how many buckets one caller can mint: a
+ * varying attacker-controlled segment yields a fresh counter per request from
+ * a single IP, and the minted tokens evict real callers' counters from the
+ * limiter's bounded LRU. Return `null` when the identifier cannot be verified
+ * — the per-IP fallback is a real cap; a mintable bucket is none.
+ */
+export type RateLimitKeyResolver = (request: Request) => string | null | Promise<string | null>;
+
+/** App-registered key resolvers, by key name. See {@link registerRateLimitKeyResolver}. */
+const appKeyResolvers = new Map<string, RateLimitKeyResolver>();
+
+/**
+ * Register a resolver for an app/fork-defined key strategy, opening the
+ * middleware's key space the same way `registerRateLimitTier` opens the tier
+ * space. This is the seam per-tenant quotas need: a fork can key a bucket on
+ * an org, a workspace, a device id — anything it can derive from the request.
+ *
+ * Apps own their keys; Sunrise owns the built-ins. Registration REJECTS a
+ * name that collides with a built-in strategy — silently re-keying
+ * `'session-user'` would change who shares a bucket on every Sunrise rule —
+ * and a duplicate registration under a different function, which is a
+ * copy-paste slip that would otherwise silently shadow the earlier resolver.
+ * Re-registering the SAME function reference is a no-op. Note this does NOT
+ * make the seam HMR-safe: the documented recipe passes an inline arrow, which
+ * is a fresh reference on every `registerAppRateLimits()` run, so a hot reload
+ * that re-runs registration against surviving module state throws here and
+ * wedges the middleware bundle until the dev server restarts. That is the same
+ * bargain {@link registerRateLimitRule} strikes — changing your registrations
+ * means restarting dev — traded for catching a real double-registration.
+ *
+ * Order matters at startup: register resolvers before the rules that use
+ * them — {@link registerRateLimitRule} throws on a custom key with no
+ * resolver, so a half-wired registration fails at boot rather than at
+ * request time.
+ *
+ * @throws if `key` is empty, a built-in strategy, or already registered with
+ *   a different resolver.
+ */
+export function registerRateLimitKeyResolver(key: string, resolver: RateLimitKeyResolver): void {
+  if (!key) {
+    throw new Error('registerRateLimitKeyResolver: key name must be a non-empty string.');
+  }
+  // Case-normalized, mirroring registerRateLimitTier's guard: a fork
+  // registering 'IP' or 'Session-User' would create a key that operators
+  // reading tokens/logs mistake for the built-in strategy.
+  if (isBuiltInRateLimitKey(key.toLowerCase())) {
+    throw new Error(
+      `registerRateLimitKeyResolver: "${key}" collides with a built-in key strategy and cannot ` +
+        'be overridden. Choose a distinct, app-prefixed name for your key.'
+    );
+  }
+  const existing = appKeyResolvers.get(key);
+  if (existing === resolver) return; // idempotent re-registration of the same reference
+  if (existing) {
+    throw new Error(
+      `registerRateLimitKeyResolver: key "${key}" is already registered. Each key gets exactly ` +
+        'one resolver; a second registration would silently shadow the first.'
+    );
+  }
+  appKeyResolvers.set(key, resolver);
+}
+
+/**
+ * Look up the resolver for a custom key. Consumed by the middleware's
+ * identifier resolution; `undefined` for built-in keys and unknown names
+ * (the middleware handles both itself).
+ */
+export function resolveAppRateLimitKeyResolver(key: string): RateLimitKeyResolver | undefined {
+  return appKeyResolvers.get(key);
+}
+
+/**
+ * Test-only: drop all app-registered key resolvers. See
+ * {@link __resetAppRateLimitRules} for the rationale.
+ */
+export function __resetAppRateLimitKeyResolvers(): void {
+  appKeyResolvers.clear();
 }

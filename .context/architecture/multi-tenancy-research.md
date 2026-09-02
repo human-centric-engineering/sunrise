@@ -207,9 +207,10 @@ Verified by search at `b7e30f06`:
   integration of any kind.
 - **No better-auth plugins.** `lib/auth/config.ts` registers none; `role` is the
   single `additionalField` (`config.ts:775-782`); the session carries no org.
-- **No org dimension in the rate-limit key space.** `RateLimitKey` is a closed
+- **No org dimension in the rate-limit key space.** `RateLimitKey` was a closed
   union of `'ip' | 'session-user' | 'api-key' | 'embed-token'`
-  (`lib/security/rate-limit-policy.ts:44`).
+  (`lib/security/rate-limit-policy.ts:44`) — **fixed 2026-09-01**: the key space
+  is now open via `registerRateLimitKeyResolver` (see [§8](#the-ratelimitkey-case-study)).
 - **No cross-tenant leakage test.** 1,030 test files, none tenancy-aware.
 
 ---
@@ -1178,7 +1179,7 @@ should be made deliberately rather than discovered.
 
 | Model                                                  | Tenant controls                      | Sunrise must build                                                                                        | Failure modes                                                                                                                               | Right when                                                      |
 | ------------------------------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **A — Shared platform keys, per-tenant quotas**        | Nothing; sees a usage limit          | Org dimension in the rate-limit key space + cost caps per org (`RateLimitKey` is a closed union — §8)     | One tenant's abuse is everyone's rate limit unless quotas are hard; margin risk is yours                                                    | Self-serve, low ARPU                                            |
+| **A — Shared platform keys, per-tenant quotas**        | Nothing; sees a usage limit          | Org dimension in the rate-limit key space (**shipped 2026-09-01**, §8) + cost caps per org                | One tenant's abuse is everyone's rate limit unless quotas are hard; margin risk is yours                                                    | Self-serve, low ARPU                                            |
 | **B — Tenant keys encrypted in Sunrise's database**    | Their own vendor account and billing | Envelope encryption, key rotation, per-tenant cache keying, redaction discipline, secure recovery UX      | **You become custodian of other companies' vendor credentials.** Breach impact escalates from "our data" to "our customers' cloud accounts" | Rarely the right first choice — see below                       |
 | **C — Reference into the tenant's own secret manager** | Everything; can revoke unilaterally  | A credential-resolver interface, per-tenant fetch with short TTL, failure handling when the vault is down | Runtime dependency on the tenant's infrastructure; a vault outage is an incident you are blamed for                                         | Enterprise tenants who already run Vault/KMS and asked for this |
 | **D — Gateway with virtual keys** (LiteLLM, Portkey)   | Their own account behind the gateway | Point the provider `baseUrl` at the gateway; per-tenant virtual key                                       | Another hop, another sub-processor to disclose, cost figures reconciled rather than computed                                                | You want per-tenant routing quickly                             |
@@ -1374,7 +1375,7 @@ every upstream sync.
 | Unique-constraint composites                       | Fork        | Rides the `orgId` migration                                                                                                       |
 | Process-cache keying (plane 3)                     | Platform    | 20+ Sunrise-owned modules                                                                                                         |
 | Background-job tenancy + fairness (plane 4)        | Platform    | `platform-jobs.ts`, `scheduler.ts`, `retention.ts`                                                                                |
-| Rate-limit `org` key                               | Platform    | `RateLimitKey` is a closed union — see below                                                                                      |
+| Rate-limit `org` key                               | Platform    | Open since 2026-09-01 via `registerRateLimitKeyResolver` — see below                                                              |
 | Storage key scoping + token org claim              | Platform    | `lib/storage/**`                                                                                                                  |
 | Per-tenant provider credentials                    | Split       | Schema fork-owned; resolution platform-owned                                                                                      |
 | Provider credential resolver seam                  | Platform    | `provider-manager.ts` — the `process.env` call site ([§5C](#5c-provider-credentials-and-per-tenant-ai-configuration))             |
@@ -1432,8 +1433,6 @@ Sunrise-owned files. Each becomes a conflict on every sync:
 | `lib/auth/guards.ts`                             | Org-aware `withAdminAuth` / `withAuth` — #366/#367                                           |
 | `lib/auth/utils.ts`                              | `hasRole` / `requireRole` — #366                                                             |
 | `lib/auth/config.ts`                             | Org in session, per-org bootstrap                                                            |
-| `lib/security/rate-limit-policy.ts`              | Add `'org'` to `RateLimitKey` — see below                                                    |
-| `lib/security/rate-limit-middleware.ts`          | Resolve the new key in the `switch` at line 250                                              |
 | `lib/orchestration/settings.ts`                  | De-singleton + re-key the cache                                                              |
 | `lib/orchestration/llm/settings-resolver.ts`     | Same                                                                                         |
 | `lib/orchestration/llm/circuit-breaker.ts`       | Key breakers by org                                                                          |
@@ -1466,8 +1465,8 @@ would otherwise be a core edit:
 | `lib/app/bootstrap.ts` (`initApp`)                 | Wiring your tenant registries at boot                                             | Runs after env validation; no request context                                                                                       |
 | `lib/app/jobs.ts` (`registerAppJob`)               | Tenant-aware periodic work on the existing tick                                   | The tick supplies **no** tenant context — iterate orgs yourself ([§5A.1](#5a1-the-prerequisite-there-is-no-tenant-context-to-pass)) |
 | `lib/app/data-export.ts` (`collectAppSubjectData`) | Art. 15 coverage for your org-owned tables                                        | Keyed on `userId`; no org dimension ([§5B](#portability-the-cheap-substitute-for-rungs-34))                                         |
-| `lib/app/db-drift.ts` (`registerAppDriftProbe`)    | CI proof that policies survived the last `migrate dev` and the last sync          | No `policyExists` / `rlsEnabled` probe factory ships — write the `pg_policies` query yourself                                       |
-| `lib/app/rate-limit.ts`                            | Org-scoped rules and tiers                                                        | The **key** union is closed — see below                                                                                             |
+| `lib/app/db-drift.ts` (`registerAppDriftProbe`)    | CI proof that policies survived the last `migrate dev` and the last sync          | `rlsEnabled` / `policyExists` factories ship as of 2026-09-01 — a probe is a one-liner                                              |
+| `lib/app/rate-limit.ts`                            | Org-scoped rules, tiers **and keys**                                              | `registerRateLimitKeyResolver` opened the key space on 2026-09-01 — no core edit                                                    |
 | `lib/app/admin-nav.ts`, `protected-routes.ts`      | Tenant-admin navigation and route gating                                          | The console split itself is platform-tier                                                                                           |
 
 Two things follow. First, **the drift-probe registry is the one nobody expects
@@ -1492,6 +1491,11 @@ listed in `VERSIONING.md`'s public surface. But:
 // lib/security/rate-limit-policy.ts:44
 export type RateLimitKey = 'ip' | 'session-user' | 'api-key' | 'embed-token';
 ```
+
+> **Resolved 2026-09-01.** `key` now widens to `RateLimitKey | (string & {})`
+> and `registerRateLimitKeyResolver()` supplies the resolver, so an org-scoped
+> key needs no core edit. The analysis below is kept as the worked example of
+> the seam shape it names — it describes the code as it stood before the fix.
 
 `tier` is deliberately open (`RateLimitTier | (string & {})`). **`key` is a
 closed union**, and it is consumed by a `switch` in
@@ -1543,10 +1547,10 @@ site.
 
 | Provision                                                                                            | The fork conflict it removes                                                                                                      | Size                   |
 | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| `rlsEnabled(table)` / `policyExists(table, policy)` factories in `lib/db/drift-probes.ts`            | Hand-written `pg_policies` SQL re-derived in every fork                                                                           | Hours                  |
+| `rlsEnabled(table)` / `policyExists(table, policy)` factories in `lib/db/drift-probes.ts`            | Hand-written `pg_policies` SQL re-derived in every fork — **shipped 2026-09-01**                                                  | Hours                  |
 | Org (or install) id in `getFullContext()` (`lib/logging/context.ts`)                                 | `lib/logging/context.ts`                                                                                                          | Hours                  |
 | Correct `VERSIONING.md`'s tenancy-seam path (see below)                                              | A fork looking for a module that was never shipped                                                                                | Minutes                |
-| Widen `RateLimitKey` and add a key-resolver registry                                                 | `rate-limit-policy.ts` + `rate-limit-middleware.ts`                                                                               | Small                  |
+| Widen `RateLimitKey` and add a key-resolver registry                                                 | `rate-limit-policy.ts` + `rate-limit-middleware.ts` — **shipped 2026-09-01**                                                      | Small                  |
 | Optional scope dimension on `SUBJECT_DATA_SOURCES` / `collectAppSubjectData`                         | Per-org export re-invented per fork ([§5B](#portability-the-cheap-substitute-for-rungs-34))                                       | Small                  |
 | Tenant-context primitive — ALS entered in `withAuth`/`withAdminAuth`, explicit per-job context       | `guards.ts`, `run-tick.ts` — **and it gates every row below** ([§5A.1](#5a1-the-prerequisite-there-is-no-tenant-context-to-pass)) | Medium                 |
 | `resolveProviderCredential(config, ctx)`, defaulting to today's `process.env` lookup                 | `provider-manager.ts` ([§5C](#the-seam-that-avoids-choosing-now))                                                                 | Small, once ctx exists |
@@ -1554,8 +1558,10 @@ site.
 | Scope key on the process caches (settings resolver, breaker, in-flight counter), defaulting `global` | Six orchestration core files                                                                                                      | Medium                 |
 | Authorization predicate + ownership resolver (#366/#367)                                             | `guards.ts`, `utils.ts`                                                                                                           | Tracked, blocked       |
 
-Three of these are hours of work and remove three named files from the
-twenty-file merge surface. The tenant-context primitive gates most of the rest,
+Three of these are hours of work. Two of the three files they remove are
+already gone — `rate-limit-policy.ts` and `rate-limit-middleware.ts` left the
+merge surface when the key-resolver registry shipped on 2026-09-01, taking it
+from twenty files to eighteen — leaving `lib/logging/context.ts`. The tenant-context primitive gates most of the rest,
 which is why [§10](#10-sequencing-shape) puts it at Phase 0c and why it is the
 one to do first if only one gets done.
 
@@ -1755,7 +1761,7 @@ answered by someone else, so its split is different:
 | 0c — tenant context               | **Build in final generic shape.** Entering it in your own wrapper around `withAuth` keeps the eventual upstream primitive a delegation             |
 | 1 — control plane (#366/#367)     | **Wait, or build generic.** Do not copy `lib/auth/guards.ts`; a local copy converts a one-line future change into permanent divergence             |
 | 2–3 — identity, rows, namespace   | **Yours anyway.** `Org`/`OrgMembership` and the `orgId` migration ride your schema; the playbook is the recipe                                     |
-| 4–5 — process, temporal, external | **Build generic, expect conflicts.** These are the twenty-file merge surface; each upstream provision that lands deletes one of your local edits   |
+| 4–5 — process, temporal, external | **Build generic, expect conflicts.** These are the eighteen-file merge surface; each upstream provision that lands deletes one of your local edits |
 | 6–7 — commercial, console split   | **Yours** (commercial) and **wait** (console split — one tree behind one guard today)                                                              |
 | Continuous — assurance            | **Start with Phase 3, plus the per-sync checklist.** The harness is the only thing that fails when an upstream release lands outside your boundary |
 
@@ -1823,7 +1829,7 @@ shape applies here:
 - A `policyExists` / `rlsEnabled` probe factory in `lib/db/drift-probes.ts`, so
   a fork's per-table policy assertions are a one-liner in `lib/app/db-drift.ts`
   instead of hand-rolled catalog SQL
-  ([§8](#provisions-upstream-should-ship)).
+  ([§8](#provisions-upstream-should-ship)) — **shipped 2026-09-01**.
 
 All three are cheap, all three fail loudly, and all three survive the author
 leaving. **They are worth more to forks than to the platform** — upstream is
@@ -2000,7 +2006,7 @@ a copied core file that never merges cleanly again.
 
 **The position: commit to the seams, not to the feature.** Ship the provisions in
 [§8](#provisions-upstream-should-ship). Each is a no-op at `TENANCY_MODE=single`,
-each deletes a named file from the twenty-file merge surface, and together they
+each deletes a named file from the eighteen-file merge surface, and together they
 move the "can a fork retrofit MT without fighting upstream?" figure in
 [§1](#1-executive-summary) without Sunrise building any tenancy at all. Three are
 hours of work — the drift-probe factories, org in the log context, and the

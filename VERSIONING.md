@@ -78,7 +78,7 @@ covered by the version contract.
   - erasure-hook registry (`lib/privacy/erasure-hooks.ts`)
   - ESLint app-boundary configuration for `lib/app/**`
   - app env registry (`lib/app/env.ts` → `appEnvSchema`)
-  - rate-limit registry (`lib/app/rate-limit.ts` → `registerRateLimitTier()` / `registerRateLimitRule()`)
+  - rate-limit registry (`lib/app/rate-limit.ts` → `registerRateLimitTier()` / `registerRateLimitRule()` / `registerRateLimitKeyResolver()`)
   - drift-probe registry (`lib/app/db-drift.ts` → `registerAppDriftProbe()`, primitives in `lib/db/drift-probes.ts`)
   - context-contributor registry (`lib/app/context-contributors.ts` → `registerContextContributor()`)
   - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)

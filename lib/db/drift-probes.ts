@@ -132,6 +132,81 @@ export function generatedColumnExists(tableName: string, columnName: string): Pr
 }
 
 /**
+ * Probe that Row-Level Security is ENABLED — and, by default, FORCED — on a
+ * table (`pg_class.relrowsecurity` / `relforcerowsecurity`).
+ *
+ * Why the FORCE default: a table's owner bypasses its own RLS policies unless
+ * `ALTER TABLE … FORCE ROW LEVEL SECURITY` has been applied, and that bypass
+ * fails **open** — every query works, no error is ever raised, and the only
+ * symptom is rows crossing a boundary they shouldn't. Like the
+ * `generatedColumnExists` / `columnExists` split above, the weaker state is the
+ * one that reads as healthy, so the probe asserts the stronger one. Pass
+ * `{ requireForced: false }` only for a table you deliberately left unforced
+ * (e.g. the app role can never own it), and say why at the registration site.
+ *
+ * Lookup is scoped to `current_schema()` — unlike the count-based probes
+ * above, this one reads `rows[0]`, and a same-named table in a backup or
+ * shadow schema could otherwise answer for the live one (a silent GREEN over
+ * an unprotected table, the worst failure mode a drift check can have).
+ * Partitioned parents (`relkind 'p'`) count: they support RLS fully, and
+ * excluding them would misreport a partitioned tenant table as missing. RLS
+ * being enabled says nothing about which policies exist; pair with
+ * `policyExists`.
+ */
+export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }): Probe {
+  const requireForced = opts?.requireForced ?? true;
+  return async () => {
+    const rows = await prisma.$queryRaw<Array<{ enabled: boolean | null; forced: boolean | null }>>`
+      SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relname = ${tableName}
+        AND c.relkind IN ('r', 'p')
+        AND n.nspname = current_schema()
+    `;
+    const row = rows[0];
+    if (!row) return { ok: false, note: 'table missing entirely' };
+    if (!row.enabled) {
+      return {
+        ok: false,
+        note: 'RLS is not enabled — every role reads every row. Run ALTER TABLE … ENABLE ROW LEVEL SECURITY (see db:tenancy:enable once it ships).',
+      };
+    }
+    if (requireForced && !row.forced) {
+      return {
+        ok: false,
+        note: 'RLS is enabled but not FORCED — the table owner bypasses every policy, silently. Run ALTER TABLE … FORCE ROW LEVEL SECURITY, or register with { requireForced: false } and record why.',
+      };
+    }
+    return { ok: true };
+  };
+}
+
+/**
+ * Existence probe for one named RLS policy on one table (`pg_policies`).
+ *
+ * The companion to `rlsEnabled`, and the probe every RLS table needs: policies
+ * are Prisma-unmodelled objects, so `prisma migrate dev` emits `DROP POLICY`
+ * for them exactly as it does for the HNSW indexes this registry was built
+ * around. A policy can also exist while RLS is disabled (`CREATE POLICY` on an
+ * un-enabled table is inert), so register both probes per protected table.
+ * Scoped to `current_schema()` so a same-named policy in a backup schema can
+ * neither answer for a dropped live policy nor inflate the count past 1.
+ */
+export function policyExists(tableName: string, policyName: string): Probe {
+  return async () => {
+    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT count(*)::bigint AS count
+      FROM pg_policies
+      WHERE schemaname = current_schema()
+        AND tablename = ${tableName}
+        AND policyname = ${policyName}
+    `;
+    return { ok: Number(rows[0]?.count ?? 0n) === 1 };
+  };
+}
+
+/**
  * App-registered drift probes. Populated by `registerAppDriftProbe()` calls
  * from `lib/app/db-drift.ts`; read by `scripts/db/check-drift.ts`.
  */

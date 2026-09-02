@@ -16,6 +16,32 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- `registerRateLimitKeyResolver(key, resolver)` in `lib/security/rate-limit-policy.ts`
+  opens the rate-limit **key** space to forks the way `registerRateLimitTier` opens
+  the tier space: a fork can bucket requests by anything it can derive from the
+  request (an org, a workspace, a device id) instead of only the four built-in
+  strategies. `RateLimitRule.key` widens to `RateLimitKey | (string & {})` to
+  match; a rule naming a custom key with no registered resolver throws at
+  registration, and built-in strategies cannot be overridden. This closes the
+  "a registry seam is only as open as its narrowest type" gap the multi-tenancy
+  research called out — per-org quotas become expressible without editing
+  `lib/security/`. `getClientIP()` now accepts anything headers-bearing
+  (`{ headers: Headers }`, so plain `Request` too), so a resolver can reach the
+  **validated** client IP rather than parsing `x-forwarded-for` itself. Note
+  this is not a licence to bucket on unverified input: a resolver's identifier
+  must derive from something the caller cannot freely choose, because
+  compositing with the IP bounds who *shares* a bucket, not how many buckets one
+  caller can *mint*.
+- `rlsEnabled(table, { requireForced? })` and `policyExists(table, policy)` probe
+  factories in `lib/db/drift-probes.ts` (the drift-probe registry's primitives).
+  A fork running the multi-tenancy retrofit can now assert its Row-Level-Security
+  posture per table as registry one-liners instead of hand-rolled `pg_policies`
+  catalog SQL. `rlsEnabled` requires `FORCE ROW LEVEL SECURITY` by default,
+  because an unforced table fails open for its owner — waive it per table with
+  `{ requireForced: false }`.
+
 ### Fixed
 
 - `VERSIONING.md`'s public-surface list named the tenancy seam as `TENANCY_MODE` +

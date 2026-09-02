@@ -79,6 +79,14 @@ export interface AlwaysRunEntry {
  */
 export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
+    path: 'tests/unit/db-raw-sql-allowlist.test.ts',
+    reason:
+      'greps lib/** and app/** for `.$queryRaw*`/`.$executeRaw*` call sites ' +
+      'against an exact allowlist. A new raw call in some far-off module is ' +
+      'exactly the change whose import graph never reaches this test — and it ' +
+      'is the class of query only RLS covers under TENANCY_MODE=multi.',
+  },
+  {
     path: 'tests/unit/lib/privacy/export-sources.test.ts',
     reason:
       'parses `prisma/schema/*.prisma` and fails until every model with a ' +
