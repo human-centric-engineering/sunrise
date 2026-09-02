@@ -28,8 +28,12 @@ release process.
   "a registry seam is only as open as its narrowest type" gap the multi-tenancy
   research called out — per-org quotas become expressible without editing
   `lib/security/`. `getClientIP()` now accepts anything headers-bearing
-  (`{ headers: Headers }`, so plain `Request` too) so resolvers can composite
-  identifiers with the validated IP instead of echoing raw forwarding headers.
+  (`{ headers: Headers }`, so plain `Request` too), so a resolver can reach the
+  **validated** client IP rather than parsing `x-forwarded-for` itself. Note
+  this is not a licence to bucket on unverified input: a resolver's identifier
+  must derive from something the caller cannot freely choose, because
+  compositing with the IP bounds who *shares* a bucket, not how many buckets one
+  caller can *mint*.
 - `rlsEnabled(table, { requireForced? })` and `policyExists(table, policy)` probe
   factories in `lib/db/drift-probes.ts` (the drift-probe registry's primitives).
   A fork running the multi-tenancy retrofit can now assert its Row-Level-Security

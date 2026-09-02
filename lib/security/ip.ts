@@ -12,8 +12,11 @@
  * reads — so it accepts a `NextRequest`, a plain `Request`, or anything
  * headers-bearing. That is deliberate: rate-limit key resolvers
  * (`registerRateLimitKeyResolver`) receive a plain `Request`, and this is the
- * validated IP primitive they should composite identifiers with instead of
- * echoing raw forwarding headers.
+ * validated IP primitive they should use instead of parsing a raw forwarding
+ * header themselves — both for the `null` fallback bucket and wherever an
+ * identifier legitimately includes the IP. It does NOT make an unverified
+ * identifier safe: compositing bounds who shares a bucket, not how many
+ * buckets one caller can mint. See {@link RateLimitKeyResolver}.
  *
  * IMPORTANT: In production, ensure your reverse proxy (nginx, Cloudflare, etc.)
  * strips and re-sets the X-Forwarded-For header to prevent client spoofing.

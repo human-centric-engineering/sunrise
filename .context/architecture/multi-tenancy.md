@@ -349,8 +349,10 @@ LEVEL SECURITY`, so do not let the app role own the tenant tables.
   `registerRateLimitKeyResolver('org', ...)` in `lib/app/rate-limit.ts` buckets
   requests by anything you can derive from the request, so an org-scoped _key_
   needs no edit to `lib/security/`. Derive the identifier from an authenticated
-  principal or composite it with `getClientIP()` — a caller who controls the
-  identifier mints a fresh bucket per request and walks past the cap. See
+  principal, or from a value the resolver verifies — a caller who controls the
+  identifier mints a fresh bucket per request and walks past the cap.
+  Compositing with `getClientIP()` is not a substitute: it bounds who _shares_
+  a bucket, not how many one caller can _mint_. See
   [rate limiting → custom keys](../security/rate-limiting.md).
 - **Fork gotcha: a registry seam is only as open as its narrowest type.**
   The case above was this shape until 2026-09-01: `lib/app/rate-limit.ts` let
