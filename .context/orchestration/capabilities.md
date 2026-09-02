@@ -237,25 +237,58 @@ capability and the `rag_retrieve` executor fill in.
 
 **What is still deliberately unattributed**, and why:
 
-| Sink                                                   | What it logs                        | Why nothing tags it                                                                             |
-| ------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `knowledge/embedder.ts` via document ingestion         | the per-document embedding batch    | no agent or conversation exists behind an upload. Tagged `metadata.kind` + `documentId` instead |
-| `knowledge/keyword-enricher.ts`                        | post-upload BM25 keyword generation | same: runs against a document, from the admin UI, with no turn or execution in scope            |
-| `knowledge/seeder.ts`, `knowledge/semantic-chunker.ts` | backfill and chunking embeddings    | operator-triggered maintenance, not work done on anyone's behalf. Tagged `metadata.kind`        |
-| `chat/message-embedder.ts` backfill path only          | re-embedding older messages         | the live chat path DOES attribute (agent + conversation); the backfill has neither in scope     |
+| Sink                                                   | What it logs                        | Why nothing tags it                                                                                                                                                                                                                                   |
+| ------------------------------------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge/embedder.ts` via ingestion/seeding/chunking | the per-document embedding batch    | those callers pass metadata only. No agent or conversation exists behind an upload, and the user who does (`AiKnowledgeDocument.uploadedBy`) is acting on the org's behalf, not their own — see the note below. Tagged `metadata.kind` + `documentId` |
+| `knowledge/keyword-enricher.ts`                        | post-upload BM25 keyword generation | same: runs against a document, from the admin UI, with no turn or execution in scope                                                                                                                                                                  |
+| `knowledge/seeder.ts`, `knowledge/semantic-chunker.ts` | backfill and chunking embeddings    | operator-triggered maintenance, not work done on anyone's behalf. Tagged `metadata.kind`                                                                                                                                                              |
+| `chat/message-embedder.ts` backfill path only          | re-embedding older messages         | the live chat path DOES attribute (agent + conversation + user); the backfill has none in scope                                                                                                                                                       |
+| any embed-widget turn, for `userId` only               | the visitor's chat spend            | an embed visitor is a synthetic `embed_<hash>`, not a `User` row. Agent + conversation still tag it                                                                                                                                                   |
 
-These are a limit of the domain, not a missing line: there is no row to point a
-foreign key at. `metadata.kind` is what makes them separable in reporting.
+Most of these are a limit of the domain, not a missing line: there is no row to
+point a foreign key at. `metadata.kind` is what makes them separable in
+reporting.
+
+**Ingestion is the exception, and it is a judgement rather than a limit** — a
+`User` _is_ available there (`AiKnowledgeDocument.uploadedBy`), so leaving
+`userId` unset is a choice that has to be defended. It is defended on the same
+line the subject-export manifest draws between `export` and `attribution`: a
+knowledge document is **org config**, and an admin uploading a corpus is doing
+the organisation's work, not incurring personal usage. Attributing it would put
+org-wide corpus spend inside one person's Art. 15 export and make whoever loaded
+the biggest document look like the platform's heaviest user — both of which
+misdescribe what happened. The rule that follows: **attribute spend to a person
+when they are the one who asked for the work, not merely when a `User` id is in
+scope.** A chat turn, a knowledge search and an MCP resource read are somebody
+asking; an upload, a seed and a re-chunk are the org maintaining itself.
 
 **The rule these three bugs share, and the guard for it.**
-`AiCostLog.agentId`, `.conversationId` and `.workflowExecutionId` are foreign
-keys, so at every call site the only two safe values are **a real row id** or
-**nothing**. A placeholder is rejected with P2003, and because `logCost` catches
-it and every caller `void`s the promise, the failure is a row that quietly never
-existed. `tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts`
+`AiCostLog.agentId`, `.conversationId`, `.workflowExecutionId` and `.userId` are
+all foreign keys, so at every call site the only two safe values are **a real row
+id** or **nothing**. A placeholder is rejected with P2003, and because `logCost`
+catches it and every caller `void`s the promise, the failure is a row that
+quietly never existed. `tests/unit/lib/orchestration/llm/cost-log-fk-attribution.test.ts`
 derives every `logCost` call site in the tree and compares what each writes into
-those columns against a written allowlist — so a fourth instance cannot be added
+those columns against a written allowlist — so a further instance cannot be added
 without someone stating why its value is a row id.
+
+`userId` was added last and immediately proved the point. Wiring the chat
+handler's `request.userId` into it looked obviously correct, but that one handler
+serves the admin, consumer **and** embed routes, and the embed route passes the
+synthetic `embed_<hash>` visitor id from `resolveEmbedToken` — no `User` row
+behind it, so the row would be rejected and discarded on write. It was caught by
+adding the column to the guard, not by review, which is the argument for
+extending that roster the moment a foreign key appears rather than after the
+first incident on it.
+
+**The reach is narrower than that sounds, and saying so matters.** No embed turn
+reaches `logCost` today: `AiConversation.userId` is a foreign key to `user` as
+well, nothing mints a `User` row for a visitor, and so an embed visitor's first
+message already fails at conversation-create ([#705](https://github.com/human-centric-engineering/sunrise/issues/705)).
+The guard is correct and forward-looking, not currently load-bearing — its value
+is that the cost-row loss cannot appear the moment #705 is fixed. `isEmbedUserId` (`lib/embed/auth.ts`) is the predicate,
+and it sits next to the mint so the prefix has one definition; the chat handler
+reduces a visitor to `null` through its own `attributableUserId`.
 
 That guard reads `logCost` call sites, and **a value can also reach a foreign key
 one hop away**, through a function that accepts an attribution and forwards it.

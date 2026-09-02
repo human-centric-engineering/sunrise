@@ -99,6 +99,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
     void logCost({
       agentId: agent.id,
+      userId: session.user.id,
       model: audio.modelId,
       provider: audio.providerSlug,
       inputTokens: 0,

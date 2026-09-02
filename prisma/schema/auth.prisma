@@ -62,6 +62,7 @@ model User {
   aiApiKeys              AiApiKey[]              @relation("AiApiKeyUser")
   aiEventHooks           AiEventHook[]           @relation("AiEventHookCreator")
   aiProviderModels       AiProviderModel[]       @relation("AiProviderModelCreator")
+  aiCostLogs             AiCostLog[]             @relation("AiCostLogUser")
   aiAdminAuditLogs       AiAdminAuditLog[]       @relation("AiAdminAuditLogUser")
   aiEmbedTokens          AiAgentEmbedToken[]     @relation("EmbedTokenCreator")
   aiExperiments          AiExperiment[]          @relation("AiExperimentCreator")

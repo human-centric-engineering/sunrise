@@ -58,6 +58,10 @@ export async function handleKnowledgeSearch(
   }
 
   const results = await searchKnowledge(query, filters, 10, undefined, {
+    // The key owner pays for this embedding, the same way they pay for a tool
+    // call made with the same key. `AiApiKey.createdBy` is a `user` FK, so it
+    // is a real row or null — never a synthetic id.
+    userId: callContext.userId,
     metadata: { kind: 'mcp_knowledge_search' },
   });
 

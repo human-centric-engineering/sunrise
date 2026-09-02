@@ -1,13 +1,14 @@
 /**
  * Guard: every `logCost` call site attributes to a real row, or says why not.
  *
- * `AiCostLog.agentId` and `AiCostLog.conversationId` are **foreign keys** to
- * `AiAgent.id` and `AiConversation.id`. `logCost` catches the P2003 a bad value
+ * `AiCostLog.agentId`, `AiCostLog.conversationId`, `workflowExecutionId` and
+ * `userId` are all **foreign keys**. `logCost` catches the P2003 a bad value
  * raises and returns `null`, and every caller `void`s the promise — so a wrong
  * value is not an error anyone sees. It is a cost row that quietly never
  * existed, on spend that quietly did.
  *
- * That has now happened three times:
+ * That has now happened three times, and was caught a fourth time before it
+ * shipped:
  *
  *   - #599 — the capability dispatcher wrote the synthetic `workflow:<id>`
  *     label into `agentId`. Every capability a workflow ran recorded nothing.
@@ -17,6 +18,21 @@
  *   - #654 — the conversation summariser passed the literals `'system'` and
  *     `'summary'`. Both FKs violated, on a call made on every turn of every
  *     long conversation.
+ *   - t-655 — adding `userId` wired `request.userId` into the new FK at every
+ *     chat call site. That handler serves the embed route too, which passes a
+ *     synthetic `embed_<hash>` visitor id: not a `User`, so the row would be
+ *     discarded on write. Caught by extending this roster to the new column
+ *     rather than by anyone reading the diff — the argument for adding a field
+ *     here the moment the column exists, not after the first incident on it.
+ *
+ *     Be precise about the blast radius, because it is smaller than it looks
+ *     and overstating it is how a guard gets trusted for the wrong reason: no
+ *     embed turn reaches `logCost` today at all. `AiConversation.userId` is
+ *     also a FK to `user`, nothing mints a `User` for a visitor, so a
+ *     visitor's first message already dies at conversation-create (see #705).
+ *     This guard is therefore correct and forward-looking rather than
+ *     currently load-bearing — it stops the cost-row loss from appearing the
+ *     moment #705 is fixed, which is exactly when nobody would be looking.
  *
  * ## Why this is a roster and not a pattern match
  *
@@ -70,11 +86,18 @@ const REPO_ROOT = process.cwd();
 /** Not source. `tests` is excluded — a test may pass whatever it likes. */
 const NOT_SOURCE = new Set(['node_modules', '.next', '.git', 'coverage', 'tests', '.claude']);
 
-/** The two columns that are foreign keys. `workflowExecutionId` is a third, but
- *  nothing has ever written a non-id into it: the execution row always exists
- *  before any step runs. It is checked anyway — adding it here costs nothing and
- *  the argument for excluding it is exactly the argument that was wrong twice. */
-const FK_FIELDS = ['agentId', 'conversationId', 'workflowExecutionId'] as const;
+/** The columns that are foreign keys. `agentId` and `conversationId` are where
+ *  the three bugs happened. `workflowExecutionId` has never held a non-id — the
+ *  execution row always exists before any step runs — and `userId` is new, but
+ *  both are checked anyway: adding a field here costs nothing, and the argument
+ *  for excluding one is exactly the argument that was wrong twice.
+ *
+ *  `userId` earns its place on the same mechanism, not on a track record.
+ *  `logCost` normalises a falsy value away, so `null`/`''` is a safe NULL — but
+ *  a non-empty value that is not a `User.id` (an agent id, a `workflow:<id>`
+ *  label, a visitor id from an embed session) raises P2003 and discards the
+ *  whole row, silently, exactly as #599/#600/#654 did. */
+const FK_FIELDS = ['agentId', 'conversationId', 'workflowExecutionId', 'userId'] as const;
 type FkField = (typeof FK_FIELDS)[number];
 
 interface FkValue {
@@ -119,6 +142,7 @@ const emptyValues = (): Record<FkField, FkValue[]> => ({
   agentId: [],
   conversationId: [],
   workflowExecutionId: [],
+  userId: [],
 });
 
 /** A bare string, or a template with nothing interpolated into it. */
@@ -225,7 +249,10 @@ function key(site: CallSite): string {
     const vals = site.values[field];
     return vals.length === 0 ? '—' : vals.map((v) => v.expr).join(' + ');
   };
-  return `${site.file} | agentId=${render('agentId')} | conversationId=${render('conversationId')} | workflowExecutionId=${render('workflowExecutionId')}`;
+  return (
+    `${site.file} | agentId=${render('agentId')} | conversationId=${render('conversationId')}` +
+    ` | workflowExecutionId=${render('workflowExecutionId')} | userId=${render('userId')}`
+  );
 }
 
 /**
@@ -242,48 +269,74 @@ function key(site: CallSite): string {
  * nullable, and the row is attributed by `workflowExecutionId` or by nothing.
  */
 const ALLOWED_CALL_SITES: readonly string[] = [
-  // Admin transcription: `agent` is the row the route just loaded.
-  'app/api/v1/admin/orchestration/chat/transcribe/route.ts | agentId=agent.id | conversationId=— | workflowExecutionId=—',
+  // Admin transcription: `agent` is the row the route just loaded, and
+  // `withAdminAuth` guarantees `session.user` is a real User row.
+  'app/api/v1/admin/orchestration/chat/transcribe/route.ts | agentId=agent.id | conversationId=— | workflowExecutionId=— | userId=session.user.id',
   // Retroactive supervisor review: attributed to the execution, not an agent.
-  'app/api/v1/admin/orchestration/executions/[id]/review/route.ts | agentId=— | conversationId=— | workflowExecutionId=id',
+  // Same `withAdminAuth` guarantee for the user.
+  'app/api/v1/admin/orchestration/executions/[id]/review/route.ts | agentId=— | conversationId=— | workflowExecutionId=id | userId=session.user.id',
   // Embed speech-to-text: `agent` is the row resolved from the embed token.
-  'app/api/v1/embed/speech-to-text/route.ts | agentId=agent.id | conversationId=— | workflowExecutionId=—',
-  // #600. The guard is load-bearing: dispatched from a workflow `tool_call`
-  // step, `context.agentId` is the synthetic `workflow:<id>` label.
-  'lib/orchestration/capabilities/built-in/send-message-to-channel.ts | agentId=spread((context.agentId && !isWorkflowAgentId(context.agentId) ? { agentId: context.agentId } : {})) | conversationId=conv.id | workflowExecutionId=spread((context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {}))',
-  // #599. Same guard, same reason — this is where it was first needed.
-  'lib/orchestration/capabilities/dispatcher.ts | agentId=spread((context.agentId && !isWorkflowAgentId(context.agentId) ? { agentId: context.agentId } : {})) | conversationId=spread((context.conversationId ? { conversationId: context.conversationId } : {})) | workflowExecutionId=spread((context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {}))',
+  // `userId` is deliberately unwritten — an embed caller has no User row at
+  // all, only the synthetic `embed_<hash>` visitor id.
+  'app/api/v1/embed/speech-to-text/route.ts | agentId=agent.id | conversationId=— | workflowExecutionId=— | userId=—',
+  // #600. The agentId guard is load-bearing: dispatched from a workflow
+  // `tool_call` step, `context.agentId` is the synthetic `workflow:<id>` label.
+  // The userId guard is load-bearing for the mirror-image reason: dispatched
+  // from an EMBED chat turn, `context.userId` is the synthetic `embed_<hash>`
+  // visitor id, because the chat handler passes `request.userId` straight into
+  // the dispatch context.
+  'lib/orchestration/capabilities/built-in/send-message-to-channel.ts | agentId=spread((context.agentId && !isWorkflowAgentId(context.agentId) ? { agentId: context.agentId } : {})) | conversationId=conv.id | workflowExecutionId=spread((context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {})) | userId=spread((context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}))',
+  // #599. Same two guards, same two reasons — this is where the agentId one
+  // was first needed.
+  'lib/orchestration/capabilities/dispatcher.ts | agentId=spread((context.agentId && !isWorkflowAgentId(context.agentId) ? { agentId: context.agentId } : {})) | conversationId=spread((context.conversationId ? { conversationId: context.conversationId } : {})) | workflowExecutionId=spread((context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {})) | userId=spread((context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}))',
   // The chat handler's four rows — turn cost, vision, transcription, tool
   // side-effects. `agent` and `conversation` are both rows it loaded itself.
-  'lib/orchestration/chat/streaming-handler.ts | agentId=agent.id | conversationId=conversation.id | workflowExecutionId=—',
-  // #654. Supplied by the chat handler, which is the only caller that holds
-  // real ids; omitted entirely rather than faked when it does not.
-  'lib/orchestration/chat/summarizer.ts | agentId=spread((options.agentId ? { agentId: options.agentId } : {})) | conversationId=spread((options.conversationId ? { conversationId: options.conversationId } : {})) | workflowExecutionId=—',
+  // `attributableUserId` is load-bearing: this one handler serves the admin,
+  // consumer AND embed routes, and only the first two pass a real `User.id`.
+  'lib/orchestration/chat/streaming-handler.ts | agentId=agent.id | conversationId=conversation.id | workflowExecutionId=— | userId=attributableUserId(request.userId)',
+  // #654. All three supplied by the chat handler, which is the only caller
+  // that holds real ids; omitted entirely rather than faked when it does not.
+  // The handler has already reduced an embed visitor to null before this.
+  'lib/orchestration/chat/summarizer.ts | agentId=spread((options.agentId ? { agentId: options.agentId } : {})) | conversationId=spread((options.conversationId ? { conversationId: options.conversationId } : {})) | workflowExecutionId=— | userId=spread((options.userId ? { userId: options.userId } : {}))',
   // `agent` is a real row: the executor resolves it before dispatching, and
   // non-null-asserts because that resolution already threw if it failed.
-  'lib/orchestration/engine/executors/agent-call.ts | agentId=agent!.id | conversationId=— | workflowExecutionId=ctx.executionId',
+  // `ctx.userId` needs no guard here or in the two entries below: the engine
+  // writes that same value to `AiWorkflowExecution.userId`, itself a FK to
+  // `user`, so a synthetic id would already be failing execution creation.
+  'lib/orchestration/engine/executors/agent-call.ts | agentId=agent!.id | conversationId=— | workflowExecutionId=ctx.executionId | userId=ctx.userId',
   // `chat_turn` runs a real agent against a real conversation it created.
-  'lib/orchestration/engine/executors/chat-turn.ts | agentId=agent.id | conversationId=conversationId | workflowExecutionId=ctx.executionId',
+  'lib/orchestration/engine/executors/chat-turn.ts | agentId=agent.id | conversationId=conversationId | workflowExecutionId=ctx.executionId | userId=ctx.userId',
   // The workflow LLM runner attributes to the execution; no agent is involved.
-  'lib/orchestration/engine/llm-runner.ts | agentId=— | conversationId=— | workflowExecutionId=ctx.executionId',
+  'lib/orchestration/engine/llm-runner.ts | agentId=— | conversationId=— | workflowExecutionId=ctx.executionId | userId=ctx.userId',
   // Opaque by construction: builds `costParams` first and sets `agentId` only
   // when `session.agentId` is non-null — which is an `AiAgent.id` on
-  // `AiEvaluationSession`. Read at the source, not inferred from this key.
-  'lib/orchestration/evaluations/complete-session.ts | agentId=opaque-argument(costParams) | conversationId=opaque-argument(costParams) | workflowExecutionId=opaque-argument(costParams)',
+  // `AiEvaluationSession`. `userId` is `params.userId`, the session owner the
+  // route already used to prove ownership. Read at the source, not inferred
+  // from this key.
+  'lib/orchestration/evaluations/complete-session.ts | agentId=opaque-argument(costParams) | conversationId=opaque-argument(costParams) | workflowExecutionId=opaque-argument(costParams) | userId=opaque-argument(costParams)',
   // `AiEvaluationRun.agentId` is an `AiAgent` FK, nullable because a run's
-  // subject can be a workflow instead — hence the guard.
-  'lib/orchestration/evaluations/run-worker.ts | agentId=spread((run.agentId ? { agentId: run.agentId } : {})) | conversationId=— | workflowExecutionId=—',
-  // #654 part 3. Both embedder rows now take whatever the caller could supply.
-  // The guards are load-bearing for the same reason as the capability entries:
+  // subject can be a workflow instead — hence the guard. `run.userId` needs
+  // none: it is NOT NULL on `AiEvaluationRun` and a FK to `user` already.
+  'lib/orchestration/evaluations/run-worker.ts | agentId=spread((run.agentId ? { agentId: run.agentId } : {})) | conversationId=— | workflowExecutionId=— | userId=run.userId',
+  // #654 part 3. Both embedder rows take whatever the caller could supply, and
+  // the guards are load-bearing for the same reason as the capability entries:
   // `search_knowledge_base` dispatched from a workflow step holds a
   // `workflow:<id>` label in `context.agentId`, and passes it only when it is
-  // not one. Ingestion callers supply metadata alone — there is no agent or
-  // conversation behind a document upload — which is recorded in
-  // `.context/orchestration/capabilities.md`.
-  'lib/orchestration/knowledge/embedder.ts | agentId=spread((attribution?.agentId ? { agentId: attribution.agentId } : {})) | conversationId=spread((attribution?.conversationId ? { conversationId: attribution.conversationId } : {})) | workflowExecutionId=spread((attribution?.workflowExecutionId ? { workflowExecutionId: attribution.workflowExecutionId } : {}))',
-  // Keyword enrichment runs post-upload against a document, with no agent or
-  // conversation in scope. Deliberate — see the doc note above.
-  'lib/orchestration/knowledge/keyword-enricher.ts | agentId=— | conversationId=— | workflowExecutionId=—',
+  // not one.
+  //
+  // `userId` is forwarded, NOT unwritten — an earlier version of this entry
+  // said "ingestion is not a person's request, so userId is unwritten", which
+  // read the site as if ingestion were its only caller. It is not: the
+  // per-message embedder runs inside a chat turn and the knowledge-search
+  // paths run inside somebody's request, so leaving it unset recorded spend a
+  // user caused against nobody — and dropped it from that user's Art. 15
+  // export while the chat row for the SAME turn appeared in it. Ingestion
+  // callers pass no attribution at all, so they still land NULL, which is what
+  // `.context/orchestration/capabilities.md` records.
+  'lib/orchestration/knowledge/embedder.ts | agentId=spread((attribution?.agentId ? { agentId: attribution.agentId } : {})) | conversationId=spread((attribution?.conversationId ? { conversationId: attribution.conversationId } : {})) | workflowExecutionId=spread((attribution?.workflowExecutionId ? { workflowExecutionId: attribution.workflowExecutionId } : {})) | userId=spread((attribution?.userId ? { userId: attribution.userId } : {}))',
+  // Keyword enrichment runs post-upload against a document, with no agent,
+  // conversation or user in scope. Deliberate — see the doc note above.
+  'lib/orchestration/knowledge/keyword-enricher.ts | agentId=— | conversationId=— | workflowExecutionId=— | userId=—',
 ];
 
 describe('AiCostLog foreign-key attribution', () => {

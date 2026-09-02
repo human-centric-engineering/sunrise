@@ -1200,6 +1200,60 @@ describe('StreamingChatHandler', () => {
     expect(logCost).toHaveBeenCalledTimes(1);
   });
 
+  // 14a-i -------------------------------------------------------------------
+  it('attributes the cost row to the caller when they are a real user', async () => {
+    const provider1 = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 3, outputTokens: 3 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: provider1,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: 'u1' }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1' }));
+  });
+
+  // 14a-ii ------------------------------------------------------------------
+  it('does NOT put an embed visitor id in the cost row — it is not a User row', async () => {
+    // `AiCostLog.userId` is a foreign key to `user`. This one handler serves the
+    // admin, consumer AND embed routes; the embed route passes the synthetic
+    // `embed_<hash>` visitor id minted by `resolveEmbedToken`, which has no
+    // `User` behind it. Writing it here raises P2003, and because `logCost`
+    // swallows write failures the entire cost row is discarded. Exactly
+    // #599/#600/#654, one column over.
+    //
+    // This asserts the guard, not a bug currently reachable in production: an
+    // embed turn dies earlier, at conversation-create, for the same reason
+    // (#705). The test is still worth having — it is what stops the cost-row
+    // loss from silently arriving with #705's fix.
+    //
+    // Asserting `userId: null` rather than merely "not the visitor id": the
+    // column must be explicitly unattributed, not carrying some other value.
+    const provider1 = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 3, outputTokens: 3 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: provider1,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: 'embed_deadbeefdeadbeef' }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logCost).toHaveBeenCalledTimes(1);
+    expect(logCost).toHaveBeenCalledWith(expect.objectContaining({ userId: null }));
+    // And specifically not the visitor id, which is the value that would have
+    // been written before the guard existed.
+    expect(logCost).not.toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'embed_deadbeefdeadbeef' })
+    );
+  });
+
   // 14b ---------------------------------------------------------------------
   it('logCost called once per turn — twice for a two-turn tool-call round-trip', async () => {
     // Arrange: turn 1 (tool call) + turn 2 (final) both reach a done chunk
@@ -4220,10 +4274,44 @@ describe('rolling conversation summarization', () => {
 
     await collect(streamChat({ ...baseRequest, conversationId: 'conv-embed' }));
 
+    // Exact object, not objectContaining: the point is that the embedding
+    // carries the SAME three attributions as the turn's own cost row. A key
+    // silently going missing here is how the embedding spend for a turn ends
+    // up owned by nobody while the chat row for that turn is owned by someone.
     expect(vi.mocked(queueMessageEmbedding)).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      { agentId: 'agent-1', conversationId: 'conv-embed' }
+      { agentId: 'agent-1', conversationId: 'conv-embed', userId: 'u1' }
+    );
+  });
+
+  it('does not attribute an embedding to an embed visitor', async () => {
+    // Mirrors the cost-row case: `userId` reaches `AiCostLog` through the
+    // embedder too, so the visitor id has to be reduced to null on this path
+    // as well or the guard only covers half the spend a turn produces.
+    mockSummariser();
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [
+          { type: 'text', content: 'An answer long enough to be worth embedding at all.' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(
+      streamChat({
+        ...baseRequest,
+        conversationId: 'conv-embed',
+        userId: 'embed_deadbeefdeadbeef',
+      })
+    );
+
+    expect(vi.mocked(queueMessageEmbedding)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      { agentId: 'agent-1', conversationId: 'conv-embed', userId: null }
     );
   });
 

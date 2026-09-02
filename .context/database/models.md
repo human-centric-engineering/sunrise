@@ -802,7 +802,7 @@ The Agent Orchestration Layer adds 13 Prisma models under the `ai_*` table prefi
 
 - Status/role/type fields are `String` columns, not Prisma enums. Valid values live in `types/orchestration.ts` and should be referenced via the exported constants (`WorkflowStatus.RUNNING`, `MessageRole.ASSISTANT`, etc.) rather than string literals.
 - Table names are snake_case (`ai_knowledge_chunk`), but column names stay camelCase — quote them in raw SQL: `"fileHash"`, `"chunkKey"`.
-- Every user-owned model has a `User` reverse relation for audit trails. `AiCostLog` uses `onDelete: SetNull` so cost history survives parent deletion.
+- Every user-owned model has a `User` reverse relation for audit trails. `AiCostLog` uses `onDelete: SetNull` on all four of its FKs — `agentId`, `conversationId`, `workflowExecutionId` and `userId` — so cost history survives deletion of the agent or conversation, and erasure of the user. A cost row is a billing record: erasing a subject must detach it, never delete it. `userId` is nullable and NULL is correct for work no person requested (ingestion, scheduled runs) and for embed traffic, whose visitor id is a synthetic `embed_<hash>` with no `User` behind it — see `isEmbedUserId` in `lib/embed/auth.ts`.
 
 ### AiAgent, AiCapability, AiAgentCapability
 

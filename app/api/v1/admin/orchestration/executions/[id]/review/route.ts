@@ -159,6 +159,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
     void logCost({
       workflowExecutionId: id,
+      userId: session.user.id,
       model: modelId,
       provider: modelInfo.provider,
       inputTokens: response.usage.inputTokens,

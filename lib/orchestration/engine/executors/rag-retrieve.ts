@@ -41,6 +41,7 @@ export async function executeRagRetrieve(
     // readers filter on.
     results = await searchKnowledge(interpolated, config.filters ?? undefined, topK, threshold, {
       workflowExecutionId: ctx.executionId,
+      userId: ctx.userId,
       metadata: { ...(ctx.costLogMetadata ?? {}), stepId: step.id, kind: 'rag_retrieve' },
     });
   } catch (err) {

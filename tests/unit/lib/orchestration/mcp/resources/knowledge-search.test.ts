@@ -68,6 +68,7 @@ describe('handleKnowledgeSearch', () => {
     const result = await handleKnowledgeSearch('sunrise://knowledge/search', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -81,6 +82,7 @@ describe('handleKnowledgeSearch', () => {
     const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=   ', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -95,6 +97,7 @@ describe('handleKnowledgeSearch', () => {
     await handleKnowledgeSearch('sunrise://knowledge/search?q=agentic+patterns', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(searchKnowledge).toHaveBeenCalledWith(
@@ -106,12 +109,56 @@ describe('handleKnowledgeSearch', () => {
     );
   });
 
+  it('attributes the query embedding to the API key owner', async () => {
+    // The embedding this resource triggers is real spend. The tool path
+    // already attributes it (`callMcpTool` threads `auth.createdBy`), so a
+    // resource read that did not would split one key's spend between an owner
+    // and nobody — and drop the resource half out of that owner's Art. 15
+    // export. `AiApiKey.createdBy` is a `user` FK, so it is a real row.
+    vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+    await handleKnowledgeSearch('sunrise://knowledge/search?q=patterns', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+      userId: 'user-42',
+    });
+
+    expect(searchKnowledge).toHaveBeenCalledWith(
+      'patterns',
+      undefined,
+      10,
+      undefined,
+      expect.objectContaining({ userId: 'user-42' })
+    );
+  });
+
+  it('passes a null owner through rather than inventing one', async () => {
+    // `createdBy` is nullable — the key's creator may since have been erased.
+    // Null must reach the cost row as an absent column, not as a fabricated id.
+    vi.mocked(searchKnowledge).mockResolvedValue([]);
+
+    await handleKnowledgeSearch('sunrise://knowledge/search?q=patterns', null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+      userId: null,
+    });
+
+    expect(searchKnowledge).toHaveBeenCalledWith(
+      'patterns',
+      undefined,
+      10,
+      undefined,
+      expect.objectContaining({ userId: null })
+    );
+  });
+
   it('maps search results to simplified shape', async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([makeSearchResult()]);
 
     const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -131,6 +178,7 @@ describe('handleKnowledgeSearch', () => {
     const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(result.mimeType).toBe('application/json');
@@ -143,6 +191,7 @@ describe('handleKnowledgeSearch', () => {
     const result = await handleKnowledgeSearch(uri, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(result.uri).toBe(uri);
@@ -158,6 +207,7 @@ describe('handleKnowledgeSearch', () => {
     const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -174,6 +224,7 @@ describe('handleKnowledgeSearch', () => {
     const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=test', null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -189,7 +240,7 @@ describe('handleKnowledgeSearch', () => {
       handleKnowledgeSearch(
         'sunrise://knowledge/search?q=test',
         { maxResults: 5 },
-        { scopedAgentId: null, apiKeyId: 'key-1' }
+        { scopedAgentId: null, apiKeyId: 'key-1', userId: null }
       )
     ).resolves.not.toThrow();
   });
@@ -204,6 +255,7 @@ describe('handleKnowledgeSearch', () => {
       handleKnowledgeSearch('sunrise://knowledge/search?q=agents', null, {
         scopedAgentId: null,
         apiKeyId: 'key-1',
+        userId: null,
       })
     ).rejects.toThrow('vector search failed');
   });
@@ -224,7 +276,7 @@ describe('handleKnowledgeSearch', () => {
       const result = await handleKnowledgeSearch(
         'sunrise://knowledge/search?q=restricted+topic',
         null,
-        { scopedAgentId: AGENT_ID, apiKeyId: 'key-scoped' }
+        { scopedAgentId: AGENT_ID, apiKeyId: 'key-scoped', userId: null }
       );
 
       // Assert: resolver called with the agent id
@@ -259,6 +311,7 @@ describe('handleKnowledgeSearch', () => {
       await handleKnowledgeSearch('sunrise://knowledge/search?q=open+topic', null, {
         scopedAgentId: AGENT_ID,
         apiKeyId: 'key-scoped',
+        userId: null,
       });
 
       // Assert: resolver was called
@@ -282,6 +335,7 @@ describe('handleKnowledgeSearch', () => {
       await handleKnowledgeSearch('sunrise://knowledge/search?q=global', null, {
         scopedAgentId: null,
         apiKeyId: 'key-service',
+        userId: null,
       });
 
       // Assert: resolver NOT called for unscoped key
@@ -296,6 +350,7 @@ describe('handleKnowledgeSearch', () => {
       await handleKnowledgeSearch('sunrise://knowledge/search?q=audit+test', null, {
         scopedAgentId: null,
         apiKeyId: 'unscoped-key-99',
+        userId: null,
       });
 
       // Assert: logger.info was called to surface the unscoped usage
@@ -328,6 +383,7 @@ describe('handleKnowledgeSearch', () => {
       const result = await handleKnowledgeSearch(malformedUri, null, {
         scopedAgentId: null,
         apiKeyId: 'key-1',
+        userId: null,
       });
 
       // Assert: graceful error response

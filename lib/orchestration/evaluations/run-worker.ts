@@ -286,6 +286,7 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
     inputTokens: 0,
     outputTokens: 0,
     metadata: { evaluationRunId: run.id, phase: 'rollup', costUsd: totalCost },
+    userId: run.userId,
     ...(run.agentId ? { agentId: run.agentId } : {}),
   }).catch((err) => {
     logger.error('Failed to log evaluation run rollup marker', {

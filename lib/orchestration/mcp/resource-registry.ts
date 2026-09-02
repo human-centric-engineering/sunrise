@@ -29,6 +29,16 @@ export interface ResourceCallContext {
   scopedAgentId: string | null;
   /** ID of the calling key — useful for audit-side logging inside handlers. */
   apiKeyId: string;
+  /**
+   * Owner of the calling API key (`AiApiKey.createdBy`), or null for a key
+   * whose creator has since been erased. A real `User.id` when present.
+   *
+   * Present so a resource that spends money can attribute it, exactly as the
+   * tool path already does via `callMcpTool`. Without it the same key's tool
+   * calls were attributed and its resource reads were not, which splits one
+   * caller's spend across an owner and nobody.
+   */
+  userId: string | null;
 }
 
 /** Resource handler function signature */

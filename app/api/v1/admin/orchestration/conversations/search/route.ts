@@ -57,6 +57,7 @@ export const GET = withAdminAuth(async (request, session) => {
   let queryEmbedding: number[];
   try {
     const embedResult = await embedText(q, 'query', {
+      userId: session.user.id,
       metadata: { kind: 'conversation_search' },
     });
     queryEmbedding = embedResult.embedding;

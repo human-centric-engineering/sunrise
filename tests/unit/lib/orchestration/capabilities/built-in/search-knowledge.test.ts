@@ -314,8 +314,30 @@ describe('SearchKnowledgeCapability', () => {
       expect(attribution).toMatchObject({
         agentId: 'a1',
         conversationId: 'conv-1',
+        // The asker pays for their own query embedding. Without this the turn's
+        // chat row is attributed and the search it made is not — one turn's
+        // spend split across an owner and nobody, and the search half missing
+        // from that user's Art. 15 export.
+        userId: 'u1',
         metadata: expect.objectContaining({ kind: 'knowledge_search' }),
       });
+    });
+
+    it('omits userId for an embed visitor, whose id is not an AiUser row', async () => {
+      // The userId counterpart of the workflow-label rule below. An embed
+      // visitor is a synthetic `embed_<hash>` from `resolveEmbedToken`, and
+      // `AiCostLog.userId` is a foreign key to `user` — writing it is a P2003
+      // that `logCost` swallows into a silently missing row.
+      const attribution = await attributionFor({
+        userId: 'embed_deadbeefdeadbeef',
+        agentId: 'a1',
+        conversationId: 'conv-1',
+      });
+
+      expect(attribution).not.toHaveProperty('userId');
+      // The agent and conversation still tag it — dropping the visitor must not
+      // cost the row its other attribution.
+      expect(attribution).toMatchObject({ agentId: 'a1', conversationId: 'conv-1' });
     });
 
     it('omits agentId when the caller is a workflow, whose label is not an AiAgent.id', async () => {

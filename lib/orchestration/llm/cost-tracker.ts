@@ -163,6 +163,19 @@ export interface LogCostParams {
    */
   traceId?: string;
   spanId?: string;
+  /**
+   * Who incurred this cost, when a person did. Accepts `null` so a caller can
+   * forward a context that is legitimately user-less (`ctx.userId`,
+   * `context.userId`) without branching at every call site — a scheduled
+   * workflow run and a user-triggered one then use the identical line, and
+   * the null falls out of the context rather than being decided here.
+   *
+   * Null/empty is normalised away before the write, so a row either carries a
+   * real user or carries none. See the column's own note in
+   * `orchestration-providers.prisma` for which paths are legitimately
+   * user-less.
+   */
+  userId?: string | null;
 }
 
 /**
@@ -320,6 +333,12 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
   if (params.workflowExecutionId !== undefined) {
     data.workflowExecutionId = params.workflowExecutionId;
   }
+  // Truthiness, not `!== undefined`: `null` (a user-less context) and `''` (a
+  // caller forwarding an unset id) must both land as SQL NULL rather than as
+  // an empty-string FK, which would fail the constraint and — because this
+  // function swallows write errors by design — discard the whole cost row.
+  // That is exactly how #654's summary rows were being lost.
+  if (params.userId) data.userId = params.userId;
   if (metadata !== undefined) {
     data.metadata = metadata as Prisma.InputJsonValue;
   }
@@ -340,7 +359,13 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
     return row;
   } catch (err) {
     logger.error('Failed to persist AiCostLog row', {
+      // All four foreign keys, because the commonest cause of this line is a
+      // P2003 on one of them and the operator cannot tell which from the
+      // Prisma message alone. Naming only agentId cost time on #599/#600/#654.
       agentId: params.agentId,
+      conversationId: params.conversationId,
+      workflowExecutionId: params.workflowExecutionId,
+      userId: params.userId,
       model: params.model,
       error: err instanceof Error ? err.message : String(err),
     });

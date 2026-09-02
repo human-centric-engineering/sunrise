@@ -16,6 +16,7 @@ import {
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { isWorkflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -157,6 +158,7 @@ export class SearchKnowledgeCapability extends BaseCapability<Args, Data> {
         ...(context.workflowExecutionId
           ? { workflowExecutionId: context.workflowExecutionId }
           : {}),
+        ...(context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}),
         metadata: { ...(context.costLogMetadata ?? {}), kind: 'knowledge_search' },
       }
     );

@@ -367,6 +367,11 @@ describe('Happy path', () => {
     expect(logCost).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: AGENT_ID,
+        // The admin who made the request. `AiCostLog.userId` is a FK to `user`,
+        // and this route is behind `withAdminAuth`, so the session user is a
+        // real row — unlike the chat handler, which also serves embed visitors
+        // and has to reduce them to null.
+        userId: 'cmjbv4i3x00003wsloputgwul',
         operation: 'transcription',
         durationMs: 5000,
         model: 'whisper-1',

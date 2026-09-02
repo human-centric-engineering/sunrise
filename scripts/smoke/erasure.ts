@@ -56,6 +56,7 @@ async function main(): Promise<void> {
   let auditId: string | null = null;
   let receiptId: string | null = null;
   let datasetId: string | null = null;
+  let costLogId: string | null = null;
   let runId: string | null = null;
   let inboundConversationId: string | null = null;
   let inboundExecutionId: string | null = null;
@@ -88,6 +89,30 @@ async function main(): Promise<void> {
     const conversation = await prisma.aiConversation.create({
       data: { userId: subject.id, agentId: agent.id, title: 'smoke convo' },
     });
+
+    // A billing record attributed to the subject. Cost rows are the one class
+    // here that must survive erasure with the person detached: the spend
+    // happened and the books must still show it, but it stops being anyone's.
+    const costLog = await prisma.aiCostLog.create({
+      data: {
+        agentId: agent.id,
+        conversationId: conversation.id,
+        userId: subject.id,
+        model: 'smoke-model',
+        provider: 'smoke-provider',
+        inputTokens: 1,
+        outputTokens: 1,
+        // Non-zero on purpose. The assertion below is that erasure does not
+        // subtract spend; with a zeroed fixture it would read 0 === 0 and pass
+        // even if erasure zeroed the column, which is the failure it exists to
+        // catch.
+        inputCostUsd: 0.25,
+        outputCostUsd: 0.75,
+        totalCostUsd: 1,
+        operation: 'chat',
+      },
+    });
+    costLogId = costLog.id;
     const message = await prisma.aiMessage.create({
       data: { conversationId: conversation.id, role: 'user', content: 'hi' },
     });
@@ -207,6 +232,16 @@ async function main(): Promise<void> {
     check(auditAfter?.userId === null, 'audit.userId nulled (SetNull)');
     check(auditAfter?.clientIp === null, 'audit.clientIp scrubbed (residual PII)');
 
+    // Cost rows: retained and de-attributed. Deleting them would silently
+    // subtract spend that actually happened, and Cascade here would make an
+    // erasure request quietly rewrite the books — which is why the FK is
+    // SetNull. `conversationId` is separately nulled by the conversation's own
+    // cascade, so the row outlives every FK it was created with.
+    const costAfter = await prisma.aiCostLog.findUnique({ where: { id: costLog.id } });
+    check(costAfter !== null, 'cost row retained (billing record, not personal data)');
+    check(costAfter?.userId === null, 'cost.userId nulled (SetNull)');
+    check(costAfter?.totalCostUsd === 1, 'cost amount unchanged by erasure (1.0, as created)');
+
     // Evaluations: dataset retained + de-attributed; run cascade-deleted.
     const datasetAfter = await prisma.aiDataset.findUnique({ where: { id: dataset.id } });
     check(datasetAfter !== null, 'eval dataset retained');
@@ -260,6 +295,8 @@ async function main(): Promise<void> {
       await prisma.aiEvaluationRun.deleteMany({ where: { id: runId } }).catch(() => undefined);
     if (datasetId)
       await prisma.aiDataset.deleteMany({ where: { id: datasetId } }).catch(() => undefined);
+    if (costLogId)
+      await prisma.aiCostLog.deleteMany({ where: { id: costLogId } }).catch(() => undefined);
     if (inboundExecutionId)
       await prisma.aiWorkflowExecution
         .deleteMany({ where: { id: inboundExecutionId } })

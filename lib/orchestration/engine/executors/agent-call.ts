@@ -255,6 +255,7 @@ async function runSingleTurn(
         void logCost({
           agentId: agent!.id,
           workflowExecutionId: ctx.executionId,
+          userId: ctx.userId,
           model: model,
           provider: usedSlug,
           inputTokens: response.usage.inputTokens,

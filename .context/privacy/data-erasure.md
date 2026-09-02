@@ -42,10 +42,16 @@ Deletion leans on Postgres referential actions (`prisma.user.delete` triggers
 them atomically and unbypassably). Relations to `User` fall into two policies —
 see the `account_deletion_erasure_cascade` migration for the full per-table list.
 
-| Policy                            | `onDelete` | What                                                                                                                                                                                                   |
-| --------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Personal data → erased**        | `Cascade`  | Sessions, accounts, conversations (+messages, embeddings, shares), workflow executions (+steps), user memory, evaluation sessions, API keys, webhook subscriptions                                     |
-| **Org config + audit → retained** | `SetNull`  | Agents, profiles, versions, invite/embed tokens, workflows (+versions, schedules, triggers), event hooks, knowledge documents, provider configs/models, experiments, admin audit log, MCP prompts/keys |
+| Policy                            | `onDelete` | What                                                                                                                                                                                                              |
+| --------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Personal data → erased**        | `Cascade`  | Sessions, accounts, conversations (+messages, embeddings, shares), workflow executions (+steps), user memory, evaluation sessions, API keys, webhook subscriptions                                                |
+| **Org config + audit → retained** | `SetNull`  | Agents, profiles, versions, invite/embed tokens, workflows (+versions, schedules, triggers), event hooks, knowledge documents, provider configs/models, experiments, admin audit log, MCP prompts/keys, cost logs |
+
+**Why retain a cost log?** Different reason from the config rows beside it, and
+worth stating separately: a cost row is a **billing record**. Cascading it would
+let an erasure request quietly rewrite the books, so the FK is `SetNull` — the
+spend stays, the person is detached. `scripts/smoke/erasure.ts` asserts exactly
+that against a real database: row retained, `userId` null, amount unchanged.
 
 **Why retain config?** `createdBy` is attribution, not ownership — any admin can
 already manage any agent/workflow/provider regardless of who created it. So a

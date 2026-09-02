@@ -46,7 +46,11 @@ describe('handleWorkflowList', () => {
   it('queries aiWorkflow with isActive=true filter', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await handleWorkflowList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
+    await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+      userId: null,
+    });
 
     expect(prisma.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -58,7 +62,11 @@ describe('handleWorkflowList', () => {
   it('orders results by name ascending', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await handleWorkflowList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
+    await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+      userId: null,
+    });
 
     expect(prisma.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -70,7 +78,11 @@ describe('handleWorkflowList', () => {
   it('selects only safe fields', async () => {
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
 
-    await handleWorkflowList(TEST_URI, null, { scopedAgentId: null, apiKeyId: 'key-1' });
+    await handleWorkflowList(TEST_URI, null, {
+      scopedAgentId: null,
+      apiKeyId: 'key-1',
+      userId: null,
+    });
 
     expect(prisma.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -90,6 +102,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(result.mimeType).toBe('application/json');
@@ -101,6 +114,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     expect(result.uri).toBe(TEST_URI);
@@ -112,6 +126,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -124,6 +139,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -145,6 +161,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -163,6 +180,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -178,6 +196,7 @@ describe('handleWorkflowList', () => {
     const result = await handleWorkflowList(TEST_URI, null, {
       scopedAgentId: null,
       apiKeyId: 'key-1',
+      userId: null,
     });
 
     const body = JSON.parse(result.text);
@@ -191,7 +210,7 @@ describe('handleWorkflowList', () => {
       handleWorkflowList(
         TEST_URI,
         { someConfig: 'value' },
-        { scopedAgentId: null, apiKeyId: 'key-1' }
+        { scopedAgentId: null, apiKeyId: 'key-1', userId: null }
       )
     ).resolves.not.toThrow();
   });

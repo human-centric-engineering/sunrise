@@ -18,6 +18,43 @@ release process.
 
 ### Added
 
+- `AiCostLog.userId` — a nullable `User` foreign key (`onDelete: SetNull`,
+  indexed) so cost attribution survives the agent, the conversation and the user
+  it was recorded against. Threaded from every `logCost` call site that has a
+  session user **on the request paths**: chat turns and their rolling
+  summaries, per-message and knowledge-search embeddings (including the MCP
+  knowledge resource, which attributes to the API key's owner as its tool calls
+  already did), capability dispatches, workflow steps, evaluation runs and the
+  admin routes. **Document ingestion is a deliberate exception**, on the
+  same line the export manifest draws between a subject's own data and org
+  config they authored: a knowledge document is org config, so an admin
+  uploading a corpus is doing the organisation's work rather than incurring
+  personal usage. Attributing it would put org-wide corpus spend inside one
+  person's subject export. The rule is *attribute to whoever asked for the
+  work*, not *whenever a `User` id is in scope*. `EmbeddingAttribution`
+  (`lib/orchestration/knowledge/embedder.ts`) gains `userId` for the same
+  reason its other three keys exist — the embedding a chat turn causes is that
+  turn's spend, and attributing the chat row while leaving the embedding row
+  unattributed would split one turn's cost across two owners. **NULL is a correct
+  value**, not a backfill gap — knowledge ingestion, keyword enrichment,
+  scheduled and trigger-driven runs, and embed-widget traffic have no `User`
+  behind them, as do all rows written before this column. A data subject's
+  export now includes their own usage rows: `AiCostLog` moves out of
+  `EXCLUDED_SOURCES` (whose stated reason, "it carries no user link", this
+  change falsified) into `SUBJECT_DATA_SOURCES` with disposition `export`.
+- `isEmbedUserId()` and `EMBED_USER_ID_PREFIX` in `lib/embed/auth.ts` — the
+  predicate for "this id is a synthetic embed visitor, not a `User` row".
+  Applied to the cost-attribution paths, where an embed visitor id would raise
+  P2003 and — because `logCost` swallows write failures — silently discard the
+  cost row. Mirrors `isWorkflowAgentId`, which exists for the identical reason
+  on `agentId`. Two caveats worth stating plainly: the failure is not currently
+  reachable (an embed turn already fails earlier, at conversation-create, for
+  the same reason — #705), so the guard's value is that the loss cannot appear
+  unnoticed when #705 is fixed; and other `user`-FK writers reached from a
+  caller id (`AiUserMemory`, `AiWorkflowExecution` via `run-workflow`) are
+  deliberately not guarded — they fail loudly, and how a visitor should behave
+  there belongs to #705.
+
 - `registerRateLimitKeyResolver(key, resolver)` in `lib/security/rate-limit-policy.ts`
   opens the rate-limit **key** space to forks the way `registerRateLimitTier` opens
   the tier space: a fork can bucket requests by anything it can derive from the
