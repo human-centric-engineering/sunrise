@@ -84,7 +84,7 @@ are a leaf fork, `lib/app/` is yours.
 | Org-aware periodic work                | `lib/app/jobs.ts` (`registerAppJob`)                                        | No — existing registry seam                                                                                                    |
 | Art. 15 export of your org-owned rows  | `lib/app/data-export.ts` (`collectAppSubjectData`)                          | No — existing registry seam                                                                                                    |
 | CI assertion that policies still exist | `lib/app/db-drift.ts` (`registerAppDriftProbe`)                             | No — existing registry seam                                                                                                    |
-| Org-scoped rate-limit rules            | `lib/app/rate-limit.ts`                                                     | No — but the **key** union is closed; see the research note below                                                              |
+| Org-scoped rate-limit rules and keys   | `lib/app/rate-limit.ts`                                                     | No — `registerRateLimitKeyResolver` opened the **key** space on 2026-09-01                                                     |
 | Tenant-admin nav and route gating      | `lib/app/admin-nav.ts`, `lib/app/protected-routes.ts`                       | No — but the admin console split itself is platform-tier                                                                       |
 
 **Exactly two sanctioned core edits**: the `withOrg` wrapper in
@@ -92,7 +92,7 @@ are a leaf fork, `lib/app/` is yours.
 reaches into `lib/auth/`, `lib/security/`, `lib/orchestration/`, `lib/storage/`
 or `proxy.ts` becomes a conflict on every upstream sync.
 [Research §8](./multi-tenancy-research.md#the-merge-conflict-surface-concretely)
-lists the twenty files concerned, which of the `lib/app/*` seams above absorb
+lists the eighteen files concerned, which of the `lib/app/*` seams above absorb
 work you would otherwise do in core, and
 [which provisions upstream should ship](./multi-tenancy-research.md#provisions-upstream-should-ship)
 so the rest stop being conflicts. Check that list before you copy a core file —
@@ -474,7 +474,7 @@ declaration.
   [sync checklist](#keeping-the-retrofit-alive-across-upstream-syncs) above is
   the tenancy-specific addition to it.
 - [`multi-tenancy-research.md` §8](./multi-tenancy-research.md#8-downstream-fork-considerations)
-  — **the fork contract.** The twenty-file merge surface, the `lib/app/*` seams
+  — **the fork contract.** The eighteen-file merge surface, the `lib/app/*` seams
   that absorb MT work today, the provisions upstream should ship to shrink that
   surface, and the seam-design principles to follow if you build one locally
   first.

@@ -40,8 +40,21 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/** Matches an actual raw-SQL member call, not a prose mention. */
-const RAW_SQL_CALL = /\.\$(queryRaw|executeRaw)(Unsafe|Typed)?\b/g;
+/**
+ * Matches an actual raw-SQL member call, not a prose mention.
+ *
+ * Both halves are load-bearing, and the leading `.` alone is NOT enough — the
+ * earlier version of this matcher counted any text containing `.$queryRaw`,
+ * so a docblock writing `` `.$queryRaw` `` failed this always-run guard with a
+ * phantom violation fixable only by rewording prose or admitting a query that
+ * does not exist.
+ *
+ * - A receiver before the dot (`prisma`, `tx`, `(await tx)`) — prose quotes the
+ *   member as `` `.$queryRaw` ``, with no identifier in front of it.
+ * - A call-ish suffix after it: `(` for a method call, a backtick for the
+ *   tagged-template form, `<` for an explicit type argument.
+ */
+const RAW_SQL_CALL = /[\w$)\]]\.\$(queryRaw|executeRaw)(Unsafe|Typed)?\s*[(`<]/g;
 
 /**
  * Every admitted raw-SQL file, with its exact call-site count and the reason
@@ -135,10 +148,15 @@ function listSourceFiles(repoRoot: string, dir: string): string[] {
   for (const entry of readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
     const rel = `${dir}/${entry.name}`;
     if (entry.isDirectory()) {
+      if (entry.name === '__tests__' || entry.name === '__mocks__') continue;
       out.push(...listSourceFiles(repoRoot, rel));
     } else if (
       /\.tsx?$/.test(entry.name) &&
-      !/\.test\.tsx?$/.test(entry.name) &&
+      // "Test files are excluded" must mean every convention a fork may use,
+      // not just Sunrise's own. This guard runs in every fork on every PR, so
+      // a colocated foo.spec.ts or a __mocks__/prisma.ts with a mocked
+      // $queryRaw would otherwise be scanned as production source.
+      !/\.(test|spec)\.tsx?$/.test(entry.name) &&
       !entry.name.endsWith('.d.ts')
     ) {
       out.push(rel);
@@ -171,6 +189,10 @@ describe('raw-SQL allowlist guard', () => {
       'await prisma.$queryRawTyped(getUsers());', // TypedSQL preview — still a raw query
       '// a comment mentioning $queryRaw and `$executeRawUnsafe` in prose',
       ' * docblock prose: prefer $queryRaw over string interpolation',
+      // The shapes the leading-dot-only matcher wrongly counted. Prose quotes
+      // the member WITH its dot, which is exactly what scripts/ci did.
+      ' * docblock prose quoting the member as `.$queryRaw` and `.$executeRaw`',
+      ' * reason string: files using `.$queryRaw*`/`.$executeRaw*` must be listed',
     ].join('\n');
     expect(countRawSqlCalls(fixture)).toBe(4);
     expect(countRawSqlCalls('// nothing raw here')).toBe(0);

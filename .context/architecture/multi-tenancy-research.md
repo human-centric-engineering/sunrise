@@ -1433,8 +1433,6 @@ Sunrise-owned files. Each becomes a conflict on every sync:
 | `lib/auth/guards.ts`                             | Org-aware `withAdminAuth` / `withAuth` — #366/#367                                           |
 | `lib/auth/utils.ts`                              | `hasRole` / `requireRole` — #366                                                             |
 | `lib/auth/config.ts`                             | Org in session, per-org bootstrap                                                            |
-| `lib/security/rate-limit-policy.ts`              | Add `'org'` to `RateLimitKey` — see below                                                    |
-| `lib/security/rate-limit-middleware.ts`          | Resolve the new key in the `switch` at line 250                                              |
 | `lib/orchestration/settings.ts`                  | De-singleton + re-key the cache                                                              |
 | `lib/orchestration/llm/settings-resolver.ts`     | Same                                                                                         |
 | `lib/orchestration/llm/circuit-breaker.ts`       | Key breakers by org                                                                          |
@@ -1468,7 +1466,7 @@ would otherwise be a core edit:
 | `lib/app/jobs.ts` (`registerAppJob`)               | Tenant-aware periodic work on the existing tick                                   | The tick supplies **no** tenant context — iterate orgs yourself ([§5A.1](#5a1-the-prerequisite-there-is-no-tenant-context-to-pass)) |
 | `lib/app/data-export.ts` (`collectAppSubjectData`) | Art. 15 coverage for your org-owned tables                                        | Keyed on `userId`; no org dimension ([§5B](#portability-the-cheap-substitute-for-rungs-34))                                         |
 | `lib/app/db-drift.ts` (`registerAppDriftProbe`)    | CI proof that policies survived the last `migrate dev` and the last sync          | `rlsEnabled` / `policyExists` factories ship as of 2026-09-01 — a probe is a one-liner                                              |
-| `lib/app/rate-limit.ts`                            | Org-scoped rules and tiers                                                        | The **key** union is closed — see below                                                                                             |
+| `lib/app/rate-limit.ts`                            | Org-scoped rules, tiers **and keys**                                              | `registerRateLimitKeyResolver` opened the key space on 2026-09-01 — no core edit                                                    |
 | `lib/app/admin-nav.ts`, `protected-routes.ts`      | Tenant-admin navigation and route gating                                          | The console split itself is platform-tier                                                                                           |
 
 Two things follow. First, **the drift-probe registry is the one nobody expects
@@ -1560,8 +1558,10 @@ site.
 | Scope key on the process caches (settings resolver, breaker, in-flight counter), defaulting `global` | Six orchestration core files                                                                                                      | Medium                 |
 | Authorization predicate + ownership resolver (#366/#367)                                             | `guards.ts`, `utils.ts`                                                                                                           | Tracked, blocked       |
 
-Three of these are hours of work and remove three named files from the
-twenty-file merge surface. The tenant-context primitive gates most of the rest,
+Three of these are hours of work. Two of the three files they remove are
+already gone — `rate-limit-policy.ts` and `rate-limit-middleware.ts` left the
+merge surface when the key-resolver registry shipped on 2026-09-01, taking it
+from twenty files to eighteen — leaving `lib/logging/context.ts`. The tenant-context primitive gates most of the rest,
 which is why [§10](#10-sequencing-shape) puts it at Phase 0c and why it is the
 one to do first if only one gets done.
 
@@ -1761,7 +1761,7 @@ answered by someone else, so its split is different:
 | 0c — tenant context               | **Build in final generic shape.** Entering it in your own wrapper around `withAuth` keeps the eventual upstream primitive a delegation             |
 | 1 — control plane (#366/#367)     | **Wait, or build generic.** Do not copy `lib/auth/guards.ts`; a local copy converts a one-line future change into permanent divergence             |
 | 2–3 — identity, rows, namespace   | **Yours anyway.** `Org`/`OrgMembership` and the `orgId` migration ride your schema; the playbook is the recipe                                     |
-| 4–5 — process, temporal, external | **Build generic, expect conflicts.** These are the twenty-file merge surface; each upstream provision that lands deletes one of your local edits   |
+| 4–5 — process, temporal, external | **Build generic, expect conflicts.** These are the eighteen-file merge surface; each upstream provision that lands deletes one of your local edits |
 | 6–7 — commercial, console split   | **Yours** (commercial) and **wait** (console split — one tree behind one guard today)                                                              |
 | Continuous — assurance            | **Start with Phase 3, plus the per-sync checklist.** The harness is the only thing that fails when an upstream release lands outside your boundary |
 
@@ -2006,7 +2006,7 @@ a copied core file that never merges cleanly again.
 
 **The position: commit to the seams, not to the feature.** Ship the provisions in
 [§8](#provisions-upstream-should-ship). Each is a no-op at `TENANCY_MODE=single`,
-each deletes a named file from the twenty-file merge surface, and together they
+each deletes a named file from the eighteen-file merge surface, and together they
 move the "can a fork retrofit MT without fighting upstream?" figure in
 [§1](#1-executive-summary) without Sunrise building any tenancy at all. Three are
 hours of work — the drift-probe factories, org in the log context, and the

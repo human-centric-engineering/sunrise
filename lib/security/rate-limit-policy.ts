@@ -501,11 +501,19 @@ export function __resetAppRateLimitRules(): void {
  * request hot path — keep them cheap, and prefer reading a header or cookie
  * over a database lookup.
  *
- * Derive the identifier from something the caller cannot freely choose (an
- * authenticated principal, a verified token), or composite it with the IP the
- * way the built-in `embed-token` strategy does. A resolver that echoes a raw
- * client-supplied header lets a caller mint a fresh bucket per request and
- * walk straight past the cap it exists to enforce.
+ * Derive the identifier from something the caller cannot freely choose — an
+ * authenticated principal, or a value the resolver itself verifies (the
+ * built-in `session-user` strategy is the model: it resolves the session
+ * rather than trusting a header). A resolver that echoes a raw client-supplied
+ * header lets a caller mint a fresh bucket per request and walk straight past
+ * the cap it exists to enforce.
+ *
+ * Compositing with the client IP is NOT a substitute for verifying the label.
+ * It bounds who shares a bucket, not how many buckets one caller can mint: a
+ * varying attacker-controlled segment yields a fresh counter per request from
+ * a single IP, and the minted tokens evict real callers' counters from the
+ * limiter's bounded LRU. Return `null` when the identifier cannot be verified
+ * — the per-IP fallback is a real cap; a mintable bucket is none.
  */
 export type RateLimitKeyResolver = (request: Request) => string | null | Promise<string | null>;
 

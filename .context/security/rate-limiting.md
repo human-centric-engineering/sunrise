@@ -102,7 +102,7 @@ How the dispatcher identifies the caller when building the bucket token. Token f
 
 **Why fallbacks exist.** Rate-limiting is best-effort defense in depth — if we can't identify the caller more precisely (auth provider down, session not yet established, missing header), we still want _some_ bucket rather than letting the request through unlimited. The fallback to IP gives unauthenticated/can't-resolve traffic a per-IP cap without changing the rule's intent for authenticated callers.
 
-**The key space is open to forks.** These four are the built-in strategies; an app/fork registers its own (an org, a workspace, a device id) via `registerRateLimitKeyResolver()` — see [App / Fork Extension](#app--fork-extension). A custom resolver returns the identifier segment (`org:123`) or `null` for the same IP fallback as the built-ins; a resolver that throws is logged as an error and falls back to IP (a fork bug must be loud, but must not fail open or take the API down). Identifiers must come from something the caller cannot freely choose, or be composited with the validated `getClientIP()` — see the example's comment for why a raw header is a bucket-minting bypass.
+**The key space is open to forks.** These four are the built-in strategies; an app/fork registers its own (an org, a workspace, a device id) via `registerRateLimitKeyResolver()` — see [App / Fork Extension](#app--fork-extension). A custom resolver returns the identifier segment (`org:123`) or `null` for the same IP fallback as the built-ins; a resolver that throws is logged as an error and falls back to IP (a fork bug must be loud, but must not fail open or take the API down). Identifiers must come from something the caller cannot freely choose. Compositing with `getClientIP()` is **not** a substitute for that: a caller who can vary the label mints a fresh bucket per request whatever else is in the token, so the cap never engages — see the example's comment.
 
 **Session resolution failure is a behaviour, not a panic.** When `auth.api.getSession` throws (DB outage, etc.), the dispatcher catches the error and falls back to IP keying — it does NOT propagate the auth error as the request's response. Route handlers that require authentication surface their own 401 downstream.
 
@@ -303,17 +303,29 @@ export function registerAppRateLimits(): void {
   // 2. (optional) register a custom key strategy — BEFORE any rule that uses it.
   //    Return the identifier segment, or null to fall back to a per-IP bucket.
   //
-  //    Derive the identifier from something the caller CANNOT freely choose —
-  //    an authenticated principal or a verified token — or composite it with
-  //    the VALIDATED client IP via getClientIP(), the way the built-in
-  //    embed-token strategy does. Never echo a raw header (x-org-id alone, or
-  //    raw x-forwarded-for): a caller who controls the identifier mints a
-  //    fresh bucket per request and walks straight past the cap. With the
-  //    validated IP composited, an unverified label degrades to per-IP
-  //    bucketing at worst instead of unlimited.
-  registerRateLimitKeyResolver('org', (request) => {
-    const org = request.headers.get('x-org-id');
-    return org ? `org:${org}:${getClientIP(request)}` : null;
+  //    The identifier MUST derive from something the caller cannot freely
+  //    choose: an authenticated principal, or a value you verify here. Never
+  //    echo a raw client header (`x-org-id`, raw `x-forwarded-for`) — a caller
+  //    who controls the label mints a fresh bucket per request and walks
+  //    straight past the cap.
+  //
+  //    Compositing with getClientIP() does NOT rescue an unverified label.
+  //    It bounds who SHARES a bucket, not how many buckets one caller can
+  //    mint: vary `x-org-id` from a single IP and every request lands in its
+  //    own counter. Minting also evicts real callers' counters from the
+  //    limiter's LRU (MAX_UNIQUE_TOKENS, 500 per tier), resetting their
+  //    windows. Return null when you cannot verify — the per-IP fallback is
+  //    a real cap; a mintable bucket is no cap at all.
+  //
+  //    This mirrors the built-in 'session-user' strategy, which resolves the
+  //    session rather than trusting a header. It assumes your fork has put
+  //    the org on the session (one of the sanctioned core edits in the
+  //    tenancy retrofit); resolvers run on the hot path, so prefer a signed
+  //    cookie or token you can verify without I/O where you have one.
+  registerRateLimitKeyResolver('org', async (request) => {
+    const session = await auth.api.getSession({ headers: request.headers });
+    const orgId = session?.user?.activeOrgId;
+    return orgId ? `org:${orgId}` : null;
   });
 
   // 3. point an app path at a tier (built-in or app) and a key (built-in or app)
