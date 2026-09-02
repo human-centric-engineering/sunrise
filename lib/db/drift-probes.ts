@@ -159,9 +159,10 @@ export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }
     const rows = await prisma.$queryRaw<Array<{ enabled: boolean | null; forced: boolean | null }>>`
       SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced
       FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relname = ${tableName}
         AND c.relkind IN ('r', 'p')
-        AND c.relnamespace = current_schema()::regnamespace
+        AND n.nspname = current_schema()
     `;
     const row = rows[0];
     if (!row) return { ok: false, note: 'table missing entirely' };

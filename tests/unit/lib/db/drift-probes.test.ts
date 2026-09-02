@@ -178,7 +178,13 @@ describe('rlsEnabled', () => {
     // Scoped to the live schema and admitting partitioned parents: a same-named
     // table in a backup schema must not answer for the real one (rows[0] would
     // make that a silent green), and relkind 'p' supports RLS fully.
-    expect(lastSql()).toContain('relnamespace = current_schema()::regnamespace');
+    // The scoping is a pg_namespace join comparing nspname, NOT a
+    // `current_schema()::regnamespace` cast: that cast re-parses the schema
+    // name as an identifier and down-cases it, so a mixed-case schema makes
+    // the cast RAISE and the probe throw instead of returning a ProbeResult.
+    expect(lastSql()).toContain('JOIN pg_namespace n ON n.oid = c.relnamespace');
+    expect(lastSql()).toContain('n.nspname = current_schema()');
+    expect(lastSql()).not.toContain('::regnamespace');
     expect(lastSql()).toContain("relkind IN ('r', 'p')");
     expect(lastValues()).toEqual(['AiConversation']);
   });

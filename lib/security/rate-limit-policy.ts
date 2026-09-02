@@ -523,8 +523,13 @@ const appKeyResolvers = new Map<string, RateLimitKeyResolver>();
  * `'session-user'` would change who shares a bucket on every Sunrise rule —
  * and a duplicate registration under a different function, which is a
  * copy-paste slip that would otherwise silently shadow the earlier resolver.
- * Re-registering the SAME function is a no-op (Next.js HMR re-runs
- * `registerAppRateLimits()` on middleware edits).
+ * Re-registering the SAME function reference is a no-op. Note this does NOT
+ * make the seam HMR-safe: the documented recipe passes an inline arrow, which
+ * is a fresh reference on every `registerAppRateLimits()` run, so a hot reload
+ * that re-runs registration against surviving module state throws here and
+ * wedges the middleware bundle until the dev server restarts. That is the same
+ * bargain {@link registerRateLimitRule} strikes — changing your registrations
+ * means restarting dev — traded for catching a real double-registration.
  *
  * Order matters at startup: register resolvers before the rules that use
  * them — {@link registerRateLimitRule} throws on a custom key with no
@@ -548,7 +553,7 @@ export function registerRateLimitKeyResolver(key: string, resolver: RateLimitKey
     );
   }
   const existing = appKeyResolvers.get(key);
-  if (existing === resolver) return; // HMR re-registration of the same function
+  if (existing === resolver) return; // idempotent re-registration of the same reference
   if (existing) {
     throw new Error(
       `registerRateLimitKeyResolver: key "${key}" is already registered. Each key gets exactly ` +

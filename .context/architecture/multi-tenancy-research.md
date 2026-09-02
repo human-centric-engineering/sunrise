@@ -207,9 +207,10 @@ Verified by search at `b7e30f06`:
   integration of any kind.
 - **No better-auth plugins.** `lib/auth/config.ts` registers none; `role` is the
   single `additionalField` (`config.ts:775-782`); the session carries no org.
-- **No org dimension in the rate-limit key space.** `RateLimitKey` is a closed
+- **No org dimension in the rate-limit key space.** `RateLimitKey` was a closed
   union of `'ip' | 'session-user' | 'api-key' | 'embed-token'`
-  (`lib/security/rate-limit-policy.ts:44`).
+  (`lib/security/rate-limit-policy.ts:44`) — **fixed 2026-09-01**: the key space
+  is now open via `registerRateLimitKeyResolver` (see [§8](#the-ratelimitkey-case-study)).
 - **No cross-tenant leakage test.** 1,030 test files, none tenancy-aware.
 
 ---
@@ -1178,7 +1179,7 @@ should be made deliberately rather than discovered.
 
 | Model                                                  | Tenant controls                      | Sunrise must build                                                                                        | Failure modes                                                                                                                               | Right when                                                      |
 | ------------------------------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **A — Shared platform keys, per-tenant quotas**        | Nothing; sees a usage limit          | Org dimension in the rate-limit key space + cost caps per org (`RateLimitKey` is a closed union — §8)     | One tenant's abuse is everyone's rate limit unless quotas are hard; margin risk is yours                                                    | Self-serve, low ARPU                                            |
+| **A — Shared platform keys, per-tenant quotas**        | Nothing; sees a usage limit          | Org dimension in the rate-limit key space (**shipped 2026-09-01**, §8) + cost caps per org                | One tenant's abuse is everyone's rate limit unless quotas are hard; margin risk is yours                                                    | Self-serve, low ARPU                                            |
 | **B — Tenant keys encrypted in Sunrise's database**    | Their own vendor account and billing | Envelope encryption, key rotation, per-tenant cache keying, redaction discipline, secure recovery UX      | **You become custodian of other companies' vendor credentials.** Breach impact escalates from "our data" to "our customers' cloud accounts" | Rarely the right first choice — see below                       |
 | **C — Reference into the tenant's own secret manager** | Everything; can revoke unilaterally  | A credential-resolver interface, per-tenant fetch with short TTL, failure handling when the vault is down | Runtime dependency on the tenant's infrastructure; a vault outage is an incident you are blamed for                                         | Enterprise tenants who already run Vault/KMS and asked for this |
 | **D — Gateway with virtual keys** (LiteLLM, Portkey)   | Their own account behind the gateway | Point the provider `baseUrl` at the gateway; per-tenant virtual key                                       | Another hop, another sub-processor to disclose, cost figures reconciled rather than computed                                                | You want per-tenant routing quickly                             |
@@ -1374,7 +1375,7 @@ every upstream sync.
 | Unique-constraint composites                       | Fork        | Rides the `orgId` migration                                                                                                       |
 | Process-cache keying (plane 3)                     | Platform    | 20+ Sunrise-owned modules                                                                                                         |
 | Background-job tenancy + fairness (plane 4)        | Platform    | `platform-jobs.ts`, `scheduler.ts`, `retention.ts`                                                                                |
-| Rate-limit `org` key                               | Platform    | `RateLimitKey` is a closed union — see below                                                                                      |
+| Rate-limit `org` key                               | Platform    | Open since 2026-09-01 via `registerRateLimitKeyResolver` — see below                                                              |
 | Storage key scoping + token org claim              | Platform    | `lib/storage/**`                                                                                                                  |
 | Per-tenant provider credentials                    | Split       | Schema fork-owned; resolution platform-owned                                                                                      |
 | Provider credential resolver seam                  | Platform    | `provider-manager.ts` — the `process.env` call site ([§5C](#5c-provider-credentials-and-per-tenant-ai-configuration))             |
@@ -1493,6 +1494,11 @@ listed in `VERSIONING.md`'s public surface. But:
 export type RateLimitKey = 'ip' | 'session-user' | 'api-key' | 'embed-token';
 ```
 
+> **Resolved 2026-09-01.** `key` now widens to `RateLimitKey | (string & {})`
+> and `registerRateLimitKeyResolver()` supplies the resolver, so an org-scoped
+> key needs no core edit. The analysis below is kept as the worked example of
+> the seam shape it names — it describes the code as it stood before the fix.
+
 `tier` is deliberately open (`RateLimitTier | (string & {})`). **`key` is a
 closed union**, and it is consumed by a `switch` in
 `lib/security/rate-limit-middleware.ts:250`. So a fork can register an org-scoped
@@ -1546,7 +1552,7 @@ site.
 | `rlsEnabled(table)` / `policyExists(table, policy)` factories in `lib/db/drift-probes.ts`            | Hand-written `pg_policies` SQL re-derived in every fork — **shipped 2026-09-01**                                                  | Hours                  |
 | Org (or install) id in `getFullContext()` (`lib/logging/context.ts`)                                 | `lib/logging/context.ts`                                                                                                          | Hours                  |
 | Correct `VERSIONING.md`'s tenancy-seam path (see below)                                              | A fork looking for a module that was never shipped                                                                                | Minutes                |
-| Widen `RateLimitKey` and add a key-resolver registry                                                 | `rate-limit-policy.ts` + `rate-limit-middleware.ts`                                                                               | Small                  |
+| Widen `RateLimitKey` and add a key-resolver registry                                                 | `rate-limit-policy.ts` + `rate-limit-middleware.ts` — **shipped 2026-09-01**                                                      | Small                  |
 | Optional scope dimension on `SUBJECT_DATA_SOURCES` / `collectAppSubjectData`                         | Per-org export re-invented per fork ([§5B](#portability-the-cheap-substitute-for-rungs-34))                                       | Small                  |
 | Tenant-context primitive — ALS entered in `withAuth`/`withAdminAuth`, explicit per-job context       | `guards.ts`, `run-tick.ts` — **and it gates every row below** ([§5A.1](#5a1-the-prerequisite-there-is-no-tenant-context-to-pass)) | Medium                 |
 | `resolveProviderCredential(config, ctx)`, defaulting to today's `process.env` lookup                 | `provider-manager.ts` ([§5C](#the-seam-that-avoids-choosing-now))                                                                 | Small, once ctx exists |

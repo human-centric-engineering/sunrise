@@ -68,7 +68,7 @@ export function isValidIP(value: string): boolean {
  *
  * Falls back to `127.0.0.1` if no valid IP is found in headers.
  *
- * @param request - The incoming NextRequest
+ * @param request - Anything headers-bearing (`NextRequest`, plain `Request`)
  * @returns Client IP address string
  */
 export function getClientIP(request: { headers: Headers }): string {

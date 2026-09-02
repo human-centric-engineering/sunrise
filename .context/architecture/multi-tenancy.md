@@ -345,11 +345,19 @@ LEVEL SECURITY`, so do not let the app role own the tenant tables.
   one `withOrg` transaction per org. The path of least resistance is to run jobs
   on the bypass role; that silently undoes the isolation guarantee for the half
   of the system that runs unattended, and nothing detects it.
+- **Per-tenant quotas: register a key resolver, don't fork the middleware.**
+  `registerRateLimitKeyResolver('org', ...)` in `lib/app/rate-limit.ts` buckets
+  requests by anything you can derive from the request, so an org-scoped _key_
+  needs no edit to `lib/security/`. Derive the identifier from an authenticated
+  principal or composite it with `getClientIP()` — a caller who controls the
+  identifier mints a fresh bucket per request and walks past the cap. See
+  [rate limiting → custom keys](../security/rate-limiting.md).
 - **Fork gotcha: a registry seam is only as open as its narrowest type.**
-  `lib/app/rate-limit.ts` lets you register org-scoped _rules_, but
-  `RateLimitKey` is a closed union consumed by a `switch`, so you cannot express
-  an org-scoped _key_ — the exact thing per-tenant quotas need. Audit the other
-  seams you plan to lean on for the same shape before you commit to them
+  The case above was this shape until 2026-09-01: `lib/app/rate-limit.ts` let
+  you register org-scoped _rules_ while `RateLimitKey` stayed a closed union, so
+  the seam looked open and the thing per-tenant quotas actually need was
+  unreachable. That instance is fixed; the shape is not rare. Audit the other
+  seams you plan to lean on for it before you commit to them
   ([research §8](./multi-tenancy-research.md#the-ratelimitkey-case-study)).
 
 ## Keeping the retrofit alive across upstream syncs

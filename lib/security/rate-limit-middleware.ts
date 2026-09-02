@@ -102,11 +102,25 @@ export function assertRateLimitPolicyIntegrity(
 
 try {
   registerAppRateLimits();
-  assertRateLimitPolicyIntegrity();
 } catch (error) {
   logger.error('Failed to register app rate limits from lib/app/rate-limit.ts', {
     error: error instanceof Error ? error.message : String(error),
-    hint: 'A throw at module load aborts the middleware bundle. Check lib/app/rate-limit.ts for a registerRateLimitRule/registerRateLimitTier call that violates the registration contract (e.g. a matcher that shadows a Sunrise-protected path, or a tier name that collides with a built-in).',
+    hint: 'A throw at module load aborts the middleware bundle. Check lib/app/rate-limit.ts for a registerRateLimitRule/registerRateLimitTier/registerRateLimitKeyResolver call that violates the registration contract (e.g. a matcher that shadows a Sunrise-protected path, or a tier or key name that collides with a built-in).',
+  });
+  throw error;
+}
+
+// Deliberately a SEPARATE catch from the one above. The integrity check reads
+// the assembled policy — Sunrise's own RATE_LIMIT_POLICY as well as any app
+// rules — so a mistyped built-in key in the core table lands here. Attributing
+// that to lib/app/rate-limit.ts would send a core contributor to a file that
+// ships empty.
+try {
+  assertRateLimitPolicyIntegrity();
+} catch (error) {
+  logger.error('Rate-limit policy integrity check failed', {
+    error: error instanceof Error ? error.message : String(error),
+    hint: 'A rule names a tier or key with no definition. The error message names the offending rule(s) — fix the typo at its source: a built-in rule in lib/security/rate-limit-policy.ts, or an app rule/resolver in lib/app/rate-limit.ts. Boot is aborted rather than shipping silent fail-open.',
   });
   throw error;
 }
