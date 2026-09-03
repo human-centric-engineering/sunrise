@@ -454,6 +454,45 @@ Anthropic thinking blocks are stripped from response content in both `chat()` an
 | `timeoutMs`    | Per-provider timeout override (1,000–300,000 ms). Resolution: `timeoutMs` → `LOCAL_TIMEOUT_MS` (if local) → `DEFAULT_TIMEOUT_MS` |
 | `maxRetries`   | Per-provider retry override (0–10). Passed to the SDK constructor                                                                |
 
+## Provider eligibility (fork seam)
+
+`resolveAgentProviderAndModel` attaches up to **three** other configured
+providers as automatic fallbacks whenever an agent has no explicit
+`fallbackProviders` list. On a single-tenant install that is a helpful default.
+On a shared one it is a leak: an org's prompts can reach a provider that org
+never approved, and nobody asked for any of them.
+
+`registerProviderEligibility` (`lib/orchestration/llm/provider-eligibility.ts`),
+registered from the fork-owned `lib/app/providers.ts`, constrains which
+providers may be used as fallbacks:
+
+```typescript
+import { registerProviderEligibility } from '@/lib/orchestration/llm/provider-eligibility';
+
+export function registerAppProviderEligibility(): void {
+  registerProviderEligibility(async (candidates, ctx) => {
+    const approved = await approvedProviderSlugs(); // cache this
+    return ctx.source === 'system' ? candidates.filter((slug) => approved.has(slug)) : candidates;
+  });
+}
+```
+
+| Property         | Behaviour                                                                                                                                                                                                                     |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Default**      | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                    |
+| **Applied at**   | Both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path. A fully-configured agent never reaches the second one, so filtering only there would cover the minority of agents. |
+| **`ctx.source`** | `'explicit'` for the agent's own list, `'system'` for the automatic fill. A fork may reasonably be stricter about the fill, which nobody asked for, than about a list an operator wrote down.                                 |
+| **Cannot widen** | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                 |
+| **On throw**     | Logged as an error and treated as "nothing is eligible". A restriction that cannot be evaluated must not be read as permission; the request keeps its primary provider and runs without fallbacks.                            |
+
+**It filters fallbacks, never the primary.** An explicit `agent.provider` is an
+operator's recorded decision, and silently rerouting it would make an agent
+answer from a provider its configuration does not name. The auto-picked primary
+(`candidates[0]`, when the agent leaves the field blank) is arguably as
+unrequested as a system fallback — that question is open and belongs with the
+work that introduces per-org rules, where there is an org to reason about. See
+[multi-tenancy design → Q15](../architecture/multi-tenancy-design.md).
+
 ## Anti-Patterns
 
 **Don't** construct providers directly in application code — always go through `providerManager`:

@@ -23,7 +23,15 @@ import { logger } from '@/lib/logging';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
+import { registerAppProviderEligibility } from '@/lib/app/providers';
 import type { TaskType } from '@/types/orchestration';
+
+// Auto-wire the fork's eligibility rule, once, at module load — the same
+// arrangement every other `lib/app/*` seam uses, so a fork registers without
+// touching core. A throw here aborts the module rather than resolving bindings
+// against a rule that did not finish registering.
+registerAppProviderEligibility();
 
 /** Number of system fallbacks to attach when an agent has no explicit provider. */
 const SYSTEM_FALLBACK_LIMIT = 3;
@@ -63,10 +71,20 @@ export async function resolveAgentProviderAndModel(
   const modelSet = typeof agent.model === 'string' && agent.model.length > 0;
 
   if (providerSet && modelSet) {
+    // This early return is a second exit, not a shortcut through the one
+    // below — a fully-configured agent never reaches the candidates block. Its
+    // explicit fallback list has to be filtered HERE or the seam would cover
+    // only agents that left a field blank, which is the minority.
     return {
       providerSlug: agent.provider,
       model: agent.model,
-      fallbacks: agent.fallbackProviders ?? [],
+      fallbacks: [
+        ...(await resolveEligibleProviders(agent.fallbackProviders ?? [], {
+          task,
+          source: 'explicit',
+          primarySlug: agent.provider,
+        })),
+      ],
     };
   }
 
@@ -83,13 +101,23 @@ export async function resolveAgentProviderAndModel(
   // System fallbacks: every other reachable candidate, capped. Skipped
   // if the agent already has an explicit fallback list.
   const explicitFallbacks = agent.fallbackProviders ?? [];
-  const fallbacks =
+  const proposed =
     explicitFallbacks.length > 0
       ? explicitFallbacks
       : candidates
           .map((c) => c.slug)
           .filter((slug) => slug !== providerSlug)
           .slice(0, SYSTEM_FALLBACK_LIMIT);
+  // Filter AFTER the cap, not before. Capping first then filtering would let an
+  // ineligible provider consume one of the three slots and silently shrink the
+  // list; this way the cap counts only providers that can actually be used.
+  const fallbacks = [
+    ...(await resolveEligibleProviders(proposed, {
+      task,
+      source: explicitFallbacks.length > 0 ? 'explicit' : 'system',
+      primarySlug: providerSlug,
+    })),
+  ];
 
   logger.debug('resolveAgentProviderAndModel: filled empty agent binding', {
     agentProvider: agent.provider,

@@ -30,6 +30,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
+import { registerAppProviderEligibility } from '@/lib/app/providers';
 import { initAppCapabilities } from '@/lib/app/capabilities';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
 import { initAppNav } from '@/lib/app/admin-nav';
@@ -59,6 +60,10 @@ import {
 } from '@/lib/privacy/subject-source-registry';
 import { getAppJobs, __resetAppJobsForTests } from '@/lib/orchestration/maintenance/app-jobs';
 import { getEffectiveRateLimitPolicy, RATE_LIMIT_POLICY } from '@/lib/security/rate-limit-policy';
+import {
+  hasProviderEligibilityResolver,
+  resolveEligibleProviders,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { getRegisteredNavSections, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 import {
   listAppMcpResourceTypes,
@@ -106,6 +111,25 @@ const UNASSERTED_SEAMS = new Set([
 ]);
 
 const SEAM_DEFAULTS: SeamDefault[] = [
+  {
+    seam: 'lib/app/providers.ts',
+    risk: 'a stray eligibility rule would silently drop provider fallbacks on every install',
+    assert: async () => {
+      registerAppProviderEligibility();
+      expect(hasProviderEligibilityResolver()).toBe(false);
+      // BY IDENTITY, not by deep equality: the default has to be the input
+      // array itself, which is what makes "byte-identical at single" a fact
+      // rather than a claim about equivalent-looking output.
+      const candidates = ['anthropic', 'openai'];
+      await expect(
+        resolveEligibleProviders(candidates, {
+          task: 'chat',
+          source: 'system',
+          primarySlug: 'anthropic',
+        })
+      ).resolves.toBe(candidates);
+    },
+  },
   {
     seam: 'lib/app/rate-limit.ts',
     risk: 'a stray tier or rule would re-cap every install',

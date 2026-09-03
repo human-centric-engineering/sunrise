@@ -18,6 +18,23 @@ release process.
 
 ### Added
 
+- `registerProviderEligibility(resolver)` in
+  `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
+  fork-owned `lib/app/providers.ts` — constrains which providers an agent may
+  **fall back to**. Sunrise attaches up to three other configured providers as
+  automatic fallbacks whenever an agent has no explicit list; on a shared
+  install that lets an org's prompts reach a provider it never approved. The
+  rule is applied at **both** of the resolver's return paths (a fully-configured
+  agent exits early and never reaches the candidates block), receives
+  `source: 'explicit' | 'system'` so a fork can be stricter about the automatic
+  fill than about an operator's own list, cannot widen or reorder the candidate
+  set, and denies every fallback if it throws — a restriction that cannot be
+  evaluated must not be read as permission. **With nothing registered it returns
+  its input unchanged**, so single-tenant behaviour is byte-identical and there
+  is no dormant second code path. It filters fallbacks only, never the primary;
+  see `.context/orchestration/llm-providers.md` for why, and for the open
+  question that leaves.
+
 - `AiCostLog.userId` — a nullable `User` foreign key (`onDelete: SetNull`,
   indexed) so cost attribution survives the agent, the conversation and the user
   it was recorded against. Threaded from every `logCost` call site that has a

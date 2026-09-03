@@ -17,7 +17,7 @@
  * @see lib/orchestration/llm/agent-resolver.ts
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +59,10 @@ import {
   NoProviderConfiguredError,
   type ResolvableAgent,
 } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  registerProviderEligibility,
+  __resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -232,5 +236,147 @@ describe('resolveAgentProviderAndModel', () => {
       expect(result.providerSlug).toBe('anthropic');
       expect(result.fallbacks).toEqual(['openai', 'ollama-local']);
     });
+  });
+});
+
+// ─── Provider eligibility seam ────────────────────────────────────────────────
+
+describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    __resetProviderEligibility();
+  });
+
+  const threeProviders = [
+    makeProviderRow({ slug: 'anthropic', createdAt: new Date('2026-04-15T00:00:00Z') }),
+    makeProviderRow({
+      slug: 'openai',
+      apiKeyEnvVar: 'OTHER_PRESENT_KEY',
+      createdAt: new Date('2026-04-16T00:00:00Z'),
+    }),
+    makeProviderRow({
+      slug: 'ollama',
+      apiKeyEnvVar: null,
+      isLocal: true,
+      createdAt: new Date('2026-04-17T00:00:00Z'),
+    }),
+  ];
+
+  it("default (nothing registered) returns exactly today's candidate set", async () => {
+    // The whole "inert at single" claim in one assertion. If this drifts, every
+    // single-tenant install has silently changed provider routing.
+    setProviders(threeProviders);
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('anthropic');
+    expect(result.fallbacks).toEqual(['openai', 'ollama']);
+  });
+
+  it('a restrictive set excludes a provider from the SYSTEM fallback fill', async () => {
+    setProviders(threeProviders);
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'openai'));
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    // Fails against the pre-change resolver, which returned both.
+    expect(result.fallbacks).toEqual(['ollama']);
+    expect(result.fallbacks).not.toContain('openai');
+    // The primary is untouched — this seam filters fallbacks only.
+    expect(result.providerSlug).toBe('anthropic');
+  });
+
+  it('a restrictive set excludes a provider from an EXPLICIT fallback list', async () => {
+    // The path that matters most, and the one the resolver's shape hides: an
+    // agent with BOTH provider and model set returns from an early exit that
+    // never reaches the candidates block. Filtering only the system fill would
+    // leave every fully-configured agent — the majority — unconstrained.
+    setProviders(threeProviders);
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'openai'));
+
+    const result = await resolveAgentProviderAndModel(
+      makeAgent({
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        fallbackProviders: ['openai', 'ollama'],
+      }),
+      'chat'
+    );
+
+    expect(result.fallbacks).toEqual(['ollama']);
+    expect(result.providerSlug).toBe('anthropic');
+    expect(result.model).toBe('claude-sonnet-4-6');
+  });
+
+  it('filters an explicit list on the candidates path too, not just the early exit', async () => {
+    // Same agent-supplied list, reached by the other route (model empty, so the
+    // resolver falls through). Both routes must apply the rule or the seam's
+    // coverage depends on which fields an operator happened to fill in.
+    setProviders(threeProviders);
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'openai'));
+
+    const result = await resolveAgentProviderAndModel(
+      makeAgent({ provider: 'anthropic', model: '', fallbackProviders: ['openai', 'ollama'] }),
+      'chat'
+    );
+
+    expect(result.fallbacks).toEqual(['ollama']);
+  });
+
+  it('tells the rule which kind of list it is filtering', async () => {
+    // `source` is the field a fork needs to be stricter about the system fill
+    // than about a list an operator wrote down. If it were always the same
+    // value the distinction would be undeliverable.
+    setProviders(threeProviders);
+    const seen: string[] = [];
+    registerProviderEligibility((candidates, ctx) => {
+      seen.push(ctx.source);
+      return candidates;
+    });
+
+    await resolveAgentProviderAndModel(makeAgent(), 'chat');
+    await resolveAgentProviderAndModel(
+      makeAgent({ provider: 'anthropic', model: 'm', fallbackProviders: ['openai'] }),
+      'chat'
+    );
+
+    expect(seen).toEqual(['system', 'explicit']);
+  });
+
+  it('denies every fallback when the rule throws, and keeps the primary', async () => {
+    // A restriction that cannot be evaluated must not be read as permission.
+    // The request degrades (no fallbacks) rather than bypassing the policy.
+    setProviders(threeProviders);
+    registerProviderEligibility(() => {
+      throw new Error('policy lookup failed');
+    });
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.fallbacks).toEqual([]);
+    expect(result.providerSlug).toBe('anthropic');
+  });
+
+  it('cannot widen the candidate set or reorder it', async () => {
+    // A rule returns a subset; anything else is ignored. Order is load-bearing
+    // because fallbacks are tried in sequence, so it comes from the resolver.
+    //
+    // The returned list is deliberately a STRICT subset in the WRONG order with
+    // a provider that was never a candidate. An earlier version returned every
+    // candidate plus a bogus one, and its expected value was therefore
+    // identical to the unfiltered list — so it passed against the pre-change
+    // resolver too, and would have kept passing if the intersect were deleted.
+    setProviders(threeProviders);
+    registerProviderEligibility(() => ['gemini-not-configured', 'ollama']);
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    // 'openai' filtered out (not returned by the rule), 'gemini' ignored (never
+    // a candidate), and what remains is in the resolver's order, not the rule's.
+    expect(result.fallbacks).toEqual(['ollama']);
   });
 });
