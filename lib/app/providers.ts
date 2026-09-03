@@ -32,7 +32,8 @@
  *
  * Before you write one:
  *
- *  - **It runs on the request hot path**, once per binding resolution. Cache
+ *  - **It runs on the request hot path**, up to TWICE per binding resolution —
+ *    once for the auto-picked primary and once for the fallback list. Cache
  *    whatever you look up; do not query per call.
  *  - **Throwing denies, it never permits**, and is logged loudly — a
  *    restriction that cannot be evaluated must not be read as permission.

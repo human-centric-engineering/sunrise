@@ -142,8 +142,15 @@ export function registerProviderEligibility(resolver: ProviderEligibilityResolve
   appResolver = resolver;
 }
 
-/** Test-only: drop the registered resolver. */
-export function __resetProviderEligibility(): void {
+/**
+ * Clear the registered resolver.
+ *
+ * For tests, and for the dev-server hot-reload case where the auto-wire in
+ * `agent-resolver.ts` re-runs on every edit — same reason
+ * `lib/db/drift-probes.ts` ships `resetAppDriftProbes()`. Not `__`-prefixed
+ * because it is not test-only: the resolver's own module load calls it.
+ */
+export function resetProviderEligibility(): void {
   appResolver = null;
 }
 
@@ -163,6 +170,11 @@ export async function resolveEligibleProviders(
   context: ProviderEligibilityContext
 ): Promise<readonly string[]> {
   if (!appResolver) return candidates;
+  // Nothing to decide, and a fork's rule may be a policy lookup. Every chat
+  // turn of a fully-configured agent with no fallback list reaches here with an
+  // empty list, so without this the rule runs — and a throwing one logs — for
+  // an answer that can only be `[]`.
+  if (candidates.length === 0) return candidates;
 
   try {
     const eligible = await appResolver(candidates, context);

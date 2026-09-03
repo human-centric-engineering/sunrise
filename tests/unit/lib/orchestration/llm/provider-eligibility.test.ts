@@ -19,7 +19,7 @@ import {
   registerProviderEligibility,
   resolveEligibleProviders,
   hasProviderEligibilityResolver,
-  __resetProviderEligibility,
+  resetProviderEligibility,
   type ProviderEligibilityContext,
 } from '@/lib/orchestration/llm/provider-eligibility';
 
@@ -32,11 +32,11 @@ const CTX: ProviderEligibilityContext = {
 describe('provider eligibility registry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    __resetProviderEligibility();
+    resetProviderEligibility();
   });
 
   afterEach(() => {
-    __resetProviderEligibility();
+    resetProviderEligibility();
   });
 
   it('reports nothing registered by default, and is the identity function', async () => {
@@ -120,7 +120,7 @@ describe('provider eligibility registry', () => {
     registerProviderEligibility(() => []);
     expect(hasProviderEligibilityResolver()).toBe(true);
 
-    __resetProviderEligibility();
+    resetProviderEligibility();
 
     expect(hasProviderEligibilityResolver()).toBe(false);
     const candidates = ['a'];

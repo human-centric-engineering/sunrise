@@ -23,14 +23,28 @@ import { logger } from '@/lib/logging';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
-import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  resolveEligibleProviders,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { registerAppProviderEligibility } from '@/lib/app/providers';
 import type { TaskType } from '@/types/orchestration';
 
-// Auto-wire the fork's eligibility rule, once, at module load — the same
-// arrangement every other `lib/app/*` seam uses, so a fork registers without
-// touching core. A throw here aborts the module rather than resolving bindings
-// against a rule that did not finish registering.
+// Auto-wire the fork's eligibility rule at module load — the same arrangement
+// every other `lib/app/*` seam uses, so a fork registers without touching core.
+//
+// The reset is not redundant. `registerProviderEligibility` rejects a SECOND,
+// different resolver, and the documented registration style is an inline arrow
+// — a fresh reference every call. Without this, any re-evaluation of this
+// module (Next dev HMR, most obviously) would re-run the scaffold, hit that
+// guard, and abort the module: every chat turn, `chat_turn` and `agent_call`
+// step dead until a full restart. Clearing first makes a re-wire idempotent
+// while keeping the guard for the mistake it exists to catch — two
+// registrations inside ONE wiring pass, which is a fork registering twice.
+//
+// `lib/db/drift-probes.ts` ships `resetAppDriftProbes()` for the same reason,
+// and `registerRateLimitRule` returns rather than throwing on a repeat.
+resetProviderEligibility();
 registerAppProviderEligibility();
 
 /** Number of system fallbacks to attach when an agent has no explicit provider. */
@@ -144,28 +158,30 @@ export async function resolveAgentProviderAndModel(
   // System fallbacks: every other reachable candidate, capped. Skipped
   // if the agent already has an explicit fallback list.
   const explicitFallbacks = agent.fallbackProviders ?? [];
-  const proposed =
-    explicitFallbacks.length > 0
-      ? explicitFallbacks
-      : // Drawn from the full candidate list, not from `eligibleCandidates`.
-        // The two are filtered independently and with different `source`
-        // values, so a rule that is stricter about the silent fill than about
-        // the primary keeps working — narrowing this by the primary's answer
-        // would silently conflate them.
-        candidates
-          .map((c) => c.slug)
-          .filter((slug) => slug !== providerSlug)
-          .slice(0, SYSTEM_FALLBACK_LIMIT);
-  // Filter AFTER the cap, not before. Capping first then filtering would let an
-  // ineligible provider consume one of the three slots and silently shrink the
-  // list; this way the cap counts only providers that can actually be used.
-  const fallbacks = [
-    ...(await resolveEligibleProviders(proposed, {
-      task,
-      source: explicitFallbacks.length > 0 ? 'explicit' : 'system',
-      primarySlug: providerSlug,
-    })),
-  ];
+  const usingExplicit = explicitFallbacks.length > 0;
+  // Drawn from the FULL candidate list, not from `eligibleCandidates`. The two
+  // are filtered independently and with different `source` values, so a rule
+  // stricter about the silent fill than about the primary keeps working —
+  // narrowing this by the primary's answer would silently conflate them.
+  const proposed = usingExplicit
+    ? explicitFallbacks
+    : candidates.map((c) => c.slug).filter((slug) => slug !== providerSlug);
+
+  const permitted = await resolveEligibleProviders(proposed, {
+    task,
+    source: usingExplicit ? 'explicit' : 'system',
+    primarySlug: providerSlug,
+  });
+
+  // Cap AFTER filtering, and only the system fill — an explicit list is the
+  // operator's and is not truncated.
+  //
+  // Order is the whole point: capping first would let ineligible providers
+  // occupy slots and silently shrink the list. With five providers and a rule
+  // permitting only the fourth and fifth, cap-then-filter yields ONE fallback
+  // where two were permitted, reachable and within budget. The three slots
+  // must count providers that can actually be used.
+  const fallbacks = usingExplicit ? [...permitted] : permitted.slice(0, SYSTEM_FALLBACK_LIMIT);
 
   logger.debug('resolveAgentProviderAndModel: filled empty agent binding', {
     agentProvider: agent.provider,

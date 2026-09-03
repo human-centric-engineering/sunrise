@@ -62,7 +62,7 @@ import {
 } from '@/lib/orchestration/llm/agent-resolver';
 import {
   registerProviderEligibility,
-  __resetProviderEligibility,
+  resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -245,11 +245,11 @@ describe('resolveAgentProviderAndModel', () => {
 describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    __resetProviderEligibility();
+    resetProviderEligibility();
   });
 
   afterEach(() => {
-    __resetProviderEligibility();
+    resetProviderEligibility();
   });
 
   const threeProviders = [
@@ -430,6 +430,82 @@ describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
     await expect(resolveAgentProviderAndModel(makeAgent(), 'chat')).rejects.toThrow(
       /permitted for this request/
     );
+  });
+
+  it('caps the system fill AFTER filtering, so eligible providers keep their slots', async () => {
+    // The ordering bug this was written for: with the cap applied first,
+    // ineligible providers occupy slots and the list silently shrinks below
+    // what the policy actually permits.
+    //
+    // Five providers, primary is p1, so the fallback candidates are p2..p5 and
+    // the cap is 3. A rule permitting only p4 and p5:
+    //   cap-then-filter → propose [p2,p3,p4], filter → ['p4']       (one lost)
+    //   filter-then-cap → filter [p4,p5], cap → ['p4','p5']         (correct)
+    // Every other test here uses exactly three providers, so the cap is never
+    // reached and none of them can tell these apart.
+    setProviders([
+      makeProviderRow({ slug: 'p1', createdAt: new Date('2026-04-15T00:00:00Z') }),
+      makeProviderRow({ slug: 'p2', createdAt: new Date('2026-04-16T00:00:00Z') }),
+      makeProviderRow({ slug: 'p3', createdAt: new Date('2026-04-17T00:00:00Z') }),
+      makeProviderRow({ slug: 'p4', createdAt: new Date('2026-04-18T00:00:00Z') }),
+      makeProviderRow({ slug: 'p5', createdAt: new Date('2026-04-19T00:00:00Z') }),
+    ]);
+    registerProviderEligibility((candidates, ctx) =>
+      ctx.source === 'primary' ? candidates : candidates.filter((s) => s === 'p4' || s === 'p5')
+    );
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('p1');
+    expect(result.fallbacks).toEqual(['p4', 'p5']);
+  });
+
+  it('still caps the system fill at three when everything is eligible', async () => {
+    // The other side of the same line — filtering first must not remove the cap.
+    setProviders([
+      makeProviderRow({ slug: 'p1', createdAt: new Date('2026-04-15T00:00:00Z') }),
+      makeProviderRow({ slug: 'p2', createdAt: new Date('2026-04-16T00:00:00Z') }),
+      makeProviderRow({ slug: 'p3', createdAt: new Date('2026-04-17T00:00:00Z') }),
+      makeProviderRow({ slug: 'p4', createdAt: new Date('2026-04-18T00:00:00Z') }),
+      makeProviderRow({ slug: 'p5', createdAt: new Date('2026-04-19T00:00:00Z') }),
+    ]);
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.fallbacks).toEqual(['p2', 'p3', 'p4']);
+  });
+
+  it('does not truncate an explicit fallback list', async () => {
+    // The cap has only ever applied to the automatic fill. An operator's own
+    // list is theirs, however long.
+    setProviders(threeProviders);
+    const explicit = ['a', 'b', 'c', 'd', 'e'];
+    registerProviderEligibility((candidates) => candidates);
+
+    const result = await resolveAgentProviderAndModel(
+      makeAgent({ provider: 'anthropic', model: 'm', fallbackProviders: explicit }),
+      'chat'
+    );
+
+    expect(result.fallbacks).toEqual(explicit);
+  });
+
+  it('does not invoke the rule for an empty candidate list', async () => {
+    // A fully-configured agent with no fallback list hits this on every turn,
+    // and a fork's rule may be a policy lookup. There is nothing to decide.
+    setProviders(threeProviders);
+    const calls: string[] = [];
+    registerProviderEligibility((candidates, ctx) => {
+      calls.push(ctx.source);
+      return candidates;
+    });
+
+    await resolveAgentProviderAndModel(
+      makeAgent({ provider: 'anthropic', model: 'm', fallbackProviders: [] }),
+      'chat'
+    );
+
+    expect(calls).toEqual([]);
   });
 
   it('cannot widen the candidate set or reorder it', async () => {
