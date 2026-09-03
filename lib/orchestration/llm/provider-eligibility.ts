@@ -21,7 +21,7 @@
  *
  * ## What it does and does not constrain
  *
- * Within `resolveAgentProviderAndModel` — its only consumer — it filters every
+ * Wherever it is consulted it filters every
  * choice Sunrise makes ON THE CALLER'S BEHALF. That scope is the whole story
  * and is smaller than it sounds: a provider resolved by any other route is
  * unfiltered, notably a workflow step's model resolution in `llm-runner.ts` and
@@ -66,8 +66,9 @@
  *    no safe default to fall back to when every remaining option is one the
  *    policy did not permit.
  *
- * @see lib/app/providers.ts — the fork-owned registration point
- * @see lib/orchestration/llm/agent-resolver.ts — the only consumer
+ * @see lib/app/llm-providers.ts — the fork-owned registration point
+ * @see lib/orchestration/llm/agent-resolver.ts — the runtime consumer
+ * @see lib/orchestration/prefetch-helpers.ts — the agent form's preview
  */
 
 import { logger } from '@/lib/logging';
@@ -99,8 +100,15 @@ export interface ProviderEligibilityContext {
    */
   source: 'primary' | 'explicit' | 'system';
   /**
-   * The provider already chosen as primary — never itself a candidate here.
-   * `null` when `source` is `'primary'`, because that is the choice being made.
+   * The provider already chosen as primary. `null` when `source` is
+   * `'primary'`, because that is the choice being made.
+   *
+   * NOT guaranteed absent from `candidates`. The system fill excludes it, but
+   * an agent's own `fallbackProviders` list is passed through as the operator
+   * wrote it — so on `source: 'explicit'` a caller may legitimately see its own
+   * primary in the list. A rule that appends `primarySlug` on the assumption it
+   * is missing would produce a duplicate, and a failover straight back to the
+   * provider that just failed.
    */
   primarySlug: string | null;
 }
@@ -151,7 +159,7 @@ let wiring: Promise<void> | null = null;
  * Putting the wiring beside the state removes the question entirely: any
  * caller of `resolveEligibleProviders` gets the rule, whatever imported it.
  *
- * **Why a dynamic import.** A fork's `lib/app/providers.ts` imports
+ * **Why a dynamic import.** A fork's `lib/app/llm-providers.ts` imports
  * `registerProviderEligibility` from this module, so a static import back would
  * be a cycle. `instrumentation.ts` uses the same `await import()` shape for the
  * boot seam, and the fork-init guard's import detection recognises it.
@@ -163,7 +171,7 @@ let wiring: Promise<void> | null = null;
  */
 function ensureWired(): Promise<void> {
   wiring ??= (async () => {
-    const { registerAppProviderEligibility } = await import('@/lib/app/providers');
+    const { registerAppProviderEligibility } = await import('@/lib/app/llm-providers');
     // AWAITED. Dropping this promise was a fail-open: a fork whose registrar
     // loads its policy first (`const approved = await approvedProviderSlugs()`
     // — which is exactly what this seam's own "cache whatever you look up"
@@ -205,7 +213,7 @@ export function registerProviderEligibility(resolver: ProviderEligibilityResolve
  * Clear the registered resolver.
  *
  * Clears the registered rule AND the auto-wire latch, so the next call to
- * `resolveEligibleProviders` re-runs `lib/app/providers.ts` from scratch.
+ * `resolveEligibleProviders` re-runs `lib/app/llm-providers.ts` from scratch.
  *
  * For tests, and for the dev-server hot-reload case — a fork editing its rule
  * needs the edit picked up, which a latch alone would prevent. Same reason

@@ -463,7 +463,7 @@ On a shared one it is a leak: an org's prompts can reach a provider that org
 never approved, and nobody asked for any of them.
 
 `registerProviderEligibility` (`lib/orchestration/llm/provider-eligibility.ts`),
-registered from the fork-owned `lib/app/providers.ts`, constrains which
+registered from the fork-owned `lib/app/llm-providers.ts`, constrains which
 providers may be used as fallbacks:
 
 ```typescript

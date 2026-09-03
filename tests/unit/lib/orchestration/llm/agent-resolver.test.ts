@@ -105,11 +105,12 @@ function setProviders(rows: FakeProviderRow[]): void {
 describe('resolveAgentProviderAndModel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // FORK NOTE: `agent-resolver` auto-wires `lib/app/providers.ts` at module
-    // load, so a fork that fills that seam would otherwise have its live rule
-    // applied to these core assertions and see them fail in a file it never
-    // touched — the #480/#525/#530 coupling class. Clearing per test keeps
-    // this file about the resolver rather than about the fork's policy.
+    // Isolation between tests in THIS file, nothing more. Fork coupling is
+    // handled globally by the seam pin in `tests/setup.ts` — and the reset
+    // alone could not do it anyway: the auto-wire is lazy now, so clearing the
+    // latch makes the fork's registrar re-run on the next resolve rather than
+    // keeping it out. An earlier version of this comment claimed the opposite,
+    // written when the wiring was a module-load side effect of the resolver.
     resetProviderEligibility();
   });
 

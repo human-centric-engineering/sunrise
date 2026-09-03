@@ -112,9 +112,12 @@ async function bothWays(agent: { provider: string; model: string }, rows: unknow
 describe('agent binding parity: runtime resolver vs the form’s preview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // FORK NOTE: both modules under test reach `lib/app/providers.ts` through
-    // the resolver's module-scope auto-wire. Without this, a fork that fills
-    // the seam sees these core assertions fail in a file it never touched.
+    // Isolation between tests in THIS file, nothing more. Fork coupling is
+    // handled globally by the seam pin in `tests/setup.ts` — and the reset
+    // alone could not do it anyway: the auto-wire is lazy now, so clearing the
+    // latch makes the fork's registrar re-run on the next resolve rather than
+    // keeping it out. An earlier version of this comment claimed the opposite,
+    // written when the wiring was a module-load side effect of the resolver.
     resetProviderEligibility();
   });
 

@@ -20,7 +20,7 @@ release process.
 
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
-  fork-owned `lib/app/providers.ts` — constrains which providers Sunrise may
+  fork-owned `lib/app/llm-providers.ts` — constrains which providers Sunrise may
   choose on a caller's behalf. Today it silently attaches up to three other
   configured providers as automatic fallbacks whenever an agent has no explicit
   list, and picks the primary itself whenever an agent leaves that field blank;

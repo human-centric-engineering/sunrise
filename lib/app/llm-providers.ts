@@ -5,8 +5,10 @@
  * after release, so your edits here merge cleanly on upgrade (the stable
  * contract is this file's export, not its body).
  *
- * Auto-wired: `lib/orchestration/llm/agent-resolver.ts` calls this once, before
- * it resolves any binding, so a fork registers without wiring anything.
+ * Auto-wired: `ensureWired()` in `lib/orchestration/llm/provider-eligibility.ts`
+ * calls this once, lazily, on the first provider resolution — so a fork
+ * registers without wiring anything, and it applies to EVERY consumer rather
+ * than only whichever module happened to import the resolver.
  *
  * Register a rule constraining which providers an agent may **fall back to**.
  * By default Sunrise attaches up to three other configured providers as

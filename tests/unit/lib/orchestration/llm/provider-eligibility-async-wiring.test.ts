@@ -17,7 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('@/lib/app/providers', () => ({
+vi.mock('@/lib/app/llm-providers', () => ({
   // Deliberately async, and deliberately deferring registration past a
   // microtask — the shape a fork gets by loading its allowlist before
   // registering. `fork-init-seams.test.ts` matches `export async function

@@ -22,7 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // The fork's scaffold, standing in for one that actually registers something.
 // Sunrise ships it empty, so without this there is no rule to observe.
-vi.mock('@/lib/app/providers', () => ({
+vi.mock('@/lib/app/llm-providers', () => ({
   registerAppProviderEligibility: () => {
     registerProviderEligibility((candidates, ctx) =>
       ctx.source === 'primary' ? candidates.filter((slug) => slug !== 'openai') : candidates

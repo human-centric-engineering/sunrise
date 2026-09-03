@@ -141,7 +141,7 @@ export async function resolveAgentProviderAndModel(
       logger.error('No configured provider is eligible for this request', {
         task,
         reachableCandidates: candidates.map((c) => c.slug),
-        fix: 'The rule registered via registerProviderEligibility() in lib/app/providers.ts permitted none of them — by policy, or because it threw (a rule that cannot be evaluated denies). Check above for a resolver failure; if there is none, widen the rule or give the agent an explicit provider.',
+        fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts permitted none of them — by policy, or because it threw (a rule that cannot be evaluated denies). Check above for a resolver failure; if there is none, widen the rule or give the agent an explicit provider.',
       });
       throw new NoEligibleProviderError();
     }

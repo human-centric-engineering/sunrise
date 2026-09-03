@@ -30,7 +30,6 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
-import { registerAppProviderEligibility } from '@/lib/app/providers';
 import { initAppCapabilities } from '@/lib/app/capabilities';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
 import { initAppNav } from '@/lib/app/admin-nav';
@@ -112,10 +111,15 @@ const UNASSERTED_SEAMS = new Set([
 
 const SEAM_DEFAULTS: SeamDefault[] = [
   {
-    seam: 'lib/app/providers.ts',
+    seam: 'lib/app/llm-providers.ts',
     risk: 'a stray eligibility rule would silently drop provider fallbacks on every install',
     assert: async () => {
-      registerAppProviderEligibility();
+      // `importActual`, NOT a plain import: tests/setup.ts pins this seam for
+      // every other file, and asserting the pin would prove nothing about what
+      // Sunrise actually ships. This is the file that must see the real one.
+      const seam =
+        await vi.importActual<typeof import('@/lib/app/llm-providers')>('@/lib/app/llm-providers');
+      await seam.registerAppProviderEligibility();
       expect(hasProviderEligibilityResolver()).toBe(false);
       // BY IDENTITY, not by deep equality: the default has to be the input
       // array itself, which is what makes "byte-identical at single" a fact
