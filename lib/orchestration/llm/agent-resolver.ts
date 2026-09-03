@@ -126,20 +126,24 @@ export async function resolveAgentProviderAndModel(
       // Fails loudly rather than falling back to an ineligible provider. The
       // message names the fix, because the state it describes ("configured but
       // not permitted") is invisible from the provider list alone.
-      // Deliberately covers BOTH ways of getting here. A rule that denies
-      // everything and a rule that THREW are indistinguishable at this point —
-      // `resolveEligibleProviders` fails closed to `[]` either way — so telling
-      // the operator to "widen the rule" would be wrong advice half the time,
-      // to someone whose rule is correct and whose policy backend is down. The
-      // logger.error emitted at the failure carries which one it was.
-      throw new NoEligibleProviderError(
-        `No configured provider is permitted for this request. ${candidates.length} ` +
-          `provider(s) are active and reachable (${candidates.map((c) => c.slug).join(', ')}), ` +
-          'but the rule registered via registerProviderEligibility() in lib/app/providers.ts ' +
-          'permitted none of them — either by policy, or because it threw and a rule that ' +
-          'cannot be evaluated denies. Check the logs for a rule failure first; if there is ' +
-          'none, widen the rule or give the agent an explicit provider.'
-      );
+      // Detail goes to the log, NOT into the message. This error's message is
+      // forwarded verbatim into an ExecutorError by the agent_call and
+      // chat_turn executors, and `streaming-handler.ts` states the rule for
+      // this codebase: raw ProviderError messages "contain internal details
+      // (env var names, provider slugs, base URLs) that must not reach the
+      // browser". A list of every configured provider plus a repo path is
+      // exactly that, and the workflow path has no scrub of its own.
+      //
+      // The log line also covers BOTH ways of arriving here: a rule that
+      // denied everything, and a rule that THREW (which fails closed to the
+      // same empty set). Telling an operator to widen a rule that is correct
+      // and whose backend is down would be wrong half the time.
+      logger.error('No configured provider is eligible for this request', {
+        task,
+        reachableCandidates: candidates.map((c) => c.slug),
+        fix: 'The rule registered via registerProviderEligibility() in lib/app/providers.ts permitted none of them — by policy, or because it threw (a rule that cannot be evaluated denies). Check above for a resolver failure; if there is none, widen the rule or give the agent an explicit provider.',
+      });
+      throw new NoEligibleProviderError();
     }
   }
 

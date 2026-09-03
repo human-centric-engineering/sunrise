@@ -79,11 +79,13 @@ function declaredSeams(): string[] {
  *
  * A SECOND family, and it was unguarded until this was added. `initApp*` seams
  * run through `createAppInitGate`; these are called directly by the one core
- * module that needs them (`registerAppDriftProbes` by the drift registry,
- * `registerAppRateLimits` by the middleware, `registerAppProviderEligibility`
- * by the agent resolver). Different mechanism, identical failure: a scaffold
- * nothing imports is dead wiring, and every fork's registrations silently never
- * run.
+ * module that needs them — `registerAppDriftProbes` by
+ * `scripts/db/check-drift.ts`, `registerAppRateLimits` by the rate-limit
+ * middleware, and `registerAppProviderEligibility` by `ensureWired()` in
+ * `lib/orchestration/llm/provider-eligibility.ts` (NOT the agent resolver —
+ * the wiring moved there so registration stops depending on who imported
+ * what). Different mechanism, identical failure: a scaffold nothing imports is
+ * dead wiring, and every fork's registrations silently never run.
  *
  * Only the dead-wiring half is asserted for these — there is no shared gate to
  * check them against, by design, because each has exactly one consumer that

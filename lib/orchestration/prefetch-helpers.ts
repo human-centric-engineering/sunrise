@@ -103,6 +103,12 @@ export async function getEffectiveAgentDefaults(agent: {
         { task: 'chat', source: 'primary', primarySlug: null }
       );
       const candidate = reachable.find((r) => permitted.includes(r.slug));
+      // Deliberate divergence when the rule permits NOTHING: the runtime
+      // refuses with `NoEligibleProviderError`, but this must never throw — it
+      // is a form preview — so the field stays empty and inherited. The form
+      // therefore shows "nothing to inherit" rather than a provider the policy
+      // forbids, which is the safe half of the disagreement. Pinned in
+      // `provider-resolution-parity.test.ts`.
       if (candidate) provider = candidate.slug;
     } catch (err) {
       logger.warn('prefetch: effective provider lookup failed', {

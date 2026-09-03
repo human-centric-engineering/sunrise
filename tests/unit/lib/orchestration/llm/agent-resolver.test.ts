@@ -54,6 +54,7 @@ vi.mock('@/lib/logging', () => ({
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import {
   resolveAgentProviderAndModel,
   NoProviderConfiguredError,
@@ -434,7 +435,35 @@ describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
     registerProviderEligibility(() => []);
 
     await expect(resolveAgentProviderAndModel(makeAgent(), 'chat')).rejects.toThrow(
-      /permitted for this request/
+      NoEligibleProviderError
+    );
+  });
+
+  it('keeps the provider inventory out of the thrown message, and in the log', async () => {
+    // The executors forward this message verbatim into an ExecutorError, and
+    // the codebase's rule (streaming-handler) is that raw ProviderError text
+    // must not carry provider slugs or internal paths. The operator detail
+    // belongs in the log line, which only an operator reads.
+    setProviders(threeProviders);
+    registerProviderEligibility(() => []);
+
+    await expect(resolveAgentProviderAndModel(makeAgent(), 'chat')).rejects.toThrow(
+      NoEligibleProviderError
+    );
+
+    // `rejects.toThrow` above proves it throws; this reads the message off the
+    // caught value directly, since a resolved binding has no `.message`.
+    let message = '';
+    try {
+      await resolveAgentProviderAndModel(makeAgent(), 'chat');
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).not.toBe('');
+    expect(message).not.toMatch(/anthropic|openai|ollama|lib\/app/);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('No configured provider is eligible'),
+      expect.objectContaining({ reachableCandidates: ['anthropic', 'openai', 'ollama'] })
     );
   });
 

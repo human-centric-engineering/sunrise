@@ -199,6 +199,31 @@ describe('agent binding parity: runtime resolver vs the form’s preview', () =>
     }
   });
 
+  it('diverges deliberately when the rule permits nothing, and says how', async () => {
+    // The one remaining disagreement, pinned rather than left implicit. The
+    // runtime REFUSES (NoEligibleProviderError); the mirror cannot throw — it
+    // is a form preview — so it reports an empty inherited provider.
+    //
+    // The parity fixture above picks two reachable providers specifically to
+    // avoid this case, which is the sort of avoidance that quietly becomes an
+    // untested boundary. Asserting it here means a future change to either
+    // side has to decide about this deliberately.
+    try {
+      registerProviderEligibility(() => []);
+
+      await expect(
+        resolveAgentProviderAndModel({ provider: '', model: '', fallbackProviders: [] }, 'chat')
+      ).rejects.toThrow();
+
+      const preview = await getEffectiveAgentDefaults({ provider: '', model: '' });
+
+      expect(preview.provider).toBe('');
+      expect(preview.inheritedProvider).toBe(true);
+    } finally {
+      resetProviderEligibility();
+    }
+  });
+
   it('the mirror computes no fallbacks, so the eligibility seam cannot desync it', async () => {
     // Pins the reason this file does NOT assert fallback parity. If
     // `getEffectiveAgentDefaults` ever grows a fallback field, this fails and

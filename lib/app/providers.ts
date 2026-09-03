@@ -20,21 +20,26 @@
  *   import { approvedProviderSlugs } from '@/lib/app/billing';
  *
  *   export function registerAppProviderEligibility(): void {
- *     registerProviderEligibility(async (candidates, ctx) => {
+ *     registerProviderEligibility(async (candidates) => {
  *       const approved = await approvedProviderSlugs();
- *       // Filter EVERY source by default. A rule that answers for only some of
- *       // them is fail-open for the rest — and `'primary'` is the one that
- *       // matters most, because a provider-less agent (the system-seeded
- *       // pattern-advisor, quiz-master, mcp-system and model-auditor all ship
- *       // that way) would otherwise send its prompts to whichever provider
- *       // happens to sort first, while the policy looks enforced.
  *       return candidates.filter((slug) => approved.has(slug));
  *     });
+ *   }
  *
- * Relax deliberately, never by omission — e.g. to honour an operator's own
- * fallback list while still constraining what Sunrise picks:
+ * Filter EVERY source by default, as above. A rule that answers for only some
+ * of them is fail-open for the rest, and `'primary'` is the one that matters
+ * most: a provider-less agent (the system-seeded pattern-advisor, quiz-master,
+ * mcp-system and model-auditor all ship that way) would otherwise reach
+ * whichever provider sorts first while the policy looks enforced.
  *
+ * To relax a source, do it deliberately — and note this is an ALTERNATIVE body
+ * for the same function, not a second call. Registering twice throws, and
+ * because the failure is cached, every later provider resolution fails with it:
+ *
+ *   export function registerAppProviderEligibility(): void {
  *     registerProviderEligibility(async (candidates, ctx) => {
+ *       // Honour an operator's own fallback list, still constrain what
+ *       // Sunrise picks on its own.
  *       if (ctx.source === 'explicit') return candidates;
  *       const approved = await approvedProviderSlugs();
  *       return candidates.filter((slug) => approved.has(slug));
