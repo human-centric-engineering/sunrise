@@ -511,23 +511,51 @@ paths listed below and no others**.
 ### What this seam does NOT cover
 
 It hangs off `resolveAgentProviderAndModel`. Anything resolving a provider by
-another route is unfiltered, and a fork building an isolation boundary needs
-this list rather than an assurance:
+another route is unfiltered.
 
-| Path                                                                                                                  | Resolves via                                        | Covered?                                                                                                                                                                      |
-| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                   | `resolveAgentProviderAndModel`                      | **Yes**                                                                                                                                                                       |
-| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`) | `getModel(override).provider` in `llm-runner.ts`    | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time. |
-| The same steps with NO override                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts` | **No — and this is a gap.** Sunrise is choosing here, so by the rule above it should be filtered. Tracked as t-658, not shipped.                                              |
-| Knowledge keyword enrichment                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`   | **No — same gap.** Sunrise chooses the model; the org's document text goes to whatever provider it names.                                                                     |
-| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                              | env vars read in `complete-session.ts`              | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                |
+**Do not build an isolation boundary on the table below.** An earlier version of
+this section said a fork "needs this list rather than an assurance", which
+presented it as something to rely on. It is not: the list is derived by hand,
+and it has been short every one of the three times anyone has checked it — the
+t-656 review named four paths and missed two; a `grep getProvider(` found those
+two and missed the embedder; a `grep getDefaultModelForTask(` found the
+embedder. Assume a fourth pass would find something too.
 
-The two rows marked _gap_ are the same shape: Sunrise picks a model from the
-registry and uses whatever provider that model names, without passing through
-the resolver. Closing them means filtering at a **second** chokepoint with its
-own fail-closed consequences (a workflow step or an ingestion run failing rather
-than a chat turn), which is why it is separate work rather than a quiet
-widening of this one.
+The table is useful for understanding **where Sunrise chooses a provider and on
+what basis**. It is not a statement about where data can go, and the difference
+matters most to exactly the reader who would treat it as one.
+[`../architecture/provider-selection-waist.md`](../architecture/provider-selection-waist.md)
+explains why the completeness question needs a call-time gate rather than a
+better list, and what that would take.
+
+| Path                                                                                                                  | Resolves via                                                                                    | Covered?                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                   | `resolveAgentProviderAndModel`                                                                  | **Yes**                                                                                                                                                                                                                                                                           |
+| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`) | `getModel(override).provider` in `llm-runner.ts`                                                | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time.                                                                                                     |
+| The same steps with NO override                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts`                                             | **No — and this is a gap.** Sunrise is choosing here, so by the rule above it should be filtered. Tracked as t-658, not shipped.                                                                                                                                                  |
+| Knowledge keyword enrichment                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`                                               | **No — same gap.** Sunrise chooses the model; the org's document text goes to whatever provider it names.                                                                                                                                                                         |
+| Retroactive execution review, when the request sets no `modelOverride` and `EVALUATION_JUDGE_MODEL` is unset          | `getDefaultModelForTask('chat')` in `executions/[id]/review/route.ts`                           | **No — and this is a gap.** Same shape as the `llm-runner.ts` row. Tracked as t-659, not shipped.                                                                                                                                                                                 |
+| A review request's own `modelOverride`, or `EVALUATION_JUDGE_MODEL`                                                   | the same line, first two arms                                                                   | **No** — both are an operator's recorded choice.                                                                                                                                                                                                                                  |
+| Audio transcription's matrix fallback, when no default is pinned or the pinned row is unreachable                     | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`                                  | **No — and this is a gap.** A caller's voice recording goes to whichever active audio row sorts first. Tracked as t-659, not shipped.                                                                                                                                             |
+| An operator's pinned audio default                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`                                 | **No** — pinned in Settings → Default models.                                                                                                                                                                                                                                     |
+| Knowledge embedding, when no active embedding model is pinned                                                         | the Voyage → local → openai-compatible → bare `OPENAI_API_KEY` chain in `knowledge/embedder.ts` | **No — and this is a gap**, and a different shape from the others: the embedder never calls `getProvider`, builds its own HTTP client, and its last arm reaches `api.openai.com` with **no `AiProviderConfig` row and no provider slug at all**. Not yet tracked as its own task. |
+| An operator's pinned `activeEmbeddingModelId`                                                                         | `resolveActiveEmbeddingConfig()` in `knowledge/embedder.ts`                                     | **No** — an operator's recorded choice.                                                                                                                                                                                                                                           |
+| `provider.testConnection()` / `provider.listModels()`                                                                 | admin routes and `model-registry.ts`                                                            | **No** — every caller acts on a provider an admin named explicitly. Listed because they do reach the vendor, and a naive gate on `chat`/`embed`/`transcribe` would silently not cover them.                                                                                       |
+| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                              | env vars read in `complete-session.ts`                                                          | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                                                                                                                    |
+
+The rows marked _gap_ are all the same category — **Sunrise choosing, not an
+operator** — which is precisely what this seam's rule says it covers. Closing
+each one means filtering at a second chokepoint with its own fail-closed
+consequences (a workflow step, an ingestion run or voice input failing rather
+than a chat turn), which is why they are separate work rather than a quiet
+widening of this one. t-658 and t-659 are built and gated but not merged,
+pending the design question in
+[`../architecture/provider-selection-waist.md`](../architecture/provider-selection-waist.md).
+
+The embedder row is the one to read if you are only reading one. It is the
+proof that this list is a hand-derived artefact rather than a boundary: it was
+invisible to two of the three passes because it reaches its vendor without ever
+touching the provider manager.
 
 One consequence worth knowing before writing a rule: because the primary is
 fail-closed, **a rule that throws costs provider-less agents an outage** rather
