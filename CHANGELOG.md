@@ -35,7 +35,9 @@ release process.
   It wires itself lazily on first use rather than as a consumer's import side
   effect, so which module reached it first cannot change whether the rule
   applies. `.context/orchestration/llm-providers.md` carries the per-path
-  coverage table, which stays the authority.
+  coverage table — hand-derived, and it names the paths still uncovered as well
+  as the covered ones. Read it before treating the seam as a whole-tree
+  guarantee.
   - **Covers** the auto-picked primary and both fallback lists (the agent's own
     and the automatic fill), at **both** of the resolver's return paths — a
     fully-configured agent exits early and never reaches the candidates block,
@@ -43,11 +45,21 @@ release process.
     unconstrained — plus a workflow step with no `modelOverride` and knowledge
     keyword enrichment, which resolve the `chat` task default and inherit
     whatever provider that model names.
-  - **Does not cover** an explicit `agent.provider`, an explicit step
-    `modelOverride`, or the `EVALUATION_DEFAULT_*` environment variables. Each
-    is an operator's recorded decision, and rerouting one would make a request
-    answer from a provider its own configuration does not name. Enforce those at
-    write time — do not offer a provider the org has not approved.
+  - **Does not cover, by design**, an explicit `agent.provider`, an explicit
+    step `modelOverride`, an operator's pinned audio default, or the
+    `EVALUATION_DEFAULT_*` / `EVALUATION_JUDGE_MODEL` environment variables.
+    Each is an operator's recorded decision, and rerouting one would make a
+    request answer from a provider its own configuration does not name. Enforce
+    those at write time — do not offer a provider the org has not approved.
+  - **Does not cover, and should**: two paths where Sunrise chooses and the rule
+    still does not reach. The retroactive-review judge when the request sets no
+    `modelOverride` and `EVALUATION_JUDGE_MODEL` is unset, and audio
+    transcription's matrix fallback — which sends a caller's recording to
+    whichever active audio row sorts first whenever no default is pinned or the
+    pinned one is unreachable. Both are listed as open gaps in the coverage
+    table. Neither is exploitable on any current install (the seam is inert
+    until a fork registers a rule, and there is no per-org policy in the tree),
+    but a fork adopting the seam should not read this as whole-tree coverage.
   - `ctx.source` is `'primary' | 'system' | 'explicit'`, so a rule can be
     stricter about what nobody asked for than about what an operator wrote down.
     The two model-registry paths reuse `'primary'` rather than adding a fourth
