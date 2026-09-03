@@ -74,7 +74,37 @@ function declaredSeams(): string[] {
   return [...names].sort();
 }
 
+/**
+ * `registerApp*` functions exported by the fork-owned scaffolds, at column 0.
+ *
+ * A SECOND family, and it was unguarded until this was added. `initApp*` seams
+ * run through `createAppInitGate`; these are called directly by the one core
+ * module that needs them — `registerAppDriftProbes` by
+ * `scripts/db/check-drift.ts`, `registerAppRateLimits` by the rate-limit
+ * middleware, and `registerAppProviderEligibility` by `ensureWired()` in
+ * `lib/orchestration/llm/provider-eligibility.ts` (NOT the agent resolver —
+ * the wiring moved there so registration stops depending on who imported
+ * what). Different mechanism, identical failure: a scaffold nothing imports is
+ * dead wiring, and every fork's registrations silently never run.
+ *
+ * Only the dead-wiring half is asserted for these — there is no shared gate to
+ * check them against, by design, because each has exactly one consumer that
+ * must call it before its own first use.
+ */
+function declaredRegistrars(): string[] {
+  const names = new Set<string>();
+  for (const file of readdirSync(APP_DIR)) {
+    if (!file.endsWith('.ts')) continue;
+    const src = readFileSync(join(APP_DIR, file), 'utf8');
+    for (const m of src.matchAll(/^export (?:async )?function (registerApp\w*)\s*\(/gm)) {
+      names.add(m[1]);
+    }
+  }
+  return [...names].sort();
+}
+
 const SEAMS = declaredSeams();
+const REGISTRARS = declaredRegistrars();
 const FILES = [
   ...sourceFiles(join(process.cwd(), 'lib')),
   ...sourceFiles(join(process.cwd(), 'components')),
@@ -84,6 +114,11 @@ const FILES = [
   join(process.cwd(), 'instrumentation.ts'),
 ].filter((f) => !f.startsWith(APP_DIR));
 
+/** Everything `FILES` covers, plus `scripts/` — see the registrar check below. */
+const REGISTRAR_FILES = [...FILES, ...sourceFiles(join(process.cwd(), 'scripts'))].filter(
+  (f) => !f.startsWith(APP_DIR)
+);
+
 describe('fork init seams', () => {
   it('finds the seams at all', () => {
     // The #634 lesson: an enumerating check whose scanner matches nothing goes
@@ -92,7 +127,37 @@ describe('fork init seams', () => {
     // undetected, which is the case that matters. Update it deliberately when
     // adding a seam.
     expect(SEAMS.length).toBe(13);
+    // Same exact-count discipline for the registrar family, and for the same
+    // reason: a floor one below the real number lets exactly one scaffold drop
+    // out of the scan undetected.
+    expect(REGISTRARS.length).toBe(3);
     expect(FILES.length).toBeGreaterThan(500);
+  });
+
+  it.each(REGISTRARS)('%s is imported by the core module that runs it', (registrar) => {
+    // Import-detection, matching the seam check above — a registrar is called,
+    // not passed as a reference, but the import is the thing that cannot be
+    // faked by a comment or a JSDoc example. It is not a nicety here: the drift
+    // registrar is NAMED in a `lib/db/drift-probes.ts` docblock while its only
+    // real consumer is a CLI script, so a mention-matching scanner would have
+    // reported it healthy no matter what happened to the wiring.
+    //
+    // Wider file set than the seam check above, deliberately. An `initApp*`
+    // seam runs in the app runtime; a registrar's single consumer may be a
+    // CLI entry point — `registerAppDriftProbes` is invoked by
+    // `scripts/db/check-drift.ts`, which `FILES` excludes. Scoping this to
+    // FILES reported that live seam as dead wiring on the first run.
+    const consumers = REGISTRAR_FILES.filter((f) =>
+      new RegExp(`\\{[^}]*\\b${registrar}\\b[^}]*\\}\\s*=?\\s*(?:from|await import)`, 's').test(
+        readFileSync(f, 'utf8')
+      )
+    );
+
+    expect(
+      consumers,
+      `${registrar} has no consumer — the scaffold is dead wiring, and every ` +
+        `fork's registrations in it would silently never run`
+    ).not.toHaveLength(0);
   });
 
   it.each(SEAMS)('%s is consumed through the shared gate', (seam) => {

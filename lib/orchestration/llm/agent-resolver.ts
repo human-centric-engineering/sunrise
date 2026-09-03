@@ -23,6 +23,11 @@ import { logger } from '@/lib/logging';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+// The fork's eligibility rule wires itself, lazily, inside
+// `resolveEligibleProviders`. It used to be a module-load side effect here,
+// which made registration depend on who imported this file — see that module's
+// `ensureWired` for why that was wrong.
+import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
 import type { TaskType } from '@/types/orchestration';
 
 /** Number of system fallbacks to attach when an agent has no explicit provider. */
@@ -51,6 +56,23 @@ export class NoProviderConfiguredError extends ProviderError {
 }
 
 /**
+ * Thrown when providers ARE configured and reachable, but the app's
+ * eligibility rule permits none of them for this request.
+ *
+ * Deliberately distinct from {@link NoProviderConfiguredError}. That one means
+ * "nothing is set up" and sends an operator to the setup wizard; this one means
+ * "everything is set up and your policy allows none of it", which is a
+ * different fix in a different place. Reporting the first for the second would
+ * send someone to re-add providers that are already there.
+ */
+export class NoEligibleProviderError extends ProviderError {
+  constructor(message = 'No configured provider is eligible for this request') {
+    super(message, { code: 'no_eligible_provider', retriable: false });
+    this.name = 'NoEligibleProviderError';
+  }
+}
+
+/**
  * Resolve the provider slug, model id, and fallback list to use for a
  * chat turn or workflow step. Empty `agent.provider`/`agent.model` are
  * filled from system defaults; explicit values pass through unchanged.
@@ -63,10 +85,20 @@ export async function resolveAgentProviderAndModel(
   const modelSet = typeof agent.model === 'string' && agent.model.length > 0;
 
   if (providerSet && modelSet) {
+    // This early return is a second exit, not a shortcut through the one
+    // below — a fully-configured agent never reaches the candidates block. Its
+    // explicit fallback list has to be filtered HERE or the seam would cover
+    // only agents that left a field blank, which is the minority.
     return {
       providerSlug: agent.provider,
       model: agent.model,
-      fallbacks: agent.fallbackProviders ?? [],
+      fallbacks: [
+        ...(await resolveEligibleProviders(agent.fallbackProviders ?? [], {
+          task,
+          source: 'explicit',
+          primarySlug: agent.provider,
+        })),
+      ],
     };
   }
 
@@ -77,19 +109,74 @@ export async function resolveAgentProviderAndModel(
     );
   }
 
-  const providerSlug = providerSet ? agent.provider : candidates[0].slug;
+  // The auto-picked primary goes through the eligibility rule; an EXPLICIT
+  // `agent.provider` does not. The difference is whose decision it is: here
+  // Sunrise is choosing on the caller's behalf, so choosing something their
+  // policy forbids is our error, not theirs. An explicit choice is enforced at
+  // write time instead — see provider-eligibility.ts for why.
+  let eligibleCandidates = candidates;
+  if (!providerSet) {
+    const permitted = await resolveEligibleProviders(
+      candidates.map((c) => c.slug),
+      { task, source: 'primary', primarySlug: null }
+    );
+    const permittedSet = new Set(permitted);
+    eligibleCandidates = candidates.filter((c) => permittedSet.has(c.slug));
+    if (eligibleCandidates.length === 0) {
+      // Fails loudly rather than falling back to an ineligible provider. The
+      // message names the fix, because the state it describes ("configured but
+      // not permitted") is invisible from the provider list alone.
+      // Detail goes to the log, NOT into the message. This error's message is
+      // forwarded verbatim into an ExecutorError by the agent_call and
+      // chat_turn executors, and `streaming-handler.ts` states the rule for
+      // this codebase: raw ProviderError messages "contain internal details
+      // (env var names, provider slugs, base URLs) that must not reach the
+      // browser". A list of every configured provider plus a repo path is
+      // exactly that, and the workflow path has no scrub of its own.
+      //
+      // The log line also covers BOTH ways of arriving here: a rule that
+      // denied everything, and a rule that THREW (which fails closed to the
+      // same empty set). Telling an operator to widen a rule that is correct
+      // and whose backend is down would be wrong half the time.
+      logger.error('No configured provider is eligible for this request', {
+        task,
+        reachableCandidates: candidates.map((c) => c.slug),
+        fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts permitted none of them — by policy, or because it threw (a rule that cannot be evaluated denies). Check above for a resolver failure; if there is none, widen the rule or give the agent an explicit provider.',
+      });
+      throw new NoEligibleProviderError();
+    }
+  }
+
+  const providerSlug = providerSet ? agent.provider : eligibleCandidates[0].slug;
   const model = modelSet ? agent.model : await getDefaultModelForTask(task);
 
   // System fallbacks: every other reachable candidate, capped. Skipped
   // if the agent already has an explicit fallback list.
   const explicitFallbacks = agent.fallbackProviders ?? [];
-  const fallbacks =
-    explicitFallbacks.length > 0
-      ? explicitFallbacks
-      : candidates
-          .map((c) => c.slug)
-          .filter((slug) => slug !== providerSlug)
-          .slice(0, SYSTEM_FALLBACK_LIMIT);
+  const usingExplicit = explicitFallbacks.length > 0;
+  // Drawn from the FULL candidate list, not from `eligibleCandidates`. The two
+  // are filtered independently and with different `source` values, so a rule
+  // stricter about the silent fill than about the primary keeps working —
+  // narrowing this by the primary's answer would silently conflate them.
+  const proposed = usingExplicit
+    ? explicitFallbacks
+    : candidates.map((c) => c.slug).filter((slug) => slug !== providerSlug);
+
+  const permitted = await resolveEligibleProviders(proposed, {
+    task,
+    source: usingExplicit ? 'explicit' : 'system',
+    primarySlug: providerSlug,
+  });
+
+  // Cap AFTER filtering, and only the system fill — an explicit list is the
+  // operator's and is not truncated.
+  //
+  // Order is the whole point: capping first would let ineligible providers
+  // occupy slots and silently shrink the list. With five providers and a rule
+  // permitting only the fourth and fifth, cap-then-filter yields ONE fallback
+  // where two were permitted, reachable and within budget. The three slots
+  // must count providers that can actually be used.
+  const fallbacks = usingExplicit ? [...permitted] : permitted.slice(0, SYSTEM_FALLBACK_LIMIT);
 
   logger.debug('resolveAgentProviderAndModel: filled empty agent binding', {
     agentProvider: agent.provider,

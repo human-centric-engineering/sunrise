@@ -33,7 +33,11 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
-import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  resolveAgentProviderAndModel,
+  NoEligibleProviderError,
+  NoProviderConfiguredError,
+} from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -616,7 +620,20 @@ export async function executeAgentCall(
     throw new ExecutorError(
       step.id,
       'provider_unavailable',
-      `No provider configured for agent "${agentSlug}"`,
+      // Forward the resolver's OWN message for the two errors it defines, and
+      // only those. "No provider configured" is actively wrong for
+      // NoEligibleProviderError — providers ARE configured, the rule permits
+      // none. Forwarding every error would be wider than intended: this catch
+      // also wraps a Prisma failure in `pickActiveProviderCandidates` and a
+      // throw from `getDefaultModelForTask`, whose messages can carry env var
+      // names and base URLs (`streaming-handler.ts` scrubs exactly those).
+      // Prefixed, not replaced: forwarding alone dropped the agent slug, and in
+      // a multi-step workflow that left an operator mapping step.id back to an
+      // agent by hand. The slug is already in the fallback message below, so it
+      // is not newly disclosed.
+      err instanceof NoEligibleProviderError || err instanceof NoProviderConfiguredError
+        ? `Agent "${agentSlug}": ${err.message}`
+        : `No provider configured for agent "${agentSlug}"`,
       err
     );
   }

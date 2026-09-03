@@ -60,6 +60,34 @@ Three properties come with it:
 | `mcp-resources.ts`                 | `initAppMcpResources`                | `lib/orchestration/mcp/resource-registry.ts`                | roll back, log, degrade        |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
 
+## The other family: `registerApp*`
+
+Three scaffolds are reached by a **direct call from the one core module that
+needs them**, not through `createAppInitGate`. Different mechanism, identical
+failure if the wiring is lost — a scaffold nothing imports is dead wiring, and
+every fork's registrations in it silently never run. `fork-init-seams.test.ts`
+guards them by import detection and pins the count at **three**, so adding a
+fourth is a deliberate edit rather than a silent one.
+
+| Edit this file     | Export                           | Called by                                                                               |
+| ------------------ | -------------------------------- | --------------------------------------------------------------------------------------- |
+| `db-drift.ts`      | `registerAppDriftProbes`         | `scripts/db/check-drift.ts` (a CLI, not a runtime module)                               |
+| `rate-limit.ts`    | `registerAppRateLimits`          | the rate-limit middleware, at module scope                                              |
+| `llm-providers.ts` | `registerAppProviderEligibility` | `ensureWired()` in `lib/orchestration/llm/provider-eligibility.ts`, lazily on first use |
+
+The third is the one to read if you are adding a fourth. It was originally wired
+as a module-load side effect of its consumer, which made registration depend on
+**who imported what**: a second consumer that did not import the first ran with
+no rule registered and silently got an unfiltered answer. Wiring from the module
+that owns the state removes the question, and is the shape to copy — the guard's
+count exists partly so that decision gets made again consciously.
+
+Unlike the `initApp*` family there is no shared gate, so this doc's
+throw-behaviour contract below does not apply to them: each registrar's consumer
+decides what a failure means. For provider eligibility a failure denies (a
+restriction that cannot be established must not be read as permission), which is
+deliberately stricter than the roll-back-and-degrade default opposite.
+
 Two `initApp*` exports are **not** in this family, and
 `tests/unit/fork-init-seams.test.ts` pins both exemptions with their reasons
 rather than letting them be absorbed by a path prefix.

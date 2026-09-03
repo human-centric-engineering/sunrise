@@ -173,6 +173,20 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     message: 'No LLM provider is configured for this Sunrise instance yet.',
     action: 'Run the setup wizard at Admin → AI Orchestration to add a provider.',
   },
+  // Distinct from the above on purpose, and the distinction is the entire
+  // reason `NoEligibleProviderError` exists: providers ARE configured, but this
+  // install's eligibility rule permits none of them here. Without this entry
+  // the code falls through to the generic `internal_error` copy, and an
+  // operator is told "Something Went Wrong" — strictly less diagnostic than the
+  // error it was split away from.
+  no_eligible_provider: {
+    title: 'No Permitted Provider',
+    message: 'LLM providers are configured, but none of them is permitted for this request.',
+    // No file paths or internal identifiers: this registry is rendered by
+    // whatever client is attached, including a fork's end-user chat surface.
+    // The operator-facing detail lives in the thrown error and the logs.
+    action: 'Ask an administrator to review this deployment’s provider settings.',
+  },
   no_default_model_configured: {
     title: 'Default Model Not Set',
     message: 'A default model for this task has not been chosen yet.',

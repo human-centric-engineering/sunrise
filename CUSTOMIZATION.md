@@ -445,6 +445,7 @@ small and conflict-free.)
 | `lib/app/context-contributors.ts`          | prompt-context loaders (`buildContext` types)      | the chat context builder (server route-handler)                             |
 | `lib/app/admin-nav.ts`                     | admin sidebar sections                             | `admin-sidebar.tsx` (client)                                                |
 | `lib/app/db-drift.ts`                      | Prisma-unmodelled DB objects                       | `scripts/db/check-drift.ts` (CI / `/pre-pr`)                                |
+| `lib/app/llm-providers.ts`                 | which LLM providers may be used                    | `resolveEligibleProviders` on first use (server)                            |
 | `lib/app/public-nav.ts`                    | public nav / footer link lists                     | `public-nav.tsx`, `public-footer.tsx` (client)                              |
 | `lib/app/protected-nav.ts`                 | authenticated nav link list                        | `protected-nav.tsx` (client)                                                |
 | `lib/app/auth-landing.ts`                  | where a signed-in user lands, and its label        | `lib/auth-landing/route.ts` → a dozen sites (proxy + server + client)       |

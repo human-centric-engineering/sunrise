@@ -11,6 +11,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import { prisma } from '@/lib/db/client';
 import type { AiProviderConfig } from '@/types/prisma';
@@ -91,7 +92,23 @@ export async function getEffectiveAgentDefaults(agent: {
         where: { isActive: true },
         orderBy: { createdAt: 'asc' },
       });
-      const candidate = rows.find((r) => r.isLocal || isApiKeyEnvVarSet(r.apiKeyEnvVar));
+      const reachable = rows.filter((r) => r.isLocal || isApiKeyEnvVarSet(r.apiKeyEnvVar));
+      // Same eligibility rule the runtime applies when IT picks the provider
+      // (`resolveAgentProviderAndModel`, source 'primary'). Without this the
+      // form previews a provider the policy forbids while every turn runs on a
+      // different one — the mirror's whole job is to show what will actually
+      // happen, so an unfiltered preview is worse than no preview.
+      const permitted = await resolveEligibleProviders(
+        reachable.map((r) => r.slug),
+        { task: 'chat', source: 'primary', primarySlug: null }
+      );
+      const candidate = reachable.find((r) => permitted.includes(r.slug));
+      // Deliberate divergence when the rule permits NOTHING: the runtime
+      // refuses with `NoEligibleProviderError`, but this must never throw — it
+      // is a form preview — so the field stays empty and inherited. The form
+      // therefore shows "nothing to inherit" rather than a provider the policy
+      // forbids, which is the safe half of the disagreement. Pinned in
+      // `provider-resolution-parity.test.ts`.
       if (candidate) provider = candidate.slug;
     } catch (err) {
       logger.warn('prefetch: effective provider lookup failed', {
