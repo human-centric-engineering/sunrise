@@ -21,7 +21,14 @@
  *
  * ## What it does and does not constrain
  *
- * It filters every provider choice Sunrise makes ON THE CALLER'S BEHALF:
+ * Within `resolveAgentProviderAndModel` — its only consumer — it filters every
+ * choice Sunrise makes ON THE CALLER'S BEHALF. That scope is the whole story
+ * and is smaller than it sounds: a provider resolved by any other route is
+ * unfiltered, notably a workflow step's model resolution in `llm-runner.ts` and
+ * knowledge keyword enrichment, which reach `getProvider` straight from the
+ * model registry. `.context/orchestration/llm-providers.md` carries the
+ * coverage table; do not read this seam as a whole-tree guarantee. The three
+ * choices it does cover:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;

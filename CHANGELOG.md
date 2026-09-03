@@ -21,7 +21,11 @@ release process.
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
   fork-owned `lib/app/providers.ts` — constrains which providers Sunrise may
-  choose **on a caller's behalf**. Today it silently attaches up to three other
+  choose on a caller's behalf **when resolving an agent's binding**. It hangs
+  off `resolveAgentProviderAndModel`; provider choices made by another route
+  (a workflow step's model resolution, knowledge keyword enrichment) are not
+  filtered — `.context/orchestration/llm-providers.md` carries the coverage
+  table, including the two gaps it names. Today it silently attaches up to three other
   configured providers as automatic fallbacks whenever an agent has no explicit
   list, and picks the primary itself whenever an agent leaves that field blank;
   on a shared install either can send an org's prompts to a provider it never
