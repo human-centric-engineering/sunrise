@@ -25,6 +25,7 @@ import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
+import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
 import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
 import {
@@ -298,15 +299,45 @@ export interface AudioProviderResolution {
 
 /**
  * Try a single matrix row as an audio provider. Returns the resolved
- * provider + model id if every guard (breaker closed, provider
- * loads, transcribe() exists) passes, or `null` so the caller can
- * fall through. Logs each rejection at the same level the old inline
- * loop used.
+ * provider + model id if every guard (breaker closed, eligible under the
+ * app's provider rule, provider loads, transcribe() exists) passes, or
+ * `null` so the caller can fall through. Logs each rejection at the same
+ * level the old inline loop used.
  */
 async function tryAudioRow(
   row: { providerSlug: string; modelId: string },
   source: 'operator_default' | 'matrix_fallback'
 ): Promise<AudioProviderResolution | null> {
+  // Provider eligibility, on the fallback arm only. `'matrix_fallback'` is
+  // Sunrise choosing — no operator pinned this row, we are walking the matrix
+  // in order — so an org's policy applies to it exactly as it applies to the
+  // agent resolver's automatic fill. `'operator_default'` is the pin an
+  // operator set in Settings → Default models, the same category as an
+  // explicit `agent.provider`, and is left alone.
+  //
+  // Denial returns `null` rather than throwing, because that is what every
+  // other guard in this function already does and what the loop above is
+  // written to handle: an unusable row yields to the next one. A rule that
+  // permits nothing therefore ends at `getAudioProvider() === null`, which all
+  // three callers already treat as "speech-to-text is unavailable" — a
+  // fail-closed outcome with an existing, tested user-facing path, and one
+  // that still lets a permitted row further down the matrix serve the request.
+  if (source === 'matrix_fallback') {
+    const permitted = await isProviderEligible(row.providerSlug, {
+      task: 'audio',
+      source: 'primary',
+      primarySlug: null,
+    });
+    if (!permitted) {
+      logger.info('Skipping audio provider — not permitted by the app eligibility rule', {
+        providerSlug: row.providerSlug,
+        modelId: row.modelId,
+        source,
+      });
+      return null;
+    }
+  }
+
   const breaker = getBreaker(row.providerSlug);
   if (!breaker.canAttempt()) {
     logger.info('Skipping audio provider — circuit breaker open', {

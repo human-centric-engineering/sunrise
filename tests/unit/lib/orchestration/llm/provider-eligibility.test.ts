@@ -168,7 +168,7 @@ describe('isProviderEligible', () => {
   });
 
   it('denies when the rule throws', async () => {
-    // Fail-closed, same as the list form — this is what the two model-registry
+    // Fail-closed, same as the list form — this is what the four non-resolver
     // callers rely on to refuse rather than run.
     registerProviderEligibility(() => {
       throw new Error('policy backend down');

@@ -513,40 +513,43 @@ paths marked covered below and no others**.
 ### Per-path coverage
 
 The seam is consulted at **two** chokepoints — the agent-binding resolver, and
-the model registry paths that never reach it (`llm-runner.ts`,
-`keyword-enricher.ts`, which call `isProviderEligible` directly). Everything
+the four paths that never reach it and call `isProviderEligible` directly
+(`llm-runner.ts`, `keyword-enricher.ts`, the retroactive-review route, and
+audio resolution in `provider-manager.ts`). Everything
 else resolving a provider is unfiltered, and a fork building an isolation
 boundary needs this table rather than an assurance.
 
-**This table is derived by hand and has twice been found short.** The t-656
-review named four uncovered paths; closing two of them (t-658) turned up two
-more it had missed — the retroactive-review judge and the audio matrix
-fallback, both listed below as open gaps. Re-derive it from
-`grep -rn 'getProvider(' lib app` before trusting it as complete, rather than
-from the previous version of this list.
+**This table is derived by hand, and it has been short once.** The t-656
+review named four paths that resolve a provider outside the agent resolver.
+There are six: re-deriving the list from `grep -rn 'getProvider(' lib app`
+during t-658 turned up the retroactive-review judge and the audio matrix
+fallback, neither of which anyone had looked at. Both are covered now, but the
+lesson stands — re-derive this from the tree before trusting it as complete,
+never from the previous version of the list.
 
-| Path                                                                                                                  | Resolves via                                                          | Covered?                                                                                                                                                                               |
-| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                   | `resolveAgentProviderAndModel`                                        | **Yes**                                                                                                                                                                                |
-| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`) | `getModel(override).provider` in `llm-runner.ts`                      | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time.          |
-| The same steps with NO override                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts`                   | **Yes** — `source: 'primary'`. Refused with `ExecutorError` code `provider_not_permitted`, non-retriable.                                                                              |
-| Knowledge keyword enrichment                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`                     | **Yes** — `source: 'primary'`. Refused with `ProviderNotPermittedError` before any chunk is read; the admin route answers 403 / `provider_not_permitted`.                              |
-| Retroactive execution review, when the request sets no `modelOverride` and `EVALUATION_JUDGE_MODEL` is unset          | `getDefaultModelForTask('chat')` in `executions/[id]/review/route.ts` | **No — and this is a gap.** Same shape as the `llm-runner.ts` row above; Sunrise chooses, so by the rule it should be filtered. Found while closing t-658 and not folded into it.      |
-| Audio transcription's matrix fallback, when no operator default is pinned or the pinned row is unreachable            | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`        | **No — and this is a gap.** A caller's voice recording goes to whichever active audio row sorts first. Structurally the same leak as the automatic fallback fill, on a different task. |
-| An operator's pinned audio default                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`       | **No** — an operator pinned it in Settings → Default models. Same category as an explicit `agent.provider`.                                                                            |
-| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                              | env vars read in `complete-session.ts`                                | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                         |
+| Path                                                                                                                  | Resolves via                                                          | Covered?                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                   | `resolveAgentProviderAndModel`                                        | **Yes**                                                                                                                                                                                                                       |
+| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`) | `getModel(override).provider` in `llm-runner.ts`                      | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time.                                                 |
+| The same steps with NO override                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts`                   | **Yes** — `source: 'primary'`. Refused with `ExecutorError` code `provider_not_permitted`, non-retriable.                                                                                                                     |
+| Knowledge keyword enrichment                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`                     | **Yes** — `source: 'primary'`. Refused with `ProviderNotPermittedError` before any chunk is read; the admin route answers 403 / `provider_not_permitted`.                                                                     |
+| Retroactive execution review, when the request sets no `modelOverride` and `EVALUATION_JUDGE_MODEL` is unset          | `getDefaultModelForTask('chat')` in `executions/[id]/review/route.ts` | **Yes** — `source: 'primary'`. Answers 403 / `provider_not_permitted` before the judge runs, so the execution's step outputs never reach the barred provider.                                                                 |
+| A review request's own `modelOverride`, or `EVALUATION_JUDGE_MODEL`                                                   | the same line, first two arms                                         | **No** — both are an operator's recorded choice. Same category as an explicit `agent.provider`.                                                                                                                               |
+| Audio transcription's matrix fallback, when no operator default is pinned or the pinned row is unreachable            | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`        | **Yes** — `source: 'primary'`, `task: 'audio'`. A barred row is skipped like any other unusable row and the loop tries the next; if none is permitted, `getAudioProvider()` returns `null` and speech-to-text is unavailable. |
+| An operator's pinned audio default                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`       | **No** — an operator pinned it in Settings → Default models. Same category as an explicit `agent.provider`.                                                                                                                   |
+| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                              | env vars read in `complete-session.ts`                                | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                                                                |
 
-#### The second chokepoint, and why it refuses differently
+#### The second chokepoint, and why each path refuses differently
 
-The two model-registry rows are the same shape as each other: Sunrise picks a
-model from the registry and uses whatever provider that model names, without
-passing through the resolver. They call `isProviderEligible(slug, ctx)` — the
-single-candidate form of the same rule, with the same fail-closed semantics —
-because there is no list to filter: the registry named one provider and there
-is no second choice to fall back to.
+The four non-resolver rows share a shape: Sunrise picks a model (or a matrix
+row) and uses whatever provider it names, without passing through the resolver.
+They call `isProviderEligible(slug, ctx)` — the single-candidate form of the
+same rule, with the same fail-closed semantics — because there is no list to
+filter: one provider is named and, except in the audio loop, there is no second
+choice to fall back to.
 
-They reuse **`source: 'primary'`** rather than introducing a fourth value, and
-that is deliberate. An unanswered `source` fails open, so a new value would mean
+They all reuse **`source: 'primary'`** rather than introducing a fourth value,
+and that is deliberate. An unanswered `source` fails open, so a new value would mean
 every rule already written in a fork silently does not cover the paths it was
 added for. Reusing `'primary'` extends an existing rule to them for free, and
 the category is honestly the same one: Sunrise chose, nobody's intent is being
@@ -554,18 +557,29 @@ overridden.
 
 What they do **not** share is the refusal, because the events are not alike:
 
-| Path               | Refusal                                                              | Retriable?                                                                                           | Where it surfaces                                                               |
-| ------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Workflow step      | `ExecutorError`, code `provider_not_permitted`                       | **No.** A policy denial is deterministic; a `retry` strategy would spend its whole budget re-asking. | The step's `errorStrategy` applies — `fail` stops the run, `continue` skips it. |
-| Keyword enrichment | `ProviderNotPermittedError`, thrown before any chunk is read or sent | n/a — the whole run is refused, so there is no partial-success state                                 | `POST …/enrich-keywords` → **403**, code `provider_not_permitted`               |
+| Path               | Refusal                                                                                                 | Retriable?                                                                                           | Where it surfaces                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Workflow step      | `ExecutorError`, code `provider_not_permitted`                                                          | **No.** A policy denial is deterministic; a `retry` strategy would spend its whole budget re-asking. | The step's `errorStrategy` applies — `fail` stops the run, `continue` skips it.                                                                  |
+| Keyword enrichment | `ProviderNotPermittedError`, thrown before any chunk is read or sent                                    | n/a — the whole run is refused, so there is no partial-success state                                 | `POST …/enrich-keywords` → **403**, code `provider_not_permitted`                                                                                |
+| Retroactive review | none — the route returns early, before `getProvider` and before the judge runs                          | n/a                                                                                                  | `POST …/executions/:id/review` → **403**, code `provider_not_permitted`                                                                          |
+| Audio resolution   | none — `tryAudioRow` returns `null`, exactly as it does for an open breaker or a missing `transcribe()` | n/a                                                                                                  | the loop tries the next matrix row; with none permitted, `getAudioProvider()` returns `null` and every caller reports speech-to-text unavailable |
 
-Both check **before** the provider is constructed and before a token is sent, so
-a refusal means nothing left the deployment. In both cases the operator-facing
-detail — which provider, which model, which fix — is in the log rather than the
-message: `ExecutorError`'s message reaches the SSE client, and the workflow path
-has no scrub of its own. The 403's message does name the provider and model,
-because that route is admin-only and both are already shown throughout the
-orchestration admin.
+Audio is the one that denies without an error, and that is the loop's own
+convention rather than a softening: `tryAudioRow` already returns `null` for
+every other reason a row is unusable, the loop above it already falls through to
+the next row, and all three callers of `getAudioProvider()` already handle
+`null`. Throwing there would invent a failure mode the callers do not have, and
+would lose the useful half of the behaviour — a permitted row further down the
+matrix can still serve the request.
+
+All four check **before** the provider is constructed and before a token is
+sent, so a refusal means nothing left the deployment. On the workflow path the
+operator-facing detail — which provider, which model, which fix — is in the log
+rather than the message, because `ExecutorError`'s message reaches the SSE
+client and that path has no scrub of its own. The two 403 messages do name the
+provider and model: both routes are admin-only, and both identifiers are already
+shown throughout the orchestration admin. The audio skip is logged at `info`,
+alongside the breaker and `transcribe()` skips it sits with.
 
 One consequence worth knowing before writing a rule: because the primary is
 fail-closed, **a rule that throws costs provider-less agents an outage** rather

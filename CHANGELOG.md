@@ -31,41 +31,37 @@ release process.
   agent-binding resolver AND the agent form's own preview, so the form cannot
   show an operator a provider the rule forbids while the runtime uses a
   different one — and `isProviderEligible`, its single-candidate form, at the
-  two paths that read the model registry without ever reaching the resolver.
-  It wires itself lazily on first use rather than as a consumer's import side
+  four paths that resolve a provider without ever reaching the resolver. It
+  wires itself lazily on first use rather than as a consumer's import side
   effect, so which module reached it first cannot change whether the rule
   applies. `.context/orchestration/llm-providers.md` carries the per-path
-  coverage table — hand-derived, and it names the paths still uncovered as well
-  as the covered ones. Read it before treating the seam as a whole-tree
+  coverage table — hand-derived, and it names the deliberately-uncovered paths
+  as well as the covered ones. Read it before treating the seam as a whole-tree
   guarantee.
   - **Covers** the auto-picked primary and both fallback lists (the agent's own
     and the automatic fill), at **both** of the resolver's return paths — a
     fully-configured agent exits early and never reaches the candidates block,
     so filtering only the latter would leave the majority of agents
-    unconstrained — plus a workflow step with no `modelOverride` and knowledge
-    keyword enrichment, which resolve the `chat` task default and inherit
-    whatever provider that model names.
+    unconstrained — plus the four paths that never reach the resolver: a
+    workflow step with no `modelOverride`, knowledge keyword enrichment, a
+    retroactive review whose model came from neither a request override nor
+    `EVALUATION_JUDGE_MODEL`, and audio transcription's matrix fallback. The
+    first three resolve the `chat` task default and inherit whatever provider
+    that model names; the last walks the audio matrix in order and would
+    otherwise send a caller's voice recording to whichever row sorts first.
   - **Does not cover, by design**, an explicit `agent.provider`, an explicit
-    step `modelOverride`, an operator's pinned audio default, or the
+    step or review `modelOverride`, an operator's pinned audio default, or the
     `EVALUATION_DEFAULT_*` / `EVALUATION_JUDGE_MODEL` environment variables.
     Each is an operator's recorded decision, and rerouting one would make a
     request answer from a provider its own configuration does not name. Enforce
     those at write time — do not offer a provider the org has not approved.
-  - **Does not cover, and should**: two paths where Sunrise chooses and the rule
-    still does not reach. The retroactive-review judge when the request sets no
-    `modelOverride` and `EVALUATION_JUDGE_MODEL` is unset, and audio
-    transcription's matrix fallback — which sends a caller's recording to
-    whichever active audio row sorts first whenever no default is pinned or the
-    pinned one is unreachable. Both are listed as open gaps in the coverage
-    table. Neither is exploitable on any current install (the seam is inert
-    until a fork registers a rule, and there is no per-org policy in the tree),
-    but a fork adopting the seam should not read this as whole-tree coverage.
   - `ctx.source` is `'primary' | 'system' | 'explicit'`, so a rule can be
     stricter about what nobody asked for than about what an operator wrote down.
-    The two model-registry paths reuse `'primary'` rather than adding a fourth
+    The four non-resolver paths reuse `'primary'` rather than adding a fourth
     value: an unanswered source fails open, so a new one would mean every rule
-    already written silently did not cover the paths it was added for. A rule
-    cannot widen or reorder the candidate set.
+    already written silently did not cover the paths it was added for.
+    `ctx.task` separates them — audio arrives as `'audio'`, the rest as
+    `'chat'`. A rule cannot widen or reorder the candidate set.
   - **Fail-closed, in each path's own vocabulary.** A rule that throws, or
     permits nothing, denies every candidate — a restriction that cannot be
     evaluated must not be read as permission. The resolver raises the new
@@ -77,7 +73,13 @@ release process.
     `retry` does not spend its budget re-asking a deterministic question.
     Keyword enrichment raises the new `ProviderNotPermittedError` before a
     single chunk is read, and `POST …/enrich-keywords` answers **403** with code
-    `provider_not_permitted`. In every case the refusal happens before the
+    `provider_not_permitted`; `POST …/executions/:id/review` answers the same
+    403 before the judge runs. Audio is the exception, deliberately:
+    `tryAudioRow` returns `null` for a barred row exactly as it already does for
+    an open breaker or a missing `transcribe()`, so the loop tries the next
+    matrix row, and only an entirely unpermitted matrix leaves
+    `getAudioProvider()` null — which every caller already reports as
+    speech-to-text unavailable. In every case the refusal happens before the
     provider is constructed, so nothing left the deployment. An agent that names
     its provider keeps working and loses only its fallbacks.
   - **With nothing registered it returns its input unchanged**, so single-tenant

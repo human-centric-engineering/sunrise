@@ -24,7 +24,7 @@
  * Wherever it is consulted it filters every
  * choice Sunrise makes ON THE CALLER'S BEHALF, and nothing an operator chose.
  * That line — *whose decision was it* — is the whole rule; the list below is
- * only where the rule has been applied so far. The five choices it covers:
+ * only where the rule has been applied so far. The seven choices it covers:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;
@@ -34,24 +34,32 @@
  *    back to the `chat` task default and then to whatever provider that model
  *    names;
  *  - **knowledge keyword enrichment** (`keyword-enricher.ts`), same shape and
- *    no override to begin with.
+ *    no override to begin with;
+ *  - the **retroactive-review judge** (`executions/[id]/review/route.ts`) when
+ *    neither a request `modelOverride` nor `EVALUATION_JUDGE_MODEL` answered;
+ *  - **audio transcription's matrix fallback** (`tryAudioRow`), the row chosen
+ *    by matrix order when no operator default is pinned or the pinned one is
+ *    unreachable.
  *
- * The last two are a SECOND chokepoint, added in t-658. They do not pass
- * through `resolveAgentProviderAndModel` at all — they read the model registry
- * directly — so they consult this module themselves via `isProviderEligible`,
- * and each ships its own refusal (`ExecutorError` with code
- * `provider_not_permitted`; `ProviderNotPermittedError`) because a workflow
- * step failing mid-run and an ingestion job failing are not the same event as a
- * chat turn failing.
+ * The last four are a SECOND chokepoint. They do not pass through
+ * `resolveAgentProviderAndModel` at all — they read the model registry, or the
+ * audio matrix, directly — so they consult this module themselves via
+ * `isProviderEligible`, and each refuses in its own vocabulary: an
+ * `ExecutorError` (`provider_not_permitted`), a `ProviderNotPermittedError`, a
+ * 403, and — in the audio loop — a `null` that skips the row and tries the
+ * next, which is what every other guard in that function already does.
  *
  * It does NOT filter an **explicit `agent.provider`**, an explicit step
- * `modelOverride`, or the `EVALUATION_DEFAULT_PROVIDER` / `_MODEL` environment
- * variables. Each is an operator's recorded decision, and silently rerouting
- * one would make a request answer from a provider its own configuration does
- * not name — harder to diagnose than a refusal, and a worse failure than the
- * one being prevented. `.context/orchestration/llm-providers.md` carries the
- * per-path coverage table, which stays the authority: read it before treating
- * this seam as a whole-tree guarantee.
+ * `modelOverride`, a review request's own `modelOverride`, an operator's pinned
+ * audio default, or the `EVALUATION_DEFAULT_PROVIDER` / `_MODEL` /
+ * `EVALUATION_JUDGE_MODEL` environment variables. Each is an operator's
+ * recorded decision, and silently rerouting one would make a request answer
+ * from a provider its own configuration does not name — harder to diagnose than
+ * a refusal, and a worse failure than the one being prevented.
+ * `.context/orchestration/llm-providers.md` carries the per-path coverage
+ * table. It is hand-derived and has been short once, so re-derive it from the
+ * tree rather than from its previous version before treating this seam as a
+ * whole-tree guarantee.
  *
  * The intended enforcement for that case is at the point of CHOOSING: a
  * per-org install should not offer a provider the org has not approved, so the
@@ -84,6 +92,7 @@
  * @see lib/orchestration/prefetch-helpers.ts — the agent form's preview
  * @see lib/orchestration/engine/llm-runner.ts — the workflow-step chokepoint
  * @see lib/orchestration/knowledge/keyword-enricher.ts — the ingestion chokepoint
+ * @see lib/orchestration/llm/provider-manager.ts — `tryAudioRow`, the audio chokepoint
  */
 
 import { logger } from '@/lib/logging';
@@ -108,11 +117,12 @@ export interface ProviderEligibilityContext {
    *
    *  - `'primary'` — Sunrise is CHOOSING the provider, because no explicit
    *    choice was recorded anywhere: an agent with a blank `provider`, a
-   *    workflow step with no `modelOverride`, or keyword enrichment, which has
-   *    no override to give. Nobody's intent is being overridden, so this is the
+   *    workflow step with no `modelOverride`, keyword enrichment (which has no
+   *    override to give), an unpinned retroactive-review judge, or an audio
+   *    matrix row reached by order rather than by an operator's pin. Nobody's intent is being overridden, so this is the
    *    strictest case to constrain and the safest.
    *
-   *    The two model-registry paths deliberately REUSE this value rather than
+   *    The four non-resolver paths deliberately REUSE this value rather than
    *    introducing a fourth. An unanswered `source` fails open (see
    *    `ProviderEligibilityResolver` below), so a new value would mean every
    *    rule already written in a fork silently does not cover the paths it was
@@ -178,9 +188,10 @@ let wiring: Promise<void> | null = null;
  * `resolveEligibleProviders` and never imports the resolver, so the agent
  * form's preview ran the filter with nothing registered and silently returned
  * everything — the exact drift the filter was added to close. Every other
- * `lib/app/*` registrar has one consumer and never met this; this seam has
- * four (the resolver, the form's preview, `llm-runner.ts` and
- * `keyword-enricher.ts`), which is what made the old shape untenable.
+ * `lib/app/*` registrar has one consumer and never met this; this seam has six
+ * (the resolver, the form's preview, `llm-runner.ts`, `keyword-enricher.ts`,
+ * the retroactive-review route and `provider-manager.ts`), which is what made
+ * the old shape untenable.
  *
  * Putting the wiring beside the state removes the question entirely: any
  * caller of `resolveEligibleProviders` gets the rule, whatever imported it.
@@ -346,17 +357,19 @@ export async function resolveEligibleProviders(
  * the same rule, the same fail-closed semantics, and the same logging — a
  * throwing or failed-to-register rule denies here too.
  *
- * Deliberately does NOT throw. The two callers refuse in their own vocabulary
- * (`ExecutorError` for a workflow step, `ProviderNotPermittedError` for an
- * ingestion run) because those failures are caught, reported and remedied in
- * different places; a shared throw here would force both through one error type
- * that fits neither.
+ * Deliberately does NOT throw. Each caller refuses in its own vocabulary — an
+ * `ExecutorError` for a workflow step, `ProviderNotPermittedError` for an
+ * ingestion run, a 403 for the retroactive-review route, and a plain `null` in
+ * the audio loop, where every other guard already denies that way and the
+ * caller is written to try the next row. Those failures are caught, reported
+ * and remedied in different places; a shared throw here would force all of them
+ * through one error type that fits none.
  *
  * Only call this where SUNRISE chose the provider. A provider reached through
  * an operator's recorded choice — an explicit `agent.provider`, a step's
- * `modelOverride`, an `EVALUATION_DEFAULT_*` env var — is out of scope by the
- * seam's rule, and passing one here would reroute a decision that was made
- * deliberately.
+ * `modelOverride`, a pinned audio default, an `EVALUATION_*` env var — is out
+ * of scope by the seam's rule, and passing one here would reroute a decision
+ * that was made deliberately.
  */
 export async function isProviderEligible(
   slug: string,
