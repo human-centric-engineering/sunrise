@@ -22,11 +22,22 @@
  *   export function registerAppProviderEligibility(): void {
  *     registerProviderEligibility(async (candidates, ctx) => {
  *       const approved = await approvedProviderSlugs();
- *       // An explicit list is a recorded operator choice; the system fill is
- *       // not. A fork may reasonably be stricter about the latter.
- *       return ctx.source === 'system'
- *         ? candidates.filter((slug) => approved.has(slug))
- *         : candidates;
+ *       // Filter EVERY source by default. A rule that answers for only some of
+ *       // them is fail-open for the rest — and `'primary'` is the one that
+ *       // matters most, because a provider-less agent (the system-seeded
+ *       // pattern-advisor, quiz-master, mcp-system and model-auditor all ship
+ *       // that way) would otherwise send its prompts to whichever provider
+ *       // happens to sort first, while the policy looks enforced.
+ *       return candidates.filter((slug) => approved.has(slug));
+ *     });
+ *
+ * Relax deliberately, never by omission — e.g. to honour an operator's own
+ * fallback list while still constraining what Sunrise picks:
+ *
+ *     registerProviderEligibility(async (candidates, ctx) => {
+ *       if (ctx.source === 'explicit') return candidates;
+ *       const approved = await approvedProviderSlugs();
+ *       return candidates.filter((slug) => approved.has(slug));
  *     });
  *   }
  *

@@ -183,7 +183,7 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     title: 'No Permitted Provider',
     message: 'LLM providers are configured, but none of them is permitted for this request.',
     action:
-      'Check the provider-eligibility rule registered in lib/app/providers.ts, or give this agent an explicit provider.',
+      'Check the server logs for a provider-eligibility rule failure, then review the rule registered in lib/app/providers.ts or give this agent an explicit provider.',
   },
   no_default_model_configured: {
     title: 'Default Model Not Set',

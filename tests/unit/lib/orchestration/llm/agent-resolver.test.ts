@@ -104,6 +104,12 @@ function setProviders(rows: FakeProviderRow[]): void {
 describe('resolveAgentProviderAndModel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // FORK NOTE: `agent-resolver` auto-wires `lib/app/providers.ts` at module
+    // load, so a fork that fills that seam would otherwise have its live rule
+    // applied to these core assertions and see them fail in a file it never
+    // touched — the #480/#525/#530 coupling class. Clearing per test keeps
+    // this file about the resolver rather than about the fork's policy.
+    resetProviderEligibility();
   });
 
   describe('explicit values pass through', () => {

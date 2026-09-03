@@ -616,7 +616,13 @@ export async function executeAgentCall(
     throw new ExecutorError(
       step.id,
       'provider_unavailable',
-      `No provider configured for agent "${agentSlug}"`,
+      // Forward the resolver's own message, as `chat-turn.ts` already does.
+      // "No provider configured" is actively wrong for NoEligibleProviderError
+      // — providers ARE configured, the rule permits none — and it discards the
+      // text that names the rule and the two ways out.
+      err instanceof Error && err.message
+        ? err.message
+        : `No provider configured for agent "${agentSlug}"`,
       err
     );
   }

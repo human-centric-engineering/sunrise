@@ -11,19 +11,22 @@
  * nasty: the form shows an operator one provider while their agent answers from
  * another, and nothing errors.
  *
- * ## Why this file exists now, which is not the reason it was asked for
+ * ## Why this file exists, and why its original premise was wrong
  *
- * The t-656 task predicted the provider-eligibility seam would desync these
- * two and asked for a parity assertion on that basis. It does not: the seam
- * filters FALLBACKS, and `getEffectiveAgentDefaults` does not compute fallbacks
- * at all — it returns `{ provider, model, inheritedProvider, inheritedModel }`
- * and has no fallback logic anywhere in the file. Nothing this seam touches can
- * make the mirror disagree.
+ * The t-656 task predicted the eligibility seam would desync these two. The
+ * first version of this file argued back: the seam filtered only FALLBACKS, and
+ * the mirror computes none, so nothing could diverge.
  *
- * The duplication is real regardless, it was untested, and the next step in the
- * programme is exactly what would break it: a per-org rule that constrains the
- * PRIMARY provider would have to be applied here too, or the form silently
- * previews a provider the org is not allowed to use. That is what this guards.
+ * That was true when written and false two commits later. Widening the seam to
+ * the auto-picked PRIMARY put it squarely on the one thing the mirror does
+ * compute, and the divergence became live rather than hypothetical: a rule
+ * denying `anthropic` left the form previewing `anthropic (inherited)` while
+ * every chat turn ran on `openai`. The tests kept passing only because they ran
+ * with no resolver registered — the seam's inert default hid the very case the
+ * file exists to catch.
+ *
+ * `getEffectiveAgentDefaults` now applies the same rule, and the registered-rule
+ * case below is what stops the premise going stale a second time.
  *
  * @see lib/orchestration/llm/agent-resolver.ts — the runtime resolver
  * @see lib/orchestration/prefetch-helpers.ts — the form's mirror
@@ -59,6 +62,10 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { getEffectiveAgentDefaults } from '@/lib/orchestration/prefetch-helpers';
 
@@ -94,9 +101,9 @@ const ROWS = [
   },
 ];
 
-/** Resolve the same agent through both paths. */
-async function bothWays(agent: { provider: string; model: string }) {
-  vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue(ROWS as never);
+/** Resolve the same agent through both paths, against `rows` (default `ROWS`). */
+async function bothWays(agent: { provider: string; model: string }, rows: unknown[] = ROWS) {
+  vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue(rows as never);
   const runtime = await resolveAgentProviderAndModel({ ...agent, fallbackProviders: [] }, 'chat');
   const preview = await getEffectiveAgentDefaults(agent);
   return { runtime, preview };
@@ -105,6 +112,10 @@ async function bothWays(agent: { provider: string; model: string }) {
 describe('agent binding parity: runtime resolver vs the form’s preview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // FORK NOTE: both modules under test reach `lib/app/providers.ts` through
+    // the resolver's module-scope auto-wire. Without this, a fork that fills
+    // the seam sees these core assertions fail in a file it never touched.
+    resetProviderEligibility();
   });
 
   it('agrees when the agent sets both fields explicitly', async () => {
@@ -143,6 +154,49 @@ describe('agent binding parity: runtime resolver vs the form’s preview', () =>
 
     expect(preview.provider).toBe(runtime.providerSlug);
     expect(preview.model).toBe(runtime.model);
+  });
+
+  it('agrees on the primary when an eligibility rule is registered', async () => {
+    // The case the old premise argued could not exist. Without the mirror
+    // applying the rule this asserts `openai === anthropic` and fails.
+    //
+    // Its own fixture: two REACHABLE providers, so denying the first leaves a
+    // real second choice. The file-level ROWS has only one reachable provider
+    // (that is what makes the reachability tests bite), and denying it would
+    // raise NoEligibleProviderError instead of exercising parity.
+    const twoReachable = [
+      {
+        id: 'q1',
+        slug: 'openai',
+        apiKeyEnvVar: 'PRESENT_KEY',
+        isLocal: false,
+        isActive: true,
+        createdAt: new Date('2026-04-15T00:00:00Z'),
+      },
+      {
+        id: 'q2',
+        slug: 'anthropic',
+        apiKeyEnvVar: 'PRESENT_KEY',
+        isLocal: false,
+        isActive: true,
+        createdAt: new Date('2026-04-16T00:00:00Z'),
+      },
+    ];
+
+    try {
+      registerProviderEligibility((candidates, ctx) =>
+        ctx.source === 'primary' ? candidates.filter((slug) => slug !== 'openai') : candidates
+      );
+
+      const { runtime, preview } = await bothWays({ provider: '', model: '' }, twoReachable);
+
+      expect(preview.provider).toBe(runtime.providerSlug);
+      // Not merely equal — equal to the PERMITTED one. Both agreeing on a
+      // forbidden provider would satisfy parity and still be wrong.
+      expect(preview.provider).toBe('anthropic');
+    } finally {
+      resetProviderEligibility();
+    }
   });
 
   it('the mirror computes no fallbacks, so the eligibility seam cannot desync it', async () => {

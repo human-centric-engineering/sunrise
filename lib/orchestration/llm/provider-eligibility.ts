@@ -112,6 +112,16 @@ export interface ProviderEligibilityContext {
  * for `source: 'primary'` means the request fails with
  * `NoEligibleProviderError` rather than silently using a disallowed provider.
  * Anything not in `candidates` is ignored — a resolver widens nothing.
+ *
+ * **Answer for every `source`, or the denial is partial.** The three are
+ * filtered independently, and the fallback lists are drawn from the full
+ * candidate set rather than from what survived the primary filter — so a rule
+ * that denies a provider for `'primary'` and waves everything through for
+ * `'system'` still lets that provider serve the request the moment the primary
+ * errors and failover runs. That independence is deliberate (a fork may want to
+ * be stricter about the silent fill than about an operator's own list), and it
+ * makes an unanswered source fail OPEN. Filter every source unless you are
+ * relaxing one on purpose.
  */
 export type ProviderEligibilityResolver = (
   candidates: readonly string[],

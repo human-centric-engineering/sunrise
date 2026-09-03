@@ -25,7 +25,7 @@ import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import {
   resolveEligibleProviders,
-  resetProviderEligibility,
+  hasProviderEligibilityResolver,
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { registerAppProviderEligibility } from '@/lib/app/providers';
 import type { TaskType } from '@/types/orchestration';
@@ -33,19 +33,31 @@ import type { TaskType } from '@/types/orchestration';
 // Auto-wire the fork's eligibility rule at module load — the same arrangement
 // every other `lib/app/*` seam uses, so a fork registers without touching core.
 //
-// The reset is not redundant. `registerProviderEligibility` rejects a SECOND,
-// different resolver, and the documented registration style is an inline arrow
-// — a fresh reference every call. Without this, any re-evaluation of this
-// module (Next dev HMR, most obviously) would re-run the scaffold, hit that
-// guard, and abort the module: every chat turn, `chat_turn` and `agent_call`
-// step dead until a full restart. Clearing first makes a re-wire idempotent
-// while keeping the guard for the mistake it exists to catch — two
-// registrations inside ONE wiring pass, which is a fork registering twice.
+// Guarded on "is anything already registered?", which is the only shape that
+// satisfies all three requirements at once:
 //
-// `lib/db/drift-probes.ts` ships `resetAppDriftProbes()` for the same reason,
-// and `registerRateLimitRule` returns rather than throwing on a repeat.
-resetProviderEligibility();
-registerAppProviderEligibility();
+//  - A re-evaluation of THIS module (Next dev HMR) must not wedge the app.
+//    `registerProviderEligibility` rejects a second, different resolver and the
+//    documented style is an inline arrow — a fresh reference every call — so an
+//    unguarded re-run would abort the module and kill every chat turn until a
+//    full restart.
+//  - A registration made ELSEWHERE must never be discarded. This module is not
+//    loaded at boot; it is first evaluated by a request. A fork registering
+//    from `initApp()` (awaited in `instrumentation.ts` at process start, and
+//    the natural home for one-time startup work) would have its rule wiped by
+//    the first chat request — silently turning a restriction seam into the
+//    identity function with every provider permitted again.
+//  - Two registrations inside ONE wiring pass must still throw, because that is
+//    a fork genuinely registering twice and one of the rules would not run.
+//
+// An earlier version called `resetProviderEligibility()` unconditionally here.
+// It fixed the first requirement by breaking the second — a fail-open on a
+// restriction control, which is the worse of the two by a distance. It also
+// cited `resetAppDriftProbes()` as precedent, which does not hold:
+// `scripts/db/check-drift.ts` registers without resetting.
+if (!hasProviderEligibilityResolver()) {
+  registerAppProviderEligibility();
+}
 
 /** Number of system fallbacks to attach when an agent has no explicit provider. */
 const SYSTEM_FALLBACK_LIMIT = 3;
@@ -143,11 +155,19 @@ export async function resolveAgentProviderAndModel(
       // Fails loudly rather than falling back to an ineligible provider. The
       // message names the fix, because the state it describes ("configured but
       // not permitted") is invisible from the provider list alone.
+      // Deliberately covers BOTH ways of getting here. A rule that denies
+      // everything and a rule that THREW are indistinguishable at this point —
+      // `resolveEligibleProviders` fails closed to `[]` either way — so telling
+      // the operator to "widen the rule" would be wrong advice half the time,
+      // to someone whose rule is correct and whose policy backend is down. The
+      // logger.error emitted at the failure carries which one it was.
       throw new NoEligibleProviderError(
         `No configured provider is permitted for this request. ${candidates.length} ` +
           `provider(s) are active and reachable (${candidates.map((c) => c.slug).join(', ')}), ` +
           'but the rule registered via registerProviderEligibility() in lib/app/providers.ts ' +
-          'allows none of them. Widen that rule, or give the agent an explicit provider.'
+          'permitted none of them — either by policy, or because it threw and a rule that ' +
+          'cannot be evaluated denies. Check the logs for a rule failure first; if there is ' +
+          'none, widen the rule or give the agent an explicit provider.'
       );
     }
   }

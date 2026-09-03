@@ -52,6 +52,10 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
 import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import {
@@ -233,6 +237,61 @@ describe('getAgentModels', () => {
     };
   }
 
+  it('drops the whole response and warns when a matrix row drifts from the schema', async () => {
+    // Pre-existing branch, uncovered until now. It is the guard against a
+    // server-side shape change silently populating the agent form's model
+    // dropdown with `undefined`s, so it is worth an assertion rather than an
+    // exemption — a warn-and-drop that nobody has ever run is a guess.
+    vi.mocked(serverFetch).mockResolvedValue(okRes());
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: [{ providerSlug: 'anthropic' }], // no modelId — fails the schema
+    } as never);
+
+    const result = await getAgentModels();
+
+    expect(result).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('drifted from schema'),
+      expect.objectContaining({ issueCount: expect.any(Number) })
+    );
+  });
+
+  it('maps every tierRole to its tier hint, and an unknown one to undefined', async () => {
+    // The other pre-existing gap: `deriveTier`'s switch. Mirrors
+    // `mapTierRoleToTier` in db-model-adapter, so a divergence here shows the
+    // form a different tier from the one the runtime uses.
+    vi.mocked(serverFetch).mockResolvedValue(okRes());
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: [
+        makeMatrixRow({ modelId: 'm-think', tierRole: 'thinking' }),
+        makeMatrixRow({ modelId: 'm-infra', tierRole: 'infrastructure' }),
+        makeMatrixRow({ modelId: 'm-worker', tierRole: 'worker' }),
+        makeMatrixRow({ modelId: 'm-control', tierRole: 'control_plane' }),
+        makeMatrixRow({ modelId: 'm-embed', tierRole: 'embedding' }),
+        makeMatrixRow({ modelId: 'm-unknown', tierRole: 'something-new' }),
+        makeMatrixRow({
+          modelId: 'm-sovereign',
+          tierRole: 'thinking',
+          deploymentProfiles: ['sovereign'],
+        }),
+      ],
+    } as never);
+
+    const result = await getAgentModels();
+    const tierOf = (id: string) => result?.find((m) => m.id === id)?.tier;
+
+    expect(tierOf('m-think')).toBe('frontier');
+    expect(tierOf('m-infra')).toBe('budget');
+    expect(tierOf('m-worker')).toBe('mid');
+    expect(tierOf('m-control')).toBe('mid');
+    expect(tierOf('m-embed')).toBe('mid');
+    expect(tierOf('m-unknown')).toBeUndefined();
+    // sovereign wins over tierRole — a sovereign deployment collapses to local
+    expect(tierOf('m-sovereign')).toBe('local');
+  });
+
   it('fetches /provider-models with capability=chat AND capability=reasoning in parallel', async () => {
     // Two URLs in flight at once — the API's `capability` filter is a
     // single value, so reasoning-only models (e.g. `o1-mini` with
@@ -386,6 +445,52 @@ describe('getEffectiveAgentDefaults', () => {
     });
     expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
     expect(getDefaultModelForTaskOrNull).not.toHaveBeenCalled();
+  });
+
+  it('skips a provider the eligibility rule forbids when filling an empty provider', async () => {
+    // The form previews what the agent will ACTUALLY use, so it has to apply
+    // the same rule the runtime does when Sunrise picks the provider. Without
+    // this the operator sees `openai (inherited)` while every turn runs on
+    // `anthropic` — a silent disagreement with nothing to alert on.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_KEY' },
+      { id: 'p2', slug: 'anthropic', isLocal: false, apiKeyEnvVar: 'ANTHROPIC_KEY' },
+    ] as never);
+    // BOTH reachable, so the rule is the only thing that can exclude one.
+    vi.mocked(isApiKeyEnvVarSet).mockImplementation(() => true);
+    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+
+    try {
+      registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'openai'));
+
+      const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
+
+      expect(result.provider).toBe('anthropic');
+      expect(result.inheritedProvider).toBe(true);
+    } finally {
+      resetProviderEligibility();
+    }
+  });
+
+  it('leaves the provider empty when the rule permits nothing', async () => {
+    // The mirror must never throw — it is a form preview. It reports what it
+    // found, which is nothing, and the field shows as un-inherited rather than
+    // guessing a provider the policy forbids.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_KEY' },
+    ] as never);
+    vi.mocked(isApiKeyEnvVarSet).mockImplementation(() => true);
+    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+
+    try {
+      registerProviderEligibility(() => []);
+
+      const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
+
+      expect(result.provider).toBe('');
+    } finally {
+      resetProviderEligibility();
+    }
   });
 
   it('fills empty provider from the first reachable active provider', async () => {
