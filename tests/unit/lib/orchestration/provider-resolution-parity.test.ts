@@ -66,7 +66,10 @@ import {
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
-import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  resolveAgentProviderAndModel,
+  NoEligibleProviderError,
+} from '@/lib/orchestration/llm/agent-resolver';
 import { getEffectiveAgentDefaults } from '@/lib/orchestration/prefetch-helpers';
 
 /**
@@ -212,11 +215,18 @@ describe('agent binding parity: runtime resolver vs the form’s preview', () =>
     // untested boundary. Asserting it here means a future change to either
     // side has to decide about this deliberately.
     try {
+      // Its OWN fixture. Inheriting the previous test's `findMany` made this
+      // pass in isolation for the wrong reason: with no rows, the resolver died
+      // on `rows.filter` and a bare `.rejects.toThrow()` accepted the TypeError.
+      // It would have stayed green with the whole eligibility check deleted.
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue(ROWS as never);
       registerProviderEligibility(() => []);
 
+      // The specific error, not "anything" — that is what makes it fail when
+      // the refusal stops happening.
       await expect(
         resolveAgentProviderAndModel({ provider: '', model: '', fallbackProviders: [] }, 'chat')
-      ).rejects.toThrow();
+      ).rejects.toThrow(NoEligibleProviderError);
 
       const preview = await getEffectiveAgentDefaults({ provider: '', model: '' });
 

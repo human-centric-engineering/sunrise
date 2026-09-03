@@ -627,8 +627,12 @@ export async function executeAgentCall(
       // also wraps a Prisma failure in `pickActiveProviderCandidates` and a
       // throw from `getDefaultModelForTask`, whose messages can carry env var
       // names and base URLs (`streaming-handler.ts` scrubs exactly those).
+      // Prefixed, not replaced: forwarding alone dropped the agent slug, and in
+      // a multi-step workflow that left an operator mapping step.id back to an
+      // agent by hand. The slug is already in the fallback message below, so it
+      // is not newly disclosed.
       err instanceof NoEligibleProviderError || err instanceof NoProviderConfiguredError
-        ? err.message
+        ? `Agent "${agentSlug}": ${err.message}`
         : `No provider configured for agent "${agentSlug}"`,
       err
     );

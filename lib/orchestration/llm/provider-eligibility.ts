@@ -215,10 +215,21 @@ export function registerProviderEligibility(resolver: ProviderEligibilityResolve
  * Clears the registered rule AND the auto-wire latch, so the next call to
  * `resolveEligibleProviders` re-runs `lib/app/llm-providers.ts` from scratch.
  *
- * For tests, and for the dev-server hot-reload case — a fork editing its rule
- * needs the edit picked up, which a latch alone would prevent. Same reason
- * `lib/db/drift-probes.ts` ships `resetAppDriftProbes()`. Not `__`-prefixed
- * because it is not test-only.
+ * For tests, and available for a dev-server hot-reload hook — a fork editing
+ * its rule needs the edit picked up, which a latch alone would prevent. Same
+ * reason `lib/db/drift-probes.ts` ships `resetAppDriftProbes()`.
+ *
+ * **Nothing in core calls this at runtime today**, and that fact is load-bearing
+ * for what is deliberately NOT guarded here: a reset landing while an async
+ * registrar is mid-flight could let the superseded wire register afterwards.
+ * A generation counter closes that, and was written and then removed — the
+ * scenario needs a runtime reset, no runtime reset exists, and no failing test
+ * could be constructed for it. Unfalsifiable concurrency logic inside a
+ * restriction control is a worse trade than the race it prevents.
+ *
+ * If anything ever calls this outside a test — a real hot-reload hook, an
+ * admin "reload policy" action — the race becomes reachable and the counter
+ * should come back WITH a test that fails without it.
  */
 export function resetProviderEligibility(): void {
   appResolver = null;
@@ -228,7 +239,15 @@ export function resetProviderEligibility(): void {
   wiring = null;
 }
 
-/** Whether an app resolver is registered. Exposed for tests and diagnostics. */
+/**
+ * Whether an app resolver is registered. **Tests only.**
+ *
+ * Deliberately synchronous, so it cannot trigger the lazy auto-wire — which
+ * means before the first `resolveEligibleProviders` it answers `false` on an
+ * install that DOES have a rule. Fine for a test asserting the shipped default;
+ * actively misleading as a health check, which would report "no policy" on a
+ * correctly configured fork.
+ */
 export function hasProviderEligibilityResolver(): boolean {
   return appResolver !== null;
 }
@@ -245,7 +264,25 @@ export async function resolveEligibleProviders(
 ): Promise<readonly string[]> {
   // Before the null check, not after: the whole point is that the rule is
   // registered no matter which module reached us.
-  await ensureWired();
+  //
+  // A throwing REGISTRAR is caught here rather than propagating raw. It still
+  // fails closed — deny everything — but as `[]` it reaches the same reporting
+  // the rest of this seam uses. Left to propagate, it surfaced as generic
+  // "Something Went Wrong" on the chat path and as "No provider configured"
+  // from the agent_call executor: the very message this branch calls actively
+  // wrong for a policy failure. And because `wiring` latches the rejection,
+  // every later resolution in the process repeated it.
+  try {
+    await ensureWired();
+  } catch (error) {
+    logger.error('provider eligibility scaffold failed to register; denying every candidate', {
+      task: context.task,
+      source: context.source,
+      error: error instanceof Error ? error.message : String(error),
+      fix: 'lib/app/llm-providers.ts threw while registering. Until it is fixed, no provider is eligible — a restriction that cannot be ESTABLISHED must not be read as permission either.',
+    });
+    return [];
+  }
 
   if (!appResolver) return candidates;
   // Nothing to decide, and a fork's rule may be a policy lookup. Every chat

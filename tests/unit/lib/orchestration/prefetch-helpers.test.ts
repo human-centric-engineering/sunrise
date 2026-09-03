@@ -474,8 +474,9 @@ describe('getEffectiveAgentDefaults', () => {
 
   it('leaves the provider empty when the rule permits nothing', async () => {
     // The mirror must never throw — it is a form preview. It reports what it
-    // found, which is nothing, and the field shows as un-inherited rather than
-    // guessing a provider the policy forbids.
+    // found, which is nothing: the field stays EMPTY and still reads as
+    // inherited (`inheritedProvider: !providerSet`, and the agent set none),
+    // rather than guessing a provider the policy forbids.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_KEY' },
     ] as never);
