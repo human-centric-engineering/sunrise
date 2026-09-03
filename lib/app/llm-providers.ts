@@ -10,13 +10,16 @@
  * registers without wiring anything, and it applies to EVERY consumer rather
  * than only whichever module happened to import the resolver.
  *
- * Register a rule constraining which providers an agent may **fall back to**.
- * By default Sunrise attaches up to three other configured providers as
- * automatic fallbacks whenever an agent has no explicit list — convenient on a
- * single-tenant install, and a leak on a shared one, because the prompt can
- * reach a provider nobody approved.
+ * Register a rule constraining which providers **Sunrise may pick on a
+ * caller's behalf**. By default it attaches up to three other configured
+ * providers as automatic fallbacks whenever an agent has no explicit list,
+ * picks the primary itself whenever an agent leaves that field blank, and — on
+ * a workflow step with no `modelOverride`, or a keyword-enrichment run — takes
+ * the `chat` task default and inherits whatever provider that model names.
+ * Convenient on a single-tenant install, and a leak on a shared one, because
+ * the prompt (or the document) can reach a provider nobody approved.
  *
- * Example — an org may only fall back within the providers it has approved:
+ * Example — an org may only use the providers it has approved:
  *
  *   import { registerProviderEligibility } from '@/lib/orchestration/llm/provider-eligibility';
  *   import { approvedProviderSlugs } from '@/lib/app/billing';
@@ -51,8 +54,9 @@
  * Before you write one:
  *
  *  - **It runs on the request hot path**, up to TWICE per binding resolution —
- *    once for the auto-picked primary and once for the fallback list. Cache
- *    whatever you look up; do not query per call.
+ *    once for the auto-picked primary and once for the fallback list — and once
+ *    more per workflow step and per keyword-enrichment run. Cache whatever you
+ *    look up; do not query per call.
  *  - **If you load policy before registering, RETURN the promise.** This
  *    function may be `async` and its caller awaits it. What must not happen is
  *    a floated promise —
@@ -63,18 +67,29 @@
  *  - **Throwing denies, it never permits**, and is logged loudly — a
  *    restriction that cannot be evaluated must not be read as permission.
  *  - **It filters what Sunrise chooses, not what an operator chose.** The
- *    auto-picked primary and both fallback lists go through your rule; an
- *    explicit `agent.provider` does not. Enforce that one at write time — do
+ *    auto-picked primary, both fallback lists, and the task-default model's
+ *    provider on the two model-registry paths all go through your rule. An
+ *    explicit `agent.provider`, an explicit step `modelOverride` and the
+ *    `EVALUATION_DEFAULT_*` env vars do not. Enforce those at write time — do
  *    not offer a provider the org has not approved.
- *  - **The primary is fail-closed.** If your rule permits nothing for
- *    `source: 'primary'`, the request raises `NoEligibleProviderError` rather
- *    than using a provider you did not approve. A rule that throws therefore
- *    costs provider-less agents an outage, not a silent bypass — deliberate,
- *    but know it before putting a network call in here.
+ *  - **`source: 'primary'` means every path where Sunrise chose**, not only the
+ *    agent one: a blank `agent.provider`, a workflow step with no
+ *    `modelOverride`, and a keyword-enrichment run all arrive under it. So a
+ *    rule you already wrote reaches the two model-registry paths without an
+ *    edit — which is why they reuse the value rather than adding a fourth one
+ *    your rule would not answer for.
+ *  - **Everything Sunrise chooses is fail-closed.** If your rule permits
+ *    nothing for `source: 'primary'`, the request raises
+ *    `NoEligibleProviderError`, a workflow step fails with a non-retriable
+ *    `provider_not_permitted`, and an enrichment run is refused with a 403 —
+ *    rather than any of them using a provider you did not approve. A rule that
+ *    throws therefore costs provider-less agents an outage and stops workflow
+ *    steps, not a silent bypass — deliberate, but know it before putting a
+ *    network call in here.
  *
  * Full guide: `.context/orchestration/llm-providers.md`
  */
 export function registerAppProviderEligibility(): void | Promise<void> {
   // No app provider-eligibility rule by default: every configured provider is
-  // an eligible fallback, which is Sunrise's single-tenant behaviour.
+  // eligible everywhere, which is Sunrise's single-tenant behaviour.
 }

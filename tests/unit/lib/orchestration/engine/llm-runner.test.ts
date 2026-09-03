@@ -4,6 +4,8 @@
  * Covers:
  *   - runLlmCall: happy path, model fallback, unknown model, provider
  *     unavailable, LLM call failure, and fire-and-forget cost logging.
+ *   - The provider-eligibility check (t-658), including the boundary: a step
+ *     with no `modelOverride` is filtered, one WITH an override is not.
  *   - interpolatePrompt: all expression forms, missing references,
  *     non-string values, and unrecognized expressions.
  */
@@ -38,6 +40,10 @@ import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError, toProviderError } from '@/lib/orchestration/llm/provider';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -732,5 +738,105 @@ describe('interpolatePrompt', () => {
       );
       expect(result).toBe('AC');
     });
+  });
+});
+// ─── Provider eligibility (t-658) ────────────────────────────────────────────
+
+describe('runLlmCall — provider eligibility', () => {
+  const BARRED = 'openai';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+  });
+
+  /** A working provider/model/cost stack, so only the rule decides the outcome. */
+  function setupStack() {
+    const chatMock = vi.fn().mockResolvedValue({
+      content: 'answer',
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    vi.mocked(getDefaultModelForTask).mockResolvedValue('default-chat-model');
+    vi.mocked(getModel).mockReturnValue({ provider: BARRED } as never);
+    vi.mocked(getProvider).mockResolvedValue({ chat: chatMock } as never);
+    vi.mocked(calculateCost).mockReturnValue({
+      totalCostUsd: 0.001,
+      isLocal: false,
+      inputCostUsd: 0.0006,
+      outputCostUsd: 0.0004,
+    });
+    vi.mocked(logCost).mockResolvedValue(null);
+    return chatMock;
+  }
+
+  it('refuses a step with no modelOverride when the rule bars the provider', async () => {
+    const chatMock = setupStack();
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== BARRED));
+
+    await expect(runLlmCall(makeCtx(), { stepId: 's1', prompt: 'hello' })).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'provider_not_permitted',
+      // Deterministic: retrying re-asks a question whose answer cannot change
+      // inside the run, so a `retry` strategy must not spend its budget on it.
+      retriable: false,
+    });
+
+    // Refused BEFORE the provider is constructed and before a token is sent.
+    expect(vi.mocked(getProvider)).not.toHaveBeenCalled();
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reroute a step that names its own model', async () => {
+    // The boundary, pinned rather than assumed. An explicit `modelOverride` is
+    // an operator's recorded choice in the workflow definition — the same
+    // category as an explicit `agent.provider`, which the seam also leaves
+    // alone. The rule below denies EVERYTHING, so this passing is the whole
+    // proof that the override path never consults it.
+    const chatMock = setupStack();
+    registerProviderEligibility(() => []);
+
+    const result = await runLlmCall(makeCtx(), {
+      stepId: 's1',
+      prompt: 'hello',
+      modelOverride: 'operator-picked-model',
+    });
+
+    expect(result.content).toBe('answer');
+    expect(result.model).toBe('operator-picked-model');
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    // And the task default was never consulted, which is what makes this the
+    // override path rather than a coincidence.
+    expect(vi.mocked(getDefaultModelForTask)).not.toHaveBeenCalled();
+  });
+
+  it('runs normally when the rule permits the provider', async () => {
+    // The control for the refusal above: without it, that test also passes on a
+    // build where every step is refused regardless of the rule.
+    const chatMock = setupStack();
+    registerProviderEligibility((candidates) => candidates);
+
+    const result = await runLlmCall(makeCtx(), { stepId: 's1', prompt: 'hello' });
+
+    expect(result.content).toBe('answer');
+    expect(chatMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing rule refuses the step rather than letting it run', async () => {
+    // Fail-closed on this path too. A rule that cannot be evaluated is not
+    // permission — otherwise a fork's policy backend going down would quietly
+    // route every workflow step wherever the registry pointed.
+    const chatMock = setupStack();
+    registerProviderEligibility(() => {
+      throw new Error('policy backend down');
+    });
+
+    await expect(runLlmCall(makeCtx(), { stepId: 's1', prompt: 'hello' })).rejects.toMatchObject({
+      code: 'provider_not_permitted',
+    });
+    expect(chatMock).not.toHaveBeenCalled();
   });
 });

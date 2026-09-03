@@ -463,8 +463,10 @@ On a shared one it is a leak: an org's prompts can reach a provider that org
 never approved, and nobody asked for any of them.
 
 `registerProviderEligibility` (`lib/orchestration/llm/provider-eligibility.ts`),
-registered from the fork-owned `lib/app/llm-providers.ts`, constrains which
-providers may be used as fallbacks:
+registered from the fork-owned `lib/app/llm-providers.ts`, constrains every
+provider Sunrise picks on a caller's behalf — the auto-picked primary, both
+fallback lists, and the task-default model's provider on the two paths that
+read the model registry directly:
 
 ```typescript
 import { registerProviderEligibility } from '@/lib/orchestration/llm/provider-eligibility';
@@ -481,14 +483,14 @@ export function registerAppProviderEligibility(): void {
 }
 ```
 
-| Property                 | Behaviour                                                                                                                                                                                                                                                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Default**              | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                                                                                                                      |
-| **Applied at**           | Both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path. A fully-configured agent never reaches the second one, so filtering only there would cover the minority of agents.                                                                                                   |
-| **`ctx.source`**         | `'primary'` when Sunrise is CHOOSING the provider (the agent left it blank), `'system'` for the automatic fallback fill, `'explicit'` for the agent's own fallback list. A fork may answer differently for each.                                                                                                                |
-| **No eligible provider** | When `source: 'primary'` permits nothing, the request fails with `NoEligibleProviderError` (`code: no_eligible_provider`) rather than using a disallowed provider. Distinct from `NoProviderConfiguredError`, which means "nothing is set up" and sends an operator to the setup wizard — a different fix in a different place. |
-| **Cannot widen**         | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                                                                                                                   |
-| **On throw**             | Logged as an error and treated as "nothing is eligible" — a restriction that cannot be evaluated must not be read as permission. An agent that names its provider keeps working and loses only its fallbacks; one that does not gets `NoEligibleProviderError`.                                                                 |
+| Property                 | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Default**              | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                                                                                                                                                                                                                                           |
+| **Applied at**           | Both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path (a fully-configured agent never reaches the second, so filtering only there would cover the minority of agents) — plus `llm-runner.ts` and `keyword-enricher.ts`, which never reach the resolver. See the coverage table below.                                                                                                            |
+| **`ctx.source`**         | `'primary'` when Sunrise is CHOOSING the provider — the agent left it blank, or a workflow step / enrichment run has no explicit model — `'system'` for the automatic fallback fill, `'explicit'` for the agent's own fallback list. A fork may answer differently for each.                                                                                                                                                                         |
+| **No eligible provider** | Fail-closed everywhere, in each path's own vocabulary: `NoEligibleProviderError` (`code: no_eligible_provider`) from the resolver, `ExecutorError` (`code: provider_not_permitted`, non-retriable) from a workflow step, `ProviderNotPermittedError` → 403 from keyword enrichment. All distinct from `NoProviderConfiguredError`, which means "nothing is set up" and sends an operator to the setup wizard — a different fix in a different place. |
+| **Cannot widen**         | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                                                                                                                                                                                                                                        |
+| **On throw**             | Logged as an error and treated as "nothing is eligible" — a restriction that cannot be evaluated must not be read as permission. An agent that names its provider keeps working and loses only its fallbacks; one that does not gets `NoEligibleProviderError`.                                                                                                                                                                                      |
 
 **Within the agent-binding resolver it filters every choice Sunrise makes on
 the caller's behalf — the auto-picked primary and both fallback lists — but
@@ -506,28 +508,64 @@ per-org rules. **Both layers are needed** — write-time validation cannot reach
 agents configured while a provider was permitted and stranded when the policy
 later changed, and it does not see writes that bypass the form (config import,
 seeds, the admin API). This seam is the runtime backstop for those, **on the
-paths listed below and no others**.
+paths marked covered below and no others**.
 
-### What this seam does NOT cover
+### Per-path coverage
 
-It hangs off `resolveAgentProviderAndModel`. Anything resolving a provider by
-another route is unfiltered, and a fork building an isolation boundary needs
-this list rather than an assurance:
+The seam is consulted at **two** chokepoints — the agent-binding resolver, and
+the model registry paths that never reach it (`llm-runner.ts`,
+`keyword-enricher.ts`, which call `isProviderEligible` directly). Everything
+else resolving a provider is unfiltered, and a fork building an isolation
+boundary needs this table rather than an assurance.
 
-| Path                                                                                                                  | Resolves via                                        | Covered?                                                                                                                                                                      |
-| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                   | `resolveAgentProviderAndModel`                      | **Yes**                                                                                                                                                                       |
-| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`) | `getModel(override).provider` in `llm-runner.ts`    | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time. |
-| The same steps with NO override                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts` | **No — and this is a gap.** Sunrise is choosing here, so by the rule above it should be filtered. Tracked as t-658, not shipped.                                              |
-| Knowledge keyword enrichment                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`   | **No — same gap.** Sunrise chooses the model; the org's document text goes to whatever provider it names.                                                                     |
-| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                              | env vars read in `complete-session.ts`              | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                |
+**This table is derived by hand and has twice been found short.** The t-656
+review named four uncovered paths; closing two of them (t-658) turned up two
+more it had missed — the retroactive-review judge and the audio matrix
+fallback, both listed below as open gaps. Re-derive it from
+`grep -rn 'getProvider(' lib app` before trusting it as complete, rather than
+from the previous version of this list.
 
-The two rows marked _gap_ are the same shape: Sunrise picks a model from the
-registry and uses whatever provider that model names, without passing through
-the resolver. Closing them means filtering at a **second** chokepoint with its
-own fail-closed consequences (a workflow step or an ingestion run failing rather
-than a chat turn), which is why it is separate work rather than a quiet
-widening of this one.
+| Path                                                                                                                  | Resolves via                                                          | Covered?                                                                                                                                                                               |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                   | `resolveAgentProviderAndModel`                                        | **Yes**                                                                                                                                                                                |
+| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`) | `getModel(override).provider` in `llm-runner.ts`                      | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time.          |
+| The same steps with NO override                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts`                   | **Yes** — `source: 'primary'`. Refused with `ExecutorError` code `provider_not_permitted`, non-retriable.                                                                              |
+| Knowledge keyword enrichment                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`                     | **Yes** — `source: 'primary'`. Refused with `ProviderNotPermittedError` before any chunk is read; the admin route answers 403 / `provider_not_permitted`.                              |
+| Retroactive execution review, when the request sets no `modelOverride` and `EVALUATION_JUDGE_MODEL` is unset          | `getDefaultModelForTask('chat')` in `executions/[id]/review/route.ts` | **No — and this is a gap.** Same shape as the `llm-runner.ts` row above; Sunrise chooses, so by the rule it should be filtered. Found while closing t-658 and not folded into it.      |
+| Audio transcription's matrix fallback, when no operator default is pinned or the pinned row is unreachable            | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`        | **No — and this is a gap.** A caller's voice recording goes to whichever active audio row sorts first. Structurally the same leak as the automatic fallback fill, on a different task. |
+| An operator's pinned audio default                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`       | **No** — an operator pinned it in Settings → Default models. Same category as an explicit `agent.provider`.                                                                            |
+| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                              | env vars read in `complete-session.ts`                                | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                         |
+
+#### The second chokepoint, and why it refuses differently
+
+The two model-registry rows are the same shape as each other: Sunrise picks a
+model from the registry and uses whatever provider that model names, without
+passing through the resolver. They call `isProviderEligible(slug, ctx)` — the
+single-candidate form of the same rule, with the same fail-closed semantics —
+because there is no list to filter: the registry named one provider and there
+is no second choice to fall back to.
+
+They reuse **`source: 'primary'`** rather than introducing a fourth value, and
+that is deliberate. An unanswered `source` fails open, so a new value would mean
+every rule already written in a fork silently does not cover the paths it was
+added for. Reusing `'primary'` extends an existing rule to them for free, and
+the category is honestly the same one: Sunrise chose, nobody's intent is being
+overridden.
+
+What they do **not** share is the refusal, because the events are not alike:
+
+| Path               | Refusal                                                              | Retriable?                                                                                           | Where it surfaces                                                               |
+| ------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Workflow step      | `ExecutorError`, code `provider_not_permitted`                       | **No.** A policy denial is deterministic; a `retry` strategy would spend its whole budget re-asking. | The step's `errorStrategy` applies — `fail` stops the run, `continue` skips it. |
+| Keyword enrichment | `ProviderNotPermittedError`, thrown before any chunk is read or sent | n/a — the whole run is refused, so there is no partial-success state                                 | `POST …/enrich-keywords` → **403**, code `provider_not_permitted`               |
+
+Both check **before** the provider is constructed and before a token is sent, so
+a refusal means nothing left the deployment. In both cases the operator-facing
+detail — which provider, which model, which fix — is in the log rather than the
+message: `ExecutorError`'s message reaches the SSE client, and the workflow path
+has no scrub of its own. The 403's message does name the provider and model,
+because that route is admin-only and both are already shown throughout the
+orchestration admin.
 
 One consequence worth knowing before writing a rule: because the primary is
 fail-closed, **a rule that throws costs provider-less agents an outage** rather

@@ -62,6 +62,7 @@ import { prisma } from '@/lib/db/client';
 import {
   enrichDocumentKeywords,
   NoChunksToEnrichError,
+  ProviderNotPermittedError,
 } from '@/lib/orchestration/knowledge/keyword-enricher';
 import { NoDefaultModelConfiguredError } from '@/lib/orchestration/llm/settings-resolver';
 
@@ -234,6 +235,34 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/enrich-keywor
       const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('CONFLICT');
+    });
+
+    it('returns 403 with a distinct code when the provider is not permitted', async () => {
+      // Not 500. The admin is authorised and nothing is broken — this
+      // deployment's provider-eligibility rule bars the provider the chat task
+      // default resolves to, which is the policy working.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue(
+        makeDocument({ chunkCount: 2 }) as never
+      );
+      vi.mocked(enrichDocumentKeywords).mockRejectedValue(
+        new ProviderNotPermittedError('openai', 'gpt-4o-mini')
+      );
+
+      const response = await POST(makeRequest(), makeParams(DOC_ID));
+
+      expect(response.status).toBe(403);
+      const data = await parseJson<{ success: boolean; error: { code: string; message: string } }>(
+        response
+      );
+      expect(data.success).toBe(false);
+      // Its own code, not the generic FORBIDDEN a role check produces — a
+      // client has to be able to tell "your policy bars this" from "you may
+      // not do this", because the remedy is in a different place.
+      expect(data.error.code).toBe('provider_not_permitted');
+      // The operator needs to know WHICH provider and which model slot.
+      expect(data.error.message).toContain('openai');
+      expect(data.error.message).toContain('gpt-4o-mini');
     });
 
     it('re-throws unexpected errors (propagates non-enricher errors)', async () => {

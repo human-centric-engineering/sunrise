@@ -22,23 +22,36 @@
  * ## What it does and does not constrain
  *
  * Wherever it is consulted it filters every
- * choice Sunrise makes ON THE CALLER'S BEHALF. That scope is the whole story
- * and is smaller than it sounds: a provider resolved by any other route is
- * unfiltered, notably a workflow step's model resolution in `llm-runner.ts` and
- * knowledge keyword enrichment, which reach `getProvider` straight from the
- * model registry. `.context/orchestration/llm-providers.md` carries the
- * coverage table; do not read this seam as a whole-tree guarantee. The three
- * choices it does cover:
+ * choice Sunrise makes ON THE CALLER'S BEHALF, and nothing an operator chose.
+ * That line — *whose decision was it* — is the whole rule; the list below is
+ * only where the rule has been applied so far. The five choices it covers:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;
  *  - the **system fallback fill**, the up-to-three providers nobody asked for;
- *  - the agent's own **explicit `fallbackProviders`** list.
+ *  - the agent's own **explicit `fallbackProviders`** list;
+ *  - a **workflow step with no `modelOverride`** (`llm-runner.ts`), which falls
+ *    back to the `chat` task default and then to whatever provider that model
+ *    names;
+ *  - **knowledge keyword enrichment** (`keyword-enricher.ts`), same shape and
+ *    no override to begin with.
  *
- * It does NOT filter an **explicit `agent.provider`**. That is an operator's
- * recorded decision, and silently rerouting it would make an agent answer from
- * a provider its own configuration does not name — harder to diagnose than a
- * refusal, and a worse failure than the one being prevented.
+ * The last two are a SECOND chokepoint, added in t-658. They do not pass
+ * through `resolveAgentProviderAndModel` at all — they read the model registry
+ * directly — so they consult this module themselves via `isProviderEligible`,
+ * and each ships its own refusal (`ExecutorError` with code
+ * `provider_not_permitted`; `ProviderNotPermittedError`) because a workflow
+ * step failing mid-run and an ingestion job failing are not the same event as a
+ * chat turn failing.
+ *
+ * It does NOT filter an **explicit `agent.provider`**, an explicit step
+ * `modelOverride`, or the `EVALUATION_DEFAULT_PROVIDER` / `_MODEL` environment
+ * variables. Each is an operator's recorded decision, and silently rerouting
+ * one would make a request answer from a provider its own configuration does
+ * not name — harder to diagnose than a refusal, and a worse failure than the
+ * one being prevented. `.context/orchestration/llm-providers.md` carries the
+ * per-path coverage table, which stays the authority: read it before treating
+ * this seam as a whole-tree guarantee.
  *
  * The intended enforcement for that case is at the point of CHOOSING: a
  * per-org install should not offer a provider the org has not approved, so the
@@ -69,6 +82,8 @@
  * @see lib/app/llm-providers.ts — the fork-owned registration point
  * @see lib/orchestration/llm/agent-resolver.ts — the runtime consumer
  * @see lib/orchestration/prefetch-helpers.ts — the agent form's preview
+ * @see lib/orchestration/engine/llm-runner.ts — the workflow-step chokepoint
+ * @see lib/orchestration/knowledge/keyword-enricher.ts — the ingestion chokepoint
  */
 
 import { logger } from '@/lib/logging';
@@ -91,9 +106,19 @@ export interface ProviderEligibilityContext {
   /**
    * What is being filtered. A fork may reasonably answer differently for each:
    *
-   *  - `'primary'` — Sunrise is CHOOSING the provider, because the agent left
-   *    the field blank. Nobody's intent is being overridden, so this is the
+   *  - `'primary'` — Sunrise is CHOOSING the provider, because no explicit
+   *    choice was recorded anywhere: an agent with a blank `provider`, a
+   *    workflow step with no `modelOverride`, or keyword enrichment, which has
+   *    no override to give. Nobody's intent is being overridden, so this is the
    *    strictest case to constrain and the safest.
+   *
+   *    The two model-registry paths deliberately REUSE this value rather than
+   *    introducing a fourth. An unanswered `source` fails open (see
+   *    `ProviderEligibilityResolver` below), so a new value would mean every
+   *    rule already written in a fork silently does not cover the paths it was
+   *    added for — the opposite of what widening coverage is supposed to do.
+   *    Reusing `'primary'` extends an existing rule to them for free, and it is
+   *    honest: the category is the same one.
    *  - `'explicit'` — the agent's own `fallbackProviders`, a recorded operator
    *    choice.
    *  - `'system'` — the automatic fill nobody asked for.
@@ -153,8 +178,9 @@ let wiring: Promise<void> | null = null;
  * `resolveEligibleProviders` and never imports the resolver, so the agent
  * form's preview ran the filter with nothing registered and silently returned
  * everything — the exact drift the filter was added to close. Every other
- * `lib/app/*` registrar has one consumer and never met this; this seam already
- * has two, and t-658 adds a third.
+ * `lib/app/*` registrar has one consumer and never met this; this seam has
+ * four (the resolver, the form's preview, `llm-runner.ts` and
+ * `keyword-enricher.ts`), which is what made the old shape untenable.
  *
  * Putting the wiring beside the state removes the question entirely: any
  * caller of `resolveEligibleProviders` gets the rule, whatever imported it.
@@ -309,4 +335,33 @@ export async function resolveEligibleProviders(
     });
     return [];
   }
+}
+
+/**
+ * Whether one already-chosen provider may be used.
+ *
+ * The single-candidate form of `resolveEligibleProviders`, for the callers that
+ * have no list to filter: the model registry named exactly one provider and
+ * there is no second choice to fall back to. It answers a yes/no question with
+ * the same rule, the same fail-closed semantics, and the same logging — a
+ * throwing or failed-to-register rule denies here too.
+ *
+ * Deliberately does NOT throw. The two callers refuse in their own vocabulary
+ * (`ExecutorError` for a workflow step, `ProviderNotPermittedError` for an
+ * ingestion run) because those failures are caught, reported and remedied in
+ * different places; a shared throw here would force both through one error type
+ * that fits neither.
+ *
+ * Only call this where SUNRISE chose the provider. A provider reached through
+ * an operator's recorded choice — an explicit `agent.provider`, a step's
+ * `modelOverride`, an `EVALUATION_DEFAULT_*` env var — is out of scope by the
+ * seam's rule, and passing one here would reroute a decision that was made
+ * deliberately.
+ */
+export async function isProviderEligible(
+  slug: string,
+  context: ProviderEligibilityContext
+): Promise<boolean> {
+  const eligible = await resolveEligibleProviders([slug], context);
+  return eligible.length > 0;
 }

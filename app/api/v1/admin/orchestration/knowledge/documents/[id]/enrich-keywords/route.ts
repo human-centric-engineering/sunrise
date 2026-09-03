@@ -11,6 +11,7 @@
  *
  * 409 if the document is currently processing (mirrors `/rechunk`).
  * 503 if no `chat` default model is configured.
+ * 403 if the provider-eligibility seam bars the resolved model's provider.
  *
  * Authentication: Admin role required.
  */
@@ -26,6 +27,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   enrichDocumentKeywords,
   NoChunksToEnrichError,
+  ProviderNotPermittedError,
 } from '@/lib/orchestration/knowledge/keyword-enricher';
 import { NoDefaultModelConfiguredError } from '@/lib/orchestration/llm/settings-resolver';
 
@@ -62,6 +64,15 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     }
     if (err instanceof NoChunksToEnrichError) {
       throw new ConflictError(err.message);
+    }
+    if (err instanceof ProviderNotPermittedError) {
+      // 403, not 500: the caller is an authenticated admin and nothing is
+      // broken — this deployment's provider-eligibility rule bars the provider
+      // the chat task default resolves to. Its own code rather than the generic
+      // `forbidden`, so a client can tell a policy refusal from a role check.
+      // Naming the model and provider is safe here and useful: admin-only
+      // route, and both are already shown throughout the orchestration admin.
+      return errorResponse(err.message, { code: 'provider_not_permitted', status: 403 });
     }
     throw err;
   }
