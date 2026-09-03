@@ -23,41 +23,12 @@ import { logger } from '@/lib/logging';
 import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
-import {
-  resolveEligibleProviders,
-  hasProviderEligibilityResolver,
-} from '@/lib/orchestration/llm/provider-eligibility';
-import { registerAppProviderEligibility } from '@/lib/app/providers';
+// The fork's eligibility rule wires itself, lazily, inside
+// `resolveEligibleProviders`. It used to be a module-load side effect here,
+// which made registration depend on who imported this file — see that module's
+// `ensureWired` for why that was wrong.
+import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
 import type { TaskType } from '@/types/orchestration';
-
-// Auto-wire the fork's eligibility rule at module load — the same arrangement
-// every other `lib/app/*` seam uses, so a fork registers without touching core.
-//
-// Guarded on "is anything already registered?", which is the only shape that
-// satisfies all three requirements at once:
-//
-//  - A re-evaluation of THIS module (Next dev HMR) must not wedge the app.
-//    `registerProviderEligibility` rejects a second, different resolver and the
-//    documented style is an inline arrow — a fresh reference every call — so an
-//    unguarded re-run would abort the module and kill every chat turn until a
-//    full restart.
-//  - A registration made ELSEWHERE must never be discarded. This module is not
-//    loaded at boot; it is first evaluated by a request. A fork registering
-//    from `initApp()` (awaited in `instrumentation.ts` at process start, and
-//    the natural home for one-time startup work) would have its rule wiped by
-//    the first chat request — silently turning a restriction seam into the
-//    identity function with every provider permitted again.
-//  - Two registrations inside ONE wiring pass must still throw, because that is
-//    a fork genuinely registering twice and one of the rules would not run.
-//
-// An earlier version called `resetProviderEligibility()` unconditionally here.
-// It fixed the first requirement by breaking the second — a fail-open on a
-// restriction control, which is the worse of the two by a distance. It also
-// cited `resetAppDriftProbes()` as precedent, which does not hold:
-// `scripts/db/check-drift.ts` registers without resetting.
-if (!hasProviderEligibilityResolver()) {
-  registerAppProviderEligibility();
-}
 
 /** Number of system fallbacks to attach when an agent has no explicit provider. */
 const SYSTEM_FALLBACK_LIMIT = 3;

@@ -131,6 +131,45 @@ export type ProviderEligibilityResolver = (
 let appResolver: ProviderEligibilityResolver | null = null;
 
 /**
+ * The in-flight or completed auto-wire. Also the latch: non-null means wiring
+ * has been attempted, so the scaffold runs exactly once per module instance.
+ */
+let wiring: Promise<void> | null = null;
+
+/**
+ * Run the fork's registration once, lazily, from the module that owns the state.
+ *
+ * **Why here and not at a consumer's module scope.** It used to be a
+ * module-load side effect of `agent-resolver.ts`. That made registration depend
+ * on WHO IMPORTED WHAT: `prefetch-helpers.ts` calls
+ * `resolveEligibleProviders` and never imports the resolver, so the agent
+ * form's preview ran the filter with nothing registered and silently returned
+ * everything — the exact drift the filter was added to close. Every other
+ * `lib/app/*` registrar has one consumer and never met this; this seam already
+ * has two, and t-658 adds a third.
+ *
+ * Putting the wiring beside the state removes the question entirely: any
+ * caller of `resolveEligibleProviders` gets the rule, whatever imported it.
+ *
+ * **Why a dynamic import.** A fork's `lib/app/providers.ts` imports
+ * `registerProviderEligibility` from this module, so a static import back would
+ * be a cycle. `instrumentation.ts` uses the same `await import()` shape for the
+ * boot seam, and the fork-init guard's import detection recognises it.
+ *
+ * **A throwing scaffold rejects every call.** The rejection is cached with the
+ * promise, so a fork whose registration is broken fails loudly and repeatedly
+ * rather than quietly running unfiltered — a restriction that cannot be
+ * established must not be read as permission.
+ */
+function ensureWired(): Promise<void> {
+  wiring ??= (async () => {
+    const { registerAppProviderEligibility } = await import('@/lib/app/providers');
+    registerAppProviderEligibility();
+  })();
+  return wiring;
+}
+
+/**
  * Register the app's eligibility rule. One resolver, registered once.
  *
  * Re-registering the same function reference is a no-op; a different one throws
@@ -155,13 +194,20 @@ export function registerProviderEligibility(resolver: ProviderEligibilityResolve
 /**
  * Clear the registered resolver.
  *
- * For tests, and for the dev-server hot-reload case where the auto-wire in
- * `agent-resolver.ts` re-runs on every edit — same reason
+ * Clears the registered rule AND the auto-wire latch, so the next call to
+ * `resolveEligibleProviders` re-runs `lib/app/providers.ts` from scratch.
+ *
+ * For tests, and for the dev-server hot-reload case — a fork editing its rule
+ * needs the edit picked up, which a latch alone would prevent. Same reason
  * `lib/db/drift-probes.ts` ships `resetAppDriftProbes()`. Not `__`-prefixed
- * because it is not test-only: the resolver's own module load calls it.
+ * because it is not test-only.
  */
 export function resetProviderEligibility(): void {
   appResolver = null;
+  // The latch as well. Without this a reset would leave `wiring` resolved, so
+  // the scaffold would never re-run and a test (or a dev-server edit) would
+  // silently keep resolving with no rule at all.
+  wiring = null;
 }
 
 /** Whether an app resolver is registered. Exposed for tests and diagnostics. */
@@ -179,6 +225,10 @@ export async function resolveEligibleProviders(
   candidates: readonly string[],
   context: ProviderEligibilityContext
 ): Promise<readonly string[]> {
+  // Before the null check, not after: the whole point is that the rule is
+  // registered no matter which module reached us.
+  await ensureWired();
+
   if (!appResolver) return candidates;
   // Nothing to decide, and a fork's rule may be a policy lookup. Every chat
   // turn of a fully-configured agent with no fallback list reaches here with an

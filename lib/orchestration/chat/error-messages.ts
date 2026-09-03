@@ -182,8 +182,10 @@ const ERROR_MAP: Record<string, UserFacingError> = {
   no_eligible_provider: {
     title: 'No Permitted Provider',
     message: 'LLM providers are configured, but none of them is permitted for this request.',
-    action:
-      'Check the server logs for a provider-eligibility rule failure, then review the rule registered in lib/app/providers.ts or give this agent an explicit provider.',
+    // No file paths or internal identifiers: this registry is rendered by
+    // whatever client is attached, including a fork's end-user chat surface.
+    // The operator-facing detail lives in the thrown error and the logs.
+    action: 'Ask an administrator to review this deployment’s provider settings.',
   },
   no_default_model_configured: {
     title: 'Default Model Not Set',

@@ -472,7 +472,11 @@ import { registerProviderEligibility } from '@/lib/orchestration/llm/provider-el
 export function registerAppProviderEligibility(): void {
   registerProviderEligibility(async (candidates, ctx) => {
     const approved = await approvedProviderSlugs(); // cache this
-    return ctx.source === 'system' ? candidates.filter((slug) => approved.has(slug)) : candidates;
+    // Filter EVERY source. A rule that answers for only some of them is
+    // fail-open for the rest, and `'primary'` matters most: a provider-less
+    // agent (the four system-seeded ones ship that way) would otherwise reach
+    // whichever provider sorts first while the policy looks enforced.
+    return candidates.filter((slug) => approved.has(slug));
   });
 }
 ```
