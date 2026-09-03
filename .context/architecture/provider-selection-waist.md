@@ -32,7 +32,7 @@ the question for you.
 
 ## Method
 
-Four **independent** enumerations over 745 non-test source files in `lib/`,
+Five **independent** enumerations over 745 non-test source files in `lib/`,
 `app/` and `scripts/`, cross-tabulated so each could be checked against the
 others rather than trusted alone:
 
@@ -61,11 +61,24 @@ genuine second path exists.
   `provider-manager.ts` (`resolveApiKey`, :661) and `embedder.ts` (:187, :252,
   :272, :290, :305). `provider-manager.ts:229` is a presence check, not a use;
   `evaluations/judge-model.ts:29` reads **model ids**, not credentials.
-- **Transmission.** Raw `fetch()` to a vendor happens in `anthropic.ts:142`,
-  `openai-compatible.ts:177` and `provider.ts:365` — all _inside_ provider
-  instances — plus `embedder.ts:387`. Every other `fetch()` in the orchestration
-  tree targets a **customer** URL (webhooks, escalation, URL ingestion) and is
-  governed by `ORCHESTRATION_ALLOWED_HOSTS`, a separate concern.
+- **Transmission.** Raw `fetch()` reaching a third party happens in
+  `anthropic.ts:142` and `openai-compatible.ts:177` (inside provider
+  instances), in `embedder.ts:387`, and in the shared `fetchWithTimeout`
+  helper at `provider.ts:365`. Every other `fetch()` in the orchestration tree
+  targets a **customer** URL (webhooks, escalation, URL ingestion) under
+  `ORCHESTRATION_ALLOWED_HOSTS`, a separate concern.
+
+  **`fetchWithTimeout` is not confined to provider instances, and an earlier
+  draft of this bullet said it was.** `voyage.ts:112` calls it from inside a
+  provider, but `model-registry.ts:79` calls it from outside one, to
+  `https://openrouter.ai/api/v1/models` (a hardcoded constant at
+  `model-registry.ts:35`) — outside the Proxy and outside
+  `ORCHESTRATION_ALLOWED_HOSTS`. It is an unauthenticated GET for model
+  metadata, so no org data leaves and the credential claim above is unaffected;
+  a provider-eligibility gate has nothing to say about it. It is recorded
+  because **this document's own enumeration was short again**, on the pass
+  written to argue that enumerations run short. That is the thesis surviving
+  contact with its author, not a counterexample to it.
 
 ## Finding 2 — the credential hypothesis fails, and fails dangerously
 
@@ -88,11 +101,29 @@ a Proxy that intercepts `chat`, `embed`, `transcribe` and `chatStream`, **with
 the provider slug in hand, on every call.** It was built for in-flight counting;
 the interception point is general.
 
-Every provider instance handed out by `getProvider` is wrapped, so every method
-call on one enters the Proxy's `get` trap. The completeness question — _can a
-vendor call escape the policy?_ — therefore has a structural answer rather than
-a list: only by not going through `getProvider`, and exactly one thing does
-(the embedder).
+Every instance **built from a database row** is wrapped, so every method call on
+one enters the Proxy's `get` trap. The completeness question — _can a vendor
+call escape the policy?_ — therefore has a structural answer rather than a
+list, but the invariant has to be stated precisely, and an earlier draft of this
+paragraph stated it wrongly.
+
+**It is not "everything `getProvider` hands out".** `getProvider` serves a cache
+hit at `:88`, _before_ it ever reaches `withInFlightTracking` at `:110` — and
+`registerProvider` (:172) and `registerProviderInstance` (:185) write
+**unwrapped** instances straight into that cache. So `getProvider` itself will
+hand back an unproxied provider for any name registered that way.
+`scripts/smoke/{chat,transcribe}.ts` already do exactly this, and the chat
+handler consumes the result with no Proxy around it.
+
+Nothing in `lib/` or `app/` calls either function, so this is not a live hole
+today — but it is a hole in **the invariant the proposed gate would rest on**,
+which is a different and worse thing than a fork risk, and the earlier draft
+filed it under "did not check" as though it were the latter. The fix is small
+and belongs in the gate's scope: have `registerProvider` and
+`registerProviderInstance` wrap too, so the invariant becomes unconditional
+rather than true-by-convention. Until then the honest statement is _only by not
+going through `buildProviderFromConfig`_ — and two exported functions plus the
+embedder do that.
 
 **One precision, because it is the kind of gap that becomes the next missed
 path.** The Proxy _sees_ every method; it _intercepts_ only
@@ -170,14 +201,23 @@ They are the selection layer, they are correct, tested and behaviour-neutral at
 the _quality_ layer rather than the _assurance_ layer. Closing them would trade
 working behaviour for nothing.
 
-Two conditions before they merge:
+Two conditions had to be met first, and **this PR meets them** — they are
+recorded as history, not as outstanding work:
 
-1. `llm-providers.md` must stop presenting the coverage table as a boundary.
-   It currently says the enumeration "has been short once" — it has been short
-   three times, and the embedder is not in the table at all. Both are wrong in
-   the tree today.
-2. The table gains the embedder row and a pointer to this document, so the next
-   reader learns the boundary is coming from the gate rather than from the list.
+1. `llm-providers.md` had to stop presenting the coverage table as a boundary.
+   On `main` it told a fork it "needs this list rather than an assurance", and
+   the list was missing four paths. It now opens with "do not build an isolation
+   boundary on the table below" and says how many times the enumeration has been
+   short.
+2. The table had to gain the missing rows and a pointer to this document, so the
+   next reader learns the boundary comes from the gate rather than from the
+   list. Done in the same commit.
+
+(An earlier draft of this section claimed `llm-providers.md` "currently says the
+enumeration has been short once". It never did — that string was on the
+unmerged t-658/t-659 branch, and `main` said the opposite. Quoting a sibling
+branch as though it were the shipped tree is the same altitude error this
+document is about, so it is corrected in place rather than deleted.)
 
 The gate itself is **`f-mt-external`** work (#109, "External plane: storage,
 export, provider policy"), not groundwork: it needs ALS provenance plumbing and
@@ -191,10 +231,13 @@ enforce against.
   (Node ≥ 18 forks per Promise), but this was read, not tested.
 - **The cost of an async gate on the hot path.** `chat` is already async so a
   gate adds an await; the per-call overhead was not measured.
-- **`registerProvider` / `registerProviderInstance` as a bypass in a fork.**
-  Both are exported. Nothing upstream calls them outside smoke scripts, but a
-  fork could, and a gate at the proxy would not cover an instance registered
-  directly.
+- **Whether `registerProvider` / `registerProviderInstance` should keep
+  bypassing the Proxy.** The bypass itself is no longer unchecked — see Finding
+  3, which states the corrected invariant. What was not decided is the remedy:
+  wrap inside both functions, refuse to cache an unwrapped instance, or make
+  them test-only. The smoke scripts that rely on them
+  (`scripts/smoke/{chat,transcribe}.ts`) inject fakes precisely to avoid a real
+  SDK, so wrapping must not assume a live vendor behind the instance.
 - **Non-LLM outbound planes.** Storage, email and webhooks resolve their own
   destinations and were out of scope. If tenancy needs "which third parties see
   our data" rather than "which LLM vendors", they need their own pass.
