@@ -57,6 +57,7 @@ import { prisma } from '@/lib/db/client';
 import {
   resolveAgentProviderAndModel,
   NoProviderConfiguredError,
+  NoEligibleProviderError,
   type ResolvableAgent,
 } from '@/lib/orchestration/llm/agent-resolver';
 import {
@@ -344,21 +345,91 @@ describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
       'chat'
     );
 
-    expect(seen).toEqual(['system', 'explicit']);
+    // 'primary' first: the auto-pick is filtered before the fallbacks it then
+    // excludes itself from. The second agent names its provider explicitly, so
+    // no 'primary' call is made for it — that choice is not ours to override.
+    expect(seen).toEqual(['primary', 'system', 'explicit']);
   });
 
-  it('denies every fallback when the rule throws, and keeps the primary', async () => {
-    // A restriction that cannot be evaluated must not be read as permission.
-    // The request degrades (no fallbacks) rather than bypassing the policy.
+  it('an agent with an explicit provider survives a throwing rule, minus fallbacks', async () => {
+    // The graceful half. Its provider is a recorded choice, not ours to
+    // override, so a broken policy costs it only the safety net.
     setProviders(threeProviders);
     registerProviderEligibility(() => {
       throw new Error('policy lookup failed');
     });
 
+    const result = await resolveAgentProviderAndModel(
+      makeAgent({
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-6',
+        fallbackProviders: ['openai'],
+      }),
+      'chat'
+    );
+
+    expect(result.providerSlug).toBe('anthropic');
+    expect(result.fallbacks).toEqual([]);
+  });
+
+  it('an auto-picking agent FAILS when the rule throws, rather than picking anyway', async () => {
+    // The harsh half, and deliberate. With no provider on the agent there is no
+    // safe default to fall back to — every option is one the policy did not
+    // approve. A restriction that cannot be evaluated must not be read as
+    // permission, so this errors instead of routing somewhere unapproved.
+    //
+    // Worth seeing plainly: a fork whose policy lookup is broken takes an
+    // outage for its provider-less agents. That is the cost of fail-closed, and
+    // the error names the cause and the fix rather than surfacing as a generic
+    // provider failure.
+    setProviders(threeProviders);
+    registerProviderEligibility(() => {
+      throw new Error('policy lookup failed');
+    });
+
+    await expect(resolveAgentProviderAndModel(makeAgent(), 'chat')).rejects.toThrow(
+      NoEligibleProviderError
+    );
+  });
+
+  it('constrains the provider Sunrise picks when the agent names none', async () => {
+    // Point 1: nobody's intent is overridden here — Sunrise is choosing on the
+    // caller's behalf, so choosing outside their policy would be our error.
+    setProviders(threeProviders);
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'anthropic'));
+
     const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
 
-    expect(result.fallbacks).toEqual([]);
+    // 'anthropic' is first by createdAt and would have been picked before.
+    expect(result.providerSlug).toBe('openai');
+    expect(result.fallbacks).not.toContain('anthropic');
+  });
+
+  it('does NOT override a provider the operator named explicitly', async () => {
+    // The deliberate boundary. Rerouting a recorded choice would make an agent
+    // answer from a provider its own configuration does not name. Enforcement
+    // for this case belongs at write time — see provider-eligibility.ts.
+    setProviders(threeProviders);
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'anthropic'));
+
+    const result = await resolveAgentProviderAndModel(
+      makeAgent({ provider: 'anthropic', model: 'claude-sonnet-4-6' }),
+      'chat'
+    );
+
     expect(result.providerSlug).toBe('anthropic');
+  });
+
+  it('errors distinctly when providers exist but none is permitted', async () => {
+    // NOT NoProviderConfiguredError: everything is set up. Reporting "no
+    // provider is configured" would send an operator to the setup wizard to
+    // re-add providers that are already there.
+    setProviders(threeProviders);
+    registerProviderEligibility(() => []);
+
+    await expect(resolveAgentProviderAndModel(makeAgent(), 'chat')).rejects.toThrow(
+      /permitted for this request/
+    );
   });
 
   it('cannot widen the candidate set or reorder it', async () => {
@@ -371,12 +442,17 @@ describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
     // identical to the unfiltered list — so it passed against the pre-change
     // resolver too, and would have kept passing if the intersect were deleted.
     setProviders(threeProviders);
-    registerProviderEligibility(() => ['gemini-not-configured', 'ollama']);
+    // Scoped to the fallback fill so this isolates widening from the primary
+    // constraint, which has its own tests above.
+    registerProviderEligibility((candidates, ctx) =>
+      ctx.source === 'primary' ? candidates : ['gemini-not-configured', 'ollama']
+    );
 
     const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
 
     // 'openai' filtered out (not returned by the rule), 'gemini' ignored (never
     // a candidate), and what remains is in the resolver's order, not the rule's.
+    expect(result.providerSlug).toBe('anthropic');
     expect(result.fallbacks).toEqual(['ollama']);
   });
 });

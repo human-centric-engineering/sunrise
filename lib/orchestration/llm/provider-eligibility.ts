@@ -21,31 +21,43 @@
  *
  * ## What it does and does not constrain
  *
- * It filters **fallbacks** — both the system-attached ones and an agent's own
- * explicit `fallbackProviders` list. It deliberately does NOT filter the
- * **primary** provider, and that boundary is worth stating because it is not
- * obviously right:
+ * It filters every provider choice Sunrise makes ON THE CALLER'S BEHALF:
  *
- *  - An explicit `agent.provider` is an operator's recorded decision. Silently
- *    rerouting it would make an agent answer from a provider its configuration
- *    does not name, which is harder to diagnose than a refusal.
- *  - The auto-picked primary (`candidates[0]`, when the agent leaves the field
- *    empty) is arguably as unrequested as a system fallback, and a per-org deny
- *    policy will eventually have to say something about it.
+ *  - the **auto-picked primary**, when the agent leaves `provider` blank and
+ *    the resolver chooses `candidates[0]`;
+ *  - the **system fallback fill**, the up-to-three providers nobody asked for;
+ *  - the agent's own **explicit `fallbackProviders`** list.
  *
- * Q15 is scoped to auto-*fallback*, so that is what this ships. Deciding the
- * primary's policy belongs with the work that introduces per-org rules, where
- * there is an org to reason about — it is recorded there rather than settled
- * quietly here.
+ * It does NOT filter an **explicit `agent.provider`**. That is an operator's
+ * recorded decision, and silently rerouting it would make an agent answer from
+ * a provider its own configuration does not name — harder to diagnose than a
+ * refusal, and a worse failure than the one being prevented.
+ *
+ * The intended enforcement for that case is at the point of CHOOSING: a
+ * per-org install should not offer a provider the org has not approved, so the
+ * value never reaches the row. That is a write-time concern with a UX question
+ * attached (hide it, or show it disabled with a reason?), so it belongs with
+ * the per-org work rather than here. This seam is the runtime backstop, which
+ * is the layer that still holds when a policy changes UNDER agents that were
+ * configured while it was permitted — the case write-time validation cannot
+ * reach.
  *
  * ## Failure behaviour: a broken resolver denies, it does not permit
  *
  * A registered resolver that throws is logged as an error and treated as
- * "nothing is eligible", so the request keeps its primary provider and loses
- * its fallbacks. The alternative — treating a failure as "everything is
+ * "nothing is eligible". The alternative — treating a failure as "everything is
  * eligible" — would turn a fork's bug into a silent policy bypass, which is the
- * one outcome a restriction seam must never produce. Losing fallbacks degrades
- * a request; ignoring the policy defeats it.
+ * one outcome a restriction seam must never produce.
+ *
+ * What that costs depends on what was being filtered, and the difference is
+ * worth knowing before putting a network call in a rule:
+ *
+ *  - An agent that NAMES its provider keeps working and loses only its
+ *    fallbacks. Degraded.
+ *  - An agent that does not is left with nothing the policy approved, so the
+ *    request raises `NoEligibleProviderError`. Broken, deliberately: there is
+ *    no safe default to fall back to when every remaining option is one the
+ *    policy did not permit.
  *
  * @see lib/app/providers.ts — the fork-owned registration point
  * @see lib/orchestration/llm/agent-resolver.ts — the only consumer
@@ -69,19 +81,29 @@ export interface ProviderEligibilityContext {
   /** The task the binding is being resolved for. */
   task: TaskType;
   /**
-   * Whether these candidates are the agent's own `fallbackProviders` or the
-   * system's automatic fill. A fork may reasonably treat them differently: an
-   * explicit list is a recorded operator choice, the system fill is not.
+   * What is being filtered. A fork may reasonably answer differently for each:
+   *
+   *  - `'primary'` — Sunrise is CHOOSING the provider, because the agent left
+   *    the field blank. Nobody's intent is being overridden, so this is the
+   *    strictest case to constrain and the safest.
+   *  - `'explicit'` — the agent's own `fallbackProviders`, a recorded operator
+   *    choice.
+   *  - `'system'` — the automatic fill nobody asked for.
    */
-  source: 'explicit' | 'system';
-  /** The provider chosen as primary — never itself a candidate here. */
-  primarySlug: string;
+  source: 'primary' | 'explicit' | 'system';
+  /**
+   * The provider already chosen as primary — never itself a candidate here.
+   * `null` when `source` is `'primary'`, because that is the choice being made.
+   */
+  primarySlug: string | null;
 }
 
 /**
- * Returns the subset of `candidates` that may be used as fallbacks.
+ * Returns the subset of `candidates` that may be used.
  *
- * Return the input to allow everything. Return `[]` to deny fallbacks entirely.
+ * Return the input to allow everything. Return `[]` to deny them all — which
+ * for `source: 'primary'` means the request fails with
+ * `NoEligibleProviderError` rather than silently using a disallowed provider.
  * Anything not in `candidates` is ignored — a resolver widens nothing.
  */
 export type ProviderEligibilityResolver = (
@@ -124,7 +146,7 @@ export function hasProviderEligibilityResolver(): boolean {
 }
 
 /**
- * Filter `candidates` to those eligible as fallbacks.
+ * Filter `candidates` to those the caller may use.
  *
  * With no registered resolver this returns `candidates` unchanged — the
  * identity default that keeps single-tenant behaviour byte-identical.
@@ -143,13 +165,13 @@ export async function resolveEligibleProviders(
     // fallbacks are tried in sequence — so it comes from `candidates`.
     return candidates.filter((slug) => allowed.has(slug));
   } catch (error) {
-    logger.error('provider eligibility resolver threw; denying all fallbacks', {
+    logger.error('provider eligibility resolver threw; denying every candidate', {
       task: context.task,
       primarySlug: context.primarySlug,
       source: context.source,
       candidateCount: candidates.length,
       error: error instanceof Error ? error.message : String(error),
-      fix: 'A restriction that cannot be evaluated must not be treated as permission. The request keeps its primary provider and runs without fallbacks until this is fixed.',
+      fix: "A restriction that cannot be evaluated must not be treated as permission. With source 'primary' this fails the request (NoEligibleProviderError); otherwise the request keeps its provider and runs without fallbacks.",
     });
     return [];
   }

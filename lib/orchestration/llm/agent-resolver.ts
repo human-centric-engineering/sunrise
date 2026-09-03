@@ -59,6 +59,23 @@ export class NoProviderConfiguredError extends ProviderError {
 }
 
 /**
+ * Thrown when providers ARE configured and reachable, but the app's
+ * eligibility rule permits none of them for this request.
+ *
+ * Deliberately distinct from {@link NoProviderConfiguredError}. That one means
+ * "nothing is set up" and sends an operator to the setup wizard; this one means
+ * "everything is set up and your policy allows none of it", which is a
+ * different fix in a different place. Reporting the first for the second would
+ * send someone to re-add providers that are already there.
+ */
+export class NoEligibleProviderError extends ProviderError {
+  constructor(message = 'No configured provider is eligible for this request') {
+    super(message, { code: 'no_eligible_provider', retriable: false });
+    this.name = 'NoEligibleProviderError';
+  }
+}
+
+/**
  * Resolve the provider slug, model id, and fallback list to use for a
  * chat turn or workflow step. Empty `agent.provider`/`agent.model` are
  * filled from system defaults; explicit values pass through unchanged.
@@ -95,7 +112,33 @@ export async function resolveAgentProviderAndModel(
     );
   }
 
-  const providerSlug = providerSet ? agent.provider : candidates[0].slug;
+  // The auto-picked primary goes through the eligibility rule; an EXPLICIT
+  // `agent.provider` does not. The difference is whose decision it is: here
+  // Sunrise is choosing on the caller's behalf, so choosing something their
+  // policy forbids is our error, not theirs. An explicit choice is enforced at
+  // write time instead — see provider-eligibility.ts for why.
+  let eligibleCandidates = candidates;
+  if (!providerSet) {
+    const permitted = await resolveEligibleProviders(
+      candidates.map((c) => c.slug),
+      { task, source: 'primary', primarySlug: null }
+    );
+    const permittedSet = new Set(permitted);
+    eligibleCandidates = candidates.filter((c) => permittedSet.has(c.slug));
+    if (eligibleCandidates.length === 0) {
+      // Fails loudly rather than falling back to an ineligible provider. The
+      // message names the fix, because the state it describes ("configured but
+      // not permitted") is invisible from the provider list alone.
+      throw new NoEligibleProviderError(
+        `No configured provider is permitted for this request. ${candidates.length} ` +
+          `provider(s) are active and reachable (${candidates.map((c) => c.slug).join(', ')}), ` +
+          'but the rule registered via registerProviderEligibility() in lib/app/providers.ts ' +
+          'allows none of them. Widen that rule, or give the agent an explicit provider.'
+      );
+    }
+  }
+
+  const providerSlug = providerSet ? agent.provider : eligibleCandidates[0].slug;
   const model = modelSet ? agent.model : await getDefaultModelForTask(task);
 
   // System fallbacks: every other reachable candidate, capped. Skipped
@@ -104,7 +147,12 @@ export async function resolveAgentProviderAndModel(
   const proposed =
     explicitFallbacks.length > 0
       ? explicitFallbacks
-      : candidates
+      : // Drawn from the full candidate list, not from `eligibleCandidates`.
+        // The two are filtered independently and with different `source`
+        // values, so a rule that is stricter about the silent fill than about
+        // the primary keeps working — narrowing this by the primary's answer
+        // would silently conflate them.
+        candidates
           .map((c) => c.slug)
           .filter((slug) => slug !== providerSlug)
           .slice(0, SYSTEM_FALLBACK_LIMIT);

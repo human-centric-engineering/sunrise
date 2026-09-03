@@ -78,7 +78,7 @@ describe('provider eligibility registry', () => {
 
     await expect(resolveEligibleProviders(['a', 'b'], CTX)).resolves.toEqual([]);
     expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('denying all fallbacks'),
+      expect.stringContaining('denying every candidate'),
       expect.objectContaining({ error: 'policy backend down', candidateCount: 2 })
     );
   });

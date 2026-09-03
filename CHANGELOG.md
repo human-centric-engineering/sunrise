@@ -31,9 +31,14 @@ release process.
   set, and denies every fallback if it throws — a restriction that cannot be
   evaluated must not be read as permission. **With nothing registered it returns
   its input unchanged**, so single-tenant behaviour is byte-identical and there
-  is no dormant second code path. It filters fallbacks only, never the primary;
-  see `.context/orchestration/llm-providers.md` for why, and for the open
-  question that leaves.
+  is no dormant second code path. It filters every provider choice Sunrise makes
+  on the caller's behalf — the auto-picked primary and both fallback lists — but
+  never an explicit `agent.provider`, which is an operator's recorded decision
+  and is enforced at write time instead. When nothing is eligible for the
+  primary the request raises the new `NoEligibleProviderError`
+  (`code: no_eligible_provider`) rather than using a disallowed provider;
+  that is deliberately distinct from `NoProviderConfiguredError`, which means
+  "nothing is set up" and sends an operator somewhere else entirely.
 
 - `AiCostLog.userId` — a nullable `User` foreign key (`onDelete: SetNull`,
   indexed) so cost attribution survives the agent, the conversation and the user

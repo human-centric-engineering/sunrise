@@ -477,20 +477,36 @@ export function registerAppProviderEligibility(): void {
 }
 ```
 
-| Property         | Behaviour                                                                                                                                                                                                                     |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Default**      | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                    |
-| **Applied at**   | Both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path. A fully-configured agent never reaches the second one, so filtering only there would cover the minority of agents. |
-| **`ctx.source`** | `'explicit'` for the agent's own list, `'system'` for the automatic fill. A fork may reasonably be stricter about the fill, which nobody asked for, than about a list an operator wrote down.                                 |
-| **Cannot widen** | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                 |
-| **On throw**     | Logged as an error and treated as "nothing is eligible". A restriction that cannot be evaluated must not be read as permission; the request keeps its primary provider and runs without fallbacks.                            |
+| Property                 | Behaviour                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Default**              | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                                                                                                                      |
+| **Applied at**           | Both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path. A fully-configured agent never reaches the second one, so filtering only there would cover the minority of agents.                                                                                                   |
+| **`ctx.source`**         | `'primary'` when Sunrise is CHOOSING the provider (the agent left it blank), `'system'` for the automatic fallback fill, `'explicit'` for the agent's own fallback list. A fork may answer differently for each.                                                                                                                |
+| **No eligible provider** | When `source: 'primary'` permits nothing, the request fails with `NoEligibleProviderError` (`code: no_eligible_provider`) rather than using a disallowed provider. Distinct from `NoProviderConfiguredError`, which means "nothing is set up" and sends an operator to the setup wizard — a different fix in a different place. |
+| **Cannot widen**         | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                                                                                                                   |
+| **On throw**             | Logged as an error and treated as "nothing is eligible" — a restriction that cannot be evaluated must not be read as permission. An agent that names its provider keeps working and loses only its fallbacks; one that does not gets `NoEligibleProviderError`.                                                                 |
 
-**It filters fallbacks, never the primary.** An explicit `agent.provider` is an
-operator's recorded decision, and silently rerouting it would make an agent
-answer from a provider its configuration does not name. The auto-picked primary
-(`candidates[0]`, when the agent leaves the field blank) is arguably as
-unrequested as a system fallback — that question is open and belongs with the
-work that introduces per-org rules, where there is an org to reason about. See
+**It filters every provider choice Sunrise makes on the caller's behalf — the
+auto-picked primary and both fallback lists — but never an explicit
+`agent.provider`.** That is an operator's recorded decision, and silently
+rerouting it would make an agent answer from a provider its own configuration
+does not name: harder to diagnose than a refusal, and a worse failure than the
+one being prevented.
+
+The intended enforcement for an explicit choice is at the point of **choosing**:
+a per-org install should not offer a provider the org has not approved, so the
+value never reaches the row. That is write-time work with a UX question attached
+(hide the option, or show it disabled with a reason?), and it belongs with the
+per-org rules. **Both layers are needed, and neither is sufficient alone** —
+write-time validation cannot reach agents configured while a provider was
+permitted and stranded when the policy later changed, and it does not see writes
+that bypass the form (config import, seeds, the admin API, a workflow step's
+`modelOverride`). This seam is the runtime backstop for exactly those.
+
+One consequence worth knowing before writing a rule: because the primary is
+fail-closed, **a rule that throws costs provider-less agents an outage** rather
+than routing them somewhere unapproved. Agents that name their provider
+explicitly keep working and merely lose their fallbacks. See
 [multi-tenancy design → Q15](../architecture/multi-tenancy-design.md).
 
 ## Anti-Patterns

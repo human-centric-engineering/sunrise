@@ -30,17 +30,21 @@
  *     });
  *   }
  *
- * Three things to know before you write one:
+ * Before you write one:
  *
  *  - **It runs on the request hot path**, once per binding resolution. Cache
  *    whatever you look up; do not query per call.
- *  - **Throwing denies every fallback**, loudly logged — a restriction that
- *    cannot be evaluated must not be read as permission. The request keeps its
- *    primary provider, so a bug here degrades rather than breaks.
- *  - **It filters fallbacks only, never the primary.** Returning `[]` does not
- *    stop an agent using its configured provider. If you need to constrain the
- *    primary too, that decision is open — see the note in
- *    `provider-eligibility.ts` and raise it rather than assuming this covers it.
+ *  - **Throwing denies, it never permits**, and is logged loudly — a
+ *    restriction that cannot be evaluated must not be read as permission.
+ *  - **It filters what Sunrise chooses, not what an operator chose.** The
+ *    auto-picked primary and both fallback lists go through your rule; an
+ *    explicit `agent.provider` does not. Enforce that one at write time — do
+ *    not offer a provider the org has not approved.
+ *  - **The primary is fail-closed.** If your rule permits nothing for
+ *    `source: 'primary'`, the request raises `NoEligibleProviderError` rather
+ *    than using a provider you did not approve. A rule that throws therefore
+ *    costs provider-less agents an outage, not a silent bypass — deliberate,
+ *    but know it before putting a network call in here.
  *
  * Full guide: `.context/orchestration/llm-providers.md`
  */
