@@ -46,6 +46,13 @@
  *  - **It runs on the request hot path**, up to TWICE per binding resolution —
  *    once for the auto-picked primary and once for the fallback list. Cache
  *    whatever you look up; do not query per call.
+ *  - **If you load policy before registering, RETURN the promise.** This
+ *    function may be `async` and its caller awaits it. What must not happen is
+ *    a floated promise —
+ *    `void loadPolicy().then((p) => registerProviderEligibility(...))` —
+ *    because resolution continues before the rule exists, and the first
+ *    requests after every cold start run UNFILTERED. Register synchronously,
+ *    or make this `async` and `await` your loading.
  *  - **Throwing denies, it never permits**, and is logged loudly — a
  *    restriction that cannot be evaluated must not be read as permission.
  *  - **It filters what Sunrise chooses, not what an operator chose.** The
@@ -60,7 +67,7 @@
  *
  * Full guide: `.context/orchestration/llm-providers.md`
  */
-export function registerAppProviderEligibility(): void {
+export function registerAppProviderEligibility(): void | Promise<void> {
   // No app provider-eligibility rule by default: every configured provider is
   // an eligible fallback, which is Sunrise's single-tenant behaviour.
 }

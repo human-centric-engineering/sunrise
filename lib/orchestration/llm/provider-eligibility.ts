@@ -164,7 +164,17 @@ let wiring: Promise<void> | null = null;
 function ensureWired(): Promise<void> {
   wiring ??= (async () => {
     const { registerAppProviderEligibility } = await import('@/lib/app/providers');
-    registerAppProviderEligibility();
+    // AWAITED. Dropping this promise was a fail-open: a fork whose registrar
+    // loads its policy first (`const approved = await approvedProviderSlugs()`
+    // — which is exactly what this seam's own "cache whatever you look up"
+    // guidance steers them toward) resolves `ensureWired` at that first inner
+    // `await`, before `registerProviderEligibility` has run. Every resolve in
+    // that window then saw `appResolver === null` and returned the candidates
+    // UNFILTERED, silently, on the first request after every cold start.
+    //
+    // `instrumentation.ts` awaits `initApp()` for the same reason; this was the
+    // only registrar call site in the family that dropped the promise.
+    await registerAppProviderEligibility();
   })();
   return wiring;
 }
