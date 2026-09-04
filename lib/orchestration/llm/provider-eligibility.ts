@@ -24,7 +24,16 @@
  * Wherever it is consulted it filters every
  * choice Sunrise makes ON THE CALLER'S BEHALF, and nothing an operator chose.
  * That line — *whose decision was it* — is the whole rule; the list below is
- * only where the rule has been applied so far. The seven choices it covers:
+ * only where the rule has been applied so far.
+ *
+ * **That list is hand-derived and was short on all three occasions it was
+ * checked**, so treat it as the current state, not a guarantee. The seam
+ * constrains what it is consulted for; it is not a boundary around the process.
+ * `.context/orchestration/llm-providers.md` carries the per-path table, the
+ * Proxy every manager-built provider passes through, and the four routes that
+ * bypass the provider manager entirely — the last of which is why a complete
+ * boundary needs enforcement at the point calls pass through rather than at
+ * each site that chooses. The seven choices this seam covers:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;
