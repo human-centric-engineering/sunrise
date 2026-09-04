@@ -61,9 +61,19 @@ Select with three options: `internal` (default), `public`, `invite_only`. Contro
 
 Hydrated from `GET /providers` on the server. Each option shows the provider name plus a `● key set` / `● no key` badge (derived from `apiKeyEnvVar` being set). If server-side hydration fails, the Select is replaced with a free-text `<Input>` and an amber warning banner appears at the top of the tab — the form never throws.
 
+**No hardcoded vendor.** The initial selection comes from the agent's own `provider`, else from `getEffectiveAgentDefaults` (the server-side mirror of the runtime's binding resolution, eligibility filter included). When neither supplies one the Select stays on its `Pick a provider` placeholder and a hint says so — it is never seeded with a literal.
+
+That matters because these values are **submitted, not merely displayed**: whatever sits in the field is written to `AiAgent.provider` as an explicit operator choice, and `resolveAgentProviderAndModel` deliberately never filters an explicit provider. A literal default therefore laundered a policy refusal — a fork's `registerProviderEligibility` rule permitting nothing for `source: 'primary'`, or throwing, which fails closed to the same empty set — into a permanent pinned choice the seam then honoured. The form now refuses to submit instead: `agentFormSchema` requires a non-empty provider, and an invalid submit raises the banner described under [Validation feedback](#validation-feedback). The same reasoning had already retired the same two literals from the setup wizard's agent draft (`.context/admin/setup-wizard.md`, the v1 → v2 key bump).
+
+What this does **not** do is stop an operator picking a denied provider from the dropdown by hand. The Select lists every configured provider, and filtering it would need a write-time `source` the eligibility seam does not have — an operator choosing is not Sunrise choosing, and a fork may legitimately permit one and deny the other. Write-time enforcement is per-org work, recorded as such in the Q15 row of `.context/architecture/multi-tenancy-design.md`.
+
 ### Model select
 
-Hydrated from `GET /models`, filtered to the selected provider. Options are labelled `${id} — ${tier}`. Same free-text fallback on hydration failure.
+Hydrated from `GET /models`, filtered to the selected provider. Options are labelled `${id} — ${tier}`. Same free-text fallback on hydration failure. Seeded the same way as the provider — the agent's own `model`, else the system default chat model, else nothing — and with no literal fallback for the same reason.
+
+### Validation feedback
+
+`handleSubmit` carries an `onInvalid` branch that fills the form-level error banner with the fields that blocked the save (`Cannot save — these fields need attention: provider, model.`), and `provider` / `model` render their own inline messages. Without it the click is a silent no-op: both fields live on the Model tab, so an operator on General would see nothing happen and get no reason why. The dead end predates the change above but became far easier to reach once the form stopped inventing a provider.
 
 ### Dynamic resolution: empty provider/model
 
@@ -169,8 +179,8 @@ The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain 
 
 ### Help copy
 
-- **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. No default — pick one of the providers configured via the setup wizard or the Providers page."
-- **Model** — "The exact model identifier your provider exposes. Changing this switches which model actually answers — cost, latency, and quality all shift. No default — pick one from the dropdown filtered to the chosen provider."
+- **Provider** — "The AI service that powers this agent (e.g. Anthropic for Claude, OpenAI for GPT, or a local Ollama server). Each provider is configured on the Providers page with its own API key. If the selected provider's key is missing, this agent won't be able to respond — look for the red 'no key' indicator in the dropdown. There is no default vendor: the field is pre-filled with the provider this agent would actually use, and left empty when none could be resolved."
+- **Model** — "The specific AI model this agent uses. Changing it switches which model actually answers — cost, speed, and quality all shift. Smaller models (e.g. Haiku, GPT-4o mini) are faster and cheaper; larger models (e.g. Opus, GPT-4o) are more capable but cost more per message. There is no default model: the field is pre-filled from the system default chat model, and left empty when none is configured."
 
 The model dropdown is sourced from the **operator-curated provider matrix** (`AiProviderModel` rows with `isActive: true`), filtered to capabilities an agent can chat through (`chat` OR `reasoning`). Mirrors the discipline already used by the `/admin/orchestration/settings` Default Models picker. Selecting a model the deployment hasn't actually added is not possible — avoids the runtime "provider unavailable" trap the previous merged-registry source allowed.
 

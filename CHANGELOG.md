@@ -154,6 +154,51 @@ release process.
 
 ### Fixed
 
+- The agent form turned a provider-eligibility **denial** into a forged operator
+  decision. `components/admin/orchestration/agent-form.tsx` seeded its provider
+  field with `(agent?.provider ?? '') || effectiveDefaults?.provider ||
+  'anthropic'` and fed that into `defaultValues`, so it was **submitted, not
+  merely displayed**. When a fork's `registerProviderEligibility` rule permitted
+  nothing for `source: 'primary'` — by denying everything, or by throwing, which
+  fails closed to the same empty set — `getEffectiveAgentDefaults` returned an
+  empty provider, the empty string was falsy, and the chain fell through to the
+  literal. An admin who opened **Agents → New** and never touched the Provider
+  field saved `anthropic` as an **explicit** `agent.provider`, which
+  `resolveAgentProviderAndModel` deliberately never filters because it is meant
+  to be an operator's recorded decision. The agent was then permanently bound to
+  a forbidden provider, the seam could never correct it, and nothing errored at
+  any point — a fail-closed control converted to fail-open by a UI default. The
+  edit page had the same path for a currently-inheriting agent, differing only
+  in that it offered to "lock this agent to" the value.
+
+  **The literals are gone from both chains** — provider and model — rather than
+  the empty case being special-cased. `(provider: '', inheritedProvider: true)`
+  was already an unambiguous "nothing to inherit" signal needing no new field;
+  the defect was callers `||`-ing past it. A hardcoded vendor as a UI fallback
+  is wrong independently of tenancy: it names a specific vendor in a template
+  every fork inherits, and it fires exactly when resolution found nothing, which
+  is when guessing is least defensible. The same two literals had already been
+  retired from the setup wizard's agent draft for the same reason (the
+  `sunrise.orchestration.setup-wizard` v1 → v2 key bump). With nothing
+  resolvable the Select now shows its placeholder and a hint saying so, and
+  `agentFormSchema`'s existing `min(1)` blocks the save.
+
+  Not addressed, and not a regression: the dropdown still lists every configured
+  provider, so an operator can pick a denied one by hand. Filtering it needs a
+  write-time `ctx.source` the seam does not have — an operator choosing is not
+  Sunrise choosing, and a fork may legitimately permit one while denying the
+  other. Write-time enforcement stays per-org work, as the Q15 row of
+  `.context/architecture/multi-tenancy-design.md` already records.
+
+- Submitting the agent form with a required field empty was a **silent no-op**.
+  `provider` and `model` rendered no inline error and `handleSubmit` had no
+  `onInvalid` branch, so an operator on the General tab clicked Create and
+  watched nothing happen, with no indication that the blocking fields were on
+  the Model tab. The form-level banner now names them
+  (`Cannot save — these fields need attention: provider, model.`) and both
+  fields render their own message. Pre-existing, but reachable far more often
+  once the form stopped inventing a provider.
+
 - `VERSIONING.md`'s public-surface list named the tenancy seam as `TENANCY_MODE` +
   `lib/tenancy/client.ts` — a file that has never existed. The covered seam is, and
   always was, `TENANCY_MODE` + the `lib/db/client.ts` chokepoint. Forks that went

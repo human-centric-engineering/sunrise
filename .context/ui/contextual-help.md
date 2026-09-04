@@ -21,7 +21,7 @@ import { FieldHelp } from '@/components/ui/field-help';
   Model{' '}
   <FieldHelp title="LLM model">
     The exact model identifier your provider exposes. Changing this switches which model answers
-    prompts. Default: <code>claude-opus-4-6</code>.{' '}
+    prompts. Pick one from the dropdown, filtered to the chosen provider.{' '}
     <Link href="/admin/orchestration/learn" className="underline">
       Learn more
     </Link>

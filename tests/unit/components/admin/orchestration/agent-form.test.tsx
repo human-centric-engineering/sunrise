@@ -104,6 +104,22 @@ const MOCK_MODELS = [
   { provider: 'openai', id: 'gpt-4o', tier: 'frontier' },
 ];
 
+/**
+ * What the two server pages (`agents/new`, `agents/[id]`) always pass —
+ * `getEffectiveAgentDefaults`' answer for a not-yet-created agent. Create-mode
+ * renders below supply it so they exercise the caller shape that exists in
+ * production. The form deliberately has no hardcoded vendor to fall back on
+ * when it is absent or empty (t-661), so a render that omits it starts with an
+ * unselected provider — which is what
+ * `agent-form-effective-defaults.test.tsx` covers directly.
+ */
+const EFFECTIVE_DEFAULTS = {
+  provider: 'anthropic',
+  model: 'claude-opus-4-6',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
+
 function makeAgent(overrides: Partial<AiAgent> = {}): AiAgent {
   return {
     id: 'agent-1',
@@ -265,7 +281,14 @@ describe('AgentForm — function coverage gaps', () => {
       vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent', name: 'Test' });
 
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'KB Agent');
       await user.click(screen.getByRole('tab', { name: /instructions/i }));
@@ -298,7 +321,14 @@ describe('AgentForm — function coverage gaps', () => {
       vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent', name: 'Test' });
 
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Fill required fields
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Guarded Agent');
@@ -340,7 +370,14 @@ describe('AgentForm — function coverage gaps', () => {
     it('toggling isActive off changes switch to unchecked', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Default is active=true
       const isActiveSwitch = screen.getByRole('switch', { name: /active/i });
@@ -379,7 +416,14 @@ describe('AgentForm — function coverage gaps', () => {
     it('changing visibility to "public" enables saving', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Act: change visibility
       const visibilitySelect = screen.getByRole('combobox', { name: /visibility/i });
@@ -423,7 +467,14 @@ describe('AgentForm — function coverage gaps', () => {
     it('checking a fallback provider adds it to the list', async () => {
       // Arrange: 2 providers, select anthropic as primary — openai shows as fallback option
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Navigate to model tab to see fallback providers
       await user.click(screen.getByRole('tab', { name: /model/i }));
@@ -584,7 +635,14 @@ describe('AgentForm — function coverage gaps', () => {
   describe('Versions tab in create mode', () => {
     it('versions tab is disabled in create mode', () => {
       // Arrange
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Assert: versions tab is disabled
       const versionsTab = screen.getByRole('tab', { name: /versions/i });
@@ -597,7 +655,14 @@ describe('AgentForm — function coverage gaps', () => {
   describe('Invite tokens tab in create mode', () => {
     it('invite tokens tab is disabled in create mode', () => {
       // Arrange
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Assert: invite tokens tab is disabled
       const inviteTab = screen.getByRole('tab', { name: /invite tokens/i });

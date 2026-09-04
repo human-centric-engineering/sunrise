@@ -91,9 +91,32 @@ const MODELS = [
   { provider: 'openai', id: 'gpt-4o-mini', tier: 'budget' },
 ];
 
+/**
+ * What the two server pages (`agents/new`, `agents/[id]`) always pass —
+ * `getEffectiveAgentDefaults`' answer for a not-yet-created agent. Create-mode
+ * renders below supply it so they exercise the caller shape that exists in
+ * production. The form deliberately has no hardcoded vendor to fall back on
+ * when it is absent or empty (t-661), so a render that omits it starts with an
+ * unselected provider — which is what
+ * `agent-form-effective-defaults.test.tsx` covers directly.
+ */
+const EFFECTIVE_DEFAULTS = {
+  provider: 'anthropic',
+  model: 'claude-opus-4-6',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
+
 async function renderAndOpenModelTab() {
   const user = userEvent.setup();
-  render(<AgentForm mode="create" providers={PROVIDERS} models={MODELS} />);
+  render(
+    <AgentForm
+      mode="create"
+      providers={PROVIDERS}
+      models={MODELS}
+      effectiveDefaults={EFFECTIVE_DEFAULTS}
+    />
+  );
   await user.click(screen.getByRole('tab', { name: /model/i }));
   return user;
 }

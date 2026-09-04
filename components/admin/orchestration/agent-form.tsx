@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -227,10 +227,27 @@ export function AgentForm({
   // quiz-master, mcp-system, model-auditor) fall through to the
   // server-resolved effective defaults instead of leaving the Select
   // unselected and forcing the model field into text-input fallback mode.
-  const initialProvider = (agent?.provider ?? '') || effectiveDefaults?.provider || 'anthropic';
-  const initialModel = (agent?.model ?? '') || effectiveDefaults?.model || 'claude-opus-4-6';
-  const providerIsInherited = isEdit && !agent?.provider;
-  const modelIsInherited = isEdit && !agent?.model;
+  //
+  // There is deliberately NO hardcoded vendor at the end of either chain.
+  // `getEffectiveAgentDefaults` returns an empty provider exactly when it
+  // could not resolve one — nothing configured, nothing reachable, or a
+  // fork's `registerProviderEligibility` rule permitting nothing for
+  // `source: 'primary'` (a rule that throws fails closed to the same empty
+  // set). These values are submitted, not merely displayed, and
+  // `resolveAgentProviderAndModel` never filters an EXPLICIT `agent.provider`
+  // because that is meant to be an operator's recorded decision. A literal
+  // here would therefore launder a policy refusal into a permanent operator
+  // decision the seam then honours — a fail-closed control turned fail-open
+  // by a UI default. Empty instead: `agentFormSchema` requires both fields,
+  // so the form refuses to submit until a human actually chooses. Same
+  // reasoning retired the same two literals from the setup wizard's agent
+  // draft (`.context/admin/setup-wizard.md`, the v1 → v2 key bump).
+  const initialProvider = (agent?.provider ?? '') || (effectiveDefaults?.provider ?? '');
+  const initialModel = (agent?.model ?? '') || (effectiveDefaults?.model ?? '');
+  // "Inherited" describes a value the form resolved and will pin on save, so
+  // it needs one to name — an unresolved field gets the hint below instead.
+  const providerIsInherited = isEdit && !agent?.provider && initialProvider.length > 0;
+  const modelIsInherited = isEdit && !agent?.model && initialModel.length > 0;
 
   const {
     register,
@@ -441,6 +458,26 @@ export function AgentForm({
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
+  /**
+   * Validation blocked the submit. Without this the button click is a silent
+   * no-op — `provider` and `model` live on the Model tab, so an operator
+   * sitting on General sees nothing happen and gets no reason why. That dead
+   * end became reachable far more often once the form stopped inventing a
+   * provider when none could be resolved (t-661): refusing to submit is the
+   * correct behaviour, but refusing silently is not.
+   */
+  const onInvalid = (formErrors: FieldErrors<AgentFormData>) => {
+    const fields = Object.keys(formErrors).map((key) =>
+      key.replace(/([A-Z])/g, ' $1').toLowerCase()
+    );
+    setSaved(false);
+    setError(
+      fields.length > 0
+        ? `Cannot save — these fields need attention: ${fields.join(', ')}.`
+        : 'Cannot save — some required fields are missing.'
+    );
+  };
+
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
     setError(null);
@@ -498,7 +535,7 @@ export function AgentForm({
   const currentProviderId = providers?.find((p) => p.slug === currentProvider)?.id ?? null;
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
+    <form onSubmit={(e) => void handleSubmit(onSubmit, onInvalid)(e)} className="space-y-6">
       {/* Sticky action bar */}
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
         <div>
@@ -836,7 +873,8 @@ export function AgentForm({
                 </Link>{' '}
                 with its own API key. If the selected provider&apos;s key is missing, this agent
                 won&apos;t be able to respond — look for the red &ldquo;no key&rdquo; indicator in
-                the dropdown. Default: <code>anthropic</code>.
+                the dropdown. There is no default vendor: the field is pre-filled with the provider
+                this agent would actually use, and left empty when none could be resolved.
               </FieldHelp>
             </Label>
             {providerFallback ? (
@@ -865,11 +903,20 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
+            {!currentProvider && (
+              <p className="text-muted-foreground text-xs">
+                No provider could be resolved automatically — none is configured, reachable, or
+                permitted. Pick one; it is saved as this agent&apos;s explicit provider.
+              </p>
+            )}
             {providerIsInherited && (
               <p className="text-muted-foreground text-xs">
                 Inherited from the first active provider. Saving will lock this agent to{' '}
                 <code className="font-mono">{currentProvider}</code>.
               </p>
+            )}
+            {errors.provider && (
+              <p className="text-destructive text-xs">{errors.provider.message}</p>
             )}
           </div>
 
@@ -920,7 +967,8 @@ export function AgentForm({
                 The specific AI model this agent uses. Changing it switches which model actually
                 answers — cost, speed, and quality all shift. Smaller models (e.g. Haiku, GPT-4o
                 mini) are faster and cheaper; larger models (e.g. Opus, GPT-4o) are more capable but
-                cost more per message. Default: <code>claude-opus-4-6</code>.
+                cost more per message. There is no default model: the field is pre-filled from the
+                system default chat model, and left empty when none is configured.
               </FieldHelp>
             </Label>
             {modelFallback ? (
@@ -993,6 +1041,7 @@ export function AgentForm({
                 <code className="font-mono">{currentModel}</code>.
               </p>
             )}
+            {errors.model && <p className="text-destructive text-xs">{errors.model.message}</p>}
           </div>
 
           <div className="grid gap-2">

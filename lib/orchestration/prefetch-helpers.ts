@@ -105,10 +105,19 @@ export async function getEffectiveAgentDefaults(agent: {
       const candidate = reachable.find((r) => permitted.includes(r.slug));
       // Deliberate divergence when the rule permits NOTHING: the runtime
       // refuses with `NoEligibleProviderError`, but this must never throw — it
-      // is a form preview — so the field stays empty and inherited. The form
-      // therefore shows "nothing to inherit" rather than a provider the policy
-      // forbids, which is the safe half of the disagreement. Pinned in
+      // is a form preview — so the field stays empty and inherited, which is
+      // the safe half of the disagreement. Pinned in
       // `provider-resolution-parity.test.ts`.
+      //
+      // `(provider: '', inheritedProvider: true)` IS the "nothing to inherit"
+      // signal — the caller needs no extra field to tell it apart from a
+      // resolved value. But it only stays safe while callers propagate the
+      // empty string: the agent form used to `|| 'anthropic'` past it and
+      // write that literal as an EXPLICIT `agent.provider`, which the runtime
+      // never filters, so a denial became a permanent pinned choice (t-661).
+      // Anything consuming this must render the empty case, not substitute
+      // for it. Pinned at the form level in
+      // `tests/unit/components/admin/orchestration/agent-form-effective-defaults.test.tsx`.
       if (candidate) provider = candidate.slug;
     } catch (err) {
       logger.warn('prefetch: effective provider lookup failed', {
