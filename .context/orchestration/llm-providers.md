@@ -225,6 +225,53 @@ For tests or scripts that bypass the database, use `providerManager.registerProv
 
 `clearCache()` evicts one or all cached instances — call it for immediate invalidation (e.g. after an admin updates a provider config). Without manual invalidation, stale entries expire naturally after 5 minutes.
 
+### Every instance is wrapped in a Proxy
+
+Between steps 5 and 6, `getProvider` passes the new instance through
+`withInFlightTracking(provider, slug)`, which returns a `Proxy`. It exists to
+keep the in-flight counter accurate, and it is the only place in the tree where
+**every** LLM call through a manager-built provider can be observed in one spot.
+
+What it intercepts is a fixed set:
+
+| Methods                       | Wrapped in                                       |
+| ----------------------------- | ------------------------------------------------ |
+| `chat`, `embed`, `transcribe` | `track(slug, …)` — increments/decrements a gauge |
+| `chatStream`                  | `trackStream(slug, …)`                           |
+
+Everything else — `testConnection`, `listModels`, `transcribeStream`, helper
+methods and accessors — is returned `fn.bind(target)`, i.e. forwarded to the
+real instance untouched. Symbol-keyed and non-function properties pass through
+unwrapped, deliberately: proxying `Symbol.toPrimitive` as though it were a
+tracked method corrupts JSON serialisation.
+
+Two consequences worth knowing before you rely on it:
+
+- Adding a new vendor-reaching method to `LlmProvider` **silently falls
+  through**. The sets are an opt-in list, not an allowlist, so a new method is
+  uncounted until someone remembers to add it. `transcribeStream` is in this
+  state today — latent rather than live, because no shipped provider implements
+  it and `streamTranscription` has no production caller.
+- Because the wrapper is applied at build time and the instance is cached, the
+  Proxy is created once per cache entry, not per call. The closures it returns
+  run per call.
+
+### What bypasses the Provider Manager
+
+Four routes reach a vendor without a manager-built, Proxy-wrapped instance. None
+is a defect on its own; all four surprise people:
+
+| Route                                               | What it skips                                                                                                                                                                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registerProvider()` / `registerProviderInstance()` | Both write **unwrapped** instances straight into the cache, so a later `getProvider` returns something the Proxy never touched. Used by smoke scripts and tests.                                                                          |
+| Direct construction                                 | `AnthropicProvider` and `OpenAiCompatibleProvider` are exported from `@/lib/orchestration/llm` and listed under Public Surface, so any caller — a fork especially — can `new` one and skip the manager, the cache and the Proxy entirely. |
+| `knowledge/embedder.ts`                             | Resolves its own destination from `AiProviderConfig` rows and runs its own `fetch`. Never calls `getProvider`. Its last fallback reaches OpenAI directly off `OPENAI_API_KEY` with no provider row at all.                                |
+| `fetchWithTimeout` (`llm/provider.ts`)              | A shared helper, not confined to provider instances — `model-registry.ts` uses it to GET OpenRouter's public model list.                                                                                                                  |
+
+If you are adding anything cross-cutting to LLM calls — metering, tracing, a
+policy check — these four are what stops "wrap the Proxy" from being sufficient
+on its own.
+
 ## Model Registry
 
 Dynamic catalogue of models with pricing, context windows, and capabilities. Four layers:
@@ -524,9 +571,10 @@ embedder. Assume a fourth pass would find something too.
 The table is useful for understanding **where Sunrise chooses a provider and on
 what basis**. It is not a statement about where data can go, and the difference
 matters most to exactly the reader who would treat it as one.
-[`../architecture/provider-selection-waist.md`](../architecture/provider-selection-waist.md)
-explains why the completeness question needs a call-time gate rather than a
-better list, and what that would take.
+The completeness question — _can a call escape the policy?_ — is answered by
+enforcing at the point every call passes through rather than at each site that
+chooses; see **Every instance is wrapped in a Proxy** above and the four routes
+that bypass it.
 
 | Path                                                                                                                                                  | Resolves via                                                                                                                                             | Covered?                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -549,9 +597,7 @@ operator** — which is precisely what this seam's rule says it covers. Closing
 each one means filtering at a second chokepoint with its own fail-closed
 consequences (a workflow step, an ingestion run or voice input failing rather
 than a chat turn), which is why they are separate work rather than a quiet
-widening of this one. t-658 and t-659 are built and gated but not merged,
-pending the design question in
-[`../architecture/provider-selection-waist.md`](../architecture/provider-selection-waist.md).
+widening of this one. t-658 and t-659 are built and gated but not merged.
 
 The embedder row is the one to read if you are only reading one. It is the
 proof that this list is a hand-derived artefact rather than a boundary: it was

@@ -31,11 +31,10 @@
  *
  * **That list is hand-derived and has been short on all three occasions it has
  * been checked**, so treat it as illustrative, not exhaustive.
- * `.context/orchestration/llm-providers.md` carries the current version and
- * `.context/architecture/provider-selection-waist.md` explains why the
- * completeness question needs a call-time gate rather than a better list. Do
- * not read this seam as a whole-tree guarantee. The three choices it does
- * cover:
+ * `.context/orchestration/llm-providers.md` carries the current version, plus
+ * the Proxy every manager-built provider passes through and the four routes
+ * that bypass it. Do not read this seam as a whole-tree guarantee. The three
+ * choices it does cover:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;

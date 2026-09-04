@@ -62,7 +62,6 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **Make the template multi-tenant**                  | `architecture/multi-tenancy.md`                  | `architecture/multi-tenancy-design.md`    |
 | **Scope multi-tenancy work / assess the gap**       | `architecture/multi-tenancy-research.md`         | `architecture/multi-tenancy.md`           |
 | **Build the tenancy capability (design record)**    | `architecture/multi-tenancy-design.md`           | `architecture/multi-tenancy.md`           |
-| **Constrain which LLM vendor a request reaches**    | `architecture/provider-selection-waist.md`       | `orchestration/llm-providers.md`          |
 | **Add OAuth provider**                              | `auth/oauth.md`                                  | `auth/security.md`                        |
 | **Protect a route**                                 | `auth/integration.md`                            | `auth/sessions.md`                        |
 | **Add environment var**                             | `environment/overview.md`                        | `environment/reference.md`                |
