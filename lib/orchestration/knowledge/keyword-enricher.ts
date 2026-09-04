@@ -24,6 +24,7 @@ import { prisma } from '@/lib/db/client';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 
@@ -65,10 +66,40 @@ export class NoChunksToEnrichError extends Error {
 }
 
 /**
+ * The `chat` task default resolves to a provider the eligibility seam bars.
+ *
+ * Named rather than a bare `Error` so the route can answer 403 with a fix an
+ * operator can act on, the way `NoChunksToEnrichError` earns its 409. Left as a
+ * plain `Error` the run would surface as a 500, which reads as "Sunrise broke"
+ * for what is actually the deployment's own policy working correctly.
+ *
+ * Thrown BEFORE any chunk is read or any call is made: an ineligible provider
+ * is a whole-run verdict, not a per-chunk one, so there is no partial-success
+ * state to report and nothing has been sent anywhere.
+ */
+export class ProviderNotPermittedError extends Error {
+  public readonly providerSlug: string;
+  public readonly modelId: string;
+
+  constructor(providerSlug: string, modelId: string) {
+    super(
+      `The chat task default resolves to model "${modelId}", whose provider ` +
+        `"${providerSlug}" is not permitted for keyword enrichment`
+    );
+    this.name = 'ProviderNotPermittedError';
+    this.providerSlug = providerSlug;
+    this.modelId = modelId;
+  }
+}
+
+/**
  * Run keyword enrichment over every chunk in a document.
  *
  * Resolves the `chat` task model from `AiOrchestrationSettings`; operators
- * who want a cheaper model for this can adjust that slot. Each chunk
+ * who want a cheaper model for this can adjust that slot. That model's
+ * provider is Sunrise's choice rather than an operator's, so it is checked
+ * against the provider-eligibility seam before anything is read or sent —
+ * `ProviderNotPermittedError` if the deployment's rule bars it. Each chunk
  * produces one LLM call; cost is logged per call via `logCost()` with
  * `operation: CHAT` and `metadata.purpose = 'knowledge.enrich_keywords'`
  * so the Costs admin can split this overhead from regular chat spend.
@@ -79,6 +110,32 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
   if (!modelInfo) {
     throw new Error(`Resolved model "${modelId}" is not in the model registry`);
   }
+
+  // The second provider-eligibility chokepoint (t-658). This path never touches
+  // `resolveAgentProviderAndModel` — there is no agent and no binding, just a
+  // task default and whatever provider the registry says that model belongs to
+  // — so the seam is consulted here or a fork's policy does not reach ingestion
+  // at all. And what is at stake is the document's own text: enrichment sends
+  // every chunk of it to the provider, which is exactly the content an org's
+  // provider policy exists to keep in approved hands.
+  //
+  // `source: 'primary'` because Sunrise chose. There is no override to honour
+  // on this path — enrichment takes the task default and nothing else.
+  const permitted = await isProviderEligible(modelInfo.provider, {
+    task: 'chat',
+    source: 'primary',
+    primarySlug: null,
+  });
+  if (!permitted) {
+    logger.error('Keyword enrichment blocked: the default model resolves to a barred provider', {
+      documentId,
+      modelId,
+      providerSlug: modelInfo.provider,
+      fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, or widen the rule.',
+    });
+    throw new ProviderNotPermittedError(modelInfo.provider, modelId);
+  }
+
   const provider = await getProvider(modelInfo.provider);
 
   const chunks = await prisma.aiKnowledgeChunk.findMany({

@@ -27,35 +27,67 @@ release process.
   on a shared install either can send an org's prompts to a provider it never
   approved.
 
-  The rule applies wherever a provider is resolved through
-  `resolveEligibleProviders` — the agent-binding resolver AND the agent form's
-  own preview, so the form cannot show an operator a provider the rule forbids
-  while the runtime uses a different one. It wires itself lazily on first use
-  rather than as a consumer's import side effect, so which module reached it
-  first cannot change whether the rule applies. Provider choices made by
-  another route entirely (a workflow step's model resolution, knowledge keyword
-  enrichment) are NOT filtered —
-  `.context/orchestration/llm-providers.md` carries the coverage table,
-  including the two gaps it names.
+  The rule is consulted at two chokepoints: `resolveEligibleProviders` — the
+  agent-binding resolver AND the agent form's own preview, so the form cannot
+  show an operator a provider the rule forbids while the runtime uses a
+  different one — and `isProviderEligible`, its single-candidate form, at the
+  four paths that resolve a provider without ever reaching the resolver. It
+  wires itself lazily on first use rather than as a consumer's import side
+  effect, so which module reached it first cannot change whether the rule
+  applies. `.context/orchestration/llm-providers.md` carries the per-path
+  coverage table, which names the covered paths, the deliberately-uncovered
+  ones, **and two open gaps** — knowledge embedding, which never touches the
+  provider manager, and `transcribeStream`, which no shipped provider
+  implements yet. The table is hand-derived and was short on all three
+  occasions it was checked, so **do not read the seam, or that table, as a
+  process-wide boundary.** The same file now documents the Proxy every
+  manager-built provider passes through and the four routes that bypass the
+  provider manager entirely, which is where a real boundary would have to
+  live.
   - **Covers** the auto-picked primary and both fallback lists (the agent's own
     and the automatic fill), at **both** of the resolver's return paths — a
     fully-configured agent exits early and never reaches the candidates block,
     so filtering only the latter would leave the majority of agents
-    unconstrained.
-  - **Does not cover** an explicit `agent.provider`. That is an operator's
-    recorded decision, and rerouting it would make an agent answer from a
-    provider its own configuration does not name. Enforce that at write time —
-    do not offer a provider the org has not approved.
+    unconstrained — plus the four paths that never reach the resolver: a
+    workflow step with no `modelOverride`, knowledge keyword enrichment, a
+    retroactive review whose model came from neither a request override nor
+    `EVALUATION_JUDGE_MODEL`, and audio transcription's matrix fallback. The
+    first three resolve the `chat` task default and inherit whatever provider
+    that model names; the last walks the audio matrix in order and would
+    otherwise send a caller's voice recording to whichever row sorts first.
+  - **Does not cover, by design**, an explicit `agent.provider`, an explicit
+    step or review `modelOverride`, an operator's pinned audio default, or the
+    `EVALUATION_DEFAULT_*` / `EVALUATION_JUDGE_MODEL` environment variables.
+    Each is an operator's recorded decision, and rerouting one would make a
+    request answer from a provider its own configuration does not name. Enforce
+    those at write time — do not offer a provider the org has not approved.
   - `ctx.source` is `'primary' | 'system' | 'explicit'`, so a rule can be
     stricter about what nobody asked for than about what an operator wrote down.
-    A rule cannot widen or reorder the candidate set.
-  - **Fail-closed.** A rule that throws, or permits nothing, denies every
-    candidate — a restriction that cannot be evaluated must not be read as
-    permission. For the primary that raises the new `NoEligibleProviderError`
-    (`code: no_eligible_provider`), deliberately distinct from
-    `NoProviderConfiguredError`: "configured but not permitted" and "nothing is
-    set up" are different fixes in different places. An agent that names its
-    provider keeps working and loses only its fallbacks.
+    The four non-resolver paths reuse `'primary'` rather than adding a fourth
+    value: an unanswered source fails open, so a new one would mean every rule
+    already written silently did not cover the paths it was added for.
+    `ctx.task` separates them — audio arrives as `'audio'`, the rest as
+    `'chat'`. A rule cannot widen or reorder the candidate set.
+  - **Fail-closed, in each path's own vocabulary.** A rule that throws, or
+    permits nothing, denies every candidate — a restriction that cannot be
+    evaluated must not be read as permission. The resolver raises the new
+    `NoEligibleProviderError` (`code: no_eligible_provider`), deliberately
+    distinct from `NoProviderConfiguredError`: "configured but not permitted"
+    and "nothing is set up" are different fixes in different places. A workflow
+    step raises a **non-retriable** `ExecutorError` with code
+    `provider_not_permitted`, so its `errorStrategy` decides routing and a
+    `retry` does not spend its budget re-asking a deterministic question.
+    Keyword enrichment raises the new `ProviderNotPermittedError` before a
+    single chunk is read, and `POST …/enrich-keywords` answers **403** with code
+    `provider_not_permitted`; `POST …/executions/:id/review` answers the same
+    403 before the judge runs. Audio is the exception, deliberately:
+    `tryAudioRow` returns `null` for a barred row exactly as it already does for
+    an open breaker or a missing `transcribe()`, so the loop tries the next
+    matrix row, and only an entirely unpermitted matrix leaves
+    `getAudioProvider()` null — which every caller already reports as
+    speech-to-text unavailable. In every case the refusal happens before the
+    provider is constructed, so nothing left the deployment. An agent that names
+    its provider keeps working and loses only its fallbacks.
   - **With nothing registered it returns its input unchanged**, so single-tenant
     behaviour is byte-identical and there is no dormant second code path.
 

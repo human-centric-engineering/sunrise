@@ -21,6 +21,10 @@
  * — schedule- and inbound-triggered). Another admin's own run returns 404
  * (not 403) — we never confirm existence of a row the caller cannot see.
  *
+ * 403 if the provider-eligibility seam bars the provider the chat task
+ * default resolves to — only when neither `modelOverride` nor
+ * `EVALUATION_JUDGE_MODEL` supplied the model.
+ *
  * Authentication: Admin role required.
  */
 
@@ -29,7 +33,7 @@ import { Prisma } from '@prisma/client';
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse } from '@/lib/api/responses';
+import { errorResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { logger } from '@/lib/logging';
@@ -47,6 +51,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
 import { runSupervisorAssessment, type LlmCallShim } from '@/lib/orchestration/supervisor';
 
@@ -140,13 +145,47 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // default chat model. The final fallback ensures a deployment with no
   // Anthropic provider (the previous hard-coded default) still gets a
   // working retroactive review using whatever the operator configured.
-  const modelId = body.modelOverride ?? JUDGE_MODEL ?? (await getDefaultModelForTask('chat'));
+  //
+  // Held separately because the eligibility check below turns on WHICH arm
+  // answered, not on what the model is.
+  const operatorChoice = body.modelOverride ?? JUDGE_MODEL ?? null;
+  const modelId = operatorChoice ?? (await getDefaultModelForTask('chat'));
   const modelInfo = getModel(modelId);
   if (!modelInfo) {
     throw new ValidationError('Unknown model', {
       modelOverride: [`Model "${modelId}" is not in the model registry`],
     });
   }
+
+  // Provider eligibility, on the task-default arm only. A request's
+  // `modelOverride` and the `EVALUATION_JUDGE_MODEL` env var are both an
+  // operator's recorded choice — the same category as an explicit
+  // `agent.provider`, which the seam also leaves alone. The third arm is
+  // Sunrise choosing, and what it sends is the execution's own step outputs.
+  if (operatorChoice === null) {
+    const permitted = await isProviderEligible(modelInfo.provider, {
+      task: 'chat',
+      source: 'primary',
+      primarySlug: null,
+    });
+    if (!permitted) {
+      log.error('Retroactive review blocked: default model resolves to a barred provider', {
+        executionId: id,
+        modelId,
+        providerSlug: modelInfo.provider,
+        fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, set EVALUATION_JUDGE_MODEL, pass modelOverride, or widen the rule.',
+      });
+      // 403 with its own code, matching the enrich-keywords route: the admin is
+      // authorised and nothing is broken — the deployment's own policy bars the
+      // provider the task default resolves to, and the remedy is a settings
+      // change rather than a permission one.
+      return errorResponse(
+        `The default chat model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Set EVALUATION_JUDGE_MODEL, pass an explicit modelOverride, or point the chat default at a permitted model.`,
+        { code: 'provider_not_permitted', status: 403 }
+      );
+    }
+  }
+
   const provider = await getProvider(modelInfo.provider);
 
   // Provider-agnostic LLM shim. Bills cost per call as a side-effect;

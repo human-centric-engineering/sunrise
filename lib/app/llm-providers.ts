@@ -10,13 +10,18 @@
  * registers without wiring anything, and it applies to EVERY consumer rather
  * than only whichever module happened to import the resolver.
  *
- * Register a rule constraining which providers an agent may **fall back to**.
- * By default Sunrise attaches up to three other configured providers as
- * automatic fallbacks whenever an agent has no explicit list — convenient on a
- * single-tenant install, and a leak on a shared one, because the prompt can
- * reach a provider nobody approved.
+ * Register a rule constraining which providers **Sunrise may pick on a
+ * caller's behalf**. By default it attaches up to three other configured
+ * providers as automatic fallbacks whenever an agent has no explicit list,
+ * picks the primary itself whenever an agent leaves that field blank, takes the
+ * `chat` task default (and inherits whatever provider that model names) for a
+ * workflow step with no `modelOverride`, a keyword-enrichment run and an
+ * unpinned retroactive review, and walks the audio matrix in order when no
+ * speech-to-text default is pinned. Convenient on a single-tenant install, and
+ * a leak on a shared one, because the prompt — or the document, or the voice
+ * recording — can reach a provider nobody approved.
  *
- * Example — an org may only fall back within the providers it has approved:
+ * Example — an org may only use the providers it has approved:
  *
  *   import { registerProviderEligibility } from '@/lib/orchestration/llm/provider-eligibility';
  *   import { approvedProviderSlugs } from '@/lib/app/billing';
@@ -51,8 +56,10 @@
  * Before you write one:
  *
  *  - **It runs on the request hot path**, up to TWICE per binding resolution —
- *    once for the auto-picked primary and once for the fallback list. Cache
- *    whatever you look up; do not query per call.
+ *    once for the auto-picked primary and once for the fallback list — once
+ *    more per workflow step, per keyword-enrichment run and per retroactive
+ *    review, and once per audio matrix row walked. Cache whatever you look up;
+ *    do not query per call.
  *  - **If you load policy before registering, RETURN the promise.** This
  *    function may be `async` and its caller awaits it. What must not happen is
  *    a floated promise —
@@ -63,18 +70,33 @@
  *  - **Throwing denies, it never permits**, and is logged loudly — a
  *    restriction that cannot be evaluated must not be read as permission.
  *  - **It filters what Sunrise chooses, not what an operator chose.** The
- *    auto-picked primary and both fallback lists go through your rule; an
- *    explicit `agent.provider` does not. Enforce that one at write time — do
- *    not offer a provider the org has not approved.
- *  - **The primary is fail-closed.** If your rule permits nothing for
- *    `source: 'primary'`, the request raises `NoEligibleProviderError` rather
- *    than using a provider you did not approve. A rule that throws therefore
- *    costs provider-less agents an outage, not a silent bypass — deliberate,
- *    but know it before putting a network call in here.
+ *    auto-picked primary, both fallback lists, the task-default model's
+ *    provider on the three paths that resolve one directly, and an audio matrix
+ *    row reached by order all go through your rule. An explicit
+ *    `agent.provider`, an explicit step or review `modelOverride`, a pinned
+ *    audio default and the `EVALUATION_*` env vars do not. Enforce those at
+ *    write time — do not offer a provider the org has not approved.
+ *  - **`source: 'primary'` means every path where Sunrise chose**, not only the
+ *    agent one: a blank `agent.provider`, a workflow step with no
+ *    `modelOverride`, a keyword-enrichment run, an unpinned retroactive review
+ *    and an audio matrix row all arrive under it. So a rule you already wrote
+ *    reaches every one of them without an edit — which is why they reuse the
+ *    value rather than adding a fourth your rule would not answer for. Use
+ *    `ctx.task` to tell them apart: audio arrives as `'audio'`, the rest as
+ *    `'chat'`.
+ *  - **Everything Sunrise chooses is fail-closed.** If your rule permits
+ *    nothing for `source: 'primary'`, the request raises
+ *    `NoEligibleProviderError`, a workflow step fails with a non-retriable
+ *    `provider_not_permitted`, an enrichment run and a retroactive review are
+ *    refused with a 403, and speech-to-text reports itself unavailable — rather
+ *    than any of them using a provider you did not approve. A rule that throws
+ *    therefore costs provider-less agents an outage, stops workflow steps and
+ *    turns off voice input, not a silent bypass — deliberate, but know it
+ *    before putting a network call in here.
  *
  * Full guide: `.context/orchestration/llm-providers.md`
  */
 export function registerAppProviderEligibility(): void | Promise<void> {
   // No app provider-eligibility rule by default: every configured provider is
-  // an eligible fallback, which is Sunrise's single-tenant behaviour.
+  // eligible everywhere, which is Sunrise's single-tenant behaviour.
 }

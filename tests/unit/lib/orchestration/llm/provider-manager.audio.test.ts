@@ -7,11 +7,13 @@
  * - Skips providers whose breaker is open
  * - Skips providers that don't implement transcribe()
  * - Surface returned tuple includes provider, modelId, providerSlug
+ * - Provider eligibility (t-659): the matrix fallback is Sunrise choosing, so a
+ *   fork's rule applies to it; an operator-pinned default is not
  *
  * @see lib/orchestration/llm/provider-manager.ts
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -65,6 +67,10 @@ import {
 } from '@/lib/orchestration/llm/provider-manager';
 import { getBreaker, resetAllBreakers } from '@/lib/orchestration/llm/circuit-breaker';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -397,5 +403,93 @@ describe('getAudioProvider', () => {
       expect(result?.providerSlug).toBe('openai');
       expect(result?.modelId).toBe('whisper-1');
     });
+  });
+});
+
+// ─── Provider eligibility (t-659) ────────────────────────────────────────────
+
+describe('getAudioProvider — provider eligibility', () => {
+  beforeEach(() => {
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+  });
+
+  it('skips a matrix-fallback row the rule bars, falling through to the next', async () => {
+    // Two rows, the barred one FIRST — otherwise "first row wins" and "first
+    // permitted row wins" are the same answer and deleting the check changes
+    // nothing. Same reason the breaker test above orders its rows that way.
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      makeAudioModelRow({ providerSlug: 'barred-provider', modelId: 'whisper-x' }),
+      makeAudioModelRow({ providerSlug: 'openai', modelId: 'whisper-1' }),
+    ]);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    registerProviderEligibility((candidates) =>
+      candidates.filter((slug) => slug !== 'barred-provider')
+    );
+
+    const result = await getAudioProvider();
+
+    expect(result?.providerSlug).toBe('openai');
+    expect(result?.modelId).toBe('whisper-1');
+  });
+
+  it('returns null when the rule permits no audio row at all', async () => {
+    // Fail-closed: speech-to-text becomes unavailable rather than routing a
+    // caller's recording to a provider the policy did not approve. `null` is
+    // the shape all three callers already handle.
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeAudioModelRow()]);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    registerProviderEligibility(() => []);
+
+    await expect(getAudioProvider()).resolves.toBeNull();
+  });
+
+  it('a throwing rule denies, rather than falling back to the matrix unfiltered', async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeAudioModelRow()]);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    registerProviderEligibility(() => {
+      throw new Error('policy backend down');
+    });
+
+    await expect(getAudioProvider()).resolves.toBeNull();
+  });
+
+  it('resolves normally when the rule permits the provider', async () => {
+    // The control. Without it the three assertions above are also satisfied by
+    // a build that denies every audio row unconditionally.
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeAudioModelRow()]);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    registerProviderEligibility((candidates) => candidates);
+
+    const result = await getAudioProvider();
+
+    expect(result?.providerSlug).toBe('openai');
+  });
+
+  it('does NOT filter an operator-pinned audio default', async () => {
+    // The boundary, pinned rather than assumed. A pin in Settings → Default
+    // models is an operator's recorded choice, the same category as an explicit
+    // `agent.provider`. The rule below denies EVERYTHING, so this resolving is
+    // the whole proof that the `operator_default` arm never consults it.
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      defaultModels: {
+        routing: '',
+        chat: '',
+        reasoning: '',
+        embeddings: '',
+        audio: 'openai::whisper-1',
+      },
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeAudioModelRow()]);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    registerProviderEligibility(() => []);
+
+    const result = await getAudioProvider();
+
+    expect(result?.providerSlug).toBe('openai');
+    expect(result?.modelId).toBe('whisper-1');
   });
 });

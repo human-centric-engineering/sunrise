@@ -5,9 +5,14 @@
  * model registry. Asserts auth, ownership, terminal-status guard,
  * happy path column writes, and re-entry archive into
  * `supervisorReport.previousVerdicts[]`.
+ *
+ * Also the provider-eligibility check (t-659): the judge's third resolution
+ * arm — no `modelOverride`, no `EVALUATION_JUDGE_MODEL` — is Sunrise choosing,
+ * so a fork's rule applies to it. The first two arms are operator choices and
+ * are not rerouted.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 
@@ -64,6 +69,10 @@ import { prisma } from '@/lib/db/client';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { runSupervisorAssessment } from '@/lib/orchestration/supervisor';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -420,5 +429,74 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     expect(reportWritten.previousVerdicts).toBeUndefined();
     // But the new verdict still wrote through.
     expect(reportWritten.verdict).toBeDefined();
+  });
+});
+
+// ─── Provider eligibility (t-659) ────────────────────────────────────────────
+
+describe('POST …/review — provider eligibility', () => {
+  beforeEach(() => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+  });
+
+  it('answers 403 when the rule bars the task-default judge provider', async () => {
+    // `getModel` is stubbed to report provider 'anthropic' for every model, and
+    // no `modelOverride` is sent, so this is the third arm: Sunrise resolving
+    // `getDefaultModelForTask('chat')`.
+    registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'anthropic'));
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { success: boolean; error: { code: string } };
+    expect(body.success).toBe(false);
+    // Its own code, not the generic FORBIDDEN a role check produces — the
+    // remedy is a settings change, not a permission one.
+    expect(body.error.code).toBe('provider_not_permitted');
+    // Refused before the provider is built and before the judge ran: the
+    // execution's step outputs never reached the barred provider.
+    expect(vi.mocked(getProvider)).not.toHaveBeenCalled();
+    expect(vi.mocked(runSupervisorAssessment)).not.toHaveBeenCalled();
+    expect(vi.mocked(prisma.aiWorkflowExecution.update)).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reroute an explicit modelOverride', async () => {
+    // The boundary. A request that names its judge is an operator's recorded
+    // choice, the same category as an explicit `agent.provider`. The rule below
+    // denies EVERYTHING, so this succeeding is the whole proof.
+    registerProviderEligibility(() => []);
+
+    const res = await POST(makeRequest({ modelOverride: 'operator-picked-judge' }), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(runSupervisorAssessment)).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs normally when the rule permits the provider', async () => {
+    // The control for the 403 above: without it, that test also passes on a
+    // build that refuses every review regardless of the rule.
+    registerProviderEligibility((candidates) => candidates);
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(runSupervisorAssessment)).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing rule refuses rather than letting the review run', async () => {
+    registerProviderEligibility(() => {
+      throw new Error('policy backend down');
+    });
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(403);
+    expect(vi.mocked(runSupervisorAssessment)).not.toHaveBeenCalled();
   });
 });

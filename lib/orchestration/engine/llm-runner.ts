@@ -6,7 +6,10 @@
  * accumulate cost" dance so each executor that needs an LLM stays
  * ~10 lines. Also handles:
  *
- *   - Resolving an empty/missing `modelOverride` to the task-default.
+ *   - Resolving an empty/missing `modelOverride` to the task-default, and
+ *     checking the resulting provider against the eligibility seam — a
+ *     task-default model is Sunrise's choice, so a fork's policy applies to it.
+ *     An explicit override is the operator's and is left alone.
  *   - Template interpolation on the prompt (`{{input}}`, `{{input.foo}}`,
  *     `{{previous.output}}`, `{{<stepId>.output}}`).
  *   - Fire-and-forget `logCost()` so an accounting failure never blocks
@@ -23,6 +26,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
@@ -102,10 +106,11 @@ export async function runLlmCall(
     async (span) => {
       const interpolated = interpolatePrompt(params.prompt, ctx, params.previousStepId);
 
-      const modelId =
-        params.modelOverride && params.modelOverride.length > 0
-          ? params.modelOverride
-          : await getDefaultModelForTask('chat');
+      // Held rather than folded into `modelId`, because the eligibility check
+      // below turns on WHERE the model came from, not on what it is.
+      const override =
+        params.modelOverride && params.modelOverride.length > 0 ? params.modelOverride : null;
+      const modelId = override ?? (await getDefaultModelForTask('chat'));
 
       const modelInfo = getModel(modelId);
       if (!modelInfo) {
@@ -120,6 +125,47 @@ export async function runLlmCall(
         [GEN_AI_REQUEST_MODEL]: modelId,
         [GEN_AI_SYSTEM]: modelInfo.provider,
       });
+
+      // The second provider-eligibility chokepoint (t-658). Nothing here goes
+      // through `resolveAgentProviderAndModel` — a step reads the model
+      // registry directly — so the seam has to be consulted on the spot or a
+      // fork's policy simply does not apply to workflow steps.
+      //
+      // Only when there is NO override. An override is an operator's recorded
+      // choice in the workflow definition, the same category as an explicit
+      // `agent.provider`, which the seam also leaves alone; rerouting it would
+      // run a step on a provider its own definition does not name. With no
+      // override, Sunrise picked the task default and then inherited whatever
+      // provider that model happens to name — nobody's intent to override.
+      if (override === null) {
+        const permitted = await isProviderEligible(modelInfo.provider, {
+          task: 'chat',
+          source: 'primary',
+          primarySlug: null,
+        });
+        if (!permitted) {
+          // Operator detail in the log, not in the message: `ExecutorError`'s
+          // message reaches the SSE client, and the workflow path has no scrub
+          // of its own. Same split the agent resolver uses.
+          logger.error('Workflow step blocked: the default model resolves to a barred provider', {
+            stepId: params.stepId,
+            executionId: ctx.executionId,
+            modelId,
+            providerSlug: modelInfo.provider,
+            fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider — by policy, or because it threw (a rule that cannot be evaluated denies). Either point the chat task default at a permitted model, give the step an explicit modelOverride, or widen the rule.',
+          });
+          // NOT retriable. A policy denial is deterministic, so a `retry`
+          // strategy would spend the step's whole retry budget re-asking a
+          // question whose answer cannot change within the run.
+          throw new ExecutorError(
+            params.stepId,
+            'provider_not_permitted',
+            'The model for this step resolves to a provider this deployment does not permit',
+            undefined,
+            false
+          );
+        }
+      }
 
       let provider;
       try {

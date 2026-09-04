@@ -9,9 +9,12 @@
  *     tolerates per-chunk failures, batches when chunk count exceeds the threshold
  *   - Empty-content chunks are skipped (not failed)
  *   - NoChunksToEnrichError when the document has no chunks
+ *   - The provider-eligibility check (t-658): enrichment sends the document's
+ *     own text to whatever provider the task-default model names, and Sunrise
+ *     picks that model, so a fork's rule has to reach it.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -51,9 +54,14 @@ import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 
 import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
+import {
   enrichDocumentKeywords,
   normaliseKeywords,
   NoChunksToEnrichError,
+  ProviderNotPermittedError,
 } from '@/lib/orchestration/knowledge/keyword-enricher';
 
 const MODEL_ID = 'gpt-4o-mini';
@@ -268,5 +276,82 @@ describe('enrichDocumentKeywords', () => {
 
     expect(result.chunksProcessed).toBe(10);
     expect(chatMock).toHaveBeenCalledTimes(10);
+  });
+});
+
+// ─── Provider eligibility (t-658) ────────────────────────────────────────────
+
+describe('enrichDocumentKeywords — provider eligibility', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+  });
+
+  /** Two chunks, so a run that is NOT blocked visibly does work. */
+  function seedChunks() {
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      makeChunk('c1', 'How hybrid search combines BM25 and vector retrieval.'),
+      makeChunk('c2', 'Reciprocal rank fusion for merging result lists.'),
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.update).mockResolvedValue({} as never);
+  }
+
+  it('refuses the run when the rule bars the resolved provider', async () => {
+    const chatMock = vi.fn().mockResolvedValue(makeChatResponse('alpha, beta'));
+    setupProvider(chatMock as never);
+    seedChunks();
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== PROVIDER_NAME));
+
+    await expect(enrichDocumentKeywords('doc-1')).rejects.toBeInstanceOf(ProviderNotPermittedError);
+
+    // The point of refusing BEFORE the read: nothing is sent, and no chunk row
+    // is even loaded. A check placed after the loop would still "block" the run
+    // while having already shipped every chunk to the barred provider.
+    expect(vi.mocked(prisma.aiKnowledgeChunk.findMany)).not.toHaveBeenCalled();
+    expect(vi.mocked(getProvider)).not.toHaveBeenCalled();
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('carries the model and provider on the error, so the operator can act', async () => {
+    setupProvider(async () => makeChatResponse('alpha'));
+    seedChunks();
+    registerProviderEligibility(() => []);
+
+    // Not just "some error": an operator has to know WHICH provider and which
+    // model slot to change, and the route renders this message at 403.
+    await expect(enrichDocumentKeywords('doc-1')).rejects.toMatchObject({
+      name: 'ProviderNotPermittedError',
+      providerSlug: PROVIDER_NAME,
+      modelId: MODEL_ID,
+    });
+  });
+
+  it('runs normally when the rule permits the provider', async () => {
+    // The control. Without it, the two assertions above are also satisfied by a
+    // seam that denies everything unconditionally — including on a tree where
+    // no rule is registered at all.
+    const chatMock = vi.fn().mockResolvedValue(makeChatResponse('alpha, beta'));
+    setupProvider(chatMock as never);
+    seedChunks();
+    registerProviderEligibility((candidates) => candidates);
+
+    const result = await enrichDocumentKeywords('doc-1');
+
+    expect(result.chunksProcessed).toBe(2);
+    expect(chatMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a throwing rule denies, rather than letting the run through', async () => {
+    setupProvider(async () => makeChatResponse('alpha'));
+    seedChunks();
+    registerProviderEligibility(() => {
+      throw new Error('policy backend down');
+    });
+
+    await expect(enrichDocumentKeywords('doc-1')).rejects.toBeInstanceOf(ProviderNotPermittedError);
   });
 });

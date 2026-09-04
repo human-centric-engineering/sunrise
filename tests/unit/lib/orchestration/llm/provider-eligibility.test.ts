@@ -18,6 +18,7 @@ import { logger } from '@/lib/logging';
 import {
   registerProviderEligibility,
   resolveEligibleProviders,
+  isProviderEligible,
   hasProviderEligibilityResolver,
   resetProviderEligibility,
   type ProviderEligibilityContext,
@@ -125,5 +126,63 @@ describe('provider eligibility registry', () => {
     expect(hasProviderEligibilityResolver()).toBe(false);
     const candidates = ['a'];
     await expect(resolveEligibleProviders(candidates, CTX)).resolves.toBe(candidates);
+  });
+});
+
+describe('isProviderEligible', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+  });
+
+  it('permits everything by default, like the list form', async () => {
+    await expect(isProviderEligible('openai', CTX)).resolves.toBe(true);
+  });
+
+  it('answers false when the rule excludes the slug', async () => {
+    registerProviderEligibility((c) => c.filter((s) => s !== 'openai'));
+
+    await expect(isProviderEligible('openai', CTX)).resolves.toBe(false);
+    // Both directions from the SAME rule. A helper that always answered false
+    // would satisfy the line above on its own.
+    await expect(isProviderEligible('anthropic', CTX)).resolves.toBe(true);
+  });
+
+  it('passes the caller’s context through to the rule untouched', async () => {
+    // A fork's rule is expected to branch on `source` and `task`; a helper that
+    // dropped or rewrote them would make those branches unreachable while every
+    // permit/deny assertion above still passed.
+    const seen: ProviderEligibilityContext[] = [];
+    registerProviderEligibility((c, ctx) => {
+      seen.push(ctx);
+      return c;
+    });
+
+    await isProviderEligible('openai', { task: 'chat', source: 'primary', primarySlug: null });
+
+    expect(seen).toEqual([{ task: 'chat', source: 'primary', primarySlug: null }]);
+  });
+
+  it('denies when the rule throws', async () => {
+    // Fail-closed, same as the list form — this is what the four non-resolver
+    // callers rely on to refuse rather than run.
+    registerProviderEligibility(() => {
+      throw new Error('policy backend down');
+    });
+
+    await expect(isProviderEligible('openai', CTX)).resolves.toBe(false);
+  });
+
+  it('cannot be widened by a rule returning a provider that was not asked about', async () => {
+    // The intersect in `resolveEligibleProviders` is what makes this true;
+    // asserting it here stops the single-candidate path being rewritten as a
+    // bare `eligible.includes(slug)` against an unintersected result.
+    registerProviderEligibility(() => ['anthropic']);
+
+    await expect(isProviderEligible('openai', CTX)).resolves.toBe(false);
   });
 });

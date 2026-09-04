@@ -247,6 +247,15 @@ Content here inherits the metadata above…
 
 Cost is logged via `cost-tracker.ts` under operation `knowledge.enrich_keywords` and shows up in the admin Costs view. The LLM call uses the configured `chat` default model (`getDefaultModelForTask('chat')`); operators can switch to a cheap utility model by editing `AiOrchestrationSettings.defaultModels.chat`.
 
+Because Sunrise — not an operator — picks that model, the provider it resolves
+to is checked against the [provider-eligibility seam](./llm-providers.md#per-path-coverage)
+before anything is read or sent. If a fork's rule bars it, the run is refused
+with `ProviderNotPermittedError` and the route answers **403** / code
+`provider_not_permitted`, naming the model and provider. The check runs before
+the chunk read, so a refusal means no chunk of the document reached the barred
+provider and there is no partial-success state to reconcile. On a default
+single-tenant install no rule is registered and nothing changes.
+
 ## Search
 
 `searchKnowledge(query, filters?, limit?, threshold?)` ranks knowledge-base chunks via pgvector cosine distance, with two modes selected by `searchConfig.hybridEnabled` on the orchestration settings singleton. Filters support `chunkType`, `patternNumber`, `section`, `documentId`, and `scope` (see `knowledgeSearchSchema` in `lib/validations/orchestration.ts` for the full enum).
