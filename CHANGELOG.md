@@ -35,9 +35,15 @@ release process.
   wires itself lazily on first use rather than as a consumer's import side
   effect, so which module reached it first cannot change whether the rule
   applies. `.context/orchestration/llm-providers.md` carries the per-path
-  coverage table — hand-derived, and it names the deliberately-uncovered paths
-  as well as the covered ones. Read it before treating the seam as a whole-tree
-  guarantee.
+  coverage table, which names the covered paths, the deliberately-uncovered
+  ones, **and two open gaps** — knowledge embedding, which never touches the
+  provider manager, and `transcribeStream`, which no shipped provider
+  implements yet. The table is hand-derived and was short on all three
+  occasions it was checked, so **do not read the seam, or that table, as a
+  process-wide boundary.** The same file now documents the Proxy every
+  manager-built provider passes through and the four routes that bypass the
+  provider manager entirely, which is where a real boundary would have to
+  live.
   - **Covers** the auto-picked primary and both fallback lists (the agent's own
     and the automatic fill), at **both** of the resolver's return paths — a
     fully-configured agent exits early and never reaches the candidates block,
