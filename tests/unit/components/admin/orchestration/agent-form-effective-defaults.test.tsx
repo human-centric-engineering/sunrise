@@ -442,7 +442,9 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     await waitFor(() => {
       expect(apiClient.post).not.toHaveBeenCalled();
       expect(
-        screen.getByText(/these fields need attention: provider, model\./i)
+        // Labels and tab come from the agent field registry, so the banner
+        // names what the <Label> names and says where to find it.
+        screen.getByText(/these fields need attention\. Model: Provider, Model/i)
       ).toBeInTheDocument();
     });
   });
@@ -486,7 +488,9 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     await waitFor(() => {
       expect(apiClient.patch).not.toHaveBeenCalled();
       expect(
-        screen.getByText(/these fields need attention: provider, model\./i)
+        // Labels and tab come from the agent field registry, so the banner
+        // names what the <Label> names and says where to find it.
+        screen.getByText(/these fields need attention\. Model: Provider, Model/i)
       ).toBeInTheDocument();
     });
   });

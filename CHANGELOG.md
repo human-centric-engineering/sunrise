@@ -223,10 +223,24 @@ release process.
   `provider` and `model` rendered no inline error and `handleSubmit` had no
   `onInvalid` branch, so an operator on the General tab clicked Create and
   watched nothing happen, with no indication that the blocking fields were on
-  the Model tab. The form-level banner now names them
-  (`Cannot save — these fields need attention: provider, model.`) and both
-  fields render their own message. Pre-existing, but reachable far more often
-  once the form stopped inventing a provider.
+  the Model tab. The form-level banner now names them, grouped by the tab they
+  live on and labelled from the agent field registry
+  (`Cannot save — these fields need attention. Model: Provider, Model`), and
+  both fields render their own message. Pre-existing, but reachable far more
+  often once the form stopped inventing a provider.
+
+- **Restoring an agent version left the form permanently unsavable.** The
+  `reset({...})` behind the Versions tab omitted ten fields — `kind`,
+  `personaMode`, `voiceMode`, `guardrailsMode`, the three `enable*Input`
+  booleans, `profileId`, `persona` and `guardrails` — and react-hook-form's
+  `reset(values)` replaces form state wholesale rather than merging, so each
+  became `undefined`. Seven are required enums or booleans, so every save after
+  a restore failed the resolver. It went unnoticed because the failure was
+  completely silent: the button did nothing at all. Surfacing it is what the
+  `onInvalid` branch above did on its first outing. A source-parity test now
+  fails, naming the missing fields, if the schema and the restore handler drift
+  apart again — and throws rather than passing vacuously if its anchors stop
+  matching.
 
 - `VERSIONING.md`'s public-surface list named the tenancy seam as `TENANCY_MODE` +
   `lib/tenancy/client.ts` — a file that has never existed. The covered seam is, and

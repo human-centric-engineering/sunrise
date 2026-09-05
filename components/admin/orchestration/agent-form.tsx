@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { fieldLabels, fieldToTab } from '@/lib/orchestration/agents/agent-field-registry';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   resolveEffectivePrompt,
@@ -470,13 +471,34 @@ export function AgentForm({
    * correct behaviour, but refusing silently is not.
    */
   const onInvalid = (formErrors: FieldErrors<AgentFormData>) => {
-    const fields = Object.keys(formErrors).map((key) =>
-      key.replace(/([A-Z])/g, ' $1').toLowerCase()
-    );
+    const labels = fieldLabels();
+    const tabs = fieldToTab();
+
+    // `root` is react-hook-form's own key for form-level issues. It is not a
+    // field and has no control to point at, so rendering it would send the
+    // operator hunting for a "root" input that does not exist.
+    const keys = Object.keys(formErrors).filter((key) => key !== 'root');
+
+    // Group by tab, because the fields that block a save are routinely NOT on
+    // the tab the operator is looking at — provider and model live on Model
+    // while the save button sits under General. Labels come from the agent
+    // field registry so the banner says what the <Label> says; the humanised
+    // key is only a fallback for a form field the registry does not describe.
+    const byTab = new Map<string, string[]>();
+    for (const key of keys) {
+      const label = labels[key] ?? key.replace(/([A-Z])/g, ' $1').toLowerCase();
+      const tab = tabs[key] ?? 'Other';
+      const bucket = byTab.get(tab);
+      if (bucket) bucket.push(label);
+      else byTab.set(tab, [label]);
+    }
+
     setSaved(false);
     setError(
-      fields.length > 0
-        ? `Cannot save — these fields need attention: ${fields.join(', ')}.`
+      byTab.size > 0
+        ? `Cannot save — these fields need attention. ${[...byTab.entries()]
+            .map(([tab, fields]) => `${tab}: ${fields.join(', ')}`)
+            .join(' · ')}`
         : 'Cannot save — some required fields are missing.'
     );
   };
@@ -908,8 +930,8 @@ export function AgentForm({
             )}
             {!providerFallback && !currentProvider && (
               <p className="text-muted-foreground text-xs">
-                No provider could be resolved automatically — none may be configured, none
-                reachable, none permitted, or the lookup itself may have failed.{' '}
+                No provider could be resolved automatically — none of the configured providers may
+                be active, reachable or permitted, or the lookup itself may have failed.{' '}
                 <strong className="font-medium">Picking one here saves it permanently</strong> as
                 this agent&apos;s explicit provider, which no policy will override later — so if you
                 did not expect this, reload before pinning one.
@@ -999,6 +1021,14 @@ export function AgentForm({
                     Providers page
                   </Link>{' '}
                   or pick a different provider above.
+                  {currentModel ? (
+                    <>
+                      {' '}
+                      Saving now would keep <code className="font-mono">{currentModel}</code>, which
+                      this provider does not list — the auto-reset only replaces a model when the
+                      new provider has one to offer, so nothing has cleared it.
+                    </>
+                  ) : null}
                 </p>
               </>
             ) : (
@@ -1934,6 +1964,24 @@ export function AgentForm({
                       brandVoiceInstructions: fresh.brandVoiceInstructions ?? null,
                       runtimePromptManaged: fresh.runtimePromptManaged ?? false,
                       runtimePromptNote: fresh.runtimePromptNote ?? null,
+                      // `reset(values)` REPLACES form state wholesale, so any
+                      // required field missing here becomes `undefined` and
+                      // every later save fails the resolver. These ten used to
+                      // be absent: seven are required enums/booleans, so a
+                      // restore left the form permanently unsavable. It failed
+                      // SILENTLY before `onInvalid` existed — the banner is
+                      // what surfaced it, which is the whole argument for
+                      // having one.
+                      kind: (fresh.kind as 'chat' | 'judge' | undefined) ?? 'chat',
+                      profileId: fresh.profileId ?? null,
+                      persona: fresh.persona ?? null,
+                      guardrails: fresh.guardrails ?? null,
+                      personaMode: (fresh.personaMode as 'override' | 'append') ?? 'override',
+                      voiceMode: (fresh.voiceMode as 'override' | 'append') ?? 'override',
+                      guardrailsMode: (fresh.guardrailsMode as 'override' | 'append') ?? 'override',
+                      enableVoiceInput: fresh.enableVoiceInput ?? false,
+                      enableImageInput: fresh.enableImageInput ?? false,
+                      enableDocumentInput: fresh.enableDocumentInput ?? false,
                     });
                   } catch {
                     // Silent — the version tab already shows its own error state.
