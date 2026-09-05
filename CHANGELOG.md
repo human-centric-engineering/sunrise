@@ -192,9 +192,16 @@ release process.
   both of which set `model: ''` while silently taking a pinned
   `provider: 'anthropic'`; both now state `provider: ''` to match.
 
-  The empty string is still meaningful and still allowed at every layer — it is
-  the dynamic-resolution contract the system-seeded agents rely on, and the one
-  `model` has always used.
+  The empty string stays meaningful **in the database**: it is the
+  dynamic-resolution contract, and on a stock install every one of the 15 seeded
+  agents uses it. It is *not* accepted by the HTTP layer — `createAgentObjectSchema`,
+  `updateAgentObjectSchema` and `bundledAgentSchema` all require non-empty when
+  the field is present. That is deliberate rather than an oversight: the way to
+  leave an agent resolving dynamically over HTTP is to **omit** the field, not to
+  send `''`. Seeds, which write through Prisma directly, are what create such
+  agents in the first place. (One consequence worth knowing: a backup bundle
+  containing a system-seeded agent cannot currently be re-imported, because
+  `bundledAgentSchema` requires the value the row does not have.)
 
   **Fork impact:** run `npm run db:migrate:deploy`. Any `prisma.aiAgent.create()`
   in your own code that omitted `provider` will now fail `tsc` — add the field.
@@ -205,6 +212,37 @@ release process.
   `npm run db:drift-check` passes all 9 probes against the applied migration.
 
 ### Fixed
+
+- **The agent form no longer writes fields the operator did not author.** This is
+  the change the rest of this group turns on, and it is worth stating as a rule
+  rather than a fix: the form used **one value as both the preview of what the
+  runtime would resolve and the payload of what the operator decided**. Every
+  symptom below followed from that conflation.
+
+  `getEffectiveAgentDefaults` pre-fills `provider` / `model` with what the
+  runtime *would* pick when the row itself is empty, and that preview was then
+  submitted as an explicit choice. So an admin fixing a typo in an agent's
+  instructions silently converted it from "resolve a provider per turn" to
+  "permanently pinned to whatever was previewed" — with a policy-forbidden
+  provider under a fork's eligibility rule, and with a merely-unintended one on
+  any install at all.
+
+  **This is the normal path, not a corner.** On a stock seeded install *all 15*
+  agents ship `provider: ''`, so every one of them was one unrelated save away
+  from being pinned.
+
+  On edit the form now sends `provider` and `model` only when the operator
+  actually changed them (react-hook-form's `dirtyFields` is the authorship
+  test), and never sends `kind`, for which it renders no control. Picking a
+  provider explicitly still writes it — that is a human decision and the seam's
+  whole design is to honour those. Changing the provider also marks the model
+  dirty, so a binding is never saved half-updated. On create both are still
+  required, because a new agent has no row to inherit from.
+
+  Two consequences worth calling out. An inheriting agent stays editable when
+  nothing resolves — previously the required-field check made every seeded agent
+  unsavable for an admin who had not set an API key yet. And a version restore
+  can no longer pin anything, because a restore authors nothing.
 
 - The agent form turned a provider-eligibility **denial** into a forged operator
   decision. `components/admin/orchestration/agent-form.tsx` seeded its provider
@@ -278,12 +316,13 @@ release process.
   control anywhere on screen. It failed silently before; the new banner made it
   worse by naming a field the operator cannot find.
 
-  Widening the form's own enum would only have moved the failure server-side —
-  `updateAgentObjectSchema.kind` carries the same enum. The form renders no
-  control for `kind`, so it now says nothing about it: it accepts whatever the
-  row holds, and **omits `kind` from the PATCH body on edit**. The API field is
-  `.optional()`, so the column is left alone. No API change; the create path
-  still only ever sets `chat` or `judge`, from the `?kind=` param.
+  The form renders no control for `kind`, so it now says nothing about it: it
+  accepts whatever the row holds, and omits `kind` from the PATCH body on edit
+  under the general rule below. (An earlier draft of this entry claimed the API's
+  PATCH schema carried the same enum and would reject the echo with a 400. That
+  was wrong — `updateAgentObjectSchema` declares no `kind` key at all, and
+  `validateRequestBody` uses a non-strict `parse`, so an echoed `kind` was being
+  silently stripped, not rejected. The behaviour is right; that reason was not.)
 
 - **Restoring an agent version left the form permanently unsavable.** The
   `reset({...})` behind the Versions tab omitted ten fields — `kind`,

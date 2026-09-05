@@ -252,30 +252,30 @@ describe('AgentForm — save after a version restore', () => {
   it('restoring an inheriting agent does not blank its resolved provider', async () => {
     // A restore returns the ROW's values, and a system-seeded agent's row holds
     // '' — the dynamic-resolution contract, not an absence of configuration.
-    // Writing that raw blanked the Select, fired the "no provider could be
-    // resolved" hint (false — resolution had just succeeded on this very page),
-    // and then `onInvalid` blocked the save until the operator pinned a
-    // provider onto an agent designed to resolve one per turn. That is this
-    // PR's own defect, reached from the other direction.
-    const { apiClient } = await restoreThenSave(makeAgent({ provider: '', model: '' }), {
+    // Writing that raw blanked the Select and fired a "no provider could be
+    // resolved" hint that was false: resolution had succeeded on this very page
+    // seconds earlier.
+    const { apiClient, user } = await restoreThenSave(makeAgent({ provider: '', model: '' }), {
       provider: 'anthropic',
       model: 'claude-opus-4-6',
       inheritedProvider: true,
       inheritedModel: true,
     });
 
-    await waitFor(() => {
-      expect(apiClient.patch).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          body: expect.objectContaining({ provider: 'anthropic', model: 'claude-opus-4-6' }),
-        })
-      );
-    });
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
 
-    expect(
-      screen.queryByText(/no provider could be resolved automatically/i)
-    ).not.toBeInTheDocument();
+    // A restore authors nothing: it re-seeds the form from the row. So the
+    // save that follows must not write provider/model — the agent stays
+    // dynamically resolving, which is what it was before the restore.
+    const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
+    expect(body.body).not.toHaveProperty('provider');
+    expect(body.body).not.toHaveProperty('model');
+    expect(body.body).toHaveProperty('name', 'Support Bot');
+
+    // And the Select is not left blank staring at the operator: the restore
+    // path runs the same resolution chain as mount, so the preview survives.
+    await user.click(screen.getByRole('tab', { name: /model/i }));
+    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/anthropic/i);
   });
 
   it('falls back safely when the restored row carries nulls', async () => {

@@ -294,8 +294,17 @@ describe('AgentForm — effective defaults', () => {
     await openModelTab();
 
     await waitFor(() => {
-      expect(screen.getByText(/inherited from the first active provider/i)).toBeInTheDocument();
-      expect(screen.getByText(/inherited from the system default chat model/i)).toBeInTheDocument();
+      // Copy replaced: the old text ("Inherited from the first active provider.
+      // Saving will lock this agent to X") described a save that WOULD pin the
+      // value. It no longer does — an untouched field is not sent at all — so
+      // the hint now says what is true, that the value is resolved per turn and
+      // only an explicit pick pins it.
+      expect(
+        screen.getByText(/no provider of its own — it resolves one at run time/i)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/no model of its own — it resolves one at run time/i)
+      ).toBeInTheDocument();
     });
   });
 
@@ -377,7 +386,27 @@ describe('AgentForm — effective defaults', () => {
  * on the deny tests alone would also be what a harness that cannot reach the
  * submit path at all looks like.
  */
-describe('AgentForm — a denied provider is never written (t-661)', () => {
+/**
+ * t-661 — the form must never write a field the operator did not author.
+ *
+ * The original defect was `|| 'anthropic'`: a provider nobody chose, submitted
+ * as an EXPLICIT `agent.provider`, which `resolveAgentProviderAndModel` never
+ * re-filters. Removing the literal was necessary but not sufficient, because
+ * the form still used ONE value as both the preview of what the runtime would
+ * resolve and the payload of what the operator decided. Any resolved value
+ * written back turns a dynamically-resolving agent into a permanently pinned
+ * one — with a forbidden provider under a fork's eligibility rule, with a
+ * merely-unapproved one during an unrelated typo fix.
+ *
+ * That matters far more than "a rare denial": on a stock install ALL 15 seeded
+ * agents ship `provider: ''`, so the inherit state is the normal case.
+ *
+ * So the property under test is authorship, not refusal. On edit the form
+ * sends `provider` / `model` only when the operator actually changed them.
+ * Create is the one place they are genuinely required — a new agent has no row
+ * to inherit from.
+ */
+describe('AgentForm — the form never writes a provider nobody chose (t-661)', () => {
   const DENIED = {
     provider: '',
     model: '',
@@ -400,13 +429,7 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     vi.restoreAllMocks();
   });
 
-  /**
-   * Fill EVERY field the schema requires apart from provider/model, so the
-   * only thing that can block the submit is the provider. Leaving one out
-   * (description, first time round) makes the deny assertions pass for a
-   * reason that has nothing to do with the policy — the control below is what
-   * exposed it.
-   */
+  /** Fill everything the create schema requires apart from provider/model. */
   async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>): Promise<void> {
     await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Denied Bot');
     await user.type(
@@ -421,6 +444,8 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     await user.click(screen.getByRole('tab', { name: /general/i }));
   }
 
+  // ── Create: provider really is required, because nothing can be inherited ──
+
   it('create: refuses to submit rather than inventing a provider', async () => {
     const { apiClient } = await import('@/lib/api/client');
     const user = userEvent.setup();
@@ -432,18 +457,9 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     await fillRequiredFields(user);
     await user.click(screen.getByRole('button', { name: /create agent/i }));
 
-    // Both claims inside one waitFor, the write first. A bare synchronous
-    // `not.toHaveBeenCalled()` straight after the click would pass simply
-    // because the submit path had not run yet; polling until the banner
-    // appears means the form has finished deciding, and a regression that
-    // writes fails here on the write rather than on a banner's wording.
-    // The provider is why it was blocked — every other required field was
-    // filled above, so nothing else can appear in that list.
     await waitFor(() => {
       expect(apiClient.post).not.toHaveBeenCalled();
       expect(
-        // Labels and tab come from the agent field registry, so the banner
-        // names what the <Label> names and says where to find it.
         screen.getByText(/these fields need attention\. Model: Provider, Model/i)
       ).toBeInTheDocument();
     });
@@ -469,33 +485,11 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     });
   });
 
-  it('edit: an inheriting agent cannot be saved into a provider the policy denies', async () => {
-    const { apiClient } = await import('@/lib/api/client');
-    const user = userEvent.setup();
+  // ── Edit: the agent stays as the operator left it ──
 
-    render(
-      <AgentForm
-        mode="edit"
-        agent={makeSystemSeededAgent()}
-        providers={PROVIDERS}
-        models={MODELS}
-        effectiveDefaults={DENIED}
-      />
-    );
-
-    await user.click(screen.getByRole('button', { name: /save changes/i }));
-
-    await waitFor(() => {
-      expect(apiClient.patch).not.toHaveBeenCalled();
-      expect(
-        // Labels and tab come from the agent field registry, so the banner
-        // names what the <Label> names and says where to find it.
-        screen.getByText(/these fields need attention\. Model: Provider, Model/i)
-      ).toBeInTheDocument();
-    });
-  });
-
-  it('CONTROL — edit: the identical save DOES submit when a provider was resolved', async () => {
+  it('edit: saving an inheriting agent does NOT write the previewed provider', async () => {
+    // THE test. `anthropic` is on screen — it is what the runtime would pick —
+    // and an operator saving an unrelated change must not thereby pin it.
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.patch).mockResolvedValue({ id: 'pattern-advisor' });
     const user = userEvent.setup();
@@ -512,70 +506,56 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
 
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
-    await waitFor(() => {
-      expect(apiClient.patch).toHaveBeenCalledWith(
-        expect.stringContaining('pattern-advisor'),
-        expect.objectContaining({ body: expect.objectContaining({ provider: 'anthropic' }) })
-      );
-    });
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+    const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
+    expect(body.body).not.toHaveProperty('provider');
+    expect(body.body).not.toHaveProperty('model');
+    // CONTROL — the save really happened and carried the rest of the form, so
+    // the two assertions above are not passing against an empty body.
+    expect(body.body).toHaveProperty('name', 'Pattern Advisor');
   });
 
-  it('does not offer to lock in a model while the Select says none are registered', async () => {
-    // Newly reachable: with the provider empty, `filteredModels` is empty, so
-    // the Model Select renders its disabled "No models registered for this
-    // provider" state. If the system default chat model IS configured,
-    // `modelIsInherited` is still true — and the operator would otherwise be
-    // told "Saving will lock this agent to claude-opus-4-6" by a hint sitting
-    // directly under a control insisting no models exist. Compounding it, the
-    // reset effect replaces that model as soon as they pick a provider, so the
-    // hint promises to keep a value the form is about to discard.
+  it('edit: an operator who PICKS a provider gets it written — that is their decision', async () => {
+    // The seam's whole design is "never reroute a human decision". Not writing
+    // an unauthored value must not become not writing a chosen one.
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({ id: 'pattern-advisor' });
+    const user = userEvent.setup();
+
     render(
       <AgentForm
         mode="edit"
         agent={makeSystemSeededAgent()}
         providers={PROVIDERS}
         models={MODELS}
-        effectiveDefaults={{
-          provider: '',
-          model: 'claude-opus-4-6',
-          inheritedProvider: true,
-          inheritedModel: true,
-        }}
+        effectiveDefaults={RESOLVED}
       />
     );
 
     await openModelTab();
+    await user.click(screen.getByRole('combobox', { name: /provider/i }));
+    await user.click(await screen.findByRole('option', { name: /openai/i }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
 
-    expect(screen.getByText(/no models are registered for/i)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/inherited from the system default chat model/i)
-    ).not.toBeInTheDocument();
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+    const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
+    expect(body.body).toHaveProperty('provider', 'openai');
+    // Changing the provider authors both halves of the binding — the model
+    // must travel with it, or the row is saved provider-new / model-old.
+    expect(body.body).toHaveProperty('model', 'gpt-4o');
   });
 
-  it('CONTROL — that hint DOES render once the provider resolves and models match', async () => {
-    render(
-      <AgentForm
-        mode="edit"
-        agent={makeSystemSeededAgent()}
-        providers={PROVIDERS}
-        models={MODELS}
-        effectiveDefaults={{
-          provider: 'anthropic',
-          model: 'claude-opus-4-6',
-          inheritedProvider: true,
-          inheritedModel: true,
-        }}
-      />
-    );
+  it('edit: an inheriting agent stays editable when NOTHING resolves', async () => {
+    // The regression this replaced: requiring a non-empty provider on edit made
+    // every seeded agent unsavable whenever resolution came back empty — an
+    // admin who has not set an API key yet cannot fix a typo without first
+    // pinning a provider. With 15/15 agents inheriting, that is the whole
+    // install, not an edge case.
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({ id: 'pattern-advisor' });
+    const user = userEvent.setup();
 
-    await openModelTab();
-
-    await waitFor(() => {
-      expect(screen.getByText(/inherited from the system default chat model/i)).toBeInTheDocument();
-    });
-  });
-
-  it('explains the empty provider instead of offering to lock the agent to nothing', async () => {
     render(
       <AgentForm
         mode="edit"
@@ -586,12 +566,34 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
       />
     );
 
+    await user.type(screen.getByRole('textbox', { name: /^description/i }), ' Updated.');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+    const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
+    expect(body.body).not.toHaveProperty('provider');
+  });
+
+  it('tells the operator the provider is resolved per turn, and what pinning costs', async () => {
+    render(
+      <AgentForm
+        mode="edit"
+        agent={makeSystemSeededAgent()}
+        providers={PROVIDERS}
+        models={MODELS}
+        effectiveDefaults={RESOLVED}
+      />
+    );
+
     await openModelTab();
 
-    expect(screen.getByText(/no provider could be resolved automatically/i)).toBeInTheDocument();
-    // The "Saving will lock this agent to X" hint needs an X to name; with
-    // nothing resolved it would read "lock this agent to <blank>", which is a
-    // warning about the wrong thing.
-    expect(screen.queryByText(/inherited from the first active provider/i)).not.toBeInTheDocument();
+    // Both fields are inherited on a system-seeded agent, so both hints show.
+    expect(
+      screen.getByText(/no provider of its own — it resolves one at run time/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no model of its own — it resolves one at run time/i)
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/picking one here pins it permanently/i)).toHaveLength(2);
   });
 });

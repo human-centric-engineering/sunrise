@@ -78,16 +78,13 @@ const agentFormSchema = z
     slug: slugSchema.min(1, 'Slug is required').max(100),
     // Set at create time only (via ?kind= query param); not editable on
     // existing agents. 'chat' or 'judge'.
-    // `AiAgent.kind` is a free `String` column, not an enum — `prisma/seeds/
-    // 017-case-generator-agent.ts` seeds `kind: 'generator'`, and the agents
-    // list returns every kind when unfiltered. Modelling it as
-    // `z.enum(['chat','judge'])` here gave the form fewer states than the
-    // domain: opening `eval-case-generator` produced a form that could never
-    // be saved, with no `kind` control on screen to fix it. The form is not
-    // this field's validator — it renders no control for it — so it accepts
-    // whatever the row holds and, on edit, does not send it back at all (see
-    // `onSubmit`). Create still only ever sets 'chat' or 'judge', from the
-    // `?kind=` param, and the API validates that end.
+    // `AiAgent.kind` is a free `String` column, not an enum —
+    // `prisma/seeds/017-case-generator-agent.ts` seeds `kind: 'generator'` and
+    // that seed runs on every install (seeds are discovered by filename), so
+    // one agent in a stock database is of a kind the old
+    // `z.enum(['chat','judge'])` could not represent. The list returns every
+    // kind when unfiltered, so an admin could open it and get a form that
+    // failed validation on a field with no control anywhere on screen.
     kind: z.string().min(1),
     description: z.string().min(1, 'Description is required').max(5000),
     // Profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
@@ -98,8 +95,14 @@ const agentFormSchema = z
     voiceMode: z.enum(['override', 'append']),
     guardrailsMode: z.enum(['override', 'append']),
     systemInstructions: z.string().min(1, 'System instructions are required').max(50000),
-    provider: z.string().min(1, 'Provider is required'),
-    model: z.string().min(1, 'Model is required'),
+    // Plain strings, NOT `.min(1)`. Empty means "this agent has no provider of
+    // its own; resolve one per turn" — the dynamic-resolution contract, and on
+    // a stock install that is EVERY agent (all 15 seeded rows ship
+    // `provider: ''`). It is the normal state, not an edge case, so a form that
+    // cannot represent it cannot edit most of the install. `createFormSchema`
+    // below re-requires both for create, where the operator really must choose.
+    provider: z.string(),
+    model: z.string(),
     temperature: z.number().min(0).max(2),
     maxTokens: z.number().int().min(1).max(200000),
     // Reasoning-effort bucket. `'auto'` is the form sentinel for "let
@@ -152,6 +155,29 @@ const agentFormSchema = z
   });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
+
+/**
+ * Create-mode schema: `provider` and `model` really are required here, because
+ * a brand-new agent has no row to inherit from and nothing resolved it. On
+ * EDIT they stay optional — see `agentFormSchema` above and the
+ * unauthored-field rule in `onSubmit`.
+ */
+const createFormSchema = agentFormSchema.superRefine((data, ctx) => {
+  if (data.provider.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['provider'],
+      message: 'Provider is required',
+    });
+  }
+  if (data.model.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['model'],
+      message: 'Model is required',
+    });
+  }
+});
 
 /**
  * Agent record as enriched by the admin GET endpoint — adds the flattened
@@ -255,10 +281,6 @@ export function AgentForm({
   // draft (`.context/admin/setup-wizard.md`, the v1 → v2 key bump).
   const initialProvider = (agent?.provider ?? '') || (effectiveDefaults?.provider ?? '');
   const initialModel = (agent?.model ?? '') || (effectiveDefaults?.model ?? '');
-  // "Inherited" describes a value the form resolved and will pin on save, so
-  // it needs one to name — an unresolved field gets the hint below instead.
-  const providerIsInherited = isEdit && !agent?.provider && initialProvider.length > 0;
-  const modelIsInherited = isEdit && !agent?.model && initialModel.length > 0;
 
   const {
     register,
@@ -266,9 +288,9 @@ export function AgentForm({
     setValue,
     watch,
     reset,
-    formState: { errors, isDirty },
+    formState: { errors, isDirty, dirtyFields },
   } = useForm<AgentFormData>({
-    resolver: zodResolver(agentFormSchema),
+    resolver: zodResolver(isEdit ? agentFormSchema : createFormSchema),
     defaultValues: {
       name: agent?.name ?? '',
       slug: agent?.slug ?? '',
@@ -447,7 +469,11 @@ export function AgentForm({
     if (modelFallback || !currentProvider) return;
     const valid = filteredModels.some((m) => m.id === currentModel);
     if (!valid && filteredModels.length > 0) {
-      setValue('model', filteredModels[0].id, { shouldValidate: true });
+      // `shouldDirty` matters: the edit payload only carries fields the
+      // operator authored, and changing the provider authors BOTH halves of
+      // the binding. Without it the new provider would be saved against the
+      // old model.
+      setValue('model', filteredModels[0].id, { shouldValidate: true, shouldDirty: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProvider]);
@@ -545,14 +571,35 @@ export function AgentForm({
 
     try {
       if (isEdit && agent) {
-        // `kind` is deliberately NOT sent on edit. The form renders no control
-        // for it, so it has nothing to say about it — and the API's PATCH
-        // schema is `z.enum(['chat','judge']).optional()`, so echoing back the
-        // row's own value would 400 for any other kind ('generator', from
-        // `prisma/seeds/017-case-generator-agent.ts`). Omitting it leaves the
-        // column untouched, which is what "the form does not edit this field"
-        // should mean on the wire as well as on screen.
-        const { kind: _kind, ...editPayload } = payload;
+        // ── Never send a field the operator did not author. ──
+        //
+        // Three of this form's fields hold values it RESOLVED rather than
+        // values a human chose: `provider` and `model` are pre-filled from
+        // `getEffectiveAgentDefaults` (a preview of what the runtime would
+        // pick) when the row itself is empty, and `kind` has no control at
+        // all. PATCH is partial, so omitting them leaves the column alone.
+        //
+        // This is the fix for the whole class this file kept producing. The
+        // form was using one value as both the PREVIEW of what the runtime
+        // will resolve and the PAYLOAD of what the operator decided; every
+        // symptom followed from that. A resolved provider written back turns a
+        // dynamically-resolving agent into a permanently pinned one — which is
+        // what `|| 'anthropic'` did with a forbidden provider, and what an
+        // unrelated typo fix would otherwise do with a merely-unapproved one.
+        // On a stock install ALL 15 seeded agents have `provider: ''`, so this
+        // is the normal path, not a corner.
+        //
+        // `dirtyFields` is the authorship test: react-hook-form marks a field
+        // dirty only when its value diverges from `defaultValues`, so a
+        // pre-filled preview the operator never touched is not dirty, while a
+        // provider they picked from the Select is. Empty is excluded too —
+        // there is no way to clear these through the UI, and the API's
+        // `updateAgentObjectSchema` requires non-empty when present.
+        const editPayload: Record<string, unknown> = { ...payload };
+        delete editPayload.kind;
+        if (!dirtyFields.provider || data.provider.length === 0) delete editPayload.provider;
+        if (!dirtyFields.model || data.model.length === 0) delete editPayload.model;
+
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
           body: editPayload,
         });
@@ -925,7 +972,9 @@ export function AgentForm({
             ) : (
               <Select
                 value={currentProvider}
-                onValueChange={(v) => setValue('provider', v, { shouldValidate: true })}
+                onValueChange={(v) =>
+                  setValue('provider', v, { shouldValidate: true, shouldDirty: true })
+                }
               >
                 <SelectTrigger id="provider">
                   <SelectValue placeholder="Pick a provider" />
@@ -946,19 +995,22 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
-            {!providerFallback && !currentProvider && (
+            {isEdit && !agent?.provider && (
               <p className="text-muted-foreground text-xs">
-                No provider could be resolved automatically — none of the configured providers may
-                be active, reachable or permitted, or the lookup itself may have failed.{' '}
-                <strong className="font-medium">Picking one here saves it permanently</strong> as
-                this agent&apos;s explicit provider, which no policy will override later — so if you
-                did not expect this, reload before pinning one.
+                This agent has no provider of its own — it resolves one at run time
+                {currentProvider ? (
+                  <>
+                    , currently <code className="font-mono">{currentProvider}</code>
+                  </>
+                ) : null}
+                . Saving other fields leaves that alone;{' '}
+                <strong className="font-medium">picking one here pins it permanently</strong>.
               </p>
             )}
-            {providerIsInherited && (
+            {!isEdit && !currentProvider && (
               <p className="text-muted-foreground text-xs">
-                Inherited from the first active provider. Saving will lock this agent to{' '}
-                <code className="font-mono">{currentProvider}</code>.
+                No provider could be resolved automatically — none of the configured providers may
+                be active, reachable or permitted. Pick one to continue.
               </p>
             )}
             {errors.provider && (
@@ -1023,7 +1075,9 @@ export function AgentForm({
               <>
                 <Select
                   value=""
-                  onValueChange={(v) => setValue('model', v, { shouldValidate: true })}
+                  onValueChange={(v) =>
+                    setValue('model', v, { shouldValidate: true, shouldDirty: true })
+                  }
                   disabled
                 >
                   <SelectTrigger id="model">
@@ -1052,7 +1106,9 @@ export function AgentForm({
             ) : (
               <Select
                 value={currentModel}
-                onValueChange={(v) => setValue('model', v, { shouldValidate: true })}
+                onValueChange={(v) =>
+                  setValue('model', v, { shouldValidate: true, shouldDirty: true })
+                }
               >
                 <SelectTrigger id="model">
                   <SelectValue placeholder="Pick a model" />
@@ -1089,10 +1145,16 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
-            {modelIsInherited && (modelFallback || filteredModels.length > 0) && (
+            {isEdit && !agent?.model && (
               <p className="text-muted-foreground text-xs">
-                Inherited from the system default chat model. Saving will lock this agent to{' '}
-                <code className="font-mono">{currentModel}</code>.
+                This agent has no model of its own — it resolves one at run time
+                {currentModel ? (
+                  <>
+                    , currently <code className="font-mono">{currentModel}</code>
+                  </>
+                ) : null}
+                . Saving other fields leaves that alone;{' '}
+                <strong className="font-medium">picking one here pins it permanently</strong>.
               </p>
             )}
             {errors.model && <p className="text-destructive text-xs">{errors.model.message}</p>}
