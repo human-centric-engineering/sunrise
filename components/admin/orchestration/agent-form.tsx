@@ -78,7 +78,17 @@ const agentFormSchema = z
     slug: slugSchema.min(1, 'Slug is required').max(100),
     // Set at create time only (via ?kind= query param); not editable on
     // existing agents. 'chat' or 'judge'.
-    kind: z.enum(['chat', 'judge']),
+    // `AiAgent.kind` is a free `String` column, not an enum — `prisma/seeds/
+    // 017-case-generator-agent.ts` seeds `kind: 'generator'`, and the agents
+    // list returns every kind when unfiltered. Modelling it as
+    // `z.enum(['chat','judge'])` here gave the form fewer states than the
+    // domain: opening `eval-case-generator` produced a form that could never
+    // be saved, with no `kind` control on screen to fix it. The form is not
+    // this field's validator — it renders no control for it — so it accepts
+    // whatever the row holds and, on edit, does not send it back at all (see
+    // `onSubmit`). Create still only ever sets 'chat' or 'judge', from the
+    // `?kind=` param, and the API validates that end.
+    kind: z.string().min(1),
     description: z.string().min(1, 'Description is required').max(5000),
     // Profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
     profileId: z.string().nullable().optional(),
@@ -209,8 +219,8 @@ export function AgentForm({
   // On a fresh create, honour `?kind=judge` from the URL (used by the
   // "Create custom judge" CTA in the run-create form). On edit, the
   // existing agent's kind is the source of truth.
-  const initialKind: 'chat' | 'judge' = isEdit
-    ? ((agent?.kind as 'chat' | 'judge' | undefined) ?? 'chat')
+  const initialKind: string = isEdit
+    ? (agent?.kind ?? 'chat')
     : searchParams.get('kind') === 'judge'
       ? 'judge'
       : 'chat';
@@ -535,8 +545,16 @@ export function AgentForm({
 
     try {
       if (isEdit && agent) {
+        // `kind` is deliberately NOT sent on edit. The form renders no control
+        // for it, so it has nothing to say about it — and the API's PATCH
+        // schema is `z.enum(['chat','judge']).optional()`, so echoing back the
+        // row's own value would 400 for any other kind ('generator', from
+        // `prisma/seeds/017-case-generator-agent.ts`). Omitting it leaves the
+        // column untouched, which is what "the form does not edit this field"
+        // should mean on the wire as well as on screen.
+        const { kind: _kind, ...editPayload } = payload;
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
-          body: payload,
+          body: editPayload,
         });
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
@@ -1932,8 +1950,18 @@ export function AgentForm({
                       slug: fresh.slug,
                       description: fresh.description,
                       systemInstructions: fresh.systemInstructions,
-                      provider: fresh.provider,
-                      model: fresh.model,
+                      // Same chain as `initialProvider` / `initialModel` at
+                      // mount. A restore returns the ROW's values, and a
+                      // system-seeded agent's row holds '' — the
+                      // dynamic-resolution contract. Writing that raw blanked
+                      // the Select, fired the "no provider could be resolved"
+                      // hint (false: resolution had just succeeded on this very
+                      // page), and then `onInvalid` blocked the save until the
+                      // operator pinned a provider onto an agent designed to
+                      // resolve one per turn. That is this PR's own defect
+                      // reached from the other direction.
+                      provider: fresh.provider || (effectiveDefaults?.provider ?? ''),
+                      model: fresh.model || (effectiveDefaults?.model ?? ''),
                       temperature: fresh.temperature,
                       maxTokens: fresh.maxTokens,
                       reasoningEffort: toReasoningEffortFormValue(fresh.reasoningEffort),
@@ -1972,7 +2000,7 @@ export function AgentForm({
                       // SILENTLY before `onInvalid` existed — the banner is
                       // what surfaced it, which is the whole argument for
                       // having one.
-                      kind: (fresh.kind as 'chat' | 'judge' | undefined) ?? 'chat',
+                      kind: fresh.kind ?? 'chat',
                       profileId: fresh.profileId ?? null,
                       persona: fresh.persona ?? null,
                       guardrails: fresh.guardrails ?? null,

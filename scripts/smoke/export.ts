@@ -109,6 +109,11 @@ async function main(): Promise<void> {
         slug: `${PREFIX}-agent-${stamp}`,
         description: 'smoke',
         systemInstructions: 'smoke',
+        // Both empty: the dynamic-resolution contract. These fixtures never
+        // make an LLM call — they exist to be erased/exported — and `provider`
+        // used to be filled with 'anthropic' by a column default, which made
+        // them inconsistent (model inherited, provider pinned) for no reason.
+        provider: '',
         model: '',
         createdBy: subject.id,
       },

@@ -26,6 +26,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AgentForm } from '@/components/admin/orchestration/agent-form';
+import type { EffectiveAgentDefaults } from '@/lib/orchestration/prefetch-helpers';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -149,13 +150,21 @@ describe('AgentForm — save after a version restore', () => {
     vi.restoreAllMocks();
   });
 
-  async function restoreThenSave(fresh: AiAgent) {
+  async function restoreThenSave(fresh: AiAgent, effectiveDefaults?: EffectiveAgentDefaults) {
     const { apiClient } = await import('@/lib/api/client');
     vi.mocked(apiClient.get).mockResolvedValue(fresh);
     vi.mocked(apiClient.patch).mockResolvedValue({ id: fresh.id });
 
     const user = userEvent.setup();
-    render(<AgentForm mode="edit" agent={makeAgent()} providers={PROVIDERS} models={MODELS} />);
+    render(
+      <AgentForm
+        mode="edit"
+        agent={makeAgent(effectiveDefaults ? { provider: '', model: '' } : {})}
+        providers={PROVIDERS}
+        models={MODELS}
+        effectiveDefaults={effectiveDefaults}
+      />
+    );
 
     await user.click(screen.getByRole('tab', { name: /versions/i }));
     await user.click(screen.getByRole('button', { name: /simulate restore/i }));
@@ -191,7 +200,6 @@ describe('AgentForm — save after a version restore', () => {
     // dropped one back to a default would fail here too.
     const { apiClient } = await restoreThenSave(
       makeAgent({
-        kind: 'judge',
         personaMode: 'append',
         voiceMode: 'append',
         guardrailsMode: 'append',
@@ -208,7 +216,6 @@ describe('AgentForm — save after a version restore', () => {
         expect.anything(),
         expect.objectContaining({
           body: expect.objectContaining({
-            kind: 'judge',
             personaMode: 'append',
             voiceMode: 'append',
             guardrailsMode: 'append',
@@ -221,6 +228,54 @@ describe('AgentForm — save after a version restore', () => {
         })
       );
     });
+  });
+
+  it('never sends `kind` on edit, so an agent of an unlisted kind stays savable', async () => {
+    // `AiAgent.kind` is a free String column — `prisma/seeds/017` seeds
+    // 'generator' — while the API's PATCH schema is
+    // `z.enum(['chat','judge']).optional()`. The form renders no control for
+    // `kind`, so echoing the row's own value back would 400 for any other
+    // kind and leave that agent permanently unsavable. Omitting it leaves the
+    // column alone, which is what "this form does not edit that field" has to
+    // mean on the wire too.
+    const { apiClient } = await restoreThenSave(makeAgent({ kind: 'generator' }));
+
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+    const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
+    expect(body.body).not.toHaveProperty('kind');
+    // CONTROL — the save really did carry the rest of the form, so the
+    // assertion above is not passing on an empty body.
+    expect(body.body).toHaveProperty('name', 'Support Bot');
+  });
+
+  it('restoring an inheriting agent does not blank its resolved provider', async () => {
+    // A restore returns the ROW's values, and a system-seeded agent's row holds
+    // '' — the dynamic-resolution contract, not an absence of configuration.
+    // Writing that raw blanked the Select, fired the "no provider could be
+    // resolved" hint (false — resolution had just succeeded on this very page),
+    // and then `onInvalid` blocked the save until the operator pinned a
+    // provider onto an agent designed to resolve one per turn. That is this
+    // PR's own defect, reached from the other direction.
+    const { apiClient } = await restoreThenSave(makeAgent({ provider: '', model: '' }), {
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      inheritedProvider: true,
+      inheritedModel: true,
+    });
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          body: expect.objectContaining({ provider: 'anthropic', model: 'claude-opus-4-6' }),
+        })
+      );
+    });
+
+    expect(
+      screen.queryByText(/no provider could be resolved automatically/i)
+    ).not.toBeInTheDocument();
   });
 
   it('falls back safely when the restored row carries nulls', async () => {

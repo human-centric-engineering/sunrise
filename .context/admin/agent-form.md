@@ -73,7 +73,7 @@ Hydrated from `GET /models`, filtered to the selected provider. Options are labe
 
 ### Validation feedback
 
-`handleSubmit` carries an `onInvalid` branch that fills the form-level error banner with the fields that blocked the save (`Cannot save — these fields need attention: provider, model.`), and `provider` / `model` render their own inline messages. Without it the click is a silent no-op: both fields live on the Model tab, so an operator on General would see nothing happen and get no reason why. The dead end predates the change above but became far easier to reach once the form stopped inventing a provider.
+`handleSubmit` carries an `onInvalid` branch that fills the form-level error banner with the fields that blocked the save, labelled from the agent field registry and grouped by the tab they live on — `Cannot save — these fields need attention. Model: Provider, Model` — and `provider` / `model` render their own inline messages. React-hook-form's form-level `root` key is filtered out rather than rendered as a field nobody can locate. Without it the click is a silent no-op: both fields live on the Model tab, so an operator on General would see nothing happen and get no reason why. The dead end predates the change above but became far easier to reach once the form stopped inventing a provider.
 
 ### Dynamic resolution: empty provider/model
 

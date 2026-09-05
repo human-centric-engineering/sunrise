@@ -11,7 +11,16 @@ model AiAgent {
   systemInstructions        String    @db.Text
   systemInstructionsHistory Json      @default("[]") // [{instructions, changedAt, changedBy}]
   model                     String // e.g. "claude-sonnet-4-6", "llama3:latest". Empty string => resolve dynamically via lib/orchestration/llm/agent-resolver.ts (used by system-seeded agents on fresh installs).
-  provider                  String    @default("anthropic") // e.g. "anthropic", "openai". Empty string => same dynamic-resolution contract as `model`.
+  // NO @default, deliberately. A default here is a third layer that supplies a
+  // provider the caller never stated — and the value lands in `provider` as an
+  // EXPLICIT operator choice, which `resolveAgentProviderAndModel` never
+  // re-filters, so on an install whose eligibility rule forbids it the agent is
+  // pinned to a forbidden provider forever. Without the default, `provider` is
+  // required in `AiAgentCreateInput`, so any create site that omits it is a
+  // COMPILE error rather than a silent substitution. Empty string is still
+  // meaningful and still allowed: it is the dynamic-resolution contract, same
+  // as `model` (which has never had a default either).
+  provider                  String    // e.g. "anthropic", "openai". Empty string => same dynamic-resolution contract as `model`.
   fallbackProviders         String[]  @default([])
   providerConfig            Json?
   temperature               Float     @default(0.7)

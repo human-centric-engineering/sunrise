@@ -175,6 +175,35 @@ release process.
   and stays optional, so partial updates that don't mention a provider still
   leave it alone.
 
+- **`AiAgent.provider` lost its column default** — migration
+  `20260905093659_drop_ai_agent_provider_default`, a single
+  `ALTER COLUMN … DROP DEFAULT`. No backfill, no data movement, no lock of
+  consequence; every existing row already holds a real value. This was the same
+  fail-open a third layer down, and dropping it is what closes the class: the
+  form's `defaultValues`, `createAgentObjectSchema` and the column were three
+  independent places able to supply a provider nobody stated.
+
+  The point of doing it in the schema rather than only in Zod is that
+  `provider` is now **required in `AiAgentCreateInput`**, so a
+  `prisma.aiAgent.create()` that omits it is a compile error rather than a
+  silent substitution — the guard is the type-checker, not a test that has to
+  remember to look. That immediately found two callers a manual sweep had
+  reported as clean (`scripts/smoke/erasure.ts`, `scripts/smoke/export.ts`),
+  both of which set `model: ''` while silently taking a pinned
+  `provider: 'anthropic'`; both now state `provider: ''` to match.
+
+  The empty string is still meaningful and still allowed at every layer — it is
+  the dynamic-resolution contract the system-seeded agents rely on, and the one
+  `model` has always used.
+
+  **Fork impact:** run `npm run db:migrate:deploy`. Any `prisma.aiAgent.create()`
+  in your own code that omitted `provider` will now fail `tsc` — add the field.
+  Note `prisma migrate dev` generates four spurious `DROP`s alongside this one
+  (the two pgvector HNSW indexes, the GIN/tsvector index and the `searchVector`
+  `GENERATED ALWAYS AS` expression); the committed migration has them
+  hand-folded out, as the comment block above `AiKnowledgeChunk` instructs.
+  `npm run db:drift-check` passes all 9 probes against the applied migration.
+
 ### Fixed
 
 - The agent form turned a provider-eligibility **denial** into a forged operator

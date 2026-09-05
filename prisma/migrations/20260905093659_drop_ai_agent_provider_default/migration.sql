@@ -1,0 +1,34 @@
+-- Drop the `ai_agent.provider` column default.
+--
+-- WHY. `provider` defaulted to 'anthropic'. The value lands in the column as an
+-- EXPLICIT operator choice, and `resolveAgentProviderAndModel` deliberately
+-- never re-filters an explicit provider — so on an install whose
+-- `registerProviderEligibility` rule forbids anthropic, any create that simply
+-- omitted the field pinned a forbidden provider permanently and silently. This
+-- is the third and last layer of that defect; the agent form's `defaultValues`
+-- and `createAgentObjectSchema`'s Zod default were the other two.
+--
+-- Without the default, `provider` is required in `AiAgentCreateInput`, so a
+-- create site that omits it is a COMPILE error rather than a silent
+-- substitution. The empty string stays meaningful and stays allowed: it is the
+-- dynamic-resolution contract that system-seeded agents rely on, the same one
+-- `model` uses — and `model` has never had a default either. Nothing is
+-- backfilled, because every existing row already holds a real value.
+--
+-- HAND-FOLDED. `prisma migrate dev` also generated these, and they were removed
+-- (see the comment block above `AiKnowledgeChunk` in
+-- prisma/schema/orchestration-knowledge.prisma, which names all four):
+--
+--   DROP INDEX "idx_ai_knowledge_chunk_search_vector";   -- GIN/tsvector index
+--   DROP INDEX "idx_knowledge_embedding";                -- pgvector HNSW
+--   DROP INDEX "idx_message_embedding";                  -- pgvector HNSW
+--   ALTER TABLE "ai_knowledge_chunk"
+--     ALTER COLUMN "searchVector" DROP DEFAULT;          -- the GENERATED ALWAYS
+--                                                        -- AS (...) STORED expr
+--
+-- Prisma cannot model any of them, so it proposes dropping them on EVERY
+-- schema-diff run. Applying them degrades vector and hybrid search to a
+-- seq-scan with no error at all. `npm run db:drift-check` probes for all four.
+
+-- AlterTable
+ALTER TABLE "ai_agent" ALTER COLUMN "provider" DROP DEFAULT;
