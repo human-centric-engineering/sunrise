@@ -203,15 +203,21 @@ release process.
   is when guessing is least defensible. The same two literals had already been
   retired from the setup wizard's agent draft for the same reason (the
   `sunrise.orchestration.setup-wizard` v1 → v2 key bump). With nothing
-  resolvable the Select now shows its placeholder and a hint saying so, and
-  `agentFormSchema`'s existing `min(1)` blocks the save.
+  resolvable the Select shows its placeholder and a hint saying the value would
+  be pinned permanently, and `agentFormSchema`'s existing `min(1)` blocks the
+  save.
 
   Not addressed, and not a regression: the dropdown still lists every configured
-  provider, so an operator can pick a denied one by hand. Filtering it needs a
-  write-time `ctx.source` the seam does not have — an operator choosing is not
-  Sunrise choosing, and a fork may legitimately permit one while denying the
-  other. Write-time enforcement stays per-org work, as the Q15 row of
-  `.context/architecture/multi-tenancy-design.md` already records.
+  provider, so an operator can pick a denied one by hand. **This is a different
+  thing from the `Changed` entry above** — that one makes the API *require* a
+  provider rather than choosing one for the caller; neither checks the chosen
+  value against the eligibility rule. Doing so needs a write-time `ctx.source`
+  the seam does not have, because an operator choosing is not Sunrise choosing
+  and a fork may legitimately permit one while denying the other. Validating an
+  operator's choice against per-org policy therefore stays per-org work, as the
+  Q15 row of `.context/architecture/multi-tenancy-design.md` already records.
+  What both changes do is stop a *denial* being laundered into a choice nobody
+  made.
 
 - Submitting the agent form with a required field empty was a **silent no-op**.
   `provider` and `model` rendered no inline error and `handleSubmit` had no
