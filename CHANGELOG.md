@@ -258,6 +258,33 @@ release process.
   both fields render their own message. Pre-existing, but reachable far more
   often once the form stopped inventing a provider.
 
+- **Restoring a version blanked an inheriting agent's provider, then demanded
+  one.** The restore `reset({...})` wrote `provider: fresh.provider` raw, but a
+  restore returns the *row's* values and a system-seeded agent's row holds `''`
+  — the dynamic-resolution contract, not an absence of configuration. So the
+  Select went blank, the new "no provider could be resolved" hint appeared
+  (false: resolution had succeeded on that same page seconds earlier), and the
+  `onInvalid` branch then blocked the save until the operator pinned a provider
+  onto an agent designed to resolve one per turn. That is the defect this
+  release fixes, reached from the other direction. The restore path now runs the
+  same resolution chain as mount.
+
+- **An agent whose `kind` was neither `chat` nor `judge` could never be saved.**
+  `AiAgent.kind` is a free `String` column and `prisma/seeds/017-case-generator-agent.ts`
+  seeds `kind: 'generator'`, but the agent form modelled it as
+  `z.enum(['chat', 'judge'])` — fewer states than the domain. The agents list
+  returns every kind when unfiltered, so an admin could open
+  `eval-case-generator` and get a form that failed validation on a field with no
+  control anywhere on screen. It failed silently before; the new banner made it
+  worse by naming a field the operator cannot find.
+
+  Widening the form's own enum would only have moved the failure server-side —
+  `updateAgentObjectSchema.kind` carries the same enum. The form renders no
+  control for `kind`, so it now says nothing about it: it accepts whatever the
+  row holds, and **omits `kind` from the PATCH body on edit**. The API field is
+  `.optional()`, so the column is left alone. No API change; the create path
+  still only ever sets `chat` or `judge`, from the `?kind=` param.
+
 - **Restoring an agent version left the form permanently unsavable.** The
   `reset({...})` behind the Versions tab omitted ten fields — `kind`,
   `personaMode`, `voiceMode`, `guardrailsMode`, the three `enable*Input`

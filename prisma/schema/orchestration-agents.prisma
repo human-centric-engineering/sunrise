@@ -20,7 +20,7 @@ model AiAgent {
   // COMPILE error rather than a silent substitution. Empty string is still
   // meaningful and still allowed: it is the dynamic-resolution contract, same
   // as `model` (which has never had a default either).
-  provider                  String    // e.g. "anthropic", "openai". Empty string => same dynamic-resolution contract as `model`.
+  provider                  String // e.g. "anthropic", "openai". Empty string => same dynamic-resolution contract as `model`.
   fallbackProviders         String[]  @default([])
   providerConfig            Json?
   temperature               Float     @default(0.7)
