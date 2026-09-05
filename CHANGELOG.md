@@ -152,6 +152,29 @@ release process.
   because an unforced table fails open for its owner — waive it per table with
   `{ requireForced: false }`.
 
+### Changed
+
+- **`POST /api/v1/admin/orchestration/agents` now requires `provider`.** It used
+  to default to `'anthropic'` (`createAgentObjectSchema` in
+  `lib/validations/orchestration.ts`), and that default was the same fail-open
+  the agent form carried, one layer down and reachable by anything that is not
+  the form: the value lands in `AiAgent.provider` as an **explicit** operator
+  choice, and `resolveAgentProviderAndModel` never re-filters an explicit
+  provider. On an install whose `registerProviderEligibility` rule forbids
+  anthropic, a scripted or CLI-authored create — the path the admin UI's own
+  `<CliAuthoringHint resource="agents" />` sends operators down — therefore
+  pinned a forbidden provider permanently and silently. The design record's Q15
+  row names this half explicitly: write-time validation must also cover "writes
+  that bypass the form". `model` never had a default, so requiring `provider`
+  also removes an asymmetry that was itself the tell.
+
+  **Fork impact:** a create payload that omitted `provider` now gets a 400 with
+  `Provider is required` instead of an agent silently bound to anthropic. Add
+  the field to any script or seed that relied on the default. `PATCH` is
+  unaffected — `updateAgentObjectSchema.provider` is a separate, optional field
+  and stays optional, so partial updates that don't mention a provider still
+  leave it alone.
+
 ### Fixed
 
 - The agent form turned a provider-eligibility **denial** into a forged operator

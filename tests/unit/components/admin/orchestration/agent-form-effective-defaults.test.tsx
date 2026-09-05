@@ -516,6 +516,61 @@ describe('AgentForm — a denied provider is never written (t-661)', () => {
     });
   });
 
+  it('does not offer to lock in a model while the Select says none are registered', async () => {
+    // Newly reachable: with the provider empty, `filteredModels` is empty, so
+    // the Model Select renders its disabled "No models registered for this
+    // provider" state. If the system default chat model IS configured,
+    // `modelIsInherited` is still true — and the operator would otherwise be
+    // told "Saving will lock this agent to claude-opus-4-6" by a hint sitting
+    // directly under a control insisting no models exist. Compounding it, the
+    // reset effect replaces that model as soon as they pick a provider, so the
+    // hint promises to keep a value the form is about to discard.
+    render(
+      <AgentForm
+        mode="edit"
+        agent={makeSystemSeededAgent()}
+        providers={PROVIDERS}
+        models={MODELS}
+        effectiveDefaults={{
+          provider: '',
+          model: 'claude-opus-4-6',
+          inheritedProvider: true,
+          inheritedModel: true,
+        }}
+      />
+    );
+
+    await openModelTab();
+
+    expect(screen.getByText(/no models are registered for/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/inherited from the system default chat model/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it('CONTROL — that hint DOES render once the provider resolves and models match', async () => {
+    render(
+      <AgentForm
+        mode="edit"
+        agent={makeSystemSeededAgent()}
+        providers={PROVIDERS}
+        models={MODELS}
+        effectiveDefaults={{
+          provider: 'anthropic',
+          model: 'claude-opus-4-6',
+          inheritedProvider: true,
+          inheritedModel: true,
+        }}
+      />
+    );
+
+    await openModelTab();
+
+    await waitFor(() => {
+      expect(screen.getByText(/inherited from the system default chat model/i)).toBeInTheDocument();
+    });
+  });
+
   it('explains the empty provider instead of offering to lock the agent to nothing', async () => {
     render(
       <AgentForm

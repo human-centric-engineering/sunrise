@@ -373,8 +373,11 @@ export function AgentForm({
   // deleted since the agent was last saved). We key off the raw
   // `agent.model` prop — NOT the form-state `currentModel` — so the
   // synthesised entry only fires for a genuinely-saved value and never
-  // for the hardcoded fallback (`'claude-opus-4-6'`) that the form
-  // seeds when an empty system-agent model resolves to a default. The
+  // for one the form merely resolved (the system default chat model, or
+  // whatever the reset effect below picked). It used to guard against a
+  // hardcoded `'claude-opus-4-6'` seed too; that literal is gone, but
+  // keying off the row rather than form state is what makes it true for
+  // every resolved value, not just that one. The
   // entry renders with an amber "no longer in matrix" badge so the
   // operator knows to pick a replacement before saving; without it,
   // the auto-reset effect below would silently change the model on
@@ -903,10 +906,13 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
-            {!currentProvider && (
+            {!providerFallback && !currentProvider && (
               <p className="text-muted-foreground text-xs">
-                No provider could be resolved automatically — none is configured, reachable, or
-                permitted. Pick one; it is saved as this agent&apos;s explicit provider.
+                No provider could be resolved automatically — none may be configured, none
+                reachable, none permitted, or the lookup itself may have failed.{' '}
+                <strong className="font-medium">Picking one here saves it permanently</strong> as
+                this agent&apos;s explicit provider, which no policy will override later — so if you
+                did not expect this, reload before pinning one.
               </p>
             )}
             {providerIsInherited && (
@@ -1035,7 +1041,7 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
-            {modelIsInherited && (
+            {modelIsInherited && (modelFallback || filteredModels.length > 0) && (
               <p className="text-muted-foreground text-xs">
                 Inherited from the system default chat model. Saving will lock this agent to{' '}
                 <code className="font-mono">{currentModel}</code>.
