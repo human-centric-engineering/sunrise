@@ -188,10 +188,14 @@ describe('AgentForm — effective defaults', () => {
 
     await openModelTab();
 
+    // CHANGED with the preview/payload split. The Select is a control for what
+    // the OPERATOR chooses; the resolved value is a preview and now renders
+    // beside it rather than inside it. Seeding the control with the preview
+    // made "picked the previewed value" and "touched nothing"
+    // indistinguishable, so pinning it was impossible.
     const providerTrigger = screen.getByRole('combobox', { name: /provider/i });
-    // Trigger displays the resolved provider name, not the placeholder.
-    expect(providerTrigger).toHaveTextContent(/anthropic/i);
-    expect(providerTrigger).not.toHaveTextContent(/pick a provider/i);
+    expect(providerTrigger).toHaveTextContent(/pick a provider/i);
+    expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(/anthropic/i);
   });
 
   it('pre-fills Model Select with effectiveDefaults when agent.model is empty', async () => {
@@ -212,9 +216,9 @@ describe('AgentForm — effective defaults', () => {
 
     await openModelTab();
 
-    const modelTrigger = screen.getByRole('combobox', { name: /^model/i });
-    expect(modelTrigger).toHaveTextContent(/claude-opus-4-6/i);
-    expect(modelTrigger).not.toHaveTextContent(/pick a model/i);
+    // Same split as the provider: the resolved model is shown, not
+    // pre-selected, so accepting it has to be an explicit act.
+    expect(screen.getByText(/no model of its own/i)).toHaveTextContent(/claude-opus-4-6/i);
   });
 
   it('renders Model as a Select (not a text input) when models list is non-empty', async () => {
@@ -299,12 +303,8 @@ describe('AgentForm — effective defaults', () => {
       // value. It no longer does — an untouched field is not sent at all — so
       // the hint now says what is true, that the value is resolved per turn and
       // only an explicit pick pins it.
-      expect(
-        screen.getByText(/no provider of its own — it resolves one at run time/i)
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/no model of its own — it resolves one at run time/i)
-      ).toBeInTheDocument();
+      expect(screen.getByText(/no provider of its own/i)).toBeInTheDocument();
+      expect(screen.getByText(/no model of its own/i)).toBeInTheDocument();
     });
   });
 
@@ -536,14 +536,22 @@ describe('AgentForm — the form never writes a provider nobody chose (t-661)', 
     await openModelTab();
     await user.click(screen.getByRole('combobox', { name: /provider/i }));
     await user.click(await screen.findByRole('option', { name: /openai/i }));
+
+    console.log(
+      'DBG-MODEL-TRIGGER:',
+      screen.getByRole('combobox', { name: /^model/i }).textContent
+    );
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
     const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
     expect(body.body).toHaveProperty('provider', 'openai');
-    // Changing the provider authors both halves of the binding — the model
-    // must travel with it, or the row is saved provider-new / model-old.
-    expect(body.body).toHaveProperty('model', 'gpt-4o');
+    // The MODEL is not written, and that is deliberate. The provider change
+    // makes the form pre-select a plausible model for display, but the form
+    // choosing something is exactly what this file refuses to submit — the
+    // operator picked a provider, not a model. The agent keeps resolving its
+    // model per turn until someone selects one.
+    expect(body.body).not.toHaveProperty('model');
   });
 
   it('edit: an inheriting agent stays editable when NOTHING resolves', async () => {
@@ -588,12 +596,12 @@ describe('AgentForm — the form never writes a provider nobody chose (t-661)', 
     await openModelTab();
 
     // Both fields are inherited on a system-seeded agent, so both hints show.
-    expect(
-      screen.getByText(/no provider of its own — it resolves one at run time/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/no model of its own — it resolves one at run time/i)
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/picking one here pins it permanently/i)).toHaveLength(2);
+    expect(screen.getByText(/no provider of its own/i)).toBeInTheDocument();
+    expect(screen.getByText(/no model of its own/i)).toBeInTheDocument();
+    // The copy must promise only what the form can deliver: leaving it alone
+    // keeps the agent dynamic, selecting one pins it.
+    expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(
+      /Selecting one pins it permanently/i
+    );
   });
 });

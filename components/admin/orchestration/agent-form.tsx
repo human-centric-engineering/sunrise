@@ -14,7 +14,7 @@
  * rest of Phase 4 — copy the voice, not just the structure.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -99,8 +99,9 @@ const agentFormSchema = z
     // its own; resolve one per turn" — the dynamic-resolution contract, and on
     // a stock install that is EVERY agent (all 15 seeded rows ship
     // `provider: ''`). It is the normal state, not an edge case, so a form that
-    // cannot represent it cannot edit most of the install. `createFormSchema`
-    // below re-requires both for create, where the operator really must choose.
+    // cannot represent it cannot edit most of the install. An empty value on
+    // edit is therefore valid and simply not submitted; only `createFormSchema`
+    // below requires these, and only for create.
     provider: z.string(),
     model: z.string(),
     temperature: z.number().min(0).max(2),
@@ -256,6 +257,20 @@ export function AgentForm({
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
+  /**
+   * Did the OPERATOR choose the provider / model, as opposed to the form
+   * previewing what the runtime would resolve?
+   *
+   * Explicit state rather than react-hook-form's `dirtyFields`, because
+   * "differs from the default" is not the same question. It answers wrongly at
+   * both ends: picking the value already displayed is not a diff, and a
+   * form-initiated `setValue` is. Authorship is a fact about who acted, so it
+   * is recorded when they act.
+   */
+  const [authored, setAuthored] = useState({ provider: false, model: false });
+  const authorProvider = () => setAuthored((a) => ({ ...a, provider: true }));
+  const authorModel = () => setAuthored((a) => ({ ...a, model: true }));
+
   const providerFallback = !providers || providers.length === 0;
   const modelFallback = !models || models.length === 0;
 
@@ -267,20 +282,30 @@ export function AgentForm({
   //
   // There is deliberately NO hardcoded vendor at the end of either chain.
   // `getEffectiveAgentDefaults` returns an empty provider exactly when it
-  // could not resolve one — nothing configured, nothing reachable, or a
-  // fork's `registerProviderEligibility` rule permitting nothing for
+  // could not resolve one — nothing configured, nothing reachable, or a fork's
+  // `registerProviderEligibility` rule permitting nothing for
   // `source: 'primary'` (a rule that throws fails closed to the same empty
-  // set). These values are submitted, not merely displayed, and
-  // `resolveAgentProviderAndModel` never filters an EXPLICIT `agent.provider`
-  // because that is meant to be an operator's recorded decision. A literal
-  // here would therefore launder a policy refusal into a permanent operator
-  // decision the seam then honours — a fail-closed control turned fail-open
-  // by a UI default. Empty instead: `agentFormSchema` requires both fields,
-  // so the form refuses to submit until a human actually chooses. Same
-  // reasoning retired the same two literals from the setup wizard's agent
-  // draft (`.context/admin/setup-wizard.md`, the v1 → v2 key bump).
-  const initialProvider = (agent?.provider ?? '') || (effectiveDefaults?.provider ?? '');
-  const initialModel = (agent?.model ?? '') || (effectiveDefaults?.model ?? '');
+  // set).
+  //
+  // ON EDIT THE PREVIEW IS NOT PUT INTO FORM STATE AT ALL. It is rendered
+  // beside the field instead (`previewProvider` below). The payload carries
+  // only fields the operator authored, and the authorship test is "this value
+  // differs from the default" — so seeding the default WITH the preview makes
+  // choosing the previewed value indistinguishable from not touching it.
+  // Radix does not even fire `onValueChange` when you pick the option already
+  // displayed, so an operator who opened the Select specifically to PIN
+  // `anthropic` would get "Saved" and an unchanged row, while the hint beside
+  // it promised the opposite. Starting empty means any pick is a real change,
+  // so it is dirty, so it is sent.
+  //
+  // On create there is no row to inherit from and every field is submitted, so
+  // the preview is a genuine starting value there.
+  const initialProvider = isEdit ? (agent?.provider ?? '') : (effectiveDefaults?.provider ?? '');
+  const initialModel = isEdit ? (agent?.model ?? '') : (effectiveDefaults?.model ?? '');
+
+  /** What the runtime would resolve right now — shown, never submitted. */
+  const previewProvider = agent?.provider ? '' : (effectiveDefaults?.provider ?? '');
+  const previewModel = agent?.model ? '' : (effectiveDefaults?.model ?? '');
 
   const {
     register,
@@ -288,7 +313,7 @@ export function AgentForm({
     setValue,
     watch,
     reset,
-    formState: { errors, isDirty, dirtyFields },
+    formState: { errors, isDirty },
   } = useForm<AgentFormData>({
     resolver: zodResolver(isEdit ? agentFormSchema : createFormSchema),
     defaultValues: {
@@ -465,15 +490,26 @@ export function AgentForm({
     currentModelCapabilities === undefined || currentModelCapabilities.includes('documents');
 
   // When provider changes, reset model if the current value doesn't belong to the new provider.
+  const providerChangedOnce = useRef(false);
   useEffect(() => {
+    // The FIRST run is mount, not a change. Marking the model dirty there would
+    // attribute to the operator a value they never picked — the same defect
+    // this form just stopped committing for `provider` — and would also leave
+    // `isDirty` true on an untouched page, so simply opening an agent and
+    // navigating away raised the unsaved-changes prompt.
+    providerChangedOnce.current = true;
+
     if (modelFallback || !currentProvider) return;
     const valid = filteredModels.some((m) => m.id === currentModel);
     if (!valid && filteredModels.length > 0) {
-      // `shouldDirty` matters: the edit payload only carries fields the
-      // operator authored, and changing the provider authors BOTH halves of
-      // the binding. Without it the new provider would be saved against the
-      // old model.
-      setValue('model', filteredModels[0].id, { shouldValidate: true, shouldDirty: true });
+      // Deliberately NOT marked as authored. This is the form picking a
+      // plausible model to display, which is the same kind of act as previewing
+      // a provider — and the whole point of this file is that what the form
+      // chose is not what the operator decided. An earlier cut did mark it, to
+      // make good on a sentence claiming "changing the provider updates both
+      // halves of the binding"; that was writing code to satisfy prose. If the
+      // operator wants this model, they select it, and then it is theirs.
+      setValue('model', filteredModels[0].id, { shouldValidate: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProvider]);
@@ -597,8 +633,8 @@ export function AgentForm({
         // `updateAgentObjectSchema` requires non-empty when present.
         const editPayload: Record<string, unknown> = { ...payload };
         delete editPayload.kind;
-        if (!dirtyFields.provider || data.provider.length === 0) delete editPayload.provider;
-        if (!dirtyFields.model || data.model.length === 0) delete editPayload.model;
+        if (!authored.provider || data.provider.length === 0) delete editPayload.provider;
+        if (!authored.model || data.model.length === 0) delete editPayload.model;
 
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
           body: editPayload,
@@ -968,13 +1004,18 @@ export function AgentForm({
               </FieldHelp>
             </Label>
             {providerFallback ? (
-              <Input id="provider" {...register('provider')} className="font-mono" />
+              <Input
+                id="provider"
+                {...register('provider', { onChange: authorProvider })}
+                className="font-mono"
+              />
             ) : (
               <Select
                 value={currentProvider}
-                onValueChange={(v) =>
-                  setValue('provider', v, { shouldValidate: true, shouldDirty: true })
-                }
+                onValueChange={(v) => {
+                  authorProvider();
+                  setValue('provider', v, { shouldValidate: true, shouldDirty: true });
+                }}
               >
                 <SelectTrigger id="provider">
                   <SelectValue placeholder="Pick a provider" />
@@ -997,14 +1038,15 @@ export function AgentForm({
             )}
             {isEdit && !agent?.provider && (
               <p className="text-muted-foreground text-xs">
-                This agent has no provider of its own — it resolves one at run time
-                {currentProvider ? (
+                This agent has no provider of its own — it resolves one per turn
+                {previewProvider ? (
                   <>
-                    , currently <code className="font-mono">{currentProvider}</code>
+                    , currently <code className="font-mono">{previewProvider}</code>
                   </>
                 ) : null}
-                . Saving other fields leaves that alone;{' '}
-                <strong className="font-medium">picking one here pins it permanently</strong>.
+                . Leave this empty to keep it that way; saving other fields will not change it.{' '}
+                <strong className="font-medium">Selecting one pins it permanently</strong>, and no
+                policy will override it afterwards.
               </p>
             )}
             {!isEdit && !currentProvider && (
@@ -1070,14 +1112,19 @@ export function AgentForm({
               </FieldHelp>
             </Label>
             {modelFallback ? (
-              <Input id="model" {...register('model')} className="font-mono" />
+              <Input
+                id="model"
+                {...register('model', { onChange: authorModel })}
+                className="font-mono"
+              />
             ) : filteredModels.length === 0 ? (
               <>
                 <Select
                   value=""
-                  onValueChange={(v) =>
-                    setValue('model', v, { shouldValidate: true, shouldDirty: true })
-                  }
+                  onValueChange={(v) => {
+                    authorModel();
+                    setValue('model', v, { shouldValidate: true, shouldDirty: true });
+                  }}
                   disabled
                 >
                   <SelectTrigger id="model">
@@ -1106,9 +1153,10 @@ export function AgentForm({
             ) : (
               <Select
                 value={currentModel}
-                onValueChange={(v) =>
-                  setValue('model', v, { shouldValidate: true, shouldDirty: true })
-                }
+                onValueChange={(v) => {
+                  authorModel();
+                  setValue('model', v, { shouldValidate: true, shouldDirty: true });
+                }}
               >
                 <SelectTrigger id="model">
                   <SelectValue placeholder="Pick a model" />
@@ -1147,14 +1195,14 @@ export function AgentForm({
             )}
             {isEdit && !agent?.model && (
               <p className="text-muted-foreground text-xs">
-                This agent has no model of its own — it resolves one at run time
-                {currentModel ? (
+                This agent has no model of its own — it resolves one per turn
+                {previewModel ? (
                   <>
-                    , currently <code className="font-mono">{currentModel}</code>
+                    , currently <code className="font-mono">{previewModel}</code>
                   </>
                 ) : null}
-                . Saving other fields leaves that alone;{' '}
-                <strong className="font-medium">picking one here pins it permanently</strong>.
+                . Leave this empty to keep it that way; saving other fields will not change it.{' '}
+                <strong className="font-medium">Selecting one pins it permanently.</strong>
               </p>
             )}
             {errors.model && <p className="text-destructive text-xs">{errors.model.message}</p>}

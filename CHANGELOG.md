@@ -235,8 +235,11 @@ release process.
   actually changed them (react-hook-form's `dirtyFields` is the authorship
   test), and never sends `kind`, for which it renders no control. Picking a
   provider explicitly still writes it — that is a human decision and the seam's
-  whole design is to honour those. Changing the provider also marks the model
-  dirty, so a binding is never saved half-updated. On create both are still
+  whole design is to honour those. Picking a provider does **not** implicitly
+  author a model: the form pre-selects a plausible one for display, and a value
+  the form chose is precisely what it now refuses to submit. The agent keeps
+  resolving its model per turn until someone selects one, and the Model field
+  says so when the newly-picked provider has no matrix rows. On create both are
   required, because a new agent has no row to inherit from.
 
   Two consequences worth calling out. An inheriting agent stays editable when
