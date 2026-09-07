@@ -235,6 +235,18 @@ release process.
   sender — to an address of the bundle author's choosing, with no warning in the
   import result and no second step required.
 
+  The guard on the PATCH route derives from the **resulting row**, not from the
+  request body. Two earlier cuts were wrong in opposite directions: checking
+  every webhook-channel patch blocked `PATCH { isActive: false }`, the one action
+  an operator needs to stop a bad row already firing; checking only for an
+  activation missed two ways a row starts emitting without one. A lone
+  `PATCH { secret }` arms `POST /webhooks/:id/test`, which fetches the stored URL
+  and does **not** require `isActive`. And the whole check is skipped while a row
+  sits on the email channel, so flipping to email, activating, and flipping back
+  with a secret reached live dispatch without any patch ever carrying
+  `isActive: true` or a `url`. The `/test` route now revalidates the stored
+  destination itself rather than resting on a write-path invariant it cannot see.
+
   Closed at both ends. The importer validates each destination per row and skips
   the offending subscription with a warning (per row rather than in the schema,
   so one bad address cannot discard the agents, capabilities, workflows and

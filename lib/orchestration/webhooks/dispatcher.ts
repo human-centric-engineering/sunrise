@@ -383,17 +383,20 @@ async function attemptDelivery(
  * metadata endpoints and the deployment's own private network. That check lives
  * at **write time**, not here: the create schema's `isSafeProviderUrl` refine,
  * the update schema's when a patch carries a url, the backup importer's per-row
- * check, and the PATCH route revalidating a stored URL when a patch ACTIVATES a
- * subscription. That list has four entries because the obvious one was not
+ * check, and the PATCH route revalidating the stored URL whenever a patch leaves
+ * the row able to emit — active, or carrying a secret, since `/test` needs only
+ * the latter. That list has four entries because the obvious one was not
  * enough — the importer bypasses the create schema, and an update that omits
  * `url` never reaches the update schema's refine, so a bundle-supplied metadata
  * address could be activated by following the importer's own instructions.
  *
- * The `/test` route is a fifth outbound call on this plane and is deliberately
- * NOT in that list: it fetches stored state without revalidating. It needs a
- * non-empty secret, which no path here can pair with an unsafe URL, so it is
- * not reachable from the bundle-import route — but it is stored state, so if
- * you add a way to write one, check it there too. It is not repeated per
+ * The `/test` route is a fifth outbound call and revalidates the stored URL
+ * itself. An earlier version of this comment excused it from doing so, on the
+ * grounds that it needs a secret "which no path here can pair with an unsafe
+ * URL" — which was wrong, and wrong in a way that made the excuse the
+ * vulnerability: `PATCH { secret }` on a legacy row did exactly that pairing,
+ * and `/test` does not require `isActive`. It now checks independently rather
+ * than resting on an invariant it cannot see. It is not repeated per
  * dispatch because the check does no DNS resolution — re-running the same
  * string check against the same URL would reach the same verdict. `#534`
  * separately made this function refuse redirects, which is the part a

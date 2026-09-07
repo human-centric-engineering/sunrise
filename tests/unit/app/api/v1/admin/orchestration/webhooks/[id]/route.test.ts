@@ -308,6 +308,53 @@ describe('PATCH /webhooks/:id', () => {
       expect(prisma.aiWebhookSubscription.update).toHaveBeenCalled();
     });
 
+    it('refuses a lone { secret } patch, which arms the /test route without activating', async () => {
+      // Path A of the round-3 finding. `/test` fetches the stored url and gates
+      // only on a non-empty secret — it does not require `isActive`. A gate that
+      // asked "does this request activate?" let this through.
+      const existing = makeWebhook({
+        url: 'http://169.254.169.254/latest/meta-data/',
+        isActive: false,
+        secret: '',
+      });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
+      vi.mocked(validateRequestBody).mockResolvedValue({ secret: 'test-secret-key-1234567890' });
+
+      const response = await PATCH(
+        makePatchRequest({ secret: 'test-secret-key-1234567890' }),
+        makeParams(WEBHOOK_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a channel flip back to webhook on an already-active row', async () => {
+      // Path B. The whole webhook branch is skipped while the row sits on the
+      // email channel, so: flip to email, activate, flip back with a secret.
+      // None of those patches carries `isActive: true` or a url.
+      const existing = makeWebhook({
+        channel: 'email',
+        url: 'http://169.254.169.254/latest/meta-data/',
+        emailAddress: 'ops@example.com',
+        isActive: true,
+        secret: '',
+      });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
+      vi.mocked(validateRequestBody).mockResolvedValue({
+        channel: 'webhook',
+        secret: 'test-secret-key-1234567890',
+      });
+
+      const response = await PATCH(
+        makePatchRequest({ channel: 'webhook', secret: 'test-secret-key-1234567890' }),
+        makeParams(WEBHOOK_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
+    });
+
     it('CONTROL — the identical patch succeeds when the stored url is public', async () => {
       // Without this, the refusal above would also pass if the PATCH path were
       // broken for some reason having nothing to do with the destination.

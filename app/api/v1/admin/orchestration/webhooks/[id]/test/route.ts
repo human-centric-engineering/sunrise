@@ -12,6 +12,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { prisma } from '@/lib/db/client';
 import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
@@ -115,6 +116,22 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       statusCode: null,
       durationMs: 0,
       error: 'Webhook has no destination URL.',
+    });
+  }
+
+  // Revalidate the STORED destination. This route is the one outbound caller on
+  // this plane that reads persisted state and takes no write path, and it does
+  // not require `isActive` — only a secret and a url. That made it the easiest
+  // way to reach an unsafe destination: `PATCH { secret }` on a legacy row, then
+  // press Test. Depending on a write-path invariant this route cannot see was
+  // the mistake; checking here is cheap and independent of every other guard.
+  const targetCheck = checkSafeProviderUrl(webhook.url);
+  if (!targetCheck.ok) {
+    return successResponse({
+      success: false,
+      statusCode: null,
+      durationMs: 0,
+      error: `Destination is not allowed: ${targetCheck.message}`,
     });
   }
 
