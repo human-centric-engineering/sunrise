@@ -25,7 +25,10 @@ release process.
   configured providers as automatic fallbacks whenever an agent has no explicit
   list, and picks the primary itself whenever an agent leaves that field blank;
   on a shared install either can send an org's prompts to a provider it never
-  approved.
+  approved. It is listed among
+  [`VERSIONING.md`](./VERSIONING.md#covered)'s named seams, so it sits inside the
+  version contract: that file states the list *is* the public surface, and a seam
+  absent from it is owed no breaking-change announcement.
 
   The rule is consulted at two chokepoints: `resolveEligibleProviders` — the
   agent-binding resolver AND the agent form's own preview, so the form cannot

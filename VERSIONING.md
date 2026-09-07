@@ -81,6 +81,7 @@ covered by the version contract.
   - rate-limit registry (`lib/app/rate-limit.ts` → `registerRateLimitTier()` / `registerRateLimitRule()` / `registerRateLimitKeyResolver()`)
   - drift-probe registry (`lib/app/db-drift.ts` → `registerAppDriftProbe()`, primitives in `lib/db/drift-probes.ts`)
   - context-contributor registry (`lib/app/context-contributors.ts` → `registerContextContributor()`)
+  - provider-eligibility seam (`lib/app/llm-providers.ts` → `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
   - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)
 - **Documented public APIs** —
   - `withAuth()`, `withAdminAuth()` from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
