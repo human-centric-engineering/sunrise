@@ -12,14 +12,20 @@
  * a reader of a module reasonably trusts what it says about itself, and the
  * error propagated from here.
  *
- * The orchestration layer has four outbound planes. This allowlist governs one:
+ * The orchestration layer has FIVE outbound planes. This allowlist governs one:
  *
  * | plane | destination control | applied |
  * | --- | --- | --- |
  * | `external_call` step / `call_external_api` capability | **this allowlist** | per call |
- * | webhook subscriptions | `isSafeProviderUrl` in the create/update schema | write time |
- * | event hooks | `isSafeProviderUrl` on the action URL (`hooks/types.ts`) | write time |
+ * | LLM + embedding provider `baseUrl` | `checkSafeProviderUrl` | write and build time |
+ * | webhook subscriptions | `isSafeProviderUrl` (create + update schema, and the PATCH route on activate) | write time |
+ * | event hooks | `isSafeProviderUrl` on the action URL (`hooks/types.ts`) | write **and** dispatch time |
  * | escalation notifier, knowledge URL fetcher | `checkSafeProviderUrl` | write **and** call time |
+ *
+ * The LLM row is the one that carries prompts and documents off-box, and the
+ * first version of this table omitted it — while asking readers to add a plane
+ * if they found one. Left as a reminder that a hand-maintained list is a
+ * convention, not a control.
  *
  * Two distinctions worth keeping straight, because conflating them is what
  * produced the sentence above.
@@ -34,10 +40,15 @@
  * not on every dispatch, and that is sufficient rather than lax:
  * `checkSafeProviderUrl` performs **no DNS resolution** (see its own docblock),
  * so re-running the same string check at dispatch would decide the same thing.
- * The one write path that skips the schema — the backup importer — forces
- * `isActive: false` with an empty secret, and dispatch refuses a subscription
- * with no secret, so an imported row cannot deliver until an admin re-enables it
- * through the update schema, which does refine.
+ *
+ * "Write time" has to mean every write, though, and it did not. The backup
+ * importer skips the create schema, and `updateWebhookSchema.url` is
+ * `.optional()` — so a patch of `{ isActive, secret }` activated a stored URL
+ * nothing had ever checked, which is precisely what the importer instructs an
+ * admin to do. An earlier draft of this docblock asserted that path was closed;
+ * it was not. Now it is, in two places: `backup/schema.ts` refuses to persist an
+ * unsafe destination, and the PATCH route revalidates the stored URL before
+ * activating, which also covers rows imported before that refine existed.
  *
  * If you add a fifth outbound path, say so here. Nothing enforces that; this
  * table is a convention, which is exactly why the sentence it replaced went

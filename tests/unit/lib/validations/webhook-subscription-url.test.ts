@@ -14,7 +14,9 @@
  *
  * These call the REAL `isSafeProviderUrl`. Mocking it would leave the test
  * asserting that a Zod refine calls a stub, which is not the property anyone
- * cares about.
+ * cares about — the failure mode `tests/unit/lib/orchestration/hooks/types.test.ts`
+ * has for the event-hook sibling, which is why that file is NOT cited as
+ * evidence the event-hook destination is guarded against real addresses.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -55,11 +57,7 @@ describe('createWebhookSchema — destination guard', () => {
 });
 
 describe('updateWebhookSchema — destination guard', () => {
-  // The update path matters as much as create: the backup importer writes a
-  // subscription directly, bypassing `createWebhookSchema`, but forces it
-  // inactive with an empty secret. Re-enabling it goes through THIS schema, so
-  // this refine is what stops an imported private URL ever being delivered to.
-  it.each(BLOCKED)('rejects %s', (_label, url) => {
+  it.each(BLOCKED)('rejects %s when the patch carries a url', (_label, url) => {
     const result = updateWebhookSchema.safeParse({ channel: 'webhook', url });
     expect(result.success).toBe(false);
   });
@@ -69,6 +67,25 @@ describe('updateWebhookSchema — destination guard', () => {
       channel: 'webhook',
       url: 'https://hooks.example.com/sunrise',
     });
+    expect(result.success).toBe(true);
+  });
+
+  it('does NOT validate the stored url when the patch omits it — the route must', () => {
+    // The re-enable flow. `url` is `.optional()`, so a patch that only flips
+    // `isActive` and sets a secret never reaches the refine above. An earlier
+    // draft of this file claimed this schema was "what stops an imported private
+    // URL ever being delivered to" — it is not, and asserting the limitation is
+    // how the claim stays honest if someone later assumes otherwise.
+    //
+    // The destination is guarded in two other places instead: the backup import
+    // schema refuses to persist an unsafe url, and the PATCH route revalidates
+    // `existing.url` before activating. See
+    // `tests/unit/app/api/v1/admin/orchestration/webhooks/id-route.test.ts`.
+    const result = updateWebhookSchema.safeParse({
+      isActive: true,
+      secret: 'test-secret-key-1234567890',
+    });
+
     expect(result.success).toBe(true);
   });
 });

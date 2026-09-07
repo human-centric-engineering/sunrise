@@ -259,6 +259,61 @@ describe('PATCH /webhooks/:id', () => {
     expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
   });
 
+  describe('destination revalidation on activate', () => {
+    // The backup importer writes a subscription with NO url validation
+    // (`backup/schema.ts` had none until this change) and forces it inactive
+    // with an empty secret, telling the admin to "set the signing secret and
+    // re-enable manually". `updateWebhookSchema.url` is `.optional()`, so a
+    // patch that only sets `{ isActive, secret }` never reaches its refine.
+    // Without the route's own check, following the importer's instruction
+    // activated an unvalidated destination — import a bundle naming
+    // 169.254.169.254 and every subscribed event POSTs to cloud metadata.
+    it('refuses to activate a stored url the patch does not carry', async () => {
+      const existing = makeWebhook({
+        url: 'http://169.254.169.254/latest/meta-data/',
+        isActive: false,
+        secret: '',
+      });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
+      vi.mocked(validateRequestBody).mockResolvedValue({
+        isActive: true,
+        secret: 'test-secret-key-1234567890',
+      });
+
+      const response = await PATCH(
+        makePatchRequest({ isActive: true, secret: 'test-secret-key-1234567890' }),
+        makeParams(WEBHOOK_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL — the identical patch succeeds when the stored url is public', async () => {
+      // Without this, the refusal above would also pass if the PATCH path were
+      // broken for some reason having nothing to do with the destination.
+      const existing = makeWebhook({
+        url: 'https://hooks.example.com/sunrise',
+        isActive: false,
+        secret: '',
+      });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
+      vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(existing as never);
+      vi.mocked(validateRequestBody).mockResolvedValue({
+        isActive: true,
+        secret: 'test-secret-key-1234567890',
+      });
+
+      const response = await PATCH(
+        makePatchRequest({ isActive: true, secret: 'test-secret-key-1234567890' }),
+        makeParams(WEBHOOK_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiWebhookSubscription.update).toHaveBeenCalled();
+    });
+  });
+
   it('updates and returns the updated webhook on success', async () => {
     // Arrange
     const existing = makeWebhook({ isActive: true });

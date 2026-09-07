@@ -10,6 +10,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
@@ -77,6 +78,25 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     if (!nextUrl) {
       throw new ValidationError('Webhook channel requires a url', { url: ['url is required'] });
     }
+    // Revalidate the DESTINATION, not just its presence.
+    //
+    // `updateWebhookSchema.url` is `.optional()`, so its `isSafeProviderUrl`
+    // refine only runs when the patch actually carries a url. A patch that
+    // merely sets `{ isActive: true, secret: '…' }` therefore activated a stored
+    // url that nothing had ever checked — and the backup importer wrote exactly
+    // such rows, inactive and secret-less, telling the admin to do precisely
+    // that. Import a bundle naming `169.254.169.254`, follow the importer's own
+    // instruction, and every subscribed event POSTs to cloud metadata.
+    //
+    // Checked here rather than only at import so rows written before the
+    // importer's refine existed cannot be activated either.
+    const urlCheck = checkSafeProviderUrl(nextUrl);
+    if (!urlCheck.ok) {
+      throw new ValidationError('URL is not allowed (private or internal address)', {
+        url: [urlCheck.message],
+      });
+    }
+
     // Secret is allowed to remain unchanged on PATCH (existing flow:
     // empty `secret` = keep current). Only enforce presence on a fresh
     // channel switch from email → webhook where no secret was ever set.

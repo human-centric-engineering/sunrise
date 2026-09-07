@@ -381,8 +381,13 @@ async function attemptDelivery(
  *
  * What *is* refused is a destination that is not a third party at all: cloud
  * metadata endpoints and the deployment's own private network. That check lives
- * at **write time**, in the create/update schema's `isSafeProviderUrl` refine
- * (`lib/validations/orchestration.ts`), not here. It is not repeated per
+ * at **write time**, not here: the create and update schemas' `isSafeProviderUrl`
+ * refine, the backup import schema, and the PATCH route revalidating a stored
+ * URL before it activates a subscription. That list has three entries because
+ * the obvious one was not enough — the importer bypasses the create schema, and
+ * an update that omits `url` never reaches the update schema's refine, so a
+ * bundle-supplied metadata address could be activated by following the
+ * importer's own instructions. It is not repeated per
  * dispatch because the check does no DNS resolution — re-running the same
  * string check against the same URL would reach the same verdict. `#534`
  * separately made this function refuse redirects, which is the part a

@@ -217,6 +217,24 @@ release process.
 
 ### Fixed
 
+- **An imported webhook subscription could be activated with a destination
+  nothing had validated** — a server-side request forgery reachable by following
+  the backup importer's own instructions. `backup/schema.ts` accepted the
+  bundle's `url` with no check at all, and `updateWebhookSchema.url` is
+  `.optional()`, so the `isSafeProviderUrl` refine only ran when a patch
+  *carried* a URL. The importer writes the row inactive with an empty secret and
+  tells the admin to "set the signing secret and re-enable manually" — a
+  `PATCH { isActive, secret }` that never reaches the refine. Import a bundle
+  naming `169.254.169.254`, do as instructed, and every subscribed event is
+  POSTed to cloud metadata from inside the deployment.
+
+  Closed at both ends: the backup import schema now refuses to persist an unsafe
+  destination, and the PATCH route revalidates the stored URL before activating a
+  subscription — the second is what also covers rows imported before the first
+  existed. Pre-existing; found while documenting why the dispatcher deliberately
+  has no destination allowlist, in the course of writing a comment that claimed
+  this path was already closed.
+
 - **A workflow `chat_turn` step put the database's host and port on the
   execution row.** `engine/executors/chat-turn.ts` forwarded every error out of
   `resolveAgentProviderAndModel` verbatim, but that catch also wraps a Prisma
@@ -231,7 +249,11 @@ release process.
 
   Narrow — admin-only audience, only while the database is down — but it is the
   deployment's own infrastructure, and the neighbouring executor already had the
-  fix.
+  fix. The predicate is `ProviderError`, not the two resolver classes
+  specifically, so `NoDefaultModelConfiguredError` still reaches the operator
+  with its remedy ("Save one in Admin → Settings → Default models") — it is the
+  likeliest benign cause here, and suppressing it would trade a leak for a dead
+  end.
 
 
 - **The agent form no longer writes fields the operator did not author.** This is
