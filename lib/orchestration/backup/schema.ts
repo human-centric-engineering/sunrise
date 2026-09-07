@@ -142,6 +142,13 @@ const webhookBackupSchema = z.object({
   // `channel` defaults to `webhook` so backups written before the
   // email-channel feature still round-trip cleanly.
   channel: z.enum(['webhook', 'email']).default('webhook'),
+  // Deliberately unrefined HERE. A bundle is operator-supplied data that becomes
+  // a destination, and both channels ARE validated — but per row in
+  // `importer.ts`, which skips the offending subscription with a warning.
+  // Refining in this schema instead aborts the entire restore over one bad row,
+  // discarding agents, capabilities, workflows and settings with it, and would
+  // also reject an email row carrying a stale `url` from a channel switch that
+  // the importer never reads.
   url: z.string().nullable().optional(),
   emailAddress: z.string().nullable().optional(),
   events: z.array(z.string()),

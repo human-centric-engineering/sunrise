@@ -6,7 +6,9 @@
  * Excludes secrets with a warning.
  */
 
+import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { backupSchema } from '@/lib/orchestration/backup/schema';
@@ -415,6 +417,26 @@ export async function importOrchestrationConfig(
         continue;
       }
 
+      // A bundle is operator-supplied data that becomes a DESTINATION, so both
+      // channels are validated here rather than trusted. Per row, with a
+      // warning, matching the skip above — validating in the schema instead
+      // would abort the whole restore over one bad subscription, taking agents,
+      // capabilities, workflows and settings with it. It would also reject an
+      // email row carrying a stale `url` left behind by a channel switch, which
+      // the importer never even reads.
+      if (channel === 'webhook' && !isSafeProviderUrl(destination)) {
+        result.warnings.push(
+          `Skipped webhook for ${destination} — private or internal addresses are not allowed as a destination`
+        );
+        continue;
+      }
+      if (channel === 'email' && !z.string().email().safeParse(destination).success) {
+        result.warnings.push(
+          `Skipped email subscription — "${destination}" is not a valid address`
+        );
+        continue;
+      }
+
       const existing = await tx.aiWebhookSubscription.findFirst({
         where: channel === 'webhook' ? { url: destination } : { emailAddress: destination },
       });
@@ -439,13 +461,23 @@ export async function importOrchestrationConfig(
           },
         });
       } else {
+        // Forced inactive and warned about, exactly like the webhook branch.
+        // It used to honour the bundle's own `isActive`, and email delivery
+        // needs no secret — so an imported bundle could stand up a LIVE
+        // subscription mailing every matching event, with its full payload, to
+        // an address of the bundle author's choosing, from the deployment's own
+        // verified sender, with nothing in the result to say so. Quieter than
+        // the webhook hole beside it, and cheaper.
+        result.warnings.push(
+          `Email subscription for ${destination} imported inactive — review the address and enable manually`
+        );
         await tx.aiWebhookSubscription.create({
           data: {
             channel: 'email',
             emailAddress: destination,
             events: wh.events,
             description: wh.description ?? null,
-            isActive: wh.isActive,
+            isActive: false,
             createdBy: userId,
           },
         });

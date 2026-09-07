@@ -156,6 +156,38 @@ describe('dispatchWebhookEvent', () => {
     );
   });
 
+  describe('destination check at the point of use', () => {
+    // Deliberately here rather than on the write paths. Guarding writes meant
+    // guarding a growing list of transitions — create, update, import, activate,
+    // set-a-secret, flip-the-channel — and two successive cuts of that list were
+    // each walked around by the one they missed. A check where the request is
+    // actually made cannot be reached around, whatever sequence produced the row.
+    it.each([
+      ['IMDS', 'http://169.254.169.254/latest/meta-data/'],
+      ['ECS task metadata', 'http://169.254.170.2/v2/credentials'],
+      ['RFC1918 private', 'http://10.0.0.7:8500/v1/kv/x'],
+      ['loopback', 'http://127.0.0.1:8080/hook'],
+    ])('does not POST to %s, whatever wrote the row', async (_label, url) => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([
+        makeSub({ url }),
+      ] as never);
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL — the identical subscription DOES deliver to a public destination', async () => {
+      // Without this, the four refusals above would also pass if dispatch were
+      // broken for a reason having nothing to do with the destination.
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('includes X-Webhook-Signature header with HMAC-SHA256', async () => {
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
 

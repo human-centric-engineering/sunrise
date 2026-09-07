@@ -199,9 +199,13 @@ release process.
   the field is present. That is deliberate rather than an oversight: the way to
   leave an agent resolving dynamically over HTTP is to **omit** the field, not to
   send `''`. Seeds, which write through Prisma directly, are what create such
-  agents in the first place. (One consequence worth knowing: a backup bundle
-  containing a system-seeded agent cannot currently be re-imported, because
-  `bundledAgentSchema` requires the value the row does not have.)
+  agents in the first place. (One consequence worth knowing, corrected after
+  release: an **agent export** bundle containing a system-seeded agent cannot be
+  re-imported, because `bundledAgentSchema` requires the value such a row does
+  not have — filed as #721. An earlier version of this bullet said *backup*
+  bundle, which is wrong: `backup/exporter.ts` filters `isSystem: false` and
+  `backup/schema.ts` accepts an empty provider, so backup/restore round-trips
+  correctly.)
 
   **Fork impact:** run `npm run db:migrate:deploy`. Any `prisma.aiAgent.create()`
   in your own code that omitted `provider` will now fail `tsc` — add the field.
@@ -212,6 +216,83 @@ release process.
   `npm run db:drift-check` passes all 9 probes against the applied migration.
 
 ### Fixed
+
+- **An imported event subscription could reach a destination nothing had
+  validated** — two ways, and the second is quieter than the first — a server-side request forgery reachable by following
+  the backup importer's own instructions. `backup/schema.ts` accepted the
+  bundle's `url` with no check at all, and `updateWebhookSchema.url` is
+  `.optional()`, so the `isSafeProviderUrl` refine only ran when a patch
+  *carried* a URL. The importer writes the row inactive with an empty secret and
+  tells the admin to "set the signing secret and re-enable manually" — a
+  `PATCH { isActive, secret }` that never reaches the refine. Import a bundle
+  naming `169.254.169.254`, do as instructed, and every subscribed event is
+  POSTed to cloud metadata from inside the deployment.
+
+  The **email** channel beside it was worse: `emailAddress` had no validation at
+  all, the importer honoured the bundle's own `isActive`, and email delivery
+  needs no secret. A bundle could therefore stand up a **live** subscription
+  mailing every matching event — full payload, from the deployment's own verified
+  sender — to an address of the bundle author's choosing, with no warning in the
+  import result and no second step required.
+
+  **The destination is now checked where the request is made**, in
+  `attemptWebhookDelivery`, rather than by guarding every write that could make a
+  bad row live. Two earlier attempts did the latter and both were walked around:
+  a lone `PATCH { secret }` armed `POST /webhooks/:id/test`, which fetches the
+  stored URL and requires no `isActive`; and the whole check sat inside a
+  `nextChannel === 'webhook'` branch, so flipping a row to the email channel,
+  activating it, and flipping back reached live dispatch without any patch ever
+  carrying `isActive: true` or a `url`. Guarding writes means guarding a list of
+  state transitions, and the list was wrong twice. A check at the point of use
+  cannot be reached around, because it does not care how the row came to look
+  like this. The write-path refines stay for fast feedback; `/test` checks too.
+
+  **Why this matters now, on installs where it grants nothing.** Today an admin
+  is the platform operator, so a webhook aimed at the deployment's own network
+  reaches infrastructure they already administer. Under multi-tenancy an org
+  admin is not the operator and the identical request crosses an isolation
+  boundary into the platform's network. This is the groundwork feature for that
+  capability, so that is the reader it is written for.
+
+  Closed at both ends. The importer validates each destination per row and skips
+  the offending subscription with a warning (per row rather than in the schema,
+  so one bad address cannot discard the agents, capabilities, workflows and
+  settings in the same restore), forces email rows inactive as webhook rows
+  already were, and warns for both. The PATCH route additionally revalidates a
+  stored URL when a patch **activates** a subscription, which covers rows
+  imported before those checks existed. Deactivating a bad subscription is
+  deliberately still permitted — a guard that blocks remediation is worse than
+  the hole it closes.
+
+  Pre-existing; found while documenting why the dispatcher deliberately has no
+  destination allowlist, in the course of writing a comment that claimed this
+  path was already closed.
+
+- **A workflow `chat_turn` step put the database's host and port on the
+  execution row.** `engine/executors/chat-turn.ts` forwarded every error out of
+  `resolveAgentProviderAndModel` verbatim, but that catch also wraps a Prisma
+  failure in `pickActiveProviderCandidates` and a throw from
+  `getDefaultModelForTask`. With the database unreachable, `Can't reach database
+  server at <host>:<port>` became the `ExecutorError` message — persisted on the
+  execution and rendered in the executions list and the trace viewer. Now
+  narrowed to `ProviderError` — the base class of the errors this call path
+  defines — matching the fix `#717` made in the sibling `agent-call.ts` executor
+  and missed here. `agent-call.ts` is widened to the same predicate in the same
+  change, so the two executors cannot disagree about one resolver call. The
+  original error is now logged before it is dropped: the generic arm hides it
+  from the execution row, and nothing else reads `ExecutorError.cause`, so
+  without a log line the diagnosis was destroyed rather than merely hidden. Both are additionally
+  prefixed with the agent slug, because in a multi-step workflow `step.id` alone
+  left an operator mapping it back to an agent by hand.
+
+  Narrow — admin-only audience, only while the database is down — but it is the
+  deployment's own infrastructure, and the neighbouring executor already had the
+  fix. The predicate is `ProviderError`, not the two resolver classes
+  specifically, so `NoDefaultModelConfiguredError` still reaches the operator
+  with its remedy ("Save one in Admin → Settings → Default models") — it is the
+  likeliest benign cause here, and suppressing it would trade a leak for a dead
+  end.
+
 
 - **The agent form no longer writes fields the operator did not author.** This is
   the change the rest of this group turns on, and it is worth stating as a rule

@@ -119,10 +119,42 @@ export async function executeChatTurn(
   try {
     resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
   } catch (err) {
+    // Log before narrowing. The generic arm below deliberately drops the
+    // original message so it cannot reach the execution row — but
+    // `ExecutorError.cause` is never read by the engine either (`sanitizeError`
+    // takes `.message`, and the logger serialises only name/message/stack), so
+    // without this the diagnosis was not hidden from the operator, it was
+    // destroyed. A DB outage would leave nothing anywhere naming Prisma.
+    logger.error('chat_turn: provider/model resolution failed', err, {
+      stepId: step.id,
+      agentSlug: config.agentSlug,
+    });
     throw new ExecutorError(
       step.id,
       'provider_unresolved',
-      err instanceof Error ? err.message : 'Failed to resolve agent provider/model',
+      // Narrowed to `ProviderError` — the errors this call path DEFINES, whose
+      // messages are static and written for an operator. Everything else gets a
+      // generic message, because this catch also wraps a Prisma failure in
+      // `pickActiveProviderCandidates`, and forwarding that put
+      // "Can't reach database server at <host>:<port>" onto the execution row,
+      // where `sanitizeError` persists it and the executions list and trace
+      // viewer render it.
+      //
+      // `ProviderError` rather than the two resolver classes specifically:
+      // `getDefaultModelForTask` throws `NoDefaultModelConfiguredError`, a third
+      // subclass, and it is the LIKELIEST benign cause here — "No default model
+      // is configured for task \"chat\". Save one in Admin → Settings → Default
+      // models." Suppressing that trades a leak for a dead end, and it carries
+      // no infrastructure detail: all three subclasses are constructed with
+      // fixed strings. If a fourth is added that interpolates a base URL or an
+      // env var name, this predicate is the place that has to change.
+      //
+      // Prefixed with the slug for the same reason the sibling `agent-call.ts`
+      // does it: in a multi-step workflow `step.id` alone leaves the operator
+      // mapping it back to an agent by hand.
+      err instanceof ProviderError
+        ? `Agent "${config.agentSlug}": ${err.message}`
+        : `Failed to resolve provider/model for agent "${config.agentSlug}"`,
       err
     );
   }

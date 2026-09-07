@@ -21,6 +21,7 @@ import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
@@ -367,6 +368,47 @@ async function attemptDelivery(
  * HMAC-signed POST to a webhook subscriber. Returns the structured
  * outcome that `attemptDelivery` uses to drive the shared retry / audit
  * write — adapters never write the audit row themselves.
+ *
+ * ## Why there is no destination allowlist here
+ *
+ * Decided deliberately, and recorded here because this is where the question
+ * occurs to people. Sunrise does **not** restrict *which* third parties a
+ * webhook may reach. An admin configuring a subscriber URL is exercising the
+ * feature; honouring it is the point. An allowlist administered by that same
+ * admin is ceremony — they would add whatever they were about to use. An
+ * allowlist administered by someone *else* is a separation-of-duties product
+ * feature (real, and a genuine ask in regulated sectors), which belongs to a
+ * fork building a product, not to the template.
+ *
+ * What *is* refused is a destination that is not a third party at all: cloud
+ * metadata endpoints and the deployment's own private network. A subscription
+ * pointing there is not an operator expressing intent — it is a mistake or an
+ * attack, and honouring it turns this server into a proxy into its own network.
+ *
+ * **This is tenancy groundwork, and the threat model is the one being built
+ * toward.** Today an admin is the platform operator, so pointing a webhook at
+ * the box's own metadata reaches infrastructure they already own. Under
+ * multi-tenancy an ORG admin is not the platform operator, and the identical
+ * request crosses a real isolation boundary into the platform's network. The
+ * guard is written for that reader.
+ *
+ * The check runs **at the point of use**, just below, and additionally on the
+ * write paths (create and update schemas, the backup importer, the `/test`
+ * route), which fail fast and tell an operator while they can still fix it.
+ *
+ * Write-path checks alone were tried and were not enough. Guarding writes means
+ * guarding a list of state transitions, and two successive cuts of that list
+ * were each walked around by the transition they had missed — a lone
+ * `PATCH { secret }`, because `/test` requires no `isActive`; then an
+ * email-channel round trip, because the whole check sat inside a
+ * `nextChannel === 'webhook'` branch. The point-of-use check ends that class:
+ * it does not care how the row came to look like this.
+ *
+ * Under multi-tenancy the *allowlist* question reopens, because "which third
+ * parties see our data" becomes an org-level concern rather than an operator
+ * one — that work is scoped on the `f-mt-external` feature, along with
+ * recording the destination on the delivery row (today it is only reachable by
+ * joining to a subscription that may since have been edited or deleted).
  */
 async function attemptWebhookDelivery(
   sub: SubscriptionLike,
@@ -385,6 +427,40 @@ async function attemptWebhookDelivery(
 
   if (!sub.url) {
     return { delivered: false, terminal: true, error: 'Webhook subscription has no URL' };
+  }
+
+  // ── The destination check, at the point of use ──
+  //
+  // NOT a destination allowlist — see the docblock above for why Sunrise does
+  // not restrict WHICH third parties a webhook may reach. This refuses a
+  // destination that is not a third party at all: the deployment's own private
+  // network and cloud metadata endpoints.
+  //
+  // Here, rather than on the write paths, because "guard every write" turned out
+  // to mean guarding a growing list of state transitions — create, update,
+  // import, activate, set-a-secret, flip-the-channel — and each cut of that list
+  // was walked around by the transition it had missed. A check at the one place
+  // the request is actually made cannot be walked around by any sequence of
+  // patches, because it does not care how the row came to look like this.
+  //
+  // The write-path refines stay: they fail fast and tell an operator at the
+  // moment they can fix it. This is what makes the guarantee true rather than
+  // conventional. It is not a DNS-rebinding defence — `checkSafeProviderUrl`
+  // resolves nothing — but rows that never passed ANY write check exist: every
+  // release before this one imported backup bundles without validating them.
+  //
+  // Terminal: no number of retries will change the URL, only admin action.
+  const targetCheck = checkSafeProviderUrl(sub.url);
+  if (!targetCheck.ok) {
+    logger.warn('Webhook target refused; not delivering', {
+      subscriptionId: sub.id,
+      reason: targetCheck.reason,
+    });
+    return {
+      delivered: false,
+      terminal: true,
+      error: `Destination is not allowed: ${targetCheck.message}`,
+    };
   }
 
   try {

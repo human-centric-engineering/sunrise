@@ -283,6 +283,81 @@ describe('importOrchestrationConfig', () => {
     expect(result.webhooks.skipped).toBe(0);
   });
 
+  describe('an imported bundle is untrusted data that becomes a destination', () => {
+    it('skips a webhook destination on the private network, keeping the rest of the restore', async () => {
+      // Per row, not per bundle: refining this in the schema instead would
+      // abort the whole restore over one subscription, taking agents,
+      // capabilities, workflows and settings with it.
+      mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
+      mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+
+      const payload = {
+        ...minPayload,
+        data: {
+          ...minPayload.data,
+          webhooks: [
+            makeWebhook({ url: 'http://169.254.169.254/latest/meta-data/' }),
+            makeWebhook({ url: 'https://good.example.com/hook' }),
+          ],
+        },
+      };
+      const result = await importOrchestrationConfig(payload, 'user-1');
+
+      expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
+      expect(result.warnings.some((w) => /private or internal/i.test(w))).toBe(true);
+      // CONTROL — the good row still landed, so the skip is targeted rather
+      // than the import having failed wholesale.
+      expect(result.webhooks.created).toBe(1);
+    });
+
+    it('imports an EMAIL subscription inactive, whatever the bundle says', async () => {
+      // It used to honour the bundle's own `isActive`, and email delivery needs
+      // no secret — so a bundle could stand up a live subscription mailing every
+      // matching event, with its full payload, to an address of the bundle
+      // author's choosing, with nothing in the result to say so.
+      mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
+      mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+
+      const payload = {
+        ...minPayload,
+        data: {
+          ...minPayload.data,
+          webhooks: [
+            makeWebhook({
+              channel: 'email',
+              url: null,
+              emailAddress: 'collector@attacker.example',
+              isActive: true,
+            }),
+          ],
+        },
+      };
+      const result = await importOrchestrationConfig(payload, 'user-1');
+
+      expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ isActive: false }) })
+      );
+      expect(result.warnings.some((w) => /imported inactive/i.test(w))).toBe(true);
+    });
+
+    it('skips an email subscription whose address is not an address', async () => {
+      mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
+      mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+
+      const payload = {
+        ...minPayload,
+        data: {
+          ...minPayload.data,
+          webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: 'not-an-address' })],
+        },
+      };
+      const result = await importOrchestrationConfig(payload, 'user-1');
+
+      expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+      expect(result.warnings.some((w) => /not a valid address/i.test(w))).toBe(true);
+    });
+  });
+
   it('skips existing webhook by URL → webhooks.skipped = 1', async () => {
     mockTx.aiWebhookSubscription.findFirst.mockResolvedValue({
       id: 'wh-1',
