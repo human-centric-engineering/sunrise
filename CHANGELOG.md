@@ -21,7 +21,7 @@ release process.
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
   fork-owned `lib/app/llm-providers.ts` — constrains which providers Sunrise may
-  choose on a caller's behalf. Today it silently attaches up to three other
+  choose on a caller's behalf. Listed among [`VERSIONING.md`](./VERSIONING.md#covered)'s named seams, so it sits inside the version contract: that file states the list *is* the public surface, and a seam absent from it is owed no breaking-change announcement. Today it silently attaches up to three other
   configured providers as automatic fallbacks whenever an agent has no explicit
   list, and picks the primary itself whenever an agent leaves that field blank;
   on a shared install either can send an org's prompts to a provider it never
