@@ -31,30 +31,30 @@ release process.
   agent-binding resolver AND the agent form's own preview, so the form cannot
   show an operator a provider the rule forbids while the runtime uses a
   different one — and `isProviderEligible`, its single-candidate form, at the
-  four paths that resolve a provider without ever reaching the resolver. It
+  five paths that resolve a provider without ever reaching the resolver. It
   wires itself lazily on first use rather than as a consumer's import side
   effect, so which module reached it first cannot change whether the rule
   applies. `.context/orchestration/llm-providers.md` carries the per-path
-  coverage table, which names the covered paths, the deliberately-uncovered
-  ones, **and two open gaps** — knowledge embedding, which never touches the
-  provider manager, and `transcribeStream`, which no shipped provider
-  implements yet. The table is hand-derived and was short on all three
-  occasions it was checked, so **do not read the seam, or that table, as a
-  process-wide boundary.** The same file now documents the Proxy every
-  manager-built provider passes through and the four routes that bypass the
-  provider manager entirely, which is where a real boundary would have to
-  live.
+  coverage table, which names the covered paths and the deliberately-uncovered
+  ones. The table is hand-derived and was short on all three occasions it was
+  checked, so **do not read the seam, or that table, as a process-wide
+  boundary.** The same file documents the Proxy every manager-built provider
+  passes through, the two routes that bypass the provider manager entirely,
+  and the limit on the whole guarantee — it binds Sunrise core, not fork code.
   - **Covers** the auto-picked primary and both fallback lists (the agent's own
     and the automatic fill), at **both** of the resolver's return paths — a
     fully-configured agent exits early and never reaches the candidates block,
     so filtering only the latter would leave the majority of agents
-    unconstrained — plus the four paths that never reach the resolver: a
+    unconstrained — plus the five paths that never reach the resolver: a
     workflow step with no `modelOverride`, knowledge keyword enrichment, a
     retroactive review whose model came from neither a request override nor
-    `EVALUATION_JUDGE_MODEL`, and audio transcription's matrix fallback. The
-    first three resolve the `chat` task default and inherit whatever provider
-    that model names; the last walks the audio matrix in order and would
-    otherwise send a caller's voice recording to whichever row sorts first.
+    `EVALUATION_JUDGE_MODEL`, audio transcription's matrix fallback, and the
+    knowledge embedder's fallback chain. The first three resolve the `chat`
+    task default and inherit whatever provider that model names; the fourth
+    walks the audio matrix in order and would otherwise send a caller's voice
+    recording to whichever row sorts first; the fifth walks a preference chain
+    and would otherwise send an org's document text and every search query to
+    whichever arm answered first.
   - **Does not cover, by design**, an explicit `agent.provider`, an explicit
     step or review `modelOverride`, an operator's pinned audio default, or the
     `EVALUATION_DEFAULT_*` / `EVALUATION_JUDGE_MODEL` environment variables.
@@ -152,7 +152,127 @@ release process.
   because an unforced table fails open for its owner — waive it per table with
   `{ requireForced: false }`.
 
+- `resolveEmbeddingAvailability()` and the `EmbeddingAvailability` type exported
+  from `lib/orchestration/knowledge/embedder.ts` — answers "can this install
+  embed right now, and if not why?" by running the resolver rather than by
+  counting provider rows. Those were the same question until the embedding chain
+  started consulting the eligibility rule (below).
+
+  `GET /api/v1/admin/orchestration/knowledge/embedding-status` gains a
+  **`providerState`** field carrying one of `'ok'`, `'none_configured'`,
+  `'none_permitted'` or `'unknown'`. `hasActiveProvider` keeps its name and
+  still gates the "Generate Embeddings" affordance, so existing consumers keep
+  working — but its **meaning has changed**: it previously meant "an active
+  provider row exists, or `OPENAI_API_KEY` is set", which on a fork whose rule
+  refuses every arm reported `true` while embedding could not run.
+
+  A boolean alone is not enough, which is why `providerState` exists. The admin
+  banner picks its remedy from it, and "nothing is set up" and "your policy
+  refuses the providers you have" need opposite remedies — telling the second
+  operator to "add an embedding provider" sends them to add rows that are
+  already there, the precise mistake `NoEligibleProviderError`'s docstring
+  exists to prevent. `'unknown'` covers a lookup that failed rather than a
+  verdict; the endpoint still returns the chunk counts in that case, because
+  500ing loses them and the client renders the same misleading banner anyway.
+
+
+- `UNCONFIGURED_OPENAI_SLUG` (`'env:openai'`) exported from
+  `lib/orchestration/knowledge/embedder.ts`. The embedder's last fallback arm
+  reaches `api.openai.com` off a bare `OPENAI_API_KEY` with no
+  `AiProviderConfig` row behind it — so until now it had no name, and a
+  provider with no name cannot be permitted or denied by a rule that works on
+  names. The escape hatch stays (it is what makes knowledge ingestion work on a
+  fresh install); it is no longer anonymous. The colon guarantees no collision
+  with a real slug, which `slugSchema` restricts to
+  `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
+
 ### Changed
+
+- **The in-flight Proxy's method sets are now an exhaustive allowlist, and an
+  unclassified method fails closed.** `withInFlightTracking` in
+  `lib/orchestration/llm/provider-manager.ts` used two `Set`s —
+  `TRACKED_METHODS` and `STREAM_METHODS` — and silently forwarded anything in
+  neither. Adding a method to `LlmProvider` therefore created a vendor-reaching
+  operation that nothing counted, nothing could gate and nothing announced;
+  `transcribeStream` had been in exactly that state since it was added, latent
+  only because no shipped provider implements it.
+
+  They are replaced by `METHOD_DISPOSITION`, a
+  `Record<ProviderMethodName, 'track' | 'trackStream' | 'passthrough'>` whose
+  key type is derived from `LlmProvider` itself. **Adding a method to that
+  interface is now a type error until somebody classifies it** — a build
+  failure at the moment the egress surface widens, rather than a runtime hole
+  found later. `transcribeStream` is classified `trackStream` and is counted.
+  `listModels` / `testConnection` are `passthrough`, which records the decision
+  not to count them rather than leaving it indistinguishable from an oversight.
+
+  At runtime, a function property that is neither classified nor host machinery
+  (`constructor` and `Object.prototype` members are forwarded, since test
+  runners and `util.inspect` reach for them) throws `ProviderError`
+  `unclassified_provider_method` **on access**, not on call — feature detection
+  is how such a method gets invoked, so it fails there too.
+
+  **Fork impact:** if you have added a method to `LlmProvider`, `tsc` will fail
+  until you classify it. If you have a vendor-reaching method on your own
+  provider class that is *not* on the contract, a manager-built instance will
+  now refuse it — put it on `LlmProvider` and classify it.
+
+- **`registerProvider()` and `registerProviderInstance()` wrap before caching.**
+  Both wrote bare instances straight into the instance cache, so "everything
+  `getProvider` returns has been through the Proxy" was true of what the manager
+  built and false of what anyone else injected, with no way to tell the two
+  apart at the read. Wrapping at the registrars is also the only fix that
+  scales: a check at `getProvider` would have to decide whether an arbitrary
+  object is already wrapped, which a `Proxy` deliberately makes unanswerable.
+
+  **Fork impact:** `getProvider(name)` no longer returns the object you
+  injected — it returns a `Proxy` over it. Calls, spies and `instanceof` all
+  still work; object identity (`expect(retrieved).toBe(fake)`) does not. Assert
+  on behaviour.
+
+- **The knowledge embedder's fallback chain is now filtered by the
+  provider-eligibility seam.** `resolveProvider` in
+  `lib/orchestration/knowledge/embedder.ts` walked Voyage → local →
+  openai-compatible → bare `OPENAI_API_KEY` without consulting any rule, so an
+  org's document text and every search query left through the one path the seam
+  could not see. Each arm now calls `isProviderEligible(slug, { task:
+  'embeddings', source: 'primary', primarySlug: null })` — reusing `'primary'`
+  rather than a new `source`, so a rule already written in a fork covers this
+  path for free. A refused arm is skipped and the chain tries the next, the same
+  shape as the audio matrix loop. The operator's `activeEmbeddingModelId` pin is
+  **not** filtered, on the same line as an explicit `agent.provider`.
+
+  Each provider *type* in the chain is walked in full rather than sampled: a
+  refusal skips the row, not the category, so an org that approves `voyage-eu`
+  and not `voyage-us` still gets Voyage when both rows are active and the
+  refused one sorts first. Shape is checked before policy, so a row that is
+  unusable anyway (a local provider with no `baseUrl`) is not recorded as a
+  refusal and does not steer the terminal error below.
+
+  Refusing every arm now fails with "No permitted embedding provider", worded
+  apart from the pre-existing "No embedding provider configured" — the first
+  sends an operator to whoever wrote the rule, the second to the setup wizard,
+  and one message could not do both. The arm that wins is logged at `info`,
+  because the operator pin is not sticky: five checks drop it through to this
+  chain, and the move was previously invisible.
+
+  This does **not** put the embedder inside the provider-manager waist. It still
+  runs its own `fetch` and is not counted by the Proxy, because
+  `LlmProvider.embed` takes one string and no model or dimension — batching,
+  `dimensions`/`output_dimension` and per-call model selection would have to go
+  onto that published contract first. That port belongs with the call-time gate;
+  the policy half does not need it.
+
+  **Fork impact:** a `registerProviderEligibility` rule that denies everything
+  for `source: 'primary'` will now fail knowledge ingestion and search rather
+  than silently embedding at whichever provider sorted first. That is the
+  intended fail-closed behaviour, but it is a behaviour change for any fork that
+  had already registered a restrictive rule. **Read `ctx.task` before assuming
+  your rule covers this correctly** — embedding arrives as `'embeddings'`, and a
+  rule shaped `ctx.task === 'audio' ? audioRule : chatRule` will run its chat
+  allowlist against the embedding chain, refusing an embeddings-only provider
+  like Voyage that no chat allowlist would contain. `lib/app/llm-providers.ts`
+  now says so at the point a fork writes the rule.
 
 - **`POST /api/v1/admin/orchestration/agents` now requires `provider`.** It used
   to default to `'anthropic'` (`createAgentObjectSchema` in

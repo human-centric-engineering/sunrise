@@ -151,7 +151,7 @@ Callers should **not** call `provider.transcribeStream` directly — go through 
 2. otherwise **`batchTranscribeAsStream`** — adapts a single `transcribe()` call into one `final` chunk plus a `done`, so every batch-capable provider satisfies the streaming contract (no interim text, but a uniform consumer shape);
 3. a `ProviderError` with `code: 'not_supported'` when the provider has neither method — surfaced on first iteration of the returned `AsyncIterable`, not synchronously at call time.
 
-Today this always resolves to the batch fallback: the only STT provider (`OpenAiCompatibleProvider`/Whisper) has no streaming transcription API. A genuinely streaming provider (Deepgram, AssemblyAI, …) would implement `transcribeStream` directly to emit `partial` chunks as audio arrives. This is the platform-side seam only — the client→server audio transport and the live `MicButton` / `useStreamingTranscription` mic layer are a separate follow-up (the transport spike in issue #308); the batch `transcribe()` path is unchanged and remains the default for every current consumer.
+**`streamTranscription` has no production caller today**, and neither voice route uses it — `embed/speech-to-text` and `admin/orchestration/chat/transcribe` both call `provider.transcribe()` directly. Were it called, it would always resolve to the batch fallback: the only STT provider (`OpenAiCompatibleProvider`/Whisper) has no streaming transcription API. A genuinely streaming provider (Deepgram, AssemblyAI, …) would implement `transcribeStream` directly to emit `partial` chunks as audio arrives. This is the platform-side seam only — the client→server audio transport and the live `MicButton` / `useStreamingTranscription` mic layer are a separate follow-up (the transport spike in issue #308); the batch `transcribe()` path is unchanged and remains the default for every current consumer.
 
 **`getAudioProvider()` (in `provider-manager.ts`)** is the entry point used by both the admin and embed transcribe routes. Selection runs in two stages:
 
@@ -228,49 +228,120 @@ For tests or scripts that bypass the database, use `providerManager.registerProv
 ### Every instance is wrapped in a Proxy
 
 Between steps 5 and 6, `getProvider` passes the new instance through
-`withInFlightTracking(provider, slug)`, which returns a `Proxy`. It exists to
-keep the in-flight counter accurate, and it is the only place in the tree where
-**every** LLM call through a manager-built provider can be observed in one spot.
+`withInFlightTracking(provider, slug)`, which returns a `Proxy`. It keeps the
+in-flight counter accurate, and it is the only place in the tree where **every**
+LLM call through a manager-built provider can be observed in one spot.
 
-What it intercepts is a fixed set:
+`registerProvider()` and `registerProviderInstance()` wrap too, so _everything
+`getProvider` hands back has been through the Proxy, whichever of the three
+routes put it in the cache_. That is a property of the cache rather than of one
+way into it. It is also why a check at the read would not have worked: deciding
+whether an arbitrary object is "already wrapped" is precisely what a `Proxy` is
+built to make unanswerable.
 
-| Methods                       | Wrapped in                                       |
-| ----------------------------- | ------------------------------------------------ |
-| `chat`, `embed`, `transcribe` | `track(slug, …)` — increments/decrements a gauge |
-| `chatStream`                  | `trackStream(slug, …)`                           |
+**Consequence for tests and smoke scripts:** `getProvider(name)` no longer
+returns the object you injected — it returns a Proxy over it. Calls, spies and
+`instanceof` all still work; object identity (`expect(retrieved).toBe(fake)`)
+does not. Assert on behaviour.
 
-Everything else — `testConnection`, `listModels`, `transcribeStream`, helper
-methods and accessors — is returned `fn.bind(target)`, i.e. forwarded to the
-real instance untouched. Symbol-keyed and non-function properties pass through
-unwrapped, deliberately: proxying `Symbol.toPrimitive` as though it were a
-tracked method corrupts JSON serialisation.
+#### The disposition map
 
-Two consequences worth knowing before you rely on it:
+Interception is driven by one exhaustive table, `METHOD_DISPOSITION` in
+`provider-manager.ts`:
 
-- Adding a new vendor-reaching method to `LlmProvider` **silently falls
-  through**. The sets are an opt-in list, not an allowlist, so a new method is
-  uncounted until someone remembers to add it. `transcribeStream` is in this
-  state today — latent rather than live, because no shipped provider implements
-  it and `streamTranscription` has no production caller.
-- Because the wrapper is applied at build time and the instance is cached, the
-  Proxy is created once per cache entry, not per call. The closures it returns
-  run per call.
+| Disposition   | Methods                          | Effect                                                       |
+| ------------- | -------------------------------- | ------------------------------------------------------------ |
+| `track`       | `chat`, `embed`, `transcribe`    | `track(slug, …)` — holds a gauge for the life of the promise |
+| `trackStream` | `chatStream`, `transcribeStream` | `trackStream(slug, …)` — holds it until the stream settles   |
+| `passthrough` | `listModels`, `testConnection`   | forwarded bound to the target, deliberately **not** counted  |
+
+Symbol-keyed accesses and non-function properties pass through unwrapped,
+deliberately: proxying `Symbol.toPrimitive` as though it were a tracked method
+corrupts JSON serialisation. `constructor` and everything inherited from
+`Object.prototype` is forwarded too — test runners, structured logging and
+`util.inspect` all reach for those, and refusing them would fail on the observer
+rather than on the thing observed.
+
+**Anything else throws on access.** A function property that is neither
+classified nor host machinery raises `ProviderError`
+(`code: 'unclassified_provider_method'`, non-retriable). Throwing on _access_
+rather than on call is the point: feature detection
+(`if (provider.newThing) …`) is how such a method gets called, so it has to fail
+there too.
+
+#### Why it is an allowlist rather than two `Set`s
+
+The previous shape was `TRACKED_METHODS` and `STREAM_METHODS`, and anything in
+neither was silently forwarded. So adding a method to `LlmProvider` created a
+vendor-reaching operation that nothing counted, nothing could gate, and nothing
+announced. `transcribeStream` sat in exactly that state from the day it was
+added — latent only because no shipped provider implements it.
+
+Two things changed, and both matter:
+
+- **`Record<ProviderMethodName, MethodDisposition>` is derived from
+  `LlmProvider` itself.** Adding a method to the interface is a _type error_
+  here until somebody classifies it. That is the primary mechanism: a build
+  failure the moment the surface widens, not a runtime hole found later.
+- **`passthrough` is a decision, written down.** "We reach the vendor and chose
+  not to count it" and "nobody looked" used to be the same state. They are now
+  different rows.
+
+The Proxy is created once per cache entry, not per call; the closures it returns
+run per call.
 
 ### What bypasses the Provider Manager
 
-Four routes reach a vendor without a manager-built, Proxy-wrapped instance. None
-is a defect on its own; all four surprise people:
+Two routes reach a vendor without a manager-built, Proxy-wrapped instance.
+Neither is a defect on its own; both surprise people:
 
-| Route                                               | What it skips                                                                                                                                                                                                                             |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `registerProvider()` / `registerProviderInstance()` | Both write **unwrapped** instances straight into the cache, so a later `getProvider` returns something the Proxy never touched. Used by smoke scripts and tests.                                                                          |
-| Direct construction                                 | `AnthropicProvider` and `OpenAiCompatibleProvider` are exported from `@/lib/orchestration/llm` and listed under Public Surface, so any caller — a fork especially — can `new` one and skip the manager, the cache and the Proxy entirely. |
-| `knowledge/embedder.ts`                             | Resolves its own destination from `AiProviderConfig` rows and runs its own `fetch`. Never calls `getProvider`. Its last fallback reaches OpenAI directly off `OPENAI_API_KEY` with no provider row at all.                                |
-| `fetchWithTimeout` (`llm/provider.ts`)              | A shared helper, not confined to provider instances — `model-registry.ts` uses it to GET OpenRouter's public model list.                                                                                                                  |
+| Route                   | What it skips                                                                                                                                                                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct construction     | `AnthropicProvider` and `OpenAiCompatibleProvider` are exported from `@/lib/orchestration/llm` and listed under Public Surface, so any caller — a fork especially — can `new` one and skip the manager, the cache and the Proxy entirely. |
+| `knowledge/embedder.ts` | Resolves its own destination from `AiProviderConfig` rows and runs its own `fetch`. Never calls `getProvider`, so it is not counted. Its provider _choices_ are filtered by the eligibility seam (below); its _calls_ are not proxied.    |
+
+`fetchWithTimeout` (`llm/provider.ts`) is a shared helper rather than a bypass —
+`model-registry.ts` uses it to GET OpenRouter's public model list, which reaches
+no vendor with anyone's data.
 
 If you are adding anything cross-cutting to LLM calls — metering, tracing, a
-policy check — these four are what stops "wrap the Proxy" from being sufficient
+policy check — these two are what stops "wrap the Proxy" from being sufficient
 on its own.
+
+### What the outbound-egress guarantee covers, and what it does not
+
+**Sunrise tells you every place its own code sends your data, and fails loudly
+when that set changes. It cannot police what you build on top.**
+
+That sentence is the whole of the promise, and the second half is not a
+disclaimer — it is a design decision, taken deliberately (2026-09-07) rather
+than arrived at by omission.
+
+**Why core only.** A fork owns the source. Any guard Sunrise writes below
+construction can be deleted in the fork that inherits it, so a boundary
+presented as unavoidable would be a boundary that can be edited away — worse
+than no boundary, because someone would rely on it. The provider classes are
+published API precisely so forks can build on them.
+
+**What that buys instead, and it is the useful half.** Three real situations
+were tested against this: a regulated customer asking a fork to demonstrate that
+data reaches only approved processors; Sunrise widening the egress surface
+underneath a fork in a later release; a fork's DPA sub-processor list going
+stale against the code. **None of them wants the guard to be unavoidable. Every
+one of them wants the set of doors to be enumerable, and loud when it widens.**
+That is what `METHOD_DISPOSITION` delivers and what two hand-maintained `Set`s
+could not.
+
+**So, concretely, for a fork engineer:**
+
+- Reaching a vendor through `getProvider` inherits counting, the disposition
+  map and (at the selection sites listed below) the eligibility rule.
+- `new OpenAiCompatibleProvider({…})` in your own code reaches the vendor
+  directly. That is supported and will keep working. It is outside every
+  guarantee on this page, and nothing will tell you so at runtime.
+- Adding a method to `LlmProvider` will not compile until you classify it. Take
+  that as the signal it is: you have widened the egress surface, and anything
+  downstream that enumerated it is now short.
 
 ## Model Registry
 
@@ -559,11 +630,12 @@ paths marked covered below and no others**.
 
 ### Per-path coverage
 
-The seam is consulted at **five** places: the agent-binding resolver, and the
-four paths that never reach it and call `isProviderEligible` directly
-(`llm-runner.ts`, `keyword-enricher.ts`, the retroactive-review route, and audio
-resolution in `provider-manager.ts`). Anything resolving a provider by another
-route is unfiltered.
+The seam is consulted at **six** places: the agent-binding resolver, and the
+five paths that never reach it and call `isProviderEligible` directly
+(`llm-runner.ts`, `keyword-enricher.ts`, the retroactive-review route, audio
+resolution in `provider-manager.ts`, and the embedding fallback chain in
+`knowledge/embedder.ts`). Anything resolving a provider by another route is
+unfiltered.
 
 **Do not build an isolation boundary on the table below.** An earlier version of
 this section said a fork "needs this list rather than an assurance", which
@@ -579,33 +651,36 @@ matters most to exactly the reader who would treat it as one.
 
 The completeness question — _can a call escape the policy?_ — is answered by
 enforcing at the point every call passes through rather than at each site that
-chooses; see **Every instance is wrapped in a Proxy** above and the four routes
-that bypass it.
+chooses; see **Every instance is wrapped in a Proxy** above, the two routes that
+bypass it, and **What the outbound-egress guarantee covers** for the limit on
+all of it.
 
-| Path                                                                                                                                                  | Resolves via                                                                                                                                             | Covered?                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                                                   | `resolveAgentProviderAndModel`                                                                                                                           | **Yes**                                                                                                                                                                                                                                                                                                                                                               |
-| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`)                                 | `getModel(override).provider` in `llm-runner.ts`                                                                                                         | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time.                                                                                                                                                                                         |
-| The same steps with NO override                                                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts`                                                                                                      | **Yes** — `source: 'primary'`. Refused with `ExecutorError` code `provider_not_permitted`, non-retriable.                                                                                                                                                                                                                                                             |
-| Knowledge keyword enrichment                                                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`                                                                                                        | **Yes** — `source: 'primary'`. Refused with `ProviderNotPermittedError` before any chunk is read; the admin route answers 403 / `provider_not_permitted`.                                                                                                                                                                                                             |
-| Retroactive execution review, when the request sets no `modelOverride` **and** neither `EVALUATION_JUDGE_MODEL` nor `EVALUATION_DEFAULT_MODEL` is set | `getDefaultModelForTask('chat')` in `executions/[id]/review/route.ts`                                                                                    | **Yes** — `source: 'primary'`. Answers 403 / `provider_not_permitted` before the judge runs, so the execution's step outputs never reach the barred provider.                                                                                                                                                                                                         |
-| A review request's own `modelOverride`, or `EVALUATION_JUDGE_MODEL` / `EVALUATION_DEFAULT_MODEL`                                                      | the same line, first two arms — `JUDGE_MODEL` in `evaluations/judge-model.ts` falls back to `EVALUATION_DEFAULT_MODEL`, so setting either takes this row | **No** — both are an operator's recorded choice.                                                                                                                                                                                                                                                                                                                      |
-| Audio transcription's matrix fallback, when no default is pinned or the pinned row is unreachable                                                     | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`                                                                                           | **Yes** — `source: 'primary'`, `task: 'audio'`. A barred row is skipped like any other unusable row and the loop tries the next; if none is permitted, `getAudioProvider()` returns `null` and speech-to-text is unavailable.                                                                                                                                         |
-| An operator's pinned audio default                                                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`                                                                                          | **No** — pinned in Settings → Default models.                                                                                                                                                                                                                                                                                                                         |
-| Knowledge embedding, whenever `resolveActiveEmbeddingConfig()` returns `null` — no pin, **or** a pin that no longer resolves                          | the Voyage → local → openai-compatible → bare `OPENAI_API_KEY` chain in `knowledge/embedder.ts`                                                          | **No — and this is a gap**, and a different shape from the others: the embedder never calls `getProvider`, builds its own HTTP client, and its last arm reaches `api.openai.com` with **no `AiProviderConfig` row and no provider slug at all**. Not yet tracked as its own task.                                                                                     |
-| An operator's pinned `activeEmbeddingModelId`, **while it still resolves**                                                                            | `resolveActiveEmbeddingConfig()` in `knowledge/embedder.ts`                                                                                              | **No** — an operator's recorded choice. But the pin is not sticky: it drops through to the gap row above on **five** conditions — the model is missing or inactive, lacks the `embedding` capability, has no `dimensions`, has no active `AiProviderConfig`, or is non-Voyage with no `baseUrl`. Deactivating a row silently moves an org from this line to that one. |
-| `provider.testConnection()` / `provider.listModels()`                                                                                                 | admin provider routes                                                                                                                                    | **No** — they do reach the vendor, and a gate on `chat`/`embed`/`transcribe` would silently not cover them. Out of scope because every caller is an admin acting on providers they configured — but note `providers/test-bulk` pings **every** configured row rather than one an admin named, so the justification is "operator-initiated", not "operator-named".     |
-| `provider.transcribeStream()`                                                                                                                         | `llm/transcribe-stream.ts`, from the voice path                                                                                                          | **No — and this is a gap.** Not in the Proxy's tracked or stream method sets, so it is neither counted nor gateable today, and unlike the row above it carries **user audio** and is not reached by an admin naming a provider. Sunrise ships no provider implementing it, so it is latent until a fork does.                                                         |
-| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                                                              | env vars read in `complete-session.ts`                                                                                                                   | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                                                                                                                                                                                                        |
+| Path                                                                                                                                                  | Resolves via                                                                                                                                             | Covered?                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat turns, `chat_turn` / `agent_call` steps, evaluation completion                                                                                   | `resolveAgentProviderAndModel`                                                                                                                           | **Yes**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| A workflow step's `modelOverride` (`llm_call`, `route`, `evaluate`, `reflect`, `guard`, `supervisor`, `orchestrator`)                                 | `getModel(override).provider` in `llm-runner.ts`                                                                                                         | **No** — and deliberately: an override is an operator's recorded choice in the workflow definition, the same category as an explicit `agent.provider`. Enforce at write time.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| The same steps with NO override                                                                                                                       | `getDefaultModelForTask('chat')` in `llm-runner.ts`                                                                                                      | **Yes** — `source: 'primary'`. Refused with `ExecutorError` code `provider_not_permitted`, non-retriable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Knowledge keyword enrichment                                                                                                                          | `getModel(...).provider` in `keyword-enricher.ts`                                                                                                        | **Yes** — `source: 'primary'`. Refused with `ProviderNotPermittedError` before any chunk is read; the admin route answers 403 / `provider_not_permitted`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Retroactive execution review, when the request sets no `modelOverride` **and** neither `EVALUATION_JUDGE_MODEL` nor `EVALUATION_DEFAULT_MODEL` is set | `getDefaultModelForTask('chat')` in `executions/[id]/review/route.ts`                                                                                    | **Yes** — `source: 'primary'`. Answers 403 / `provider_not_permitted` before the judge runs, so the execution's step outputs never reach the barred provider.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A review request's own `modelOverride`, or `EVALUATION_JUDGE_MODEL` / `EVALUATION_DEFAULT_MODEL`                                                      | the same line, first two arms — `JUDGE_MODEL` in `evaluations/judge-model.ts` falls back to `EVALUATION_DEFAULT_MODEL`, so setting either takes this row | **No** — both are an operator's recorded choice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Audio transcription's matrix fallback, when no default is pinned or the pinned row is unreachable                                                     | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`                                                                                           | **Yes** — `source: 'primary'`, `task: 'audio'`. A barred row is skipped like any other unusable row and the loop tries the next; if none is permitted, `getAudioProvider()` returns `null` and speech-to-text is unavailable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| An operator's pinned audio default                                                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`                                                                                          | **No** — pinned in Settings → Default models.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Knowledge embedding, whenever `resolveActiveEmbeddingConfig()` returns `null` — no pin, **or** a pin that no longer resolves                          | the Voyage → local → openai-compatible → bare `OPENAI_API_KEY` chain in `knowledge/embedder.ts`                                                          | **Yes** — `source: 'primary'`, `task: 'embeddings'`. A refused arm is skipped and the chain tries the next, the audio loop's shape. The bare-`OPENAI_API_KEY` arm answers to the reserved slug `env:openai` (`UNCONFIGURED_OPENAI_SLUG`) so a rule can name it; before that it was the one destination no policy could see. If everything available is refused the call fails with a message distinct from "nothing is configured". **Still outside the Proxy** — see _The embedder is filtered but not proxied_ below.                                                                                                                                                                       |
+| An operator's pinned `activeEmbeddingModelId`, **while it still resolves**                                                                            | `resolveActiveEmbeddingConfig()` in `knowledge/embedder.ts`                                                                                              | **No** — an operator's recorded choice. But the pin is not sticky: it drops through to the gap row above on **five** conditions — the model is missing or inactive, lacks the `embedding` capability, has no `dimensions`, has no active `AiProviderConfig`, or is non-Voyage with no `baseUrl`. Each of those five drop-throughs is logged at `warn` inside `resolveActiveEmbeddingConfig`, which is where the transition happens and is visible at production's default `INFO` level. The arm the chain then lands on is `debug` — per-call provenance, fired once per search query and once per chat message on any unpinned install, so it is not the place to carry a transition signal. |
+| `provider.testConnection()` / `provider.listModels()`                                                                                                 | admin provider routes                                                                                                                                    | **No** — they do reach the vendor, and a gate on `chat`/`embed`/`transcribe` would silently not cover them. Out of scope because every caller is an admin acting on providers they configured — but note `providers/test-bulk` pings **every** configured row rather than one an admin named, so the justification is "operator-initiated", not "operator-named".                                                                                                                                                                                                                                                                                                                             |
+| `provider.transcribeStream()`                                                                                                                         | `streamTranscription` in `llm/transcribe-stream.ts` — which has **no production caller**; both voice routes call `provider.transcribe()`                 | **Not a provider _choice_ at all** — by the time it is called the provider is resolved, so there is nothing here for the eligibility seam to filter. It is now `trackStream` in the disposition map, so it is counted and interceptable like `chatStream`. An earlier version of this row said it was "from the voice path" and carried user audio today: it does not.                                                                                                                                                                                                                                                                                                                        |
+| `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                                                              | env vars read in `complete-session.ts`                                                                                                                   | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 #### The second chokepoint, and why each path refuses differently
 
-The four non-resolver rows share a shape: Sunrise picks a model (or a matrix
-row) and uses whatever provider it names, without passing through the resolver.
-They call `isProviderEligible(slug, ctx)` — the single-candidate form of the
-same rule, with the same fail-closed semantics — because there is no list to
-filter: one provider is named and, except in the audio loop, there is no second
-choice to fall back to.
+The five non-resolver rows share a shape: Sunrise picks a model (or a matrix
+row, or an arm of a preference chain) and uses whatever provider it names,
+without passing through the resolver. They call `isProviderEligible(slug, ctx)`
+— the single-candidate form of the same rule, with the same fail-closed
+semantics — because there is no list to filter: one provider is named at a time.
+The audio loop and the embedding chain are the two that do have somewhere to
+fall through to, and both use the same answer for a denial as for any other
+unusable candidate: skip it, try the next.
 
 They all reuse **`source: 'primary'`** rather than introducing a fourth value,
 and that is deliberate. An unanswered `source` fails open, so a new value would mean
@@ -616,12 +691,13 @@ overridden.
 
 What they do **not** share is the refusal, because the events are not alike:
 
-| Path               | Refusal                                                                                                 | Retriable?                                                                                           | Where it surfaces                                                                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Workflow step      | `ExecutorError`, code `provider_not_permitted`                                                          | **No.** A policy denial is deterministic; a `retry` strategy would spend its whole budget re-asking. | The step's `errorStrategy` applies — `fail` stops the run, `continue` skips it.                                                                  |
-| Keyword enrichment | `ProviderNotPermittedError`, thrown before any chunk is read or sent                                    | n/a — the whole run is refused, so there is no partial-success state                                 | `POST …/enrich-keywords` → **403**, code `provider_not_permitted`                                                                                |
-| Retroactive review | none — the route returns early, before `getProvider` and before the judge runs                          | n/a                                                                                                  | `POST …/executions/:id/review` → **403**, code `provider_not_permitted`                                                                          |
-| Audio resolution   | none — `tryAudioRow` returns `null`, exactly as it does for an open breaker or a missing `transcribe()` | n/a                                                                                                  | the loop tries the next matrix row; with none permitted, `getAudioProvider()` returns `null` and every caller reports speech-to-text unavailable |
+| Path                | Refusal                                                                                                 | Retriable?                                                                                           | Where it surfaces                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workflow step       | `ExecutorError`, code `provider_not_permitted`                                                          | **No.** A policy denial is deterministic; a `retry` strategy would spend its whole budget re-asking. | The step's `errorStrategy` applies — `fail` stops the run, `continue` skips it.                                                                                                          |
+| Keyword enrichment  | `ProviderNotPermittedError`, thrown before any chunk is read or sent                                    | n/a — the whole run is refused, so there is no partial-success state                                 | `POST …/enrich-keywords` → **403**, code `provider_not_permitted`                                                                                                                        |
+| Retroactive review  | none — the route returns early, before `getProvider` and before the judge runs                          | n/a                                                                                                  | `POST …/executions/:id/review` → **403**, code `provider_not_permitted`                                                                                                                  |
+| Audio resolution    | none — `tryAudioRow` returns `null`, exactly as it does for an open breaker or a missing `transcribe()` | n/a                                                                                                  | the loop tries the next matrix row; with none permitted, `getAudioProvider()` returns `null` and every caller reports speech-to-text unavailable                                         |
+| Knowledge embedding | none per arm — the chain skips a refused provider and tries the next                                    | n/a                                                                                                  | with no arm permitted, `resolveProvider` throws "No permitted embedding provider", deliberately worded apart from the "not configured" error so the two send readers to different places |
 
 Audio is the one that denies without an error, and that is the loop's own
 convention rather than a softening: `tryAudioRow` already returns `null` for
@@ -631,7 +707,7 @@ the next row, and all three callers of `getAudioProvider()` already handle
 would lose the useful half of the behaviour — a permitted row further down the
 matrix can still serve the request.
 
-All four check **before** the provider is constructed and before a token is
+All five check **before** the provider is constructed and before a token is
 sent, so a refusal means nothing left the deployment. On the workflow path the
 operator-facing detail — which provider, which model, which fix — is in the log
 rather than the message, because `ExecutorError`'s message reaches the SSE
@@ -645,6 +721,31 @@ fail-closed, **a rule that throws costs provider-less agents an outage** rather
 than routing them somewhere unapproved. Agents that name their provider
 explicitly keep working and merely lose their fallbacks. See
 [multi-tenancy design → Q15](../architecture/multi-tenancy-design.md).
+
+#### The embedder is filtered but not proxied
+
+The embedding chain is the one covered row that is **not** inside the provider
+manager. It resolves its own destination and runs its own `fetch`, so the
+eligibility seam constrains _which provider it chooses_ while the in-flight
+Proxy never sees the call: nothing counts it, and a future call-time gate hung
+off the Proxy would not cover it either. Its SSRF re-check and redirect refusal
+are its own, at the point of use.
+
+**That split is deliberate, and here is the cost of closing it.**
+`LlmProvider.embed` takes one string and returns one vector — no batch, no model
+argument, no dimension. The embedder needs all three: it posts up to 100 inputs
+per request, selects the model per call, and sends `dimensions` /
+`output_dimension` for the models that accept them. Bringing it inside means
+widening the `LlmProvider` contract first, which is a larger and more
+consequential change than this row — every provider implements `embed`, and the
+contract is published surface for forks.
+
+So the port belongs with the call-time gate (`f-mt-external`), which needs it
+anyway, and the policy half — the part that does not need the contract change —
+ships here. Stated the other way round, so the limit is not read as larger than
+it is: **an org's documents and search queries still leave through a path the
+Proxy cannot observe. What changed is that the destination is now one the org's
+rule got to approve.**
 
 ## Anti-Patterns
 

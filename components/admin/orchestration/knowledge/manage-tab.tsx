@@ -70,6 +70,7 @@ const embeddingStatusResponseSchema = z.object({
       embedded: z.number(),
       pending: z.number(),
       hasActiveProvider: z.boolean(),
+      providerState: z.enum(['ok', 'none_configured', 'none_permitted', 'unknown']).optional(),
     })
     .optional(),
 });
@@ -111,6 +112,7 @@ interface EmbeddingStatus {
   embedded: number;
   pending: number;
   hasActiveProvider: boolean;
+  providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
 }
 
 /**
@@ -403,6 +405,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
 
   const hasChunks = embeddingStatus !== null && embeddingStatus.total > 0;
   const hasProvider = embeddingStatus?.hasActiveProvider ?? false;
+  // A status fetch that never landed is not the same as "no provider". Without
+  // this the banner prints "add an embedding provider" whenever the endpoint is
+  // briefly unreachable, which is the wrong remedy for a working install.
+  const providerState = embeddingStatus === null ? 'unknown' : embeddingStatus.providerState;
   const allEmbedded =
     embeddingStatus !== null && embeddingStatus.total > 0 && embeddingStatus.pending === 0;
   const embedDisabled = embedding || !hasChunks || !hasProvider || allEmbedded;
@@ -571,6 +577,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           {embedError && <p className="text-destructive text-sm">{embedError}</p>}
           {embeddingStatus && hasChunks && !allEmbedded && embeddingStatus.embedded > 0 && (
             <EmbeddingStatusBanner
+              providerState={providerState}
               total={embeddingStatus.total}
               embedded={embeddingStatus.embedded}
               hasActiveProvider={hasProvider}

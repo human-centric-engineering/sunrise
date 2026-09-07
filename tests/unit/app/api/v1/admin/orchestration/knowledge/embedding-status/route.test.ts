@@ -8,7 +8,7 @@
  * @see app/api/v1/admin/orchestration/knowledge/embedding-status/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/v1/admin/orchestration/knowledge/embedding-status/route';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
@@ -23,12 +23,27 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// `hasActiveProvider` is answered by running the embedding resolver rather than
+// by counting rows (see the route). That is a wider dependency surface than the
+// single `findFirst` this file used to need — deliberately, because the row
+// count and the resolver stopped agreeing once the embedding chain started
+// consulting the provider-eligibility rule.
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiKnowledgeChunk: { count: vi.fn() },
-    aiProviderConfig: { findFirst: vi.fn() },
+    aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() },
+    aiOrchestrationSettings: { findFirst: vi.fn() },
+    aiProviderModel: { findUnique: vi.fn() },
     $queryRaw: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
+  getDefaultModelForTask: vi.fn(async () => 'text-embedding-3-small'),
 }));
 
 vi.mock('@/lib/security/ip', () => ({
@@ -39,6 +54,10 @@ vi.mock('@/lib/security/ip', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -58,6 +77,25 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(100);
     vi.mocked(prisma.$queryRaw).mockResolvedValue([{ count: BigInt(80) }] as never);
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue({ id: 'prov-1' } as never);
+    // The resolver's own reads: no operator pin, one usable provider row.
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      {
+        id: 'prov-1',
+        slug: 'together',
+        providerType: 'openai-compatible',
+        baseUrl: 'https://api.example.com/v1',
+        apiKeyEnvVar: null,
+        isLocal: false,
+        isActive: true,
+      },
+    ] as never);
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
   });
 
   it('returns embedding status with counts', async () => {
@@ -74,6 +112,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
 
   it('reports hasActiveProvider true when only OPENAI_API_KEY is set', async () => {
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
     const originalEnv = process.env['OPENAI_API_KEY'];
     process.env['OPENAI_API_KEY'] = 'sk-test';
 
@@ -92,6 +131,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
 
   it('reports hasActiveProvider false when no provider and no env key', async () => {
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
     const originalEnv = process.env['OPENAI_API_KEY'];
     delete process.env['OPENAI_API_KEY'];
 
@@ -103,6 +143,55 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
       if (originalEnv !== undefined) {
         process.env['OPENAI_API_KEY'] = originalEnv;
       }
+    }
+  });
+
+  it('reports hasActiveProvider false when the eligibility rule refuses every provider', async () => {
+    // Arrange: a provider row exists — the exact state the old row-count check
+    // called "available" — but the app's rule permits nothing.
+    registerProviderEligibility(() => []);
+
+    // Act
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    // Assert: the admin UI gates "Generate Embeddings" on this field, so a
+    // `true` here is an enabled button for a run that cannot succeed.
+    expect(body.data.hasActiveProvider).toBe(false);
+    // And the WHY travels with it. The banner prints "Add an embedding
+    // provider" for a bare `false`, which is the wrong remedy here — the
+    // providers are already there and the rule is what refuses them.
+    expect(body.data.providerState).toBe('none_permitted');
+  });
+
+  it('reports providerState "unknown" when the lookup itself fails', async () => {
+    // Arrange: the one query on the chain with no `.catch()`.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(new Error('pool timeout'));
+
+    // Act
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    // Assert: still 200 with the counts. 500ing looks honest but the client
+    // does `if (!res.ok) return`, so it renders the same misleading "add a
+    // provider" banner AND loses the counts.
+    expect(res.status).toBe(200);
+    expect(body.data.total).toBe(100);
+    expect(body.data.providerState).toBe('unknown');
+    expect(body.data.hasActiveProvider).toBe(false);
+  });
+
+  it('reports providerState "none_configured" when nothing is set up', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+    const original = process.env['OPENAI_API_KEY'];
+    delete process.env['OPENAI_API_KEY'];
+    try {
+      const res = await GET(makeRequest());
+      const body = await res.json();
+      expect(body.data.providerState).toBe('none_configured');
+    } finally {
+      if (original === undefined) delete process.env['OPENAI_API_KEY'];
+      else process.env['OPENAI_API_KEY'] = original;
     }
   });
 

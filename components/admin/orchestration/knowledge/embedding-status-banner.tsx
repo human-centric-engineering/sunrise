@@ -7,6 +7,12 @@ interface EmbeddingStatusBannerProps {
   total: number;
   embedded: number;
   hasActiveProvider: boolean;
+  /**
+   * Why embedding is unavailable, when it is. Optional so existing callers
+   * keep compiling; without it the banner falls back to the "add a provider"
+   * remedy, which is right for a fresh install and wrong for the other two.
+   */
+  providerState?: 'ok' | 'none_configured' | 'none_permitted' | 'unknown';
 }
 
 /**
@@ -20,8 +26,15 @@ export function EmbeddingStatusBanner({
   total,
   embedded,
   hasActiveProvider,
+  providerState,
 }: EmbeddingStatusBannerProps) {
   if (total === 0 || embedded >= total) return null;
+
+  // The remedy has to match the reason. Telling an operator whose policy
+  // refuses every provider to "add an embedding provider" sends them to add
+  // rows that are already there and never mentions the rule — the exact
+  // mistake `NoEligibleProviderError` exists to keep the runtime from making.
+  const state = providerState ?? (hasActiveProvider ? 'ok' : 'none_configured');
 
   return (
     <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
@@ -33,7 +46,21 @@ export function EmbeddingStatusBanner({
             {embedded} of {total}
           </strong>{' '}
           chunks are embedded.
-          {!hasActiveProvider ? (
+          {state === 'none_permitted' ? (
+            <>
+              {' '}
+              An embedding provider is configured, but this deployment&rsquo;s provider policy
+              permits none of them, so embedding cannot run. Adding another provider will not help —
+              the rule itself has to allow one (see <code>lib/app/llm-providers.ts</code>).
+            </>
+          ) : state === 'unknown' ? (
+            <>
+              {' '}
+              We could not check whether an embedding provider is available — this is a temporary
+              failure, not a verdict. Reload to try again; the chunk counts above are still
+              accurate.
+            </>
+          ) : state === 'none_configured' ? (
             <>
               {' '}
               <Link href="/admin/orchestration/providers" className="underline">
