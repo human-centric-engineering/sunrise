@@ -58,8 +58,9 @@
  *  - **It runs on the request hot path**, up to TWICE per binding resolution —
  *    once for the auto-picked primary and once for the fallback list — once
  *    more per workflow step, per keyword-enrichment run and per retroactive
- *    review, and once per audio matrix row walked. Cache whatever you look up;
- *    do not query per call.
+ *    review, once per audio matrix row walked, and once per embedding-chain arm
+ *    tried, which means once per knowledge search query. Cache whatever you look
+ *    up; do not query per call.
  *  - **If you load policy before registering, RETURN the promise.** This
  *    function may be `async` and its caller awaits it. What must not happen is
  *    a floated promise —
@@ -71,28 +72,38 @@
  *    restriction that cannot be evaluated must not be read as permission.
  *  - **It filters what Sunrise chooses, not what an operator chose.** The
  *    auto-picked primary, both fallback lists, the task-default model's
- *    provider on the three paths that resolve one directly, and an audio matrix
- *    row reached by order all go through your rule. An explicit
+ *    provider on the three paths that resolve one directly, an audio matrix row
+ *    reached by order, and every arm of the embedding fallback chain all go
+ *    through your rule. An explicit
  *    `agent.provider`, an explicit step or review `modelOverride`, a pinned
  *    audio default and the `EVALUATION_*` env vars do not. Enforce those at
  *    write time — do not offer a provider the org has not approved.
  *  - **`source: 'primary'` means every path where Sunrise chose**, not only the
  *    agent one: a blank `agent.provider`, a workflow step with no
- *    `modelOverride`, a keyword-enrichment run, an unpinned retroactive review
- *    and an audio matrix row all arrive under it. So a rule you already wrote
- *    reaches every one of them without an edit — which is why they reuse the
- *    value rather than adding a fourth your rule would not answer for. Use
- *    `ctx.task` to tell them apart: audio arrives as `'audio'`, the rest as
- *    `'chat'`.
+ *    `modelOverride`, a keyword-enrichment run, an unpinned retroactive review,
+ *    an audio matrix row and an embedding-chain arm all arrive under it. So a
+ *    rule you already wrote reaches every one of them without an edit — which is
+ *    why they reuse the value rather than adding a fourth your rule would not
+ *    answer for. Use `ctx.task` to tell them apart: audio arrives as `'audio'`,
+ *    **embedding as `'embeddings'`**, the rest as `'chat'`.
+ *
+ *    Read that last clause before writing `ctx.task === 'audio' ? … : chatRule`.
+ *    A two-way split like that runs your CHAT allowlist against the embedding
+ *    chain, and an embeddings-only provider — Voyage is the obvious one — is
+ *    never in a chat allowlist. The result is refused embeddings, so knowledge
+ *    ingestion and search fail with "No permitted embedding provider" and
+ *    nothing points at the rule. Answer all three tasks, or return `candidates`
+ *    for the ones you do not mean to constrain.
  *  - **Everything Sunrise chooses is fail-closed.** If your rule permits
  *    nothing for `source: 'primary'`, the request raises
  *    `NoEligibleProviderError`, a workflow step fails with a non-retriable
  *    `provider_not_permitted`, an enrichment run and a retroactive review are
- *    refused with a 403, and speech-to-text reports itself unavailable — rather
- *    than any of them using a provider you did not approve. A rule that throws
- *    therefore costs provider-less agents an outage, stops workflow steps and
- *    turns off voice input, not a silent bypass — deliberate, but know it
- *    before putting a network call in here.
+ *    refused with a 403, speech-to-text reports itself unavailable, and
+ *    knowledge embedding throws "No permitted embedding provider" — rather than
+ *    any of them using a provider you did not approve. A rule that throws
+ *    therefore costs provider-less agents an outage, stops workflow steps, turns
+ *    off voice input and breaks knowledge ingestion AND search, not a silent
+ *    bypass — deliberate, but know it before putting a network call in here.
  *
  * Full guide: `.context/orchestration/llm-providers.md`
  */

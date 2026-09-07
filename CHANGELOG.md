@@ -152,6 +152,18 @@ release process.
   because an unforced table fails open for its owner — waive it per table with
   `{ requireForced: false }`.
 
+- `canResolveEmbeddingProvider()` exported from
+  `lib/orchestration/knowledge/embedder.ts` — answers "can this install embed
+  right now?" by running the resolver rather than by counting provider rows.
+  Those were the same question until the embedding chain started consulting the
+  eligibility rule (below), and `GET
+  /api/v1/admin/orchestration/knowledge/embedding-status` now uses it for
+  `hasActiveProvider`. **Behaviour change:** that field previously meant "an
+  active provider row exists, or `OPENAI_API_KEY` is set". On a fork whose rule
+  refuses every arm it reported `true` while embedding could not run, so the
+  admin UI enabled "Generate Embeddings" for a run guaranteed to fail. It now
+  means what its name says.
+
 - `UNCONFIGURED_OPENAI_SLUG` (`'env:openai'`) exported from
   `lib/orchestration/knowledge/embedder.ts`. The embedder's last fallback arm
   reaches `api.openai.com` off a bare `OPENAI_API_KEY` with no
@@ -218,12 +230,19 @@ release process.
   shape as the audio matrix loop. The operator's `activeEmbeddingModelId` pin is
   **not** filtered, on the same line as an explicit `agent.provider`.
 
+  Each provider *type* in the chain is walked in full rather than sampled: a
+  refusal skips the row, not the category, so an org that approves `voyage-eu`
+  and not `voyage-us` still gets Voyage when both rows are active and the
+  refused one sorts first. Shape is checked before policy, so a row that is
+  unusable anyway (a local provider with no `baseUrl`) is not recorded as a
+  refusal and does not steer the terminal error below.
+
   Refusing every arm now fails with "No permitted embedding provider", worded
   apart from the pre-existing "No embedding provider configured" — the first
   sends an operator to whoever wrote the rule, the second to the setup wizard,
   and one message could not do both. The arm that wins is logged at `info`,
-  because the operator pin is not sticky: five conditions drop it through to
-  this chain, and the move was previously invisible.
+  because the operator pin is not sticky: five checks drop it through to this
+  chain, and the move was previously invisible.
 
   This does **not** put the embedder inside the provider-manager waist. It still
   runs its own `fetch` and is not counted by the Proxy, because
@@ -236,7 +255,12 @@ release process.
   for `source: 'primary'` will now fail knowledge ingestion and search rather
   than silently embedding at whichever provider sorted first. That is the
   intended fail-closed behaviour, but it is a behaviour change for any fork that
-  had already registered a restrictive rule.
+  had already registered a restrictive rule. **Read `ctx.task` before assuming
+  your rule covers this correctly** — embedding arrives as `'embeddings'`, and a
+  rule shaped `ctx.task === 'audio' ? audioRule : chatRule` will run its chat
+  allowlist against the embedding chain, refusing an embeddings-only provider
+  like Voyage that no chat allowlist would contain. `lib/app/llm-providers.ts`
+  now says so at the point a fork writes the rule.
 
 - **`POST /api/v1/admin/orchestration/agents` now requires `provider`.** It used
   to default to `'anthropic'` (`createAgentObjectSchema` in

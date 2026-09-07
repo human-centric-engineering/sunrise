@@ -9,7 +9,9 @@
  * - Admin auth required (401/403 otherwise)
  * - Rate limiting enforced by proxy.ts (orchestration tier)
  * - Returns correct counts: total, embedded, pending
- * - hasActiveProvider: true when active aiProviderConfig row exists
+ * - hasActiveProvider: true when an active aiProviderConfig row RESOLVES
+ *   (the route runs the embedding resolver rather than counting rows, so a row
+ *   the app's eligibility rule refuses does not count as available)
  * - hasActiveProvider: true via OPENAI_API_KEY env fallback
  * - hasActiveProvider: false when no provider and no env key
  */
@@ -33,6 +35,8 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+// `hasActiveProvider` is answered by running the embedding resolver, not by
+// counting rows — see the route. Hence the resolver's own reads below.
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiKnowledgeChunk: {
@@ -41,8 +45,15 @@ vi.mock('@/lib/db/client', () => ({
     $queryRaw: vi.fn(),
     aiProviderConfig: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
+    aiOrchestrationSettings: { findFirst: vi.fn() },
+    aiProviderModel: { findUnique: vi.fn() },
   },
+}));
+
+vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
+  getDefaultModelForTask: vi.fn(async () => 'text-embedding-3-small'),
 }));
 
 vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
@@ -97,6 +108,11 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     vi.clearAllMocks();
     // Default: no env key
     delete process.env['OPENAI_API_KEY'];
+    // Resolver baseline: no operator pin, no provider rows. Each test below
+    // sets the rows it needs.
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
   });
 
   afterEach(() => {
@@ -132,6 +148,17 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
       vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(10);
       vi.mocked(prisma.$queryRaw).mockResolvedValue([{ count: 4n }] as never);
       vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue({ id: 'p1' } as never);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        {
+          id: 'p1',
+          slug: 'together',
+          providerType: 'openai-compatible',
+          baseUrl: 'https://api.example.com/v1',
+          apiKeyEnvVar: null,
+          isLocal: false,
+          isActive: true,
+        },
+      ] as never);
 
       const response = await GET(makeRequest());
       const body = await parseJson<{ success: boolean; data: StatusResponseData }>(response);

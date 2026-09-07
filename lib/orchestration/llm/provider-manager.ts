@@ -182,12 +182,18 @@ const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
  * unclassified method to forward; under the architecture this is groundwork for
  * a fork's provider does, and the refusal is the whole control.
  *
- * A frozen list also fails in the right direction. A future runtime adding a
+ * A fixed list also fails in the right direction. A future runtime adding a
  * member to `Object.prototype` gets refused rather than silently exempted, and
  * the error names the file to edit.
  *
- * `constructor` is included because it is the same category — reached by test
- * runners and `instanceof` checks, never by a vendor.
+ * `ReadonlySet` is a compile-time claim, not a runtime one — a `Set` cannot be
+ * meaningfully frozen, since `Object.freeze` does not stop `Set.prototype.add`.
+ * What makes it safe is that it is module-private and unexported, so no caller
+ * has a reference to mutate. Do not export it.
+ *
+ * `constructor` is listed so a pollution write cannot make it look like an
+ * ordinary provider method, but it is returned UNBOUND at the call site above —
+ * see the comment there.
  */
 const HOST_MACHINERY: ReadonlySet<string> = new Set([
   'constructor',
@@ -260,10 +266,20 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
           return fn.bind(target);
       }
 
-      // Host machinery — reached by test runners, structured logging and
-      // `util.inspect`, never by a vendor. Refusing these would fail on the
-      // observer rather than on the thing observed. See HOST_MACHINERY for why
-      // it is a fixed list and not `prop in Object.prototype`.
+      // `constructor` is a class, not a method that needs a `this` rebind, and
+      // binding it corrupts two things callers legitimately read: identity
+      // (`provider.constructor === AnthropicProvider` becomes false) and name
+      // (`.name` becomes "bound AnthropicProvider", which is what a diagnostic
+      // logging `constructor.name` would print). Return it untouched.
+      // `instanceof` was never affected — it walks the prototype chain, which
+      // the Proxy preserves.
+      if (prop === 'constructor') return value;
+
+      // The rest is host machinery — reached by test runners, structured
+      // logging and `util.inspect`, never by a vendor. Refusing these would
+      // fail on the observer rather than on the thing observed. See
+      // HOST_MACHINERY for why it is a fixed list and not
+      // `prop in Object.prototype`.
       if (HOST_MACHINERY.has(prop)) return fn.bind(target);
 
       logger.error('Refusing an unclassified method on a provider instance', undefined, {

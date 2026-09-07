@@ -39,7 +39,7 @@ global.fetch = mockFetch;
 
 const { registerProviderEligibility, resetProviderEligibility } =
   await import('@/lib/orchestration/llm/provider-eligibility');
-const { embedText, UNCONFIGURED_OPENAI_SLUG } =
+const { embedText, canResolveEmbeddingProvider, UNCONFIGURED_OPENAI_SLUG } =
   await import('@/lib/orchestration/knowledge/embedder');
 
 function row(overrides: Record<string, unknown>) {
@@ -177,6 +177,66 @@ describe('the fallback chain consults the eligibility seam', () => {
     // Assert: same line as an explicit `agent.provider` — silently rerouting a
     // recorded operator decision is a worse failure than the one prevented.
     expect(fetchedHost()).toBe('api.example.com');
+  });
+});
+
+describe('a refusal skips the row, not the category', () => {
+  it('tries the next row of the same type when the first is refused', async () => {
+    // Arrange: two Voyage rows, the refused one sorting first, and NOTHING else
+    // in the chain to fall through to.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'voyage-us', providerType: 'voyage', baseUrl: 'https://us.voyage.test/v1' }),
+      row({ slug: 'voyage-eu', providerType: 'voyage', baseUrl: 'https://eu.voyage.test/v1' }),
+    ] as never);
+    registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'voyage-us'));
+
+    // Act
+    await embedText('hello');
+
+    // Assert: `providers.find(...)` sampled ONE row per category, so a refusal
+    // abandoned Voyage entirely and this threw — with an approved, active
+    // Voyage row sitting right there. The audio loop this is modelled on
+    // iterates every matrix row; now so does this.
+    expect(fetchedHost()).toBe('eu.voyage.test');
+  });
+
+  it('does not record a refusal for a row that was unusable anyway', async () => {
+    // Arrange: a local row with no baseUrl (unusable on shape alone) and no
+    // other provider. The rule permits everything.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'ollama', isLocal: true, baseUrl: null }),
+    ] as never);
+    registerProviderEligibility((candidates) => candidates);
+
+    // Act + Assert: shape is checked before policy, so nothing was refused and
+    // the operator is sent to the setup wizard rather than to the rule.
+    await expect(embedText('hello')).rejects.toThrow(/No embedding provider configured/);
+  });
+});
+
+describe('canResolveEmbeddingProvider', () => {
+  it('reports false when rows exist but the rule refuses them all', async () => {
+    // Arrange: exactly the state the old row-count check called "available".
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'together' }),
+    ] as never);
+    process.env['OPENAI_API_KEY'] = 'sk-test';
+    registerProviderEligibility(() => []);
+
+    // Act + Assert: the admin UI gates "Generate Embeddings" on this, so a
+    // `true` here is an enabled button for a run that cannot succeed.
+    await expect(canResolveEmbeddingProvider()).resolves.toBe(false);
+  });
+
+  it('reports true when a permitted arm resolves', async () => {
+    // Arrange: the control.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'together' }),
+    ] as never);
+    registerProviderEligibility((candidates) => candidates);
+
+    // Act + Assert
+    await expect(canResolveEmbeddingProvider()).resolves.toBe(true);
   });
 });
 

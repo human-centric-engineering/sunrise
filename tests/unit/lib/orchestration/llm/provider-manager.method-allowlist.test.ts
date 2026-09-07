@@ -195,6 +195,23 @@ describe('an unclassified method fails closed', () => {
     }
   });
 
+  it('returns `constructor` unbound, so identity and name survive', async () => {
+    // Arrange
+    const { provider } = makeProbe();
+    registerProviderInstance('probe', provider);
+
+    // Act
+    const resolved = await getProvider('probe');
+
+    // Assert: `constructor` is a class, not a method needing a `this` rebind.
+    // Binding it made `provider.constructor === Ctor` false and turned
+    // `.name` into "bound Ctor" — which is what any diagnostic reading
+    // `constructor.name` to identify a provider would then print.
+    expect(resolved.constructor).toBe(provider.constructor);
+    expect(resolved.constructor.name).toBe(provider.constructor.name);
+    expect(resolved.constructor.name.startsWith('bound ')).toBe(false);
+  });
+
   it('passes non-function properties through untouched', async () => {
     // Arrange
     const { provider } = makeProbe();

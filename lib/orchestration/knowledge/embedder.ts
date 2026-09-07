@@ -279,9 +279,10 @@ async function permittedForEmbedding(slug: string, refusals: string[]): Promise<
  * operator's pin at (1) is not.** That is the same line the rest of the tree
  * draws — Sunrise's own choices are constrained, an operator's recorded
  * decision is not — and it matters more here than anywhere else, because the
- * pin is not sticky: five separate conditions drop it through to the chain
- * (missing, inactive, no `embedding` capability, no `dimensions`, no active
- * `AiProviderConfig`, or non-Voyage with no `baseUrl`). Deactivating one row
+ * pin is not sticky: five separate checks drop it through to the chain (missing
+ * or inactive — one `if`, and why this is five and not six; no `embedding`
+ * capability; no `dimensions`; no active `AiProviderConfig`; non-Voyage with no
+ * `baseUrl`). Deactivating one row
  * moves an install from the unfiltered line to the filtered one silently,
  * which is why the drop-through is logged.
  *
@@ -314,13 +315,22 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // every other openai-compatible host honours it.
   const settingsModel = await getDefaultModelForTask('embeddings').catch(() => DEFAULT_MODEL);
 
+  // Each category is walked in full, not sampled with `find`. A refusal has to
+  // skip the ROW, not the category: an org that approves `voyage-eu` and not
+  // `voyage-us` must still get Voyage when both rows are active and the refused
+  // one happens to sort first. `find` returned that one row, the refusal
+  // abandoned Voyage entirely, and the chain fell through to a provider the org
+  // had not asked for — or to no provider at all. This is what "the audio loop's
+  // shape" means; `tryAudioRow`'s caller iterates every matrix row.
+
   // Prefer Voyage AI provider (best retrieval quality, free tier)
-  const voyageProvider = providers.find((p) => p.providerType === 'voyage');
-  if (voyageProvider && (await permittedForEmbedding(voyageProvider.slug, refusals))) {
+  for (const voyageProvider of providers) {
+    if (voyageProvider.providerType !== 'voyage') continue;
+    if (!(await permittedForEmbedding(voyageProvider.slug, refusals))) continue;
     const apiKey = voyageProvider.apiKeyEnvVar
       ? (process.env[voyageProvider.apiKeyEnvVar] ?? null)
       : null;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'voyage',
       providerSlug: voyageProvider.slug,
     });
@@ -338,9 +348,13 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // Prefer a local provider for embeddings (cheaper/faster). Local
   // models (nomic-embed-text) produce a fixed native dim and ignore
   // `dimensions`; `schemaCompatible: false` keeps us from sending it.
-  const localProvider = providers.find((p) => p.isLocal);
-  if (localProvider?.baseUrl && (await permittedForEmbedding(localProvider.slug, refusals))) {
-    logger.info('Embedding provider resolved by the fallback chain', {
+  for (const localProvider of providers) {
+    // Shape first, policy second: a row with no `baseUrl` is unusable whatever
+    // the rule says, and consulting the rule for it would record a refusal that
+    // never happened and steer the terminal error to the wrong message.
+    if (!localProvider.isLocal || !localProvider.baseUrl) continue;
+    if (!(await permittedForEmbedding(localProvider.slug, refusals))) continue;
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'local',
       providerSlug: localProvider.slug,
     });
@@ -359,15 +373,15 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // active-model pick, only the canonical text-embedding-3-* family is
   // assumed schema-compatible — other openai-compatible hosts may
   // error on `dimensions`, so default to false.
-  const openaiCompatible = providers.find(
-    (p) => p.providerType === 'openai-compatible' && p.baseUrl
-  );
-  if (openaiCompatible?.baseUrl && (await permittedForEmbedding(openaiCompatible.slug, refusals))) {
+  for (const openaiCompatible of providers) {
+    if (openaiCompatible.providerType !== 'openai-compatible' || !openaiCompatible.baseUrl)
+      continue;
+    if (!(await permittedForEmbedding(openaiCompatible.slug, refusals))) continue;
     const apiKey = openaiCompatible.apiKeyEnvVar
       ? (process.env[openaiCompatible.apiKeyEnvVar] ?? null)
       : null;
     const model = settingsModel || DEFAULT_MODEL;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'openai-compatible',
       providerSlug: openaiCompatible.slug,
     });
@@ -387,7 +401,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
   if (openaiKey && (await permittedForEmbedding(UNCONFIGURED_OPENAI_SLUG, refusals))) {
     const model = settingsModel || DEFAULT_MODEL;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'unconfigured-openai',
       providerSlug: UNCONFIGURED_OPENAI_SLUG,
     });
@@ -419,6 +433,36 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
       'or configure an embedding provider in the admin settings.'
   );
+}
+
+/**
+ * Can this install embed right now?
+ *
+ * Answers the question by *running the resolver*, rather than by re-deriving it
+ * from row counts. Those two used to be the same question and this branch made
+ * them different: an install can have active provider rows and an
+ * `OPENAI_API_KEY` while the app's eligibility rule refuses every one of them.
+ * A caller that checks for rows would then enable an action the runtime is
+ * guaranteed to fail.
+ *
+ * `false` for both terminal states — nothing configured, and nothing permitted —
+ * because a caller gating a UI affordance wants one bit and both answers are
+ * "not now". The reason is logged rather than returned; `resolveProvider`'s two
+ * distinct messages are what distinguishes them for an operator reading logs.
+ *
+ * Costs one eligibility evaluation per call, so treat it as the status check it
+ * is and do not put it on a per-request path.
+ */
+export async function canResolveEmbeddingProvider(): Promise<boolean> {
+  try {
+    await resolveProvider();
+    return true;
+  } catch (err) {
+    logger.info('No usable embedding provider', {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
 }
 
 /**
