@@ -808,7 +808,7 @@ The Agent Orchestration Layer adds 13 Prisma models under the `ai_*` table prefi
 
 **Purpose:** Define configurable agent personas and the capabilities (tools/functions) they can invoke.
 
-- **`AiAgent`** — a configured persona. Key fields: `slug` (unique), `systemInstructions` (long text), `systemInstructionsHistory` (JSON array of `{instructions, changedAt, changedBy}` entries — see `SystemInstructionsHistoryEntry`), `model`, `provider` (default `"anthropic"`), `temperature`, `maxTokens`, `monthlyBudgetUsd`.
+- **`AiAgent`** — a configured persona. Key fields: `slug` (unique), `systemInstructions` (long text), `systemInstructionsHistory` (JSON array of `{instructions, changedAt, changedBy}` entries — see `SystemInstructionsHistoryEntry`), `model`, `provider` (**no default** — see the create-agent section of [`.context/orchestration/admin-api.md`](../orchestration/admin-api.md#create-agent); empty string means dynamic resolution, same as `model`), `temperature`, `maxTokens`, `monthlyBudgetUsd`.
 - **`AiCapability`** — a discrete tool. `functionDefinition` is an OpenAI-compatible function schema. `executionType` is one of `"internal" | "api" | "webhook"` (see `ExecutionType`). `requiresApproval` gates capability calls behind human approval.
 - **`AiAgentCapability`** — pivot table. Composite unique on `(agentId, capabilityId)`. Allows per-agent overrides via `customConfig` and `customRateLimit`.
 

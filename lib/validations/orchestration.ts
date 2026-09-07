@@ -87,11 +87,22 @@ export const createAgentObjectSchema = z.object({
 
   model: z.string().min(1, 'Model is required').max(100, 'Model must be less than 100 characters'),
 
+  // No `.default()`, deliberately — `model` above has never had one either,
+  // and the asymmetry was the bug. A create that omits `provider` used to be
+  // written as an EXPLICIT `agent.provider` of 'anthropic', and
+  // `resolveAgentProviderAndModel` never re-filters an explicit provider
+  // because it is meant to be an operator's recorded decision. So on an
+  // install whose eligibility rule forbids anthropic, a scripted or CLI-authored
+  // create — the path `<CliAuthoringHint resource="agents" />` sends operators
+  // down — silently pinned a forbidden provider forever. Requiring the field
+  // makes the caller state its choice instead of inheriting ours. This is the
+  // same defect the agent form carried in its `defaultValues`, at the boundary
+  // the tenancy design record's Q15 row names as the other half: "nor writes
+  // that bypass the form".
   provider: z
     .string()
     .min(1, 'Provider is required')
-    .max(50, 'Provider must be less than 50 characters')
-    .default('anthropic'),
+    .max(50, 'Provider must be less than 50 characters'),
 
   fallbackProviders: z
     .array(z.string().max(50, 'Provider slug must be less than 50 characters'))

@@ -131,6 +131,7 @@ describe('createAgentSchema', () => {
     slug: VALID_SLUG,
     description: 'A test agent description.',
     systemInstructions: 'You are a helpful assistant.',
+    provider: 'anthropic',
     model: 'claude-3-5-sonnet-20241022',
   };
 
@@ -140,17 +141,50 @@ describe('createAgentSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should apply defaults: provider=anthropic, temperature=0.7, maxTokens=4096, isActive=true', () => {
+  it('should apply defaults: temperature=0.7, maxTokens=4096, isActive=true', () => {
     const result = createAgentSchema.safeParse(VALID_AGENT);
     // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.provider).toBe('anthropic');
       expect(result.data.temperature).toBe(0.7);
       expect(result.data.maxTokens).toBe(4096);
       // test-review:accept tobe_true — boolean schema field `isActive`; asserting parsed default value
       expect(result.data.isActive).toBe(true);
     }
+  });
+
+  // `provider` deliberately has NO default. This block used to assert the
+  // opposite — that omitting it yielded `provider: 'anthropic'` — and that
+  // default was a fail-open: the value lands in `AiAgent.provider` as an
+  // EXPLICIT operator choice, which `resolveAgentProviderAndModel` never
+  // re-filters, so on an install whose eligibility rule forbids anthropic a
+  // scripted create silently pinned a forbidden provider forever. Same defect
+  // the agent form carried in its `defaultValues`, at the API boundary.
+  it('rejects a create that omits provider rather than choosing one for the caller', () => {
+    const { provider: _provider, ...withoutProvider } = VALID_AGENT;
+    const result = createAgentSchema.safeParse(withoutProvider);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path[0] === 'provider')).toBe(true);
+    }
+  });
+
+  it('CONTROL — the same payload WITH a provider is accepted, and keeps the caller value', () => {
+    // Without this, the rejection above would also pass if the fixture were
+    // broken in some unrelated way.
+    const result = createAgentSchema.safeParse({ ...VALID_AGENT, provider: 'openai' });
+
+    // test-review:accept tobe_true — structural assertion on Zod safeParse success field
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.provider).toBe('openai');
+    }
+  });
+
+  it('still rejects an explicitly empty provider', () => {
+    const result = createAgentSchema.safeParse({ ...VALID_AGENT, provider: '' });
+    expect(result.success).toBe(false);
   });
 
   it('should reject when name is missing', () => {

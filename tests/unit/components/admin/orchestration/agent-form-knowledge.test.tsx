@@ -73,6 +73,22 @@ const MOCK_PROVIDERS: (AiProviderConfig & { apiKeyPresent?: boolean })[] = [
 
 const MOCK_MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
 
+/**
+ * What the two server pages (`agents/new`, `agents/[id]`) always pass —
+ * `getEffectiveAgentDefaults`' answer for a not-yet-created agent. Create-mode
+ * renders below supply it so they exercise the caller shape that exists in
+ * production. The form deliberately has no hardcoded vendor to fall back on
+ * when it is absent or empty (t-661), so a render that omits it starts with an
+ * unselected provider — which is what
+ * `agent-form-effective-defaults.test.tsx` covers directly.
+ */
+const EFFECTIVE_DEFAULTS = {
+  provider: 'anthropic',
+  model: 'claude-opus-4-6',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
+
 function makeAgent(
   overrides: Partial<AiAgent & { grantedTagIds?: string[]; grantedDocumentIds?: string[] }> = {}
 ): AiAgent & { grantedTagIds?: string[]; grantedDocumentIds?: string[] } {
@@ -438,7 +454,14 @@ describe('AgentForm — Knowledge Access section callbacks', () => {
   describe('create mode with knowledge access section', () => {
     it('new agent form starts with Full Access radio selected', async () => {
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       await user.click(screen.getByRole('tab', { name: /instructions/i }));
 
@@ -448,7 +471,14 @@ describe('AgentForm — Knowledge Access section callbacks', () => {
 
     it('switching to Restricted in create mode shows the selector section', async () => {
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       await user.click(screen.getByRole('tab', { name: /instructions/i }));
 
@@ -466,7 +496,14 @@ describe('AgentForm — Knowledge Access section callbacks', () => {
       vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-agent' });
 
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Fill required fields
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'KB Agent');

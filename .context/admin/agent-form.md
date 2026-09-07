@@ -61,9 +61,25 @@ Select with three options: `internal` (default), `public`, `invite_only`. Contro
 
 Hydrated from `GET /providers` on the server. Each option shows the provider name plus a `● key set` / `● no key` badge (derived from `apiKeyEnvVar` being set). If server-side hydration fails, the Select is replaced with a free-text `<Input>` and an amber warning banner appears at the top of the tab — the form never throws.
 
+**Preview is not payload.** This is the rule the whole field turns on. The initial selection comes from the agent's own `provider`, else from `getEffectiveAgentDefaults` (the server-side mirror of the runtime's binding resolution, eligibility filter included) — that is a **preview of what the runtime would pick**, not a decision anyone made. It is never seeded with a hardcoded vendor, and when nothing resolves the Select stays on its `Pick a provider` placeholder.
+
+On **edit**, the form sends `provider` / `model` only when the operator actually changed them — react-hook-form's `dirtyFields` is the authorship test — and never sends `kind`, for which it renders no control. PATCH is partial, so an omitted field leaves the column alone. On **create** both are required: a new agent has no row to inherit from.
+
+Why it matters that this is the _normal_ path: on a stock seeded install **all 15 agents have `provider: ''`**. Submitting the preview therefore meant any unrelated edit — fixing a typo in the instructions — silently converted a dynamically-resolving agent into a permanently pinned one. Picking a provider explicitly still writes it; that is a human decision and the seam exists to honour those, not to reroute them. Picking a provider does **not** implicitly author a model — the form pre-selects one for display, and a value the form chose is exactly what it refuses to submit. The agent goes on resolving its model per turn until someone selects one; when the newly-picked provider has no matrix rows the Model field says so explicitly.
+
+The authorship signal is deliberately **explicit component state, not react-hook-form's `dirtyFields`**. "Differs from the default" answers a different question and answers it wrongly at both ends: selecting the value already on screen is not a diff, and a `setValue` the form itself issued is one.
+
+`resolveAgentProviderAndModel` deliberately never re-filters an _explicit_ `AiAgent.provider`, because that is meant to be an operator's recorded decision. So anything the form writes there is final — which is what made a `|| 'anthropic'` fallback able to launder a policy refusal (a fork's `registerProviderEligibility` rule permitting nothing for `source: 'primary'`, or throwing, which fails closed to the same empty set) into a permanent pinned choice the seam then honoured. Removing the literal was necessary; not submitting unauthored values is what actually closes it.
+
+What this does **not** do is stop an operator picking a denied provider from the dropdown by hand. The Select lists every configured provider, and filtering it would need a write-time `source` the eligibility seam does not have — an operator choosing is not Sunrise choosing, and a fork may legitimately permit one and deny the other. Validating an operator's own choice against per-org policy is per-org work, recorded as such in the Q15 row of `.context/architecture/multi-tenancy-design.md`.
+
 ### Model select
 
-Hydrated from `GET /models`, filtered to the selected provider. Options are labelled `${id} — ${tier}`. Same free-text fallback on hydration failure.
+Hydrated from `GET /models`, filtered to the selected provider. Options are labelled `${id} — ${tier}`. Same free-text fallback on hydration failure. Seeded the same way as the provider — the agent's own `model`, else the system default chat model, else nothing — with no literal fallback, and governed by the same authorship rule on submit.
+
+### Validation feedback
+
+`handleSubmit` carries an `onInvalid` branch that fills the form-level error banner with the fields that blocked the save, labelled from the agent field registry and grouped by the tab they live on — `Cannot save — these fields need attention. Model: Provider, Model` — and `provider` / `model` render their own inline messages. React-hook-form's form-level `root` key is filtered out rather than rendered as a field nobody can locate. Without it the click is a silent no-op: both fields live on the Model tab, so an operator on General would see nothing happen and get no reason why. The dead end predates the change above but became far easier to reach once the form stopped inventing a provider.
 
 ### Dynamic resolution: empty provider/model
 
@@ -169,8 +185,8 @@ The standalone `<ProviderTestButton>` and `<ModelTestButton>` components remain 
 
 ### Help copy
 
-- **Provider** — "Which upstream API answers prompts for this agent. Each provider has its own API key set in the Providers page — agents that reference a provider with no key attached will fail at chat time. No default — pick one of the providers configured via the setup wizard or the Providers page."
-- **Model** — "The exact model identifier your provider exposes. Changing this switches which model actually answers — cost, latency, and quality all shift. No default — pick one from the dropdown filtered to the chosen provider."
+- **Provider** — "The AI service that powers this agent (e.g. Anthropic for Claude, OpenAI for GPT, or a local Ollama server). Each provider is configured on the Providers page with its own API key. If the selected provider's key is missing, this agent won't be able to respond — look for the red “no key” indicator in the dropdown. There is no default vendor: the field is pre-filled with the provider this agent would actually use, and left empty when none could be resolved."
+- **Model** — "The specific AI model this agent uses. Changing it switches which model actually answers — cost, speed, and quality all shift. Smaller models (e.g. Haiku, GPT-4o mini) are faster and cheaper; larger models (e.g. Opus, GPT-4o) are more capable but cost more per message. There is no default model: the field is pre-filled from the system default chat model, and left empty when none is configured."
 
 The model dropdown is sourced from the **operator-curated provider matrix** (`AiProviderModel` rows with `isActive: true`), filtered to capabilities an agent can chat through (`chat` OR `reasoning`). Mirrors the discipline already used by the `/admin/orchestration/settings` Default Models picker. Selecting a model the deployment hasn't actually added is not possible — avoids the runtime "provider unavailable" trap the previous merged-registry source allowed.
 

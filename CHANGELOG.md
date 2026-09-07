@@ -152,7 +152,193 @@ release process.
   because an unforced table fails open for its owner — waive it per table with
   `{ requireForced: false }`.
 
+### Changed
+
+- **`POST /api/v1/admin/orchestration/agents` now requires `provider`.** It used
+  to default to `'anthropic'` (`createAgentObjectSchema` in
+  `lib/validations/orchestration.ts`), and that default was the same fail-open
+  the agent form carried, one layer down and reachable by anything that is not
+  the form: the value lands in `AiAgent.provider` as an **explicit** operator
+  choice, and `resolveAgentProviderAndModel` never re-filters an explicit
+  provider. On an install whose `registerProviderEligibility` rule forbids
+  anthropic, a scripted or CLI-authored create — the path the admin UI's own
+  `<CliAuthoringHint resource="agents" />` sends operators down — therefore
+  pinned a forbidden provider permanently and silently. The design record's Q15
+  row names this half explicitly: write-time validation must also cover "writes
+  that bypass the form". `model` never had a default, so requiring `provider`
+  also removes an asymmetry that was itself the tell.
+
+  **Fork impact:** a create payload that omitted `provider` now gets a 400 with
+  `Provider is required` instead of an agent silently bound to anthropic. Add
+  the field to any script or seed that relied on the default. `PATCH` is
+  unaffected — `updateAgentObjectSchema.provider` is a separate, optional field
+  and stays optional, so partial updates that don't mention a provider still
+  leave it alone.
+
+- **`AiAgent.provider` lost its column default** — migration
+  `20260905093659_drop_ai_agent_provider_default`, a single
+  `ALTER COLUMN … DROP DEFAULT`. No backfill, no data movement, no lock of
+  consequence; every existing row already holds a real value. This was the same
+  fail-open a third layer down, and dropping it is what closes the class: the
+  form's `defaultValues`, `createAgentObjectSchema` and the column were three
+  independent places able to supply a provider nobody stated.
+
+  The point of doing it in the schema rather than only in Zod is that
+  `provider` is now **required in `AiAgentCreateInput`**, so a
+  `prisma.aiAgent.create()` that omits it is a compile error rather than a
+  silent substitution — the guard is the type-checker, not a test that has to
+  remember to look. That immediately found two callers a manual sweep had
+  reported as clean (`scripts/smoke/erasure.ts`, `scripts/smoke/export.ts`),
+  both of which set `model: ''` while silently taking a pinned
+  `provider: 'anthropic'`; both now state `provider: ''` to match.
+
+  The empty string stays meaningful **in the database**: it is the
+  dynamic-resolution contract, and on a stock install every one of the 15 seeded
+  agents uses it. It is *not* accepted by the HTTP layer — `createAgentObjectSchema`,
+  `updateAgentObjectSchema` and `bundledAgentSchema` all require non-empty when
+  the field is present. That is deliberate rather than an oversight: the way to
+  leave an agent resolving dynamically over HTTP is to **omit** the field, not to
+  send `''`. Seeds, which write through Prisma directly, are what create such
+  agents in the first place. (One consequence worth knowing: a backup bundle
+  containing a system-seeded agent cannot currently be re-imported, because
+  `bundledAgentSchema` requires the value the row does not have.)
+
+  **Fork impact:** run `npm run db:migrate:deploy`. Any `prisma.aiAgent.create()`
+  in your own code that omitted `provider` will now fail `tsc` — add the field.
+  Note `prisma migrate dev` generates four spurious `DROP`s alongside this one
+  (the two pgvector HNSW indexes, the GIN/tsvector index and the `searchVector`
+  `GENERATED ALWAYS AS` expression); the committed migration has them
+  hand-folded out, as the comment block above `AiKnowledgeChunk` instructs.
+  `npm run db:drift-check` passes all 9 probes against the applied migration.
+
 ### Fixed
+
+- **The agent form no longer writes fields the operator did not author.** This is
+  the change the rest of this group turns on, and it is worth stating as a rule
+  rather than a fix: the form used **one value as both the preview of what the
+  runtime would resolve and the payload of what the operator decided**. Every
+  symptom below followed from that conflation.
+
+  `getEffectiveAgentDefaults` pre-fills `provider` / `model` with what the
+  runtime *would* pick when the row itself is empty, and that preview was then
+  submitted as an explicit choice. So an admin fixing a typo in an agent's
+  instructions silently converted it from "resolve a provider per turn" to
+  "permanently pinned to whatever was previewed" — with a policy-forbidden
+  provider under a fork's eligibility rule, and with a merely-unintended one on
+  any install at all.
+
+  **This is the normal path, not a corner.** On a stock seeded install *all 15*
+  agents ship `provider: ''`, so every one of them was one unrelated save away
+  from being pinned.
+
+  On edit the form now sends `provider` and `model` only when the operator
+  actually changed them (react-hook-form's `dirtyFields` is the authorship
+  test), and never sends `kind`, for which it renders no control. Picking a
+  provider explicitly still writes it — that is a human decision and the seam's
+  whole design is to honour those. Picking a provider does **not** implicitly
+  author a model: the form pre-selects a plausible one for display, and a value
+  the form chose is precisely what it now refuses to submit. The agent keeps
+  resolving its model per turn until someone selects one, and the Model field
+  says so when the newly-picked provider has no matrix rows. On create both are
+  required, because a new agent has no row to inherit from.
+
+  Two consequences worth calling out. An inheriting agent stays editable when
+  nothing resolves — previously the required-field check made every seeded agent
+  unsavable for an admin who had not set an API key yet. And a version restore
+  can no longer pin anything, because a restore authors nothing.
+
+- The agent form turned a provider-eligibility **denial** into a forged operator
+  decision. `components/admin/orchestration/agent-form.tsx` seeded its provider
+  field with `(agent?.provider ?? '') || effectiveDefaults?.provider ||
+  'anthropic'` and fed that into `defaultValues`, so it was **submitted, not
+  merely displayed**. When a fork's `registerProviderEligibility` rule permitted
+  nothing for `source: 'primary'` — by denying everything, or by throwing, which
+  fails closed to the same empty set — `getEffectiveAgentDefaults` returned an
+  empty provider, the empty string was falsy, and the chain fell through to the
+  literal. An admin who opened **Agents → New** and never touched the Provider
+  field saved `anthropic` as an **explicit** `agent.provider`, which
+  `resolveAgentProviderAndModel` deliberately never filters because it is meant
+  to be an operator's recorded decision. The agent was then permanently bound to
+  a forbidden provider, the seam could never correct it, and nothing errored at
+  any point — a fail-closed control converted to fail-open by a UI default. The
+  edit page had the same path for a currently-inheriting agent, differing only
+  in that it offered to "lock this agent to" the value.
+
+  **The literals are gone from both chains** — provider and model — rather than
+  the empty case being special-cased. `(provider: '', inheritedProvider: true)`
+  was already an unambiguous "nothing to inherit" signal needing no new field;
+  the defect was callers `||`-ing past it. A hardcoded vendor as a UI fallback
+  is wrong independently of tenancy: it names a specific vendor in a template
+  every fork inherits, and it fires exactly when resolution found nothing, which
+  is when guessing is least defensible. The same two literals had already been
+  retired from the setup wizard's agent draft for the same reason (the
+  `sunrise.orchestration.setup-wizard` v1 → v2 key bump). With nothing
+  resolvable the Select shows its placeholder and a hint saying the value would
+  be pinned permanently, and `agentFormSchema`'s existing `min(1)` blocks the
+  save.
+
+  Not addressed, and not a regression: the dropdown still lists every configured
+  provider, so an operator can pick a denied one by hand. **This is a different
+  thing from the `Changed` entry above** — that one makes the API *require* a
+  provider rather than choosing one for the caller; neither checks the chosen
+  value against the eligibility rule. Doing so needs a write-time `ctx.source`
+  the seam does not have, because an operator choosing is not Sunrise choosing
+  and a fork may legitimately permit one while denying the other. Validating an
+  operator's choice against per-org policy therefore stays per-org work, as the
+  Q15 row of `.context/architecture/multi-tenancy-design.md` already records.
+  What both changes do is stop a *denial* being laundered into a choice nobody
+  made.
+
+- Submitting the agent form with a required field empty was a **silent no-op**.
+  `provider` and `model` rendered no inline error and `handleSubmit` had no
+  `onInvalid` branch, so an operator on the General tab clicked Create and
+  watched nothing happen, with no indication that the blocking fields were on
+  the Model tab. The form-level banner now names them, grouped by the tab they
+  live on and labelled from the agent field registry
+  (`Cannot save — these fields need attention. Model: Provider, Model`), and
+  both fields render their own message. Pre-existing, but reachable far more
+  often once the form stopped inventing a provider.
+
+- **Restoring a version blanked an inheriting agent's provider, then demanded
+  one.** The restore `reset({...})` wrote `provider: fresh.provider` raw, but a
+  restore returns the *row's* values and a system-seeded agent's row holds `''`
+  — the dynamic-resolution contract, not an absence of configuration. So the
+  Select went blank, the new "no provider could be resolved" hint appeared
+  (false: resolution had succeeded on that same page seconds earlier), and the
+  `onInvalid` branch then blocked the save until the operator pinned a provider
+  onto an agent designed to resolve one per turn. That is the defect this
+  release fixes, reached from the other direction. The restore path now runs the
+  same resolution chain as mount.
+
+- **An agent whose `kind` was neither `chat` nor `judge` could never be saved.**
+  `AiAgent.kind` is a free `String` column and `prisma/seeds/017-case-generator-agent.ts`
+  seeds `kind: 'generator'`, but the agent form modelled it as
+  `z.enum(['chat', 'judge'])` — fewer states than the domain. The agents list
+  returns every kind when unfiltered, so an admin could open
+  `eval-case-generator` and get a form that failed validation on a field with no
+  control anywhere on screen. It failed silently before; the new banner made it
+  worse by naming a field the operator cannot find.
+
+  The form renders no control for `kind`, so it now says nothing about it: it
+  accepts whatever the row holds, and omits `kind` from the PATCH body on edit
+  under the general rule below. (An earlier draft of this entry claimed the API's
+  PATCH schema carried the same enum and would reject the echo with a 400. That
+  was wrong — `updateAgentObjectSchema` declares no `kind` key at all, and
+  `validateRequestBody` uses a non-strict `parse`, so an echoed `kind` was being
+  silently stripped, not rejected. The behaviour is right; that reason was not.)
+
+- **Restoring an agent version left the form permanently unsavable.** The
+  `reset({...})` behind the Versions tab omitted ten fields — `kind`,
+  `personaMode`, `voiceMode`, `guardrailsMode`, the three `enable*Input`
+  booleans, `profileId`, `persona` and `guardrails` — and react-hook-form's
+  `reset(values)` replaces form state wholesale rather than merging, so each
+  became `undefined`. Seven are required enums or booleans, so every save after
+  a restore failed the resolver. It went unnoticed because the failure was
+  completely silent: the button did nothing at all. Surfacing it is what the
+  `onInvalid` branch above did on its first outing. A source-parity test now
+  fails, naming the missing fields, if the schema and the restore handler drift
+  apart again — and throws rather than passing vacuously if its anchors stop
+  matching.
 
 - `VERSIONING.md`'s public-surface list named the tenancy seam as `TENANCY_MODE` +
   `lib/tenancy/client.ts` — a file that has never existed. The covered seam is, and

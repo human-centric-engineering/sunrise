@@ -75,6 +75,22 @@ const MOCK_MODELS = [
   { provider: 'anthropic', id: 'claude-haiku-3', tier: 'budget' },
 ];
 
+/**
+ * What the two server pages (`agents/new`, `agents/[id]`) always pass —
+ * `getEffectiveAgentDefaults`' answer for a not-yet-created agent. Create-mode
+ * renders below supply it so they exercise the caller shape that exists in
+ * production. The form deliberately has no hardcoded vendor to fall back on
+ * when it is absent or empty (t-661), so a render that omits it starts with an
+ * unselected provider — which is what
+ * `agent-form-effective-defaults.test.tsx` covers directly.
+ */
+const EFFECTIVE_DEFAULTS = {
+  provider: 'anthropic',
+  model: 'claude-opus-4-6',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('AgentForm — General tab', () => {
@@ -92,7 +108,14 @@ describe('AgentForm — General tab', () => {
     it('slug auto-populates from name on first type', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Act: type a name
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'My Research Bot');
@@ -107,7 +130,14 @@ describe('AgentForm — General tab', () => {
     it('slug uses lowercase, replaces spaces with hyphens', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Act
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Hello World Agent!');
@@ -125,7 +155,14 @@ describe('AgentForm — General tab', () => {
     it('slug becomes user-editable after typing in slug field directly', async () => {
       // Arrange
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // First type a name so slug auto-generates
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Some Name');
@@ -214,7 +251,14 @@ describe('AgentForm — General tab', () => {
   describe('visibility', () => {
     it('renders visibility select with 3 options', async () => {
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       const select = screen.getByRole('combobox', { name: /visibility/i });
       expect(select).toBeInTheDocument();
@@ -233,7 +277,14 @@ describe('AgentForm — General tab', () => {
 
   describe('retention days', () => {
     it('renders retention days input with placeholder', () => {
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
       const input = screen.getByRole('spinbutton', { name: /conversation retention/i });
       expect(input).toBeInTheDocument();
       expect(input).toHaveAttribute('placeholder', 'Keep forever');
@@ -247,7 +298,14 @@ describe('AgentForm — General tab', () => {
       // Arrange
       const { apiClient } = await import('@/lib/api/client');
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Act: submit without filling in name/description/instructions
       await user.click(screen.getByRole('button', { name: /create agent/i }));
@@ -263,7 +321,14 @@ describe('AgentForm — General tab', () => {
       // Arrange
       const { apiClient } = await import('@/lib/api/client');
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Fill name but not description
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Test Agent');
@@ -292,7 +357,14 @@ describe('AgentForm — General tab', () => {
       });
 
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Act: fill all required fields and submit
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Research Bot');
@@ -338,7 +410,14 @@ describe('AgentForm — General tab', () => {
       });
 
       const user = userEvent.setup();
-      render(<AgentForm mode="create" providers={MOCK_PROVIDERS} models={MOCK_MODELS} />);
+      render(
+        <AgentForm
+          mode="create"
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+          effectiveDefaults={EFFECTIVE_DEFAULTS}
+        />
+      );
 
       // Fill all required fields
       await user.type(screen.getByRole('textbox', { name: /^name/i }), 'Research Bot');

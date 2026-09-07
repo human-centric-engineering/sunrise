@@ -129,7 +129,11 @@ curl -X POST /api/v1/admin/orchestration/agents \
   }'
 ```
 
-Validated by `createAgentSchema`. Optional fields include `rateLimitRpm` (Int, per-agent rate limit in requests/minute — null uses global default) and `runtimePromptManaged` (Boolean, default `false`) + `runtimePromptNote` (nullable String ≤ 2,000 chars) — an advisory, behaviour-neutral marker for agents whose system prompt is built in application code per call rather than read from the stored instruction fields; the runtime never reads it (see [`.context/admin/agent-form.md`](../admin/agent-form.md#runtime-built-prompt-honesty-flag)). New agents start with `systemInstructionsHistory: []` and `createdBy = session.user.id`. Slug collision → 409 `ConflictError`.
+Validated by `createAgentSchema`. **`provider` is required and has no default** — it used to default to `'anthropic'`, and that was a fail-open: the value is written to `AiAgent.provider` as an _explicit_ operator choice, and `resolveAgentProviderAndModel` never re-filters an explicit provider, so on an install whose `registerProviderEligibility` rule forbids anthropic a create that simply omitted the field pinned a forbidden provider permanently and silently. Omitting it now returns 400 `Provider is required`. `model` has always been required for the same reason.
+
+> The **column** default was dropped in the same change (`20260905093659_drop_ai_agent_provider_default`), so `provider` is now required in `AiAgentCreateInput` too — a `prisma.aiAgent.create()` that omits it is a compile error rather than a silent substitution. That is what closed the class: the form's `defaultValues`, this schema and the column were three layers each able to supply a provider nobody stated. The empty string stays meaningful and stays allowed at every layer — it is the dynamic-resolution contract system-seeded agents use, the same one `model` uses.
+
+Optional fields include `rateLimitRpm` (Int, per-agent rate limit in requests/minute — null uses global default) and `runtimePromptManaged` (Boolean, default `false`) + `runtimePromptNote` (nullable String ≤ 2,000 chars) — an advisory, behaviour-neutral marker for agents whose system prompt is built in application code per call rather than read from the stored instruction fields; the runtime never reads it (see [`.context/admin/agent-form.md`](../admin/agent-form.md#runtime-built-prompt-honesty-flag)). New agents start with `systemInstructionsHistory: []` and `createdBy = session.user.id`. Slug collision → 409 `ConflictError`.
 
 ### Update agent — `systemInstructions` audit push
 

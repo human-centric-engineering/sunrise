@@ -14,8 +14,8 @@
  * rest of Phase 4 — copy the voice, not just the structure.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useForm, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { fieldLabels, fieldToTab } from '@/lib/orchestration/agents/agent-field-registry';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   resolveEffectivePrompt,
@@ -77,7 +78,14 @@ const agentFormSchema = z
     slug: slugSchema.min(1, 'Slug is required').max(100),
     // Set at create time only (via ?kind= query param); not editable on
     // existing agents. 'chat' or 'judge'.
-    kind: z.enum(['chat', 'judge']),
+    // `AiAgent.kind` is a free `String` column, not an enum —
+    // `prisma/seeds/017-case-generator-agent.ts` seeds `kind: 'generator'` and
+    // that seed runs on every install (seeds are discovered by filename), so
+    // one agent in a stock database is of a kind the old
+    // `z.enum(['chat','judge'])` could not represent. The list returns every
+    // kind when unfiltered, so an admin could open it and get a form that
+    // failed validation on a field with no control anywhere on screen.
+    kind: z.string().min(1),
     description: z.string().min(1, 'Description is required').max(5000),
     // Profile inheritance — see lib/orchestration/agents/resolve-effective-prompt.ts.
     profileId: z.string().nullable().optional(),
@@ -87,8 +95,15 @@ const agentFormSchema = z
     voiceMode: z.enum(['override', 'append']),
     guardrailsMode: z.enum(['override', 'append']),
     systemInstructions: z.string().min(1, 'System instructions are required').max(50000),
-    provider: z.string().min(1, 'Provider is required'),
-    model: z.string().min(1, 'Model is required'),
+    // Plain strings, NOT `.min(1)`. Empty means "this agent has no provider of
+    // its own; resolve one per turn" — the dynamic-resolution contract, and on
+    // a stock install that is EVERY agent (all 15 seeded rows ship
+    // `provider: ''`). It is the normal state, not an edge case, so a form that
+    // cannot represent it cannot edit most of the install. An empty value on
+    // edit is therefore valid and simply not submitted; only `createFormSchema`
+    // below requires these, and only for create.
+    provider: z.string(),
+    model: z.string(),
     temperature: z.number().min(0).max(2),
     maxTokens: z.number().int().min(1).max(200000),
     // Reasoning-effort bucket. `'auto'` is the form sentinel for "let
@@ -141,6 +156,29 @@ const agentFormSchema = z
   });
 
 type AgentFormData = z.infer<typeof agentFormSchema>;
+
+/**
+ * Create-mode schema: `provider` and `model` really are required here, because
+ * a brand-new agent has no row to inherit from and nothing resolved it. On
+ * EDIT they stay optional — see `agentFormSchema` above and the
+ * unauthored-field rule in `onSubmit`.
+ */
+const createFormSchema = agentFormSchema.superRefine((data, ctx) => {
+  if (data.provider.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['provider'],
+      message: 'Provider is required',
+    });
+  }
+  if (data.model.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['model'],
+      message: 'Model is required',
+    });
+  }
+});
 
 /**
  * Agent record as enriched by the admin GET endpoint — adds the flattened
@@ -208,8 +246,8 @@ export function AgentForm({
   // On a fresh create, honour `?kind=judge` from the URL (used by the
   // "Create custom judge" CTA in the run-create form). On edit, the
   // existing agent's kind is the source of truth.
-  const initialKind: 'chat' | 'judge' = isEdit
-    ? ((agent?.kind as 'chat' | 'judge' | undefined) ?? 'chat')
+  const initialKind: string = isEdit
+    ? (agent?.kind ?? 'chat')
     : searchParams.get('kind') === 'judge'
       ? 'judge'
       : 'chat';
@@ -219,6 +257,20 @@ export function AgentForm({
   const [error, setError] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(isEdit);
 
+  /**
+   * Did the OPERATOR choose the provider / model, as opposed to the form
+   * previewing what the runtime would resolve?
+   *
+   * Explicit state rather than react-hook-form's `dirtyFields`, because
+   * "differs from the default" is not the same question. It answers wrongly at
+   * both ends: picking the value already displayed is not a diff, and a
+   * form-initiated `setValue` is. Authorship is a fact about who acted, so it
+   * is recorded when they act.
+   */
+  const [authored, setAuthored] = useState({ provider: false, model: false });
+  const authorProvider = () => setAuthored((a) => ({ ...a, provider: true }));
+  const authorModel = () => setAuthored((a) => ({ ...a, model: true }));
+
   const providerFallback = !providers || providers.length === 0;
   const modelFallback = !models || models.length === 0;
 
@@ -227,10 +279,33 @@ export function AgentForm({
   // quiz-master, mcp-system, model-auditor) fall through to the
   // server-resolved effective defaults instead of leaving the Select
   // unselected and forcing the model field into text-input fallback mode.
-  const initialProvider = (agent?.provider ?? '') || effectiveDefaults?.provider || 'anthropic';
-  const initialModel = (agent?.model ?? '') || effectiveDefaults?.model || 'claude-opus-4-6';
-  const providerIsInherited = isEdit && !agent?.provider;
-  const modelIsInherited = isEdit && !agent?.model;
+  //
+  // There is deliberately NO hardcoded vendor at the end of either chain.
+  // `getEffectiveAgentDefaults` returns an empty provider exactly when it
+  // could not resolve one — nothing configured, nothing reachable, or a fork's
+  // `registerProviderEligibility` rule permitting nothing for
+  // `source: 'primary'` (a rule that throws fails closed to the same empty
+  // set).
+  //
+  // ON EDIT THE PREVIEW IS NOT PUT INTO FORM STATE AT ALL. It is rendered
+  // beside the field instead (`previewProvider` below). The payload carries
+  // only fields the operator authored, and the authorship test is "this value
+  // differs from the default" — so seeding the default WITH the preview makes
+  // choosing the previewed value indistinguishable from not touching it.
+  // Radix does not even fire `onValueChange` when you pick the option already
+  // displayed, so an operator who opened the Select specifically to PIN
+  // `anthropic` would get "Saved" and an unchanged row, while the hint beside
+  // it promised the opposite. Starting empty means any pick is a real change,
+  // so it is dirty, so it is sent.
+  //
+  // On create there is no row to inherit from and every field is submitted, so
+  // the preview is a genuine starting value there.
+  const initialProvider = isEdit ? (agent?.provider ?? '') : (effectiveDefaults?.provider ?? '');
+  const initialModel = isEdit ? (agent?.model ?? '') : (effectiveDefaults?.model ?? '');
+
+  /** What the runtime would resolve right now — shown, never submitted. */
+  const previewProvider = agent?.provider ? '' : (effectiveDefaults?.provider ?? '');
+  const previewModel = agent?.model ? '' : (effectiveDefaults?.model ?? '');
 
   const {
     register,
@@ -240,7 +315,7 @@ export function AgentForm({
     reset,
     formState: { errors, isDirty },
   } = useForm<AgentFormData>({
-    resolver: zodResolver(agentFormSchema),
+    resolver: zodResolver(isEdit ? agentFormSchema : createFormSchema),
     defaultValues: {
       name: agent?.name ?? '',
       slug: agent?.slug ?? '',
@@ -356,8 +431,11 @@ export function AgentForm({
   // deleted since the agent was last saved). We key off the raw
   // `agent.model` prop — NOT the form-state `currentModel` — so the
   // synthesised entry only fires for a genuinely-saved value and never
-  // for the hardcoded fallback (`'claude-opus-4-6'`) that the form
-  // seeds when an empty system-agent model resolves to a default. The
+  // for one the form merely resolved (the system default chat model, or
+  // whatever the reset effect below picked). It used to guard against a
+  // hardcoded `'claude-opus-4-6'` seed too; that literal is gone, but
+  // keying off the row rather than form state is what makes it true for
+  // every resolved value, not just that one. The
   // entry renders with an amber "no longer in matrix" badge so the
   // operator knows to pick a replacement before saving; without it,
   // the auto-reset effect below would silently change the model on
@@ -412,10 +490,25 @@ export function AgentForm({
     currentModelCapabilities === undefined || currentModelCapabilities.includes('documents');
 
   // When provider changes, reset model if the current value doesn't belong to the new provider.
+  const providerChangedOnce = useRef(false);
   useEffect(() => {
+    // The FIRST run is mount, not a change. Marking the model dirty there would
+    // attribute to the operator a value they never picked — the same defect
+    // this form just stopped committing for `provider` — and would also leave
+    // `isDirty` true on an untouched page, so simply opening an agent and
+    // navigating away raised the unsaved-changes prompt.
+    providerChangedOnce.current = true;
+
     if (modelFallback || !currentProvider) return;
     const valid = filteredModels.some((m) => m.id === currentModel);
     if (!valid && filteredModels.length > 0) {
+      // Deliberately NOT marked as authored. This is the form picking a
+      // plausible model to display, which is the same kind of act as previewing
+      // a provider — and the whole point of this file is that what the form
+      // chose is not what the operator decided. An earlier cut did mark it, to
+      // make good on a sentence claiming "changing the provider updates both
+      // halves of the binding"; that was writing code to satisfy prose. If the
+      // operator wants this model, they select it, and then it is theirs.
       setValue('model', filteredModels[0].id, { shouldValidate: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -440,6 +533,47 @@ export function AgentForm({
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
+
+  /**
+   * Validation blocked the submit. Without this the button click is a silent
+   * no-op — `provider` and `model` live on the Model tab, so an operator
+   * sitting on General sees nothing happen and gets no reason why. That dead
+   * end became reachable far more often once the form stopped inventing a
+   * provider when none could be resolved (t-661): refusing to submit is the
+   * correct behaviour, but refusing silently is not.
+   */
+  const onInvalid = (formErrors: FieldErrors<AgentFormData>) => {
+    const labels = fieldLabels();
+    const tabs = fieldToTab();
+
+    // `root` is react-hook-form's own key for form-level issues. It is not a
+    // field and has no control to point at, so rendering it would send the
+    // operator hunting for a "root" input that does not exist.
+    const keys = Object.keys(formErrors).filter((key) => key !== 'root');
+
+    // Group by tab, because the fields that block a save are routinely NOT on
+    // the tab the operator is looking at — provider and model live on Model
+    // while the save button sits under General. Labels come from the agent
+    // field registry so the banner says what the <Label> says; the humanised
+    // key is only a fallback for a form field the registry does not describe.
+    const byTab = new Map<string, string[]>();
+    for (const key of keys) {
+      const label = labels[key] ?? key.replace(/([A-Z])/g, ' $1').toLowerCase();
+      const tab = tabs[key] ?? 'Other';
+      const bucket = byTab.get(tab);
+      if (bucket) bucket.push(label);
+      else byTab.set(tab, [label]);
+    }
+
+    setSaved(false);
+    setError(
+      byTab.size > 0
+        ? `Cannot save — these fields need attention. ${[...byTab.entries()]
+            .map(([tab, fields]) => `${tab}: ${fields.join(', ')}`)
+            .join(' · ')}`
+        : 'Cannot save — some required fields are missing.'
+    );
+  };
 
   const onSubmit = async (data: AgentFormData) => {
     setSubmitting(true);
@@ -473,11 +607,43 @@ export function AgentForm({
 
     try {
       if (isEdit && agent) {
+        // ── Never send a field the operator did not author. ──
+        //
+        // Three of this form's fields hold values it RESOLVED rather than
+        // values a human chose: `provider` and `model` are pre-filled from
+        // `getEffectiveAgentDefaults` (a preview of what the runtime would
+        // pick) when the row itself is empty, and `kind` has no control at
+        // all. PATCH is partial, so omitting them leaves the column alone.
+        //
+        // This is the fix for the whole class this file kept producing. The
+        // form was using one value as both the PREVIEW of what the runtime
+        // will resolve and the PAYLOAD of what the operator decided; every
+        // symptom followed from that. A resolved provider written back turns a
+        // dynamically-resolving agent into a permanently pinned one — which is
+        // what `|| 'anthropic'` did with a forbidden provider, and what an
+        // unrelated typo fix would otherwise do with a merely-unapproved one.
+        // On a stock install ALL 15 seeded agents have `provider: ''`, so this
+        // is the normal path, not a corner.
+        //
+        // `dirtyFields` is the authorship test: react-hook-form marks a field
+        // dirty only when its value diverges from `defaultValues`, so a
+        // pre-filled preview the operator never touched is not dirty, while a
+        // provider they picked from the Select is. Empty is excluded too —
+        // there is no way to clear these through the UI, and the API's
+        // `updateAgentObjectSchema` requires non-empty when present.
+        const editPayload: Record<string, unknown> = { ...payload };
+        delete editPayload.kind;
+        if (!authored.provider || data.provider.length === 0) delete editPayload.provider;
+        if (!authored.model || data.model.length === 0) delete editPayload.model;
+
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
-          body: payload,
+          body: editPayload,
         });
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
+        // Authorship describes edits made since the form was last seeded. The
+        // save re-seeds it, so the slate is clean again.
+        setAuthored({ provider: false, model: false });
         setSaved(true);
         schedule(() => setSaved(false), 2500);
       } else {
@@ -498,7 +664,7 @@ export function AgentForm({
   const currentProviderId = providers?.find((p) => p.slug === currentProvider)?.id ?? null;
 
   return (
-    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="space-y-6">
+    <form onSubmit={(e) => void handleSubmit(onSubmit, onInvalid)(e)} className="space-y-6">
       {/* Sticky action bar */}
       <div className="bg-background/95 sticky top-0 z-10 -mx-2 flex items-center justify-between border-b px-2 py-3 backdrop-blur">
         <div>
@@ -836,15 +1002,23 @@ export function AgentForm({
                 </Link>{' '}
                 with its own API key. If the selected provider&apos;s key is missing, this agent
                 won&apos;t be able to respond — look for the red &ldquo;no key&rdquo; indicator in
-                the dropdown. Default: <code>anthropic</code>.
+                the dropdown. There is no default vendor: the field is pre-filled with the provider
+                this agent would actually use, and left empty when none could be resolved.
               </FieldHelp>
             </Label>
             {providerFallback ? (
-              <Input id="provider" {...register('provider')} className="font-mono" />
+              <Input
+                id="provider"
+                {...register('provider', { onChange: authorProvider })}
+                className="font-mono"
+              />
             ) : (
               <Select
                 value={currentProvider}
-                onValueChange={(v) => setValue('provider', v, { shouldValidate: true })}
+                onValueChange={(v) => {
+                  authorProvider();
+                  setValue('provider', v, { shouldValidate: true, shouldDirty: true });
+                }}
               >
                 <SelectTrigger id="provider">
                   <SelectValue placeholder="Pick a provider" />
@@ -865,11 +1039,27 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
-            {providerIsInherited && (
+            {isEdit && !agent?.provider && (
               <p className="text-muted-foreground text-xs">
-                Inherited from the first active provider. Saving will lock this agent to{' '}
-                <code className="font-mono">{currentProvider}</code>.
+                This agent has no provider of its own — it resolves one per turn
+                {previewProvider ? (
+                  <>
+                    , currently <code className="font-mono">{previewProvider}</code>
+                  </>
+                ) : null}
+                . Leave this empty to keep it that way; saving other fields will not change it.{' '}
+                <strong className="font-medium">Selecting one pins it permanently</strong>, and no
+                policy will override it afterwards.
               </p>
+            )}
+            {!isEdit && !currentProvider && (
+              <p className="text-muted-foreground text-xs">
+                No provider could be resolved automatically — none of the configured providers may
+                be active, reachable or permitted. Pick one to continue.
+              </p>
+            )}
+            {errors.provider && (
+              <p className="text-destructive text-xs">{errors.provider.message}</p>
             )}
           </div>
 
@@ -920,16 +1110,24 @@ export function AgentForm({
                 The specific AI model this agent uses. Changing it switches which model actually
                 answers — cost, speed, and quality all shift. Smaller models (e.g. Haiku, GPT-4o
                 mini) are faster and cheaper; larger models (e.g. Opus, GPT-4o) are more capable but
-                cost more per message. Default: <code>claude-opus-4-6</code>.
+                cost more per message. There is no default model: the field is pre-filled from the
+                system default chat model, and left empty when none is configured.
               </FieldHelp>
             </Label>
             {modelFallback ? (
-              <Input id="model" {...register('model')} className="font-mono" />
+              <Input
+                id="model"
+                {...register('model', { onChange: authorModel })}
+                className="font-mono"
+              />
             ) : filteredModels.length === 0 ? (
               <>
                 <Select
                   value=""
-                  onValueChange={(v) => setValue('model', v, { shouldValidate: true })}
+                  onValueChange={(v) => {
+                    authorModel();
+                    setValue('model', v, { shouldValidate: true, shouldDirty: true });
+                  }}
                   disabled
                 >
                   <SelectTrigger id="model">
@@ -945,12 +1143,23 @@ export function AgentForm({
                     Providers page
                   </Link>{' '}
                   or pick a different provider above.
+                  {currentModel ? (
+                    <>
+                      {' '}
+                      Saving now would keep <code className="font-mono">{currentModel}</code>, which
+                      this provider does not list — the auto-reset only replaces a model when the
+                      new provider has one to offer, so nothing has cleared it.
+                    </>
+                  ) : null}
                 </p>
               </>
             ) : (
               <Select
                 value={currentModel}
-                onValueChange={(v) => setValue('model', v, { shouldValidate: true })}
+                onValueChange={(v) => {
+                  authorModel();
+                  setValue('model', v, { shouldValidate: true, shouldDirty: true });
+                }}
               >
                 <SelectTrigger id="model">
                   <SelectValue placeholder="Pick a model" />
@@ -987,12 +1196,19 @@ export function AgentForm({
                 </SelectContent>
               </Select>
             )}
-            {modelIsInherited && (
+            {isEdit && !agent?.model && (
               <p className="text-muted-foreground text-xs">
-                Inherited from the system default chat model. Saving will lock this agent to{' '}
-                <code className="font-mono">{currentModel}</code>.
+                This agent has no model of its own — it resolves one per turn
+                {previewModel ? (
+                  <>
+                    , currently <code className="font-mono">{previewModel}</code>
+                  </>
+                ) : null}
+                . Leave this empty to keep it that way; saving other fields will not change it.{' '}
+                <strong className="font-medium">Selecting one pins it permanently.</strong>
               </p>
             )}
+            {errors.model && <p className="text-destructive text-xs">{errors.model.message}</p>}
           </div>
 
           <div className="grid gap-2">
@@ -1847,8 +2063,18 @@ export function AgentForm({
                       slug: fresh.slug,
                       description: fresh.description,
                       systemInstructions: fresh.systemInstructions,
-                      provider: fresh.provider,
-                      model: fresh.model,
+                      // Same chain as `initialProvider` / `initialModel` at
+                      // mount. A restore returns the ROW's values, and a
+                      // system-seeded agent's row holds '' — the
+                      // dynamic-resolution contract. Writing that raw blanked
+                      // the Select, fired the "no provider could be resolved"
+                      // hint (false: resolution had just succeeded on this very
+                      // page), and then `onInvalid` blocked the save until the
+                      // operator pinned a provider onto an agent designed to
+                      // resolve one per turn. That is this PR's own defect
+                      // reached from the other direction.
+                      provider: fresh.provider || (effectiveDefaults?.provider ?? ''),
+                      model: fresh.model || (effectiveDefaults?.model ?? ''),
                       temperature: fresh.temperature,
                       maxTokens: fresh.maxTokens,
                       reasoningEffort: toReasoningEffortFormValue(fresh.reasoningEffort),
@@ -1879,7 +2105,33 @@ export function AgentForm({
                       brandVoiceInstructions: fresh.brandVoiceInstructions ?? null,
                       runtimePromptManaged: fresh.runtimePromptManaged ?? false,
                       runtimePromptNote: fresh.runtimePromptNote ?? null,
+                      // `reset(values)` REPLACES form state wholesale, so any
+                      // required field missing here becomes `undefined` and
+                      // every later save fails the resolver. These ten used to
+                      // be absent: seven are required enums/booleans, so a
+                      // restore left the form permanently unsavable. It failed
+                      // SILENTLY before `onInvalid` existed — the banner is
+                      // what surfaced it, which is the whole argument for
+                      // having one.
+                      kind: fresh.kind ?? 'chat',
+                      profileId: fresh.profileId ?? null,
+                      persona: fresh.persona ?? null,
+                      guardrails: fresh.guardrails ?? null,
+                      personaMode: (fresh.personaMode as 'override' | 'append') ?? 'override',
+                      voiceMode: (fresh.voiceMode as 'override' | 'append') ?? 'override',
+                      guardrailsMode: (fresh.guardrailsMode as 'override' | 'append') ?? 'override',
+                      enableVoiceInput: fresh.enableVoiceInput ?? false,
+                      enableImageInput: fresh.enableImageInput ?? false,
+                      enableDocumentInput: fresh.enableDocumentInput ?? false,
                     });
+                    // MUST clear authorship. `reset` replaces the form values
+                    // but not this state, so without it a provider the operator
+                    // picked-but-did-not-save left `authored.provider` true
+                    // while the reset put the PREVIEW back in the field — and
+                    // the next save pinned the preview. That is precisely the
+                    // defect this form exists to prevent, arriving through the
+                    // restore path.
+                    setAuthored({ provider: false, model: false });
                   } catch {
                     // Silent — the version tab already shows its own error state.
                   }
