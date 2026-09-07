@@ -12,6 +12,7 @@ import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { calculateEmbeddingCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
+import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 
@@ -24,6 +25,23 @@ import { describeFetchFailure } from '@/lib/errors/fetch-error';
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const FALLBACK_DIMENSIONS = 1536;
 const DEFAULT_BATCH_SIZE = 100;
+
+/**
+ * The slug the unconfigured OpenAI arm answers to.
+ *
+ * That arm reaches `api.openai.com` off a bare `OPENAI_API_KEY` with no
+ * `AiProviderConfig` row behind it, so until now it had no name — and a
+ * provider with no name cannot be permitted or denied by a rule that works on
+ * names. It kept an install embedding out of the box, and it did so as the one
+ * destination no policy could see.
+ *
+ * The verdict is that the escape hatch stays and stops being anonymous: a
+ * reserved slug is enough to make it addressable, and the colon guarantees it
+ * can never collide with a real row (`AiProviderConfig.slug` is validated
+ * against `^[a-z0-9]+(?:-[a-z0-9]+)*$`). A fork denying it gets the refusal it
+ * asked for rather than a silent call to OpenAI.
+ */
+export const UNCONFIGURED_OPENAI_SLUG = 'env:openai';
 
 /** Rate limit: pause between batches (ms) */
 const BATCH_DELAY_MS = 200;
@@ -214,6 +232,35 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
 }
 
 /**
+ * Ask the app's provider-eligibility rule whether Sunrise may pick `slug` for
+ * embedding on the caller's behalf.
+ *
+ * `source: 'primary'` because every arm of the chain below is Sunrise
+ * choosing: nobody recorded a decision, we are walking a preference order. It
+ * matches what `tryAudioRow`, `llm-runner` and `keyword-enricher` pass for the
+ * same reason, so a rule already written in a fork covers this path for free.
+ *
+ * A denial skips the arm and the chain tries the next one — the audio loop's
+ * shape, and the right one here: a fork that permits a local embedder but not
+ * Voyage should get the local embedder, not a failure. A rule that permits
+ * nothing runs off the end of the chain, which is fail-closed.
+ */
+async function permittedForEmbedding(slug: string, refusals: string[]): Promise<boolean> {
+  const permitted = await isProviderEligible(slug, {
+    task: 'embeddings',
+    source: 'primary',
+    primarySlug: null,
+  });
+  if (!permitted) {
+    refusals.push(slug);
+    logger.info('Skipping embedding provider — not permitted by the app eligibility rule', {
+      providerSlug: slug,
+    });
+  }
+  return permitted;
+}
+
+/**
  * Resolve the embedding provider.
  *
  * Preference order:
@@ -227,12 +274,34 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
  * The fallback always reports `FALLBACK_DIMENSIONS` (1536) because all
  * of its concrete branches are configured to produce 1536-dim vectors
  * today.
+ *
+ * **Every arm of the chain is filtered by the provider-eligibility seam; the
+ * operator's pin at (1) is not.** That is the same line the rest of the tree
+ * draws — Sunrise's own choices are constrained, an operator's recorded
+ * decision is not — and it matters more here than anywhere else, because the
+ * pin is not sticky: five separate conditions drop it through to the chain
+ * (missing, inactive, no `embedding` capability, no `dimensions`, no active
+ * `AiProviderConfig`, or non-Voyage with no `baseUrl`). Deactivating one row
+ * moves an install from the unfiltered line to the filtered one silently,
+ * which is why the drop-through is logged.
+ *
+ * This does NOT put the embedder inside the provider-manager waist. It still
+ * builds its own HTTP request and is not counted by the in-flight Proxy,
+ * because `LlmProvider.embed` takes one string and no model or dimension —
+ * batching, `dimensions` / `output_dimension` and per-call model selection
+ * would all have to go onto that contract first. That port belongs with the
+ * call-time gate (`f-mt-external`); what ships here is the policy half, which
+ * does not need it.
  */
 async function resolveProvider(): Promise<EmbeddingProvider> {
   const active = await resolveActiveEmbeddingConfig();
   if (active) {
     return active;
   }
+
+  // Slugs the eligibility rule turned down on this pass. Only used to pick the
+  // right terminal error — see the end of this function.
+  const refusals: string[] = [];
 
   // Check for configured providers that support embeddings
   const providers = await prisma.aiProviderConfig.findMany({
@@ -247,10 +316,14 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
 
   // Prefer Voyage AI provider (best retrieval quality, free tier)
   const voyageProvider = providers.find((p) => p.providerType === 'voyage');
-  if (voyageProvider) {
+  if (voyageProvider && (await permittedForEmbedding(voyageProvider.slug, refusals))) {
     const apiKey = voyageProvider.apiKeyEnvVar
       ? (process.env[voyageProvider.apiKeyEnvVar] ?? null)
       : null;
+    logger.info('Embedding provider resolved by the fallback chain', {
+      arm: 'voyage',
+      providerSlug: voyageProvider.slug,
+    });
     return {
       baseUrl: voyageProvider.baseUrl ?? 'https://api.voyageai.com/v1',
       apiKey,
@@ -266,7 +339,11 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // models (nomic-embed-text) produce a fixed native dim and ignore
   // `dimensions`; `schemaCompatible: false` keeps us from sending it.
   const localProvider = providers.find((p) => p.isLocal);
-  if (localProvider?.baseUrl) {
+  if (localProvider?.baseUrl && (await permittedForEmbedding(localProvider.slug, refusals))) {
+    logger.info('Embedding provider resolved by the fallback chain', {
+      arm: 'local',
+      providerSlug: localProvider.slug,
+    });
     return {
       baseUrl: localProvider.baseUrl,
       apiKey: localProvider.apiKeyEnvVar ? (process.env[localProvider.apiKeyEnvVar] ?? null) : null,
@@ -285,11 +362,15 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   const openaiCompatible = providers.find(
     (p) => p.providerType === 'openai-compatible' && p.baseUrl
   );
-  if (openaiCompatible?.baseUrl) {
+  if (openaiCompatible?.baseUrl && (await permittedForEmbedding(openaiCompatible.slug, refusals))) {
     const apiKey = openaiCompatible.apiKeyEnvVar
       ? (process.env[openaiCompatible.apiKeyEnvVar] ?? null)
       : null;
     const model = settingsModel || DEFAULT_MODEL;
+    logger.info('Embedding provider resolved by the fallback chain', {
+      arm: 'openai-compatible',
+      providerSlug: openaiCompatible.slug,
+    });
     return {
       baseUrl: openaiCompatible.baseUrl,
       apiKey,
@@ -301,24 +382,43 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     };
   }
 
-  // Default: OpenAI API directly
+  // Default: OpenAI API directly, off a bare env var with no provider row.
+  // See UNCONFIGURED_OPENAI_SLUG for why this arm has a name at all.
   const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
-  if (!openaiKey) {
+  if (openaiKey && (await permittedForEmbedding(UNCONFIGURED_OPENAI_SLUG, refusals))) {
+    const model = settingsModel || DEFAULT_MODEL;
+    logger.info('Embedding provider resolved by the fallback chain', {
+      arm: 'unconfigured-openai',
+      providerSlug: UNCONFIGURED_OPENAI_SLUG,
+    });
+    return {
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: openaiKey,
+      model,
+      dimensions: FALLBACK_DIMENSIONS,
+      schemaCompatible: isOpenAiSchemaCompatibleModel(model),
+      isLocal: false,
+      providerType: 'openai-compatible',
+    };
+  }
+
+  // Two distinct endings, kept distinct: "nothing is set up" sends an operator
+  // to the setup wizard, and "what is set up was refused" sends them to
+  // whoever wrote the rule. Collapsing them into one message would send half
+  // of the readers to the wrong place. The flag is what separates them — an
+  // install with only an Anthropic row reaches the end of this chain having
+  // been refused nothing, and must not be told a policy turned it away.
+  if (refusals.length > 0) {
     throw new Error(
-      'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
-        'or configure an embedding provider in the admin settings.'
+      'No permitted embedding provider. Every embedding provider this install could ' +
+        'have used was refused by the app provider-eligibility rule ' +
+        '(lib/app/llm-providers.ts).'
     );
   }
-  const model = settingsModel || DEFAULT_MODEL;
-  return {
-    baseUrl: 'https://api.openai.com/v1',
-    apiKey: openaiKey,
-    model,
-    dimensions: FALLBACK_DIMENSIONS,
-    schemaCompatible: isOpenAiSchemaCompatibleModel(model),
-    isLocal: false,
-    providerType: 'openai-compatible',
-  };
+  throw new Error(
+    'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
+      'or configure an embedding provider in the admin settings.'
+  );
 }
 
 /**

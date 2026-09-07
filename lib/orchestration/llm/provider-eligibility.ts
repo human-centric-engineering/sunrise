@@ -33,7 +33,7 @@
  * Proxy every manager-built provider passes through, and the four routes that
  * bypass the provider manager entirely — the last of which is why a complete
  * boundary needs enforcement at the point calls pass through rather than at
- * each site that chooses. The seven choices this seam covers:
+ * each site that chooses. The eight choices this seam covers:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;
@@ -48,15 +48,21 @@
  *    neither a request `modelOverride` nor `EVALUATION_JUDGE_MODEL` answered;
  *  - **audio transcription's matrix fallback** (`tryAudioRow`), the row chosen
  *    by matrix order when no operator default is pinned or the pinned one is
- *    unreachable.
+ *    unreachable;
+ *  - the **embedding fallback chain** (`knowledge/embedder.ts`), walked whenever
+ *    the operator's `activeEmbeddingModelId` pin is absent or no longer
+ *    resolves — including its final arm, which reaches OpenAI off a bare
+ *    `OPENAI_API_KEY` with no provider row and answers to the reserved slug
+ *    `env:openai` so a rule has something to name.
  *
- * The last four are a SECOND chokepoint. They do not pass through
+ * The last five are a SECOND chokepoint. They do not pass through
  * `resolveAgentProviderAndModel` at all — they read the model registry, or the
  * audio matrix, directly — so they consult this module themselves via
  * `isProviderEligible`, and each refuses in its own vocabulary: an
  * `ExecutorError` (`provider_not_permitted`), a `ProviderNotPermittedError`, a
- * 403, and — in the audio loop — a `null` that skips the row and tries the
- * next, which is what every other guard in that function already does.
+ * 403, and — in the audio loop and the embedding chain — a skip that tries the
+ * next candidate, which is what every other guard in those functions already
+ * does.
  *
  * It does NOT filter an **explicit `agent.provider`**, an explicit step
  * `modelOverride`, a review request's own `modelOverride`, an operator's pinned
@@ -102,6 +108,7 @@
  * @see lib/orchestration/engine/llm-runner.ts — the workflow-step chokepoint
  * @see lib/orchestration/knowledge/keyword-enricher.ts — the ingestion chokepoint
  * @see lib/orchestration/llm/provider-manager.ts — `tryAudioRow`, the audio chokepoint
+ * @see lib/orchestration/knowledge/embedder.ts — `resolveProvider`, the embedding chokepoint
  */
 
 import { logger } from '@/lib/logging';

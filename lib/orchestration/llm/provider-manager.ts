@@ -117,26 +117,90 @@ export async function getProvider(slugOrName: string): Promise<LlmProvider> {
 }
 
 /**
- * Wrap a freshly-built provider so its long-running calls (chat,
- * chatStream, embed, transcribe) are accounted in the in-flight
- * counter under `slug`. Short admin-metadata methods (`listModels`,
- * `testConnection`) are NOT tracked — they're not part of the runtime
- * workload the dashboard is measuring.
+ * How the in-flight Proxy treats one method on the provider surface.
  *
- * Uses a `Proxy` so the returned value preserves the original
- * prototype — existing call sites (and tests) doing
- * `instanceof AnthropicProvider` keep working. The handler intercepts
- * the four tracked methods and rebinds them to the original target so
- * `this` inside the SDK call is the real provider instance.
- *
- * Wrapping happens once per cache miss, not per call, so the proxy
- * cost is negligible. Returns the original instance unchanged when
- * `slug` is empty (defensive — should not happen with current
- * call sites).
+ *  - `'track'` — a single-shot vendor call; wrapped in `track(slug, …)`.
+ *  - `'trackStream'` — a vendor call returning an `AsyncIterable`; wrapped in
+ *    `trackStream(slug, …)`, which holds the count until the stream settles.
+ *  - `'passthrough'` — reaches the vendor but is deliberately NOT counted:
+ *    short admin-metadata calls that are not part of the runtime workload the
+ *    dashboard measures. Listing them is not a formality — it is the
+ *    difference between "we decided not to count this" and "nobody looked".
  */
-const TRACKED_METHODS = new Set(['chat', 'embed', 'transcribe']);
-const STREAM_METHODS = new Set(['chatStream']);
+type MethodDisposition = 'track' | 'trackStream' | 'passthrough';
 
+/**
+ * Every method member of `LlmProvider`, optional ones included.
+ *
+ * Derived from the interface rather than written out, so
+ * {@link METHOD_DISPOSITION} below cannot compile while a method exists that
+ * nobody has classified.
+ */
+type ProviderMethodName = {
+  [K in keyof LlmProvider]-?: NonNullable<LlmProvider[K]> extends (...args: never[]) => unknown
+    ? K
+    : never;
+}[keyof LlmProvider];
+
+/**
+ * The complete classification of the provider surface.
+ *
+ * **This is an allowlist, not an opt-in list, and that is the point.** The
+ * previous shape was two `Set`s of method names: anything absent from both was
+ * silently forwarded, so adding a method to `LlmProvider` made a new vendor-
+ * reaching operation that nothing counted and nothing could gate, with no
+ * signal of any kind. `transcribeStream` sat in exactly that state from the day
+ * it was added — latent only because no shipped provider implements it.
+ *
+ * `Record<ProviderMethodName, …>` makes that impossible: the type is derived
+ * from the interface, so a new method is a type error here until someone
+ * decides what it is. That is the whole mechanism — a compile-time failure at
+ * the moment the surface widens, rather than a runtime hole discovered later.
+ *
+ * See `.context/orchestration/llm-providers.md` for the outbound-egress
+ * guarantee this supports, and its limits.
+ */
+const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
+  chat: 'track',
+  embed: 'track',
+  transcribe: 'track',
+  chatStream: 'trackStream',
+  transcribeStream: 'trackStream',
+  listModels: 'passthrough',
+  testConnection: 'passthrough',
+};
+
+function dispositionOf(prop: string): MethodDisposition | undefined {
+  return Object.prototype.hasOwnProperty.call(METHOD_DISPOSITION, prop)
+    ? METHOD_DISPOSITION[prop as ProviderMethodName]
+    : undefined;
+}
+
+/**
+ * Wrap a freshly-built provider so its vendor calls are accounted in the
+ * in-flight counter under `slug`, and so no unclassified method on the
+ * instance can reach a vendor unnoticed.
+ *
+ * Uses a `Proxy` so the returned value preserves the original prototype —
+ * existing call sites (and tests) doing `instanceof AnthropicProvider` keep
+ * working. The handler rebinds intercepted methods to the original target so
+ * `this` inside the SDK call is the real provider instance, which also means a
+ * provider's own internal `this.foo()` calls never re-enter the trap.
+ *
+ * Wrapping happens once per cache entry, not per call, so the proxy cost is
+ * negligible; the closures it returns run per call. Returns the original
+ * instance unchanged when `slug` is empty (defensive — should not happen with
+ * current call sites).
+ *
+ * **Unclassified methods throw on access.** A function property that is not on
+ * {@link METHOD_DISPOSITION} and not host machinery is a method someone added
+ * to a concrete provider class without putting it on the `LlmProvider`
+ * contract. Forwarding it would reproduce the hole this function exists to
+ * close, one class at a time instead of one interface at a time, so it is
+ * refused. Throwing on *access* rather than on call is deliberate: feature
+ * detection (`if (provider.newThing)`) is exactly how such a method gets
+ * called, and it should fail there too.
+ */
 function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider {
   if (!slug) return provider;
   return new Proxy(provider, {
@@ -149,18 +213,37 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
       // serialisation calling `Symbol.toPrimitive`).
       if (typeof prop !== 'string' || typeof value !== 'function') return value;
       const fn = value as (this: LlmProvider, ...args: unknown[]) => unknown;
-      if (TRACKED_METHODS.has(prop)) {
-        return (...args: unknown[]): Promise<unknown> =>
-          track(slug, () => fn.apply(target, args) as Promise<unknown>);
+
+      switch (dispositionOf(prop)) {
+        case 'track':
+          return (...args: unknown[]): Promise<unknown> =>
+            track(slug, () => fn.apply(target, args) as Promise<unknown>);
+        case 'trackStream':
+          return (...args: unknown[]): AsyncIterable<unknown> =>
+            trackStream(slug, () => fn.apply(target, args) as AsyncIterable<unknown>);
+        case 'passthrough':
+          // Forwarded bound to the original instance so `this` resolution
+          // inside the SDK call stays intact.
+          return fn.bind(target);
       }
-      if (STREAM_METHODS.has(prop)) {
-        return (...args: unknown[]): AsyncIterable<unknown> =>
-          trackStream(slug, () => fn.apply(target, args) as AsyncIterable<unknown>);
-      }
-      // Everything else (listModels, testConnection, helper methods,
-      // accessors) is forwarded bound to the original instance so
-      // `this` resolution inside the SDK call stays intact.
-      return fn.bind(target);
+
+      // `constructor` and everything inherited from `Object.prototype`
+      // (`toString`, `hasOwnProperty`, `valueOf`, …) is host machinery that
+      // every object carries and no vendor sees. Test runners, structured
+      // logging and `util.inspect` all reach for these; refusing them would
+      // fail on the observer rather than on the thing observed.
+      if (prop === 'constructor' || prop in Object.prototype) return fn.bind(target);
+
+      logger.error('Refusing an unclassified method on a provider instance', undefined, {
+        provider: slug,
+        method: prop,
+      });
+      throw new ProviderError(
+        `Provider "${slug}" exposes method "${prop}", which is not on the LlmProvider ` +
+          'contract. Add it to LlmProvider and classify it in METHOD_DISPOSITION ' +
+          '(lib/orchestration/llm/provider-manager.ts) before calling it.',
+        { code: 'unclassified_provider_method', retriable: false }
+      );
     },
   });
 }
@@ -169,9 +252,13 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
  * Register a provider instance programmatically (tests, scripts, or
  * callers that want to bypass the database). The instance is cached
  * under `config.name` so `getProvider(name)` returns it.
+ *
+ * Returns the wrapped instance — the same object `getProvider(config.name)`
+ * will hand back, not the bare construction. See
+ * {@link registerProviderInstance} for why.
  */
 export function registerProvider(config: ProviderConfig): LlmProvider {
-  const instance = buildProviderFromInMemoryConfig(config);
+  const instance = withInFlightTracking(buildProviderFromInMemoryConfig(config), config.name);
   instanceCache.set(config.name, { provider: instance, cachedAt: Date.now() });
   return instance;
 }
@@ -182,9 +269,24 @@ export function registerProvider(config: ProviderConfig): LlmProvider {
  * (chat handler, workflow engine) without a real SDK, API key, or
  * `AiProviderConfig` row. `getProvider(name)` will return this instance
  * and skip the database lookup entirely.
+ *
+ * **The instance is wrapped before it is cached**, so "everything
+ * `getProvider` returns has been through the Proxy" is a property of the
+ * cache rather than a property of one of the three ways into it. Both
+ * registrars used to write bare instances straight in, which meant the
+ * invariant held by convention: it was true of what the manager built and
+ * false of what anyone else put there, with no way to tell the two apart at
+ * the read. Wrapping here is also the only fix that scales — a check at
+ * `getProvider` would have to decide whether an arbitrary object is already
+ * wrapped, which a `Proxy` deliberately makes unanswerable.
+ *
+ * Consequence for callers, and it is a real one: `getProvider(name)` no
+ * longer returns the object you passed in. It returns a Proxy over it, so
+ * identity comparisons (`expect(retrieved).toBe(fake)`) fail while every
+ * call, spy and `instanceof` still works. Assert on behaviour instead.
  */
 export function registerProviderInstance(name: string, instance: LlmProvider): void {
-  instanceCache.set(name, { provider: instance, cachedAt: Date.now() });
+  instanceCache.set(name, { provider: withInFlightTracking(instance, name), cachedAt: Date.now() });
 }
 
 /**

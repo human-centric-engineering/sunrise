@@ -442,8 +442,15 @@ describe('registerProviderInstance', () => {
     registerProviderInstance('injected-provider', fakeProvider);
     const retrieved = await getProvider('injected-provider');
 
-    // Assert: exact same object, no DB lookup
-    expect(retrieved).toBe(fakeProvider);
+    // Assert: the injected instance is what answers, and no DB lookup happened.
+    // NOT the same object — `registerProviderInstance` wraps before caching, so
+    // everything `getProvider` hands out has been through the Proxy whichever
+    // of the three routes put it there. Identity is the one property that
+    // deliberately no longer holds; calls, spies and `instanceof` all do.
+    expect(retrieved).not.toBe(fakeProvider);
+    expect(retrieved.name).toBe('injected-provider');
+    await retrieved.chat([], { model: 'm' });
+    expect(fakeProvider.chat).toHaveBeenCalledTimes(1);
     expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
   });
 });
@@ -565,7 +572,9 @@ describe('getProviderWithFallbacks', () => {
 
     // Assert: fallback was used
     expect(usedSlug).toBe('cb-fallback-2');
-    expect(provider).toBe(fallbackProvider);
+    // Proxy-wrapped on the way into the cache (see registerProviderInstance),
+    // so assert the identity that survives rather than object identity.
+    expect(provider.name).toBe('cb-fallback-2');
     // DB was not consulted (both providers resolved from cache/in-memory)
     expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
   });
