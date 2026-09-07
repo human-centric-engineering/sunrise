@@ -77,10 +77,10 @@ describe('updateWebhookSchema — destination guard', () => {
     // URL ever being delivered to" — it is not, and asserting the limitation is
     // how the claim stays honest if someone later assumes otherwise.
     //
-    // The destination is guarded in two other places instead: the backup import
-    // schema refuses to persist an unsafe url, and the PATCH route revalidates
-    // `existing.url` before activating. See
-    // `tests/unit/app/api/v1/admin/orchestration/webhooks/id-route.test.ts`.
+    // The destination is guarded elsewhere instead: the backup importer skips
+    // an unsafe row with a warning, and the PATCH route revalidates
+    // `existing.url` when a patch ACTIVATES a subscription. See
+    // `tests/unit/app/api/v1/admin/orchestration/webhooks/[id]/route.test.ts`.
     const result = updateWebhookSchema.safeParse({
       isActive: true,
       secret: 'test-secret-key-1234567890',

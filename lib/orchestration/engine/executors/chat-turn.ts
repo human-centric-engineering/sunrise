@@ -119,6 +119,16 @@ export async function executeChatTurn(
   try {
     resolvedBinding = await resolveAgentProviderAndModel(agent, 'chat');
   } catch (err) {
+    // Log before narrowing. The generic arm below deliberately drops the
+    // original message so it cannot reach the execution row — but
+    // `ExecutorError.cause` is never read by the engine either (`sanitizeError`
+    // takes `.message`, and the logger serialises only name/message/stack), so
+    // without this the diagnosis was not hidden from the operator, it was
+    // destroyed. A DB outage would leave nothing anywhere naming Prisma.
+    logger.error('chat_turn: provider/model resolution failed', err, {
+      stepId: step.id,
+      agentSlug: config.agentSlug,
+    });
     throw new ExecutorError(
       step.id,
       'provider_unresolved',

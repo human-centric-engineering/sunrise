@@ -289,6 +289,25 @@ describe('PATCH /webhooks/:id', () => {
       expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
     });
 
+    it('still lets an operator DEACTIVATE a row whose stored url is unsafe', async () => {
+      // A guard that prevents remediation is worse than the hole it closes. An
+      // admin finding a live legacy row pointing at metadata must be able to
+      // turn it off; the first cut of this check 400'd that, leaving DELETE as
+      // the only way to stop the bleeding.
+      const existing = makeWebhook({
+        url: 'http://169.254.169.254/latest/meta-data/',
+        isActive: true,
+      });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
+      vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(existing as never);
+      vi.mocked(validateRequestBody).mockResolvedValue({ isActive: false });
+
+      const response = await PATCH(makePatchRequest({ isActive: false }), makeParams(WEBHOOK_ID));
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiWebhookSubscription.update).toHaveBeenCalled();
+    });
+
     it('CONTROL — the identical patch succeeds when the stored url is public', async () => {
       // Without this, the refusal above would also pass if the PATCH path were
       // broken for some reason having nothing to do with the destination.

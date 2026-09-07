@@ -149,8 +149,10 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       body: payload,
       signal: controller.signal,
       // Refuse redirects, matching `webhooks/dispatcher.ts` on the SAME value
-      // (#635). `webhook.url` is validated in the Zod refine at create/update
-      // and never again, so a redirect is an unvalidated second target — and
+      // (#635). `webhook.url` is validated at create, at update when the patch
+      // carries one, when a patch ACTIVATES the subscription, and on backup
+      // import — but never here, and never per dispatch. A redirect TARGET is a
+      // second address none of those ever saw, so it is unvalidated — and
       // `X-Webhook-Signature` is a CUSTOM header name, which the fetch spec
       // does not strip cross-origin the way it strips `Authorization`. The HMAC
       // would travel.

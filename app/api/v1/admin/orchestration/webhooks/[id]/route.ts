@@ -90,11 +90,20 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     //
     // Checked here rather than only at import so rows written before the
     // importer's refine existed cannot be activated either.
-    const urlCheck = checkSafeProviderUrl(nextUrl);
-    if (!urlCheck.ok) {
-      throw new ValidationError('URL is not allowed (private or internal address)', {
-        url: [urlCheck.message],
-      });
+    // Gated on activation, NOT on every patch. The first cut checked
+    // unconditionally, which blocked the one action an operator most needs when
+    // they find a bad row already live: `PATCH { isActive: false }` to stop it
+    // firing. That 400'd, leaving DELETE as the only remedy — a guard that
+    // prevents remediation is worse than the hole it closes. Editing
+    // `description` or narrowing `events` on such a row was blocked too.
+    const isActivating = body.isActive === true || 'url' in body;
+    if (isActivating) {
+      const urlCheck = checkSafeProviderUrl(nextUrl);
+      if (!urlCheck.ok) {
+        throw new ValidationError('URL is not allowed (private or internal address)', {
+          url: [urlCheck.message],
+        });
+      }
     }
 
     // Secret is allowed to remain unchanged on PATCH (existing flow:

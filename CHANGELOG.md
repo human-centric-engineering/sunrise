@@ -217,8 +217,8 @@ release process.
 
 ### Fixed
 
-- **An imported webhook subscription could be activated with a destination
-  nothing had validated** — a server-side request forgery reachable by following
+- **An imported event subscription could reach a destination nothing had
+  validated** — two ways, and the second is quieter than the first — a server-side request forgery reachable by following
   the backup importer's own instructions. `backup/schema.ts` accepted the
   bundle's `url` with no check at all, and `updateWebhookSchema.url` is
   `.optional()`, so the `isSafeProviderUrl` refine only ran when a patch
@@ -228,12 +228,26 @@ release process.
   naming `169.254.169.254`, do as instructed, and every subscribed event is
   POSTed to cloud metadata from inside the deployment.
 
-  Closed at both ends: the backup import schema now refuses to persist an unsafe
-  destination, and the PATCH route revalidates the stored URL before activating a
-  subscription — the second is what also covers rows imported before the first
-  existed. Pre-existing; found while documenting why the dispatcher deliberately
-  has no destination allowlist, in the course of writing a comment that claimed
-  this path was already closed.
+  The **email** channel beside it was worse: `emailAddress` had no validation at
+  all, the importer honoured the bundle's own `isActive`, and email delivery
+  needs no secret. A bundle could therefore stand up a **live** subscription
+  mailing every matching event — full payload, from the deployment's own verified
+  sender — to an address of the bundle author's choosing, with no warning in the
+  import result and no second step required.
+
+  Closed at both ends. The importer validates each destination per row and skips
+  the offending subscription with a warning (per row rather than in the schema,
+  so one bad address cannot discard the agents, capabilities, workflows and
+  settings in the same restore), forces email rows inactive as webhook rows
+  already were, and warns for both. The PATCH route additionally revalidates a
+  stored URL when a patch **activates** a subscription, which covers rows
+  imported before those checks existed. Deactivating a bad subscription is
+  deliberately still permitted — a guard that blocks remediation is worse than
+  the hole it closes.
+
+  Pre-existing; found while documenting why the dispatcher deliberately has no
+  destination allowlist, in the course of writing a comment that claimed this
+  path was already closed.
 
 - **A workflow `chat_turn` step put the database's host and port on the
   execution row.** `engine/executors/chat-turn.ts` forwarded every error out of
@@ -242,8 +256,13 @@ release process.
   `getDefaultModelForTask`. With the database unreachable, `Can't reach database
   server at <host>:<port>` became the `ExecutorError` message — persisted on the
   execution and rendered in the executions list and the trace viewer. Now
-  narrowed to the two errors the resolver defines, matching the fix `#717` made
-  in the sibling `agent-call.ts` executor and missed here. Both are additionally
+  narrowed to `ProviderError` — the base class of the errors this call path
+  defines — matching the fix `#717` made in the sibling `agent-call.ts` executor
+  and missed here. `agent-call.ts` is widened to the same predicate in the same
+  change, so the two executors cannot disagree about one resolver call. The
+  original error is now logged before it is dropped: the generic arm hides it
+  from the execution row, and nothing else reads `ExecutorError.cause`, so
+  without a log line the diagnosis was destroyed rather than merely hidden. Both are additionally
   prefixed with the agent slug, because in a multi-step workflow `step.id` alone
   left an operator mapping it back to an agent by hand.
 

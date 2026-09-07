@@ -33,11 +33,7 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
-import {
-  resolveAgentProviderAndModel,
-  NoEligibleProviderError,
-  NoProviderConfiguredError,
-} from '@/lib/orchestration/llm/agent-resolver';
+import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -620,8 +616,14 @@ export async function executeAgentCall(
     throw new ExecutorError(
       step.id,
       'provider_unavailable',
-      // Forward the resolver's OWN message for the two errors it defines, and
-      // only those. "No provider configured" is actively wrong for
+      // Forward the message for errors this call path DEFINES — the three
+      // `ProviderError` subclasses — and only those. Widened from the two
+      // resolver classes so `NoDefaultModelConfiguredError` from
+      // `getDefaultModelForTask` keeps its remedy ("Save one in Admin →
+      // Settings → Default models") instead of being replaced by a message
+      // that sends the operator nowhere. `chat-turn.ts` makes the same call
+      // and must give the same answer; they disagreed for one commit.
+      // "No provider configured" is actively wrong for
       // NoEligibleProviderError — providers ARE configured, the rule permits
       // none. Forwarding every error would be wider than intended: this catch
       // also wraps a Prisma failure in `pickActiveProviderCandidates` and a
@@ -631,7 +633,7 @@ export async function executeAgentCall(
       // a multi-step workflow that left an operator mapping step.id back to an
       // agent by hand. The slug is already in the fallback message below, so it
       // is not newly disclosed.
-      err instanceof NoEligibleProviderError || err instanceof NoProviderConfiguredError
+      err instanceof ProviderError
         ? `Agent "${agentSlug}": ${err.message}`
         : `No provider configured for agent "${agentSlug}"`,
       err

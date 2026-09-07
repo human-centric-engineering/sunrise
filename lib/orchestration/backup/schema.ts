@@ -6,7 +6,6 @@
  */
 
 import { z } from 'zod';
-import { isSafeProviderUrl } from '@/lib/security/safe-url';
 
 export const agentBackupSchema = z.object({
   name: z.string(),
@@ -143,19 +142,14 @@ const webhookBackupSchema = z.object({
   // `channel` defaults to `webhook` so backups written before the
   // email-channel feature still round-trip cleanly.
   channel: z.enum(['webhook', 'email']).default('webhook'),
-  // Refined, unlike most of this schema. A bundle is operator-supplied data that
-  // becomes a webhook DESTINATION — an unsafe URL here reaches the database with
-  // no other check, because the import path does not go through
-  // `createWebhookSchema`. The import forces the row inactive with an empty
-  // secret, but re-enabling it (`PATCH {isActive, secret}`) does not carry a url
-  // and so never triggers the update schema's own refine. Guarding here stops it
-  // persisting at all; the PATCH route additionally revalidates on activation,
-  // for rows imported before this refine existed.
-  url: z
-    .string()
-    .refine((u) => isSafeProviderUrl(u), 'URL is not allowed (private or internal address)')
-    .nullable()
-    .optional(),
+  // Deliberately unrefined HERE. A bundle is operator-supplied data that becomes
+  // a destination, and both channels ARE validated — but per row in
+  // `importer.ts`, which skips the offending subscription with a warning.
+  // Refining in this schema instead aborts the entire restore over one bad row,
+  // discarding agents, capabilities, workflows and settings with it, and would
+  // also reject an email row carrying a stale `url` from a channel switch that
+  // the importer never reads.
+  url: z.string().nullable().optional(),
   emailAddress: z.string().nullable().optional(),
   events: z.array(z.string()),
   description: z.string().nullable().optional(),
