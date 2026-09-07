@@ -10,7 +10,7 @@
  * @see lib/orchestration/knowledge/embedder.ts
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { prisma } from '@/lib/db/client';
 
 vi.mock('@/lib/db/client', () => ({
@@ -40,7 +40,7 @@ global.fetch = mockFetch;
 const { registerProviderEligibility, resetProviderEligibility } =
   await import('@/lib/orchestration/llm/provider-eligibility');
 const { logger } = await import('@/lib/logging');
-const { embedText, canResolveEmbeddingProvider, UNCONFIGURED_OPENAI_SLUG } =
+const { embedText, resolveEmbeddingAvailability, UNCONFIGURED_OPENAI_SLUG } =
   await import('@/lib/orchestration/knowledge/embedder');
 
 function row(overrides: Record<string, unknown>) {
@@ -71,6 +71,15 @@ function fetchedHost(): string {
   const [url] = mockFetch.mock.calls[0] as [string];
   return new URL(url).host;
 }
+
+const originalOpenAiKey = process.env['OPENAI_API_KEY'];
+
+afterAll(() => {
+  // `process.env` is shared across files in a vitest worker, so a test file
+  // that deletes a var leaks it to every file that runs after it.
+  if (originalOpenAiKey === undefined) delete process.env['OPENAI_API_KEY'];
+  else process.env['OPENAI_API_KEY'] = originalOpenAiKey;
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -215,7 +224,7 @@ describe('a refusal skips the row, not the category', () => {
   });
 });
 
-describe('canResolveEmbeddingProvider', () => {
+describe('resolveEmbeddingAvailability', () => {
   it('reports false when rows exist but the rule refuses them all', async () => {
     // Arrange: exactly the state the old row-count check called "available".
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
@@ -226,7 +235,7 @@ describe('canResolveEmbeddingProvider', () => {
 
     // Act + Assert: the admin UI gates "Generate Embeddings" on this, so a
     // `true` here is an enabled button for a run that cannot succeed.
-    await expect(canResolveEmbeddingProvider()).resolves.toBe(false);
+    await expect(resolveEmbeddingAvailability()).resolves.toBe('none_permitted');
   });
 
   it('reports true when a permitted arm resolves', async () => {
@@ -237,12 +246,12 @@ describe('canResolveEmbeddingProvider', () => {
     registerProviderEligibility((candidates) => candidates);
 
     // Act + Assert
-    await expect(canResolveEmbeddingProvider()).resolves.toBe(true);
+    await expect(resolveEmbeddingAvailability()).resolves.toBe('ok');
   });
 });
 
-describe('canResolveEmbeddingProvider distinguishes a verdict from a failure', () => {
-  it('propagates a database error rather than reporting "no provider"', async () => {
+describe('resolveEmbeddingAvailability distinguishes a verdict from a failure', () => {
+  it('reports "unknown" for a database error, not a verdict', async () => {
     // Arrange: the chain's own uncaught query fails, as it would under
     // connection-pool pressure.
     vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(
@@ -252,7 +261,7 @@ describe('canResolveEmbeddingProvider distinguishes a verdict from a failure', (
     // Act + Assert: "I cannot answer" is not the answer "no". Swallowing this
     // tells an operator they have no embedding provider configured and sends
     // them to reconfigure providers that were fine all along.
-    await expect(canResolveEmbeddingProvider()).rejects.toThrow(/connection pool/);
+    await expect(resolveEmbeddingAvailability()).resolves.toBe('unknown');
   });
 });
 
@@ -275,8 +284,8 @@ describe('the eligibility rule is asked once per slug', () => {
   });
 });
 
-describe('the winning arm is logged where production can see it', () => {
-  it('logs at info, not debug', async () => {
+describe('the winning arm is per-call provenance, not the drop-through signal', () => {
+  it('logs at debug, leaving the production-visible signal to the drop-through warns', async () => {
     // Arrange
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       row({ slug: 'together' }),
@@ -285,17 +294,17 @@ describe('the winning arm is logged where production can see it', () => {
     // Act
     await embedText('hello');
 
-    // Assert: `lib/logging` defaults to INFO when NODE_ENV === 'production',
-    // so `debug` here is dropped in exactly the deployment that needs it —
-    // and the drop-through this line exists to make visible stays invisible.
-    // Three docs promise `info`; this is what stops the code drifting off them
-    // again. The parallel audio path (`'Audio provider resolved'`) is `info`
-    // for the same reason.
-    expect(logger.info).toHaveBeenCalledWith('Embedding provider resolved by the fallback chain', {
+    // Assert: this fires once per knowledge-search query and once per chat
+    // message on any install without an `activeEmbeddingModelId` pin — the
+    // out-of-the-box state. It is per-call provenance, so `debug`. The pin
+    // drop-through it was once justified by is ALREADY logged at `warn`, five
+    // times over, inside `resolveActiveEmbeddingConfig` — production-visible
+    // without putting an info line on the hot path.
+    expect(logger.debug).toHaveBeenCalledWith('Embedding provider resolved by the fallback chain', {
       arm: 'openai-compatible',
       providerSlug: 'together',
     });
-    expect(logger.debug).not.toHaveBeenCalledWith(
+    expect(logger.info).not.toHaveBeenCalledWith(
       'Embedding provider resolved by the fallback chain',
       expect.anything()
     );

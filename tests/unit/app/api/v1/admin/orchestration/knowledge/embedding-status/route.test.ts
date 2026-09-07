@@ -158,6 +158,41 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     // Assert: the admin UI gates "Generate Embeddings" on this field, so a
     // `true` here is an enabled button for a run that cannot succeed.
     expect(body.data.hasActiveProvider).toBe(false);
+    // And the WHY travels with it. The banner prints "Add an embedding
+    // provider" for a bare `false`, which is the wrong remedy here — the
+    // providers are already there and the rule is what refuses them.
+    expect(body.data.providerState).toBe('none_permitted');
+  });
+
+  it('reports providerState "unknown" when the lookup itself fails', async () => {
+    // Arrange: the one query on the chain with no `.catch()`.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(new Error('pool timeout'));
+
+    // Act
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    // Assert: still 200 with the counts. 500ing looks honest but the client
+    // does `if (!res.ok) return`, so it renders the same misleading "add a
+    // provider" banner AND loses the counts.
+    expect(res.status).toBe(200);
+    expect(body.data.total).toBe(100);
+    expect(body.data.providerState).toBe('unknown');
+    expect(body.data.hasActiveProvider).toBe(false);
+  });
+
+  it('reports providerState "none_configured" when nothing is set up', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+    const original = process.env['OPENAI_API_KEY'];
+    delete process.env['OPENAI_API_KEY'];
+    try {
+      const res = await GET(makeRequest());
+      const body = await res.json();
+      expect(body.data.providerState).toBe('none_configured');
+    } finally {
+      if (original === undefined) delete process.env['OPENAI_API_KEY'];
+      else process.env['OPENAI_API_KEY'] = original;
+    }
   });
 
   it('handles empty query result safely (null-safe count)', async () => {

@@ -349,7 +349,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     const apiKey = voyageProvider.apiKeyEnvVar
       ? (process.env[voyageProvider.apiKeyEnvVar] ?? null)
       : null;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'voyage',
       providerSlug: voyageProvider.slug,
     });
@@ -373,7 +373,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     // never happened and steer the terminal error to the wrong message.
     if (!localProvider.isLocal || !localProvider.baseUrl) continue;
     if (!(await permittedForEmbedding(localProvider.slug, refusals, seen))) continue;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'local',
       providerSlug: localProvider.slug,
     });
@@ -400,7 +400,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       ? (process.env[openaiCompatible.apiKeyEnvVar] ?? null)
       : null;
     const model = settingsModel || DEFAULT_MODEL;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'openai-compatible',
       providerSlug: openaiCompatible.slug,
     });
@@ -420,7 +420,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
   if (openaiKey && (await permittedForEmbedding(UNCONFIGURED_OPENAI_SLUG, refusals, seen))) {
     const model = settingsModel || DEFAULT_MODEL;
-    logger.info('Embedding provider resolved by the fallback chain', {
+    logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'unconfigured-openai',
       providerSlug: UNCONFIGURED_OPENAI_SLUG,
     });
@@ -455,39 +455,64 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
 }
 
 /**
- * Can this install embed right now?
+ * Why this install can or cannot embed right now.
  *
- * Answers the question by *running the resolver*, rather than by re-deriving it
- * from row counts. Those two used to be the same question and this branch made
- * them different: an install can have active provider rows and an
- * `OPENAI_API_KEY` while the app's eligibility rule refuses every one of them.
- * A caller that checks for rows would then enable an action the runtime is
- * guaranteed to fail.
+ * A boolean was the first cut and it threw away the distinction
+ * `resolveProvider` had just paid to keep. `NoEligibleProviderError`'s own
+ * docstring says reporting "nothing is configured" for "your policy allows none
+ * of it" sends someone to re-add providers that are already there — and that is
+ * exactly what the admin banner does with a bare `false`: it prints
+ * "Add an embedding provider", which will not help and never mentions a policy.
  *
- * `false` for both terminal states — nothing configured, and nothing permitted —
- * because a caller gating a UI affordance wants one bit and both answers are
- * "not now". The reason is logged rather than returned; `resolveProvider`'s two
- * distinct messages are what distinguishes them for an operator reading logs.
- *
- * Costs one eligibility evaluation per call, so treat it as the status check it
- * is and do not put it on a per-request path.
+ * `'unknown'` is the fourth state and it is not padding. The chain's
+ * `aiProviderConfig.findMany` is the one query with no `.catch()`, so a pool
+ * timeout is a failure to ANSWER, not an answer of "no". Reporting it as a
+ * verdict prints the same wrong remedy; 500ing instead does not help either,
+ * because the caller does `if (!res.ok) return` and falls back to the same
+ * misleading `false` while also losing the chunk counts.
  */
-export async function canResolveEmbeddingProvider(): Promise<boolean> {
+export type EmbeddingAvailability =
+  /** A provider resolves; embedding will run. */
+  | 'ok'
+  /** Nothing is set up. The operator wants the setup wizard or a provider row. */
+  | 'none_configured'
+  /** Providers exist and the app's eligibility rule refuses every one of them. */
+  | 'none_permitted'
+  /** We could not find out — a transient failure, not a verdict. */
+  | 'unknown';
+
+/**
+ * Can this install embed right now, and if not, why?
+ *
+ * Answers by *running the resolver* rather than by re-deriving it from row
+ * counts. Those two used to be the same question and this branch made them
+ * different: an install can have active provider rows and an `OPENAI_API_KEY`
+ * while the app's eligibility rule refuses every one of them.
+ *
+ * Never throws. A caller rendering an operator-facing remedy needs an answer
+ * for every case, and `'unknown'` is the honest one when the lookup itself
+ * failed — see {@link EmbeddingAvailability}.
+ *
+ * Costs one eligibility evaluation per arm tried, so treat it as the status
+ * check it is and do not put it on a per-request path.
+ */
+export async function resolveEmbeddingAvailability(): Promise<EmbeddingAvailability> {
   try {
     await resolveProvider();
-    return true;
+    return 'ok';
   } catch (err) {
-    // ONLY the two verdicts answer `false`. Everything else — above all the
-    // uncaught `aiProviderConfig.findMany` on the chain's own path — is a
-    // failure to ANSWER the question, not an answer of "no", and it propagates
-    // so the route 500s. Swallowing it would tell an operator under connection
-    // pressure that they have no embedding provider configured, and send them
-    // to reconfigure providers that were fine all along.
-    if (err instanceof NoProviderConfiguredError || err instanceof NoEligibleProviderError) {
-      logger.info('No usable embedding provider', { reason: err.message, code: err.code });
-      return false;
+    if (err instanceof NoProviderConfiguredError) {
+      logger.info('No embedding provider configured', { reason: err.message });
+      return 'none_configured';
     }
-    throw err;
+    if (err instanceof NoEligibleProviderError) {
+      logger.warn('Every embedding provider was refused by the app eligibility rule', {
+        reason: err.message,
+      });
+      return 'none_permitted';
+    }
+    logger.error('Could not determine embedding availability', err, {});
+    return 'unknown';
   }
 }
 

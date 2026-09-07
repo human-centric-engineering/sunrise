@@ -152,17 +152,29 @@ release process.
   because an unforced table fails open for its owner — waive it per table with
   `{ requireForced: false }`.
 
-- `canResolveEmbeddingProvider()` exported from
-  `lib/orchestration/knowledge/embedder.ts` — answers "can this install embed
-  right now?" by running the resolver rather than by counting provider rows.
-  Those were the same question until the embedding chain started consulting the
-  eligibility rule (below), and `GET
-  /api/v1/admin/orchestration/knowledge/embedding-status` now uses it for
-  `hasActiveProvider`. **Behaviour change:** that field previously meant "an
-  active provider row exists, or `OPENAI_API_KEY` is set". On a fork whose rule
-  refuses every arm it reported `true` while embedding could not run, so the
-  admin UI enabled "Generate Embeddings" for a run guaranteed to fail. It now
-  means what its name says.
+- `resolveEmbeddingAvailability()` and the `EmbeddingAvailability` type exported
+  from `lib/orchestration/knowledge/embedder.ts` — answers "can this install
+  embed right now, and if not why?" by running the resolver rather than by
+  counting provider rows. Those were the same question until the embedding chain
+  started consulting the eligibility rule (below).
+
+  `GET /api/v1/admin/orchestration/knowledge/embedding-status` gains a
+  **`providerState`** field carrying one of `'ok'`, `'none_configured'`,
+  `'none_permitted'` or `'unknown'`. `hasActiveProvider` keeps its name and
+  still gates the "Generate Embeddings" affordance, so existing consumers keep
+  working — but its **meaning has changed**: it previously meant "an active
+  provider row exists, or `OPENAI_API_KEY` is set", which on a fork whose rule
+  refuses every arm reported `true` while embedding could not run.
+
+  A boolean alone is not enough, which is why `providerState` exists. The admin
+  banner picks its remedy from it, and "nothing is set up" and "your policy
+  refuses the providers you have" need opposite remedies — telling the second
+  operator to "add an embedding provider" sends them to add rows that are
+  already there, the precise mistake `NoEligibleProviderError`'s docstring
+  exists to prevent. `'unknown'` covers a lookup that failed rather than a
+  verdict; the endpoint still returns the chunk counts in that case, because
+  500ing loses them and the client renders the same misleading banner anyway.
+
 
 - `UNCONFIGURED_OPENAI_SLUG` (`'env:openai'`) exported from
   `lib/orchestration/knowledge/embedder.ts`. The embedder's last fallback arm

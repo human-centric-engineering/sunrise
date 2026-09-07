@@ -12,7 +12,7 @@
  * question ("does a provider exist?") and the two stopped agreeing once the
  * embedding chain started consulting the provider-eligibility rule. This is a
  * polling snapshot behind the knowledge Manage tab; keep it off any per-request
- * path, as `canResolveEmbeddingProvider`'s own JSDoc says.
+ * path, as `resolveEmbeddingAvailability`'s own JSDoc says.
  *
  * Authentication: Admin role required.
  */
@@ -20,10 +20,10 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { prisma } from '@/lib/db/client';
-import { canResolveEmbeddingProvider } from '@/lib/orchestration/knowledge/embedder';
+import { resolveEmbeddingAvailability } from '@/lib/orchestration/knowledge/embedder';
 
 export const GET = withAdminAuth(async (_request) => {
-  const [total, embeddedRows, hasActiveProvider] = await Promise.all([
+  const [total, embeddedRows, providerState] = await Promise.all([
     prisma.aiKnowledgeChunk.count(),
     prisma.$queryRaw<[{ count: bigint }]>`
       SELECT COUNT(*) as count FROM ai_knowledge_chunk WHERE embedding IS NOT NULL
@@ -35,7 +35,7 @@ export const GET = withAdminAuth(async (_request) => {
     // rule. On a fork whose rule refuses every arm, the row check reports
     // `true` and the admin UI enables "Generate Embeddings" for a run that
     // cannot succeed.
-    canResolveEmbeddingProvider(),
+    resolveEmbeddingAvailability(),
   ]);
 
   const embedded = Number(embeddedRows[0]?.count ?? 0);
@@ -44,6 +44,11 @@ export const GET = withAdminAuth(async (_request) => {
     total,
     embedded,
     pending: total - embedded,
-    hasActiveProvider,
+    // Kept, and kept meaning "embedding will run" — every existing consumer
+    // gates an affordance on it. `providerState` is additive and carries the
+    // WHY, because "no provider is set up" and "your policy refuses the ones
+    // that are" need opposite remedies and the boolean prints only the first.
+    hasActiveProvider: providerState === 'ok',
+    providerState,
   });
 });
