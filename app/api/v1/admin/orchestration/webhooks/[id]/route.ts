@@ -10,7 +10,6 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
@@ -90,40 +89,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     //
     // Checked here rather than only at import so rows written before the
     // importer's refine existed cannot be activated either.
-    // Derived from the RESULTING ROW, not from the request body.
-    //
-    // Two earlier cuts of this were wrong in opposite directions. Checking every
-    // webhook-channel patch blocked `PATCH { isActive: false }` — the one action
-    // an operator needs when they find a bad row already live — leaving DELETE
-    // as the only remedy. Checking only `body.isActive === true || 'url' in body`
-    // then asked "does this request activate?" when the question is "can the row
-    // emit to `nextUrl` once this patch lands?". Two things make it emit that
-    // such a predicate never sees:
-    //
-    //   - a SECRET. `POST /webhooks/:id/test` fetches the stored url and gates
-    //     only on a non-empty secret — `isActive` is not required. So
-    //     `PATCH { secret }` alone armed an unsafe destination.
-    //   - a CHANNEL flip. This whole branch is skipped while the row sits on
-    //     `email`, so: flip to email, activate, flip back to webhook with a
-    //     secret. Three patches, none carrying `isActive: true` or a `url`, and
-    //     the row dispatches live to an address nothing ever checked.
-    //
-    // Both need a row whose stored url is unsafe — which is exactly the case
-    // this guard exists for: bundles imported before the importer validated
-    // destinations, whose own warning tells the operator to set a secret and
-    // re-enable. Editing `description` on a row that is already active and
-    // unsafe is now refused; deactivate first. That is the right trade.
-    const nextIsActive = body.isActive ?? existing.isActive;
-    const settingSecret = 'secret' in body && !!body.secret;
-    if (nextIsActive || settingSecret || 'url' in body) {
-      const urlCheck = checkSafeProviderUrl(nextUrl);
-      if (!urlCheck.ok) {
-        throw new ValidationError('URL is not allowed (private or internal address)', {
-          url: [urlCheck.message],
-        });
-      }
-    }
-
     // Secret is allowed to remain unchanged on PATCH (existing flow:
     // empty `secret` = keep current). Only enforce presence on a fresh
     // channel switch from email → webhook where no secret was ever set.

@@ -235,17 +235,24 @@ release process.
   sender — to an address of the bundle author's choosing, with no warning in the
   import result and no second step required.
 
-  The guard on the PATCH route derives from the **resulting row**, not from the
-  request body. Two earlier cuts were wrong in opposite directions: checking
-  every webhook-channel patch blocked `PATCH { isActive: false }`, the one action
-  an operator needs to stop a bad row already firing; checking only for an
-  activation missed two ways a row starts emitting without one. A lone
-  `PATCH { secret }` arms `POST /webhooks/:id/test`, which fetches the stored URL
-  and does **not** require `isActive`. And the whole check is skipped while a row
-  sits on the email channel, so flipping to email, activating, and flipping back
-  with a secret reached live dispatch without any patch ever carrying
-  `isActive: true` or a `url`. The `/test` route now revalidates the stored
-  destination itself rather than resting on a write-path invariant it cannot see.
+  **The destination is now checked where the request is made**, in
+  `attemptWebhookDelivery`, rather than by guarding every write that could make a
+  bad row live. Two earlier attempts did the latter and both were walked around:
+  a lone `PATCH { secret }` armed `POST /webhooks/:id/test`, which fetches the
+  stored URL and requires no `isActive`; and the whole check sat inside a
+  `nextChannel === 'webhook'` branch, so flipping a row to the email channel,
+  activating it, and flipping back reached live dispatch without any patch ever
+  carrying `isActive: true` or a `url`. Guarding writes means guarding a list of
+  state transitions, and the list was wrong twice. A check at the point of use
+  cannot be reached around, because it does not care how the row came to look
+  like this. The write-path refines stay for fast feedback; `/test` checks too.
+
+  **Why this matters now, on installs where it grants nothing.** Today an admin
+  is the platform operator, so a webhook aimed at the deployment's own network
+  reaches infrastructure they already administer. Under multi-tenancy an org
+  admin is not the operator and the identical request crosses an isolation
+  boundary into the platform's network. This is the groundwork feature for that
+  capability, so that is the reader it is written for.
 
   Closed at both ends. The importer validates each destination per row and skips
   the offending subscription with a warning (per row rather than in the schema,

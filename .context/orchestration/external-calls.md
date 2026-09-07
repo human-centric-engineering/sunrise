@@ -85,13 +85,13 @@ All `external_call` URLs are validated against the `ORCHESTRATION_ALLOWED_HOSTS`
 
 `ORCHESTRATION_ALLOWED_HOSTS` covers the `external_call` step and the `call_external_api` capability. It does **not** govern the other four outbound planes, and `lib/orchestration/http/allowlist.ts` used to claim otherwise in its own docstring — a false assurance that propagated into a design spike before it was caught.
 
-| plane                                      | destination control                                                                                                                         | applied                     |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| `external_call` / `call_external_api`      | **`ORCHESTRATION_ALLOWED_HOSTS`**                                                                                                           | per call                    |
-| LLM + embedding provider `baseUrl`         | `checkSafeProviderUrl`                                                                                                                      | write and build time        |
-| Webhook subscriptions                      | `isSafeProviderUrl` on create, update, backup import, the PATCH route whenever the patch leaves the row able to emit, and the `/test` route | write time + `/test`        |
-| Event hooks                                | `isSafeProviderUrl` on the action URL                                                                                                       | write **and** dispatch time |
-| Escalation notifier, knowledge URL fetcher | `checkSafeProviderUrl`                                                                                                                      | write **and** call time     |
+| plane                                      | destination control                                                                                                       | applied                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `external_call` / `call_external_api`      | **`ORCHESTRATION_ALLOWED_HOSTS`**                                                                                         | per call                      |
+| LLM + embedding provider `baseUrl`         | `checkSafeProviderUrl`                                                                                                    | write and build time          |
+| Webhook subscriptions                      | `checkSafeProviderUrl` in `attemptWebhookDelivery`, plus `isSafeProviderUrl` on create, update, backup import and `/test` | **point of use** + write time |
+| Event hooks                                | `isSafeProviderUrl` on the action URL                                                                                     | write **and** dispatch time   |
+| Escalation notifier, knowledge URL fetcher | `checkSafeProviderUrl`                                                                                                    | write **and** call time       |
 
 Two distinctions, because conflating them is what produced the wrong claim:
 

@@ -21,6 +21,7 @@ import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
+import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
@@ -380,27 +381,28 @@ async function attemptDelivery(
  * fork building a product, not to the template.
  *
  * What *is* refused is a destination that is not a third party at all: cloud
- * metadata endpoints and the deployment's own private network. That check lives
- * at **write time**, not here: the create schema's `isSafeProviderUrl` refine,
- * the update schema's when a patch carries a url, the backup importer's per-row
- * check, and the PATCH route revalidating the stored URL whenever a patch leaves
- * the row able to emit — active, or carrying a secret, since `/test` needs only
- * the latter. That list has four entries because the obvious one was not
- * enough — the importer bypasses the create schema, and an update that omits
- * `url` never reaches the update schema's refine, so a bundle-supplied metadata
- * address could be activated by following the importer's own instructions.
+ * metadata endpoints and the deployment's own private network. A subscription
+ * pointing there is not an operator expressing intent — it is a mistake or an
+ * attack, and honouring it turns this server into a proxy into its own network.
  *
- * The `/test` route is a fifth outbound call and revalidates the stored URL
- * itself. An earlier version of this comment excused it from doing so, on the
- * grounds that it needs a secret "which no path here can pair with an unsafe
- * URL" — which was wrong, and wrong in a way that made the excuse the
- * vulnerability: `PATCH { secret }` on a legacy row did exactly that pairing,
- * and `/test` does not require `isActive`. It now checks independently rather
- * than resting on an invariant it cannot see. It is not repeated per
- * dispatch because the check does no DNS resolution — re-running the same
- * string check against the same URL would reach the same verdict. `#534`
- * separately made this function refuse redirects, which is the part a
- * write-time check genuinely could not cover.
+ * **This is tenancy groundwork, and the threat model is the one being built
+ * toward.** Today an admin is the platform operator, so pointing a webhook at
+ * the box's own metadata reaches infrastructure they already own. Under
+ * multi-tenancy an ORG admin is not the platform operator, and the identical
+ * request crosses a real isolation boundary into the platform's network. The
+ * guard is written for that reader.
+ *
+ * The check runs **at the point of use**, just below, and additionally on the
+ * write paths (create and update schemas, the backup importer, the `/test`
+ * route), which fail fast and tell an operator while they can still fix it.
+ *
+ * Write-path checks alone were tried and were not enough. Guarding writes means
+ * guarding a list of state transitions, and two successive cuts of that list
+ * were each walked around by the transition they had missed — a lone
+ * `PATCH { secret }`, because `/test` requires no `isActive`; then an
+ * email-channel round trip, because the whole check sat inside a
+ * `nextChannel === 'webhook'` branch. The point-of-use check ends that class:
+ * it does not care how the row came to look like this.
  *
  * Under multi-tenancy the *allowlist* question reopens, because "which third
  * parties see our data" becomes an org-level concern rather than an operator
@@ -425,6 +427,40 @@ async function attemptWebhookDelivery(
 
   if (!sub.url) {
     return { delivered: false, terminal: true, error: 'Webhook subscription has no URL' };
+  }
+
+  // ── The destination check, at the point of use ──
+  //
+  // NOT a destination allowlist — see the docblock above for why Sunrise does
+  // not restrict WHICH third parties a webhook may reach. This refuses a
+  // destination that is not a third party at all: the deployment's own private
+  // network and cloud metadata endpoints.
+  //
+  // Here, rather than on the write paths, because "guard every write" turned out
+  // to mean guarding a growing list of state transitions — create, update,
+  // import, activate, set-a-secret, flip-the-channel — and each cut of that list
+  // was walked around by the transition it had missed. A check at the one place
+  // the request is actually made cannot be walked around by any sequence of
+  // patches, because it does not care how the row came to look like this.
+  //
+  // The write-path refines stay: they fail fast and tell an operator at the
+  // moment they can fix it. This is what makes the guarantee true rather than
+  // conventional. It is not a DNS-rebinding defence — `checkSafeProviderUrl`
+  // resolves nothing — but rows that never passed ANY write check exist: every
+  // release before this one imported backup bundles without validating them.
+  //
+  // Terminal: no number of retries will change the URL, only admin action.
+  const targetCheck = checkSafeProviderUrl(sub.url);
+  if (!targetCheck.ok) {
+    logger.warn('Webhook target refused; not delivering', {
+      subscriptionId: sub.id,
+      reason: targetCheck.reason,
+    });
+    return {
+      delivered: false,
+      terminal: true,
+      error: `Destination is not allowed: ${targetCheck.message}`,
+    };
   }
 
   try {
