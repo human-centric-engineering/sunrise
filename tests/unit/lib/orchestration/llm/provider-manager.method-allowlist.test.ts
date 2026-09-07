@@ -212,6 +212,17 @@ describe('an unclassified method fails closed', () => {
     expect(resolved.constructor.name.startsWith('bound ')).toBe(false);
   });
 
+  it('refuses to cache an instance with no slug, rather than caching it unwrapped', async () => {
+    // Arrange
+    const { provider } = makeProbe();
+
+    // Act + Assert: this used to `return provider` unwrapped, which put a
+    // never-proxied instance into the cache — a silent exception to the one
+    // invariant the registrars exist to hold, and one no reader of
+    // `getProvider` could detect.
+    expect(() => registerProviderInstance('', provider)).toThrow(/without a slug/);
+  });
+
   it('passes non-function properties through untouched', async () => {
     // Arrange
     const { provider } = makeProbe();

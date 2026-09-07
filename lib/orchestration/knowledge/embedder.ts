@@ -13,6 +13,10 @@ import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolve
 import { calculateEmbeddingCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  NoEligibleProviderError,
+  NoProviderConfiguredError,
+} from '@/lib/orchestration/llm/agent-resolver';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 
@@ -245,12 +249,26 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
  * Voyage should get the local embedder, not a failure. A rule that permits
  * nothing runs off the end of the chain, which is fail-closed.
  */
-async function permittedForEmbedding(slug: string, refusals: string[]): Promise<boolean> {
+async function permittedForEmbedding(
+  slug: string,
+  refusals: string[],
+  seen: Map<string, boolean>
+): Promise<boolean> {
+  // A row can match two arms — an Ollama row is `isLocal` AND
+  // `providerType: 'openai-compatible'`, which is the common local setup, not
+  // an exotic one. Without this the rule is evaluated twice for the same slug
+  // on every refusal, on the per-query knowledge-search path, and the slug is
+  // recorded as two refusals. The seam's own guidance anticipates rules that do
+  // policy lookups, so asking one twice per query is a cost worth not paying.
+  const cached = seen.get(slug);
+  if (cached !== undefined) return cached;
+
   const permitted = await isProviderEligible(slug, {
     task: 'embeddings',
     source: 'primary',
     primarySlug: null,
   });
+  seen.set(slug, permitted);
   if (!permitted) {
     refusals.push(slug);
     logger.info('Skipping embedding provider — not permitted by the app eligibility rule', {
@@ -303,6 +321,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // Slugs the eligibility rule turned down on this pass. Only used to pick the
   // right terminal error — see the end of this function.
   const refusals: string[] = [];
+  const seen = new Map<string, boolean>();
 
   // Check for configured providers that support embeddings
   const providers = await prisma.aiProviderConfig.findMany({
@@ -326,11 +345,11 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // Prefer Voyage AI provider (best retrieval quality, free tier)
   for (const voyageProvider of providers) {
     if (voyageProvider.providerType !== 'voyage') continue;
-    if (!(await permittedForEmbedding(voyageProvider.slug, refusals))) continue;
+    if (!(await permittedForEmbedding(voyageProvider.slug, refusals, seen))) continue;
     const apiKey = voyageProvider.apiKeyEnvVar
       ? (process.env[voyageProvider.apiKeyEnvVar] ?? null)
       : null;
-    logger.debug('Embedding provider resolved by the fallback chain', {
+    logger.info('Embedding provider resolved by the fallback chain', {
       arm: 'voyage',
       providerSlug: voyageProvider.slug,
     });
@@ -353,8 +372,8 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     // the rule says, and consulting the rule for it would record a refusal that
     // never happened and steer the terminal error to the wrong message.
     if (!localProvider.isLocal || !localProvider.baseUrl) continue;
-    if (!(await permittedForEmbedding(localProvider.slug, refusals))) continue;
-    logger.debug('Embedding provider resolved by the fallback chain', {
+    if (!(await permittedForEmbedding(localProvider.slug, refusals, seen))) continue;
+    logger.info('Embedding provider resolved by the fallback chain', {
       arm: 'local',
       providerSlug: localProvider.slug,
     });
@@ -376,12 +395,12 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   for (const openaiCompatible of providers) {
     if (openaiCompatible.providerType !== 'openai-compatible' || !openaiCompatible.baseUrl)
       continue;
-    if (!(await permittedForEmbedding(openaiCompatible.slug, refusals))) continue;
+    if (!(await permittedForEmbedding(openaiCompatible.slug, refusals, seen))) continue;
     const apiKey = openaiCompatible.apiKeyEnvVar
       ? (process.env[openaiCompatible.apiKeyEnvVar] ?? null)
       : null;
     const model = settingsModel || DEFAULT_MODEL;
-    logger.debug('Embedding provider resolved by the fallback chain', {
+    logger.info('Embedding provider resolved by the fallback chain', {
       arm: 'openai-compatible',
       providerSlug: openaiCompatible.slug,
     });
@@ -399,9 +418,9 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // Default: OpenAI API directly, off a bare env var with no provider row.
   // See UNCONFIGURED_OPENAI_SLUG for why this arm has a name at all.
   const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
-  if (openaiKey && (await permittedForEmbedding(UNCONFIGURED_OPENAI_SLUG, refusals))) {
+  if (openaiKey && (await permittedForEmbedding(UNCONFIGURED_OPENAI_SLUG, refusals, seen))) {
     const model = settingsModel || DEFAULT_MODEL;
-    logger.debug('Embedding provider resolved by the fallback chain', {
+    logger.info('Embedding provider resolved by the fallback chain', {
       arm: 'unconfigured-openai',
       providerSlug: UNCONFIGURED_OPENAI_SLUG,
     });
@@ -423,13 +442,13 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // install with only an Anthropic row reaches the end of this chain having
   // been refused nothing, and must not be told a policy turned it away.
   if (refusals.length > 0) {
-    throw new Error(
+    throw new NoEligibleProviderError(
       'No permitted embedding provider. Every embedding provider this install could ' +
         'have used was refused by the app provider-eligibility rule ' +
         '(lib/app/llm-providers.ts).'
     );
   }
-  throw new Error(
+  throw new NoProviderConfiguredError(
     'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
       'or configure an embedding provider in the admin settings.'
   );
@@ -458,10 +477,17 @@ export async function canResolveEmbeddingProvider(): Promise<boolean> {
     await resolveProvider();
     return true;
   } catch (err) {
-    logger.info('No usable embedding provider', {
-      reason: err instanceof Error ? err.message : String(err),
-    });
-    return false;
+    // ONLY the two verdicts answer `false`. Everything else — above all the
+    // uncaught `aiProviderConfig.findMany` on the chain's own path — is a
+    // failure to ANSWER the question, not an answer of "no", and it propagates
+    // so the route 500s. Swallowing it would tell an operator under connection
+    // pressure that they have no embedding provider configured, and send them
+    // to reconfigure providers that were fine all along.
+    if (err instanceof NoProviderConfiguredError || err instanceof NoEligibleProviderError) {
+      logger.info('No usable embedding provider', { reason: err.message, code: err.code });
+      return false;
+    }
+    throw err;
   }
 }
 

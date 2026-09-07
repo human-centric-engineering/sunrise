@@ -3,8 +3,16 @@
  *
  * GET /api/v1/admin/orchestration/knowledge/embedding-status
  *
- * Lightweight endpoint returning how many chunks have embeddings
- * and whether an active embedding provider is configured.
+ * Returns how many chunks have embeddings, and whether this install can
+ * actually embed right now.
+ *
+ * NOT lightweight, and deliberately so. `hasActiveProvider` runs the embedding
+ * resolver — up to four more queries plus one eligibility evaluation per arm
+ * tried — because the cheap row count it replaced answered a different
+ * question ("does a provider exist?") and the two stopped agreeing once the
+ * embedding chain started consulting the provider-eligibility rule. This is a
+ * polling snapshot behind the knowledge Manage tab; keep it off any per-request
+ * path, as `canResolveEmbeddingProvider`'s own JSDoc says.
  *
  * Authentication: Admin role required.
  */

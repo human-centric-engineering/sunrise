@@ -191,12 +191,12 @@ const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
  * What makes it safe is that it is module-private and unexported, so no caller
  * has a reference to mutate. Do not export it.
  *
- * `constructor` is listed so a pollution write cannot make it look like an
- * ordinary provider method, but it is returned UNBOUND at the call site above —
- * see the comment there.
+ * `constructor` is deliberately NOT in this set: it is handled by its own
+ * branch at the call site, which runs first and returns it unbound. Listing it
+ * here as well would be a dead entry whose presence implied this set was what
+ * protected it.
  */
 const HOST_MACHINERY: ReadonlySet<string> = new Set([
-  'constructor',
   'hasOwnProperty',
   'isPrototypeOf',
   'propertyIsEnumerable',
@@ -227,9 +227,9 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * provider's own internal `this.foo()` calls never re-enter the trap.
  *
  * Wrapping happens once per cache entry, not per call, so the proxy cost is
- * negligible; the closures it returns run per call. Returns the original
- * instance unchanged when `slug` is empty (defensive — should not happen with
- * current call sites).
+ * negligible; the closures it returns run per call. Throws on an empty `slug`,
+ * because the alternative — returning the instance unwrapped — is the one way
+ * the cache's invariant could quietly fail.
  *
  * **Unclassified methods throw on access.** A function property that is not on
  * {@link METHOD_DISPOSITION} and not host machinery is a method someone added
@@ -241,7 +241,18 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * called, and it should fail there too.
  */
 function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider {
-  if (!slug) return provider;
+  // Refuse rather than return the bare instance. This used to be
+  // `if (!slug) return provider;`, described as defensive — but the callers are
+  // the three ways into `instanceCache`, so "everything `getProvider` returns
+  // has been through the Proxy" was a property with a silent exception in it,
+  // and an exception nobody could see at the read. An empty slug is a caller
+  // bug either way; this is the version that says so.
+  if (!slug) {
+    throw new ProviderError('Cannot wrap a provider instance without a slug', {
+      code: 'missing_provider_slug',
+      retriable: false,
+    });
+  }
   return new Proxy(provider, {
     get(target, prop, receiver): unknown {
       const value: unknown = Reflect.get(target, prop, receiver);

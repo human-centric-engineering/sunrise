@@ -39,6 +39,7 @@ global.fetch = mockFetch;
 
 const { registerProviderEligibility, resetProviderEligibility } =
   await import('@/lib/orchestration/llm/provider-eligibility');
+const { logger } = await import('@/lib/logging');
 const { embedText, canResolveEmbeddingProvider, UNCONFIGURED_OPENAI_SLUG } =
   await import('@/lib/orchestration/knowledge/embedder');
 
@@ -237,6 +238,67 @@ describe('canResolveEmbeddingProvider', () => {
 
     // Act + Assert
     await expect(canResolveEmbeddingProvider()).resolves.toBe(true);
+  });
+});
+
+describe('canResolveEmbeddingProvider distinguishes a verdict from a failure', () => {
+  it('propagates a database error rather than reporting "no provider"', async () => {
+    // Arrange: the chain's own uncaught query fails, as it would under
+    // connection-pool pressure.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(
+      new Error('Timed out fetching a new connection from the connection pool')
+    );
+
+    // Act + Assert: "I cannot answer" is not the answer "no". Swallowing this
+    // tells an operator they have no embedding provider configured and sends
+    // them to reconfigure providers that were fine all along.
+    await expect(canResolveEmbeddingProvider()).rejects.toThrow(/connection pool/);
+  });
+});
+
+describe('the eligibility rule is asked once per slug', () => {
+  it('does not re-evaluate a row that matches two arms', async () => {
+    // Arrange: an Ollama row is `isLocal` AND `openai-compatible` — the common
+    // local setup, so it matches the local arm and the openai-compatible arm.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'ollama', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
+    ] as never);
+    const resolver = vi.fn(() => [] as string[]);
+    registerProviderEligibility(resolver);
+
+    // Act
+    await expect(embedText('hello')).rejects.toThrow(/No permitted embedding provider/);
+
+    // Assert: one evaluation, not two. This runs per knowledge-search query and
+    // a fork's rule may do a policy lookup, so the duplicate was a real cost.
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the winning arm is logged where production can see it', () => {
+  it('logs at info, not debug', async () => {
+    // Arrange
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      row({ slug: 'together' }),
+    ] as never);
+
+    // Act
+    await embedText('hello');
+
+    // Assert: `lib/logging` defaults to INFO when NODE_ENV === 'production',
+    // so `debug` here is dropped in exactly the deployment that needs it —
+    // and the drop-through this line exists to make visible stays invisible.
+    // Three docs promise `info`; this is what stops the code drifting off them
+    // again. The parallel audio path (`'Audio provider resolved'`) is `info`
+    // for the same reason.
+    expect(logger.info).toHaveBeenCalledWith('Embedding provider resolved by the fallback chain', {
+      arm: 'openai-compatible',
+      providerSlug: 'together',
+    });
+    expect(logger.debug).not.toHaveBeenCalledWith(
+      'Embedding provider resolved by the fallback chain',
+      expect.anything()
+    );
   });
 });
 
