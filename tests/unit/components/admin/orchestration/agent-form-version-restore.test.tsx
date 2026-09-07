@@ -278,6 +278,56 @@ describe('AgentForm — save after a version restore', () => {
     expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/anthropic/i);
   });
 
+  it('a provider picked but not saved does not survive a restore as an authored value', async () => {
+    // The nastiest shape this form can produce, and it arrives through the
+    // restore path: `reset()` replaces the form VALUES but not the authorship
+    // state beside them. An operator who picks a provider, changes their mind
+    // and restores a version would otherwise leave `authored.provider` true
+    // while the reset put the PREVIEW back into the field — so the next save
+    // pinned a provider nobody chose. That is the defect this whole form
+    // exists to prevent.
+    const { apiClient } = await import('@/lib/api/client');
+    const fresh = makeAgent({ provider: '', model: '' });
+    vi.mocked(apiClient.get).mockResolvedValue(fresh);
+    vi.mocked(apiClient.patch).mockResolvedValue({ id: fresh.id });
+
+    const user = userEvent.setup();
+    render(
+      <AgentForm
+        mode="edit"
+        agent={makeAgent({ provider: '', model: '' })}
+        providers={PROVIDERS}
+        models={MODELS}
+        effectiveDefaults={{
+          provider: 'anthropic',
+          model: 'claude-opus-4-6',
+          inheritedProvider: true,
+          inheritedModel: true,
+        }}
+      />
+    );
+
+    // 1. Author a provider.
+    await user.click(screen.getByRole('tab', { name: /model/i }));
+    await user.click(screen.getByRole('combobox', { name: /provider/i }));
+    await user.click(await screen.findByRole('option', { name: /anthropic/i }));
+
+    // 2. Change your mind: restore a version instead.
+    await user.click(screen.getByRole('tab', { name: /versions/i }));
+    await user.click(screen.getByRole('button', { name: /simulate restore/i }));
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+
+    // 3. Save.
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+
+    const body = vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> };
+    expect(body.body).not.toHaveProperty('provider');
+    // CONTROL — the save happened and carried the form, so the assertion above
+    // is not passing against an empty body.
+    expect(body.body).toHaveProperty('name', 'Support Bot');
+  });
+
   it('falls back safely when the restored row carries nulls', async () => {
     // Covers the `??` arms — a version restored from a row whose optional
     // columns are null must still produce a schema-valid form.

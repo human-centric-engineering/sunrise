@@ -641,6 +641,9 @@ export function AgentForm({
         });
         // Re-seed the form with what we just saved so dirty-state clears.
         reset(data);
+        // Authorship describes edits made since the form was last seeded. The
+        // save re-seeds it, so the slate is clean again.
+        setAuthored({ provider: false, model: false });
         setSaved(true);
         schedule(() => setSaved(false), 2500);
       } else {
@@ -2121,6 +2124,14 @@ export function AgentForm({
                       enableImageInput: fresh.enableImageInput ?? false,
                       enableDocumentInput: fresh.enableDocumentInput ?? false,
                     });
+                    // MUST clear authorship. `reset` replaces the form values
+                    // but not this state, so without it a provider the operator
+                    // picked-but-did-not-save left `authored.provider` true
+                    // while the reset put the PREVIEW back in the field — and
+                    // the next save pinned the preview. That is precisely the
+                    // defect this form exists to prevent, arriving through the
+                    // restore path.
+                    setAuthored({ provider: false, model: false });
                   } catch {
                     // Silent — the version tab already shows its own error state.
                   }
