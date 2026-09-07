@@ -170,6 +170,39 @@ const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
   testConnection: 'passthrough',
 };
 
+/**
+ * Method names that every object carries and no vendor ever sees.
+ *
+ * Written out rather than tested with `prop in Object.prototype`, which was the
+ * first cut. That version asked a *mutable* object what counts as host
+ * machinery: anything that writes to `Object.prototype` — a prototype-pollution
+ * gadget, or a careless polyfill — widens the exemption by exactly the name it
+ * writes, and a provider method with that name would then be forwarded instead
+ * of refused. It grants nothing today, because no provider in the tree has an
+ * unclassified method to forward; under the architecture this is groundwork for
+ * a fork's provider does, and the refusal is the whole control.
+ *
+ * A frozen list also fails in the right direction. A future runtime adding a
+ * member to `Object.prototype` gets refused rather than silently exempted, and
+ * the error names the file to edit.
+ *
+ * `constructor` is included because it is the same category — reached by test
+ * runners and `instanceof` checks, never by a vendor.
+ */
+const HOST_MACHINERY: ReadonlySet<string> = new Set([
+  'constructor',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString',
+  'toString',
+  'valueOf',
+  '__defineGetter__',
+  '__defineSetter__',
+  '__lookupGetter__',
+  '__lookupSetter__',
+]);
+
 function dispositionOf(prop: string): MethodDisposition | undefined {
   return Object.prototype.hasOwnProperty.call(METHOD_DISPOSITION, prop)
     ? METHOD_DISPOSITION[prop as ProviderMethodName]
@@ -227,12 +260,11 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
           return fn.bind(target);
       }
 
-      // `constructor` and everything inherited from `Object.prototype`
-      // (`toString`, `hasOwnProperty`, `valueOf`, …) is host machinery that
-      // every object carries and no vendor sees. Test runners, structured
-      // logging and `util.inspect` all reach for these; refusing them would
-      // fail on the observer rather than on the thing observed.
-      if (prop === 'constructor' || prop in Object.prototype) return fn.bind(target);
+      // Host machinery — reached by test runners, structured logging and
+      // `util.inspect`, never by a vendor. Refusing these would fail on the
+      // observer rather than on the thing observed. See HOST_MACHINERY for why
+      // it is a fixed list and not `prop in Object.prototype`.
+      if (HOST_MACHINERY.has(prop)) return fn.bind(target);
 
       logger.error('Refusing an unclassified method on a provider instance', undefined, {
         provider: slug,

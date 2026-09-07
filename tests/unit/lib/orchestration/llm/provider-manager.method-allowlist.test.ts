@@ -170,6 +170,31 @@ describe('an unclassified method fails closed', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
+  it('is not widened by writing to Object.prototype', async () => {
+    // Arrange: a provider with an unclassified vendor-reaching method, plus a
+    // prototype-pollution gadget naming that same method.
+    const rerank = vi.fn(async () => ['a']);
+    const { provider } = makeProbe({ rerank });
+    registerProviderInstance('probe', provider);
+    const resolved = await getProvider('probe');
+
+    try {
+      (Object.prototype as unknown as Record<string, unknown>)['rerank'] = rerank;
+
+      // Act + Assert: the exemption is a frozen list, so `rerank` is still an
+      // unclassified provider method. Asking a MUTABLE object what counts as
+      // host machinery — `prop in Object.prototype`, the first cut — let any
+      // write to that object widen the exemption by exactly the name written,
+      // and this method would have been forwarded instead of refused.
+      expect(() => (resolved as unknown as { rerank: unknown }).rerank).toThrow(
+        /not on the LlmProvider contract/
+      );
+      expect(rerank).not.toHaveBeenCalled();
+    } finally {
+      delete (Object.prototype as unknown as Record<string, unknown>)['rerank'];
+    }
+  });
+
   it('passes non-function properties through untouched', async () => {
     // Arrange
     const { provider } = makeProbe();
