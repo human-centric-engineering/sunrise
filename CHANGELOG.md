@@ -199,9 +199,13 @@ release process.
   the field is present. That is deliberate rather than an oversight: the way to
   leave an agent resolving dynamically over HTTP is to **omit** the field, not to
   send `''`. Seeds, which write through Prisma directly, are what create such
-  agents in the first place. (One consequence worth knowing: a backup bundle
-  containing a system-seeded agent cannot currently be re-imported, because
-  `bundledAgentSchema` requires the value the row does not have.)
+  agents in the first place. (One consequence worth knowing, corrected after
+  release: an **agent export** bundle containing a system-seeded agent cannot be
+  re-imported, because `bundledAgentSchema` requires the value such a row does
+  not have — filed as #721. An earlier version of this bullet said *backup*
+  bundle, which is wrong: `backup/exporter.ts` filters `isSystem: false` and
+  `backup/schema.ts` accepts an empty provider, so backup/restore round-trips
+  correctly.)
 
   **Fork impact:** run `npm run db:migrate:deploy`. Any `prisma.aiAgent.create()`
   in your own code that omitted `provider` will now fail `tsc` — add the field.
@@ -212,6 +216,23 @@ release process.
   `npm run db:drift-check` passes all 9 probes against the applied migration.
 
 ### Fixed
+
+- **A workflow `chat_turn` step put the database's host and port on the
+  execution row.** `engine/executors/chat-turn.ts` forwarded every error out of
+  `resolveAgentProviderAndModel` verbatim, but that catch also wraps a Prisma
+  failure in `pickActiveProviderCandidates` and a throw from
+  `getDefaultModelForTask`. With the database unreachable, `Can't reach database
+  server at <host>:<port>` became the `ExecutorError` message — persisted on the
+  execution and rendered in the executions list and the trace viewer. Now
+  narrowed to the two errors the resolver defines, matching the fix `#717` made
+  in the sibling `agent-call.ts` executor and missed here. Both are additionally
+  prefixed with the agent slug, because in a multi-step workflow `step.id` alone
+  left an operator mapping it back to an agent by hand.
+
+  Narrow — admin-only audience, only while the database is down — but it is the
+  deployment's own infrastructure, and the neighbouring executor already had the
+  fix.
+
 
 - **The agent form no longer writes fields the operator did not author.** This is
   the change the rest of this group turns on, and it is worth stating as a rule

@@ -39,9 +39,16 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProviderWithFallbacks: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/llm/agent-resolver', () => ({
-  resolveAgentProviderAndModel: vi.fn(),
-}));
+// The two error CLASSES come from the real module: the executor narrows on
+// `instanceof`, so stubbing them away would make every branch fall to the
+// generic arm and the narrowing test would pass for the wrong reason.
+vi.mock('@/lib/orchestration/llm/agent-resolver', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/orchestration/llm/agent-resolver')>();
+  return {
+    ...actual,
+    resolveAgentProviderAndModel: vi.fn(),
+  };
+});
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   calculateCost: vi.fn(() => ({ inputCostUsd: 0.001, outputCostUsd: 0.002 })),
@@ -73,7 +80,11 @@ vi.mock('@/lib/orchestration/engine/llm-runner', async () => {
 
 import { prisma } from '@/lib/db/client';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
-import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  resolveAgentProviderAndModel,
+  NoEligibleProviderError,
+  NoProviderConfiguredError,
+} from '@/lib/orchestration/llm/agent-resolver';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { executeChatTurn } from '@/lib/orchestration/engine/executors/chat-turn';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
@@ -287,6 +298,60 @@ describe('chat_turn — error paths', () => {
     });
   });
 
+  describe('resolver failures do not leak infrastructure detail (t-664)', () => {
+    async function resolverThrows(err: unknown) {
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+        id: 'conv_1',
+        agentId: 'agent_1',
+      } as never);
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+      vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
+      vi.mocked(resolveAgentProviderAndModel).mockRejectedValue(err);
+      try {
+        await executeChatTurn(makeStep(), makeCtx());
+      } catch (e: unknown) {
+        return e as Error;
+      }
+      // Not a formality: if the executor ever stops throwing here, every
+      // assertion below would read a property off a resolved StepResult and
+      // silently pass.
+      throw new Error('expected executeChatTurn to reject, but it resolved');
+    }
+
+    it('does not forward a Prisma connection error onto the execution row', async () => {
+      // The catch around `resolveAgentProviderAndModel` also wraps a Prisma
+      // failure in `pickActiveProviderCandidates`. This message is persisted on
+      // the execution row and rendered in the executions list and trace UI, so
+      // forwarding it verbatim publishes the deployment's own database host.
+      const caught = await resolverThrows(
+        new Error("Can't reach database server at `db.internal.example:5432`")
+      );
+
+      expect(caught.message).not.toContain('db.internal.example');
+      expect(caught.message).not.toContain('5432');
+      // Still useful: names the agent, so a multi-step workflow does not leave
+      // the operator mapping step.id back to an agent by hand.
+      expect(caught.message).toContain('helpful-agent');
+      expect(caught).toMatchObject({ code: 'provider_unresolved' });
+    });
+
+    it("CONTROL — the resolver's OWN errors still reach the operator, with the slug", async () => {
+      // Without this, the assertion above would also pass if the executor had
+      // simply stopped reporting anything useful.
+      const caught = await resolverThrows(
+        new NoEligibleProviderError('No configured provider is permitted for this agent')
+      );
+
+      expect(caught.message).toContain('No configured provider is permitted');
+      expect(caught.message).toContain('helpful-agent');
+    });
+
+    it('CONTROL — NoProviderConfiguredError is forwarded too', async () => {
+      const caught = await resolverThrows(new NoProviderConfiguredError('No active provider'));
+      expect(caught.message).toContain('No active provider');
+    });
+  });
+
   it('wraps a provider-level chat() failure in a typed ExecutorError', async () => {
     vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
       id: 'conv_1',
@@ -465,14 +530,18 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
       agentId: 'agent_1',
     } as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
-    // String throw (not an Error instance) — exercises the `err instanceof Error` ELSE branch.
+    // String throw (not an Error instance) — exercises the branch where the
+    // thrown value is neither of the resolver's own error types.
     vi.mocked(resolveAgentProviderAndModel).mockRejectedValueOnce('weird non-error throw');
 
     const err = await executeChatTurn(makeStep(), makeCtx()).catch((e) => e);
     expect(err).toBeInstanceOf(ExecutorError);
     expect(err.code).toBe('provider_unresolved');
-    // Default message wins when err is not an Error.
-    expect(err.message).toBe('Failed to resolve agent provider/model');
+    // The generic message now names the agent (t-664). It deliberately does NOT
+    // carry the thrown value: this arm is what stops a Prisma or settings
+    // failure putting infrastructure detail on the execution row.
+    expect(err.message).toBe('Failed to resolve provider/model for agent "helpful-agent"');
+    expect(err.message).not.toContain('weird non-error throw');
   });
 
   it('wraps a non-Error throw from provider.chat in chat_turn_failed (string fallback)', async () => {

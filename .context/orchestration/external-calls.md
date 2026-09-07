@@ -79,7 +79,25 @@ This lets downstream steps detect and handle transform issues without failing th
 
 ### SSRF protection
 
-All outbound URLs are validated against the `ORCHESTRATION_ALLOWED_HOSTS` environment variable (comma-separated hostnames). An empty or absent allowlist blocks all external calls. The parsed allowlist is cached in memory and refreshed when the env var value changes.
+All `external_call` URLs are validated against the `ORCHESTRATION_ALLOWED_HOSTS` environment variable (comma-separated hostnames). An empty or absent allowlist blocks all external calls. The parsed allowlist is cached in memory and refreshed when the env var value changes.
+
+### What the allowlist does and does not govern
+
+`ORCHESTRATION_ALLOWED_HOSTS` covers the `external_call` step and the `call_external_api` capability. It does **not** govern the other outbound planes, and `lib/orchestration/http/allowlist.ts` used to claim otherwise in its own docstring — a false assurance that propagated into a design spike before it was caught.
+
+| plane                                      | destination control                                    | applied                 |
+| ------------------------------------------ | ------------------------------------------------------ | ----------------------- |
+| `external_call` / `call_external_api`      | **`ORCHESTRATION_ALLOWED_HOSTS`**                      | per call                |
+| Webhook subscriptions                      | `isSafeProviderUrl` refine on the create/update schema | write time              |
+| Event hooks                                | `isSafeProviderUrl` refine on the action URL           | write time              |
+| Escalation notifier, knowledge URL fetcher | `checkSafeProviderUrl`                                 | write **and** call time |
+
+Two distinctions, because conflating them is what produced the wrong claim:
+
+- **An allowlist is not a shape check.** The allowlist answers _which third parties may we reach_. The other three answer only _is this a third party at all, or is it our own network_. The hook planes deliberately have **no** allowlist: their destinations are operator-configured and honouring the URL is the feature. An allowlist administered by the same admin who sets the URL is ceremony; one administered by somebody else is a separation-of-duties product feature, which belongs to a fork rather than the template. The reasoning is recorded beside `attemptWebhookDelivery` in `webhooks/dispatcher.ts`, where the question tends to occur to people.
+- **Write time is not laxer than call time here.** `checkSafeProviderUrl` performs no DNS resolution, so re-running the same string check per dispatch would reach the same verdict — it is not a rebinding defence, and adding one would be machinery for no gain. The single write path that skips the schema, the backup importer, forces `isActive: false` with an empty secret, and dispatch refuses a subscription with no secret; re-enabling goes through the update schema, which does refine. The webhook subscription refine is asserted by `tests/unit/lib/validations/webhook-subscription-url.test.ts` and the event-hook one by `tests/unit/lib/orchestration/hooks/types.test.ts`.
+
+Under multi-tenancy the allowlist question genuinely reopens, because "which third parties see our data" becomes an org-level concern rather than an operator one. That is scoped on the `f-mt-external` feature, together with recording the destination on the delivery row — today it is reachable only by joining to a subscription that may since have been edited or deleted.
 
 **Redirects are refused, not followed** (`redirect: 'error'`, #628). `isHostAllowed` runs **once**, on the pre-auth URL — and `lib/security/safe-url.ts` states the rule that makes that insufficient on its own: _"Validation is per-URL, not per-hop … Callers must either refuse redirects or re-run this check on each hop."_ Without the refusal, undici's default `'follow'` meant every `Location` after the first was unvalidated, and the response body comes back to the model through `call_external_api`, making it a read primitive rather than a blind write. Auth travels too: the fetch spec strips `Authorization` cross-origin, so `bearer` and `basic` are safe, but `api-key` with a custom `apiKeyHeaderName` is not, and `query-param` puts the secret in the URL.
 

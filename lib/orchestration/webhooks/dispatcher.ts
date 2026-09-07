@@ -367,6 +367,32 @@ async function attemptDelivery(
  * HMAC-signed POST to a webhook subscriber. Returns the structured
  * outcome that `attemptDelivery` uses to drive the shared retry / audit
  * write — adapters never write the audit row themselves.
+ *
+ * ## Why there is no destination allowlist here
+ *
+ * Decided deliberately, and recorded here because this is where the question
+ * occurs to people. Sunrise does **not** restrict *which* third parties a
+ * webhook may reach. An admin configuring a subscriber URL is exercising the
+ * feature; honouring it is the point. An allowlist administered by that same
+ * admin is ceremony — they would add whatever they were about to use. An
+ * allowlist administered by someone *else* is a separation-of-duties product
+ * feature (real, and a genuine ask in regulated sectors), which belongs to a
+ * fork building a product, not to the template.
+ *
+ * What *is* refused is a destination that is not a third party at all: cloud
+ * metadata endpoints and the deployment's own private network. That check lives
+ * at **write time**, in the create/update schema's `isSafeProviderUrl` refine
+ * (`lib/validations/orchestration.ts`), not here. It is not repeated per
+ * dispatch because the check does no DNS resolution — re-running the same
+ * string check against the same URL would reach the same verdict. `#534`
+ * separately made this function refuse redirects, which is the part a
+ * write-time check genuinely could not cover.
+ *
+ * Under multi-tenancy the *allowlist* question reopens, because "which third
+ * parties see our data" becomes an org-level concern rather than an operator
+ * one — that work is scoped on the `f-mt-external` feature, along with
+ * recording the destination on the delivery row (today it is only reachable by
+ * joining to a subscription that may since have been edited or deleted).
  */
 async function attemptWebhookDelivery(
   sub: SubscriptionLike,

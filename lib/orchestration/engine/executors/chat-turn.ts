@@ -41,7 +41,11 @@ import { logger } from '@/lib/logging';
 import { CostOperation, type StepResult, type WorkflowStep } from '@/types/orchestration';
 import type { LlmMessage, ReasoningEffort } from '@/lib/orchestration/llm/types';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
-import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
+import {
+  resolveAgentProviderAndModel,
+  NoEligibleProviderError,
+  NoProviderConfiguredError,
+} from '@/lib/orchestration/llm/agent-resolver';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { chatTurnConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -122,7 +126,19 @@ export async function executeChatTurn(
     throw new ExecutorError(
       step.id,
       'provider_unresolved',
-      err instanceof Error ? err.message : 'Failed to resolve agent provider/model',
+      // Narrowed to the two errors the resolver DEFINES, matching `agent-call.ts`
+      // — this executor forwarded every error verbatim, and that catch also wraps
+      // a Prisma failure in `pickActiveProviderCandidates` and a throw from
+      // `getDefaultModelForTask`. A database outage therefore put
+      // "Can't reach database server at <host>:<port>" onto the execution row,
+      // where it is persisted and rendered in the executions list and trace UI.
+      // Prefixed with the slug for the same reason the sibling does it: in a
+      // multi-step workflow, `step.id` alone leaves the operator mapping it back
+      // to an agent by hand. The slug is already in the fallback message, so it
+      // is not newly disclosed.
+      err instanceof NoEligibleProviderError || err instanceof NoProviderConfiguredError
+        ? `Agent "${config.agentSlug}": ${err.message}`
+        : `Failed to resolve provider/model for agent "${config.agentSlug}"`,
       err
     );
   }
