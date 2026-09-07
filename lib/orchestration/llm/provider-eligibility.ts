@@ -30,10 +30,13 @@
  * checked**, so treat it as the current state, not a guarantee. The seam
  * constrains what it is consulted for; it is not a boundary around the process.
  * `.context/orchestration/llm-providers.md` carries the per-path table, the
- * Proxy every manager-built provider passes through, and the four routes that
+ * Proxy every manager-built provider passes through, and the two routes that
  * bypass the provider manager entirely — the last of which is why a complete
  * boundary needs enforcement at the point calls pass through rather than at
- * each site that chooses. The eight choices this seam covers:
+ * each site that chooses. Note the limit on all of it, recorded 2026-09-07 and
+ * written down in that file: the guarantee binds Sunrise core, not a fork's own
+ * code, which can construct a provider directly. The eight choices this seam
+ * covers:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;

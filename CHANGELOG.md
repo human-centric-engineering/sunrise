@@ -31,30 +31,30 @@ release process.
   agent-binding resolver AND the agent form's own preview, so the form cannot
   show an operator a provider the rule forbids while the runtime uses a
   different one — and `isProviderEligible`, its single-candidate form, at the
-  four paths that resolve a provider without ever reaching the resolver. It
+  five paths that resolve a provider without ever reaching the resolver. It
   wires itself lazily on first use rather than as a consumer's import side
   effect, so which module reached it first cannot change whether the rule
   applies. `.context/orchestration/llm-providers.md` carries the per-path
-  coverage table, which names the covered paths, the deliberately-uncovered
-  ones, **and two open gaps** — knowledge embedding, which never touches the
-  provider manager, and `transcribeStream`, which no shipped provider
-  implements yet. The table is hand-derived and was short on all three
-  occasions it was checked, so **do not read the seam, or that table, as a
-  process-wide boundary.** The same file now documents the Proxy every
-  manager-built provider passes through and the four routes that bypass the
-  provider manager entirely, which is where a real boundary would have to
-  live.
+  coverage table, which names the covered paths and the deliberately-uncovered
+  ones. The table is hand-derived and was short on all three occasions it was
+  checked, so **do not read the seam, or that table, as a process-wide
+  boundary.** The same file documents the Proxy every manager-built provider
+  passes through, the two routes that bypass the provider manager entirely,
+  and the limit on the whole guarantee — it binds Sunrise core, not fork code.
   - **Covers** the auto-picked primary and both fallback lists (the agent's own
     and the automatic fill), at **both** of the resolver's return paths — a
     fully-configured agent exits early and never reaches the candidates block,
     so filtering only the latter would leave the majority of agents
-    unconstrained — plus the four paths that never reach the resolver: a
+    unconstrained — plus the five paths that never reach the resolver: a
     workflow step with no `modelOverride`, knowledge keyword enrichment, a
     retroactive review whose model came from neither a request override nor
-    `EVALUATION_JUDGE_MODEL`, and audio transcription's matrix fallback. The
-    first three resolve the `chat` task default and inherit whatever provider
-    that model names; the last walks the audio matrix in order and would
-    otherwise send a caller's voice recording to whichever row sorts first.
+    `EVALUATION_JUDGE_MODEL`, audio transcription's matrix fallback, and the
+    knowledge embedder's fallback chain. The first three resolve the `chat`
+    task default and inherit whatever provider that model names; the fourth
+    walks the audio matrix in order and would otherwise send a caller's voice
+    recording to whichever row sorts first; the fifth walks a preference chain
+    and would otherwise send an org's document text and every search query to
+    whichever arm answered first.
   - **Does not cover, by design**, an explicit `agent.provider`, an explicit
     step or review `modelOverride`, an operator's pinned audio default, or the
     `EVALUATION_DEFAULT_*` / `EVALUATION_JUDGE_MODEL` environment variables.
