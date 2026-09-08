@@ -37,6 +37,7 @@ import { logger } from '@/lib/logging';
 import {
   canAdminister,
   canRead,
+  readTargetFor,
   type AuthorizationPrincipal,
   type AuthorizationResource,
 } from '@/lib/auth/authorization';
@@ -338,14 +339,11 @@ export function withAuth(
       if (resource === UNRESOLVED) {
         throw new ForbiddenError('Access denied');
       }
-      // The resource goes through as well as the subject derived from it. It
-      // is the same object `withAdminAuth` hands `canAdminister`, and passing
-      // only `ownerId` made the read face structurally unable to see a row it
-      // could not attribute — an org-owned row, or a nullable `createdBy` —
-      // which then arrived indistinguishable from "this route named nothing"
-      // and was permitted unconditionally. A fork could not fix that in its own
-      // policy, because the information was discarded here.
-      if (!(await canRead(principal, resource?.ownerId ?? null, {}, resource))) {
+      // `readTargetFor` is the one place a resource becomes a read question, so
+      // the three states it can be in are named rather than flattened. This used
+      // to be `resource?.ownerId ?? null`, which collapsed "named nothing" and
+      // "named a row with no owner" onto the value the default policy permits.
+      if (!(await canRead(principal, readTargetFor(resource)))) {
         throw new ForbiddenError('Access denied');
       }
 

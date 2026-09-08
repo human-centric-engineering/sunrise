@@ -43,8 +43,11 @@
  * - {@link AuthorizationPolicy.canAdminister} — "may this principal use an
  *   admin surface?", optionally about one resource. The face `withAdminAuth`
  *   and the admin layout call.
- * - {@link AuthorizationPolicy.canRead} — "may this principal read this
- *   subject's data?" A boolean about one subject.
+ * - {@link AuthorizationPolicy.canRead} — "may this principal read what this
+ *   {@link ReadTarget} names?" A boolean about one of three states: a subject,
+ *   a row with no owner, or a route that named nothing. The states are a union
+ *   rather than a nullable id because collapsing them is a silent allow — see
+ *   {@link ReadTarget} for the three occasions that cost.
  * - {@link AuthorizationPolicy.subjectScope} — the same predicate as a Prisma
  *   `where` fragment: *which* subjects may this principal see? The list face.
  *   **Nothing in Sunrise core calls it yet** — there is no core list endpoint
@@ -206,6 +209,67 @@ export interface SubjectFilter {
 }
 
 /**
+ * What a request is asking to read — a **total** answer, so that "we could not
+ * determine this" can never be spelled the same way as "there is nothing to
+ * check".
+ *
+ * This union is the shape it is because the alternative kept failing. `canRead`
+ * used to take `subject: string | null`, and every state that was not a user id
+ * arrived as `null`: a route with no resolver, a resolver that returned nothing,
+ * and a row with no owner. The first should permit, the other two should not,
+ * and the natural line to write — `subject === null || subject === viewer.userId`
+ * — permits all three. That mistake was made three times inside a single branch,
+ * twice by the author of this module while a reviewer was pointing at it, and
+ * once in this file's own documentation example. A comment was not going to hold
+ * it, so the type does: a `switch` that misses an arm returns `undefined`, which
+ * does not satisfy `Promise<boolean>`, and the fork's build fails.
+ *
+ * Build one with {@link readTargetFor} (from a resolved resource) or
+ * {@link readSubject} (from a user id you already hold).
+ */
+export type ReadTarget =
+  /**
+   * The route named no resource. It is not making a claim a policy can narrow,
+   * and it is what every Sunrise route does today — which is why wiring this
+   * seam changed no behaviour. The one arm that permits by default.
+   */
+  | { kind: 'nothing' }
+  /**
+   * The route named a resource and it has no owner: an org-owned row, or a
+   * nullable `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates for
+   * retained config and audit models — so this is a common shape, not an exotic
+   * one. Answer it deliberately; it is the arm that used to be invisible.
+   */
+  | { kind: 'unattributed'; resource: AuthorizationResource }
+  /**
+   * The route named a subject: `userId` owns what is being read. The only arm
+   * in the parity relation with {@link AuthorizationPolicy.subjectScope}.
+   */
+  | { kind: 'subject'; userId: string; resource: AuthorizationResource | null };
+
+/**
+ * The one place a resolved resource becomes a {@link ReadTarget}.
+ *
+ * One named mapping rather than the same `?? null` at each call site: that
+ * duplication is how the guards drifted apart in the first place, with
+ * `withAdminAuth` passing a whole resource and `withAuth` passing one field of
+ * it.
+ */
+export function readTargetFor(resource: AuthorizationResource | null): ReadTarget {
+  if (resource === null) return { kind: 'nothing' };
+  if (resource.ownerId === undefined) return { kind: 'unattributed', resource };
+  return { kind: 'subject', userId: resource.ownerId, resource };
+}
+
+/** A {@link ReadTarget} for a user id you already hold, with no resource behind it. */
+export function readSubject(
+  userId: string,
+  resource: AuthorizationResource | null = null
+): ReadTarget {
+  return { kind: 'subject', userId, resource };
+}
+
+/**
  * The policy. A fork registers a complete one — all three faces — from
  * `lib/app/authorization.ts`.
  *
@@ -237,36 +301,30 @@ export interface AuthorizationPolicy {
   ): Promise<boolean>;
 
   /**
-   * May `viewer` read `subject`'s data? `subject` is a **user id**, or `null`
-   * when the route named no owner.
+   * May `viewer` read what {@link ReadTarget} names?
    *
-   * The parity partner of {@link subjectScope}, and parity is defined over
-   * concrete subject ids: `canRead(v, s)` must agree with
-   * "`subjectScope(v)` selects `s`" for every `s`. The `null` case is outside
-   * that relation — it is not a subject, it is the absence of one — so answer
-   * it on its own terms. See {@link checkAuthorizationParity}.
+   * `target` is a discriminated union with three arms and **you must answer all
+   * of them** — that is enforced by the compiler, not by this comment. Only the
+   * `'subject'` arm is in the parity relation with {@link subjectScope}:
+   * `canRead(v, readSubject(s))` must agree with "`subjectScope(v)` selects
+   * `s`" for every `s`. The other two arms are not subjects, so they are
+   * outside the relation and answered on their own terms. See
+   * {@link checkAuthorizationParity}.
    *
-   * **`subject` and `resource` together make three states, not two**, and
-   * collapsing them is a silent allow. `resource` carries whatever the route's
-   * resolver returned, so a row with no single owner still reaches you:
-   *
-   * | `subject` | `resource` | what the route said                          |
-   * | --------- | ---------- | -------------------------------------------- |
-   * | `null`    | `null`     | nothing — no resolver, every core route      |
-   * | `null`    | an object  | a resource it could **not** attribute to a user |
-   * | an id     | an object  | this resource, owned by this user            |
-   *
-   * The middle row is the one to answer deliberately. An org-owned row, or a
-   * nullable `createdBy` on a `SetNull` model — which `CLAUDE.md` mandates for
-   * retained config and audit models, so it is the common schema shape — lands
-   * there. Writing `subject === null || …` treats it as "unscoped" and permits
-   * every caller while looking exactly like a check.
+   * ```ts
+   * canRead: async (viewer, target) => {
+   *   switch (target.kind) {
+   *     case 'nothing':      return true;                          // route named nothing
+   *     case 'unattributed': return false;                         // named a row with no owner
+   *     case 'subject':      return target.userId === viewer.userId;
+   *   }
+   * }
+   * ```
    */
   canRead(
     viewer: AuthorizationPrincipal,
-    subject: string | null,
-    scope: AuthorizationScope,
-    resource: AuthorizationResource | null
+    target: ReadTarget,
+    scope: AuthorizationScope
   ): Promise<boolean>;
 
   /** Which subjects may `viewer` see? The list face of {@link canRead}. */
@@ -288,6 +346,20 @@ const warnedOwnerlessKinds = new Set<string>();
 /** Test-only: re-arm the once-per-kind ownerless-resource warning. */
 export function __resetOwnerlessWarningsForTests(): void {
   warnedOwnerlessKinds.clear();
+}
+
+/** Tell a fork, once per kind, that its resolver named a row nobody owns. */
+function warnOnceAboutUnattributed(resource: AuthorizationResource): void {
+  const kind = resource.kind ?? '(unnamed kind)';
+  if (warnedOwnerlessKinds.has(kind)) return;
+  warnedOwnerlessKinds.add(kind);
+  logger.warn(
+    'authorization: a route named a resource with no ownerId — denying non-admins (logged once per kind)',
+    {
+      kind,
+      fix: 'Sunrise\u2019s default policy cannot attribute an ownerless row to anyone. Either give the resolver an `ownerId`, or answer the `unattributed` arm in your own `canRead`.',
+    }
+  );
 }
 
 /**
@@ -316,34 +388,26 @@ function administersEverything(viewer: AuthorizationPrincipal): boolean {
 export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
   canAdminister: (viewer) => Promise.resolve(administersEverything(viewer)),
 
-  canRead: (viewer, subject, _scope, resource) => {
-    if (subject !== null) {
-      return Promise.resolve(subject === viewer.userId || administersEverything(viewer));
+  canRead: (viewer, target) => {
+    switch (target.kind) {
+      case 'nothing':
+        // The route named nothing, so there is no claim for this policy to
+        // narrow. Sunrise ships no `resource` resolvers, so this is the arm
+        // every core `withAuth` route takes, and it is why wiring the seam
+        // changed no behaviour.
+        return Promise.resolve(true);
+
+      case 'unattributed':
+        // A row this policy cannot attribute to anyone. Permitting it would let
+        // every caller through while the diff, and the log, still showed a
+        // policy being consulted — an allow wearing the costume of a check. So
+        // the default narrows to platform staff and says so.
+        warnOnceAboutUnattributed(target.resource);
+        return Promise.resolve(administersEverything(viewer));
+
+      case 'subject':
+        return Promise.resolve(target.userId === viewer.userId || administersEverything(viewer));
     }
-    // No owner. Which of the two no-owner states is this?
-    if (resource === null) {
-      // The route named nothing, so there is no claim for this policy to
-      // narrow. Sunrise ships no `resource` resolvers, so this is the arm every
-      // core `withAuth` route takes, and it is why wiring the seam changed no
-      // behaviour.
-      return Promise.resolve(true);
-    }
-    // The route named a resource and could not attribute it to a user. Falling
-    // through to the arm above would permit EVERY caller while the diff, and
-    // the log, still showed a policy being consulted — an allow wearing the
-    // costume of a check. So the default narrows to platform staff and says so.
-    const kind = resource.kind ?? '(unnamed kind)';
-    if (!warnedOwnerlessKinds.has(kind)) {
-      warnedOwnerlessKinds.add(kind);
-      logger.warn(
-        'authorization: a route named a resource with no ownerId — denying non-admins (logged once per kind)',
-        {
-          kind,
-          fix: 'Sunrise\u2019s default policy cannot attribute an ownerless row to anyone. Either give the resolver an `ownerId`, or answer for this case in your own `canRead` — it arrives as `subject === null` with a non-null `resource`.',
-        }
-      );
-    }
-    return Promise.resolve(administersEverything(viewer));
   },
 
   subjectScope: (viewer) =>
@@ -360,11 +424,20 @@ export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
  */
 export const SAFE_MODE_POLICY: AuthorizationPolicy = {
   canAdminister: () => Promise.resolve(false),
-  canRead: (viewer, subject, _scope, resource) =>
-    // The `null` subject is allowed only when the route named nothing at all —
-    // see the module header. A resource it could not attribute is something safe
-    // mode WAS asked about, so it is refused.
-    Promise.resolve(subject === null ? resource === null : subject === viewer.userId),
+  canRead: (viewer, target) => {
+    switch (target.kind) {
+      case 'nothing':
+        // Safe mode refuses what it WAS asked about. A route that named nothing
+        // asked nothing — and core routes all take this arm, so denying it
+        // would take the whole application down over an authorization seam that
+        // is not yet load-bearing for them.
+        return Promise.resolve(true);
+      case 'unattributed':
+        return Promise.resolve(false);
+      case 'subject':
+        return Promise.resolve(target.userId === viewer.userId);
+    }
+  },
   subjectScope: (viewer) => Promise.resolve({ userId: viewer.userId }),
 };
 
@@ -500,7 +573,11 @@ export async function canAdminister(
   scope: AuthorizationScope = {}
 ): Promise<boolean> {
   try {
-    return await getAuthorizationPolicy().canAdminister(viewer, resource, scope);
+    // `=== true`, not a truthiness test: the declared return type is
+    // `Promise<boolean>`, and a policy that answers with anything else has not
+    // said yes. TypeScript stops a fork writing one; this keeps the wrapper's
+    // own signature honest for a fork that reaches it from untyped code.
+    return (await getAuthorizationPolicy().canAdminister(viewer, resource, scope)) === true;
   } catch (error) {
     denyAfterThrow('canAdminister', error, viewer);
     return await SAFE_MODE_POLICY.canAdminister(viewer, resource, scope);
@@ -508,21 +585,19 @@ export async function canAdminister(
 }
 
 /**
- * May `viewer` read `subject`'s data? `subject` is a user id, or `null` when the
- * route named no owner — in which case `resource` says whether it named
- * anything at all. See {@link AuthorizationPolicy.canRead} for the three states.
+ * May `viewer` read what `target` names? Build the target with
+ * {@link readTargetFor} or {@link readSubject}.
  */
 export async function canRead(
   viewer: AuthorizationPrincipal,
-  subject: string | null,
-  scope: AuthorizationScope = {},
-  resource: AuthorizationResource | null = null
+  target: ReadTarget,
+  scope: AuthorizationScope = {}
 ): Promise<boolean> {
   try {
-    return await getAuthorizationPolicy().canRead(viewer, subject, scope, resource);
+    return (await getAuthorizationPolicy().canRead(viewer, target, scope)) === true;
   } catch (error) {
     denyAfterThrow('canRead', error, viewer);
-    return await SAFE_MODE_POLICY.canRead(viewer, subject, scope, resource);
+    return await SAFE_MODE_POLICY.canRead(viewer, target, scope);
   }
 }
 
@@ -539,7 +614,23 @@ export async function subjectScope(
   scope: AuthorizationScope = {}
 ): Promise<SubjectFilter> {
   try {
-    return await getAuthorizationPolicy().subjectScope(viewer, scope);
+    const filter = await getAuthorizationPolicy().subjectScope(viewer, scope);
+    // Shape-checked, not trusted. This face is the only one whose wrong answer
+    // is WIDER than its right one: `undefined` or a non-object would reach
+    // `subjectFilterSelects` as "no userId key", which means EVERY subject. A
+    // fork cannot write that in TypeScript, and this is what makes the module
+    // header's "every path here fails closed" true rather than nearly true.
+    if (typeof filter !== 'object' || filter === null) {
+      logger.error(
+        'authorization: subjectScope returned a non-object — falling back to safe mode',
+        {
+          userId: viewer.userId,
+          returned: typeof filter,
+        }
+      );
+      return await SAFE_MODE_POLICY.subjectScope(viewer, scope);
+    }
+    return filter;
   } catch (error) {
     denyAfterThrow('subjectScope', error, viewer);
     return await SAFE_MODE_POLICY.subjectScope(viewer, scope);
@@ -561,6 +652,17 @@ export interface AuthorizationParityCase {
   /** Concrete subject ids. Include at least the viewer and one other. */
   subjects: readonly string[];
   scope?: AuthorizationScope;
+  /**
+   * A resource to attach to each subject, if your `canRead` branches on one.
+   *
+   * Without it the faces are compared on `readSubject(id)` — no resource —
+   * which is not the shape a route with a resolver produces. `subjectScope` has
+   * no resource to be told about, so a `canRead` that branches on the resource
+   * for a CONCRETE subject cannot be in parity with it at all; this exists so
+   * you can check the shape your routes actually produce rather than an
+   * adjacent one.
+   */
+  resource?: AuthorizationResource;
 }
 
 /** One disagreement between `canRead` and `subjectScope`. */
@@ -646,12 +748,14 @@ export async function checkAuthorizationParity(
     const filter = await policy.subjectScope(testCase.viewer, scope);
 
     for (const subject of testCase.subjects) {
-      // A null resource: parity is a relation between the two faces over
-      // concrete subject ids, and `subjectScope` has no resource to be told
-      // about. The resource-bearing states are outside the relation by
-      // construction — which is precisely why they need answering in the policy
-      // rather than being checked here.
-      const readable = await policy.canRead(testCase.viewer, subject, scope, null);
+      // Only the `'subject'` arm is in the relation: `'nothing'` and
+      // `'unattributed'` are not subjects, so `subjectScope` has nothing to say
+      // about them and they are answered in the policy rather than checked here.
+      const readable = await policy.canRead(
+        testCase.viewer,
+        readSubject(subject, testCase.resource ?? null),
+        scope
+      );
       const selected = subjectFilterSelects(filter, subject);
       if (readable === selected) continue;
 

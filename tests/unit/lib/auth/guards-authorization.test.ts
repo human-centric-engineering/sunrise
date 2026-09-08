@@ -49,6 +49,7 @@ import {
   type AuthorizationPrincipal,
   type AuthorizationResource,
   type AuthorizationScope,
+  type ReadTarget,
 } from '@/lib/auth/authorization';
 
 // No `AuthSession` return annotation on purpose: `auth.api.getSession`'s mocked
@@ -88,7 +89,7 @@ interface AdministerCall {
 }
 interface ReadCall {
   viewer: AuthorizationPrincipal;
-  subject: string | null;
+  target: ReadTarget;
 }
 
 /** A policy that records what it was asked and answers `verdict`. */
@@ -103,8 +104,8 @@ function recordingPolicy(verdict: boolean, administered: AdministerCall[], read:
       administered.push({ viewer, resource, scope });
       return Promise.resolve(verdict);
     },
-    canRead: (viewer: AuthorizationPrincipal, subject: string | null) => {
-      read.push({ viewer, subject });
+    canRead: (viewer: AuthorizationPrincipal, target: ReadTarget) => {
+      read.push({ viewer, target });
       return Promise.resolve(verdict);
     },
   };
@@ -132,7 +133,7 @@ describe('withAuth asks the policy about the subject', () => {
     expect(read).toEqual([
       {
         viewer: { userId: 'user_1', role: 'USER', credential: 'session', scopes: undefined },
-        subject: null,
+        target: { kind: 'nothing' },
       },
     ]);
   });
@@ -146,7 +147,13 @@ describe('withAuth asks the policy about the subject', () => {
       resource: () => ({ kind: 'thing', id: 't1', ownerId: 'owner_9' }),
     })(request());
 
-    expect(read.map((call) => call.subject)).toEqual(['owner_9']);
+    expect(read.map((call) => call.target)).toEqual([
+      {
+        kind: 'subject',
+        userId: 'owner_9',
+        resource: { kind: 'thing', id: 't1', ownerId: 'owner_9' },
+      },
+    ]);
   });
 
   it('403s a foreign owner under the default policy, without running the handler', async () => {
@@ -196,11 +203,11 @@ describe('withAuth asks the policy about the subject', () => {
     // Why the assertion above holds rather than being a coincidence: the read
     // face now sees what the admin face always saw. Without this, the fix is one
     // `if` in the default policy that a fork replacing the policy loses.
-    const seen: (AuthorizationResource | null)[] = [];
+    const seen: ReadTarget[] = [];
     registerAuthorizationPolicy({
       ...DEFAULT_AUTHORIZATION_POLICY,
-      canRead: (_viewer, _subject, _scope, resource) => {
-        seen.push(resource);
+      canRead: (_viewer, target) => {
+        seen.push(target);
         return Promise.resolve(true);
       },
     });
@@ -211,7 +218,13 @@ describe('withAuth asks the policy about the subject', () => {
     })(request());
     await withAuth(() => ok())(request());
 
-    expect(seen).toEqual([{ kind: 'report', id: 'r1', orgId: 'org_7' }, null]);
+    // The union names the state instead of leaving it to be inferred from a
+    // null: the ownerless row is 'unattributed', the resolver-less route is
+    // 'nothing', and neither can be mistaken for the other.
+    expect(seen).toEqual([
+      { kind: 'unattributed', resource: { kind: 'report', id: 'r1', orgId: 'org_7' } },
+      { kind: 'nothing' },
+    ]);
   });
 
   it('denies when the resolver names nothing, rather than reading it as unscoped', async () => {

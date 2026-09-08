@@ -20,8 +20,8 @@ release process.
 
 - **The authorization decision is now a seam, not a role check in a guard body.**
   `lib/auth/authorization.ts` ships a policy with three faces —
-  `canAdminister(viewer, resource, scope)`,
-  `canRead(viewer, subject, scope, resource)` and `subjectScope(viewer, scope)`,
+  `canAdminister(viewer, resource, scope)`, `canRead(viewer, target, scope)` and
+  `subjectScope(viewer, scope)`,
   the last returning a Prisma `where` fragment so that a fork's list query and
   its single-row read cannot disagree — **nothing in core calls `subjectScope`
   yet**, since there is no core list endpoint scoped by subject; it ships now
@@ -44,11 +44,17 @@ release process.
   it runs before the authorization decision, so treat its input as reachable by
   any authenticated caller.
 
-  The read face receives the resolved resource as well as the subject derived
-  from it, so a row with no single owner — an org-owned row, or a nullable
-  `createdBy` on a `SetNull` model — is a state a policy can answer rather than
-  one that arrives indistinguishable from "this route named nothing". Sunrise's
-  default narrows that case to platform staff and logs it. **The read axis is
+  The read face takes a `ReadTarget` — a three-arm discriminated union
+  (`'nothing'` · `'unattributed'` · `'subject'`), built by `readTargetFor()` or
+  `readSubject()` — rather than a nullable subject id. A policy must answer all
+  three arms and **the compiler enforces it**: a `switch` that misses one
+  returns `undefined`, which does not satisfy `Promise<boolean>`. That exists
+  because a row with no single owner (an org-owned row, or a nullable
+  `createdBy` on a `SetNull` model) otherwise arrives indistinguishable from
+  "this route named nothing", and the natural line to write against a nullable
+  subject — `subject === null || subject === viewer.userId` — permits every
+  caller while reading exactly like a check. Sunrise's default narrows
+  `'unattributed'` to platform staff and logs it once per kind. **The read axis is
   not yet fully behind the seam**: `GET /api/v1/users/[id]` and
   `/api/v1/users/me` still decide from the platform role inline, so a narrowing
   policy does not narrow those two — named in both module headers, tracked in

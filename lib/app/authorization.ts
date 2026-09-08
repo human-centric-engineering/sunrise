@@ -56,16 +56,29 @@
  * export function initAppAuthorizationPolicy(): void {
  *   registerAuthorizationPolicy({
  *     ...DEFAULT_AUTHORIZATION_POLICY,
- *     canRead: async (viewer, subject, _scope, resource) => {
- *       // Three states, not two. `subject === null || …` would permit every
- *       // caller for any row your resolver could not attribute to a user.
- *       if (subject === null) return resource === null;
- *       return subject === viewer.userId || (await isTeamMate(viewer.userId, subject));
+ *     canRead: async (viewer, target) => {
+ *       switch (target.kind) {
+ *         case 'nothing':      return true;   // the route named no resource
+ *         case 'unattributed': return false;  // named a row with no owner
+ *         case 'subject':
+ *           return (
+ *             target.userId === viewer.userId ||
+ *             (await isTeamMate(viewer.userId, target.userId))
+ *           );
+ *       }
  *     },
  *     subjectScope: async (viewer) => ({ userId: viewer.userId }),
  *   });
  * }
  * ```
+ *
+ * You must answer all three arms and the compiler holds you to it: a `switch`
+ * that misses one returns `undefined`, which does not satisfy `Promise<boolean>`,
+ * so your build fails rather than your install quietly permitting something.
+ * That is not defensiveness for its own sake — the previous signature took a
+ * `subject: string | null`, and the natural line to write against it,
+ * `subject === null || subject === viewer.userId`, permitted every caller for
+ * any row without an owner while reading exactly like a check.
  *
  * Before you write one:
  *
@@ -79,13 +92,16 @@
  *    each case a subject the viewer is not**: a self-only case is clean under
  *    every self-inclusive policy, correct or not, and the checker now reports
  *    that as a fault rather than passing it.
- *  - **A resolver that returns a resource with no `ownerId` is a case you must
- *    answer.** It reaches `canRead` as `subject === null` with a non-null
- *    `resource` — an org-owned row, or a nullable `createdBy` on a `SetNull`
- *    model, which `CLAUDE.md` mandates for retained config and audit models.
- *    Sunrise's default narrows it to platform staff and logs; if you spread the
- *    default and do not answer for it yourself, your org members are denied
- *    rather than silently permitted.
+ *  - **`'unattributed'` is the arm to think hardest about.** It is a row your
+ *    resolver named and could not attribute: an org-owned row, or a nullable
+ *    `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates for retained
+ *    config and audit models. Sunrise's default narrows it to platform staff
+ *    and logs once per kind; if you spread the default and do not answer it
+ *    yourself, your org members are denied rather than silently permitted.
+ *  - **A resolver that returns `null`, or throws, denies the request** before
+ *    your policy is consulted — it is not a state you can widen, and it never
+ *    reaches `canRead`. `'nothing'` means the route declared no resolver at
+ *    all, which is a decision visible in that route's source.
  *  - **Register the whole policy, not a patch.** Spread
  *    `DEFAULT_AUTHORIZATION_POLICY` when you mean to change one face, as above.
  *    The copy is then visible at your call site rather than merged behind your

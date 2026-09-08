@@ -256,6 +256,12 @@ allows. **A resolver that returns nothing, or throws, denies the request** —
 `null` is a refusal, not "unscoped" — and it runs before the authorization
 decision, so on an admin route it is reachable by any authenticated caller.
 
+What reaches the policy is a `ReadTarget`: `'nothing'` (no resolver on this
+route), `'unattributed'` (a row the resolver named but could not attribute to a
+user) or `'subject'` (a user id owns it). A policy must answer all three, and
+the compiler enforces that rather than a docblock — see
+`tests/unit/lib/auth/authorization-exhaustiveness.test.ts`.
+
 The full guide is coming with the fork-scoping work; until then read
 `lib/auth/authorization.ts`'s module header, which carries the contract,
 including the two `users` routes whose read decision is still inline (#738).

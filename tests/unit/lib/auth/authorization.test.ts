@@ -24,6 +24,8 @@ import {
   canRead,
   subjectScope,
   subjectFilterSelects,
+  readSubject,
+  readTargetFor,
   getAuthorizationPolicy,
   hasAppAuthorizationPolicy,
   registerAuthorizationPolicy,
@@ -96,22 +98,24 @@ describe('the default policy reproduces the guards it replaced', () => {
   });
 
   it('reads everyone for an admin, and only themselves for everyone else', async () => {
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, 'user-9', {}, null)).resolves.toBe(
-      true
-    );
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-1', {}, null)).resolves.toBe(
-      true
-    );
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-9', {}, null)).resolves.toBe(
-      false
-    );
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, readSubject('user-9'), {})
+    ).resolves.toBe(true);
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, readSubject('user-1'), {})
+    ).resolves.toBe(true);
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, readSubject('user-9'), {})
+    ).resolves.toBe(false);
   });
 
   it('allows a read the route declared no subject for', async () => {
     // The arm every core route takes: nothing supplies a `resource` resolver,
     // so `withAuth` asks about `null` on every request. If this were `false`,
     // wiring the seam would have 403'd the entire authenticated API.
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, null)).resolves.toBe(true);
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, { kind: 'nothing' }, {})
+    ).resolves.toBe(true);
   });
 
   it('refuses a resource it cannot attribute, rather than reading it as unscoped', async () => {
@@ -124,13 +128,17 @@ describe('the default policy reproduces the guards it replaced', () => {
     // until the fork answers for the case in its own `canRead`.
     const orphan = { kind: 'report', id: 'r1', orgId: 'org-7' };
 
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, orphan)).resolves.toBe(
-      false
-    );
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, null, {}, orphan)).resolves.toBe(true);
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, readTargetFor(orphan), {})
+    ).resolves.toBe(false);
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, readTargetFor(orphan), {})
+    ).resolves.toBe(true);
     // And the state it must NOT be confused with, one line away so the contrast
     // is the test: same null subject, no resource, still allowed.
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, null)).resolves.toBe(true);
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, { kind: 'nothing' }, {})
+    ).resolves.toBe(true);
   });
 
   it('names the unattributed resource in the log, once per kind rather than per request', async () => {
@@ -140,9 +148,13 @@ describe('the default policy reproduces the guards it replaced', () => {
     __resetOwnerlessWarningsForTests();
 
     for (let i = 0; i < 3; i++) {
-      await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, { kind: 'report', id: `r${i}` });
+      await DEFAULT_AUTHORIZATION_POLICY.canRead(
+        MEMBER,
+        readTargetFor({ kind: 'report', id: `r${i}` }),
+        {}
+      );
     }
-    await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, { kind: 'invoice' });
+    await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, readTargetFor({ kind: 'invoice' }), {});
 
     expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
@@ -243,9 +255,9 @@ describe('failure is closed, on every path', () => {
       subjectScope: () => Promise.reject(new Error('boom')),
     });
 
-    await expect(canRead(MEMBER, 'user-1')).resolves.toBe(true);
+    await expect(canRead(MEMBER, readSubject('user-1'))).resolves.toBe(true);
     await expect(subjectScope(MEMBER)).resolves.toEqual({ userId: 'user-1' });
-    await expect(canRead(MEMBER, 'user-9')).resolves.toBe(false);
+    await expect(canRead(MEMBER, readSubject('user-9'))).resolves.toBe(false);
   });
 
   it('denies when a policy method throws, and says so', async () => {
@@ -256,7 +268,7 @@ describe('failure is closed, on every path', () => {
     });
 
     await expect(canAdminister(ADMIN)).resolves.toBe(false);
-    await expect(canRead(ADMIN, 'user-9')).resolves.toBe(false);
+    await expect(canRead(ADMIN, readSubject('user-9'))).resolves.toBe(false);
     // `{}` is the WIDEST value this type can express, so the fail-closed answer
     // for the list face is the narrow one, not the empty object.
     await expect(subjectScope(ADMIN)).resolves.toEqual({ userId: 'admin-1' });
@@ -264,7 +276,7 @@ describe('failure is closed, on every path', () => {
     // A platform admin gets no special treatment on the throw path: safe mode
     // does not know who is an admin, because a policy that cannot answer cannot
     // be asked who counts as one.
-    await expect(canRead(ADMIN, 'admin-1')).resolves.toBe(true);
+    await expect(canRead(ADMIN, readSubject('admin-1'))).resolves.toBe(true);
   });
 
   it('denies the admin surface, but not undeclared reads, in safe mode', async () => {
@@ -273,13 +285,13 @@ describe('failure is closed, on every path', () => {
     // cannot become access, loose enough that an install whose routes declare no
     // subject is not taken down wholesale by an authorization seam.
     await expect(SAFE_MODE_POLICY.canAdminister(ADMIN, null, {})).resolves.toBe(false);
-    await expect(SAFE_MODE_POLICY.canRead(ADMIN, 'user-9', {}, null)).resolves.toBe(false);
-    await expect(SAFE_MODE_POLICY.canRead(ADMIN, null, {}, null)).resolves.toBe(true);
+    await expect(SAFE_MODE_POLICY.canRead(ADMIN, readSubject('user-9'), {})).resolves.toBe(false);
+    await expect(SAFE_MODE_POLICY.canRead(ADMIN, { kind: 'nothing' }, {})).resolves.toBe(true);
     // Safe mode refuses what it WAS asked about. An unattributed resource is a
     // question it was asked; a route that named nothing is not.
-    await expect(SAFE_MODE_POLICY.canRead(ADMIN, null, {}, { kind: 'report' })).resolves.toBe(
-      false
-    );
+    await expect(
+      SAFE_MODE_POLICY.canRead(ADMIN, readTargetFor({ kind: 'report' }), {})
+    ).resolves.toBe(false);
     await expect(SAFE_MODE_POLICY.subjectScope(ADMIN, {})).resolves.toEqual({ userId: 'admin-1' });
   });
 
@@ -302,8 +314,12 @@ describe('checkAuthorizationParity', () => {
     // page opens a record its own list does not contain.
     const divergent: AuthorizationPolicy = {
       canAdminister: () => Promise.resolve(false),
-      canRead: (viewer, subject) =>
-        Promise.resolve(subject === null || subject === viewer.userId || subject === 'team-mate'),
+      canRead: (viewer, target) =>
+        Promise.resolve(
+          target.kind !== 'subject' ||
+            target.userId === viewer.userId ||
+            target.userId === 'team-mate'
+        ),
       subjectScope: (viewer) => Promise.resolve({ userId: viewer.userId }),
     };
 
@@ -327,7 +343,8 @@ describe('checkAuthorizationParity', () => {
     // dangerous one.
     const leaky: AuthorizationPolicy = {
       canAdminister: () => Promise.resolve(false),
-      canRead: (viewer, subject) => Promise.resolve(subject === null || subject === viewer.userId),
+      canRead: (viewer, target) =>
+        Promise.resolve(target.kind !== 'subject' || target.userId === viewer.userId),
       subjectScope: () => Promise.resolve({}),
     };
 
@@ -348,8 +365,12 @@ describe('checkAuthorizationParity', () => {
     // claims immunity to.
     const divergent: AuthorizationPolicy = {
       canAdminister: () => Promise.resolve(false),
-      canRead: (viewer, subject) =>
-        Promise.resolve(subject === null || subject === viewer.userId || subject === 'team-mate'),
+      canRead: (viewer, target) =>
+        Promise.resolve(
+          target.kind !== 'subject' ||
+            target.userId === viewer.userId ||
+            target.userId === 'team-mate'
+        ),
       subjectScope: (viewer) => Promise.resolve({ userId: viewer.userId }),
     };
 
@@ -380,7 +401,7 @@ describe('checkAuthorizationParity', () => {
     const seen: string[] = [];
     const scoped: AuthorizationPolicy = {
       canAdminister: () => Promise.resolve(false),
-      canRead: (_viewer, _subject, scope) => {
+      canRead: (_viewer, _target, scope) => {
         seen.push(`canRead:${scope.ownership ?? '-'}`);
         return Promise.resolve(scope.ownership === 'all');
       },

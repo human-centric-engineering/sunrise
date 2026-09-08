@@ -34,6 +34,7 @@ import {
   getAuthorizationPolicy,
   canAdminister,
   canRead,
+  readSubject,
   subjectScope,
   __resetAuthorizationPolicyForTests,
   type AuthorizationPrincipal,
@@ -63,9 +64,9 @@ describe('a throwing app registration', () => {
   });
 
   it('narrows declared reads to the reader, and leaves undeclared ones alone', async () => {
-    await expect(canRead(ADMIN, 'user-9')).resolves.toBe(false);
-    await expect(canRead(ADMIN, 'admin-1')).resolves.toBe(true);
-    await expect(canRead(ADMIN, null)).resolves.toBe(true);
+    await expect(canRead(ADMIN, readSubject('user-9'))).resolves.toBe(false);
+    await expect(canRead(ADMIN, readSubject('admin-1'))).resolves.toBe(true);
+    await expect(canRead(ADMIN, { kind: 'nothing' })).resolves.toBe(true);
     await expect(subjectScope(ADMIN)).resolves.toEqual({ userId: 'admin-1' });
   });
 
