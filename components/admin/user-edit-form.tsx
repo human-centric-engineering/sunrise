@@ -37,13 +37,21 @@ import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import type { AdminUser } from '@/types/admin';
 import { getInitials } from '@/lib/utils/initials';
+import {
+  USER_ROLES,
+  DEFAULT_USER_ROLE,
+  PLATFORM_ADMIN_ROLE,
+  isPlatformAdmin,
+  isUserRole,
+  roleLabel,
+} from '@/lib/auth/roles';
 
 /**
  * Form validation schema
  */
 const userEditSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name must be less than 100 characters'),
-  role: z.enum(['USER', 'ADMIN']),
+  role: z.enum(USER_ROLES),
   emailVerified: z.boolean(),
 });
 
@@ -72,7 +80,7 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     resolver: zodResolver(userEditSchema),
     defaultValues: {
       name: user.name,
-      role: user.role === 'ADMIN' ? 'ADMIN' : 'USER',
+      role: isPlatformAdmin(user) ? PLATFORM_ADMIN_ROLE : DEFAULT_USER_ROLE,
       emailVerified: user.emailVerified,
     },
   });
@@ -179,7 +187,9 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
                 <Select
                   value={currentRole}
                   onValueChange={(value) =>
-                    setValue('role', value as 'USER' | 'ADMIN', { shouldDirty: true })
+                    setValue('role', isUserRole(value) ? value : DEFAULT_USER_ROLE, {
+                      shouldDirty: true,
+                    })
                   }
                   disabled={isCurrentUser}
                 >
@@ -187,8 +197,11 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
                     <SelectValue placeholder="Select role" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USER">User</SelectItem>
-                    <SelectItem value="ADMIN">Admin</SelectItem>
+                    {USER_ROLES.map((role) => (
+                      <SelectItem key={role} value={role}>
+                        {roleLabel(role)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 {isCurrentUser && (

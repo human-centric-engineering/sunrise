@@ -6,6 +6,7 @@
  */
 
 import type { FeatureFlag, User } from '@/types/prisma';
+import type { UserRole } from '@/lib/auth/roles';
 
 /**
  * System Statistics
@@ -21,10 +22,7 @@ export interface SystemStats {
     /** Users created in the last 24 hours */
     recentSignups: number;
     /** Breakdown by role */
-    byRole: {
-      USER: number;
-      ADMIN: number;
-    };
+    byRole: Record<UserRole, number>;
   };
   system: {
     /** Node.js version */
@@ -131,7 +129,7 @@ export interface AdminUserUpdateInput {
   /** User's display name */
   name?: string;
   /** User's role */
-  role?: 'USER' | 'ADMIN';
+  role?: UserRole;
   /** Whether email is verified */
   emailVerified?: boolean;
 }

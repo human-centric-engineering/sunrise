@@ -21,6 +21,7 @@ import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { userIdSchema } from '@/lib/validations/user';
 import { adminUserUpdateSchema } from '@/lib/validations/admin';
 import { getRouteLogger } from '@/lib/api/context';
+import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 /**
  * GET /api/v1/users/:id
@@ -48,7 +49,7 @@ export const GET = withAuth<{ id: string }>(async (request, session, { params })
   log.info('Fetching user by ID', { targetUserId: id });
 
   // Authorization: Admin can view any user, users can view own profile
-  if (session.user.id !== id && session.user.role !== 'ADMIN') {
+  if (session.user.id !== id && !isPlatformAdmin(session.user)) {
     throw new ForbiddenError();
   }
 
@@ -132,7 +133,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   }
 
   // Prevent admin from demoting themselves
-  if (session.user.id === id && body.role && body.role !== 'ADMIN') {
+  if (session.user.id === id && body.role && body.role !== PLATFORM_ADMIN_ROLE) {
     return errorResponse('Cannot change your own role', {
       status: 400,
       code: 'SELF_ROLE_CHANGE',
@@ -227,7 +228,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   }
 
   // Prevent deleting other admin accounts
-  if (user.role === 'ADMIN') {
+  if (isPlatformAdmin(user)) {
     return errorResponse('Cannot delete an admin account. Demote the user first.', {
       status: 400,
       code: 'CANNOT_DELETE_ADMIN',

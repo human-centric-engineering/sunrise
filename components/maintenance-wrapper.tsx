@@ -24,6 +24,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { MaintenancePage } from '@/components/maintenance-page';
 import { logger } from '@/lib/logging';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 
 interface MaintenanceWrapperProps {
   children: React.ReactNode;
@@ -75,7 +76,7 @@ export async function MaintenanceWrapper({ children }: MaintenanceWrapperProps) 
   try {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders });
-    isAdmin = session?.user?.role === 'ADMIN';
+    isAdmin = isPlatformAdmin(session?.user);
   } catch {
     // If session check fails, show maintenance page for safety
   }
@@ -115,7 +116,7 @@ export async function MaintenanceWrapperWithAdminNotice({ children }: Maintenanc
   try {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders });
-    isAdmin = session?.user?.role === 'ADMIN';
+    isAdmin = isPlatformAdmin(session?.user);
   } catch {
     // If session check fails, show maintenance page for safety
   }

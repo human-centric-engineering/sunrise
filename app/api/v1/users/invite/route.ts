@@ -55,6 +55,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { env } from '@/lib/env';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
  * POST /api/v1/users/invite
@@ -146,7 +147,7 @@ export const POST = withAdminAuth(async (request, session) => {
   // 7. Generate or regenerate invitation token
   const invitationMetadata = {
     name: body.name,
-    role: body.role || 'USER',
+    role: body.role || DEFAULT_USER_ROLE,
     invitedBy: session.user.id,
     invitedAt: new Date().toISOString(),
   };
@@ -215,7 +216,7 @@ export const POST = withAdminAuth(async (request, session) => {
       invitation: {
         email: body.email,
         name: body.name,
-        role: body.role || 'USER',
+        role: body.role || DEFAULT_USER_ROLE,
         invitedAt: new Date().toISOString(),
         expiresAt: expiresAt.toISOString(),
         link: invitationUrl,

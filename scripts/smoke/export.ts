@@ -39,6 +39,7 @@ import {
   getAppExcludedSubjectSources,
 } from '@/lib/privacy/subject-source-registry';
 import { isEmptySection } from '@/scripts/smoke/export-assertions';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 const PREFIX = 'smoke-test-export';
 const stamp = Date.now();
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
 
     // ADMIN so the export also covers an attribution source (a created agent).
     const subject = await prisma.user.create({
-      data: { name: `${PREFIX} subject`, email, role: 'ADMIN' },
+      data: { name: `${PREFIX} subject`, email, role: PLATFORM_ADMIN_ROLE },
     });
     subjectUserId = subject.id;
 

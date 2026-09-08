@@ -62,6 +62,7 @@ import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import { getInitials, getRoleBadgeVariant } from '@/lib/utils/initials';
+import { isPlatformAdmin, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 interface UserTableProps {
   initialUsers: UserListItem[];
@@ -344,7 +345,9 @@ export function UserTable({
                   </TableCell>
                   <TableCell className="text-muted-foreground truncate">{user.email}</TableCell>
                   <TableCell className="text-center">
-                    <Badge variant={getRoleBadgeVariant(user.role)}>{user.role || 'USER'}</Badge>
+                    <Badge variant={getRoleBadgeVariant(user.role)}>
+                      {user.role || DEFAULT_USER_ROLE}
+                    </Badge>
                   </TableCell>
                   <TableCell className="text-center">
                     {user.emailVerified ? (
@@ -428,7 +431,7 @@ export function UserTable({
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteUserId} onOpenChange={() => setDeleteUserId(null)}>
         <AlertDialogContent>
-          {users.find((u) => u.id === deleteUserId)?.role === 'ADMIN' ? (
+          {isPlatformAdmin(users.find((u) => u.id === deleteUserId)) ? (
             <>
               <AlertDialogHeader>
                 <AlertDialogTitle>Cannot Delete Admin</AlertDialogTitle>

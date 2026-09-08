@@ -132,6 +132,16 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'documented empty default. A new seam file changes the answer.',
   },
   {
+    path: 'tests/unit/auth-role-literals.test.ts',
+    reason:
+      'greps every tracked source file for a bare `User.role` literal against ' +
+      'an allowlist, so the vocabulary stays in `lib/auth/roles.ts`. A new bare ' +
+      'role comparison in some far-off component is exactly the change whose ' +
+      'import graph never reaches this test. (Worded without the literal on ' +
+      'purpose — this string is code, and the guard rightly flagged an earlier ' +
+      'version of it.)',
+  },
+  {
     path: 'tests/unit/versioning-seam-coverage.test.ts',
     reason:
       "reads `lib/app/*` off disk and checks it against VERSIONING.md's " +

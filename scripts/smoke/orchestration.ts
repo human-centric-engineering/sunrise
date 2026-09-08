@@ -39,6 +39,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { prisma } from '@/lib/db/client';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Config
@@ -413,7 +414,7 @@ async function main(): Promise<void> {
     adminUserId = user.id;
     await prisma.user.update({
       where: { id: user.id },
-      data: { role: 'ADMIN' },
+      data: { role: PLATFORM_ADMIN_ROLE },
     });
     console.log(`    ✓ upgraded ${ADMIN_EMAIL} to ADMIN role`);
 

@@ -4,6 +4,8 @@
  * Shared helpers for displaying user names, initials, and role badges.
  */
 
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+
 /**
  * Get initials from a user's name (max 2 characters).
  *
@@ -30,7 +32,7 @@ export function getInitials(name: string): string {
  */
 export function getRoleBadgeVariant(role: string | null): 'default' | 'secondary' | 'outline' {
   switch (role) {
-    case 'ADMIN':
+    case PLATFORM_ADMIN_ROLE:
       return 'default';
     default:
       return 'outline';

@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/auth/client';
 import { protectedNavItems } from '@/lib/app/protected-nav';
 import { DEFAULT_PROTECTED_NAV } from '@/lib/protected-nav/types';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 
 // Fork override (a non-null array) replaces the platform default wholesale.
 const navItems = protectedNavItems ?? DEFAULT_PROTECTED_NAV;
@@ -32,7 +33,7 @@ export function ProtectedNav() {
   const pathname = usePathname();
   const { data: session } = useSession();
 
-  const isAdmin = session?.user?.role === 'ADMIN';
+  const isAdmin = isPlatformAdmin(session?.user);
 
   return (
     <nav className="flex items-center gap-1">

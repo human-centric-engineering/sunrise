@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Mail, MapPin, Clock, Calendar, Pencil } from 'lucide-react';
 import { AccountSections } from '@/components/account/account-sections';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 export const metadata: Metadata = {
   title: 'Profile',
@@ -82,7 +83,7 @@ export default async function ProfilePage() {
               <h1 className="text-2xl font-bold">{user.name}</h1>
               <p className="text-muted-foreground">{user.email}</p>
               <div className="mt-2 flex flex-wrap justify-center gap-2 sm:justify-start">
-                <Badge variant="secondary">{user.role || 'USER'}</Badge>
+                <Badge variant="secondary">{user.role || DEFAULT_USER_ROLE}</Badge>
                 {user.emailVerified && (
                   <Badge variant="outline" className="text-green-600 dark:text-green-400">
                     Verified

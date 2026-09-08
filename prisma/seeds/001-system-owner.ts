@@ -1,12 +1,13 @@
 import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import type { SeedUnit } from '@/prisma/runner';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 /**
  * Seeds a single non-login SYSTEM config-owner user.
  *
  * Downstream orchestration seeds (workflows, capabilities, provider models,
  * judges, etc.) resolve an `ADMIN` user via
- * `prisma.user.findFirst({ where: { role: 'ADMIN' } })` and use its id as
+ * `prisma.user.findFirst({ where: { role: PLATFORM_ADMIN_ROLE } })` and use its id as
  * `createdBy`. This unit guarantees such an owner exists on a fresh database.
  *
  * Deliberately NO credential `Account` is created — better-auth hashes
@@ -25,12 +26,12 @@ const unit: SeedUnit = {
       where: { email: SYSTEM_USER_EMAIL },
       // `update` heals an existing row (e.g. an instance seeded before the
       // accountType field existed) so it is always marked SERVICE.
-      update: { role: 'ADMIN', accountType: 'SERVICE' },
+      update: { role: PLATFORM_ADMIN_ROLE, accountType: 'SERVICE' },
       create: {
         email: SYSTEM_USER_EMAIL,
         name: 'System (config owner)',
         emailVerified: true,
-        role: 'ADMIN',
+        role: PLATFORM_ADMIN_ROLE,
         accountType: 'SERVICE',
       },
     });

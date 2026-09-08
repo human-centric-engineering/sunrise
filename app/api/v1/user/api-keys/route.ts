@@ -25,6 +25,7 @@ import {
   listValidApiKeyScopes,
 } from '@/lib/auth/api-keys';
 import { getRouteLogger } from '@/lib/api/context';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 
 export const GET = withAuth(async (_request, session) => {
   const keys = await prisma.aiApiKey.findMany({
@@ -63,7 +64,7 @@ export const POST = withAuth(async (request, session) => {
 
   const body = await validateRequestBody(request, createApiKeySchema);
 
-  if (body.scopes.includes('admin') && session.user.role !== 'ADMIN') {
+  if (body.scopes.includes('admin') && !isPlatformAdmin(session.user)) {
     throw new ForbiddenError('Admin scope requires admin role');
   }
 

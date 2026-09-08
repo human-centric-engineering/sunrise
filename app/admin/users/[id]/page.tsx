@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator';
 import { ArrowLeft, Mail, Phone, MapPin, Clock, Calendar, RefreshCw, Pencil } from 'lucide-react';
 import { ClientDate } from '@/components/ui/client-date';
 import type { AdminUser } from '@/types/admin';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -120,7 +121,7 @@ export default async function AdminUserProfilePage({ params }: PageProps) {
               <h1 className="text-2xl font-bold">{user.name}</h1>
               <p className="text-muted-foreground">{user.email}</p>
               <div className="mt-2 flex flex-wrap justify-center gap-2 sm:justify-start">
-                <Badge variant="secondary">{user.role || 'USER'}</Badge>
+                <Badge variant="secondary">{user.role || DEFAULT_USER_ROLE}</Badge>
                 {user.emailVerified ? (
                   <Badge variant="outline" className="text-green-600 dark:text-green-400">
                     Verified

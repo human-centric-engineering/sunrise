@@ -20,6 +20,7 @@ import { Pool } from 'pg';
 import { seedChunkSchema } from '@/lib/orchestration/knowledge/seeder';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 import { buildDocumentSlugBase } from '@/lib/orchestration/knowledge/document-slug';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 // Load env from .env.local
 config({ path: resolve(__dirname, '../.env.local') });
@@ -32,14 +33,14 @@ const DOCUMENT_NAME = 'Agentic Design Patterns';
 const CHUNKS_PATH = resolve(__dirname, '../prisma/seeds/data/chunks/chunks.json');
 
 async function ensureTestUser(): Promise<string> {
-  const existing = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
+  const existing = await prisma.user.findFirst({ where: { role: PLATFORM_ADMIN_ROLE } });
   if (existing) return existing.id;
 
   const user = await prisma.user.create({
     data: {
       name: 'Test Admin',
       email: 'admin@test.local',
-      role: 'ADMIN',
+      role: PLATFORM_ADMIN_ROLE,
       emailVerified: true,
     },
   });
