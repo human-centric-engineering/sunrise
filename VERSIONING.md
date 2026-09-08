@@ -97,7 +97,7 @@ covered by the version contract.
   - `lib/app/bootstrap.ts` → `initApp()` — the app boot hook, awaited by `instrumentation.ts`
   - `lib/app/brand.ts` → `appBrandName` / `appBrandLegalName` / `appBrandDescription` — brand overrides
   - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
-  - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors
+  - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
   - `lib/app/csp.ts` → `appFrameSrc` — extra CSP `frame-src` origins
   - `lib/app/data-export.ts` → `initAppSubjectSources()` / `collectAppSubjectData()` — Art. 15 export sources
   - `lib/app/db-drift.ts` → `registerAppDriftProbes()` — drift-probe registry (primitives in `lib/db/drift-probes.ts`)
@@ -110,7 +110,7 @@ covered by the version contract.
   - `lib/app/guard-floor-contributors.ts` → `initAppGuardFloorContributors()` — output-guard floor contributors
   - `lib/app/jobs.ts` → `initAppJobs()` — maintenance-tick job registry
   - `lib/app/knowledge-access-contributors.ts` → `initAppKnowledgeAccessContributors()` — knowledge document access
-  - `lib/app/llm-providers.ts` → `registerAppProviderEligibility()` — provider-eligibility seam, resolved through `lib/orchestration/llm/provider-eligibility.ts`
+  - `lib/app/llm-providers.ts` → `registerAppProviderEligibility()` — provider-eligibility seam (primitive: `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
   - `lib/app/mcp-resources.ts` → `initAppMcpResources()` — MCP resource-type registry
   - `lib/app/protected-nav.ts` → `protectedNavItems` — authenticated-area nav
   - `lib/app/protected-routes.ts` → `appProtectedRoutes` — extra route prefixes the proxy protects
@@ -126,7 +126,7 @@ covered by the version contract.
   - erasure-hook registry (`lib/privacy/erasure-hooks.ts`)
   - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)
   - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
-  - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold, ships null)
+  - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold; the default returns `BRAND.name` as a bare string, so a fork replaces markup rather than filling a blank)
   - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)
   - fork schema tier (`prisma/schema/app.prisma` — ships empty; the reserved `/app` and `/framework` tiers generally, see [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#the-appplatform-model))
 

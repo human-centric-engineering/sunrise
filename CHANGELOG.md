@@ -216,9 +216,8 @@ release process.
   extensions, so `lib/app/theme.mts` passed silently, and it read only
   top-level files, so a nested `lib/app/<name>/server/` seam (the shape the
   root ESLint config's own error message recommends) was invisible.
-  The three seams outside `lib/app/` — the erasure-hook registry, the tenancy
-  seam, and the ESLint app-boundary rule — stay hand-maintained, and the guard
-  says so rather than implying a completeness it does not have.
+  The seams outside `lib/app/` stay hand-maintained — nothing derives them —
+  and the guard says so rather than implying a completeness it does not have.
 
   **A fork adding its own scaffold under `lib/app/` — file or directory, any
   extension — will fail this test until it adds the entry.** That is the guard

@@ -10,9 +10,17 @@
  *
  * The list was hand-maintained and nothing checked it. `npm run check:exports`
  * structurally cannot: it walks `lib/**\/index.ts` barrels, and these are not
- * barrels. This test is the check — the same shape as the `SEAM_DEFAULTS` drift
- * guard in `tests/unit/lib/app/defaults.test.ts`, which reads the directory
- * rather than trusting a table to be complete.
+ * barrels. This test is the check, and it borrows its idea from the
+ * `SEAM_DEFAULTS` drift guard in `tests/unit/lib/app/defaults.test.ts` — read
+ * the directory rather than trust a table to be complete.
+ *
+ * The borrowing stops at the idea. That guard still classifies with a two-item
+ * extension allowlist over top-level files only, which are exactly the two
+ * defects corrected here after review, so a fork adding `lib/app/theme.mts` or
+ * `lib/app/orders/` fails THIS guard loudly while that one accepts it in
+ * silence. Aligning the two is filed separately rather than folded in: a
+ * `SEAM_DEFAULTS` row costs a fork an assertion function, not a line, so
+ * widening what demands one is its own decision.
  *
  * ---------------------------------------------------------------------------
  * WHAT THIS DOES NOT COVER
@@ -93,7 +101,28 @@ const NOT_A_SEAM = [
  * about implementation rather than surface.
  */
 function scaffoldsOnDisk(): string[] {
-  return readdirSync(APP_DIR, { withFileTypes: true })
+  return classifyEntries(readdirSync(APP_DIR, { withFileTypes: true }));
+}
+
+/** The minimal shape {@link classifyEntries} needs — what `withFileTypes` gives back. */
+interface DirEntryLike {
+  name: string;
+  isDirectory: () => boolean;
+}
+
+/**
+ * The classifier itself, split from the `readdirSync` call so a test can drive
+ * it with entries this directory does not currently contain.
+ *
+ * That split is the whole reason it exists. The nested-directory case has no
+ * example upstream — `lib/app/` is flat today — so the test for it originally
+ * re-implemented this filter/map inline, which meant it asserted a copy of the
+ * logic rather than the logic: adding `.filter(e => e.isFile())` here would
+ * have left all five tests green while nested seams dropped out of the
+ * contract. A verification that cannot fail is not one.
+ */
+function classifyEntries(entries: readonly DirEntryLike[]): string[] {
+  return entries
     .filter((e) => !NOT_A_SEAM.some((rx) => rx.test(e.name)))
     .map((e) => (e.isDirectory() ? `lib/app/${e.name}/` : `lib/app/${e.name}`))
     .sort();
@@ -103,10 +132,16 @@ function scaffoldsOnDisk(): string[] {
  * The `lib/app/` paths named in VERSIONING.md's Covered section.
  *
  * Scoped to that section deliberately: a path mentioned under "Not covered", or
- * in the prose above it, must not count as coverage. Matches a backticked path
- * that ends in an extension or a trailing slash — the two forms
- * {@link scaffoldsOnDisk} produces — so the `lib/app/**` glob in the ESLint
- * entry is not mistaken for a scaffold.
+ * in the prose above it, must not count as coverage.
+ *
+ * **The name part is deliberately unconstrained**, matching whatever
+ * {@link classifyEntries} will emit rather than a list of shapes. An earlier
+ * version required an extension or a trailing slash, which put a fork adding
+ * `lib/app/Makefile` (or `Dockerfile`, or `CODEOWNERS`) into an unfixable red:
+ * the scan demanded a row, and the parser could not see the row they added.
+ * That is the enumerating shape again, on the reading side — the character
+ * class excludes `*`, which is all that is needed to keep the `lib/app/**`
+ * glob in the ESLint entry from being read as a scaffold.
  */
 function scaffoldsNamedInVersioning(markdown: string): string[] {
   const start = markdown.indexOf('### Covered');
@@ -120,7 +155,7 @@ function scaffoldsNamedInVersioning(markdown: string): string[] {
   }
   const covered = markdown.slice(start, end);
   const found = new Set<string>();
-  for (const m of covered.matchAll(/`(lib\/app\/[A-Za-z0-9._-]+(?:\.[A-Za-z0-9]+|\/))`/g)) {
+  for (const m of covered.matchAll(/`(lib\/app\/[A-Za-z0-9._-]+\/?)`/g)) {
     found.add(m[1]);
   }
   return [...found].sort();
@@ -186,16 +221,15 @@ describe('VERSIONING.md seam coverage', () => {
     // points a fork at `lib/app/<name>/server/` for a Node-only seam. A
     // top-level-files-only scan passed `lib/app/zz-sub/seam.ts` green, so the
     // contract would have been silent about an entire extension point.
-    // Upstream ships none today, which is exactly why this asserts the
-    // classifier's behaviour rather than the current directory listing.
-    const entries = [
+    // Upstream ships no nested seam today, so this drives the real classifier
+    // with entries the directory does not contain — NOT a copy of it, which is
+    // what the first version of this test did and why it could not have failed.
+    const derived = classifyEntries([
       { name: 'orders', isDirectory: () => true },
       { name: 'brand.ts', isDirectory: () => false },
-    ];
-    const derived = entries
-      .filter((e) => !NOT_A_SEAM.some((rx) => rx.test(e.name)))
-      .map((e) => (e.isDirectory() ? `lib/app/${e.name}/` : `lib/app/${e.name}`));
+      { name: '.DS_Store', isDirectory: () => false },
+    ]);
 
-    expect(derived).toEqual(['lib/app/orders/', 'lib/app/brand.ts']);
+    expect(derived).toEqual(['lib/app/brand.ts', 'lib/app/orders/']);
   });
 });
