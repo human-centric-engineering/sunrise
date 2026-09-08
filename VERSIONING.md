@@ -79,8 +79,12 @@ covered by the version contract.
   points", which named seven of them and left every fork's `brand.ts`,
   `public-nav.ts` and `emails.ts` edits owed no announcement (#732).
 
-  The `lib/app/` half below is checked against the directory by
-  `tests/unit/versioning-seam-coverage.test.ts`, in both directions. It
+  The `lib/app/` half below has its **paths** checked against the directory by
+  `tests/unit/versioning-seam-coverage.test.ts`, in both directions — a file
+  with no row, and a row with no file. The `→ export` beside each path is
+  **not** checked and can go stale on a rename: this list carried
+  `registerAppDriftProbe()` for the seam whose export is
+  `registerAppDriftProbes()`. It
   classifies by exclusion — anything in `lib/app/` that is not a dotfile, a
   `.d.ts` or a `.md` is a scaffold and must be named here, whatever its
   extension — and a subdirectory counts as one scaffold, named with a trailing

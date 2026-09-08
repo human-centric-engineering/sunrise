@@ -18,9 +18,10 @@
  * extension allowlist over top-level files only, which are exactly the two
  * defects corrected here after review, so a fork adding `lib/app/theme.mts` or
  * `lib/app/orders/` fails THIS guard loudly while that one accepts it in
- * silence. Aligning the two is filed separately rather than folded in: a
- * `SEAM_DEFAULTS` row costs a fork an assertion function, not a line, so
- * widening what demands one is its own decision.
+ * silence — as does `fork-init-seams.test.ts`, which is `.ts`-only. Tracked as
+ * **#734** rather than folded in here: a `SEAM_DEFAULTS` row costs a fork an
+ * assertion function, not a line, so widening what demands one is its own
+ * decision.
  *
  * ---------------------------------------------------------------------------
  * WHAT THIS DOES NOT COVER
@@ -131,17 +132,34 @@ function classifyEntries(entries: readonly DirEntryLike[]): string[] {
 /**
  * The `lib/app/` paths named in VERSIONING.md's Covered section.
  *
- * Scoped to that section deliberately: a path mentioned under "Not covered", or
- * in the prose above it, must not count as coverage.
+ * **Both halves of this are exclusion rules, and that is the point.** Three
+ * review rounds on this file each found the same shape in a different place —
+ * a classifier narrower than the thing it classifies — so the property is
+ * stated here rather than patched a fourth time: *every boundary in this guard
+ * says what is NOT a scaffold, never enumerates what is.* It held on the disk
+ * side (an extension allowlist missed `.mts`; a files-only read missed nested
+ * seams) and it holds here on the document side.
  *
- * **The name part is deliberately unconstrained**, matching whatever
- * {@link classifyEntries} will emit rather than a list of shapes. An earlier
- * version required an extension or a trailing slash, which put a fork adding
- * `lib/app/Makefile` (or `Dockerfile`, or `CODEOWNERS`) into an unfixable red:
- * the scan demanded a row, and the parser could not see the row they added.
- * That is the enumerating shape again, on the reading side — the character
- * class excludes `*`, which is all that is needed to keep the `lib/app/**`
- * glob in the ESLint entry from being read as a scaffold.
+ * **Anchored to the bullet, not the section.** A section-wide scan counted a
+ * path mentioned anywhere in prose as a contract row, so deleting a row and
+ * writing its full path in a sentence above left the guard green with the seam
+ * out of the contract. That is not hypothetical: the preamble already names
+ * `brand.ts`, `public-nav.ts` and `emails.ts` by bare filename, one clarifying
+ * `lib/app/` prefix away from making those three rows silently deletable.
+ *
+ * **The name is anything but whitespace, a backtick or `*`.** It has to accept
+ * whatever {@link classifyEntries} emits, which is whatever `readdirSync`
+ * returns. An `[A-Za-z0-9._-]+` class looked unconstrained and was not:
+ * `lib/app/café.ts` — or any name with a space, `+`, `~` or `@` — demanded a
+ * row the parser then could not see, leaving a fork in a red it had no way to
+ * clear. Excluding `*` is the whole of what keeps the `lib/app/**` glob in the
+ * ESLint entry from being read as a scaffold.
+ *
+ * What it does NOT check is the `→ export` column beside each path: this
+ * compares filenames only. A row whose export name is wrong stays green — and
+ * that is a live failure mode, not a theoretical one, since this branch found
+ * `registerAppDriftProbe()` in the list where the actual export is
+ * `registerAppDriftProbes()`.
  */
 function scaffoldsNamedInVersioning(markdown: string): string[] {
   const start = markdown.indexOf('### Covered');
@@ -155,8 +173,9 @@ function scaffoldsNamedInVersioning(markdown: string): string[] {
   }
   const covered = markdown.slice(start, end);
   const found = new Set<string>();
-  for (const m of covered.matchAll(/`(lib\/app\/[A-Za-z0-9._-]+\/?)`/g)) {
-    found.add(m[1]);
+  for (const line of covered.split('\n')) {
+    const m = /^\s*-\s+`(lib\/app\/[^\s`*]+)`/.exec(line);
+    if (m) found.add(m[1]);
   }
   return [...found].sort();
 }

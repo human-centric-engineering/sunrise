@@ -223,8 +223,7 @@ release process.
   extension — will fail this test until it adds the entry.** That is the guard
   working: your scaffold is public surface for whoever forks you.
 
-  The seams **outside** `lib/app/` stay hand-maintained, and three that were
-  missing are now named: `components/brand/brand-mark.tsx`,
+  Three seams **outside** `lib/app/` that were missing are now named: `components/brand/brand-mark.tsx`,
   `app/brand-theme.css` and `prisma/schema/app.prisma`. All three are
   documented elsewhere as fork-owned, and all three were absent from the list
   that calls itself the public surface — so a fork that had filled them could
