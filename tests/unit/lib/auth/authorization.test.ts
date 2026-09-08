@@ -291,6 +291,37 @@ describe('failure is closed, on every path', () => {
     );
   });
 
+  it('refuses a subjectScope whose userId key holds nothing usable', async () => {
+    // The last instance of the class, in the sibling face. `{ userId: undefined }`
+    // and `{}` are indistinguishable to `subjectFilterSelects` — both read as
+    // "no narrowing, every subject" — but they mean opposite things: the first
+    // is a fork MEANING to narrow whose lookup returned nothing, the second is a
+    // fork deliberately not narrowing. It type-checks because
+    // `exactOptionalPropertyTypes` is off in this repo, so the type cannot carry
+    // the distinction and the wrapper has to.
+    for (const bad of [{ userId: undefined }, { userId: '' }, { userId: 42 }]) {
+      __resetAuthorizationPolicyForTests();
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        // @ts-expect-error -- two of these three are writable in TypeScript
+        // today; the cast covers all of them so the runtime rule is what is
+        // under test rather than what the compiler happens to catch.
+        subjectScope: () => Promise.resolve(bad),
+      });
+
+      await expect(subjectScope(MEMBER)).resolves.toEqual({ userId: 'user-1' });
+    }
+
+    // And the contrast that stops this being a blanket rejection: `{}` is the
+    // deliberate "every subject" answer and must survive untouched.
+    __resetAuthorizationPolicyForTests();
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      subjectScope: () => Promise.resolve({}),
+    });
+    await expect(subjectScope(MEMBER)).resolves.toEqual({});
+  });
+
   it('denies when a policy method throws, and says so', async () => {
     registerAuthorizationPolicy({
       canAdminister: () => Promise.reject(new Error('policy lookup failed')),

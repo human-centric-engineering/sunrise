@@ -615,21 +615,45 @@ export async function subjectScope(
 ): Promise<SubjectFilter> {
   try {
     const filter = await getAuthorizationPolicy().subjectScope(viewer, scope);
+
     // Shape-checked, not trusted. This face is the only one whose wrong answer
-    // is WIDER than its right one: `undefined` or a non-object would reach
-    // `subjectFilterSelects` as "no userId key", which means EVERY subject. A
-    // fork cannot write that in TypeScript, and this is what makes the module
-    // header's "every path here fails closed" true rather than nearly true.
+    // is WIDER than its right one, because "no `userId` key" means EVERY
+    // subject — the same absence-means-unrestricted shape the `ReadTarget`
+    // union exists to remove, left standing in the sibling face.
+    //
+    // `SubjectFilter` cannot take the union treatment: it is spread straight
+    // into a Prisma `where`, and making a fork unpack it at every list endpoint
+    // would reintroduce the per-call-site duplication that let the two guards
+    // drift apart. So the invariant is enforced here instead, at the one place
+    // every caller passes through.
     if (typeof filter !== 'object' || filter === null) {
       logger.error(
         'authorization: subjectScope returned a non-object — falling back to safe mode',
+        { userId: viewer.userId, returned: typeof filter }
+      );
+      return await SAFE_MODE_POLICY.subjectScope(viewer, scope);
+    }
+
+    // Present-but-not-a-string is the case that matters, and it is reachable in
+    // TypeScript: `exactOptionalPropertyTypes` is off in this repo, so
+    // `{ userId: await lookupOrgOwner(v) }` type-checks when the lookup returns
+    // `undefined`. That is a fork MEANING to narrow and failing to — the exact
+    // opposite of `{}`, which is a fork deliberately not narrowing — and the two
+    // are indistinguishable to `subjectFilterSelects`. An empty string is caught
+    // for the same reason: `{ userId: row.ownerId ?? '' }` narrows to a subject
+    // nobody is, which is safe, but it is not what the author meant either.
+    if ('userId' in filter && (typeof filter.userId !== 'string' || filter.userId === '')) {
+      logger.error(
+        'authorization: subjectScope named a userId that is not a usable id — falling back to safe mode',
         {
           userId: viewer.userId,
-          returned: typeof filter,
+          returned: typeof filter.userId,
+          fix: 'Return `{}` to mean "every subject" — deliberately, and visibly. A `userId` key holding undefined or an empty string is a narrowing that failed, and treating it as an absent key would widen the query to the whole table.',
         }
       );
       return await SAFE_MODE_POLICY.subjectScope(viewer, scope);
     }
+
     return filter;
   } catch (error) {
     denyAfterThrow('subjectScope', error, viewer);

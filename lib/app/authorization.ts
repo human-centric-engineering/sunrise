@@ -120,9 +120,14 @@
  *    yours usually narrows it, so falling back would widen access under a log
  *    line saying the feature was disabled. Register synchronously and do your
  *    loading elsewhere.
- *  - **This seam must be synchronous.** Making it `async` means the gate sees
- *    the promise rather than the work, and the all-or-nothing rollback does not
- *    apply. Lint catches it (`@typescript-eslint/no-misused-promises`).
+ *  - **This seam must be synchronous, and here that is a security property.**
+ *    Making it `async` means the gate sees the promise rather than the work, so
+ *    it latches success immediately: your policy is not registered yet, and
+ *    every read in that window — and every read forever, if your promise
+ *    rejects — gets Sunrise's DEFAULT policy, the widest one, while the
+ *    safe-mode machinery above reports nothing wrong. Lint catches it
+ *    (`@typescript-eslint/no-misused-promises`) and #739 tracks making the gate
+ *    itself refuse. Do your loading elsewhere and register synchronously.
  *  - **An `admin`-scoped API key bypasses the role check** and always has: the
  *    scope is the capability. The design record pins that scope as
  *    platform-only (Q6), and minting one already requires a platform admin with
