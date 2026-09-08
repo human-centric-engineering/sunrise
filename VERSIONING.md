@@ -80,8 +80,12 @@ covered by the version contract.
   `public-nav.ts` and `emails.ts` edits owed no announcement (#732).
 
   The `lib/app/` half below is checked against the directory by
-  `tests/unit/versioning-seam-coverage.test.ts`, in both directions. The seams
-  outside it are hand-maintained, because nothing derives them.
+  `tests/unit/versioning-seam-coverage.test.ts`, in both directions. It
+  classifies by exclusion — anything in `lib/app/` that is not a dotfile, a
+  `.d.ts` or a `.md` is a scaffold and must be named here, whatever its
+  extension — and a subdirectory counts as one scaffold, named with a trailing
+  slash. The seams outside `lib/app/` are hand-maintained, because nothing
+  derives them.
 
   Fork-owned scaffolds in `lib/app/` — a fork edits these, upstream ships them
   empty (or, for `surface.ts`, as a default it may replace):
@@ -116,10 +120,15 @@ covered by the version contract.
   - `lib/app/surface.ts` → `classifySurface()` / `DEFAULT_SURFACE` — per-surface theming classifier
   - `lib/app/user-created.ts` → `initAppUserCreatedHooks()` — post-signup hook registry
 
-  Outside `lib/app/`:
+  Outside `lib/app/` — **hand-maintained, so check it against the tree rather
+  than trusting it.** The guard cannot derive this half, and a short list here
+  is the same broken promise #732 was about:
   - erasure-hook registry (`lib/privacy/erasure-hooks.ts`)
   - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)
   - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
+  - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold, ships null)
+  - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)
+  - fork schema tier (`prisma/schema/app.prisma` — ships empty; the reserved `/app` and `/framework` tiers generally, see [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#the-appplatform-model))
 
 - **Documented public APIs** —
   - `withAuth()`, `withAdminAuth()` from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
