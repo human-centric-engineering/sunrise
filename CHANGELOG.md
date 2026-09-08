@@ -35,6 +35,14 @@ release process.
 
   A fork replaces the policy from the new fork-owned `lib/app/authorization.ts`,
   which is listed among [`VERSIONING.md`](./VERSIONING.md#covered)'s named seams.
+  The primitives it calls are `registerAuthorizationPolicy(policy)` and
+  `DEFAULT_AUTHORIZATION_POLICY` — spread the latter to replace one face, since a
+  policy is registered whole rather than merged, which is what keeps "I overrode
+  `canRead` and forgot `subjectScope`" visible in the fork's own diff.
+  `SAFE_MODE_POLICY`, `getAuthorizationPolicy()`, `subjectFilterSelects()`,
+  `readTargetFor()`, `readSubject()` and the `AuthorizationPolicy` /
+  `AuthorizationPrincipal` / `AuthorizationResource` / `AuthorizationScope` /
+  `ReadTarget` / `SubjectFilter` / `Ownership` types are exported alongside them.
   Both guards also gain an optional `resource` resolver
   (`withAuth(handler, { resource })`), so a policy can see *which* resource is
   being touched without every handler signature changing downstream; `RouteContext`,
@@ -69,11 +77,13 @@ release process.
   of the fork-first version of this contract, and it leaks in one direction and
   hides rows in the other.
 
-  **Behaviour is unchanged with no policy registered**, at both guards and the
-  admin layout, including the arm every core route takes (no resolver ⇒ the policy
-  is asked about a `null` subject and allows it). Two failure behaviours are worth
-  knowing before you fill the seam: a policy method that throws **denies**, and a
-  registration that throws puts the install in a **safe mode** where nobody
+  **Behaviour is unchanged with no policy registered**, at all four chokepoints,
+  including the arm every core route takes (no resolver ⇒ the policy is asked
+  about `{ kind: 'nothing' }` and allows it). Two failure behaviours are worth
+  knowing before you fill the seam: a policy method that throws **denies** — and
+  so does one that answers with the wrong shape, since `subjectScope` returning a
+  `userId` key that is not a usable id would otherwise widen a list to every row —
+  and a registration that throws puts the install in a **safe mode** where nobody
   administers anything — Sunrise deliberately does not fall back to its own default
   policy, because a fork's policy usually narrows it and falling back would widen
   access under a log line saying the feature was disabled. The `admin` API-key
