@@ -7,9 +7,11 @@
  * question inline, with a role predicate in the guard body. That made the
  * chokepoint real and the decision unreachable: a fork needing "admin of this
  * org, not of the platform" (#366) or "only the questionnaires I created"
- * (#367) had to shadow `lib/auth/guards.ts` or edit the 192 call sites behind
- * it. Extracting the answer costs those forks nothing at the call sites,
- * because the chokepoint was already there.
+ * (#367) had to shadow `lib/auth/guards.ts` or edit every call site behind it:
+ * 262 `withAdminAuth` handlers across 193 files, 257 of them under
+ * `/api/v1/admin`, plus 23 `withAuth` handlers. Extracting the answer costs
+ * those forks nothing at the call sites, because the chokepoint was already
+ * there.
  *
  * ## The three faces
  *

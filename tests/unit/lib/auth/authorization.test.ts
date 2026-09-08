@@ -5,8 +5,8 @@
  * hardest:
  *
  *  1. **The default policy reproduces what the guards asserted inline.** If it
- *     does not, 192 routes changed behaviour in a PR that claims to have changed
- *     none.
+ *     does not, every guarded handler in the tree changed behaviour in a PR
+ *     that claims to have changed none.
  *  2. **A registered override changes the answer.** A seam nothing can be seen
  *     to alter is decoration; this is the test that proves the seam is a seam.
  *  3. **The parity checker can go red.** A checker that has never been shown to

@@ -24,7 +24,8 @@ release process.
   `subjectScope(viewer, scope)`, the last returning a Prisma `where` fragment so a
   list query and a single-row read cannot disagree. All three chokepoints route
   through it: `withAdminAuth`, `withAuth` and `app/admin/layout.tsx`. None of the
-  192 admin call sites behind them changed, which is the point — a fork needing a
+  262 guarded handlers behind them changed — 257 under `/api/v1/admin` — which is
+  the point: a fork needing a
   second admin tier (#366) or owner-scoped visibility (#367) had to shadow
   `lib/auth/guards.ts` or edit all of them.
 

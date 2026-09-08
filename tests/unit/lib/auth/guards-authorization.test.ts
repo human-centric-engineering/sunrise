@@ -3,7 +3,7 @@
  *
  * `guards.test.ts` covers what the guards DO — 401s, 403s, params, error
  * routing — and all forty of its tests pass unchanged across this wiring, which
- * is the behaviour-neutrality evidence at the guard rather than at 192 routes.
+ * is the behaviour-neutrality evidence at the guard rather than at 262 handlers.
  * This file covers the wiring itself, which that file cannot see: it asserts the
  * call the guard makes into the policy, and that replacing the policy replaces
  * the outcome.
@@ -237,7 +237,7 @@ describe('withAdminAuth asks the policy whether to admit', () => {
 
   it('admits a non-admin when the policy says so — the seam is a seam', async () => {
     // The proof the extraction is worth anything: same principal, same route,
-    // opposite outcome, and not one of the 192 call sites changed. Under the
+    // opposite outcome, and not one of the 262 call sites changed. Under the
     // default policy this is the 403 asserted below it.
     registerAuthorizationPolicy({
       ...DEFAULT_AUTHORIZATION_POLICY,

@@ -11,7 +11,8 @@
  *
  * Register a policy and you replace **the** authorization decision, at all three
  * places Sunrise makes one: `withAdminAuth`, `withAuth` and the admin layout.
- * There are 192 routes behind those three, and none of them changes.
+ * There are 262 guarded handlers behind those three — 257 of them under
+ * `/api/v1/admin` — and none of them changes.
  *
  * The two cases this exists for:
  *
