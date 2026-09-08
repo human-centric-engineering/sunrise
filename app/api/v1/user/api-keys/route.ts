@@ -64,6 +64,22 @@ export const POST = withAuth(async (request, session) => {
 
   const body = await validateRequestBody(request, createApiKeySchema);
 
+  // PLATFORM standing, deliberately NOT the authorization policy.
+  //
+  // An `admin`-scoped key satisfies every scope and bypasses the role check in
+  // `withAdminAuth` entirely — the scope IS the capability there. That makes it
+  // cross-tenant by construction, which is why the design record pins it as
+  // platform-only (Q6, `.context/architecture/multi-tenancy-design.md`).
+  //
+  // So this asks `isPlatformAdmin` rather than `canAdminister`. A fork whose
+  // policy lets an org admin administer their own org must not thereby let them
+  // mint a credential that reaches every org's admin routes — routing this
+  // through the seam would do exactly that, quietly, the day the fork widened
+  // its policy for an unrelated reason.
+  //
+  // What is NOT enforced here, because it cannot be yet: keys carry no org, so
+  // "an org-bound key can never hold `admin`" arrives with the org axis (§106),
+  // not with this line.
   if (body.scopes.includes('admin') && !isPlatformAdmin(session.user)) {
     throw new ForbiddenError('Admin scope requires admin role');
   }

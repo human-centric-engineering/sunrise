@@ -467,6 +467,7 @@ small and conflict-free.)
 | `lib/app/api-key-scopes.ts`                | extra API-key scopes (`APP_API_KEY_SCOPES`)        | `lib/auth/api-key-scopes.ts` + `createApiKeySchema` (server + client)       |
 | `lib/app/brand.ts`                         | product name, legal entity, meta description       | `lib/brand.ts` → metadata, footers, `<BrandMark>`, emails (server + client) |
 | `lib/app/reserved-tiers.ts`                | which reserved tiers THIS checkout occupies        | `tests/unit/reserved-fork-tiers.test.ts` + the metadata guard (test)        |
+| `lib/app/authorization.ts`                 | who may administer, and over whose data            | `withAuth` / `withAdminAuth` / the admin layout (server)                    |
 
 > **Filling a seam is expected to fail one row of a core test.**
 > `tests/unit/lib/app/defaults.test.ts` asserts every seam ships empty — that

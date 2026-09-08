@@ -98,6 +98,7 @@ covered by the version contract.
   - `lib/app/agent-fields.ts` → `appAgentFields` — extra `AiAgent` config fields
   - `lib/app/api-key-scopes.ts` → `APP_API_KEY_SCOPES` — extra mintable API-key scopes
   - `lib/app/auth-landing.ts` → `appAuthLandingRoute` / `appAuthLandingLabel` — where sign-in lands
+  - `lib/app/authorization.ts` → `initAppAuthorizationPolicy()` — the authorization policy: who administers, and over whose data (primitives: `registerAuthorizationPolicy()` / `DEFAULT_AUTHORIZATION_POLICY` in `lib/auth/authorization.ts`)
   - `lib/app/bootstrap.ts` → `initApp()` — the app boot hook, awaited by `instrumentation.ts`
   - `lib/app/brand.ts` → `appBrandName` / `appBrandLegalName` / `appBrandDescription` — brand overrides
   - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
