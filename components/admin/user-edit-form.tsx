@@ -37,14 +37,7 @@ import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import type { AdminUser } from '@/types/admin';
 import { getInitials } from '@/lib/utils/initials';
-import {
-  USER_ROLES,
-  DEFAULT_USER_ROLE,
-  PLATFORM_ADMIN_ROLE,
-  isPlatformAdmin,
-  isUserRole,
-  roleLabel,
-} from '@/lib/auth/roles';
+import { USER_ROLES, DEFAULT_USER_ROLE, isUserRole, roleLabel } from '@/lib/auth/roles';
 
 /**
  * Form validation schema
@@ -80,7 +73,10 @@ export function UserEditForm({ user, currentUserId }: UserEditFormProps) {
     resolver: zodResolver(userEditSchema),
     defaultValues: {
       name: user.name,
-      role: isPlatformAdmin(user) ? PLATFORM_ADMIN_ROLE : DEFAULT_USER_ROLE,
+      // Preserve whatever role the user holds. Collapsing anything-but-ADMIN
+      // to USER would silently demote on save, because `onSubmit` PATCHes the
+      // whole form — an admin editing only the name would strip a third role.
+      role: isUserRole(user.role) ? user.role : DEFAULT_USER_ROLE,
       emailVerified: user.emailVerified,
     },
   });

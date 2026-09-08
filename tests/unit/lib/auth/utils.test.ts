@@ -62,6 +62,7 @@ vi.mock('@/lib/logging', () => ({
 import { auth } from '@/lib/auth/config';
 import { headers } from 'next/headers';
 import { logger } from '@/lib/logging';
+import type { UserRole } from '@/lib/auth/roles';
 
 /**
  * Test data factories
@@ -392,8 +393,11 @@ describe('hasRole()', () => {
       vi.mocked(headers).mockResolvedValue(mockHeaders);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
 
-      // Act: Check with lowercase 'admin'
-      const result = await hasRole('admin');
+      // Act: Check with lowercase 'admin'. The parameter is now typed
+      // `UserRole`, so this is a compile error for a TypeScript caller — the
+      // cast is deliberate, and what it documents is the RUNTIME backstop for
+      // a caller that is not (a JS consumer, or a role read from config).
+      const result = await hasRole('admin' as UserRole);
 
       // Assert: Verify false (case mismatch)
       expect(result).toBe(false);
@@ -614,8 +618,10 @@ describe('requireRole()', () => {
       vi.mocked(headers).mockResolvedValue(mockHeaders);
       vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
 
-      // Act & Assert: Verify lowercase 'admin' fails
-      await expect(requireRole('admin')).rejects.toThrow('Role admin required');
+      // Act & Assert: Verify lowercase 'admin' fails. Cast for the same
+      // reason as the `hasRole` case above — the type prevents it, this
+      // asserts the runtime still denies.
+      await expect(requireRole('admin' as UserRole)).rejects.toThrow('Role admin required');
     });
   });
 

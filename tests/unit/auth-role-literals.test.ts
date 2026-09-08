@@ -27,6 +27,12 @@
  * ceremony to hundreds of files to protect nothing — the drift this guard
  * exists to stop is in code that makes decisions, not in code that makes rows.
  *
+ * Everything else git tracks IS scanned, `proxy.ts` and `instrumentation.ts`
+ * included. Those two sit outside every source directory, and an earlier
+ * version of this guard listed directories to visit rather than exclusions —
+ * so a role gate in Next 16's middleware, the likeliest place for one, would
+ * have left it green.
+ *
  * **`lib/auth/roles.ts` itself**, which is where the literals are supposed to
  * live.
  *
@@ -42,11 +48,25 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { USER_ROLES } from '@/lib/auth/roles';
 
-/** Source trees whose role handling is the platform's own. */
-const SCANNED = ['app', 'components', 'lib', 'types', 'prisma', 'scripts'];
-
 /** The module that owns the vocabulary — the one place a literal belongs. */
-const OWNER = path.join('lib', 'auth', 'roles.ts');
+const OWNER = 'lib/auth/roles.ts';
+
+/**
+ * Paths this guard does not read.
+ *
+ * A deny-list over **everything git tracks**, rather than a list of source
+ * trees to visit. The first version named six directories — `app`,
+ * `components`, `lib`, `types`, `prisma`, `scripts` — which left `proxy.ts`
+ * unscanned. That file is Next 16's middleware and the single most likely home
+ * for a route-level role gate, and `emails/`, `hooks/` and
+ * `instrumentation.ts` were outside it too. A guard that enumerates where to
+ * look has the same failure mode as the hand-maintained list it replaces: it is
+ * complete only until someone adds a directory.
+ */
+const NOT_SCANNED = [
+  /^tests\//, //        fixtures describe data, not vocabulary — see the header
+  new RegExp(`^${OWNER}$`), // the module that owns the literals
+];
 
 /**
  * Sites allowed to write a bare role literal, each with the reason.
@@ -58,14 +78,14 @@ const OWNER = path.join('lib', 'auth', 'roles.ts');
  */
 const ALLOWED = new Set<string>([]);
 
-/** Files this guard reads: tracked TypeScript sources, minus tests and the owner. */
+/** Files this guard reads: every tracked TypeScript source but the exclusions. */
 function scannedFiles(): string[] {
-  const tracked = execFileSync('git', ['ls-files', ...SCANNED], { encoding: 'utf8' });
+  const tracked = execFileSync('git', ['ls-files'], { encoding: 'utf8' });
   return tracked
     .split('\n')
     .filter((f) => /\.tsx?$/.test(f))
     .filter((f) => !/\.(test|spec)\.tsx?$/.test(f))
-    .filter((f) => f !== OWNER.split(path.sep).join('/'))
+    .filter((f) => !NOT_SCANNED.some((rx) => rx.test(f)))
     .sort();
 }
 
@@ -138,12 +158,32 @@ describe('role literals live in lib/auth/roles.ts', () => {
     ).toEqual([]);
   });
 
-  it('scans a tree it can actually see', () => {
-    // Guards the scanner, not the code. `git ls-files` returning nothing — a
-    // renamed directory, a detached checkout, a cwd that is not the repo root —
-    // would make the assertion above pass while reading no files at all, which
-    // is the quiet green this whole file exists to prevent.
-    expect(scannedFiles().length).toBeGreaterThan(100);
+  it('reaches the places a role check would actually live', () => {
+    // Guards the scanner, not the code. A bare count cannot notice the scan
+    // narrowing: `lib/` alone is hundreds of files, so losing a whole tree
+    // leaves any plausible floor comfortably satisfied. These name the files
+    // where a role gate would plausibly be written instead, including the two
+    // that the original directory list did not reach at all.
+    const scanned = new Set(scannedFiles());
+
+    for (const file of [
+      'lib/auth/guards.ts', //        the admin chokepoint
+      'app/admin/layout.tsx', //      the admin tree gate
+      'proxy.ts', //                  Next 16 middleware — outside every src dir
+      'instrumentation.ts', //        boot, likewise at the root
+      'components/maintenance-wrapper.tsx',
+      'prisma/seeds/001-system-owner.ts',
+    ]) {
+      expect(scanned, `${file} must be scanned`).toContain(file);
+    }
+  });
+
+  it('does not read its own exclusions', () => {
+    // The other half of the property: the deny-list must actually deny, or the
+    // guard reports every fixture in `tests/` and gets switched off.
+    const scanned = new Set(scannedFiles());
+    expect(scanned).not.toContain(OWNER);
+    expect([...scanned].filter((f) => f.startsWith('tests/'))).toEqual([]);
   });
 
   it('builds its pattern from the constant, so a new role is policed too', () => {
