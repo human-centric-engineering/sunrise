@@ -155,8 +155,16 @@ describe('the default policy reproduces the guards it replaced', () => {
       );
     }
     await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, readTargetFor({ kind: 'invoice' }), {});
+    // A resource with no `kind` at all — `AuthorizationResource` has no required
+    // field, so this is a shape a fork's resolver can return, and it must not
+    // key the latch on `undefined`.
+    await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, readTargetFor({ id: 'x' }), {});
 
-    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no ownerId'),
+      expect.objectContaining({ kind: '(unnamed kind)' })
+    );
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('no ownerId'),
       expect.objectContaining({ kind: 'report' })
@@ -258,6 +266,29 @@ describe('failure is closed, on every path', () => {
     await expect(canRead(MEMBER, readSubject('user-1'))).resolves.toBe(true);
     await expect(subjectScope(MEMBER)).resolves.toEqual({ userId: 'user-1' });
     await expect(canRead(MEMBER, readSubject('user-9'))).resolves.toBe(false);
+  });
+
+  it('refuses a subjectScope that answered with something other than a filter', async () => {
+    // The only face whose WRONG answer is wider than its right one: `undefined`
+    // reaches `subjectFilterSelects` as "no userId key", which means EVERY
+    // subject — so a policy that forgot to return would silently widen a list
+    // to the whole table. TypeScript stops a fork writing it, which is why this
+    // is a backstop rather than the main defence; it is tested because an
+    // untested fail-closed branch is indistinguishable from one that does not
+    // work.
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      // @ts-expect-error -- deliberately returning the wrong shape, which is
+      // the whole point of the branch under test. If this ever stops erroring,
+      // the interface has been widened and the backstop matters more, not less.
+      subjectScope: () => Promise.resolve(undefined),
+    });
+
+    await expect(subjectScope(MEMBER)).resolves.toEqual({ userId: 'user-1' });
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringContaining('non-object'),
+      expect.objectContaining({ userId: 'user-1', returned: 'undefined' })
+    );
   });
 
   it('denies when a policy method throws, and says so', async () => {
