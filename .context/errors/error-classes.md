@@ -83,7 +83,7 @@ Used when user is authenticated but lacks permission.
 ```typescript
 import { ForbiddenError } from '@/lib/api/errors';
 
-if (session.user.role !== 'ADMIN') {
+if (!isPlatformAdmin(session.user)) {
   throw new ForbiddenError('Admin access required');
 }
 ```

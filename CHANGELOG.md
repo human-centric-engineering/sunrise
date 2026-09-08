@@ -191,6 +191,24 @@ release process.
 
 ### Changed
 
+- **`hasRole()` and `requireRole()` in `lib/auth/utils.ts` now take `UserRole`
+  rather than `string`.** `hasRole('Admin')` used to compile and silently
+  return false forever; `requireRole('admin')` used to compile and always
+  throw. Both are now type errors. **This can break a fork's build** — a call
+  passing a `string` variable, or a role name this install does not declare,
+  stops type-checking until the value is a member of `USER_ROLES` in the new
+  `lib/auth/roles.ts`. Neither function has a caller in Sunrise itself, so the
+  breakage lands only on forks that adopted them.
+
+  Listed here because it can break a build, not because these helpers are
+  inside the version contract — [`VERSIONING.md`](./VERSIONING.md#covered)'s
+  documented-public-API list names `withAuth()` / `withAdminAuth()` from
+  `lib/auth/guards.ts` and does not name `lib/auth/utils.ts`. The role
+  vocabulary itself is described in `.context/auth/overview.md`; it is
+  deliberately not promoted into the contract here, because org roles arrive
+  with multi-tenancy and that is the point at which the shape of the seam
+  should be decided rather than inherited.
+
 - **The version contract now covers every fork-owned scaffold in `lib/app/`,
   not just the registry-based ones.** [`VERSIONING.md`](./VERSIONING.md#covered)
   states that its Covered list _is_ the public surface and that nothing else is

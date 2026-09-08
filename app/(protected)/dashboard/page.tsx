@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmailStatusCard } from '@/components/dashboard/email-status-card';
 import { User, Settings, Shield } from 'lucide-react';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
  * Dashboard Page
@@ -124,7 +125,7 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2">
-              <Badge variant="secondary">{user.role || 'USER'}</Badge>
+              <Badge variant="secondary">{user.role || DEFAULT_USER_ROLE}</Badge>
             </div>
             <p className="text-muted-foreground mt-1 text-xs">Your account role</p>
           </CardContent>

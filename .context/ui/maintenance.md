@@ -172,7 +172,7 @@ The `MAINTENANCE_MODE` flag supports these metadata fields:
 Admins are automatically identified and allowed through maintenance mode:
 
 1. The wrapper checks for an active session using `auth.api.getSession()`
-2. If the user has `role === 'ADMIN'`, they bypass the maintenance page
+2. If `isPlatformAdmin()` (`@/lib/auth/roles`) is true for the user, they bypass the maintenance page
 3. The check runs server-side on every request (no caching)
 
 **Security considerations:**

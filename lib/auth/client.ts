@@ -1,7 +1,6 @@
 import { createAuthClient } from 'better-auth/react';
 import type { UserRole } from '@/types';
-
-const VALID_ROLES: readonly string[] = ['USER', 'ADMIN'];
+import { isUserRole, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
  * Better Auth Client
@@ -97,11 +96,7 @@ interface UseSessionReturn {
  * defaulting to 'USER' if the value is missing or unexpected.
  */
 function extractUserRole(rawUser: Record<string, unknown>): UserRole {
-  const role = rawUser.role;
-  if (typeof role === 'string' && VALID_ROLES.includes(role)) {
-    return role as UserRole;
-  }
-  return 'USER';
+  return isUserRole(rawUser.role) ? rawUser.role : DEFAULT_USER_ROLE;
 }
 
 /**

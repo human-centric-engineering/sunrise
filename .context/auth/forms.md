@@ -283,7 +283,7 @@ export function AdminPanel() {
     return <div>Loading...</div>
   }
 
-  if (session?.user?.role !== 'ADMIN') {
+  if (!isPlatformAdmin(session?.user)) {
     return null // Don't render for non-admins
   }
 

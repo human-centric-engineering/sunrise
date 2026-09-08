@@ -13,11 +13,13 @@
  * import from seeds, hooks, and route handlers alike.
  */
 
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+
 /** Matches real, login-capable users (excludes SERVICE principals). */
 export const humanWhere = { accountType: 'HUMAN' } as const;
 
 /** Matches real human admins — the "is there still a real operator?" predicate. */
-export const humanAdminWhere = { role: 'ADMIN', accountType: 'HUMAN' } as const;
+export const humanAdminWhere = { role: PLATFORM_ADMIN_ROLE, accountType: 'HUMAN' } as const;
 
 /** Matches non-login SERVICE principals (the seeded config-owner). */
 export const serviceAccountWhere = { accountType: 'SERVICE' } as const;

@@ -19,6 +19,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { APP_VERSION } from '@/lib/app-version';
 import { SUNRISE_VERSION } from '@/lib/sunrise-version';
 import type { SystemStats } from '@/types/admin';
+import { USER_ROLES, type UserRole } from '@/lib/auth/roles';
 
 /**
  * Track the process start time for uptime calculation
@@ -75,11 +76,12 @@ export const GET = withAdminAuth(async (request, session) => {
     getDatabaseHealth(),
   ]);
 
-  // Convert role counts to object
-  const roleCountMap: Record<string, number> = {
-    USER: 0,
-    ADMIN: 0,
-  };
+  // Convert role counts to object. Seeded from the known-values list so a role
+  // added to `USER_ROLES` reports as 0 rather than being absent from the
+  // response — a missing key and a genuine zero are different answers.
+  const roleCountMap: Record<string, number> = Object.fromEntries(
+    USER_ROLES.map((role) => [role, 0])
+  );
 
   for (const roleGroup of usersByRole) {
     if (roleGroup.role) {
@@ -87,16 +89,25 @@ export const GET = withAdminAuth(async (request, session) => {
     }
   }
 
+  // Pick only the known roles out of the map, so a role stored in the database
+  // that this install no longer declares is dropped rather than appearing in
+  // the response — which is what the hand-written pair of keys used to do.
+  //
+  // No `?? 0` fallback: every `USER_ROLES` key was seeded above, so one would
+  // be a branch nothing can reach. Exhaustive by construction, which is also
+  // what makes the assertion safe — the keys come from `USER_ROLES` itself.
+  const byRole = Object.fromEntries(USER_ROLES.map((role) => [role, roleCountMap[role]])) as Record<
+    UserRole,
+    number
+  >;
+
   // Build stats response
   const stats: SystemStats = {
     users: {
       total: totalUsers,
       verified: verifiedUsers,
       recentSignups,
-      byRole: {
-        USER: roleCountMap['USER'] || 0,
-        ADMIN: roleCountMap['ADMIN'] || 0,
-      },
+      byRole,
     },
     system: {
       nodeVersion: process.version,

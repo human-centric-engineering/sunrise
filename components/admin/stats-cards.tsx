@@ -93,7 +93,7 @@ export function StatsCards({ stats, isLoading }: StatsCardsProps) {
       <StatCard
         title="Admin Users"
         value={stats.users.byRole.ADMIN}
-        description={`${stats.users.byRole.USER} regular users`}
+        description={`${stats.users.total - stats.users.byRole.ADMIN} non-admin users`}
         icon={<Shield className="h-4 w-4" />}
       />
     </div>

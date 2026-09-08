@@ -34,6 +34,7 @@ import {
   type ApiKeyScope,
 } from '@/lib/auth/api-keys';
 import { logger } from '@/lib/logging';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -264,7 +265,7 @@ export function withAdminAuth(handler: (...args: any[]) => Response | Promise<Re
         throw new UnauthorizedError();
       }
 
-      if (session.user.role !== 'ADMIN') {
+      if (!isPlatformAdmin(session.user)) {
         throw new ForbiddenError('Admin access required');
       }
 

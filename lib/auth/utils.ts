@@ -1,6 +1,7 @@
 import { auth } from '@/lib/auth/config';
 import { headers } from 'next/headers';
 import { logger } from '@/lib/logging';
+import type { UserRole } from '@/lib/auth/roles';
 
 /**
  * Session type derived from better-auth configuration.
@@ -89,13 +90,13 @@ export async function getServerUser(): Promise<AuthSession['user'] | null> {
 /**
  * Check if the current user has a specific role
  *
- * @param requiredRole - The role to check for ('USER' | 'ADMIN')
+ * @param requiredRole - The role to check for; see `USER_ROLES`
  * @returns true if the user has the required role, false otherwise
  *
  * @example
  * ```tsx
  * export default async function AdminPage() {
- *   const isAdmin = await hasRole('ADMIN')
+ *   const isAdmin = await hasRole(PLATFORM_ADMIN_ROLE)
  *
  *   if (!isAdmin) {
  *     redirect('/unauthorized')
@@ -105,7 +106,7 @@ export async function getServerUser(): Promise<AuthSession['user'] | null> {
  * }
  * ```
  */
-export async function hasRole(requiredRole: string): Promise<boolean> {
+export async function hasRole(requiredRole: UserRole): Promise<boolean> {
   const user = await getServerUser();
 
   if (!user) {
@@ -155,13 +156,13 @@ export async function requireAuth(): Promise<AuthSession> {
  * @example
  * ```tsx
  * export default async function AdminDashboard() {
- *   const session = await requireRole('ADMIN')
+ *   const session = await requireRole(PLATFORM_ADMIN_ROLE)
  *   // If we get here, user is an admin
  *   return <div>Admin Controls</div>
  * }
  * ```
  */
-export async function requireRole(requiredRole: string): Promise<AuthSession> {
+export async function requireRole(requiredRole: UserRole): Promise<AuthSession> {
   const session = await requireAuth();
 
   if (session.user.role !== requiredRole) {

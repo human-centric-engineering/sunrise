@@ -419,7 +419,7 @@ import {
 
 // Usage
 if (!session) throw new UnauthorizedError();
-if (session.user.role !== 'ADMIN') throw new ForbiddenError('Admin access required');
+if (!isPlatformAdmin(session.user)) throw new ForbiddenError('Admin access required');
 if (!user) throw new NotFoundError('User not found');
 ```
 

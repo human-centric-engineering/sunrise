@@ -55,6 +55,7 @@ import {
   getRateLimitHeaders,
 } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 /**
  * POST /api/auth/accept-invite
@@ -171,7 +172,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       where: { id: newUserId },
       data: {
         emailVerified: true, // Mark as verified
-        role: metadata.role && metadata.role !== 'USER' ? metadata.role : undefined,
+        role: metadata.role && metadata.role !== DEFAULT_USER_ROLE ? metadata.role : undefined,
       },
     });
 

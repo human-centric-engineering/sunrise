@@ -104,7 +104,7 @@ import { prisma } from '@/lib/db/client';
 
 export async function deleteUser(userId: string) {
   // Ensure user is admin
-  await requireRole('ADMIN');
+  await requireRole(PLATFORM_ADMIN_ROLE);
 
   await prisma.user.delete({
     where: { id: userId },
@@ -271,7 +271,7 @@ const session = await requireAuth();
 Throws if not authenticated or wrong role:
 
 ```typescript
-await requireRole('ADMIN');
+await requireRole(PLATFORM_ADMIN_ROLE);
 // Throws if not admin
 ```
 

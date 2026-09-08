@@ -57,6 +57,7 @@ import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
 import { ClientDate } from '@/components/ui/client-date';
 import { getRoleBadgeVariant } from '@/lib/utils/initials';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 interface InvitationTableProps {
   initialInvitations: InvitationListItem[];
@@ -379,7 +380,7 @@ export function InvitationTable({
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant={getRoleBadgeVariant(invitation.role)}>
-                      {invitation.role || 'USER'}
+                      {invitation.role || DEFAULT_USER_ROLE}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground truncate">

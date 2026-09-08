@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { getInitials } from '@/lib/utils/initials';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 
 export function UserButton() {
   const { data: session, isPending } = useSession();
@@ -125,7 +126,7 @@ export function UserButton() {
             Settings
           </Link>
         </DropdownMenuItem>
-        {user.role === 'ADMIN' && (
+        {isPlatformAdmin(user) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>

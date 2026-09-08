@@ -34,6 +34,7 @@ import { FormError } from '@/components/forms/form-error';
 import { AlertCircle, Send, ArrowLeft, CheckCircle, Copy, ExternalLink } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { USER_ROLES, DEFAULT_USER_ROLE, isUserRole, roleLabel } from '@/lib/auth/roles';
 
 /**
  * Form validation schema
@@ -42,7 +43,7 @@ import { API } from '@/lib/api/endpoints';
 const inviteFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name must be less than 100 characters'),
   email: z.string().email('Invalid email address'),
-  role: z.enum(['USER', 'ADMIN']),
+  role: z.enum(USER_ROLES),
 });
 
 type InviteFormData = z.infer<typeof inviteFormSchema>;
@@ -80,7 +81,7 @@ export function UserInviteForm() {
     defaultValues: {
       name: '',
       email: '',
-      role: 'USER',
+      role: DEFAULT_USER_ROLE,
     },
   });
 
@@ -262,7 +263,9 @@ export function UserInviteForm() {
               <Select
                 value={currentRole}
                 onValueChange={(value) =>
-                  setValue('role', value as 'USER' | 'ADMIN', { shouldDirty: true })
+                  setValue('role', isUserRole(value) ? value : DEFAULT_USER_ROLE, {
+                    shouldDirty: true,
+                  })
                 }
                 disabled={isLoading}
               >
@@ -270,8 +273,11 @@ export function UserInviteForm() {
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="USER">User</SelectItem>
-                  <SelectItem value="ADMIN">Admin</SelectItem>
+                  {USER_ROLES.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {roleLabel(role)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="text-muted-foreground text-xs">

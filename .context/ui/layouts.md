@@ -167,7 +167,7 @@ None. Navigation items are hardcoded.
 
 ### Features
 
-- **Role-based visibility:** Admin link only shown to users with `role === 'ADMIN'`
+- **Role-based visibility:** Admin link only shown to platform admins (`isPlatformAdmin()` from `@/lib/auth/roles`)
 - **Active state highlighting:** Uses `bg-accent text-accent-foreground` for current page
 - **Prefix matching:** Active state for nested routes (e.g., `/settings/security`)
 - **Responsive:** Labels hidden on small screens, icons always visible
@@ -304,7 +304,7 @@ export default async function AdminLayout({ children }) {
   const session = await getServerSession();
 
   if (!session) redirect('/login');
-  if (session.user.role !== 'ADMIN') redirect('/dashboard');
+  if (!isPlatformAdmin(session.user)) redirect('/dashboard');
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

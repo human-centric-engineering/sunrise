@@ -27,6 +27,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 const PREFIX = 'smoke-test-erasure';
 const stamp = Date.now();
@@ -68,7 +69,7 @@ async function main(): Promise<void> {
       data: {
         name: `${PREFIX} subject`,
         email: `${PREFIX}-subject-${stamp}@example.com`,
-        role: 'ADMIN',
+        role: PLATFORM_ADMIN_ROLE,
       },
     });
     subjectUserId = subject.id;

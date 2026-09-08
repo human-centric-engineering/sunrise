@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Check role-based permissions
-  if (session.user.role !== 'ADMIN') {
+  if (!isPlatformAdmin(session.user)) {
     return Response.json({ success: false, error: { message: 'Forbidden' } }, { status: 403 });
   }
 
@@ -182,7 +182,7 @@ import { prisma } from '@/lib/db/client';
 export async function GET(request: NextRequest) {
   try {
     // Throws if not authenticated or not admin
-    await requireRole('ADMIN');
+    await requireRole(PLATFORM_ADMIN_ROLE);
 
     const users = await prisma.user.findMany();
     return Response.json({ success: true, data: users });
@@ -342,7 +342,7 @@ import { requireRole } from '@/lib/auth/utils'
 
 export default async function AdminPage() {
   // Throws if not authenticated or not admin
-  const session = await requireRole('ADMIN')
+  const session = await requireRole(PLATFORM_ADMIN_ROLE)
 
   return (
     <div>
@@ -367,7 +367,7 @@ export default async function AdminPage() {
     redirect('/login?callbackUrl=/admin')
   }
 
-  if (session.user.role !== 'ADMIN') {
+  if (!isPlatformAdmin(session.user)) {
     redirect('/unauthorized')
   }
 
@@ -430,7 +430,7 @@ import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole('ADMIN');
+    await requireRole(PLATFORM_ADMIN_ROLE);
 
     const users = await prisma.user.findMany();
 

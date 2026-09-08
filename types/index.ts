@@ -26,10 +26,12 @@ export type {
 /**
  * User Role Types
  *
- * Defines the possible roles a user can have in the system.
- * Add additional roles as needed (e.g., 'MODERATOR').
+ * Re-exported from `lib/auth/roles.ts`, which is the single source of truth for
+ * the vocabulary — add a role there and it reaches the Zod schemas, the session
+ * validator and the admin form without a sweep. Kept exported here because this
+ * barrel is the documented import site for shared types.
  */
-export type UserRole = 'USER' | 'ADMIN';
+export type { UserRole } from '@/lib/auth/roles';
 
 /**
  * User Email Preferences

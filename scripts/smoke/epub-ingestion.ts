@@ -36,6 +36,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { buildEpub } from '@/tests/helpers/epub-fixture';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
 const BASE_URL = process.env.SMOKE_BASE_URL ?? 'http://localhost:3100';
 const PREFIX = 'smoke-test-epub';
@@ -104,7 +105,7 @@ async function main(): Promise<void> {
 
     await prisma.user.update({
       where: { email: EMAIL },
-      data: { role: 'ADMIN', emailVerified: true },
+      data: { role: PLATFORM_ADMIN_ROLE, emailVerified: true },
     });
 
     const signin = await fetch(`${BASE_URL}/api/auth/sign-in/email`, {

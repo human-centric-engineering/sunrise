@@ -23,6 +23,7 @@ import { eraseUser } from '@/lib/privacy/erase-user';
 import { getRouteLogger } from '@/lib/api/context';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 
 /**
  * GET /api/v1/users/me
@@ -291,7 +292,7 @@ export const DELETE = withAuth(async (request, session) => {
     // Counting it would let the last human admin self-delete, leaving zero
     // operators and re-opening the first-user-is-admin bootstrap. See
     // lib/auth/account.ts and lib/auth/config.ts.
-    if (session.user.role === 'ADMIN') {
+    if (isPlatformAdmin(session.user)) {
       const adminCount = await prisma.user.count({ where: humanAdminWhere });
       if (adminCount <= 1) {
         return errorResponse(

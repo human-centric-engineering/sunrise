@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { paginationQuerySchema, cuidSchema } from '@/lib/validations/common';
+import { USER_ROLES } from '@/lib/auth/roles';
 
 /**
  * Feature flag metadata value schema
@@ -137,7 +138,7 @@ export const adminUserUpdateSchema = z.object({
     .optional(),
 
   /** User's role */
-  role: z.enum(['USER', 'ADMIN']).optional(),
+  role: z.enum(USER_ROLES).optional(),
 
   /** Whether email is verified */
   emailVerified: z.boolean().optional(),

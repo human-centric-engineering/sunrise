@@ -39,7 +39,7 @@ if (!session) {
   redirect('/login'); // Unauthenticated -> login
 }
 
-if (session.user.role !== 'ADMIN') {
+if (!isPlatformAdmin(session.user)) {
   redirect('/dashboard'); // Non-admin -> dashboard
 }
 ```
