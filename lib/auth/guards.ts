@@ -304,7 +304,14 @@ export function withAuth(
       if (resource === RESOLVER_FAILED) {
         throw new ForbiddenError('Access denied');
       }
-      if (!(await canRead(principal, resource?.ownerId ?? null))) {
+      // The resource goes through as well as the subject derived from it. It
+      // is the same object `withAdminAuth` hands `canAdminister`, and passing
+      // only `ownerId` made the read face structurally unable to see a row it
+      // could not attribute — an org-owned row, or a nullable `createdBy` —
+      // which then arrived indistinguishable from "this route named nothing"
+      // and was permitted unconditionally. A fork could not fix that in its own
+      // policy, because the information was discarded here.
+      if (!(await canRead(principal, resource?.ownerId ?? null, {}, resource))) {
         throw new ForbiddenError('Access denied');
       }
 

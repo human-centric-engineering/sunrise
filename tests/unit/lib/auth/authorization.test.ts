@@ -94,16 +94,50 @@ describe('the default policy reproduces the guards it replaced', () => {
   });
 
   it('reads everyone for an admin, and only themselves for everyone else', async () => {
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, 'user-9', {})).resolves.toBe(true);
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-1', {})).resolves.toBe(true);
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-9', {})).resolves.toBe(false);
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, 'user-9', {}, null)).resolves.toBe(
+      true
+    );
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-1', {}, null)).resolves.toBe(
+      true
+    );
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-9', {}, null)).resolves.toBe(
+      false
+    );
   });
 
   it('allows a read the route declared no subject for', async () => {
     // The arm every core route takes: nothing supplies a `resource` resolver,
     // so `withAuth` asks about `null` on every request. If this were `false`,
     // wiring the seam would have 403'd the entire authenticated API.
-    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {})).resolves.toBe(true);
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, null)).resolves.toBe(true);
+  });
+
+  it('refuses a resource it cannot attribute, rather than reading it as unscoped', async () => {
+    // The three states `subject`/`resource` encode, and the middle one is why
+    // `resource` is passed at all. A route that named `{ kind, id, orgId }` with
+    // no `ownerId` — an org-owned row, or a nullable `createdBy` on a SetNull
+    // model — used to arrive here indistinguishable from "this route named
+    // nothing" and was permitted for every caller. Platform staff still read it,
+    // because reading everyone is what the default policy IS; nobody else does
+    // until the fork answers for the case in its own `canRead`.
+    const orphan = { kind: 'report', id: 'r1', orgId: 'org-7' };
+
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, orphan)).resolves.toBe(
+      false
+    );
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, null, {}, orphan)).resolves.toBe(true);
+    // And the state it must NOT be confused with, one line away so the contrast
+    // is the test: same null subject, no resource, still allowed.
+    await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, null)).resolves.toBe(true);
+  });
+
+  it('names the unattributed resource in the log, so a fork is not left with a mystery 403', async () => {
+    await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, { kind: 'report', id: 'r1' });
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no ownerId'),
+      expect.objectContaining({ kind: 'report', id: 'r1' })
+    );
   });
 
   it('expresses "everyone" as an absent key, so widening is a deletion', async () => {
@@ -201,8 +235,13 @@ describe('failure is closed, on every path', () => {
     // cannot become access, loose enough that an install whose routes declare no
     // subject is not taken down wholesale by an authorization seam.
     await expect(SAFE_MODE_POLICY.canAdminister(ADMIN, null, {})).resolves.toBe(false);
-    await expect(SAFE_MODE_POLICY.canRead(ADMIN, 'user-9', {})).resolves.toBe(false);
-    await expect(SAFE_MODE_POLICY.canRead(ADMIN, null, {})).resolves.toBe(true);
+    await expect(SAFE_MODE_POLICY.canRead(ADMIN, 'user-9', {}, null)).resolves.toBe(false);
+    await expect(SAFE_MODE_POLICY.canRead(ADMIN, null, {}, null)).resolves.toBe(true);
+    // Safe mode refuses what it WAS asked about. An unattributed resource is a
+    // question it was asked; a route that named nothing is not.
+    await expect(SAFE_MODE_POLICY.canRead(ADMIN, null, {}, { kind: 'report' })).resolves.toBe(
+      false
+    );
     await expect(SAFE_MODE_POLICY.subjectScope(ADMIN, {})).resolves.toEqual({ userId: 'admin-1' });
   });
 
@@ -261,6 +300,31 @@ describe('checkAuthorizationParity', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({ case: 'user-1', subject: 'stranger' });
     expect(violations[0].message).toContain('leaks a row');
+  });
+
+  it('refuses a case that names only the viewer, which any policy passes', async () => {
+    // The arm this checker was missing, and the one a fork reaches for first.
+    // Both faces agree trivially about the viewer, so a self-only case is clean
+    // under a correct policy AND under the divergent one above — which is the
+    // exact "green because it never looked" failure this function's own docblock
+    // claims immunity to.
+    const divergent: AuthorizationPolicy = {
+      canAdminister: () => Promise.resolve(false),
+      canRead: (viewer, subject) =>
+        Promise.resolve(subject === null || subject === viewer.userId || subject === 'team-mate'),
+      subjectScope: (viewer) => Promise.resolve({ userId: viewer.userId }),
+    };
+
+    await expect(
+      checkAuthorizationParity(divergent, [{ viewer: MEMBER, subjects: ['user-1'] }])
+    ).resolves.toMatchObject([{ case: 'user-1', subject: '(none)' }]);
+
+    // Two subjects that are both the viewer is the same blind spot with an
+    // extra element, so the rule is "at least one the viewer is not", not a
+    // length check.
+    await expect(
+      checkAuthorizationParity(divergent, [{ viewer: MEMBER, subjects: ['user-1', 'user-1'] }])
+    ).resolves.toMatchObject([{ case: 'user-1', subject: '(none)' }]);
   });
 
   it('refuses to pass a check that compared nothing', async () => {

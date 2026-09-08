@@ -1,7 +1,7 @@
 /**
  * The authorization policy — one decision, three faces, one seam.
  *
- * Sunrise asks "may this principal do this?" in exactly three places:
+ * Sunrise asks "may this principal **administer**?" in exactly three places:
  * `withAdminAuth`, `withAuth` (both in `lib/auth/guards.ts`) and
  * `app/admin/layout.tsx`. Until this module existed each of them *answered* the
  * question inline, with a role predicate in the guard body. That made the
@@ -12,6 +12,29 @@
  * `/api/v1/admin`, plus 23 `withAuth` handlers. Extracting the answer costs
  * those forks nothing at the call sites, because the chokepoint was already
  * there.
+ *
+ * ## The READ axis is not yet fully behind this seam. Read this before relying on it.
+ *
+ * "Three chokepoints" is true of `canAdminister`. It is **not** true of
+ * `canRead` / `subjectScope`, and the difference matters most to the fork this
+ * seam is for. Two core routes decide a read from the platform role inline, and
+ * this branch did not migrate them:
+ *
+ *  - `app/api/v1/users/[id]/route.ts` (GET) — `session.user.id !== id &&
+ *    !isPlatformAdmin(session.user)`. That is `canRead(viewer, subject)` written
+ *    out longhand. Its `withAuth` wrapper does consult this module, but with no
+ *    `resource` resolver, so the seam is asked about a `null` subject, allows,
+ *    and the real decision is still the line below it.
+ *  - `app/api/v1/users/me/route.ts` — an admin-only branch, same shape.
+ *
+ * The consequence is directional, and it is the unsafe direction: a fork
+ * registering a policy that NARROWS reads does not narrow those two. A platform
+ * `ADMIN` still reads every user row through them, **including in safe mode**,
+ * whose promise that "every declared read narrows to the reader's own rows"
+ * cannot bind a read that was never declared. Migrating them is the first
+ * adopter of the `resource` resolver and is tracked in #738 — it changes a
+ * shipped route's behaviour and wants its own review, rather than riding along
+ * with the extraction.
  *
  * ## The three faces
  *
@@ -208,18 +231,35 @@ export interface AuthorizationPolicy {
 
   /**
    * May `viewer` read `subject`'s data? `subject` is a **user id**, or `null`
-   * when the route declared no subject.
+   * when the route named no owner.
    *
    * The parity partner of {@link subjectScope}, and parity is defined over
    * concrete subject ids: `canRead(v, s)` must agree with
    * "`subjectScope(v)` selects `s`" for every `s`. The `null` case is outside
    * that relation — it is not a subject, it is the absence of one — so answer
    * it on its own terms. See {@link checkAuthorizationParity}.
+   *
+   * **`subject` and `resource` together make three states, not two**, and
+   * collapsing them is a silent allow. `resource` carries whatever the route's
+   * resolver returned, so a row with no single owner still reaches you:
+   *
+   * | `subject` | `resource` | what the route said                          |
+   * | --------- | ---------- | -------------------------------------------- |
+   * | `null`    | `null`     | nothing — no resolver, every core route      |
+   * | `null`    | an object  | a resource it could **not** attribute to a user |
+   * | an id     | an object  | this resource, owned by this user            |
+   *
+   * The middle row is the one to answer deliberately. An org-owned row, or a
+   * nullable `createdBy` on a `SetNull` model — which `CLAUDE.md` mandates for
+   * retained config and audit models, so it is the common schema shape — lands
+   * there. Writing `subject === null || …` treats it as "unscoped" and permits
+   * every caller while looking exactly like a check.
    */
   canRead(
     viewer: AuthorizationPrincipal,
     subject: string | null,
-    scope: AuthorizationScope
+    scope: AuthorizationScope,
+    resource: AuthorizationResource | null
   ): Promise<boolean>;
 
   /** Which subjects may `viewer` see? The list face of {@link canRead}. */
@@ -252,14 +292,29 @@ function administersEverything(viewer: AuthorizationPrincipal): boolean {
 export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
   canAdminister: (viewer) => Promise.resolve(administersEverything(viewer)),
 
-  canRead: (viewer, subject) =>
-    Promise.resolve(
-      // A route that declared no subject is not making a claim this policy can
-      // narrow. Sunrise has no `resource` resolvers, so this is the arm every
+  canRead: (viewer, subject, _scope, resource) => {
+    if (subject !== null) {
+      return Promise.resolve(subject === viewer.userId || administersEverything(viewer));
+    }
+    // No owner. Which of the two no-owner states is this?
+    if (resource === null) {
+      // The route named nothing, so there is no claim for this policy to
+      // narrow. Sunrise ships no `resource` resolvers, so this is the arm every
       // core `withAuth` route takes, and it is why wiring the seam changed no
       // behaviour.
-      subject === null || subject === viewer.userId || administersEverything(viewer)
-    ),
+      return Promise.resolve(true);
+    }
+    // The route named a resource and could not attribute it to a user. Falling
+    // through to the arm above would permit EVERY caller while the diff, and
+    // the log, still showed a policy being consulted — an allow wearing the
+    // costume of a check. So the default narrows to platform staff and says so.
+    logger.warn('authorization: a route named a resource with no ownerId — denying non-admins', {
+      kind: resource.kind,
+      id: resource.id,
+      fix: 'Sunrise\u2019s default policy cannot attribute an ownerless row to anyone. Either give the resolver an `ownerId`, or answer for this case in your own `canRead` — it arrives as `subject === null` with a non-null `resource`.',
+    });
+    return Promise.resolve(administersEverything(viewer));
+  },
 
   subjectScope: (viewer) =>
     Promise.resolve(administersEverything(viewer) ? {} : { userId: viewer.userId }),
@@ -275,7 +330,11 @@ export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
  */
 export const SAFE_MODE_POLICY: AuthorizationPolicy = {
   canAdminister: () => Promise.resolve(false),
-  canRead: (viewer, subject) => Promise.resolve(subject === null || subject === viewer.userId),
+  canRead: (viewer, subject, _scope, resource) =>
+    // The `null` subject is allowed only when the route named nothing at all —
+    // see the module header. A resource it could not attribute is something safe
+    // mode WAS asked about, so it is refused.
+    Promise.resolve(subject === null ? resource === null : subject === viewer.userId),
   subjectScope: (viewer) => Promise.resolve({ userId: viewer.userId }),
 };
 
@@ -410,15 +469,17 @@ export async function canAdminister(
 
 /**
  * May `viewer` read `subject`'s data? `subject` is a user id, or `null` when the
- * route declared none.
+ * route named no owner — in which case `resource` says whether it named
+ * anything at all. See {@link AuthorizationPolicy.canRead} for the three states.
  */
 export async function canRead(
   viewer: AuthorizationPrincipal,
   subject: string | null,
-  scope: AuthorizationScope = {}
+  scope: AuthorizationScope = {},
+  resource: AuthorizationResource | null = null
 ): Promise<boolean> {
   try {
-    return await getAuthorizationPolicy().canRead(viewer, subject, scope);
+    return await getAuthorizationPolicy().canRead(viewer, subject, scope, resource);
   } catch (error) {
     denyAfterThrow('canRead', error, viewer);
     return false;
@@ -525,10 +586,32 @@ export async function checkAuthorizationParity(
       continue;
     }
 
+    // A case that names only the viewer proves nothing, and it is the shape a
+    // fork reaches for first. Every self-inclusive policy agrees with itself
+    // about the viewer — correct ones and divergent ones alike — so this
+    // passed clean on the counter-example policy in `lib/app/authorization.ts`
+    // that is labelled, in that file, as deliberately wrong. The `subjects`
+    // field has said "include at least the viewer and one other" since it was
+    // written; nothing enforced it, which made this checker an instance of the
+    // failure it exists to catch.
+    if (!testCase.subjects.some((subject) => subject !== testCase.viewer.userId)) {
+      violations.push({
+        case: name,
+        subject: '(none)',
+        message: `Case "${name}" names only the viewer as a subject, so the two faces agree trivially and a divergent policy would pass. Add at least one subject the viewer is not.`,
+      });
+      continue;
+    }
+
     const filter = await policy.subjectScope(testCase.viewer, scope);
 
     for (const subject of testCase.subjects) {
-      const readable = await policy.canRead(testCase.viewer, subject, scope);
+      // A null resource: parity is a relation between the two faces over
+      // concrete subject ids, and `subjectScope` has no resource to be told
+      // about. The resource-bearing states are outside the relation by
+      // construction — which is precisely why they need answering in the policy
+      // rather than being checked here.
+      const readable = await policy.canRead(testCase.viewer, subject, scope, null);
       const selected = subjectFilterSelects(filter, subject);
       if (readable === selected) continue;
 

@@ -9,10 +9,16 @@
  * this once, lazily, before the first read — which happens at the top of every
  * guarded request. You register; you wire nothing.
  *
- * Register a policy and you replace **the** authorization decision, at all three
+ * Register a policy and you replace the **administer** decision at all three
  * places Sunrise makes one: `withAdminAuth`, `withAuth` and the admin layout.
  * There are 262 guarded handlers behind those three — 257 of them under
  * `/api/v1/admin` — and none of them changes.
+ *
+ * **The read decision is not yet fully behind the seam**, and you need to know
+ * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET) and
+ * `app/api/v1/users/me` still decide from the platform role inline, so a
+ * platform `ADMIN` reads every user row through them whatever your policy says.
+ * `lib/auth/authorization.ts`'s module header carries the detail; #738 tracks it.
  *
  * The two cases this exists for:
  *
@@ -49,8 +55,12 @@
  * export function initAppAuthorizationPolicy(): void {
  *   registerAuthorizationPolicy({
  *     ...DEFAULT_AUTHORIZATION_POLICY,
- *     canRead: async (viewer, subject) =>
- *       subject === null || subject === viewer.userId || (await isTeamMate(viewer.userId, subject)),
+ *     canRead: async (viewer, subject, _scope, resource) => {
+ *       // Three states, not two. `subject === null || …` would permit every
+ *       // caller for any row your resolver could not attribute to a user.
+ *       if (subject === null) return resource === null;
+ *       return subject === viewer.userId || (await isTeamMate(viewer.userId, subject));
+ *     },
  *     subjectScope: async (viewer) => ({ userId: viewer.userId }),
  *   });
  * }
@@ -64,7 +74,17 @@
  *    detail page opens a record its own list does not contain. Run
  *    `checkAuthorizationParity(yourPolicy, cases)` — exported from
  *    `lib/auth/authorization.ts` with no test-framework dependency — in your own
- *    test suite, and it names the subject the two faces disagree about.
+ *    test suite, and it names the subject the two faces disagree about. **Give
+ *    each case a subject the viewer is not**: a self-only case is clean under
+ *    every self-inclusive policy, correct or not, and the checker now reports
+ *    that as a fault rather than passing it.
+ *  - **A resolver that returns a resource with no `ownerId` is a case you must
+ *    answer.** It reaches `canRead` as `subject === null` with a non-null
+ *    `resource` — an org-owned row, or a nullable `createdBy` on a `SetNull`
+ *    model, which `CLAUDE.md` mandates for retained config and audit models.
+ *    Sunrise's default narrows it to platform staff and logs; if you spread the
+ *    default and do not answer for it yourself, your org members are denied
+ *    rather than silently permitted.
  *  - **Register the whole policy, not a patch.** Spread
  *    `DEFAULT_AUTHORIZATION_POLICY` when you mean to change one face, as above.
  *    The copy is then visible at your call site rather than merged behind your

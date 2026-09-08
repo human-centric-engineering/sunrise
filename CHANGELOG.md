@@ -37,6 +37,16 @@ release process.
   `WithAdminAuthOptions` and `AuthorizationResourceResolver` are exported from
   `lib/auth/guards.ts` for it.
 
+  The read face receives the resolved resource as well as the subject derived
+  from it, so a row with no single owner — an org-owned row, or a nullable
+  `createdBy` on a `SetNull` model — is a state a policy can answer rather than
+  one that arrives indistinguishable from "this route named nothing". Sunrise's
+  default narrows that case to platform staff and logs it. **The read axis is
+  not yet fully behind the seam**: `GET /api/v1/users/[id]` and
+  `/api/v1/users/me` still decide from the platform role inline, so a narrowing
+  policy does not narrow those two — named in both module headers, tracked in
+  #738.
+
   Every face returns a `Promise` from day one — the org input (§106) needs a
   membership lookup, and a later sync→async conversion would be a sweep of every
   caller — and `scope` is an open struct `{ ownership?, tier?, org? }` so a new

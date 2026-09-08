@@ -173,6 +173,47 @@ describe('withAuth asks the policy about the subject', () => {
     expect(response.status).toBe(200);
   });
 
+  it('does not read an ownerless resource as an unscoped route', async () => {
+    // The finding /security-review caught. `subject` used to be the ONLY thing
+    // that reached `canRead`, so a resolver naming `{ kind, id, orgId }` — an
+    // org-owned row, or a nullable `createdBy` on a SetNull model — arrived as
+    // `null` and hit the same allow arm as "this route named nothing". Every
+    // caller passed, on a route that looked scoped in the diff and in the log,
+    // and a fork could not fix it in its own policy because core discarded the
+    // information first.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', 'user_1'));
+    const handler = vi.fn(() => ok());
+
+    const response = await withAuth(handler, {
+      resource: () => ({ kind: 'report', id: 'r1', orgId: 'org_7' }),
+    })(request());
+
+    expect(response.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('hands the whole resource to the read face, not just the owner it derived', async () => {
+    // Why the assertion above holds rather than being a coincidence: the read
+    // face now sees what the admin face always saw. Without this, the fix is one
+    // `if` in the default policy that a fork replacing the policy loses.
+    const seen: (AuthorizationResource | null)[] = [];
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (_viewer, _subject, _scope, resource) => {
+        seen.push(resource);
+        return Promise.resolve(true);
+      },
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(session());
+
+    await withAuth(() => ok(), {
+      resource: () => ({ kind: 'report', id: 'r1', orgId: 'org_7' }),
+    })(request());
+    await withAuth(() => ok())(request());
+
+    expect(seen).toEqual([{ kind: 'report', id: 'r1', orgId: 'org_7' }, null]);
+  });
+
   it('denies when the resolver throws, rather than asking about a null subject', async () => {
     // The distinction the `RESOLVER_FAILED` sentinel exists for. Collapsing a
     // failed resolution into "no resource" would hand the policy `null` — which
