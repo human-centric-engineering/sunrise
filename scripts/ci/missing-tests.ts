@@ -187,6 +187,17 @@ export const NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION: ReadonlyArray<{
       'guarantees about it is asserted by `tests/unit/eslint-app-boundary.test.ts`.',
   },
   {
+    pattern: 'scripts/test-knowledge-base.ts',
+    reason:
+      'same category as the spikes and smoke harnesses either side of this ' +
+      'entry: `npx tsx scripts/test-knowledge-base.ts` is a standalone probe ' +
+      'needing a live Postgres and an embedding provider, nothing imports it, ' +
+      'so its 0% is structural. It sits at the root of `scripts/` rather than ' +
+      'in a subdirectory, which is why the directory globs did not already ' +
+      'reach it. 4f still asks, and should — it reports and never gates, so ' +
+      'the question is answered in review rather than silenced here.',
+  },
+  {
     pattern: 'scripts/spikes/**',
     reason:
       'same category as the smoke harnesses below: `rls-isolation-spike.mjs` ' +

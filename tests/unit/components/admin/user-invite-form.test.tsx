@@ -323,6 +323,33 @@ describe('components/admin/user-invite-form', () => {
       });
     });
 
+    it('should navigate to /admin/users from the Back to Users button above the card', async () => {
+      // The success view renders TWO "Back to Users" buttons — one above the
+      // card and one in its footer. The footer's is covered below; this is the
+      // top one, whose handler had no test.
+      const user = await renderSuccessCard();
+
+      await user.click(screen.getAllByRole('button', { name: /back to users/i })[0]);
+
+      expect(mockPush).toHaveBeenCalledWith('/admin/users');
+    });
+
+    it('should open the invitation link in a new tab', async () => {
+      // Arrange
+      const link = 'https://example.com/invite/token-abc';
+      const user = await renderSuccessCard({ link });
+      const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+
+      // Act
+      await user.click(screen.getByRole('button', { name: /open link/i }));
+
+      // Assert: the operator gets the invite link itself, in a new tab — not
+      // the admin's current page navigated away from mid-flow.
+      expect(openSpy).toHaveBeenCalledWith(link, '_blank');
+
+      openSpy.mockRestore();
+    });
+
     it('should navigate to /admin/users when Back to Users button is clicked on success card footer', async () => {
       // Arrange
       const user = await renderSuccessCard();

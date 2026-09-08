@@ -575,6 +575,54 @@ log reports as off. See
 
 See [`CUSTOMIZATION.md` §4](../../CUSTOMIZATION.md#4-configuration--environment--the-libapp-surface).
 
+## Role vocabulary — `lib/auth/roles.ts`
+
+`User.role` is a free-form `String` on the schema with two values by
+convention. Those values live in **one module**, and every site that compares,
+validates, seeds or renders a role reads them from there:
+
+```typescript
+import {
+  USER_ROLES, // readonly ['USER', 'ADMIN'] — the known values
+  DEFAULT_USER_ROLE, // 'USER'  — new accounts, and the fallback for an unknown value
+  PLATFORM_ADMIN_ROLE, // 'ADMIN' — compare a *value* against this
+  isUserRole, // unknown -> value is UserRole  (narrowing at a boundary)
+  isPlatformAdmin, // { role } -> boolean      (asking about a *principal*)
+  roleLabel, // 'ADMIN' -> 'Admin'       (display)
+} from '@/lib/auth/roles';
+
+// Asking about a principal — session user, Prisma row, or API-key session alike
+if (!isPlatformAdmin(session.user)) throw new ForbiddenError('Admin access required');
+
+// Comparing a value being written
+if (body.role !== PLATFORM_ADMIN_ROLE) { ... }
+```
+
+**Do not write `role === 'ADMIN'`.** `tests/unit/auth-role-literals.test.ts`
+scans every tracked source file and fails on a bare role literal, so a new one
+is caught at the gate rather than found later by a string hunt. It builds its
+pattern from `USER_ROLES` itself, so a role added there is policed immediately.
+
+**Why a separate module rather than a helper in `utils.ts`.** It is
+side-effect-free and imports nothing — not Prisma, not better-auth, not
+`next/*` — which is what lets a `'use client'` component, a Prisma seed, a
+standalone script and a route handler all read the same list. Several role
+comparisons are in client components, so a module that reached for the session
+would be unusable exactly where it is most needed. The same constraint produced
+`lib/auth/api-key-scopes.ts`, and the purity is asserted in
+`tests/unit/lib/auth/roles.test.ts` rather than promised in a comment.
+
+It is deliberately the shape of its sibling [`lib/auth/account.ts`](../../lib/auth/account.ts),
+which owns the orthogonal `accountType` (HUMAN / SERVICE) axis. Keep the two
+axes separate: `role` is _what this principal may do_, `accountType` is _what
+kind of principal it is_.
+
+**`isPlatformAdmin`, not `isAdmin`.** Multi-tenancy adds a third, org-scoped
+axis, at which point today's global `ADMIN` means platform staff and a
+customer's own administrator is an org role rather than a third value here.
+Naming it now makes that a documentation change instead of a rename across
+every call site.
+
 ## Route Protection
 
 ### Middleware-Based Protection

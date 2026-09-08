@@ -50,7 +50,7 @@ import { UserButton } from '@/components/auth/user-button';
 | --------------- | ----------- | ----------------------- |
 | View profile    | `/profile`  | Always                  |
 | Settings        | `/settings` | Always                  |
-| Admin Dashboard | `/admin`    | `user.role === 'ADMIN'` |
+| Admin Dashboard | `/admin`    | `isPlatformAdmin(user)` |
 | Sign out        | -           | Always                  |
 
 **Menu Items (Not Authenticated):**

@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Check role-based permissions
-  if (session.user.role !== 'ADMIN') {
+  if (!isPlatformAdmin(session.user)) {
     return Response.json({ success: false, error: { message: 'Forbidden' } }, { status: 403 });
   }
 
@@ -367,7 +367,7 @@ export default async function AdminPage() {
     redirect('/login?callbackUrl=/admin')
   }
 
-  if (session.user.role !== 'ADMIN') {
+  if (!isPlatformAdmin(session.user)) {
     redirect('/unauthorized')
   }
 

@@ -195,6 +195,14 @@ export default defineConfig({
         // hand against a real database, that vitest never executes. Structurally
         // 0%, so the per-file gate would fail on any edit to it.
         'scripts/spikes/**',
+        // The fourth of that same family, and the one the directory globs above
+        // cannot reach because it sits at the root of `scripts/` rather than in
+        // a subdirectory of it. `npx tsx scripts/test-knowledge-base.ts`,
+        // documented in its own header as requiring a running Postgres and an
+        // embedding provider; nothing imports it. It surfaced the way #671's
+        // did — invisible to a full run, forced to 0% by a scoped run when a
+        // one-line edit dragged it in.
+        'scripts/test-knowledge-base.ts',
         '**/types/**',
         '.next/',
         'coverage/',

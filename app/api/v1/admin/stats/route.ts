@@ -89,12 +89,17 @@ export const GET = withAdminAuth(async (request, session) => {
     }
   }
 
-  // Exhaustive by construction: the keys come from `USER_ROLES` itself, which
-  // is what `Record<UserRole, number>` names. The assertion is on the shape of
-  // an object built two lines above, not on anything crossing a boundary.
-  const byRole = Object.fromEntries(
-    USER_ROLES.map((role) => [role, roleCountMap[role] ?? 0])
-  ) as Record<UserRole, number>;
+  // Pick only the known roles out of the map, so a role stored in the database
+  // that this install no longer declares is dropped rather than appearing in
+  // the response — which is what the hand-written pair of keys used to do.
+  //
+  // No `?? 0` fallback: every `USER_ROLES` key was seeded above, so one would
+  // be a branch nothing can reach. Exhaustive by construction, which is also
+  // what makes the assertion safe — the keys come from `USER_ROLES` itself.
+  const byRole = Object.fromEntries(USER_ROLES.map((role) => [role, roleCountMap[role]])) as Record<
+    UserRole,
+    number
+  >;
 
   // Build stats response
   const stats: SystemStats = {
