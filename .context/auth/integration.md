@@ -217,6 +217,9 @@ export interface WithAuthOptions {
  * - Throws UnauthorizedError (401) if no session
  * - Throws ForbiddenError (403) if `options.scope` is set and an API-key
  *   caller lacks it
+ * - Asks the authorization policy `canRead(principal, subject)`, where the
+ *   subject is the `ownerId` from `options.resource` — or `null` when the route
+ *   named none, which every core route does and the default policy allows
  * - Passes the session to the handler
  * - Catches all errors via handleAPIError
  */
@@ -229,12 +232,25 @@ export function withAuth(
  * Wrap an API route handler with admin authentication.
  *
  * - Throws UnauthorizedError (401) if no session
- * - Throws ForbiddenError (403) if user role is not ADMIN
+ * - Throws ForbiddenError (403) when the authorization policy refuses. On a
+ *   stock install that is the role check this guard used to assert inline —
+ *   platform role for a cookie session, the `admin` scope for an API key.
  */
 export function withAdminAuth(
-  handler: (request: NextRequest, session: AuthSession) => Response | Promise<Response>
+  handler: (request: NextRequest, session: AuthSession) => Response | Promise<Response>,
+  options?: WithAdminAuthOptions
 ): (request: NextRequest) => Promise<Response>;
 ```
+
+**The admin decision is a seam.** Both guards route it through
+`lib/auth/authorization.ts` rather than asserting a role in the guard body, so a
+fork replaces "who counts as an admin" — and "over whose data" — from
+`lib/app/authorization.ts` without touching a route. Behaviour on a stock
+install is unchanged. Both guards also take an optional `resource` resolver, so
+the policy can see _which_ resource is being touched; core supplies none, and
+with none the policy is asked about a `null` subject and allows it. The full
+guide is coming with the fork-scoping work; until then read
+`lib/auth/authorization.ts`'s module header, which carries the contract.
 
 **Usage - Simple authenticated route:**
 

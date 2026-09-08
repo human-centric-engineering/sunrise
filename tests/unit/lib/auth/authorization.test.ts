@@ -79,6 +79,20 @@ describe('the default policy reproduces the guards it replaced', () => {
     );
   });
 
+  it('refuses a key principal carrying no scopes at all', async () => {
+    // Reachable from a fork's own code rather than from the guards, which always
+    // pass the resolved key's scopes. It matters because the alternative reading
+    // of an absent list — "unscoped, therefore unrestricted" — is the fail-open
+    // one, and the type allows the state.
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canAdminister(
+        { userId: 'user-2', role: 'ADMIN', credential: 'api-key' },
+        null,
+        {}
+      )
+    ).resolves.toBe(false);
+  });
+
   it('reads everyone for an admin, and only themselves for everyone else', async () => {
     await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(ADMIN, 'user-9', {})).resolves.toBe(true);
     await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, 'user-1', {})).resolves.toBe(true);
