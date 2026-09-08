@@ -33,10 +33,19 @@
  *
  * ## Adding a role
  *
- * Add it to {@link USER_ROLES}. Everything that enumerates the vocabulary reads
- * from there — the Zod schemas, the client-side session validator, the admin
- * form's select options, the badge variants — so the new value becomes
- * mintable, selectable and validated without a sweep.
+ * Add it to {@link USER_ROLES}. Everything that enumerates the vocabulary by
+ * *value* reads from there — the Zod schemas, the client-side session
+ * validator, the admin forms' select options and defaults, the role counts in
+ * the admin stats response — so the new value becomes mintable, selectable and
+ * validated without a sweep.
+ *
+ * What that does **not** reach is code naming a role as a *property*:
+ * `stats.users.byRole.ADMIN` is a legitimate question about admins
+ * specifically, and `tests/unit/auth-role-literals.test.ts` cannot see it
+ * because there is no quoted literal to match. Such a site is fine when it
+ * really is asking about that one role, and wrong when it is standing in for
+ * "everyone else" — which is what `byRole.USER` was doing on the admin
+ * dashboard until it was rewritten as `total - byRole.ADMIN`.
  *
  * What it does **not** do is decide anything: a new role grants nothing until
  * some guard asks about it. That is deliberate, and it is why this module has
@@ -104,14 +113,23 @@ export function isPlatformAdmin(principal: { role?: string | null } | null | und
 }
 
 /**
- * The human-readable label for a role, as shown in the admin forms.
+ * The human-readable label for a role, as shown in the admin role selects.
  *
  * Derived from the value rather than mapped from a table, so a role added to
- * {@link USER_ROLES} appears in the role selects with a sensible label instead
- * of requiring a second edit somewhere else — which is the drift this module
- * exists to remove. A fork wanting different wording overrides at the call
- * site; this is a default, not a translation layer.
+ * {@link USER_ROLES} appears in the selects without a second edit somewhere
+ * else — the drift this module exists to remove. `SCREAMING_SNAKE` becomes
+ * `Title Case`, so `PLATFORM_STAFF` reads as `Platform Staff` rather than the
+ * `Platform_staff` a naive lower-casing produces.
+ *
+ * **There is no override seam**, and the two call sites are platform files. A
+ * fork needing different wording — a translation, or a name this rule cannot
+ * derive — has to carry an edit, and that is the honest limit of what a
+ * derivation gives you. Say so rather than implying otherwise: the alternative
+ * is a fork discovering it while looking for the hook.
  */
 export function roleLabel(role: UserRole): string {
-  return role.charAt(0) + role.slice(1).toLowerCase();
+  return role
+    .split('_')
+    .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
+    .join(' ');
 }

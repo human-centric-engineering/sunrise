@@ -99,35 +99,72 @@ function scannedFiles(): string[] {
 const ROLE_LITERAL = new RegExp(`['"](${USER_ROLES.join('|')})['"]`);
 
 /**
- * Strip comments, crudely but predictably.
+ * Strip comments, tracking string state so a `//` inside a literal is not
+ * mistaken for one.
  *
  * A docblock quoting `role === 'ADMIN'` while explaining the rule is not drift,
- * and there are several. This drops `//` lines and `/* … *\/` blocks; it does
- * not understand a comment marker inside a string literal, which would cause a
- * false NEGATIVE rather than a false positive — the safe direction for a line
- * that is genuinely code.
+ * and there are several. The first version of this only blanked lines whose
+ * *trimmed* form began with a comment marker, which left **trailing** comments
+ * intact — so `const isAdmin = check(u); // formerly role === 'ADMIN'` was
+ * scanned as code and failed the guard. That is a false POSITIVE, and this
+ * guard is in `ALWAYS_RUN_TESTS`: it would have broken CI on a comment, with a
+ * message telling the author to import a constant into it. The docblock at the
+ * time claimed the crude version could only err towards false negatives, "the
+ * safe direction" — it could not, and the claim is what made the gap easy to
+ * miss.
+ *
+ * Quote tracking is what makes cutting at `//` safe: without it, a line
+ * containing `'https://example.com'` would be truncated at the scheme and any
+ * role literal after it silently dropped.
  */
 function stripComments(source: string): string[] {
   const out: string[] = [];
   let inBlock = false;
+
   for (const line of source.split('\n')) {
-    const trimmed = line.trim();
-    if (inBlock) {
-      if (trimmed.includes('*/')) inBlock = false;
-      out.push('');
-      continue;
+    let code = '';
+    let quote: string | null = null;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const next = line[i + 1];
+
+      if (inBlock) {
+        if (ch === '*' && next === '/') {
+          inBlock = false;
+          i++;
+        }
+        continue;
+      }
+
+      if (quote) {
+        if (ch === '\\')
+          i++; // escaped char — never closes the string
+        else if (ch === quote) quote = null;
+        code += ch;
+        continue;
+      }
+
+      if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        code += ch;
+        continue;
+      }
+      if (ch === '/' && next === '/') break; // rest of the line is a comment
+      if (ch === '/' && next === '*') {
+        inBlock = true;
+        i++;
+        continue;
+      }
+      code += ch;
     }
-    if (trimmed.startsWith('/*')) {
-      if (!trimmed.includes('*/')) inBlock = true;
-      out.push('');
-      continue;
-    }
-    if (trimmed.startsWith('//') || trimmed.startsWith('*')) {
-      out.push('');
-      continue;
-    }
-    out.push(line);
+
+    // A `*` continuation line inside a JSDoc block that the scanner above did
+    // not open (the block started on an earlier line) — already handled by
+    // `inBlock`, but a lone leading `*` outside one is still prose.
+    out.push(code.trim().startsWith('*') ? '' : code);
   }
+
   return out;
 }
 
@@ -144,6 +181,39 @@ function roleLiteralSites(): string[] {
   }
   return found;
 }
+
+describe('comment stripping', () => {
+  /** What the scanner would flag on one line of source. */
+  const flags = (line: string) => stripComments(line).some((l) => ROLE_LITERAL.test(l));
+
+  it('ignores a role literal in a trailing comment', () => {
+    // The false positive the first version shipped. This guard is in
+    // ALWAYS_RUN_TESTS, so getting it wrong breaks CI on a comment.
+    expect(flags("const isAdmin = check(u); // formerly role === 'ADMIN'")).toBe(false);
+  });
+
+  it('ignores a whole-line and a block comment', () => {
+    expect(flags("// role === 'ADMIN'")).toBe(false);
+    expect(flags("/* role === 'ADMIN' */")).toBe(false);
+    expect(flags(" * role === 'ADMIN'")).toBe(false);
+  });
+
+  it('still flags a role literal in real code', () => {
+    // The other direction: stripping must not swallow the thing being guarded.
+    expect(flags("if (user.role === 'ADMIN') {")).toBe(true);
+    expect(flags('<SelectItem value="ADMIN">')).toBe(true);
+  });
+
+  it('does not treat a URL as the start of a comment', () => {
+    // Without quote tracking, cutting at `//` truncates the line at the scheme
+    // and silently drops anything after it — a false negative in code.
+    expect(flags("const u = 'https://example.com'; const r = 'ADMIN';")).toBe(true);
+  });
+
+  it('keeps code that follows a closed block comment on the same line', () => {
+    expect(flags("/* note */ const r = 'ADMIN';")).toBe(true);
+  });
+});
 
 describe('role literals live in lib/auth/roles.ts', () => {
   it('no source file outside the module writes one', () => {

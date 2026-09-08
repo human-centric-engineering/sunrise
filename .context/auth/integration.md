@@ -182,7 +182,7 @@ import { prisma } from '@/lib/db/client';
 export async function GET(request: NextRequest) {
   try {
     // Throws if not authenticated or not admin
-    await requireRole('ADMIN');
+    await requireRole(PLATFORM_ADMIN_ROLE);
 
     const users = await prisma.user.findMany();
     return Response.json({ success: true, data: users });
@@ -342,7 +342,7 @@ import { requireRole } from '@/lib/auth/utils'
 
 export default async function AdminPage() {
   // Throws if not authenticated or not admin
-  const session = await requireRole('ADMIN')
+  const session = await requireRole(PLATFORM_ADMIN_ROLE)
 
   return (
     <div>
@@ -430,7 +430,7 @@ import { prisma } from '@/lib/db/client';
 
 export async function GET(request: NextRequest) {
   try {
-    await requireRole('ADMIN');
+    await requireRole(PLATFORM_ADMIN_ROLE);
 
     const users = await prisma.user.findMany();
 

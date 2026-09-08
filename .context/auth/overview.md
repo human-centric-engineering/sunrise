@@ -350,7 +350,7 @@ export async function getServerUser(): Promise<AuthSession['user'] | null> {
 /**
  * Check if the current user has a specific role
  */
-export async function hasRole(requiredRole: string): Promise<boolean> {
+export async function hasRole(requiredRole: UserRole): Promise<boolean> {
   const user = await getServerUser();
   if (!user) return false;
   return user.role === requiredRole;
@@ -372,7 +372,7 @@ export async function requireAuth(): Promise<AuthSession> {
  * Require a specific role for a server component or API route
  * @throws Error if not authenticated or doesn't have required role
  */
-export async function requireRole(requiredRole: string): Promise<AuthSession> {
+export async function requireRole(requiredRole: UserRole): Promise<AuthSession> {
   const session = await requireAuth();
   if (session.user.role !== requiredRole) {
     throw new Error(`Role ${requiredRole} required`);
