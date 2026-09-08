@@ -114,7 +114,7 @@ describe('AdminLayout defers to a registered authorization policy', () => {
 
   it('lets a non-admin into the admin tree when the policy admits them', async () => {
     // The #366 case, at the shell rather than at the API: a fork's org-admin
-    // tier reaches the admin console without an edit to this file or to the 192
+    // tier reaches the admin console without an edit to this file or to the 262
     // routes underneath it. Under the default policy this same session is the
     // redirect asserted above.
     registerAuthorizationPolicy({

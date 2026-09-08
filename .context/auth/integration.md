@@ -245,12 +245,20 @@ export function withAdminAuth(
 **The admin decision is a seam.** Both guards route it through
 `lib/auth/authorization.ts` rather than asserting a role in the guard body, so a
 fork replaces "who counts as an admin" — and "over whose data" — from
-`lib/app/authorization.ts` without touching a route. Behaviour on a stock
-install is unchanged. Both guards also take an optional `resource` resolver, so
-the policy can see _which_ resource is being touched; core supplies none, and
-with none the policy is asked about a `null` subject and allows it. The full
-guide is coming with the fork-scoping work; until then read
-`lib/auth/authorization.ts`'s module header, which carries the contract.
+`lib/app/authorization.ts` without touching a route. `app/admin/layout.tsx` and
+the maintenance-mode bypass in `components/maintenance-wrapper.tsx` ask the same
+policy. Behaviour on a stock install is unchanged.
+
+Both guards also take an optional `resource` resolver so the policy can see
+_which_ resource is being touched. Core supplies none, and a route with no
+resolver has the policy asked about a `null` subject, which the default policy
+allows. **A resolver that returns nothing, or throws, denies the request** —
+`null` is a refusal, not "unscoped" — and it runs before the authorization
+decision, so on an admin route it is reachable by any authenticated caller.
+
+The full guide is coming with the fork-scoping work; until then read
+`lib/auth/authorization.ts`'s module header, which carries the contract,
+including the two `users` routes whose read decision is still inline (#738).
 
 **Usage - Simple authenticated route:**
 

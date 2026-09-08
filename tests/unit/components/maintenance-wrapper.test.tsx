@@ -21,7 +21,7 @@
  * @see components/maintenance-wrapper.tsx
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 // ─── Side-effect mocks — must come before any import that transitively pulls
@@ -119,6 +119,11 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { createMockHeaders, createMockSession } from '@/tests/types/mocks';
+import {
+  DEFAULT_AUTHORIZATION_POLICY,
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+} from '@/lib/auth/authorization';
 import {
   MaintenanceWrapper,
   MaintenanceWrapperWithAdminNotice,
@@ -449,5 +454,64 @@ describe('MaintenanceWrapperWithAdminNotice', () => {
     // Assert: MaintenancePage shown with isAdmin=false
     expect(screen.getByTestId('maintenance-page')).toBeInTheDocument();
     expect(screen.getByTestId('mp-isAdmin').textContent).toBe('false');
+  });
+
+  describe('the maintenance bypass is an authorization decision, not a role read', () => {
+    // The fourth chokepoint, found by /code-review. Bypassing this page reaches
+    // the WHOLE site, so it is an access decision and belongs behind the same
+    // seam as the guards. Left as a bare role read it would have made the new
+    // safe-mode guarantee false as written — "nobody administers anything"
+    // while the maintenance bypass stayed open to every stored role: 'ADMIN'.
+    //
+    // The twelve tests above run on the default policy and are unchanged by the
+    // migration, which is the behaviour-neutrality evidence here.
+    beforeEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    it('lets a non-admin past when the policy admits them', async () => {
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders() as unknown as ReturnType<typeof headers> extends Promise<infer T>
+          ? T
+          : never
+      );
+      vi.mocked(prisma.featureFlag.findUnique).mockResolvedValue(makeEnabledFlag() as never);
+      vi.mocked(auth.api.getSession).mockResolvedValue(
+        createMockSession({ user: { id: 'org-admin', role: 'USER' } })
+      );
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canAdminister: (viewer) => Promise.resolve(viewer.userId === 'org-admin'),
+      });
+
+      render(await MaintenanceWrapper({ children: <span>site content</span> }));
+
+      expect(screen.getByText('site content')).toBeInTheDocument();
+    });
+
+    it('holds a platform admin at the maintenance page when the policy refuses', async () => {
+      vi.mocked(headers).mockResolvedValue(
+        createMockHeaders() as unknown as ReturnType<typeof headers> extends Promise<infer T>
+          ? T
+          : never
+      );
+      vi.mocked(prisma.featureFlag.findUnique).mockResolvedValue(makeEnabledFlag() as never);
+      vi.mocked(auth.api.getSession).mockResolvedValue(
+        createMockSession({ user: { role: 'ADMIN' } })
+      );
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canAdminister: () => Promise.resolve(false),
+      });
+
+      render(await MaintenanceWrapper({ children: <span>site content</span> }));
+
+      expect(screen.queryByText('site content')).not.toBeInTheDocument();
+      expect(screen.getByTestId('mp-isAdmin').textContent).toBe('false');
+    });
   });
 });

@@ -81,18 +81,37 @@ export interface RouteContext<TParams = Record<string, string>> {
  * all Sunrise's own policy needs, and is why no core route supplies a resolver.
  * A fork scoping by owner (#367) or by org (§106) needs the resource, and the
  * alternative to this hook is rewriting every handler's signature to pass it
- * down. Return `null` when there is nothing to name.
+ * down.
  *
- * Runs **before** the handler and on every request to the route, so keep it to
- * what the URL already carries where you can. A resolver that throws denies the
- * request — a scope that cannot be established is not permission.
+ * **Naming no resource DENIES.** Returning `null` or `undefined` — or throwing —
+ * refuses the request; it does not mean "this route is unscoped". Those are
+ * opposite answers and the guard cannot tell them apart from the outside, so the
+ * one that is safe to guess wrong is the refusal. The permissive state is
+ * reached by not declaring a resolver at all, which is a decision visible in the
+ * route's source rather than in a row that happened to be missing. Do not add a
+ * resolver to a route that does not act on a resource.
+ *
+ * That matters most for the shape below: a `findUnique` returns `null` for a row
+ * that was deleted, or that the resolver's own `where` excluded. Under the
+ * opposite convention that request would run the handler with no ownership check
+ * at all, on a route that looks scoped in the diff and in the log.
+ *
+ * **Runs before the authorization decision**, not merely before the handler —
+ * the policy cannot be asked about a resource that has not been resolved. So on
+ * an admin route the resolver is reachable by any *authenticated* caller,
+ * including one the policy is about to refuse. Treat its input as hostile: key
+ * off the URL segment, select the few columns the policy needs, and do not do
+ * expensive or side-effecting work in it.
  *
  * ```ts
  * export const GET = withAuth<{ id: string }>(handler, {
  *   resource: async (_request, context) => {
  *     const { id } = await context!.params;
  *     const row = await prisma.thing.findUnique({ where: { id }, select: { createdBy: true } });
- *     return row && { kind: 'thing', id, ownerId: row.createdBy };
+ *     // `null` here refuses the request, which is what a missing row deserves.
+ *     // `createdBy` is nullable on a SetNull model, and an absent `ownerId`
+ *     // reaches `canRead` as its own state — answer it in your policy.
+ *     return row ? { kind: 'thing', id, ownerId: row.createdBy ?? undefined } : null;
  *   },
  * });
  * ```
@@ -164,29 +183,44 @@ function principalOf(
 /**
  * Run a route's resource resolver, or answer `null` when it has none.
  *
- * A throwing resolver is turned into a denial rather than a 500. It sits in
- * front of the policy, so a scope it could not establish must not be read as no
- * scope at all — that would hand the policy `null` and, on the default policy,
- * quietly permit. `RESOLVER_FAILED` is a distinct sentinel from `null` for
- * exactly that reason.
+ * **Two outcomes are unresolved, not one**, and both deny. A resolver that
+ * throws is the obvious one. A resolver that RETURNS nothing is the one that
+ * looks harmless: a `findUnique` answering `null` for a deleted or filtered row
+ * is the single most likely thing a real resolver does, and reading that as
+ * "this route named nothing" hands the policy the same value a route with no
+ * resolver at all produces — which the default policy permits. The handler would
+ * then run with no ownership check on a route that looks scoped in the diff and
+ * in the log.
+ *
+ * So `UNRESOLVED` is a Symbol distinct from `null`, and only the guard's own
+ * "this route declared no resolver" path yields `null`. A resolver cannot forge
+ * either: it can return an object, or it cannot, and both are answered here.
  */
-const RESOLVER_FAILED = Symbol('resource-resolver-failed');
+const UNRESOLVED = Symbol('resource-unresolved');
 
 async function resolveResource(
   resolver: AuthorizationResourceResolver | undefined,
   request: NextRequest,
   context: RouteContext | undefined
-): Promise<AuthorizationResource | null | typeof RESOLVER_FAILED> {
+): Promise<AuthorizationResource | null | typeof UNRESOLVED> {
   if (!resolver) return null;
   try {
-    return (await resolver(request, context)) ?? null;
+    const resource = await resolver(request, context);
+    if (!resource) {
+      logger.warn('authorization: a route resource resolver named nothing — denying the request', {
+        path: request.nextUrl?.pathname,
+        fix: 'Returning null/undefined from a resource resolver refuses the request; it does not mean "unscoped". A route that acts on no resource should not declare a resolver.',
+      });
+      return UNRESOLVED;
+    }
+    return resource;
   } catch (error) {
     logger.error('authorization: a route resource resolver threw — denying the request', {
       path: request.nextUrl?.pathname,
       error: error instanceof Error ? error.message : String(error),
       fix: 'The policy cannot be asked about a resource that could not be resolved, and an unresolved scope is not an absent one.',
     });
-    return RESOLVER_FAILED;
+    return UNRESOLVED;
   }
 }
 
@@ -301,7 +335,7 @@ export function withAuth(
         request as NextRequest,
         context as RouteContext | undefined
       );
-      if (resource === RESOLVER_FAILED) {
+      if (resource === UNRESOLVED) {
         throw new ForbiddenError('Access denied');
       }
       // The resource goes through as well as the subject derived from it. It
@@ -425,13 +459,15 @@ export function withAdminAuth(
         context as RouteContext | undefined
       );
 
-      if (resource === RESOLVER_FAILED || !(await canAdminister(principal, resource))) {
-        // The message follows the credential, not the policy, so both 403s read
-        // exactly as they did before the decision moved: a key caller is told
-        // about the scope it is missing, a person about the access.
-        throw new ForbiddenError(
-          principal.credential === 'api-key' ? 'Admin scope required' : 'Admin access required'
-        );
+      // 'Admin access required' for BOTH credentials here, and that is not a
+      // regression on the key path: the only thing that used to answer for a key
+      // caller is the scope floor above, which still throws its own
+      // 'Admin scope required' and is unreachable past. What lands here is a
+      // resolver that named nothing, or a policy that refused — neither of which
+      // is a missing scope, and telling an operator debugging safe mode to go
+      // and look at their key would send them to the one place that is fine.
+      if (resource === UNRESOLVED || !(await canAdminister(principal, resource))) {
+        throw new ForbiddenError('Admin access required');
       }
 
       if (context !== undefined) {

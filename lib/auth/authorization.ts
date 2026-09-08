@@ -1,14 +1,16 @@
 /**
  * The authorization policy — one decision, three faces, one seam.
  *
- * Sunrise asks "may this principal **administer**?" in exactly three places:
- * `withAdminAuth`, `withAuth` (both in `lib/auth/guards.ts`) and
- * `app/admin/layout.tsx`. Until this module existed each of them *answered* the
+ * Sunrise asks "may this principal **administer**?" in exactly four places:
+ * `withAdminAuth` and `withAuth` (both in `lib/auth/guards.ts`),
+ * `app/admin/layout.tsx`, and `components/maintenance-wrapper.tsx` — the last
+ * being the maintenance-mode bypass, which is an access decision rather than a
+ * piece of chrome, because getting past that page reaches the whole site. Until this module existed each of them *answered* the
  * question inline, with a role predicate in the guard body. That made the
  * chokepoint real and the decision unreachable: a fork needing "admin of this
  * org, not of the platform" (#366) or "only the questionnaires I created"
  * (#367) had to shadow `lib/auth/guards.ts` or edit every call site behind it:
- * 262 `withAdminAuth` handlers across 193 files, 257 of them under
+ * 262 `withAdminAuth` handlers across 190 files, 257 of them under
  * `/api/v1/admin`, plus 23 `withAuth` handlers. Extracting the answer costs
  * those forks nothing at the call sites, because the chokepoint was already
  * there.
@@ -45,6 +47,11 @@
  *   subject's data?" A boolean about one subject.
  * - {@link AuthorizationPolicy.subjectScope} — the same predicate as a Prisma
  *   `where` fragment: *which* subjects may this principal see? The list face.
+ *   **Nothing in Sunrise core calls it yet** — there is no core list endpoint
+ *   scoped by subject to call it from. It ships now because it is the half of
+ *   the contract a fork's `AND`-it-into-the-query code needs, and because
+ *   shipping it later would mean shipping `canRead` without the thing that keeps
+ *   it honest.
  *
  * **The last two are one rule wearing two shapes, and they must agree.** A
  * single-row read that permits and a list query that hides — or worse, the
@@ -267,6 +274,23 @@ export interface AuthorizationPolicy {
 }
 
 /**
+ * Resource kinds already warned about, so the ownerless-resource arm below does
+ * not log once per request.
+ *
+ * That arm is a fork's STEADY STATE, not a misconfiguration they are about to
+ * fix: a resolver on an org-owned model returns an ownerless resource every
+ * time, so an unlatched warn would be one line per request forever on exactly
+ * the hot route the arm exists for. Bounded by the number of distinct `kind`
+ * values a fork declares, which is a handful.
+ */
+const warnedOwnerlessKinds = new Set<string>();
+
+/** Test-only: re-arm the once-per-kind ownerless-resource warning. */
+export function __resetOwnerlessWarningsForTests(): void {
+  warnedOwnerlessKinds.clear();
+}
+
+/**
  * Whether this principal administers the whole install.
  *
  * The one place the platform-admin question is answered, so the default
@@ -308,11 +332,17 @@ export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
     // through to the arm above would permit EVERY caller while the diff, and
     // the log, still showed a policy being consulted — an allow wearing the
     // costume of a check. So the default narrows to platform staff and says so.
-    logger.warn('authorization: a route named a resource with no ownerId — denying non-admins', {
-      kind: resource.kind,
-      id: resource.id,
-      fix: 'Sunrise\u2019s default policy cannot attribute an ownerless row to anyone. Either give the resolver an `ownerId`, or answer for this case in your own `canRead` — it arrives as `subject === null` with a non-null `resource`.',
-    });
+    const kind = resource.kind ?? '(unnamed kind)';
+    if (!warnedOwnerlessKinds.has(kind)) {
+      warnedOwnerlessKinds.add(kind);
+      logger.warn(
+        'authorization: a route named a resource with no ownerId — denying non-admins (logged once per kind)',
+        {
+          kind,
+          fix: 'Sunrise\u2019s default policy cannot attribute an ownerless row to anyone. Either give the resolver an `ownerId`, or answer for this case in your own `canRead` — it arrives as `subject === null` with a non-null `resource`.',
+        }
+      );
+    }
     return Promise.resolve(administersEverything(viewer));
   },
 
@@ -431,14 +461,24 @@ export function __resetAuthorizationPolicyForTests(): void {
 }
 
 /**
- * Log a policy method that threw, and say what was denied instead.
+ * Log a policy method that threw. Every caller then answers from
+ * {@link SAFE_MODE_POLICY} rather than inventing a per-face fallback.
  *
- * Every caller of this returns the *denying* answer. A throwing policy is a
- * policy that could not be evaluated, and an unevaluated restriction is not
- * permission — the same rule the provider-eligibility seam runs on.
+ * A throwing policy is a policy that could not be evaluated, and an unevaluated
+ * restriction is not permission — the same rule the provider-eligibility seam
+ * runs on. But "deny" is not one answer here, it is three, and hand-writing them
+ * per face broke the invariant this module exists to hold: `canRead` returning
+ * `false` while `subjectScope` returned `{ userId }` is exactly the divergence
+ * {@link checkAuthorizationParity} is for — a list containing the viewer's own
+ * rows whose detail view 403s. One broken shared helper inside a fork's policy
+ * makes both faces throw, so that was the LIKELY case, not a corner.
+ *
+ * Deferring to the safe-mode policy makes the fallback parity-consistent by
+ * construction, and it is the same answer the install gives when a registration
+ * fails — one degraded behaviour to reason about instead of two.
  */
 function denyAfterThrow(face: string, error: unknown, viewer: AuthorizationPrincipal): void {
-  logger.error(`authorization: ${face} threw — denying`, {
+  logger.error(`authorization: ${face} threw — falling back to safe mode for this call`, {
     face,
     userId: viewer.userId,
     credential: viewer.credential,
@@ -463,7 +503,7 @@ export async function canAdminister(
     return await getAuthorizationPolicy().canAdminister(viewer, resource, scope);
   } catch (error) {
     denyAfterThrow('canAdminister', error, viewer);
-    return false;
+    return await SAFE_MODE_POLICY.canAdminister(viewer, resource, scope);
   }
 }
 
@@ -482,7 +522,7 @@ export async function canRead(
     return await getAuthorizationPolicy().canRead(viewer, subject, scope, resource);
   } catch (error) {
     denyAfterThrow('canRead', error, viewer);
-    return false;
+    return await SAFE_MODE_POLICY.canRead(viewer, subject, scope, resource);
   }
 }
 
@@ -490,9 +530,9 @@ export async function canRead(
  * Which subjects may `viewer` see? `AND` this into a list query so the list and
  * the single-row read cannot disagree.
  *
- * On a throwing policy this narrows to the viewer's own rows rather than
- * returning `{}`: `{}` is the *widest* value this type can express, so the
- * fail-closed answer is the narrow one.
+ * On a throwing policy this answers from {@link SAFE_MODE_POLICY} — the viewer's
+ * own rows — rather than returning `{}`, which is the *widest* value this type
+ * can express.
  */
 export async function subjectScope(
   viewer: AuthorizationPrincipal,
@@ -502,7 +542,7 @@ export async function subjectScope(
     return await getAuthorizationPolicy().subjectScope(viewer, scope);
   } catch (error) {
     denyAfterThrow('subjectScope', error, viewer);
-    return { userId: viewer.userId };
+    return await SAFE_MODE_POLICY.subjectScope(viewer, scope);
   }
 }
 

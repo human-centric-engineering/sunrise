@@ -9,8 +9,9 @@
  * this once, lazily, before the first read — which happens at the top of every
  * guarded request. You register; you wire nothing.
  *
- * Register a policy and you replace the **administer** decision at all three
- * places Sunrise makes one: `withAdminAuth`, `withAuth` and the admin layout.
+ * Register a policy and you replace the **administer** decision at all four
+ * places Sunrise makes one: `withAdminAuth`, `withAuth`, the admin layout, and
+ * the maintenance-mode bypass.
  * There are 262 guarded handlers behind those three — 257 of them under
  * `/api/v1/admin` — and none of them changes.
  *

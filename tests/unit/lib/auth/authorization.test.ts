@@ -29,6 +29,7 @@ import {
   registerAuthorizationPolicy,
   checkAuthorizationParity,
   __resetAuthorizationPolicyForTests,
+  __resetOwnerlessWarningsForTests,
   type AuthorizationPolicy,
   type AuthorizationPrincipal,
 } from '@/lib/auth/authorization';
@@ -56,6 +57,7 @@ const NARROW_KEY: AuthorizationPrincipal = {
 
 afterEach(() => {
   __resetAuthorizationPolicyForTests();
+  __resetOwnerlessWarningsForTests();
   vi.clearAllMocks();
 });
 
@@ -131,12 +133,25 @@ describe('the default policy reproduces the guards it replaced', () => {
     await expect(DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, null)).resolves.toBe(true);
   });
 
-  it('names the unattributed resource in the log, so a fork is not left with a mystery 403', async () => {
-    await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, { kind: 'report', id: 'r1' });
+  it('names the unattributed resource in the log, once per kind rather than per request', async () => {
+    // The arm is a fork's steady state — a resolver on an org-owned model
+    // returns an ownerless resource every time — so an unlatched warn would be
+    // one line per request forever on the hot route the arm exists for.
+    __resetOwnerlessWarningsForTests();
 
+    for (let i = 0; i < 3; i++) {
+      await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, { kind: 'report', id: `r${i}` });
+    }
+    await DEFAULT_AUTHORIZATION_POLICY.canRead(MEMBER, null, {}, { kind: 'invoice' });
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('no ownerId'),
-      expect.objectContaining({ kind: 'report', id: 'r1' })
+      expect.objectContaining({ kind: 'report' })
+    );
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no ownerId'),
+      expect.objectContaining({ kind: 'invoice' })
     );
   });
 
@@ -214,6 +229,25 @@ describe('the seam', () => {
 });
 
 describe('failure is closed, on every path', () => {
+  it('keeps the two read faces agreeing when the policy throws', async () => {
+    // The invariant a hand-written per-face fallback broke. `canRead` answering
+    // `false` while `subjectScope` answered `{ userId }` is precisely the
+    // divergence the parity checker exists to name: a list containing the
+    // viewer's own rows whose detail view 403s. And it was the LIKELY shape, not
+    // a corner — one broken shared helper in a fork's policy makes both faces
+    // throw at once. The wrappers now answer from SAFE_MODE_POLICY, so the
+    // fallback is parity-consistent by construction.
+    registerAuthorizationPolicy({
+      canAdminister: () => Promise.reject(new Error('boom')),
+      canRead: () => Promise.reject(new Error('boom')),
+      subjectScope: () => Promise.reject(new Error('boom')),
+    });
+
+    await expect(canRead(MEMBER, 'user-1')).resolves.toBe(true);
+    await expect(subjectScope(MEMBER)).resolves.toEqual({ userId: 'user-1' });
+    await expect(canRead(MEMBER, 'user-9')).resolves.toBe(false);
+  });
+
   it('denies when a policy method throws, and says so', async () => {
     registerAuthorizationPolicy({
       canAdminister: () => Promise.reject(new Error('policy lookup failed')),
@@ -227,6 +261,10 @@ describe('failure is closed, on every path', () => {
     // for the list face is the narrow one, not the empty object.
     await expect(subjectScope(ADMIN)).resolves.toEqual({ userId: 'admin-1' });
     expect(vi.mocked(logger.error)).toHaveBeenCalledTimes(3);
+    // A platform admin gets no special treatment on the throw path: safe mode
+    // does not know who is an admin, because a policy that cannot answer cannot
+    // be asked who counts as one.
+    await expect(canRead(ADMIN, 'admin-1')).resolves.toBe(true);
   });
 
   it('denies the admin surface, but not undeclared reads, in safe mode', async () => {

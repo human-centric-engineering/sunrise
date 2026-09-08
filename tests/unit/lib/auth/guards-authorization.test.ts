@@ -214,6 +214,38 @@ describe('withAuth asks the policy about the subject', () => {
     expect(seen).toEqual([{ kind: 'report', id: 'r1', orgId: 'org_7' }, null]);
   });
 
+  it('denies when the resolver names nothing, rather than reading it as unscoped', async () => {
+    // The likeliest thing a real resolver does: `findUnique` answers `null` for
+    // a deleted row, or one its own `where` excluded. That used to produce the
+    // same value as "this route declared no resolver", which the default policy
+    // permits — so the handler ran with no ownership check on a route that looks
+    // scoped in the diff and in the log. `null` from a resolver now denies.
+    const read: ReadCall[] = [];
+    registerAuthorizationPolicy(recordingPolicy(true, [], read));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session());
+    const handler = vi.fn(() => ok());
+
+    const response = await withAuth(handler, { resource: () => null })(request());
+
+    expect(response.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+    // Not even asked: an unresolved scope is not a question the policy can
+    // answer, so it is refused in front of it.
+    expect(read).toEqual([]);
+  });
+
+  it('still allows the route that declares no resolver at all', async () => {
+    // The contrast that makes the assertion above a rule rather than a blanket
+    // denial — and the arm every core route takes.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session());
+    const handler = vi.fn(() => ok());
+
+    const response = await withAuth(handler)(request());
+
+    expect(response.status).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('denies when the resolver throws, rather than asking about a null subject', async () => {
     // The distinction the `RESOLVER_FAILED` sentinel exists for. Collapsing a
     // failed resolution into "no resource" would hand the policy `null` — which
@@ -357,6 +389,19 @@ describe('withAdminAuth asks the policy whether to admit', () => {
     const body = (await response.json()) as { error: { message: string } };
 
     expect(response.status).toBe(403);
-    expect(body.error.message).toBe('Admin scope required');
+    // NOT 'Admin scope required'. The floor above already passed, so the key is
+    // the one thing that is fine — sending an operator to look at it is the
+    // wrong answer, and in safe mode it is the answer they would always get.
+    expect(body.error.message).toBe('Admin access required');
+  });
+
+  it('refuses a resolver that named nothing, without running the handler', async () => {
+    const handler = vi.fn(() => ok());
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    const response = await withAdminAuth(handler, { resource: () => null })(request());
+
+    expect(response.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
   });
 });
