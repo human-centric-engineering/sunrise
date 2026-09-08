@@ -191,6 +191,44 @@ release process.
 
 ### Changed
 
+- **The version contract now covers every fork-owned scaffold in `lib/app/`,
+  not just the registry-based ones.** [`VERSIONING.md`](./VERSIONING.md#covered)
+  states that its Covered list _is_ the public surface and that nothing else is
+  covered — and that list named seven of the thirty files in `lib/app/`. So a
+  fork that had filled `brand.ts`, `public-nav.ts`, `emails.ts`, `csp.ts`,
+  `agent-fields.ts` or any of the other twenty-three was owed no
+  breaking-change announcement if we changed them, and had no way to learn that
+  from reading the file (#732).
+
+  All thirty are now named, each with the export a fork fills. **This widens
+  what Sunrise owes you**: a change to any of them is a CHANGELOG entry and, at
+  `1.0`, a MAJOR if it breaks. Widening is deliberate and done now because
+  `VERSIONING.md`'s own asymmetry only runs one way — the list can widen in a
+  MINOR, and can only narrow in a MAJOR.
+
+  The `lib/app/` half of the list is no longer hand-maintained.
+  `tests/unit/versioning-seam-coverage.test.ts` derives it from the directory
+  and fails in both directions — a scaffold the list does not name, and a name
+  with no file behind it. It classifies by **exclusion**, not by an extension
+  allowlist: anything in `lib/app/` that is not a dotfile, a `.d.ts` or a `.md`
+  is a scaffold, and a subdirectory counts as one. An allowlist was the first
+  attempt and it reproduced the defect one item along — it named five
+  extensions, so `lib/app/theme.mts` passed silently, and it read only
+  top-level files, so a nested `lib/app/<name>/server/` seam (the shape the
+  root ESLint config's own error message recommends) was invisible.
+  The seams outside `lib/app/` stay hand-maintained — nothing derives them —
+  and the guard says so rather than implying a completeness it does not have.
+
+  **A fork adding its own scaffold under `lib/app/` — file or directory, any
+  extension — will fail this test until it adds the entry.** That is the guard
+  working: your scaffold is public surface for whoever forks you.
+
+  Three seams **outside** `lib/app/` that were missing are now named: `components/brand/brand-mark.tsx`,
+  `app/brand-theme.css` and `prisma/schema/app.prisma`. All three are
+  documented elsewhere as fork-owned, and all three were absent from the list
+  that calls itself the public surface — so a fork that had filled them could
+  have lost its branding on a merge with nothing owed to it.
+
 - **The in-flight Proxy's method sets are now an exhaustive allowlist, and an
   unclassified method fails closed.** `withInFlightTracking` in
   `lib/orchestration/llm/provider-manager.ts` used two `Set`s —

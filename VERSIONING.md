@@ -72,17 +72,68 @@ covered by the version contract.
 
 ### Covered
 
-- **Named seams** — the registry-based extension points. Currently:
-  - capability registry (`lib/app/capabilities.ts` → `registerAppCapability()`)
-  - admin nav registry (`lib/app/admin-nav.ts` → `registerNavSection()`)
+- **Named seams** — **every fork-owned scaffold in `lib/app/`**, plus the seams
+  that live outside that directory. A fork fills a config scaffold exactly as it
+  fills a registry, and a breaking change to either costs it the same merge, so
+  both are covered. This list used to read "the registry-based extension
+  points", which named seven of them and left every fork's `brand.ts`,
+  `public-nav.ts` and `emails.ts` edits owed no announcement (#732).
+
+  The `lib/app/` half below has its **paths** checked against the directory by
+  `tests/unit/versioning-seam-coverage.test.ts`, in both directions — a file
+  with no row, and a row with no file. The `→ export` beside each path is
+  **not** checked and can go stale on a rename: this list carried
+  `registerAppDriftProbe()` for the seam whose export is
+  `registerAppDriftProbes()`. It
+  classifies by exclusion — anything in `lib/app/` that is not a dotfile, a
+  `.d.ts` or a `.md` is a scaffold and must be named here, whatever its
+  extension — and a subdirectory counts as one scaffold, named with a trailing
+  slash. The seams outside `lib/app/` are hand-maintained, because nothing
+  derives them.
+
+  Fork-owned scaffolds in `lib/app/` — a fork edits these, upstream ships them
+  empty (or, for `surface.ts`, as a default it may replace):
+  - `lib/app/account-sections.ts` → `initAppAccountSections()` — account-page section registry
+  - `lib/app/admin-nav.ts` → `initAppNav()` — admin nav registry (`registerNavSection()`)
+  - `lib/app/agent-fields.ts` → `appAgentFields` — extra `AiAgent` config fields
+  - `lib/app/api-key-scopes.ts` → `APP_API_KEY_SCOPES` — extra mintable API-key scopes
+  - `lib/app/auth-landing.ts` → `appAuthLandingRoute` / `appAuthLandingLabel` — where sign-in lands
+  - `lib/app/bootstrap.ts` → `initApp()` — the app boot hook, awaited by `instrumentation.ts`
+  - `lib/app/brand.ts` → `appBrandName` / `appBrandLegalName` / `appBrandDescription` — brand overrides
+  - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
+  - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
+  - `lib/app/csp.ts` → `appFrameSrc` — extra CSP `frame-src` origins
+  - `lib/app/data-export.ts` → `initAppSubjectSources()` / `collectAppSubjectData()` — Art. 15 export sources
+  - `lib/app/db-drift.ts` → `registerAppDriftProbes()` — drift-probe registry (primitives in `lib/db/drift-probes.ts`)
+  - `lib/app/emails.ts` → `emailOverrides` — transactional-email template overrides
+  - `lib/app/env.ts` → `appEnvSchema` — app env registry
+  - `lib/app/eslint.config.mjs` — the fork's own ESLint tier config, spread into the root config
+  - `lib/app/evaluations.ts` → `initAppGraders()` — evaluation grader registry
+  - `lib/app/footer.ts` → `footerCopyright` — footer copyright line
+  - `lib/app/guard-event-contributors.ts` → `initAppGuardEventContributors()` — output-guard event contributors
+  - `lib/app/guard-floor-contributors.ts` → `initAppGuardFloorContributors()` — output-guard floor contributors
+  - `lib/app/jobs.ts` → `initAppJobs()` — maintenance-tick job registry
+  - `lib/app/knowledge-access-contributors.ts` → `initAppKnowledgeAccessContributors()` — knowledge document access
+  - `lib/app/llm-providers.ts` → `registerAppProviderEligibility()` — provider-eligibility seam (primitive: `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
+  - `lib/app/mcp-resources.ts` → `initAppMcpResources()` — MCP resource-type registry
+  - `lib/app/protected-nav.ts` → `protectedNavItems` — authenticated-area nav
+  - `lib/app/protected-routes.ts` → `appProtectedRoutes` — extra route prefixes the proxy protects
+  - `lib/app/public-nav.ts` → `publicNavItems` / `footerNavItems` / `footerLegalItems` — public nav and footer
+  - `lib/app/rate-limit.ts` → `registerAppRateLimits()` — rate-limit registry (`registerRateLimitTier()` / `registerRateLimitRule()` / `registerRateLimitKeyResolver()`)
+  - `lib/app/reserved-tiers.ts` → `occupiedTiers` — which reserved namespace tiers this fork occupies
+  - `lib/app/surface.ts` → `classifySurface()` / `DEFAULT_SURFACE` — per-surface theming classifier
+  - `lib/app/user-created.ts` → `initAppUserCreatedHooks()` — post-signup hook registry
+
+  Outside `lib/app/` — **hand-maintained, so check it against the tree rather
+  than trusting it.** The guard cannot derive this half, and a short list here
+  is the same broken promise #732 was about:
   - erasure-hook registry (`lib/privacy/erasure-hooks.ts`)
-  - ESLint app-boundary configuration for `lib/app/**`
-  - app env registry (`lib/app/env.ts` → `appEnvSchema`)
-  - rate-limit registry (`lib/app/rate-limit.ts` → `registerRateLimitTier()` / `registerRateLimitRule()` / `registerRateLimitKeyResolver()`)
-  - drift-probe registry (`lib/app/db-drift.ts` → `registerAppDriftProbe()`, primitives in `lib/db/drift-probes.ts`)
-  - context-contributor registry (`lib/app/context-contributors.ts` → `registerContextContributor()`)
-  - provider-eligibility seam (`lib/app/llm-providers.ts` → `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
   - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)
+  - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
+  - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold; the default returns `BRAND.name` as a bare string, so a fork replaces markup rather than filling a blank)
+  - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)
+  - fork schema tier (`prisma/schema/app.prisma` — ships empty; the reserved `/app` and `/framework` tiers generally, see [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#the-appplatform-model))
+
 - **Documented public APIs** —
   - `withAuth()`, `withAdminAuth()` from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
   - `successResponse()`, `errorResponse()` from `lib/api/responses.ts`
