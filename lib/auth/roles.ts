@@ -130,6 +130,6 @@ export function isPlatformAdmin(principal: { role?: string | null } | null | und
 export function roleLabel(role: UserRole): string {
   return role
     .split('_')
-    .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
 }

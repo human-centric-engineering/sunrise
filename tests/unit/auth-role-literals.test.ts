@@ -116,10 +116,28 @@ const ROLE_LITERAL = new RegExp(`['"](${USER_ROLES.join('|')})['"]`);
  * Quote tracking is what makes cutting at `//` safe: without it, a line
  * containing `'https://example.com'` would be truncated at the scheme and any
  * role literal after it silently dropped.
+ *
+ * **Template literals are prose; their `${…}` interpolations are code.** A
+ * prompt template in `lib/orchestration/` may legitimately say "answer with
+ * 'USER' or 'ADMIN'", and flagging that is a red build over a string. But
+ * `${user.role === 'ADMIN' ? …}` inside the same template is a real
+ * comparison, so interpolation depth is tracked and its contents are scanned.
+ * Template state carries across lines, because a backtick string is the only
+ * one that may span them.
+ *
+ * `'` and `\"` reset per line instead — they cannot span a line in valid
+ * source, and resetting contains the damage from an apostrophe in prose: a
+ * stray quote cannot leave the scanner in string state for the rest of a file.
+ *
+ * Two earlier versions got this wrong in the same direction, each introduced by
+ * the fix for the one before: the first ignored trailing comments, the second
+ * reset template state per line and flagged line 2 of a prompt.
  */
 function stripComments(source: string): string[] {
   const out: string[] = [];
   let inBlock = false;
+  let inTemplate = false;
+  let interpolationDepth = 0;
 
   for (const line of source.split('\n')) {
     let code = '';
@@ -137,20 +155,39 @@ function stripComments(source: string): string[] {
         continue;
       }
 
+      // Template literal, outside `${}`: prose, not code.
+      if (inTemplate && interpolationDepth === 0) {
+        if (ch === '\\') i++;
+        else if (ch === '`') inTemplate = false;
+        else if (ch === '$' && next === '{') {
+          interpolationDepth = 1;
+          i++;
+        }
+        continue;
+      }
+
       if (quote) {
-        if (ch === '\\')
-          i++; // escaped char — never closes the string
+        if (ch === '\\') i++;
         else if (ch === quote) quote = null;
         code += ch;
         continue;
       }
 
-      if (ch === "'" || ch === '"' || ch === '`') {
+      if (interpolationDepth > 0) {
+        if (ch === '{') interpolationDepth++;
+        else if (ch === '}') interpolationDepth--;
+      }
+
+      if (ch === '`') {
+        inTemplate = true;
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
         quote = ch;
         code += ch;
         continue;
       }
-      if (ch === '/' && next === '/') break; // rest of the line is a comment
+      if (ch === '/' && next === '/') break;
       if (ch === '/' && next === '*') {
         inBlock = true;
         i++;
@@ -159,9 +196,6 @@ function stripComments(source: string): string[] {
       code += ch;
     }
 
-    // A `*` continuation line inside a JSDoc block that the scanner above did
-    // not open (the block started on an earlier line) — already handled by
-    // `inBlock`, but a lone leading `*` outside one is still prose.
     out.push(code.trim().startsWith('*') ? '' : code);
   }
 
@@ -212,6 +246,40 @@ describe('comment stripping', () => {
 
   it('keeps code that follows a closed block comment on the same line', () => {
     expect(flags("/* note */ const r = 'ADMIN';")).toBe(true);
+  });
+
+  it('does not scan the inside of a multi-line template literal', () => {
+    // The false positive the per-line quote state produced. Prompt templates
+    // in `lib/orchestration/` legitimately name roles in prose; with this
+    // guard in ALWAYS_RUN_TESTS, flagging one is a red build over a string.
+    const src = ['const PROMPT = `', "  Answer with 'USER' or 'ADMIN'.", '`;'].join('\n');
+
+    expect(stripComments(src).some((l) => ROLE_LITERAL.test(l))).toBe(false);
+  });
+
+  it('still sees code after a template literal closes', () => {
+    // The other direction: carrying template state must not swallow the rest
+    // of the file once the backtick closes.
+    const src = ['const P = `', '  hello', '`;', "const r = 'ADMIN';"].join('\n');
+
+    expect(stripComments(src).some((l) => ROLE_LITERAL.test(l))).toBe(true);
+  });
+
+  it('still scans a ${} interpolation inside a template', () => {
+    // The limit of treating templates as prose. An interpolated comparison is
+    // real code and must not be hidden by the rule that protects the prose
+    // around it.
+    const src = ['const msg = `', "  ${user.role === 'ADMIN' ? 'yes' : 'no'}", '`;'].join('\n');
+
+    expect(stripComments(src).some((l) => ROLE_LITERAL.test(l))).toBe(true);
+  });
+
+  it('contains an apostrophe in prose to its own line', () => {
+    // A stray `'` — "step's output" inside a comment — must not leave the
+    // scanner in string state for everything that follows.
+    const src = ["// the step's output", "const r = 'ADMIN';"].join('\n');
+
+    expect(stripComments(src).some((l) => ROLE_LITERAL.test(l))).toBe(true);
   });
 });
 

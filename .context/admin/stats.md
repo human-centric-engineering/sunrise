@@ -8,12 +8,12 @@ The stats dashboard (`/admin/overview`) provides administrators with a real-time
 
 The `StatsCards` component displays four key metrics:
 
-| Card            | Metric                | Description                |
-| --------------- | --------------------- | -------------------------- |
-| Total Users     | `users.total`         | All registered users       |
-| Verified Users  | `users.verified`      | Users with verified emails |
-| New Users (24h) | `users.recentSignups` | Signups in last 24 hours   |
-| Admin Users     | `users.byRole.ADMIN`  | Users with admin role      |
+| Card            | Metric                | Description                                                                                                         |
+| --------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Total Users     | `users.total`         | All registered users                                                                                                |
+| Verified Users  | `users.verified`      | Users with verified emails                                                                                          |
+| New Users (24h) | `users.recentSignups` | Signups in last 24 hours                                                                                            |
+| Admin Users     | `users.byRole.ADMIN`  | Admins; the card's subtitle shows `total - byRole.ADMIN`, so it stays correct when an install declares a third role |
 
 ## System Information
 
@@ -118,10 +118,9 @@ interface SystemStats {
     total: number; // Total user count
     verified: number; // Verified email count
     recentSignups: number; // Last 24 hours
-    byRole: {
-      USER: number;
-      ADMIN: number;
-    };
+    // Keyed by every role in `USER_ROLES` (lib/auth/roles.ts), derived — a
+    // role added there appears here as 0 rather than being absent.
+    byRole: Record<UserRole, number>;
   };
   system: {
     nodeVersion: string; // e.g., "v24.9.0"
