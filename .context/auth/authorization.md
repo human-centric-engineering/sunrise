@@ -51,12 +51,12 @@ Sunrise consults the policy in exactly four places, and they are the reason a
 fork edits nothing else. **Which face each one asks matters more than the
 count** — three ask `canAdminister`, one asks `canRead`:
 
-| Chokepoint                             | Face            | What it gates                                                                                                                                      |
-| -------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `withAdminAuth` (`lib/auth/guards.ts`) | `canAdminister` | 262 handler wrappings across 190 files, 257 of them under `/api/v1/admin`                                                                          |
-| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree                                                                                                                       |
-| `components/maintenance-wrapper.tsx`   | `canAdminister` | The maintenance-mode bypass — an access decision, not chrome, because getting past that page reaches the whole site                                |
-| `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them, but no core route declares a `resource` resolver, so it is asked about `{ kind: 'nothing' }` |
+| Chokepoint                             | Face            | What it gates                                                                                                                                                                                |
+| -------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `withAdminAuth` (`lib/auth/guards.ts`) | `canAdminister` | 262 handler wrappings across 190 files, 257 of them under `/api/v1/admin`                                                                                                                    |
+| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree                                                                                                                                                                 |
+| `components/maintenance-wrapper.tsx`   | `canAdminister` | The maintenance-mode bypass — an access decision, not chrome, because getting past that page reaches the whole site                                                                          |
+| `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them; all but one declare no `resource` resolver, so it is asked about `{ kind: 'nothing' }`. The exception is `app/api/v1/users/[id]` (GET) |
 
 Read that table before assuming an override is doing what you meant.
 **Replacing `canAdminister` alone changes nothing about a `withAuth` route**,
@@ -168,34 +168,20 @@ Sunrise deliberately does **not** fall back to its own default policy on a faile
 registration. A fork's policy typically _narrows_ the platform default, so
 falling back would widen access under a log line saying the feature was disabled.
 
-Safe mode does not deny a read with **no declared subject** — core routes declare
-none, so denying those would take the application down over a seam that is not
-yet load-bearing for them. Safe mode refuses what it was asked about, not what it
-was not asked about.
+Safe mode does not deny a read with **no declared subject** — almost every core
+route declares none, so denying those would take the application down over a seam
+most of them do not use. It refuses what it was asked about, not what it was not
+asked about: `app/api/v1/users/[id]` (GET) declares a resource, and safe mode
+refuses that read even for a platform admin.
 
 ---
 
 ## What is not behind the seam yet
 
-Read this before trusting a narrowing `canRead`.
-
-**One core route decides a read from the platform role inline.**
-`app/api/v1/users/[id]/route.ts:52` tests
-`session.user.id !== id && !isPlatformAdmin(session.user)` — `canRead` written
-longhand. Its `withAuth` wrapper does consult the policy, but with no `resource`
-resolver, so it is asked about `{ kind: 'nothing' }`, allows, and the real
-decision is the line below it. The consequence is directional and it is the
-unsafe direction: **a fork's narrowing policy does not narrow it, and neither
-does safe mode** — safe mode's promise that every declared read narrows to the
-reader's own rows cannot bind a read that was never declared. Migrating it is
-the first real adopter of the `resource` resolver; it is scheduled, and this
-paragraph goes when it lands.
-
-`app/api/v1/users/me/route.ts` is **not** a second instance, though this
-document said so until 2026-09-09. Its `GET` reads
-`where: { id: session.user.id }` and is self-scoped by construction; its only
-`isPlatformAdmin` call (`:295`) guards the last-admin count inside `DELETE`,
-which is a restriction on admins rather than a read decision.
+Read this before trusting a narrowing `canRead`. The read _decision_ is now
+behind the seam everywhere core makes one — `app/api/v1/users/[id]` (GET) was
+the last inline holdout and declares a resolver as of this release. What follows
+is about the _list_ half of the contract.
 
 **`subjectScope` has no core caller.** There is no list endpoint in Sunrise core
 scoped by subject. It ships because it is the half of the contract a fork's

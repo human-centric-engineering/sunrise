@@ -266,8 +266,8 @@ the compiler enforces that rather than a docblock — see
 
 The full guide is [`.context/auth/authorization.md`](./authorization.md) — the
 three scope inputs, the owner-scoped list recipe, and an explicit list of what
-is **not** behind the seam yet, including the one `users` route whose read
-decision is still inline (`app/api/v1/users/[id]/route.ts` GET).
+is **not** behind the seam yet. `app/api/v1/users/[id]/route.ts` (GET) is the
+one core route that declares a `resource`, and the example to copy from.
 
 **Usage - Simple authenticated route:**
 

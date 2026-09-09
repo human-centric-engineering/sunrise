@@ -63,10 +63,7 @@ release process.
   "this route named nothing", and the natural line to write against a nullable
   subject — `subject === null || subject === viewer.userId` — permits every
   caller while reading exactly like a check. Sunrise's default narrows
-  `'unattributed'` to platform staff and logs it once per kind. **The read axis is
-  not yet fully behind the seam**: `GET /api/v1/users/[id]` still decides from
-  the platform role inline, so a narrowing policy does not narrow it and neither
-  does safe mode — named in both module headers.
+  `'unattributed'` to platform staff and logs it once per kind.
 
   Every face returns a `Promise` from day one — the org input (§106) needs a
   membership lookup, and a later sync→async conversion would be a sweep of every
@@ -102,6 +99,29 @@ release process.
   judged by the role, and `subjectScope` would answer `{}` (every subject) where
   it should answer `{ userId }`. That divergence sat in the caller, so
   `checkAuthorizationParity` could not see it.
+
+- **`GET /api/v1/users/[id]` now asks the authorization policy instead of the
+  platform role.** It is the first core route to declare a `resource` resolver,
+  so a fork's narrowing `canRead` narrows it and safe mode refuses it — neither
+  of which a decision written inline in the handler could ever do. Three
+  behaviour changes, all narrowing:
+
+  - **An API key is judged by its scopes, not its owner's role.** The inline
+    check read `session.user.role`, which for a key-authenticated caller is the
+    **key owner's** role, and `withAuth` accepts a key of any scope — so a
+    `chat`-scoped key belonging to an admin could read every user's profile
+    through this route. It now needs the `admin` scope, matching every other
+    surface.
+  - The 403's message moves from `Forbidden` to `Access denied`, because the
+    refusal comes from the guard. Status `403` and code `FORBIDDEN` are
+    unchanged.
+  - A malformed id from a non-admin returns `403` rather than `400`: the policy
+    decides before the handler validates, so the caller can no longer tell
+    "not a valid id" from "not yours".
+
+  Self-read, admin-reads-other and non-admin-reads-other are otherwise
+  unchanged. `PATCH` and `DELETE` are untouched — they are `withAdminAuth`, whose
+  decision was already behind the seam.
 
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new

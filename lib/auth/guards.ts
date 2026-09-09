@@ -113,8 +113,9 @@ export interface RouteContext<TParams = Record<string, string>> {
 /**
  * Tells the authorization policy **what** a request is acting on.
  *
- * Without one, the policy is asked about the caller and nothing else — which is
- * all Sunrise's own policy needs, and is why no core route supplies a resolver.
+ * Without one, the policy is asked about the caller and nothing else, which is
+ * all Sunrise's own policy needs on all but one route — `app/api/v1/users/[id]`
+ * (GET) supplies one, and is the worked example.
  * A fork scoping by owner (#367) or by org (§106) needs the resource, and the
  * alternative to this hook is rewriting every handler's signature to pass it
  * down.
