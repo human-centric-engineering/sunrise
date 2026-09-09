@@ -351,6 +351,14 @@ async function resolveResource(
  * not an environment variable on purpose: which way this goes is a property of
  * the product, decided once by whoever owns the fork, not a per-deploy dial that
  * can differ between staging and production and hide the difference.
+ *
+ * **What `'refuse'` looks like on a mutating route, so it is not a surprise:**
+ * the check can only run after the handler, because whether the handler
+ * consulted the filter is not knowable before it does. So a `POST` that writes
+ * and then turns out to have no ownership declaration returns 500 **with the
+ * write committed**. That is a misconfigured route reporting itself in
+ * development, not a rollback, and the fix is the one line the error names —
+ * but do not read the 500 as "nothing happened".
  */
 const OWNERSHIP_GAP_ACTION: 'refuse' | 'log' = env.NODE_ENV === 'production' ? 'log' : 'refuse';
 
@@ -617,7 +625,14 @@ async function runHandler(args: {
   // wants it. On the default policy this is a pure function of the role; a fork
   // whose policy does a lookup pays one call per request and the handler reads
   // the result instead of making a second one.
-  const filter = await subjectScope(args.principal);
+  // Copied, not handed straight over. This is the first time a policy's return
+  // value reaches route code, and the policy is a fork's. A fork that caches or
+  // memoises its filter would otherwise be handing every request a reference to
+  // one shared object, and a handler that mutated it rather than `AND`ing it in
+  // would contaminate the next request's scope. One spread per request removes
+  // the whole class in both directions, and — unlike `Object.freeze` — it does
+  // it without reaching into an object this module does not own.
+  const filter: SubjectFilter = { ...(await subjectScope(args.principal)) };
   let filterRead = false;
 
   // One principal, built by the guard and handed on — never rebuilt by the

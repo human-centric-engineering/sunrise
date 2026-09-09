@@ -311,6 +311,43 @@ describe('the filter the guard hands over', () => {
     expect(scopeCalls).toEqual(['user_1']);
   });
 
+  it('is a copy, so a handler cannot contaminate the next request through it', async () => {
+    // The policy here caches one filter object and returns it every time —
+    // the natural shape for a fork that memoises a membership lookup, and the
+    // reason the guard copies rather than handing the reference over. A handler
+    // that widens its own copy must not widen the next caller's scope.
+    const cached: SubjectFilter = { userId: 'user_1' };
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      subjectScope: () => Promise.resolve(cached),
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+
+    const widen = withAuth(
+      (_request, s: AuthenticatedSession) => {
+        const mine = s.subjectFilter;
+        delete mine.userId; // "every subject" — the widest value this type has
+        return ok();
+      },
+      { ownership: { decidedBy: 'policy' } }
+    );
+    await widen(request());
+
+    let secondCaller: SubjectFilter | undefined;
+    await withAuth(
+      (_request, s: AuthenticatedSession) => {
+        secondCaller = s.subjectFilter;
+        return ok();
+      },
+      { ownership: { decidedBy: 'policy' } }
+    )(request());
+
+    expect(secondCaller).toEqual({ userId: 'user_1' });
+    // And the policy's own object is untouched, which is the other direction:
+    // the guard must not mutate something it does not own either.
+    expect(cached).toEqual({ userId: 'user_1' });
+  });
+
   it('is not consumed by a handler that merely spreads the session', async () => {
     // The way a checkable claim could have been fooled: `{ ...session }` copies
     // enumerable properties, so an enumerable getter would fire on a handler
