@@ -12,6 +12,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
@@ -76,11 +77,11 @@ export const GET = withAdminAuth<Params>(
     const log = await getRouteLogger(request);
     const { id } = await params;
 
-    // Owner in the `where`, not a post-fetch comparison: the boundary is then
-    // visible at the query, which is where every other route in this family
+    // Ownership in the `where`, not a post-fetch comparison: the boundary is
+    // then visible at the query, which is where every other route in this family
     // spells it. Cross-user 404 so a foreign experiment's existence never leaks.
     const experiment = await prisma.aiExperiment.findFirst({
-      where: { id, createdBy: session.user.id },
+      where: { AND: [await visibleExperimentClause(session), { id }] },
       include: {
         variants: {
           include: {
@@ -137,7 +138,7 @@ export const GET = withAdminAuth<Params>(
     ownership: {
       decidedBy: 'self',
       because:
-        'Reads one experiment and its variants keyed on createdBy = the caller, and nothing else.',
+        "Reads one experiment and its variants under the caller's visible clause — theirs, or unowned where the policy allows — and nothing else.",
     },
   }
 );

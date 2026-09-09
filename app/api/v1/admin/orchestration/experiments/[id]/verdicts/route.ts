@@ -24,6 +24,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -56,11 +57,11 @@ export const POST = withAdminAuth<Params>(
 
     const body = await validateRequestBody(request, runPairwiseVerdictSchema);
 
-    // Owner in the `where`, not a post-fetch comparison — same spelling as every
-    // other route in this family. Cross-user 404 so a foreign experiment's
+    // Ownership in the `where`, not a post-fetch comparison — same spelling as
+    // every other route in this family. Cross-user 404 so a foreign experiment's
     // existence never leaks.
     const experiment = await prisma.aiExperiment.findFirst({
-      where: { id, createdBy: session.user.id },
+      where: { AND: [await visibleExperimentClause(session), { id }] },
       select: {
         id: true,
         datasetId: true,
@@ -247,7 +248,7 @@ export const POST = withAdminAuth<Params>(
     ownership: {
       decidedBy: 'self',
       because:
-        "Reads and writes one experiment keyed on createdBy = the caller, and reaches case results only through that experiment's own variant run ids. The judge agent it invokes is an AiAgent, which is admin-global by design and carries nobody's rows.",
+        "Reads and writes one experiment under the caller's visible clause — theirs, or unowned where the policy allows — and reaches case results only through that experiment's own variant run ids. The judge agent it invokes is an AiAgent, which is admin-global by design and carries nobody's rows.",
     },
   }
 );

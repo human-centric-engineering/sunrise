@@ -30,12 +30,12 @@ release process.
   decision (see the `ownership` entry below) — but **not on every request**: only
   where the answer can be used, which is a route that declared no `ownership` or
   one that declared `{ decidedBy: 'policy' }`. All 23 core `withAuth` routes
-  declare something else, so they skip it; all but eight of the 262
+  declare something else, so they skip it; all but nine of the 263
   `withAdminAuth` routes declare nothing, so they do not. The policy
   is consulted in four places, and which face each asks matters more than the
   count: `withAdminAuth`, `app/admin/layout.tsx` and the maintenance-mode bypass
   in `components/maintenance-wrapper.tsx` ask `canAdminister`, while `withAuth`
-  asks `canRead`. Wiring the seam changed none of the 262 `withAdminAuth`
+  asks `canRead`. Wiring the seam changed none of the then-262 `withAdminAuth`
   handlers — 257 under `/api/v1/admin` — nor the 23 `withAuth` ones, which is the
   point: a fork
   needing a second admin tier (#366) or owner-scoped visibility (#367) had to
@@ -168,8 +168,8 @@ release process.
   **Breaking for forks, in their test suite.** All 23 of Sunrise's own `withAuth`
   handlers now declare one — 22 `'self'` or `'nothing'` with a reason, and
   `GET /api/v1/users/[id]` `'resource'` — because a member is narrowed to their
-  own rows under the default policy. The 262 `withAdminAuth` handlers declare
-  nothing, because a platform admin is unrestricted — except the eight
+  own rows under the default policy. The `withAdminAuth` handlers declare
+  nothing, because a platform admin is unrestricted — except the nine
   experiments handlers, which declare `'self'` because they scope themselves by
   hand rather than by policy (see the experiments entry under **Changed**). A fork's route tests will fail until they declare one — that is
   the signal, and the error message names the fix. Only the test environment
@@ -363,21 +363,24 @@ release process.
   `GET` / `PATCH` / `DELETE .../experiments/:id` read every admin's rows, while
   `run`, `compare` and `verdicts` on the same model already returned a
   cross-user 404 — so one admin could open and **delete** an experiment they
-  could not run. All eight handlers in the family — five route files — are now
-  owner-scoped on `createdBy`, the list's `count` included, and each declares
-  `ownership: { decidedBy: 'self' }` so the posture is readable in the route's
-  own source. Anyone relying on the list
-  being install-wide sees fewer rows after upgrading.
+  could not run. All nine handlers in the family — six route files, counting the
+  new `claim` below — are now owner-scoped on `createdBy`, the list's `count`
+  included, and each declares `ownership: { decidedBy: 'self' }` so the posture
+  is readable in the route's own source. Anyone relying on the list being
+  install-wide sees fewer rows after upgrading.
 
-  **One consequence worth knowing before you upgrade.** `AiExperiment.createdBy`
-  is `SetNull`, so an experiment whose creator has been erased under Art. 17 is
-  retained with a null owner — and a null owner now matches nobody, which makes
-  that row unreachable through the API rather than visible to every admin as it
-  was before. The direction is safe (invisible, not exposed) and it is the
-  behaviour `AiDataset` has always had, but it is a real operational gap;
-  #752 tracks giving both models a disposition for orphaned rows, and
-  `.context/privacy/data-erasure.md` now says which retained models this applies
-  to.
+  **A row nobody owns is a third case, and it is handled.** `createdBy` is
+  `SetNull`, so an experiment whose creator was erased under Art. 17 is retained
+  with a null owner. Scoping purely to the caller would have made those
+  unreachable by everyone, so the visible set is "mine, plus nobody's" — the
+  second half gated on `canRead`'s `'unattributed'` arm, which the default policy
+  grants platform staff and a fork narrows by registering a policy rather than by
+  editing a route. These are the first core callers of that arm. A new
+  `POST /api/v1/admin/orchestration/experiments/:id/claim` lets an admin adopt an
+  ownerless experiment so it re-enters the ordinary rules; claiming one that
+  already has an owner is refused with a 404, so it cannot be used to probe for
+  other admins' experiments. `AiDataset` has the same gap and does **not** get
+  this yet.
 
   The posture matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun` —
   the models an experiment reads from and writes to, which every route under

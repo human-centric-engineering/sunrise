@@ -7,7 +7,7 @@
  * @see app/api/v1/admin/orchestration/experiments/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/experiments/route';
 import {
@@ -16,6 +16,11 @@ import {
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
 import { ownerScopedCount, ownerScopedFindMany } from '@/tests/helpers/owner-scoped-prisma';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -170,11 +175,11 @@ describe('GET /api/v1/admin/orchestration/experiments', () => {
 
       await GET(makeGetRequest({ status: 'running' }));
 
-      expect(vi.mocked(prisma.aiExperiment.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ status: 'running' }),
-        })
-      );
+      // The filters sit in their own AND member, beside the ownership clause,
+      // so neither can overwrite the other.
+      expect(vi.mocked(prisma.aiExperiment.findMany).mock.calls[0][0]).toMatchObject({
+        where: { AND: [expect.anything(), { status: 'running' }] },
+      });
     });
 
     it('passes agentId filter to Prisma WHERE clause', async () => {
@@ -183,11 +188,9 @@ describe('GET /api/v1/admin/orchestration/experiments', () => {
 
       await GET(makeGetRequest({ agentId: 'agent-42' }));
 
-      expect(vi.mocked(prisma.aiExperiment.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ agentId: 'agent-42' }),
-        })
-      );
+      expect(vi.mocked(prisma.aiExperiment.findMany).mock.calls[0][0]).toMatchObject({
+        where: { AND: [expect.anything(), { agentId: 'agent-42' }] },
+      });
     });
   });
 
@@ -226,18 +229,40 @@ describe('GET /api/v1/admin/orchestration/experiments', () => {
 
       const data = await parseJson<{ meta: { total: number } }>(response);
       expect(data.meta.total).toBe(1);
-      expect(vi.mocked(prisma.aiExperiment.count).mock.calls[0][0]).toMatchObject({
-        where: { createdBy: ADMIN_ID },
-      });
+      // Assert the identity rather than the shape: whatever the clause looks
+      // like, the total must be computed from the same one as the page. A
+      // structural assertion here would need rewriting every time the clause
+      // grows an arm, which is exactly when it stops being checked.
+      const [findManyArgs] = vi.mocked(prisma.aiExperiment.findMany).mock.calls[0];
+      const [countArgs] = vi.mocked(prisma.aiExperiment.count).mock.calls[0];
+      expect(countArgs?.where).toEqual(findManyArgs?.where);
+    });
+
+    it("still omits another admin's experiment when orphans are visible", async () => {
+      // The t-678 widening must not have re-opened t-677. Unowned is a third
+      // case, not a synonym for "not mine".
+      const ORPHAN = makeExperiment({ id: 'exp-orphan', createdBy: null });
+      vi.mocked(prisma.aiExperiment.findMany).mockImplementation(
+        ownerScopedFindMany([OWN, FOREIGN, ORPHAN]) as never
+      );
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{ data: Array<{ id: string }> }>(response);
+      expect(data.data.map((e) => e.id).sort()).toEqual(['exp-orphan', 'exp-own']);
     });
 
     it('keeps the owner clause when a status filter is also applied', async () => {
-      // The clause is assigned onto a literal rather than spread, so an extra
-      // filter cannot overwrite it — `?createdBy=` would be the obvious way in.
+      // The ownership clause and the query filters are separate AND members,
+      // so no query parameter can overwrite the boundary — `?createdBy=` would
+      // be the obvious way in. Under the default policy the ownership member is
+      // the widened form, which still names the caller and nobody else.
       await GET(makeGetRequest({ status: 'draft' }));
 
       expect(vi.mocked(prisma.aiExperiment.findMany).mock.calls[0][0]).toMatchObject({
-        where: { createdBy: ADMIN_ID, status: 'draft' },
+        where: {
+          AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { status: 'draft' }],
+        },
       });
     });
   });
@@ -486,5 +511,81 @@ describe('POST /api/v1/admin/orchestration/experiments', () => {
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
     });
+  });
+});
+
+/**
+ * t-678: `createdBy` is `SetNull`, so erasing an admin leaves their experiments
+ * owned by nobody. Owner-scoping alone made those unreachable by everyone. The
+ * visible set is now "mine, plus nobody's when the policy permits" — and which
+ * half of that a caller gets is the policy's answer, not the route's.
+ */
+describe('GET /experiments — ownerless rows', () => {
+  const OWN = makeExperiment({ id: 'exp-own', createdBy: ADMIN_ID });
+  const FOREIGN = makeExperiment({ id: 'exp-foreign', createdBy: 'someone-else' });
+  const ORPHAN = makeExperiment({ id: 'exp-orphan', createdBy: null });
+
+  /** A fork's narrower tier: same admin, same rows, no unattributed reads. */
+  function denyUnattributedReads() {
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(false)
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.findMany).mockImplementation(
+      ownerScopedFindMany([OWN, FOREIGN, ORPHAN]) as never
+    );
+    vi.mocked(prisma.aiExperiment.count).mockImplementation(
+      ownerScopedCount([OWN, FOREIGN, ORPHAN]) as never
+    );
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  it('shows an ownerless experiment under the default policy', async () => {
+    const response = await GET(makeGetRequest());
+
+    const data = await parseJson<{ data: Array<{ id: string }>; meta: { total: number } }>(
+      response
+    );
+    expect(data.data.map((e) => e.id).sort()).toEqual(['exp-orphan', 'exp-own']);
+    // The count must agree with the page on this branch too.
+    expect(data.meta.total).toBe(2);
+  });
+
+  it('hides it again when the policy denies an unattributed read', async () => {
+    // If the route decided this for itself rather than asking the policy, this
+    // returns two rows and fails — which is the whole point of the seam.
+    denyUnattributedReads();
+
+    const response = await GET(makeGetRequest());
+
+    const data = await parseJson<{ data: Array<{ id: string }>; meta: { total: number } }>(
+      response
+    );
+    expect(data.data.map((e) => e.id)).toEqual(['exp-own']);
+    expect(data.meta.total).toBe(1);
+  });
+
+  it("never shows another admin's owned experiment on either branch", async () => {
+    const permitted = await parseJson<{ data: Array<{ id: string }> }>(await GET(makeGetRequest()));
+    denyUnattributedReads();
+    const denied = await parseJson<{ data: Array<{ id: string }> }>(await GET(makeGetRequest()));
+
+    // Non-empty on both branches, or "does not contain" proves nothing.
+    expect(permitted.data.length).toBeGreaterThan(0);
+    expect(denied.data.length).toBeGreaterThan(0);
+    for (const body of [permitted, denied]) {
+      expect(body.data.map((e) => e.id)).not.toContain('exp-foreign');
+    }
   });
 });

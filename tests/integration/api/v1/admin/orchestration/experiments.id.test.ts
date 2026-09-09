@@ -498,8 +498,13 @@ describe('ownership — a cross-user read, edit or delete is a 404', () => {
     const response = await GET(makeGetRequest(), makeContext());
 
     expect(response.status).toBe(404);
+    // The ownership clause and the id are separate AND members. Under the
+    // default policy the ownership member is the widened form — the caller, or
+    // nobody. Never another subject, which is what the fake proves above.
     expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
-      where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+      where: {
+        AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
+      },
     });
   });
 

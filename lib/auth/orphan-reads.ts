@@ -1,0 +1,52 @@
+/**
+ * Rows that belong to nobody, and who may read them.
+ *
+ * An owner-scoped route asks "is this row mine?". That question has three
+ * answers, not two: mine, someone else's, and **nobody's**. The third arises
+ * on every model `CLAUDE.md` tells us to make `onDelete: SetNull` — retained
+ * config and audit rows, whose owner column is nulled when the person is erased
+ * under Art. 17. A `where` clause keyed on the caller silently answers "not
+ * yours" for all of them, which turns a retained row into an unreachable one:
+ * invisible to every admin, deletable by none, and pruned by nothing.
+ *
+ * That is what this module exists to prevent. It is deliberately **not** a
+ * relaxation of the owner clause — re-admitting every admin to every other
+ * admin's rows is the divergence #741 closed. Nobody's row is a different
+ * question from someone else's, and it gets its own answer.
+ *
+ * **The answer comes from the policy, not from here.** `canRead`'s `ReadTarget`
+ * union already has an `'unattributed'` arm for precisely this shape, and
+ * `DEFAULT_AUTHORIZATION_POLICY` answers it with `administersEverything` — so
+ * platform staff reach ownerless rows and a fork narrows that by registering a
+ * policy rather than by editing a route. A fork whose org admins must not see
+ * another department's abandoned work overrides `canRead` and these routes
+ * follow, with no diff here.
+ *
+ * @see `.context/auth/authorization.md` — the seam, and the `'unattributed'` arm
+ * @see `.context/privacy/data-erasure.md` — why these rows exist at all
+ */
+
+import { canRead } from '@/lib/auth/authorization';
+import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
+
+/**
+ * May this caller read rows of `kind` that have no owner?
+ *
+ * Ask once per request and reuse the answer — a list and the rows it links to
+ * must not disagree, and this is one policy call, not one per row.
+ *
+ * `kind` is the resource kind the policy sees (`'experiment'`, `'dataset'`). It
+ * is what lets a fork answer differently per model, and what the default
+ * policy's once-per-kind log line names, so pass the model's own noun rather
+ * than a generic label.
+ *
+ * A policy that throws is handled by `canRead` itself: it falls back to safe
+ * mode, whose `'unattributed'` arm is `false`. The failure direction is
+ * therefore "orphans stay hidden", never "orphans become public".
+ */
+export function mayReadUnattributed(
+  principal: AuthorizationPrincipal,
+  kind: string
+): Promise<boolean> {
+  return canRead(principal, { kind: 'unattributed', resource: { kind } });
+}

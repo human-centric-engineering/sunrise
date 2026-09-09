@@ -285,13 +285,13 @@ The one shape it gets wrong is a **streamed body**, because the read happens
 after the response is returned. Read `session.subjectFilter` before you hand
 back the stream — you need it to build the query anyway.
 
-That is why all but eight of Sunrise's 262 `withAdminAuth` handlers carry no
+That is why all but nine of Sunrise's 263 `withAdminAuth` handlers carry no
 declaration and its 23 `withAuth` handlers do: under the default policy a platform admin is
 unrestricted and a member is not. On a fork whose org admin **is** narrowed, the
 admin routes start asking too, one route at a time, in that fork's own test
 suite.
 
-The eight are the experiments family, which scopes itself by hand and says so
+The nine are the experiments family, which scopes itself by hand and says so
 with `'self'` — see [Experiments](#experiments--the-divergence-this-page-was-written-about-since-closed).
 
 `because` is required on all but `'policy'`, and required rather than
@@ -507,16 +507,16 @@ about `createdBy` two sections down, turned on the page itself.
 
 ### Experiments — the divergence this page was written about, since closed
 
-`AiExperiment` is classified tenant-owned, and until [#741] the eight handlers
-over it disagreed with each other. One admin saw another's experiment in the list,
+`AiExperiment` is classified tenant-owned, and until [#741] the handlers over it
+disagreed with each other. One admin saw another's experiment in the list,
 opened it, edited it and could **delete** it — but got a "not found" trying to
 run or compare it, from sites whose comments called the 404 deliberate, "so the
 existence of a foreign experiment never leaks", while the list two directories
 up leaked exactly that. The widest verb had the weakest check.
 
-All eight are now owner-scoped on `createdBy` — the list and its `count`, the
-create, the detail `GET` / `PATCH` / `DELETE`, and the `run` / `compare` /
-`verdicts` routes that already were — and each declares `{ decidedBy: 'self' }`, so a reader of any
+All nine are now owner-scoped on `createdBy` — the list and its `count`, the
+create, the detail `GET` / `PATCH` / `DELETE`, the `run` / `compare` /
+`verdicts` routes that already were, and the `claim` route below — and each declares `{ decidedBy: 'self' }`, so a reader of any
 one route sees the posture without reading the other five.
 
 **It is spelled as a `createdBy` clause, not as `subjectScope`, and that is the

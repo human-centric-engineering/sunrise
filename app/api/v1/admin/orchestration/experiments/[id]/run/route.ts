@@ -21,6 +21,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
@@ -40,8 +41,10 @@ export const POST = withAdminAuth<Params>(
     // Quick 404 check before opening a transaction. Cross-user 404 (not
     // 403) so the existence of another admin's experiment never leaks —
     // the posture every route in this family uses (#741).
+    const visible = await visibleExperimentClause(session);
+
     const exists = await prisma.aiExperiment.findFirst({
-      where: { id, createdBy: session.user.id },
+      where: { AND: [visible, { id }] },
       select: { id: true },
     });
     if (!exists) throw new NotFoundError('Experiment not found');
@@ -50,7 +53,9 @@ export const POST = withAdminAuth<Params>(
 
     const updated = await prisma.$transaction(async (tx) => {
       const experiment = await tx.aiExperiment.findFirst({
-        where: { id, createdBy: session.user.id },
+        // Same clause object as the pre-transaction check — one policy answer
+        // for the whole request, so the two reads cannot disagree.
+        where: { AND: [visible, { id }] },
         include: {
           variants: true,
           // Pull dataset.userId here so we can defence-in-depth verify
@@ -178,7 +183,7 @@ export const POST = withAdminAuth<Params>(
     ownership: {
       decidedBy: 'self',
       because:
-        'Both experiment reads are keyed on createdBy = the caller — the pre-transaction existence check and the in-transaction read. The dataset is reached through that experiment and verified against userId = the caller before its content is copied, and the runs and sessions this writes are stamped with the same id.',
+        "Both experiment reads use the caller's visible clause — theirs, or unowned where the policy allows — the pre-transaction existence check and the in-transaction read, from one policy answer. The dataset is reached through that experiment and verified against userId = the caller before its content is copied, and the runs and sessions this writes are stamped with the same id.",
     },
   }
 );

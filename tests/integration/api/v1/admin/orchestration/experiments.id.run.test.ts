@@ -294,23 +294,30 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
 
       await POST(makePostRequest(), makeContext());
 
-      // tx.aiExperiment.findFirst is called inside the transaction with
-      // a userId-scoped where clause (cross-user 404, matching the
-      // posture every other Phase 2 evaluation route uses).
+      // tx.aiExperiment.findFirst is called inside the transaction under the
+      // caller's visible clause — theirs, or unowned where the policy allows —
+      // so a foreign row is a 404 there as well as at the outer check.
       expect(mockTxFindUnique).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+          where: {
+            AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
+          },
           include: expect.objectContaining({ variants: true }),
         })
       );
-      // The outer prisma.aiExperiment.findFirst applies the same
-      // userId scope at the pre-transaction 404 check.
+      // The pre-transaction 404 check uses the SAME clause object, so the two
+      // reads cannot disagree about who the caller is.
       expect(vi.mocked(prisma.aiExperiment.findFirst)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+          where: {
+            AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
+          },
           select: { id: true },
         })
       );
+      const outerWhere = vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]?.where;
+      const innerWhere = mockTxFindUnique.mock.calls[0][0]?.where;
+      expect(innerWhere).toEqual(outerWhere);
     });
   });
 
@@ -406,8 +413,14 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
       const response = await POST(makePostRequest(), makeContext());
 
       expect(response.status).toBe(404);
+      // The ownership clause and the id are separate AND members. Under the
+      // default policy the ownership member is the widened form — the caller,
+      // or nobody. Never another subject, which is what the fake above proves
+      // by handing back nothing.
       expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
-        where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+        where: {
+          AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
+        },
       });
       // Crucially, no inserts on either path. Pre-fix, the caller's
       // userId would have ended up on AiEvaluationRun rows hash-pinned

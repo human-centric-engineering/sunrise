@@ -19,11 +19,21 @@
  * install. Correct today (a count, to a platform admin), and named here because
  * a roster of this family assembled by reading the `evaluations/` directory
  * misses it. Filed as #753.
+ *
+ * **Ownerless rows are a third case, and they are the policy's to decide.**
+ * `createdBy` is `SetNull`, so erasing an admin leaves their experiments with no
+ * owner. Those belong to nobody rather than to someone else, so every handler
+ * here reads them too — but only when `canRead` permits an `'unattributed'`
+ * read, which the default policy grants platform staff and a fork narrows by
+ * registering a policy. Without that, scoping to the owner would make a retained
+ * row unreachable by everyone (t-678). `mayReadUnattributed` is the one place
+ * that question is asked.
  */
 
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
@@ -81,11 +91,14 @@ export const GET = withAdminAuth(
     const query = validateQueryParams(searchParams, listSchema);
     const { page, limit, status, agentId } = query;
 
-    // The owner clause goes in the literal and the optional filters are
-    // assigned onto it, so no later key can spread over the boundary.
-    const where: Prisma.AiExperimentWhereInput = { createdBy: session.user.id };
-    if (status) where.status = status;
-    if (agentId) where.agentId = agentId;
+    // Mine, plus nobody's when the policy allows it. `AND`, not a spread: the
+    // optional filters are assigned onto their own object so no query parameter
+    // can reach the key that is the boundary.
+    const ownerClause = await visibleExperimentClause(session);
+    const filters: Prisma.AiExperimentWhereInput = {};
+    if (status) filters.status = status;
+    if (agentId) filters.agentId = agentId;
+    const where: Prisma.AiExperimentWhereInput = { AND: [ownerClause, filters] };
 
     const [experiments, total] = await Promise.all([
       prisma.aiExperiment.findMany({
@@ -113,7 +126,7 @@ export const GET = withAdminAuth(
     ownership: {
       decidedBy: 'self',
       because:
-        'The list and its count are keyed on createdBy = the caller. Not `policy`: subjectScope widens to {} for a platform admin, which is the admin-global posture this route was fixed away from.',
+        "The list and its count are keyed on createdBy = the caller, widened only to rows with NO owner and only when canRead permits an unattributed read. Never another subject's row. Not `policy`: subjectScope widens to {} for a platform admin, which is the admin-global posture this route was fixed away from.",
     },
   }
 );

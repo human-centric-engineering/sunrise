@@ -60,26 +60,31 @@ of who created it. So a departing creator's config keeps working; only the
 deliveries, steps) already cascade from their parents, so only the root `User`
 relations carry the policy.
 
-**Two of them are owner-scoped, and for those the sentence above does not
-hold.** `AiExperiment` (`createdBy`) and `AiDataset` (`userId`) narrow every one
-of their routes to the caller's own rows, so nulling the link does not
-de-attribute the row so much as **orphan** it: it matches no owner clause, and no
-admin can list, open, edit or delete it through the API afterwards. (Both detail
-routes go through an owner-scoped read — `AiDataset`'s via the `loadDataset`
-helper, which is why grepping the route file for `userId` does not find it.)
-Nothing prunes either model on a schedule. An orphaned `AiExperiment` at least
-still cascades from its agent, whose FK is `onDelete: Cascade` and not nullable;
-an orphaned `AiDataset` has no such parent, so it survives until someone reaches
-the database directly.
+**Two of them are owner-scoped, and they need a third rule.** `AiExperiment`
+(`createdBy`) and `AiDataset` (`userId`) narrow every one of their routes to the
+caller's own rows. Nulling the link on such a model does not de-attribute the row
+so much as **orphan** it: keyed purely on the caller, every route answers "not
+yours", and a row deliberately retained becomes one nobody can list, open, edit
+or delete.
 
-That is the safe direction — invisible, not exposed — and it is deliberate for
-both: an owner-scoped read is what makes an experiment's results private to the
-admin who ran it, and re-widening it so an orphan stays deletable would hand
-every admin every other admin's live rows too. But it is a real operational gap
-rather than an intended end state; [#752] tracks giving these two a disposition
-for orphaned rows. Weigh it when you classify the **next** `SetNull` model: the
-retain policy and the route's ownership posture are two decisions, and this row
-of the table only records the first.
+`AiExperiment` handles that case explicitly, and it is the shape to copy.
+A row belongs to **me**, to **someone else**, or to **nobody**, and the third is
+not a synonym for the second. Its visible set is "mine, plus nobody's" — and who
+gets the second half is `canRead`'s `'unattributed'` arm, which exists for
+exactly this shape. The default policy grants it to platform staff, so an admin
+sees and can delete an orphaned experiment; a fork narrows it by registering a
+policy rather than by editing a route. An admin can also **claim** one
+(`POST /experiments/:id/claim`), which stamps them as the owner so the row
+re-enters the normal rules instead of staying a permanent special case. The
+boundary is untouched: another admin's _owned_ experiment is still a 404.
+
+`AiDataset` still has the gap — it has had it since datasets shipped — and wants
+the same treatment.
+
+**So when you classify the next `SetNull` model, decide two things, not one.**
+This table records the retain policy. Whether the model's routes are owner-scoped
+is a separate decision, and where both are true you owe the orphan rule above or
+you are shipping rows that outlive everyone's ability to reach them.
 
 ### System-owned runs
 
@@ -302,5 +307,3 @@ demoted or deleted). See
 - [Auth Security](../auth/security.md) — sessions, password handling
 - `lib/privacy/erasure-hooks.ts` — the app erasure cleanup-hook registry
 - [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#4-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`
-
-[#752]: https://github.com/human-centric-engineering/sunrise/issues/752

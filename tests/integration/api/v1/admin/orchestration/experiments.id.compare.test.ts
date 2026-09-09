@@ -159,8 +159,12 @@ describe('GET /experiments/:id/compare — ownership + not-found', () => {
     const res = await GET(makeRequest(), ctx());
 
     expect(res.status).toBe(404);
+    // Ownership clause and id as separate AND members; under the default
+    // policy the ownership member is the widened form — the caller, or nobody.
     expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
-      where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+      where: {
+        AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
+      },
     });
   });
 

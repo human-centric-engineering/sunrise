@@ -9,6 +9,7 @@ app/api/v1/admin/orchestration/experiments/
 ├── route.ts                — GET list, POST create
 ├── [id]/route.ts           — GET one, PATCH update, DELETE
 ├── [id]/run/route.ts       — POST start experiment
+├── [id]/claim/route.ts     — POST adopt an ownerless experiment
 ├── [id]/compare/route.ts   — GET variant comparison
 └── [id]/verdicts/route.ts  — POST pairwise judge verdict
 
@@ -20,13 +21,24 @@ Prisma model: `AiExperiment` with `AiExperimentVariant[]`.
 
 ## Ownership — an experiment belongs to the admin who created it
 
-**Every one of the eight handlers above is scoped to `createdBy` = the caller.**
+**Every one of the nine handlers above is scoped to `createdBy` = the caller.**
 Another admin's experiment is a 404 on read, update, delete, run, compare and
 verdict alike, and it is absent from the list — the `count` included, so the
 total never reports rows the caller cannot see. Each handler says so in its own
 source with `ownership: { decidedBy: 'self' }`.
 
 The 404 (rather than a 403) is deliberate: a 403 confirms the id exists.
+
+**One exception, and it is not a hole: a row nobody owns.** `createdBy` is
+`onDelete: SetNull`, so erasing an admin under Art. 17 leaves their experiments
+with no owner. Those are visible to a caller whose policy permits an
+`'unattributed'` read — every platform admin, by default — because the
+alternative is a retained row no operator can ever reach. `POST
+/experiments/:id/claim` lets an admin adopt one, after which it is theirs under
+the ordinary rules; claiming a row that already has an owner is refused, and
+refused with a 404 so the route cannot be used to probe for other people's
+experiments. `lib/orchestration/experiments/visible-scope.ts` is the single
+definition every handler uses.
 
 This matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun`, which an
 experiment reads from and writes to. It deliberately does **not** match `AiAgent`

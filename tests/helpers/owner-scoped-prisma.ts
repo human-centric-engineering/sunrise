@@ -20,10 +20,21 @@
  * different fake.
  */
 
-/** The subset of a `where` these fakes interpret. */
+/**
+ * The subset of a `where` these fakes interpret.
+ *
+ * `createdBy: null` means IS NULL — the ownerless row, not "no clause". `AND`
+ * and `OR` are understood because the routes build the visible set as
+ * `{ AND: [ownerClause, filters] }` where `ownerClause` may itself be
+ * `{ OR: [{ createdBy: me }, { createdBy: null }] }`. A matcher that ignored
+ * those keys would match every row and report a leak as a pass — which it did,
+ * once, before it understood them.
+ */
 export interface OwnerScopedWhere {
   id?: string;
-  createdBy?: string;
+  createdBy?: string | null;
+  AND?: OwnerScopedWhere[];
+  OR?: OwnerScopedWhere[];
 }
 
 /** A row addressable by these fakes. `createdBy` is nullable on `SetNull` models. */
@@ -34,7 +45,11 @@ export interface OwnedRow {
 
 function matches(row: OwnedRow, where: OwnerScopedWhere): boolean {
   if (where.id !== undefined && row.id !== where.id) return false;
+  // `!== undefined` rather than a truthiness test: `createdBy: null` is a real
+  // clause (IS NULL), and treating it as "absent" would match every row.
   if (where.createdBy !== undefined && row.createdBy !== where.createdBy) return false;
+  if (where.AND !== undefined && !where.AND.every((clause) => matches(row, clause))) return false;
+  if (where.OR !== undefined && !where.OR.some((clause) => matches(row, clause))) return false;
   return true;
 }
 
