@@ -41,7 +41,7 @@ vi.mock('@/lib/logging', () => ({
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { resolveApiKey } from '@/lib/auth/api-keys';
-import { withAuth, withAdminAuth } from '@/lib/auth/guards';
+import { withAuth, withAdminAuth, type AuthSession } from '@/lib/auth/guards';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
@@ -416,5 +416,105 @@ describe('withAdminAuth asks the policy whether to admit', () => {
 
     expect(response.status).toBe(403);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('the handler receives the principal the guard actually decided with', () => {
+  // The property: ONE principal per request. The guard asks `canRead` /
+  // `canAdminister` with it, and the handler asks `subjectScope` with the same
+  // object — so the two faces of the policy cannot disagree because the caller
+  // rebuilt the viewer differently from the guard.
+  //
+  // Before this, a handler could only reconstruct one, and the plausible
+  // reconstruction (`credential: 'session'` from the session it was handed) is
+  // wrong in the WIDENING direction for every API-key caller. The api-key test
+  // below is the control for exactly that: it fails against a guard that
+  // hardcodes the credential, or that drops `scopes`.
+
+  it('hands a session caller the same principal object it asked the policy about', async () => {
+    const read: ReadCall[] = [];
+    registerAuthorizationPolicy(recordingPolicy(true, [], read));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    let seen: AuthorizationPrincipal | undefined;
+    await withAuth((_request, s) => {
+      seen = s.principal;
+      return ok();
+    })(request());
+
+    expect(seen).toEqual({
+      userId: 'admin_1',
+      role: 'ADMIN',
+      credential: 'session',
+      scopes: undefined,
+    });
+    // Identity, not just equality: one object, so there is nothing to drift.
+    expect(seen).toBe(read[0]?.viewer);
+  });
+
+  it('hands an api-key caller the key’s credential AND scopes, not the session shape', async () => {
+    const read: ReadCall[] = [];
+    registerAuthorizationPolicy(recordingPolicy(true, [], read));
+    // A role that WOULD read as platform admin, on a key that is not admin-scoped.
+    // This is the combination the widening bug turned into "every subject".
+    vi.mocked(resolveApiKey).mockResolvedValue({
+      session: session('ADMIN', 'admin_1'),
+      scopes: ['chat'],
+      rateLimitRpm: null,
+    });
+
+    let seen: AuthorizationPrincipal | undefined;
+    await withAuth((_request, s) => {
+      seen = s.principal;
+      return ok();
+    })(request());
+
+    expect(seen?.credential).toBe('api-key');
+    expect(seen?.scopes).toEqual(['chat']);
+    expect(seen).toBe(read[0]?.viewer);
+  });
+
+  it('hands withAdminAuth’s handler the principal too', async () => {
+    const administered: AdministerCall[] = [];
+    registerAuthorizationPolicy(recordingPolicy(true, administered, []));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    let seen: AuthorizationPrincipal | undefined;
+    await withAdminAuth((_request, s) => {
+      seen = s.principal;
+      return ok();
+    })(request());
+
+    expect(seen).toBe(administered[0]?.viewer);
+  });
+
+  it('reaches a route with NO params, which is where the list face is needed', async () => {
+    // `context` is undefined for a non-dynamic route, so anything hung off the
+    // route context would be unreachable exactly where `subjectScope` is called.
+    // That is why the principal rides on the session instead.
+    registerAuthorizationPolicy(recordingPolicy(true, [], []));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session());
+
+    let seen: AuthorizationPrincipal | undefined;
+    const response = await withAuth((_request, s) => {
+      seen = s.principal;
+      return ok();
+    })(request());
+
+    expect(response.status).toBe(200);
+    expect(seen?.userId).toBe('user_1');
+  });
+
+  it('still satisfies a handler declared with the narrower AuthSession', async () => {
+    // The additive claim: existing handlers keep compiling. If this stops type-
+    // checking, `AuthenticatedSession` stopped being assignable to `AuthSession`
+    // and every one of the 285 guarded handlers is a breaking change.
+    registerAuthorizationPolicy(recordingPolicy(true, [], []));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session());
+
+    const legacy = (_request: NextRequest, s: AuthSession) => Response.json({ id: s.user.id });
+    const response = await withAuth(legacy)(request());
+
+    expect(response.status).toBe(200);
   });
 });

@@ -208,43 +208,36 @@ that costs.
 The two faces are **one rule in two shapes**. Use both, or the detail page opens
 a record its own list does not contain.
 
-### Building the principal — read this before the recipe
+### The principal comes from the guard — never rebuild it
 
-`subjectScope` takes an `AuthorizationPrincipal`, and **a handler cannot build
-the one the guard built.** The guard resolves the credential kind and, for an
-API key, its scopes (`principalOf`, `lib/auth/guards.ts:176`) — then passes the
-handler only `(request, session, context)` and discards the principal.
-`principalOf` is not exported, and `AuthSession` carries no scopes.
-
-That matters because `administersEverything` branches on exactly those two
-fields: an `api-key` principal is judged by `hasScope(scopes, 'admin')`, a
-`session` principal by the platform role. **Hardcoding `credential: 'session'`
-is therefore a widening bug, not a shortcut** — `withAuth` accepts an API key of
-any scope, so a `chat`-scoped key held by a user whose role is `ADMIN` would be
-judged by the role, and a policy that should have returned `{ userId }` returns
-`{}`: the whole table.
-
-It is also invisible to `checkAuthorizationParity`. The guard asks `canRead`
-with the true principal while the handler asks `subjectScope` with the
-fabricated one, so the two faces disagree **at the call site**, for a policy the
-checker passes clean.
-
-Until the guards hand the handler their principal, derive what you can and
-accept that the rest fails closed:
+`subjectScope` takes an `AuthorizationPrincipal`, and the guard hands you the
+one it used for its own decision:
 
 ```ts
-import { isApiKeySession } from '@/lib/auth/api-keys';
-
-const viewer = {
-  userId: session.user.id,
-  role: session.user.role,
-  // Derived, never assumed. Getting this wrong widens.
-  credential: isApiKeySession(session) ? ('api-key' as const) : ('session' as const),
-  // Scopes are unreachable from a handler. Omitting them means an
-  // `admin`-scoped key is treated as unscoped, which NARROWS its list —
-  // the safe direction, and a real divergence from what `canRead` allows it.
-};
+export const GET = withAdminAuth(async (request, session) => {
+  const filter = await subjectScope(session.principal);
+  // …
+});
 ```
+
+`session` is an `AuthenticatedSession` — `AuthSession` plus `principal`. That is
+the whole API; there is nothing to construct.
+
+**Do not rebuild it from `session.user`.** `administersEverything` branches on
+`credential` and `scopes`, and a handler cannot see either: the credential kind
+and an API key's scopes are known only inside the guard, and `AuthSession`
+carries neither. The plausible reconstruction — `credential: 'session'`, taken
+from the session object you were handed — is a **widening bug**: `withAuth`
+accepts a key of any scope, so a `chat`-scoped key held by a user whose role is
+`ADMIN` gets judged by the role, and a policy that should answer `{ userId }`
+answers `{}` — every subject.
+
+It is also invisible to `checkAuthorizationParity`, which is why the fix is one
+object rather than a documented convention. The guard asks `canRead` with the
+true principal; a handler asking `subjectScope` with a reconstruction makes the
+two faces disagree **at the call site**, for a policy the checker passes clean.
+Passing `session.principal` makes them the same object, so there is nothing to
+drift.
 
 ### The list
 
@@ -252,7 +245,7 @@ const viewer = {
 import { subjectScope } from '@/lib/auth/authorization';
 
 export const GET = withAdminAuth(async (request, session) => {
-  const filter = await subjectScope(viewer); // built as above
+  const filter = await subjectScope(session.principal);
 
   // `{}` means every subject, so an unrestricted viewer adds no clause and a
   // narrowed one adds `createdBy`.

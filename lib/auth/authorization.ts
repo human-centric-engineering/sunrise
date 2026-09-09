@@ -730,6 +730,13 @@ export interface AuthorizationParityViolation {
  * proving nothing. That is the failure mode this whole file is written against,
  * and a checker is not exempt from it.
  *
+ * **It checks the POLICY, not the call sites**, and that boundary has already
+ * cost something. If a handler asks `subjectScope` with a principal it built
+ * itself rather than the one its guard used (`session.principal`, see
+ * `AuthenticatedSession`), the two faces can disagree on a live request while a
+ * policy passes clean here — the disagreement is in the caller, and nothing in
+ * this function can see it.
+ *
  * ```ts
  * const violations = await checkAuthorizationParity(myPolicy, [
  *   { label: 'a member', viewer: { userId: 'u1', credential: 'session' }, subjects: ['u1', 'u2'] },
