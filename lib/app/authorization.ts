@@ -117,10 +117,15 @@
  *    editing every query that `AND`s the fragment in.
  *  - **The day your policy narrows, your routes start being asked to declare
  *    how they decide.** When `subjectScope` narrows a caller and the route
- *    declared no `ownership`, the guard reports it — a 500 in development and
- *    test, a log line in production. A `resource` resolver does not exempt a
- *    route on its own; declare `{ decidedBy: 'resource', because }`. That is the migration surfacing route by route in your
- *    own test suite instead of in a support ticket, and each fix is one line:
+ *    declared no `ownership`, the guard reports it — a **failing test**, and a
+ *    log line said once per route in every other environment. Development
+ *    deliberately does NOT refuse: widening `canAdminister` alone leaves the
+ *    default `subjectScope` narrowing your org admin, so all 262 admin routes
+ *    owe a declaration the moment you register, and a refusing dev server would
+ *    mean an admin console that does not start. A `resource` resolver does not
+ *    exempt a route on its own; declare `{ decidedBy: 'resource', because }`.
+ *    That is the migration surfacing route by route in your own test suite
+ *    instead of in a support ticket, and each fix is one line:
  *    `ownership: { decidedBy: 'policy' }` and read `session.subjectFilter`, or
  *    `'resource'` / `'self'` / `'nothing'` with the sentence saying why. See
  *    `RouteOwnership` in `lib/auth/guards.ts`.

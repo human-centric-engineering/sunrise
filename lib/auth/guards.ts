@@ -400,21 +400,28 @@ const OWNERSHIP_GAP_ACTION: 'refuse' | 'log' =
   env.NODE_ENV === 'development' || env.NODE_ENV === 'production' ? 'log' : 'refuse';
 
 /**
- * Route+guard pairs already reported in this process, so the `'log'` branch says
- * it once instead of once per request.
+ * One route's "already reported" flag, owned by that route's guard closure.
  *
- * A fork mid-migration has every un-annotated route reporting on every request;
- * without this the signal is buried in its own volume, which is the failure the
+ * A fork mid-migration has every un-annotated route reporting on every request,
+ * and the signal does not survive its own volume — the failure the
  * `'unattributed'` arm in `lib/auth/authorization.ts` already logs-once-per-kind
- * to avoid. The `'refuse'` branch is not deduplicated — it throws, so it cannot
- * be missed, and suppressing the second occurrence would make a test's second
- * assertion depend on its first.
+ * to avoid.
+ *
+ * **A module-level `Set` keyed on the request path was the wrong instrument, in
+ * two ways at once.** `nextUrl.pathname` is the CONCRETE path, so on a dynamic
+ * route every id is its own key: `/agents/[id]` deduplicated nothing across
+ * 10k agent views, and the Set grew one permanent entry per id in a long-lived
+ * process — traffic-proportional, never evicted. Each `withAuth(...)` call
+ * already creates exactly one closure per route, so the flag lives there: no
+ * key to get wrong, no growth, and it is right on dynamic routes by
+ * construction rather than by string handling.
+ *
+ * The `'refuse'` branch does not consult it. It throws, so it cannot be missed,
+ * and suppressing a second occurrence would make one test's assertion depend on
+ * whether another had run.
  */
-const reportedOwnershipGaps = new Set<string>();
-
-/** Clear the once-per-process report memory. Tests only. */
-export function __resetOwnershipReportsForTests(): void {
-  reportedOwnershipGaps.clear();
+interface OwnershipReportState {
+  reported: boolean;
 }
 
 /**
@@ -495,6 +502,7 @@ function reportOwnershipGap(options: {
   filter: SubjectFilter;
   filterRead: boolean;
   principal: AuthorizationPrincipal;
+  state: OwnershipReportState;
 }): void {
   // Not narrowed ⇒ every subject is this caller's to see ⇒ nothing to forget.
   if (options.filter.userId === undefined) return;
@@ -543,13 +551,11 @@ function reportOwnershipGap(options: {
 
   if (complaint === null) return;
 
-  // Say it once per route per process on the log branch. A fork mid-migration
-  // has every un-annotated route reporting on every request, and the signal does
-  // not survive its own volume.
-  const key = `${options.guard} ${options.path ?? '(unknown)'} ${declared ?? '(none)'}`;
+  // Once per route on the log branch — the flag belongs to this route's guard
+  // closure, so "this route" needs no key.
   if (OWNERSHIP_GAP_ACTION === 'log') {
-    if (reportedOwnershipGaps.has(key)) return;
-    reportedOwnershipGaps.add(key);
+    if (options.state.reported) return;
+    options.state.reported = true;
   }
 
   // `undefined` in the error slot, context in `meta`: the signature is
@@ -668,6 +674,9 @@ export function withAuth(
   // `resource` key while copying the users/[id] recipe is how it arrives.
   warnOnContradictoryOwnership('withAuth', options);
 
+  // One per route, because this factory runs once per route module.
+  const ownershipReportState: OwnershipReportState = { reported: false };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
     try {
@@ -746,6 +755,7 @@ export function withAuth(
         principal,
         ownership: options?.ownership,
         declaredResource: options?.resource !== undefined,
+        state: ownershipReportState,
       });
     } catch (error) {
       return handleAPIError(error);
@@ -776,6 +786,7 @@ async function runHandler(args: {
   principal: AuthorizationPrincipal;
   ownership: RouteOwnership | undefined;
   declaredResource: boolean;
+  state: OwnershipReportState;
 }): Promise<Response> {
   // Asked only where the answer can be used: the check needs it when the route
   // declared nothing, and the handler needs it when the route declared
@@ -823,14 +834,20 @@ async function runHandler(args: {
       // prevent it. Refusing is the only safe answer to "you did not ask for
       // this".
       if (!filterIsUsable) {
-        // Logged before it throws, and deliberately unlike OWNERSHIP_GAP_ACTION,
-        // which logs instead of refusing outside test. The asymmetry is the
-        // point: a missing annotation is a route that has not been migrated, and
-        // taking it down would be worse than logging. THIS is a handler asking
-        // for a boundary value it declared it does not use, and the only other
-        // answer available is `{}` — every subject — which it might then build a
-        // query from. There is no safe degraded reply, so it refuses in every
-        // environment, and the log is what names the route when it does.
+        // Logged and answered with the NARROWEST value — not thrown. This used
+        // to throw in every environment, which sat badly beside
+        // OWNERSHIP_GAP_ACTION's carefully argued "do not turn a misconfigured
+        // route into an outage", and worse: `subjectFilter` is a required member,
+        // so a cross-cutting helper typed against `AuthenticatedSession` — a
+        // shared paginator, an audit wrapper — had no type-level signal that
+        // reading it was unsafe and no way to probe but `try`/`catch`.
+        //
+        // `{ userId }` is the safe answer because it is the narrowest one the
+        // type can express, so a query built from it returns too FEW rows rather
+        // than too many. Answering `{}` would be the opposite and is what makes
+        // this branch worth having at all. It is also exactly what
+        // `subjectScope`'s own wrapper does with a policy it cannot trust: log,
+        // and fall back to safe mode.
         logger.error(
           'authorization: subjectFilter read on a route that did not ask for it',
           undefined,
@@ -838,11 +855,10 @@ async function runHandler(args: {
             path: args.request.nextUrl?.pathname,
             guard: args.guard,
             declared: args.ownership?.decidedBy ?? '(none)',
+            fix: "The filter is only computed for a route that declared { decidedBy: 'policy' }. This read got the reader's own id — the narrowest answer — rather than the policy's. Declare 'policy' if the handler needs the real one.",
           }
         );
-        throw new Error(
-          `${args.guard}: session.subjectFilter was read on a route that declared ownership { decidedBy: '${args.ownership?.decidedBy ?? 'unknown'}' }, so it was never computed. A handler that needs the policy's filter must declare { decidedBy: 'policy' }.`
-        );
+        return { userId: args.principal.userId };
       }
       filterRead = true;
       return filter;
@@ -872,6 +888,7 @@ async function runHandler(args: {
     path: args.request.nextUrl?.pathname,
     ownership: args.ownership,
     declaredResource: args.declaredResource,
+    state: args.state,
     // A 4xx/5xx answered nobody's query, so it cannot have answered it too
     // widely — and gating on it is what stops the check firing on the early
     // `return createRateLimitResponse(...)` that 38 guarded routes here open
@@ -940,6 +957,9 @@ export function withAdminAuth(
   options?: WithAdminAuthOptions
 ) {
   warnOnContradictoryOwnership('withAdminAuth', options);
+
+  // One per route, because this factory runs once per route module.
+  const ownershipReportState: OwnershipReportState = { reported: false };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
@@ -1016,6 +1036,7 @@ export function withAdminAuth(
         principal,
         ownership: options?.ownership,
         declaredResource: options?.resource !== undefined,
+        state: ownershipReportState,
       });
     } catch (error) {
       return handleAPIError(error);

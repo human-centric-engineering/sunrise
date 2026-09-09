@@ -419,12 +419,17 @@ describe('the filter the guard hands over', () => {
     expect(scopeCalls).toEqual([]);
   });
 
-  it('THROWS rather than answering "every subject" when it was not computed', async () => {
+  it('answers the NARROWEST value when it was not computed, and says so', async () => {
     // The dangerous way to implement the optimisation above is to hand back
-    // `{}` — which is the WIDEST value this type can express. A `'self'` route
-    // that read it would be told "every subject" and could build an unnarrowed
-    // query out of it: the exact leak, delivered by the mechanism meant to
-    // prevent it. Refusing is the only safe answer to "you did not ask for this".
+    // `{}` — the WIDEST value this type can express. A `'self'` route reading it
+    // would be told "every subject" and could build an unnarrowed query out of
+    // it: the exact leak, delivered by the mechanism meant to prevent it.
+    //
+    // So it answers the reader's own id instead. A query built from that returns
+    // too FEW rows, never too many, and the mistake is loud in the log rather
+    // than a 500 for real users — which is the same trade `subjectScope`'s own
+    // wrapper makes with a policy it cannot trust, and the same one
+    // OWNERSHIP_GAP_ACTION makes two functions up.
     vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
 
     const response = await withAuth(
@@ -432,7 +437,13 @@ describe('the filter the guard hands over', () => {
       { ownership: { decidedBy: 'self', because: 'Reads only session.user.id.' } }
     )(request());
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ filter: { userId: 'user_1' } });
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'authorization: subjectFilter read on a route that did not ask for it',
+      undefined,
+      expect.objectContaining({ declared: 'self' })
+    );
   });
 
   it('is a copy, so a handler cannot contaminate the next request through it', async () => {

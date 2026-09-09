@@ -292,10 +292,17 @@ run. It was also the only escape hatch that needed no sentence and produced no
 log line. Declare `{ decidedBy: 'resource', because }` and let the sentence carry
 the "and nothing else" — `app/api/v1/users/[id]` (GET) is the worked example.
 
-**Reading `session.subjectFilter` on a route that declared anything but
-`'policy'` throws.** The filter is only computed where it can be used, and the
-alternative to throwing is handing back `{}` — the widest value the type can
-express — to a route that would then build an unnarrowed query out of it.
+**Reading `session.subjectFilter` on a route whose declaration settles the
+question without it gives you the reader's own id, and logs.** The filter is
+only computed where it can be used — a route that declared nothing, or one that
+declared `'policy'`. Everywhere else the getter answers `{ userId }`: the
+_narrowest_ value the type can express, so a query built from it returns too few
+rows rather than too many. It deliberately does **not** answer `{}`, which is the
+widest, and it deliberately does not throw — `subjectFilter` is a required member,
+so a shared helper typed against `AuthenticatedSession` has no way to know
+reading is unsafe, and a 500 for real users is the wrong price for that. Same
+trade as `subjectScope`'s own wrapper, which logs and falls back to safe mode
+rather than raising.
 
 **`'self'` is not `'policy'` with extra steps, and must not be migrated to it.**
 `subjectScope` widens to `{}` for a platform admin — correct for an admin list,

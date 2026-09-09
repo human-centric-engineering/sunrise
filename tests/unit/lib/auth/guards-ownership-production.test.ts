@@ -52,15 +52,12 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { logger } from '@/lib/logging';
-import { withAuth, __resetOwnershipReportsForTests } from '@/lib/auth/guards';
+import { withAuth } from '@/lib/auth/guards';
 
 const request = () => new NextRequest('http://localhost:3000/api/v1/widgets');
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The log branch says it once per route per process, so without this the
-  // second test in this file would assert against a suppressed report.
-  __resetOwnershipReportsForTests();
   vi.mocked(headers).mockResolvedValue(new Headers());
   vi.mocked(resolveApiKey).mockResolvedValue(null);
   vi.mocked(auth.api.getSession).mockResolvedValue({

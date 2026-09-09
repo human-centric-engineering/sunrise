@@ -25,9 +25,13 @@ release process.
   the last returning a Prisma `where` fragment so that a fork's list query and
   its single-row read cannot disagree. No core list endpoint _narrows_ by
   `subjectScope`, since a single-tenant install has one class of admin and
-  nothing to narrow to; both guards call it on every request all the same, to
-  supply `session.subjectFilter` and to decide whether a route owed an ownership
-  decision (see the `ownership` entry below). The policy
+  nothing to narrow to. Both guards call it all the same — to supply
+  `session.subjectFilter` and to decide whether a route owed an ownership
+  decision (see the `ownership` entry below) — but **not on every request**: only
+  where the answer can be used, which is a route that declared no `ownership` or
+  one that declared `{ decidedBy: 'policy' }`. All 23 core `withAuth` routes
+  declare something else, so they skip it; the 262 `withAdminAuth` routes declare
+  nothing, so they do not. The policy
   is consulted in four places, and which face each asks matters more than the
   count: `withAdminAuth`, `app/admin/layout.tsx` and the maintenance-mode bypass
   in `components/maintenance-wrapper.tsx` ask `canAdminister`, while `withAuth`
@@ -158,11 +162,11 @@ release process.
   `AuthenticatedSession` gains `subjectFilter`, the policy's answer for this
   caller, so a handler never rebuilds a principal to ask for it.
 
-  **Breaking for forks, in development and test only.** Sunrise's own 22
-  `withAuth` handlers now declare `'self'` or `'nothing'` with a reason (a member
-  is narrowed to their own rows under the default policy); the 262
-  `withAdminAuth` handlers declare nothing, because a platform admin is
-  unrestricted. A fork's route tests will fail until they declare one — that is
+  **Breaking for forks, in their test suite.** All 23 of Sunrise's own `withAuth`
+  handlers now declare one — 22 `'self'` or `'nothing'` with a reason, and
+  `GET /api/v1/users/[id]` `'resource'` — because a member is narrowed to their
+  own rows under the default policy. The 262 `withAdminAuth` handlers declare
+  nothing, because a platform admin is unrestricted. A fork's route tests will fail until they declare one — that is
   the signal, and the error message names the fix. Only the test environment
   refuses; development and production log once per route. That reversal is
   deliberate: the documented one-line `canAdminister` override leaves the default

@@ -56,7 +56,7 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { logger } from '@/lib/logging';
-import { withAdminAuth, __resetOwnershipReportsForTests } from '@/lib/auth/guards';
+import { withAdminAuth } from '@/lib/auth/guards';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
@@ -76,7 +76,6 @@ function ownershipReports(): unknown[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  __resetOwnershipReportsForTests();
   vi.mocked(headers).mockResolvedValue(new Headers());
   vi.mocked(resolveApiKey).mockResolvedValue(null);
   vi.mocked(auth.api.getSession).mockResolvedValue({
@@ -141,11 +140,26 @@ describe('a fork that widened canAdminister and left subjectScope alone', () => 
 
   it('still reports a different route', async () => {
     // The control for the deduplication: "once per route", not "once, ever".
-    // Without this, a memory that suppressed everything after the first report
-    // would look identical to one that works.
+    // Without this, state that suppressed everything after the first report
+    // would look identical to state that works. Two `withAdminAuth` calls are
+    // two route modules, so two flags.
     await withAdminAuth(() => ok())(request('/api/v1/admin/agents'));
     await withAdminAuth(() => ok())(request('/api/v1/admin/workflows'));
 
     expect(ownershipReports()).toHaveLength(2);
+  });
+
+  it('says it once for a DYNAMIC route, however many ids are requested', async () => {
+    // The reason the flag moved out of a module-level Set keyed on the request
+    // path: `nextUrl.pathname` is the concrete path, so every id was its own
+    // key. 10k agent views meant 10k log lines — the volume the dedupe exists to
+    // prevent — and 10k permanent Set entries in a long-lived process. One
+    // closure per route makes it right by construction.
+    const route = withAdminAuth(() => ok());
+    await route(request('/api/v1/admin/agents/agent-1'));
+    await route(request('/api/v1/admin/agents/agent-2'));
+    await route(request('/api/v1/admin/agents/agent-3'));
+
+    expect(ownershipReports()).toHaveLength(1);
   });
 });
