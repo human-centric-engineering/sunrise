@@ -545,6 +545,14 @@ function reportOwnershipGap(options: {
       break;
     case 'self':
     case 'nothing':
+      // **Unreachable today, and it must stay anyway.** Both settle the question
+      // on their own, so `declarationSettlesIt` skips the `subjectScope` call for
+      // them, the filter is `{}`, and this function has already returned at its
+      // first gate. The arm exists so the switch stays exhaustive over
+      // `RouteOwnership`: delete it as dead code and the next `decidedBy` value
+      // added compiles into a silent `undefined` complaint instead of failing
+      // the build, which is the entire reason this is a switch and not a chain.
+      // Its absence from the coverage report is that, not a missing test.
       complaint = null;
       break;
   }
