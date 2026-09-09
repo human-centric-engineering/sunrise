@@ -100,8 +100,16 @@ and forgot `subjectScope`" a thing they can see.
 `async` `initAppAuthorizationPolicy` makes the init gate latch success on the
 _promise_ rather than the work, so every read in that window — and every read
 forever, if the promise rejects — gets Sunrise's default policy, the widest one,
-while the safe-mode machinery reports nothing wrong. Lint catches it
-(`@typescript-eslint/no-misused-promises`); [#739] tracks making the gate refuse.
+while the **safe-mode machinery reports nothing wrong** — the gate latched
+`'ok'`, so no rollback and no `onFailure`.
+
+It is not silent, though, and the log is where to look first:
+`lib/fork-init.ts` emits `logger.error('… returned a promise — this seam must be
+synchronous, and the all-or-nothing rollback does NOT apply to it')`, plus a
+second error if the promise later rejects. Lint also catches it
+(`@typescript-eslint/no-misused-promises`). What is missing is a _refusal_:
+the gate logs and carries on, so the install runs the widest policy either way.
+[#739] tracks that.
 
 ### The three faces
 
@@ -401,9 +409,9 @@ experiment never leaks", while the list two directories up leaks exactly that.
 
 This is not a hypothetical divergence between a list and a detail read. It is
 that divergence, in `main`, in the family the ownership seam is for — which is
-why the rule needs a name and a checker rather than a convention. Tracked in
-scheduled separately; it is deliberately not fixed here, because it changes shipped route
-behaviour and wants its own review.
+why the rule needs a name and a checker rather than a convention. Fixing it is
+scheduled separately; it is deliberately not fixed here, because it changes a
+shipped route's behaviour and wants its own review.
 
 ### The families that record `createdBy` and never read it
 
@@ -437,10 +445,13 @@ runs and what a customer runs. That mapping is in the multi-tenancy playbook, as
 because it derives from the same model inventory: a surface belongs to whichever
 plane its backing models sit in.
 
-The short version, and the reason it is worth reading rather than guessing: **the
-split does not follow the URL tree.** `orchestration/mcp/keys` and
-`mcp/prompts` are a customer's; `mcp/tools`, `mcp/resources` and `mcp/settings`
-are the vendor's — one nav section, both planes.
+The short version, and the reason it is worth reading rather than guessing:
+**the split does not follow the URL tree.** `orchestration/mcp/*` alone has
+three answers — `keys` is a customer's, `tools`, `resources` and `settings` are
+the vendor's, and `prompts` is **neither until `McpExposedPrompt` is scoped**,
+because it is served from a process-global cache to every MCP client under a
+global name namespace and a global cap. Do not summarise that page from this
+one; go and read it.
 
 ---
 

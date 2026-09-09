@@ -273,7 +273,6 @@ the model inventory win.
 | `orchestration/mcp/tools`, `mcp/resources`                   | `McpExposedTool`, `McpExposedResource`                             |
 | `users`, `users/[id]`, `users/invite`                        | `User` — tenancy arrives via the `Org` join, not an `orgId` column |
 | `logs`, `orchestration/audit-log`, `orchestration/mcp/audit` | Audit models — the actor is retained deliberately                  |
-| `orchestration/executions/live`                              | Engine lease state; process-global, plane 3                        |
 | `orchestration/learn`                                        | Static content, no data                                            |
 
 Credentials are the hard stop, not a preference: `AiProviderConfig` keys its
@@ -288,7 +287,6 @@ per install**, because vector dimension is a schema property.
 | --------------------------------------------------- | ----------------------------------------------------- |
 | `orchestration/agents` (+ `new`, `[id]`, `compare`) | `AiAgent`, `AiAgentVersion`, the token models         |
 | `orchestration/workflows`                           | `AiWorkflow`, `AiWorkflowVersion`                     |
-| `orchestration/executions` (list, detail)           | `AiWorkflowExecution`                                 |
 | `orchestration/triggers`                            | `AiWorkflowTrigger`, `AiWorkflowSchedule`             |
 | `orchestration/knowledge`                           | `AiKnowledgeDocument`, `AiKnowledgeBase`              |
 | `orchestration/conversations`                       | `AiConversation`                                      |
@@ -313,6 +311,14 @@ customer console that leaks an aggregate.
   content gaps are all derived from `AiConversation`. Tenant data presented as a
   global roll-up: the _page_ is a customer's, the vendor's version of it is a
   different query.
+- **`orchestration/executions`** — the one that looks cleanly splittable and is
+  not. `app/admin/orchestration/executions/page.tsx` fans three reads —
+  `getExecutions()` (`AiWorkflowExecution`, the customer's), `getInitialSnapshot()`
+  (live-engine lease state, process-global) and `getOrchestrationSettings()` (the
+  global singleton, for the stuck-step threshold) — and renders the live-engine
+  dashboard **above** the table on the same page. `executions/live` is a deeper
+  view of the same platform-ops data, not a separable surface. Assign the list to
+  a customer console and the engine state and settings singleton ship with it.
 - **`orchestration/mcp/prompts`** — looks like a customer's, and is not one
   yet. `McpExposedPrompt` is served from a process-global cache to every MCP
   client, with a global `name` namespace and a global enabled-cap, so shipping

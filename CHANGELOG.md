@@ -34,20 +34,6 @@ release process.
   needing a second admin tier (#366) or owner-scoped visibility (#367) had to
   shadow `lib/auth/guards.ts` or edit all of them.
 
-- **`withAuth()` / `withAdminAuth()` now hand the handler the principal they
-  decided with.** The second argument is an `AuthenticatedSession` —
-  `AuthSession` plus `principal` — so a handler calling `subjectScope()` uses the
-  same `AuthorizationPrincipal` the guard asked `canRead` / `canAdminister`
-  about. Additive: a handler typed `(request, session: AuthSession)` is
-  unchanged and still compiles. It matters because a handler could not previously
-  build a correct principal — the credential kind and an API key's scopes are
-  known only inside the guard — and the plausible reconstruction
-  (`credential: 'session'`) is a **widening** error: `withAuth` accepts a key of
-  any scope, so a `chat`-scoped key held by a user whose role is `ADMIN` would be
-  judged by the role, and `subjectScope` would answer `{}` (every subject) where
-  it should answer `{ userId }`. That divergence sat in the caller, so
-  `checkAuthorizationParity` could not see it.
-
   A fork replaces the policy from the new fork-owned `lib/app/authorization.ts`,
   which is listed among [`VERSIONING.md`](./VERSIONING.md#covered)'s named seams.
   The primitives it calls are `registerAuthorizationPolicy(policy)` and
@@ -102,6 +88,20 @@ release process.
   policy, because a fork's policy usually narrows it and falling back would widen
   access under a log line saying the feature was disabled. The `admin` API-key
   scope stays **platform-only** and is deliberately *not* routed through the seam.
+
+- **`withAuth()` / `withAdminAuth()` now hand the handler the principal they
+  decided with.** The second argument is an `AuthenticatedSession` —
+  `AuthSession` plus `principal` — so a handler calling `subjectScope()` uses the
+  same `AuthorizationPrincipal` the guard asked `canRead` / `canAdminister`
+  about. Additive: a handler typed `(request, session: AuthSession)` is
+  unchanged and still compiles. It matters because a handler could not previously
+  build a correct principal — the credential kind and an API key's scopes are
+  known only inside the guard — and the plausible reconstruction
+  (`credential: 'session'`) is a **widening** error: `withAuth` accepts a key of
+  any scope, so a `chat`-scoped key held by a user whose role is `ADMIN` would be
+  judged by the role, and `subjectScope` would answer `{}` (every subject) where
+  it should answer `{ userId }`. That divergence sat in the caller, so
+  `checkAuthorizationParity` could not see it.
 
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
