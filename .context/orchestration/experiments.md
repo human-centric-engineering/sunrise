@@ -122,6 +122,29 @@ Response 200: { success: true, data: Experiment }
 Audit: experiment.update
 ```
 
+### Claim an ownerless experiment
+
+```
+POST /api/v1/admin/orchestration/experiments/:id/claim
+Authorization: Admin
+Rate limit: adminLimiter
+Body: none
+
+Stamps the caller as `createdBy` on an experiment nobody owns — one whose
+creator was erased under Art. 17 (`createdBy` is `SetNull`). After claiming it
+behaves exactly like one the caller created.
+
+Refusals:
+  - owned by another admin, or no such id  → 404 NOT_FOUND (indistinguishable
+    on purpose, so the route cannot probe for other admins' experiments)
+  - already owned by the caller            → 409 CONFLICT
+  - claimed by someone else in the window  → 409 CONFLICT
+  - caller may not read unowned rows       → 404 NOT_FOUND
+
+Response 200: { success: true, data: Experiment }
+Audit: experiment.claim
+```
+
 ### Delete experiment
 
 ```
@@ -258,5 +281,6 @@ Every non-trivial field has a `<FieldHelp>` popover matching the CLAUDE.md conte
 | Already running/completed       | 400  | `VALIDATION_ERROR`    |
 | Invalid status transition       | 400  | `VALIDATION_ERROR`    |
 | Delete while running            | 400  | `VALIDATION_ERROR`    |
+| Claim an already-owned row      | 409  | `CONFLICT`            |
 | < 2 variants on run             | 400  | `VALIDATION_ERROR`    |
 | Too few/many variants on create | 400  | `VALIDATION_ERROR`    |

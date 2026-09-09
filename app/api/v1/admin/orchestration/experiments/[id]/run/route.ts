@@ -21,7 +21,11 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
+import {
+  visibleExperimentClause,
+  DATASET_RESOURCE_KIND,
+} from '@/lib/orchestration/experiments/visible-scope';
+import { mayReadUnattributed } from '@/lib/auth/orphan-reads';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
@@ -42,6 +46,13 @@ export const POST = withAdminAuth<Params>(
     // 403) so the existence of another admin's experiment never leaks —
     // the posture every route in this family uses (#741).
     const visible = await visibleExperimentClause(session);
+
+    // Asked before the transaction, not inside it: a fork's policy may do a
+    // membership lookup, and that should not run with a transaction open.
+    const mayReadUnownedDataset = await mayReadUnattributed(
+      session.principal,
+      DATASET_RESOURCE_KIND
+    );
 
     const exists = await prisma.aiExperiment.findFirst({
       where: { AND: [visible, { id }] },
@@ -80,13 +91,20 @@ export const POST = withAdminAuth<Params>(
 
       const datasetDriven = !!experiment.dataset && !!experiment.metricConfigs;
 
-      // Defence in depth: the dataset bound to this experiment must
-      // belong to the caller. Create-time validation at
-      // `POST /experiments` already enforces this, but checking again
-      // here means a future writer can add a new experiment-create path
-      // without re-introducing the cross-user-dataset hole.
-      if (datasetDriven && experiment.dataset && experiment.dataset.userId !== session.user.id) {
-        throw new NotFoundError('Experiment not found');
+      // Defence in depth: the dataset bound to this experiment must be one the
+      // caller may read. Create-time validation at `POST /experiments` already
+      // enforces this, but checking again here means a future writer can add a
+      // new experiment-create path without re-introducing the cross-user hole.
+      //
+      // Three cases, exactly as for the experiment itself — `AiDataset.userId`
+      // is `SetNull` too, so erasing an admin orphans the dataset alongside the
+      // experiment. Testing only `!== session.user.id` made a claimed orphan
+      // impossible to run: the claim succeeded, the row stayed visible, and
+      // `run` answered 404 for an experiment the caller now owned (t-678).
+      if (datasetDriven && experiment.dataset) {
+        const owner = experiment.dataset.userId;
+        const mayUse = owner === session.user.id || (owner === null && mayReadUnownedDataset);
+        if (!mayUse) throw new NotFoundError('Experiment not found');
       }
 
       for (const variant of experiment.variants) {

@@ -387,8 +387,11 @@ release process.
   the models an experiment reads from and writes to, which every route under
   `orchestration/evaluations` already scopes to their owner — rather than
   `AiAgent` and `AiWorkflow`, which stay admin-global. `AiExperiment` also gains
-  an `@@index([createdBy, createdAt])` to serve the newly filtered and sorted
-  list, matching the owner-column indexes those sibling models carry. It is spelled
+  an `@@index([createdBy, createdAt])` for the newly filtered list, matching the
+  owner-column indexes those sibling models carry. It keeps both branches of the
+  clause off a full table scan; it serves the `createdAt` sort as well only on
+  the narrow one, since the widened `OR createdBy IS NULL` branch plans as a
+  BitmapOr. It is spelled
   as a `createdBy` clause rather than through `subjectScope`, because the default
   policy widens that to every subject for a platform admin: routing this family
   through the seam would have been the admin-global choice, not the owner-scoped

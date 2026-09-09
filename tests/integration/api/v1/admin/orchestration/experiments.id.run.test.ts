@@ -6,7 +6,7 @@
  * @see app/api/v1/admin/orchestration/experiments/[id]/run/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/experiments/[id]/run/route';
 import {
@@ -15,6 +15,11 @@ import {
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
 import { ownerScopedFindFirst } from '@/tests/helpers/owner-scoped-prisma';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -465,6 +470,82 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
       expect(response.status).toBe(404);
       expect(mockEvalRunCreate).not.toHaveBeenCalled();
       expect(mockTxUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * t-678. `AiDataset.userId` is `SetNull` too, so erasing an admin orphans the
+   * dataset alongside the experiment. Testing the dataset with a bare
+   * `!== session.user.id` made a claimed orphan impossible to run: the claim
+   * succeeded, the row stayed visible, and `run` answered 404 for an experiment
+   * the caller now owned. The dataset gets the same three cases the experiment
+   * does — mine, nobody's, someone else's.
+   */
+  describe('an ownerless dataset', () => {
+    function orphanDatasetExperiment() {
+      return {
+        id: EXPERIMENT_ID,
+        name: 'Test Experiment',
+        agentId: 'agent-1',
+        status: 'draft',
+        // The experiment has been claimed: the caller owns it now.
+        createdBy: ADMIN_ID,
+        datasetId: 'ds-orphan',
+        metricConfigs: [{ slug: 'judge_agent', config: { agentSlug: 'eval-judge-relevance' } }],
+        // Its dataset was orphaned by the same erasure and nobody claimed it.
+        dataset: { id: 'ds-orphan', userId: null, contentHash: 'h', caseCount: 12 },
+        variants: [
+          { id: 'v1', label: 'Control' },
+          { id: 'v2', label: 'Variant A' },
+        ],
+      };
+    }
+
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+      mockTxFindUnique.mockResolvedValue(orphanDatasetExperiment());
+    });
+
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    it('runs when the policy lets the caller read unowned rows', async () => {
+      const response = await POST(makePostRequest(), makeContext());
+
+      expect(response.status).toBe(200);
+      expect(mockEvalRunCreate).toHaveBeenCalled();
+    });
+
+    it('is refused when the policy does not', async () => {
+      // A fork whose org admins may not touch another department's abandoned
+      // work. Same claimed experiment, same orphaned dataset, narrower policy.
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canRead: (viewer, target, scope) =>
+          target.kind === 'unattributed'
+            ? Promise.resolve(false)
+            : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+      });
+
+      const response = await POST(makePostRequest(), makeContext());
+
+      expect(response.status).toBe(404);
+      expect(mockEvalRunCreate).not.toHaveBeenCalled();
+    });
+
+    it("still refuses a LIVE third party's dataset, on both policies", async () => {
+      // The regression guard for the widening. `null` is the only owner value
+      // the relaxation may admit; an actual foreign id must stay refused
+      // whatever the policy says about unowned rows.
+      mockTxFindUnique.mockResolvedValue({
+        ...orphanDatasetExperiment(),
+        dataset: { id: 'ds-foreign', userId: 'another-admin', contentHash: 'h', caseCount: 12 },
+      });
+
+      expect((await POST(makePostRequest(), makeContext())).status).toBe(404);
+      expect(mockEvalRunCreate).not.toHaveBeenCalled();
     });
   });
 });

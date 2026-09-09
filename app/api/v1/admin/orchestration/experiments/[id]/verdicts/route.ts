@@ -64,6 +64,9 @@ export const POST = withAdminAuth<Params>(
       where: { AND: [await visibleExperimentClause(session), { id }] },
       select: {
         id: true,
+        // Not for the ownership test — the `where` above settles that — but so
+        // the write at the end can pin itself to the owner this read saw.
+        createdBy: true,
         datasetId: true,
         variants: {
           select: { id: true, label: true, evaluationRunId: true },
@@ -227,8 +230,12 @@ export const POST = withAdminAuth<Params>(
       perCase: [...perCase, ...missing].sort((a, b) => a.casePosition - b.casePosition),
     };
 
+    // Pinned to the ownership the read at the top of this handler saw. The
+    // judging above is slow, so this window is the widest in the family; an
+    // orphan claimed meanwhile must not have a verdict written onto it by the
+    // admin who no longer holds it.
     await prisma.aiExperiment.update({
-      where: { id },
+      where: { id, createdBy: experiment.createdBy },
       data: { pairwiseVerdict: summary as unknown as Prisma.InputJsonValue },
     });
 

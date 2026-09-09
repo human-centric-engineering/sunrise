@@ -32,6 +32,21 @@
  * widening this arm. If the seam ever grows a write-side question for unowned
  * rows, this is where it belongs.
  *
+ * **Asking this trips a diagnostic that is aimed at something else.** The
+ * default policy's `'unattributed'` arm logs, once per kind per process,
+ * `"a route named a resource with no ownerId — denying non-admins"`, and tells
+ * you to give a resolver an `ownerId`. There is no resolver here and nothing to
+ * correct: the arm cannot currently tell "a resolver named a row it could not
+ * attribute" from "does this principal may-read unowned rows of kind X at all".
+ * So an install with no ownerless rows still sees one line naming `experiment`
+ * and one naming `dataset`, and both are false alarms — see #754.
+ *
+ * Narrowing the warning to resources carrying an `id` was tried and reverted:
+ * it would silence a fork whose resolver really is misconfigured and returns no
+ * id, which is the case the diagnostic exists for. Trading a real warning for a
+ * cosmetic one is the wrong way round. The fix is a separate question on the
+ * seam, not a narrower predicate here.
+ *
  * @see `.context/auth/authorization.md` — the seam, and the `'unattributed'` arm
  * @see `.context/privacy/data-erasure.md` — why these rows exist at all
  */

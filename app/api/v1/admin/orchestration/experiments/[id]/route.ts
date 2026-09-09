@@ -96,8 +96,14 @@ export const PATCH = withAdminAuth<Params>(
       }
     }
 
+    // Pinned to the ownership the read above saw, not just to `id`. An orphan
+    // can now be claimed, so `createdBy` has a null -> someone transition it did
+    // not have before: without this, an admin could edit a row another admin
+    // claimed in the window, which a re-read would have 404'd. A miss throws
+    // P2025, which the shared handler renders as 404 — the honest answer, since
+    // the row is no longer one this caller may write.
     const experiment = await prisma.aiExperiment.update({
-      where: { id },
+      where: { id, createdBy: existing.createdBy },
       data: {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
@@ -152,7 +158,8 @@ export const DELETE = withAdminAuth<Params>(
       throw new ValidationError('Cannot delete a running experiment — stop it first');
     }
 
-    await prisma.aiExperiment.delete({ where: { id } });
+    // Pinned to the ownership the read above saw — see the PATCH handler.
+    await prisma.aiExperiment.delete({ where: { id, createdBy: existing.createdBy } });
 
     logAdminAction({
       userId: session.user.id,

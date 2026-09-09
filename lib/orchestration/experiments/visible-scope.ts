@@ -31,6 +31,19 @@ import { mayReadUnattributed } from '@/lib/auth/orphan-reads';
 export const EXPERIMENT_RESOURCE_KIND = 'experiment';
 
 /**
+ * The resource kind for `AiDataset`.
+ *
+ * It lives here, rather than in a datasets module, because there is no datasets
+ * equivalent of this file yet — `AiDataset` has the same `SetNull` orphan gap
+ * and has not been given the same treatment. The `run` route needs the string
+ * today to ask whether the caller may read an experiment's ownerless dataset.
+ * When datasets get their own visible-scope module, move this there and reuse
+ * the value; a second spelling of the same kind would silently split the
+ * policy's answer in two.
+ */
+export const DATASET_RESOURCE_KIND = 'dataset';
+
+/**
  * A `where` fragment selecting the experiments `session` may read.
  *
  * `AND` it into a query rather than spreading it — an optional filter built from
