@@ -19,12 +19,12 @@
  * `canRead`, not `canAdminister`: overriding the administer face alone does
  * nothing to its 23 handlers.
  *
- * **The read decision is not yet fully behind the seam**, and you need to know
- * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET)
- * still decides from the platform role inline, so a platform `ADMIN` reads
- * every user row through it whatever your policy says.
- * `lib/auth/authorization.ts`'s module header carries the detail. Migrating it
- * is scheduled; until then, treat that route as outside your policy.
+ * The read decision is behind the seam too. `app/api/v1/users/[id]` (GET) is
+ * the one core route that declares a `resource`, so your `canRead` governs who
+ * may read a user's profile — including refusing a platform `ADMIN`, and
+ * including in safe mode. It is also the worked example to copy: its resolver
+ * reads the URL segment and does not load the row, because a resolver returning
+ * `null` denies and would turn a missing user's 404 into a 403.
  *
  * The two cases this exists for:
  *

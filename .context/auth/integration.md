@@ -218,8 +218,9 @@ export interface WithAuthOptions {
  * - Throws ForbiddenError (403) if `options.scope` is set and an API-key
  *   caller lacks it
  * - Asks the authorization policy `canRead(principal, subject)`, where the
- *   subject is the `ownerId` from `options.resource` — or `null` when the route
- *   named none, which every core route does and the default policy allows
+ *   target comes from `options.resource` — or `{ kind: 'nothing' }` when the
+ *   route named none, which the default policy allows. Every core route but
+ *   `app/api/v1/users/[id]` (GET) takes that arm
  * - Passes the session to the handler
  * - Catches all errors via handleAPIError
  */
@@ -266,8 +267,8 @@ the compiler enforces that rather than a docblock — see
 
 The full guide is [`.context/auth/authorization.md`](./authorization.md) — the
 three scope inputs, the owner-scoped list recipe, and an explicit list of what
-is **not** behind the seam yet, including the one `users` route whose read
-decision is still inline (`app/api/v1/users/[id]/route.ts` GET).
+is **not** behind the seam yet. `app/api/v1/users/[id]/route.ts` (GET) is the
+one core route that declares a `resource`, and the example to copy from.
 
 **Usage - Simple authenticated route:**
 

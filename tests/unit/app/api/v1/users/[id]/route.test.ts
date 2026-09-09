@@ -22,7 +22,7 @@
  * @see app/api/v1/users/[id]/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GET, PATCH, DELETE } from '@/app/api/v1/users/[id]/route';
 import type { NextRequest } from 'next/server';
 import {
@@ -49,6 +49,13 @@ vi.mock('@/lib/auth/config', () => ({
     },
   },
 }));
+
+// Mock only the API-key RESOLVER; `hasScope` and the scope list stay real, since
+// the credential narrowing this route now inherits is exactly what they decide.
+vi.mock('@/lib/auth/api-keys', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/api-keys')>();
+  return { ...actual, resolveApiKey: vi.fn().mockResolvedValue(null) };
+});
 
 // Mock Prisma client
 vi.mock('@/lib/db/client', () => ({
@@ -84,6 +91,13 @@ import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
+import { resolveApiKey } from '@/lib/auth/api-keys';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+  SAFE_MODE_POLICY,
+} from '@/lib/auth/authorization';
 
 /**
  * Response type interfaces
@@ -179,7 +193,10 @@ describe('GET /api/v1/users/[id]', () => {
       expect(response.status).toBe(403);
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('FORBIDDEN');
-      expect(data.error.message).toBe('Forbidden');
+      // 'Access denied', not 'Forbidden': the refusal now comes from the guard's
+      // canRead call rather than an inline check in the handler. Status and code
+      // are unchanged, which is the behaviour-neutrality that matters.
+      expect(data.error.message).toBe('Access denied');
 
       // Should not query database when not authorized
       expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
@@ -1786,5 +1803,171 @@ describe('DELETE /api/v1/users/[id]', () => {
     // Neither findUnique (role check prereq) nor eraseUser should be reached
     expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — guard-order proof: self check fires first, DB not reached
     expect(eraseUser).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The point of t-675: this route's read decision is now the policy's.
+ *
+ * The tests above prove behaviour is unchanged under Sunrise's default —
+ * self-read allowed, admin-reads-other allowed, non-admin-reads-other refused.
+ * These prove the thing that was impossible before the migration: that a fork
+ * replacing the policy actually changes what this route returns. Without them
+ * this task would have shipped a refactor and called it a fix.
+ */
+describe('GET /api/v1/users/[id] — the read decision is the policy’s', () => {
+  const OTHER_ID = 'cmjbv4i3x00004wsloputgwux';
+
+  // This block sits outside the describe that owns the file's `vi.clearAllMocks()`,
+  // so it needs its own — without it these tests inherit call counts from each
+  // other, and "the DB was never reached" passes or fails on the previous test.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(headers).mockResolvedValue(new Headers());
+    vi.mocked(resolveApiKey).mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  it('lets a registered NARROWING policy refuse a read the default allows', async () => {
+    // An admin reading someone else: allowed by DEFAULT_AUTHORIZATION_POLICY,
+    // and the test above proves it. A fork's policy that scopes reads to the
+    // reader must be able to override that, or the seam is decoration.
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target) =>
+        Promise.resolve(target.kind === 'subject' ? target.userId === viewer.userId : true),
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GET({} as NextRequest, { params: createMockParams(OTHER_ID) });
+
+    expect(response.status).toBe(403);
+    // The DB is never reached: the policy refuses before the handler runs.
+    expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the refusal must precede the read
+  });
+
+  it('still lets that same narrowing policy read the reader’s own row', async () => {
+    // The control for the test above. Without it, "the policy narrowed the
+    // route" is indistinguishable from "the route is broken for everyone".
+    const currentUser = mockAdminUser();
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target) =>
+        Promise.resolve(target.kind === 'subject' ? target.userId === viewer.userId : true),
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(currentUser);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: currentUser.user.id,
+      name: 'Self',
+      email: 'self@example.com',
+      role: 'ADMIN',
+      emailVerified: true,
+      image: null,
+      bio: null,
+      phone: null,
+      timezone: null,
+      location: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as Awaited<ReturnType<typeof prisma.user.findUnique>>);
+
+    const response = await GET({} as NextRequest, {
+      params: createMockParams(currentUser.user.id),
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it('refuses every declared read in safe mode, including an admin’s', async () => {
+    // Safe mode is what an install runs when a fork's registration throws. Its
+    // promise — "every declared read narrows to the reader's own rows" — could
+    // not bind this route while the decision was inline. Now it can.
+    registerAuthorizationPolicy(SAFE_MODE_POLICY);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GET({} as NextRequest, { params: createMockParams(OTHER_ID) });
+
+    expect(response.status).toBe(403);
+  });
+
+  it('judges an API key by its SCOPES, not by its owner’s role', async () => {
+    // The security fix hiding inside this migration. The inline check read
+    // `session.user.role`, and for an API-key caller that is the KEY OWNER's
+    // role — so a `chat`-scoped key belonging to an admin could read every
+    // user's profile through this route. `administersEverything` judges an
+    // api-key principal by `hasScope(scopes, 'admin')` instead, which is the
+    // credential narrowing #542 established for every other surface.
+    const adminOwner = mockAdminUser();
+    vi.mocked(resolveApiKey).mockResolvedValue({
+      session: adminOwner,
+      scopes: ['chat'],
+      rateLimitRpm: null,
+    });
+
+    const response = await GET({} as NextRequest, { params: createMockParams(OTHER_ID) });
+
+    expect(response.status).toBe(403);
+    expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the key must not reach the row
+  });
+
+  it('refuses a malformed id from a non-admin with 403, not 400', async () => {
+    // The third documented behaviour change, and the only one nothing pinned.
+    // The resolver and the policy run BEFORE `validateQueryParams`, so a
+    // non-admin can no longer tell "not a valid id" from "not yours". Both
+    // pre-existing invalid-id tests use an admin session and so only exercise
+    // the 400 path; reordering validation ahead of the guard would silently
+    // restore the 400 while the CHANGELOG and the API docs assert the 403.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const response = await GET({} as NextRequest, { params: createMockParams('not-a-cuid') });
+    const data = await parseResponse<ErrorResponse>(response);
+
+    expect(response.status).toBe(403);
+    expect(data.error.code).toBe('FORBIDDEN');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the read
+  });
+
+  it('still returns 400 for a malformed id when the policy allows the read', async () => {
+    // The control: an admin gets past the policy, so validation is reached and
+    // the 400 survives. Without this, the test above passes for a policy that
+    // refuses everything, which is a different bug.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GET({} as NextRequest, { params: createMockParams('not-a-cuid') });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('still admits an API key that actually holds the admin scope', async () => {
+    // The control for the test above: it must fail on the missing scope, not on
+    // "api-key callers are refused", which would pass the previous test for a
+    // reason that has nothing to do with the fix.
+    const adminOwner = mockAdminUser();
+    vi.mocked(resolveApiKey).mockResolvedValue({
+      session: adminOwner,
+      scopes: ['admin'],
+      rateLimitRpm: null,
+    });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: OTHER_ID,
+      name: 'Other',
+      email: 'other@example.com',
+      role: 'USER',
+      emailVerified: true,
+      image: null,
+      bio: null,
+      phone: null,
+      timezone: null,
+      location: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as Awaited<ReturnType<typeof prisma.user.findUnique>>);
+
+    const response = await GET({} as NextRequest, { params: createMockParams(OTHER_ID) });
+
+    expect(response.status).toBe(200);
   });
 });
