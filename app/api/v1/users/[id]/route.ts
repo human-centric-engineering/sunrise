@@ -14,7 +14,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { withAuth, withAdminAuth } from '@/lib/auth/guards';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
@@ -27,58 +27,76 @@ import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
  * GET /api/v1/users/:id
  *
  * Returns a specific user's profile.
- * Admin users can view any profile.
- * Regular users can only view their own profile.
+ *
+ * **The read decision is the authorization policy's, not this handler's.** The
+ * `resource` resolver below names the user row being read, and
+ * `lib/auth/authorization.ts` answers. Sunrise's default answers exactly what
+ * the inline check used to: your own profile, or anyone's if you are platform
+ * staff. A fork that registers a narrowing policy narrows this route with it,
+ * which is what a decision written out longhand here could never do.
+ *
+ * This is the first core route to declare a resource, so it is also the worked
+ * example: the resolver reads the URL segment and nothing else. It does **not**
+ * load the row — existence stays the handler's question, which is what keeps a
+ * missing user a 404 rather than the 403 a `null`-returning resolver would give.
  *
  * @param params - Route parameters containing user ID
  * @returns User profile
  * @throws UnauthorizedError if not authenticated
- * @throws ForbiddenError if non-admin tries to view another user
+ * @throws ForbiddenError (from the guard) if the policy refuses the read
  * @throws NotFoundError if user doesn't exist
  * @throws ValidationError if ID format is invalid
  */
-export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
+export const GET = withAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
 
-  // Await params (Next.js 16 requirement)
-  const { id: userId } = await params;
+    // Await params (Next.js 16 requirement)
+    const { id: userId } = await params;
 
-  // Validate user ID parameter
-  const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
+    // Validate user ID parameter
+    const { id } = validateQueryParams(new URLSearchParams({ id: userId }), userIdSchema);
 
-  log.info('Fetching user by ID', { targetUserId: id });
+    log.info('Fetching user by ID', { targetUserId: id });
 
-  // Authorization: Admin can view any user, users can view own profile
-  if (session.user.id !== id && !isPlatformAdmin(session.user)) {
-    throw new ForbiddenError();
-  }
+    // Fetch user from database
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerified: true,
+        image: true,
+        bio: true,
+        phone: true,
+        timezone: true,
+        location: true,
+        createdAt: true,
+        updatedAt: true,
+        // Exclude password
+      },
+    });
 
-  // Fetch user from database
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      emailVerified: true,
-      image: true,
-      bio: true,
-      phone: true,
-      timezone: true,
-      location: true,
-      createdAt: true,
-      updatedAt: true,
-      // Exclude password
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    return successResponse(user);
+  },
+  {
+    // The subject of this read is the user being read — a user row's owner is
+    // that user. Deliberately derived from the URL segment rather than from a
+    // `findUnique`: the resolver runs before the authorization decision and so
+    // is reachable by any authenticated caller, and returning `null` for a row
+    // that does not exist would turn today's 404 into a 403.
+    resource: async (_request, context) => {
+      const { id } = await context!.params;
+      return { kind: 'user', id, ownerId: id };
     },
-  });
-
-  if (!user) {
-    throw new NotFoundError('User not found');
   }
-
-  return successResponse(user);
-});
+);
 
 /**
  * PATCH /api/v1/users/:id
