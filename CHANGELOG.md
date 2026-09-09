@@ -377,9 +377,10 @@ release process.
   grants platform staff and a fork narrows by registering a policy rather than by
   editing a route. These are the first core callers of that arm. A new
   `POST /api/v1/admin/orchestration/experiments/:id/claim` lets an admin adopt an
-  ownerless experiment so it re-enters the ordinary rules; claiming one that
-  already has an owner is refused with a 404, so it cannot be used to probe for
-  other admins' experiments. `AiDataset` has the same gap and does **not** get
+  ownerless experiment so it re-enters the ordinary rules. Only an unowned row can
+  be taken: another admin's is a 404, indistinguishable from one that does not
+  exist, so the route cannot be used to probe for other admins' experiments, and
+  one you already own is a 409. `AiDataset` has the same gap and does **not** get
   this yet.
 
   The posture matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun` —

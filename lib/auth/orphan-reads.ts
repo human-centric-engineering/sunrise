@@ -22,6 +22,16 @@
  * another department's abandoned work overrides `canRead` and these routes
  * follow, with no diff here.
  *
+ * **A fork overriding this arm is deciding more than reading.** `canRead` is a
+ * read predicate, but a route that builds its visible set from the answer uses
+ * that set for its writes too — edit, delete, and anything the row can be made
+ * to do. So `case 'unattributed': return isOrgAdmin(viewer)`, written to mean
+ * "org admins may VIEW de-attributed rows for audit", also hands them deletion
+ * and any cost-incurring action over those rows, with no second predicate to
+ * consult and no diff in the routes to review. Decide the wider question before
+ * widening this arm. If the seam ever grows a write-side question for unowned
+ * rows, this is where it belongs.
+ *
  * @see `.context/auth/authorization.md` — the seam, and the `'unattributed'` arm
  * @see `.context/privacy/data-erasure.md` — why these rows exist at all
  */

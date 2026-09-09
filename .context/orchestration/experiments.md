@@ -35,10 +35,12 @@ with no owner. Those are visible to a caller whose policy permits an
 `'unattributed'` read — every platform admin, by default — because the
 alternative is a retained row no operator can ever reach. `POST
 /experiments/:id/claim` lets an admin adopt one, after which it is theirs under
-the ordinary rules; claiming a row that already has an owner is refused, and
-refused with a 404 so the route cannot be used to probe for other people's
-experiments. `lib/orchestration/experiments/visible-scope.ts` is the single
-definition every handler uses.
+the ordinary rules. Only an unowned row can be taken, and the two refusals are
+deliberately different: another admin's experiment is a **404**, identical to one
+that does not exist, so the route cannot be used to probe for other people's
+experiments; your own is a **409**, which discloses nothing you could not already
+see in your own list. `lib/orchestration/experiments/visible-scope.ts` is the
+single definition every handler uses.
 
 This matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun`, which an
 experiment reads from and writes to. It deliberately does **not** match `AiAgent`
