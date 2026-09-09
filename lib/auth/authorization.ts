@@ -1,11 +1,19 @@
 /**
  * The authorization policy — one decision, three faces, one seam.
  *
- * Sunrise asks "may this principal **administer**?" in exactly four places:
- * `withAdminAuth` and `withAuth` (both in `lib/auth/guards.ts`),
- * `app/admin/layout.tsx`, and `components/maintenance-wrapper.tsx` — the last
- * being the maintenance-mode bypass, which is an access decision rather than a
- * piece of chrome, because getting past that page reaches the whole site. Until this module existed each of them *answered* the
+ * Sunrise consults this policy in exactly four places: `withAdminAuth` and
+ * `withAuth` (both in `lib/auth/guards.ts`), `app/admin/layout.tsx`, and
+ * `components/maintenance-wrapper.tsx` — the last being the maintenance-mode
+ * bypass, which is an access decision rather than a piece of chrome, because
+ * getting past that page reaches the whole site.
+ *
+ * **Three of those four ask `canAdminister`** — `withAdminAuth`, the admin
+ * layout and the maintenance bypass. `withAuth` asks `canRead`, and is the only
+ * core caller of that face. Do not read "four chokepoints" as "four places the
+ * administer decision is made": a fork replacing `canAdminister` alone changes
+ * nothing about a `withAuth` route.
+ *
+ * Until this module existed each of them *answered* the
  * question inline, with a role predicate in the guard body. That made the
  * chokepoint real and the decision unreachable: a fork needing "admin of this
  * org, not of the platform" (#366) or "only the questionnaires I created"
@@ -17,24 +25,28 @@
  *
  * ## The READ axis is not yet fully behind this seam. Read this before relying on it.
  *
- * "Three chokepoints" is true of `canAdminister`. It is **not** true of
+ * "Every decision is behind the seam" is true of `canAdminister`, whose three
+ * call sites are listed above. It is **not** true of
  * `canRead` / `subjectScope`, and the difference matters most to the fork this
- * seam is for. Two core routes decide a read from the platform role inline, and
- * this branch did not migrate them:
+ * seam is for. One core route decides a read from the platform role inline, and
+ * this seam's own PR did not migrate it:
  *
- *  - `app/api/v1/users/[id]/route.ts` (GET) — `session.user.id !== id &&
- *    !isPlatformAdmin(session.user)`. That is `canRead(viewer, subject)` written
- *    out longhand. Its `withAuth` wrapper does consult this module, but with no
- *    `resource` resolver, so the seam is asked about a `null` subject, allows,
- *    and the real decision is still the line below it.
- *  - `app/api/v1/users/me/route.ts` — an admin-only branch, same shape.
+ *  - `app/api/v1/users/[id]/route.ts:52` (GET) — `session.user.id !== id &&
+ *    !isPlatformAdmin(session.user)`. That is `canRead` written out longhand.
+ *    Its `withAuth` wrapper does consult this module, but with no `resource`
+ *    resolver, so the seam is asked about `{ kind: 'nothing' }`, allows, and the
+ *    real decision is still the line below it.
+ *
+ * `app/api/v1/users/me/route.ts` was listed here as a second instance until
+ * 2026-09-09 and is not one: its GET reads `where: { id: session.user.id }`, and
+ * its only `isPlatformAdmin` call guards the last-admin count in DELETE.
  *
  * The consequence is directional, and it is the unsafe direction: a fork
- * registering a policy that NARROWS reads does not narrow those two. A platform
- * `ADMIN` still reads every user row through them, **including in safe mode**,
+ * registering a policy that NARROWS reads does not narrow it. A platform
+ * `ADMIN` still reads every user row through it, **including in safe mode**,
  * whose promise that "every declared read narrows to the reader's own rows"
  * cannot bind a read that was never declared. Migrating them is the first
- * adopter of the `resource` resolver and is tracked in #738 — it changes a
+ * adopter of the `resource` resolver, and is scheduled separately — it changes a
  * shipped route's behaviour and wants its own review, rather than riding along
  * with the extraction.
  *
@@ -106,8 +118,11 @@
  * not what it was not asked about.
  *
  * @see lib/app/authorization.ts — the fork-owned scaffold
- * @see lib/auth/guards.ts — `withAuth` / `withAdminAuth`, two of the three chokepoints
+ * @see lib/auth/guards.ts — `withAuth` / `withAdminAuth`, two of the four chokepoints
  * @see app/admin/layout.tsx — the third
+ * @see components/maintenance-wrapper.tsx — the fourth
+ * @see .context/auth/authorization.md — the guide: the three inputs, the
+ *   owner-scoped list recipe, and the read paths not yet behind this seam
  * @see .context/architecture/multi-tenancy-design.md — principle 7, and the Q6 ruling on `admin` keys
  */
 
@@ -714,6 +729,13 @@ export interface AuthorizationParityViolation {
  * check run over zero cases, or over a case with no subjects, passes while
  * proving nothing. That is the failure mode this whole file is written against,
  * and a checker is not exempt from it.
+ *
+ * **It checks the POLICY, not the call sites**, and that boundary has already
+ * cost something. If a handler asks `subjectScope` with a principal it built
+ * itself rather than the one its guard used (`session.principal`, see
+ * `AuthenticatedSession`), the two faces can disagree on a live request while a
+ * policy passes clean here — the disagreement is in the caller, and nothing in
+ * this function can see it.
  *
  * ```ts
  * const violations = await checkAuthorizationParity(myPolicy, [

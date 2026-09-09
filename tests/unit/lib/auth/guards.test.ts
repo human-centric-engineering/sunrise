@@ -203,7 +203,7 @@ describe('withAuth', () => {
 
       // Handler should be called with request and session
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(request, mockSession);
+      expect(handler).toHaveBeenCalledWith(request, expect.objectContaining(mockSession));
     });
 
     it('should work with USER role', async () => {
@@ -271,7 +271,7 @@ describe('withAuth', () => {
 
       // Assert
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(request, mockSession);
+      expect(handler).toHaveBeenCalledWith(request, expect.objectContaining(mockSession));
     });
 
     it('should receive (request, session, context) when route has params', async () => {
@@ -304,7 +304,7 @@ describe('withAuth', () => {
 
       // Handler should be called with request, session, and context
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(request, mockSession, context);
+      expect(handler).toHaveBeenCalledWith(request, expect.objectContaining(mockSession), context);
     });
 
     it('should handle complex route params', async () => {
@@ -599,7 +599,7 @@ describe('withAdminAuth', () => {
 
       // Handler should be called with request and session
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(request, mockSession);
+      expect(handler).toHaveBeenCalledWith(request, expect.objectContaining(mockSession));
     });
   });
 
@@ -626,7 +626,7 @@ describe('withAdminAuth', () => {
 
       // Assert
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(request, mockSession);
+      expect(handler).toHaveBeenCalledWith(request, expect.objectContaining(mockSession));
     });
 
     it('should receive (request, session, context) when route has params', async () => {
@@ -659,7 +659,7 @@ describe('withAdminAuth', () => {
 
       // Handler should be called with request, session, and context
       expect(handler).toHaveBeenCalledTimes(1);
-      expect(handler).toHaveBeenCalledWith(request, mockSession, context);
+      expect(handler).toHaveBeenCalledWith(request, expect.objectContaining(mockSession), context);
     });
 
     it('should return the Response from the handler on success', async () => {
@@ -845,7 +845,7 @@ describe('API-key fallback', () => {
       const wrapped = withAuth(handler);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(200);
-      expect(handler).toHaveBeenCalledWith(expect.anything(), session);
+      expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
       // The session-cookie path should not have been consulted.
       expect(auth.api.getSession).not.toHaveBeenCalled();
     });
@@ -899,7 +899,7 @@ describe('API-key fallback', () => {
       const res = await wrapped(createRequest());
 
       expect(res.status).toBe(200);
-      expect(handler).toHaveBeenCalledWith(expect.anything(), session);
+      expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
     });
 
     it('admits an admin-scoped key for any scope, per hasScope', async () => {
@@ -980,7 +980,7 @@ describe('API-key fallback', () => {
       const wrapped = withAdminAuth(handler);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(200);
-      expect(handler).toHaveBeenCalledWith(expect.anything(), session);
+      expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
       expect(auth.api.getSession).not.toHaveBeenCalled();
     });
 

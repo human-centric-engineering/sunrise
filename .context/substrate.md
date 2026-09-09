@@ -54,37 +54,38 @@ Entry point for the `.context/` documentation system. Load specific domains base
 
 ## Task Lookup
 
-| Task                                                | Start Here                                       | Also See                                  |
-| --------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- |
-| **Add API endpoint**                                | `api/endpoints.md`                               | `api/headers.md`                          |
-| **Add protected page**                              | `architecture/overview.md`                       | `auth/integration.md`                     |
-| **Add database model**                              | `database/schema.md`                             | `database/migrations.md`                  |
-| **Make the template multi-tenant**                  | `architecture/multi-tenancy.md`                  | `architecture/multi-tenancy-design.md`    |
-| **Scope multi-tenancy work / assess the gap**       | `architecture/multi-tenancy-research.md`         | `architecture/multi-tenancy.md`           |
-| **Build the tenancy capability (design record)**    | `architecture/multi-tenancy-design.md`           | `architecture/multi-tenancy.md`           |
-| **Add OAuth provider**                              | `auth/oauth.md`                                  | `auth/security.md`                        |
-| **Protect a route**                                 | `auth/integration.md`                            | `auth/sessions.md`                        |
-| **Add environment var**                             | `environment/overview.md`                        | `environment/reference.md`                |
-| **Deploy to production**                            | `deployment/overview.md`                         | `environment/overview.md`                 |
-| **Tune CI / fix a private-fork CI failure**         | `architecture/ci.md`                             | `environment/overview.md`                 |
-| **Write or review an automated check / gate**       | `architecture/checks.md`                         | `architecture/ci.md`                      |
-| **Add error handling**                              | `errors/overview.md`                             | `logging/overview.md`                     |
-| **Add logging**                                     | `logging/overview.md`                            | `logging/request-context.md`              |
-| **Add rate limiting**                               | `security/rate-limiting.md`                      | `security/overview.md`                    |
-| **Write tests**                                     | `testing/patterns.md`                            | `testing/mocking.md`                      |
-| **Mock dependencies**                               | `testing/mocking.md`                             | `testing/async-testing.md`                |
-| **Add file uploads**                                | `storage/overview.md`                            | `security/overview.md`                    |
-| **Add analytics**                                   | `analytics/overview.md`                          | `privacy/overview.md`                     |
-| **Build admin feature**                             | `admin/overview.md`                              | `api/admin-endpoints.md`                  |
-| **Add health checks**                               | `monitoring/health-checks.md`                    | `monitoring/overview.md`                  |
-| **Create email template**                           | `email/overview.md`                              | `ui/forms.md`                             |
-| **Call an LLM**                                     | `orchestration/llm-providers.md`                 | `orchestration/overview.md`               |
-| **Call a capability**                               | `orchestration/capabilities.md`                  | `orchestration/overview.md`               |
-| **Wire an integration via a recipe**                | `orchestration/recipes/`                         | `orchestration/capabilities.md`           |
-| **Stream a chat turn**                              | `orchestration/chat.md`                          | `orchestration/overview.md`               |
-| **Know what the orchestration layer does**          | `orchestration/meta/functional-specification.md` | `orchestration/meta/README.md`            |
-| **Understand why an orchestration choice was made** | `orchestration/meta/architectural-decisions.md`  | `orchestration/meta/maturity-analysis.md` |
-| **Add type patterns**                               | `types/overview.md`                              | `types/conventions.md`                    |
+| Task                                                    | Start Here                                       | Also See                                  |
+| ------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| **Add API endpoint**                                    | `api/endpoints.md`                               | `api/headers.md`                          |
+| **Add protected page**                                  | `architecture/overview.md`                       | `auth/integration.md`                     |
+| **Add database model**                                  | `database/schema.md`                             | `database/migrations.md`                  |
+| **Make the template multi-tenant**                      | `architecture/multi-tenancy.md`                  | `architecture/multi-tenancy-design.md`    |
+| **Scope multi-tenancy work / assess the gap**           | `architecture/multi-tenancy-research.md`         | `architecture/multi-tenancy.md`           |
+| **Build the tenancy capability (design record)**        | `architecture/multi-tenancy-design.md`           | `architecture/multi-tenancy.md`           |
+| **Add OAuth provider**                                  | `auth/oauth.md`                                  | `auth/security.md`                        |
+| **Protect a route**                                     | `auth/integration.md`                            | `auth/sessions.md`                        |
+| **Change who may administer, or scope a list by owner** | `auth/authorization.md`                          | `architecture/multi-tenancy.md`           |
+| **Add environment var**                                 | `environment/overview.md`                        | `environment/reference.md`                |
+| **Deploy to production**                                | `deployment/overview.md`                         | `environment/overview.md`                 |
+| **Tune CI / fix a private-fork CI failure**             | `architecture/ci.md`                             | `environment/overview.md`                 |
+| **Write or review an automated check / gate**           | `architecture/checks.md`                         | `architecture/ci.md`                      |
+| **Add error handling**                                  | `errors/overview.md`                             | `logging/overview.md`                     |
+| **Add logging**                                         | `logging/overview.md`                            | `logging/request-context.md`              |
+| **Add rate limiting**                                   | `security/rate-limiting.md`                      | `security/overview.md`                    |
+| **Write tests**                                         | `testing/patterns.md`                            | `testing/mocking.md`                      |
+| **Mock dependencies**                                   | `testing/mocking.md`                             | `testing/async-testing.md`                |
+| **Add file uploads**                                    | `storage/overview.md`                            | `security/overview.md`                    |
+| **Add analytics**                                       | `analytics/overview.md`                          | `privacy/overview.md`                     |
+| **Build admin feature**                                 | `admin/overview.md`                              | `api/admin-endpoints.md`                  |
+| **Add health checks**                                   | `monitoring/health-checks.md`                    | `monitoring/overview.md`                  |
+| **Create email template**                               | `email/overview.md`                              | `ui/forms.md`                             |
+| **Call an LLM**                                         | `orchestration/llm-providers.md`                 | `orchestration/overview.md`               |
+| **Call a capability**                                   | `orchestration/capabilities.md`                  | `orchestration/overview.md`               |
+| **Wire an integration via a recipe**                    | `orchestration/recipes/`                         | `orchestration/capabilities.md`           |
+| **Stream a chat turn**                                  | `orchestration/chat.md`                          | `orchestration/overview.md`               |
+| **Know what the orchestration layer does**              | `orchestration/meta/functional-specification.md` | `orchestration/meta/README.md`            |
+| **Understand why an orchestration choice was made**     | `orchestration/meta/architectural-decisions.md`  | `orchestration/meta/maturity-analysis.md` |
+| **Add type patterns**                                   | `types/overview.md`                              | `types/conventions.md`                    |
 
 ## Architecture Decisions
 

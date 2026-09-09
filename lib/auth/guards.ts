@@ -69,6 +69,41 @@ export interface AuthSession {
 }
 
 /**
+ * What a guard hands its handler: the session, plus the principal the guard
+ * **actually used** for its own authorization decision.
+ *
+ * `principal` is not a convenience. `subjectScope()` — the list face of the
+ * authorization policy — needs a principal, and before this existed a handler
+ * could not build the right one: `principalOf` is private, and the credential
+ * kind and an API key's scopes are known only inside the guard. `AuthSession`
+ * carries neither.
+ *
+ * A handler that reconstructed one got it **wrong in the widening direction**.
+ * `administersEverything()` branches on `credential` and `scopes`: an
+ * `api-key` principal is judged by `hasScope(scopes, 'admin')`, a `session`
+ * principal by the platform role. `withAuth` accepts a key of any scope, so
+ * assuming `credential: 'session'` means a `chat`-scoped key held by a user
+ * whose role is `ADMIN` is judged by the role — `subjectScope` answers `{}`
+ * (every subject) where it should answer `{ userId }`. That is the credential
+ * narrowing #542 exists to hold, undone by a plausible-looking helper.
+ *
+ * It was also invisible to `checkAuthorizationParity`: the guard asked
+ * `canRead` with the true principal while the handler asked `subjectScope` with
+ * a reconstruction, so the two faces disagreed **at the call site** for a policy
+ * the checker passes clean. One principal, built once, removes that class.
+ *
+ * It rides on the session rather than on the route context because `context` is
+ * `undefined` for a non-dynamic route — and a list endpoint is precisely where
+ * `subjectScope` is called.
+ *
+ * Additive: a handler typed `(request, session: AuthSession)` still compiles,
+ * because `AuthenticatedSession` is assignable to `AuthSession`.
+ */
+export interface AuthenticatedSession extends AuthSession {
+  principal: AuthorizationPrincipal;
+}
+
+/**
  * Next.js route params context shape
  */
 export interface RouteContext<TParams = Record<string, string>> {
@@ -257,14 +292,14 @@ async function resolveResource(
  * ```
  */
 export function withAuth(
-  handler: (request: NextRequest, session: AuthSession) => Response | Promise<Response>,
+  handler: (request: NextRequest, session: AuthenticatedSession) => Response | Promise<Response>,
   options?: WithAuthOptions
 ): (request: NextRequest) => Promise<Response>;
 
 export function withAuth<TParams>(
   handler: (
     request: NextRequest,
-    session: AuthSession,
+    session: AuthenticatedSession,
     context: RouteContext<TParams>
   ) => Response | Promise<Response>,
   options?: WithAuthOptions<TParams>
@@ -347,10 +382,13 @@ export function withAuth(
         throw new ForbiddenError('Access denied');
       }
 
+      // One principal, built by the guard and handed on — never rebuilt by the
+      // handler. See {@link AuthenticatedSession} for what reconstruction cost.
+      const authenticated: AuthenticatedSession = { ...session, principal };
       if (context !== undefined) {
-        return await handler(request, session, context);
+        return await handler(request, authenticated, context);
       }
-      return await handler(request, session);
+      return await handler(request, authenticated);
     } catch (error) {
       return handleAPIError(error);
     }
@@ -393,14 +431,14 @@ export function withAuth(
  * ```
  */
 export function withAdminAuth(
-  handler: (request: NextRequest, session: AuthSession) => Response | Promise<Response>,
+  handler: (request: NextRequest, session: AuthenticatedSession) => Response | Promise<Response>,
   options?: WithAdminAuthOptions
 ): (request: NextRequest) => Promise<Response>;
 
 export function withAdminAuth<TParams>(
   handler: (
     request: NextRequest,
-    session: AuthSession,
+    session: AuthenticatedSession,
     context: RouteContext<TParams>
   ) => Response | Promise<Response>,
   options?: WithAdminAuthOptions<TParams>
@@ -468,10 +506,13 @@ export function withAdminAuth(
         throw new ForbiddenError('Admin access required');
       }
 
+      // One principal, built by the guard and handed on — never rebuilt by the
+      // handler. See {@link AuthenticatedSession} for what reconstruction cost.
+      const authenticated: AuthenticatedSession = { ...session, principal };
       if (context !== undefined) {
-        return await handler(request, session, context);
+        return await handler(request, authenticated, context);
       }
-      return await handler(request, session);
+      return await handler(request, authenticated);
     } catch (error) {
       return handleAPIError(error);
     }

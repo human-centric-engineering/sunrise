@@ -242,12 +242,14 @@ export function withAdminAuth(
 ): (request: NextRequest) => Promise<Response>;
 ```
 
-**The admin decision is a seam.** Both guards route it through
+**The authorization decision is a seam.** Both guards route it through
 `lib/auth/authorization.ts` rather than asserting a role in the guard body, so a
 fork replaces "who counts as an admin" — and "over whose data" — from
-`lib/app/authorization.ts` without touching a route. `app/admin/layout.tsx` and
-the maintenance-mode bypass in `components/maintenance-wrapper.tsx` ask the same
-policy. Behaviour on a stock install is unchanged.
+`lib/app/authorization.ts` without touching a route. Note which face each guard
+asks: `withAdminAuth` asks `canAdminister`, and so do `app/admin/layout.tsx` and
+the maintenance-mode bypass in `components/maintenance-wrapper.tsx`; `withAuth`
+asks `canRead`. Replacing one face does not affect the other's routes.
+Behaviour on a stock install is unchanged.
 
 Both guards also take an optional `resource` resolver so the policy can see
 _which_ resource is being touched. Core supplies none, and a route with no
@@ -262,9 +264,10 @@ user) or `'subject'` (a user id owns it). A policy must answer all three, and
 the compiler enforces that rather than a docblock — see
 `tests/unit/lib/auth/authorization-exhaustiveness.test.ts`.
 
-The full guide is coming with the fork-scoping work; until then read
-`lib/auth/authorization.ts`'s module header, which carries the contract,
-including the two `users` routes whose read decision is still inline (#738).
+The full guide is [`.context/auth/authorization.md`](./authorization.md) — the
+three scope inputs, the owner-scoped list recipe, and an explicit list of what
+is **not** behind the seam yet, including the one `users` route whose read
+decision is still inline (`app/api/v1/users/[id]/route.ts` GET).
 
 **Usage - Simple authenticated route:**
 

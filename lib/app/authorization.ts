@@ -9,17 +9,22 @@
  * this once, lazily, before the first read — which happens at the top of every
  * guarded request. You register; you wire nothing.
  *
- * Register a policy and you replace the **administer** decision at all four
- * places Sunrise makes one: `withAdminAuth`, `withAuth`, the admin layout, and
- * the maintenance-mode bypass.
- * There are 262 guarded handlers behind those three — 257 of them under
- * `/api/v1/admin` — and none of them changes.
+ * Register a policy and you replace the **administer** decision at all three
+ * places Sunrise makes one: `withAdminAuth`, the admin layout, and the
+ * maintenance-mode bypass. There are 262 `withAdminAuth` handlers behind the
+ * first of those — 257 of them under `/api/v1/admin` — and none of them
+ * changes.
+ *
+ * `withAuth` is the fourth place the policy is consulted, but it asks
+ * `canRead`, not `canAdminister`: overriding the administer face alone does
+ * nothing to its 23 handlers.
  *
  * **The read decision is not yet fully behind the seam**, and you need to know
- * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET) and
- * `app/api/v1/users/me` still decide from the platform role inline, so a
- * platform `ADMIN` reads every user row through them whatever your policy says.
- * `lib/auth/authorization.ts`'s module header carries the detail; #738 tracks it.
+ * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET)
+ * still decides from the platform role inline, so a platform `ADMIN` reads
+ * every user row through it whatever your policy says.
+ * `lib/auth/authorization.ts`'s module header carries the detail. Migrating it
+ * is scheduled; until then, treat that route as outside your policy.
  *
  * The two cases this exists for:
  *
@@ -135,7 +140,8 @@
  *    never hold `admin`" is not something this seam can enforce today — that
  *    arrives with the org axis.
  *
- * Full guide: CUSTOMIZATION.md §4 · lib/auth/authorization.ts
+ * Full guide: .context/auth/authorization.md · CUSTOMIZATION.md §4 ·
+ * lib/auth/authorization.ts
  */
 export function initAppAuthorizationPolicy(): void {
   // No app authorization policy by default: platform admin administers
