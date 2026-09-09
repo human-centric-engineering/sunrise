@@ -138,7 +138,7 @@ The direct owners (FK `userId` / `createdBy` / `uploadedBy`):
 `AiWorkflowExecution`, `AiWorkflowSchedule`, `AiWorkflowTrigger`,
 `AiKnowledgeDocument`, `AiDataset`, `AiEvaluationSession`, `AiEvaluationRun`,
 `AiExperiment`, `AiApiKey`, `AiUserMemory`, `AiWebhookSubscription`,
-`AiEventHook`, `McpApiKey`, `McpExposedPrompt`.
+`AiEventHook`, `McpApiKey`.
 
 `AiKnowledgeBase` belongs here too, and is the awkward one: it has **no owner
 column at all** — it is a container whose documents are owned — so nothing marks
@@ -168,11 +168,21 @@ all tenants:
 `McpExposedResource`, `AiOrchestrationSettings` (singleton), `McpServerConfig`
 (singleton).
 
-**Note the MCP split**, because "scope everything MCP" is the wrong sweep:
-`McpExposedTool` is 1:1 with a global `AiCapability` and `McpExposedResource` is
-a global URI registry — both are the vendor publishing a surface. `McpApiKey`
-and `McpExposedPrompt` carry `createdBy` and are tenant-owned. Four models, two
-planes.
+**Note the MCP split**, because neither "scope everything MCP" nor "scope
+whatever has a `createdBy`" is the right sweep:
+`McpExposedTool` is 1:1 with a global `AiCapability` and `McpExposedResource`
+is a global URI registry — both are the vendor publishing a surface.
+`McpApiKey` is genuinely tenant-owned: a key belongs to its holder.
+
+**`McpExposedPrompt` is the trap.** It carries `createdBy`, and this page's own
+rule in bold above says that is not what makes a model tenant-owned — it is
+provenance, and the FK is nullable `SetNull`. Everything about how the model is
+_used_ is global: `lib/orchestration/mcp/prompt-registry.ts:54` loads every row
+with `isEnabled: true` — no owner key — into a **process-global 5-minute
+cache** served to every MCP client, `name` is `@unique` across the whole
+install, and `MAX_ENABLED_PROMPTS` is a global cap. Scoping it means an `orgId`
+on the registry query, `@@unique([orgId, name])`, and a per-org cache key and
+cap. Until then it is global config that happens to record an author.
 
 Leaving these global is the right default. A fork **may** decide some should be
 tenant-scoped (e.g. per-org provider API keys) — that is a deliberate product
@@ -204,7 +214,20 @@ have a knowledge base called `policies` — and the collision surfaces as a writ
 error in whichever tenant arrives second, not as a design review. Every such key
 on a table you scope must become `@@unique([orgId, …])` in the same migration.
 
-Present instances: `AiKnowledgeBase.slug` and `AiOutboundMessage.dedupKey`.
+**Derive this list; do not trust a written one.** The first version of this
+paragraph enumerated two instances and missed four, which is the same failure
+`[#742]` is about:
+
+```bash
+grep -n '@unique' prisma/schema/*.prisma   # then cross-reference the tenant-owned list above
+```
+
+At the time of writing that yields, on tenant-owned models:
+`AiWorkflow.slug`, `AiKnowledgeDocument.slug`, `AiKnowledgeBase.slug`,
+`McpExposedPrompt.name`, `AiWorkflowExecution.dedupKey` and
+`AiOutboundMessage.dedupKey`. Hash and token uniques (`AiApiKey.keyHash`,
+`McpApiKey.keyHash`, `AiAgentEmbedToken.token`, …) are not collision-prone and
+need nothing.
 Routing keys that are global **on purpose** — an agent slug an unauthenticated
 embed resolves before any org context exists — are the exception, and design
 decision 4 covers them.
@@ -270,7 +293,7 @@ per install**, because vector dimension is a schema property.
 | `orchestration/evaluations` (+ `datasets`, `runs`)  | `AiEvaluationSession`, `AiDataset`, `AiEvaluationRun` |
 | `orchestration/experiments`                         | `AiExperiment`                                        |
 | `orchestration/event-subscriptions` (+ `dlq`)       | `AiWebhookSubscription`, `AiEventHook`                |
-| `orchestration/mcp/keys`, `mcp/prompts`             | `McpApiKey`, `McpExposedPrompt`                       |
+| `orchestration/mcp/keys`                            | `McpApiKey`                                           |
 | `orchestration/approvals`                           | Approvals on executions                               |
 
 ### Mixed — these need splitting, not assigning
@@ -288,14 +311,21 @@ customer console that leaks an aggregate.
   content gaps are all derived from `AiConversation`. Tenant data presented as a
   global roll-up: the _page_ is a customer's, the vendor's version of it is a
   different query.
+- **`orchestration/mcp/prompts`** — looks like a customer's, and is not one
+  yet. `McpExposedPrompt` is served from a process-global cache to every MCP
+  client, with a global `name` namespace and a global enabled-cap, so shipping
+  this page in a customer console publishes one tenant's prompt to all of them,
+  lets each edit and delete the others', and lets one exhaust the cap for
+  everyone. Assign it to the customer only after scoping the model.
 - **`orchestration/mcp` (landing) and `mcp/sessions`** — sit above both halves
   of the MCP split above.
 
 ### Why the URL tree is not the answer
 
 The obvious implementation — gate `app/admin/*` by prefix — does not work, and
-`orchestration/mcp/*` is the proof: `keys` and `prompts` are a customer's while
-`tools`, `resources` and `settings` are the vendor's, inside one nav section.
+`orchestration/mcp/*` is the proof: `keys` is a customer's, `tools`,
+`resources` and `settings` are the vendor's, and `prompts` is neither until the
+model behind it is scoped — three answers inside one nav section.
 Route the decision through the authorization policy
 ([`.context/auth/authorization.md`](../auth/authorization.md)) with a `tier`
 input, and let each surface answer for itself.

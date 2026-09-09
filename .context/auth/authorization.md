@@ -168,14 +168,21 @@ was not asked about.
 
 Read this before trusting a narrowing `canRead`.
 
-**Two core routes decide a read from the platform role inline.**
-`app/api/v1/users/[id]/route.ts` (GET) and `app/api/v1/users/me/route.ts` both
-test `session.user.id !== id && !isPlatformAdmin(session.user)` — `canRead`
-written longhand. Their `withAuth` wrapper does consult the policy, but with no
-`resource` resolver, so it is asked about `{ kind: 'nothing' }`, allows, and the
-real decision is the line below it. The consequence is directional and it is the
-unsafe direction: **a fork's narrowing policy does not narrow those two, and
-neither does safe mode.** Tracked in [#738].
+**One core route decides a read from the platform role inline.**
+`app/api/v1/users/[id]/route.ts:52` tests
+`session.user.id !== id && !isPlatformAdmin(session.user)` — `canRead` written
+longhand. Its `withAuth` wrapper does consult the policy, but with no `resource`
+resolver, so it is asked about `{ kind: 'nothing' }`, allows, and the real
+decision is the line below it. The consequence is directional and it is the
+unsafe direction: **a fork's narrowing policy does not narrow it, and neither
+does safe mode** — safe mode's promise that every declared read narrows to the
+reader's own rows cannot bind a read that was never declared. Tracked in [#738].
+
+`app/api/v1/users/me/route.ts` is **not** a second instance, though #738 and
+this document both said so until 2026-09-09. Its `GET` reads
+`where: { id: session.user.id }` and is self-scoped by construction; its only
+`isPlatformAdmin` call (`:295`) guards the last-admin count inside `DELETE`,
+which is a restriction on admins rather than a read decision.
 
 **`subjectScope` has no core caller.** There is no list endpoint in Sunrise core
 scoped by subject. It ships because it is the half of the contract a fork's
@@ -196,24 +203,61 @@ that costs.
 The two faces are **one rule in two shapes**. Use both, or the detail page opens
 a record its own list does not contain.
 
+### Building the principal — read this before the recipe
+
+`subjectScope` takes an `AuthorizationPrincipal`, and **a handler cannot build
+the one the guard built.** The guard resolves the credential kind and, for an
+API key, its scopes (`principalOf`, `lib/auth/guards.ts:176`) — then passes the
+handler only `(request, session, context)` and discards the principal.
+`principalOf` is not exported, and `AuthSession` carries no scopes.
+
+That matters because `administersEverything` branches on exactly those two
+fields: an `api-key` principal is judged by `hasScope(scopes, 'admin')`, a
+`session` principal by the platform role. **Hardcoding `credential: 'session'`
+is therefore a widening bug, not a shortcut** — `withAuth` accepts an API key of
+any scope, so a `chat`-scoped key held by a user whose role is `ADMIN` would be
+judged by the role, and a policy that should have returned `{ userId }` returns
+`{}`: the whole table.
+
+It is also invisible to `checkAuthorizationParity`. The guard asks `canRead`
+with the true principal while the handler asks `subjectScope` with the
+fabricated one, so the two faces disagree **at the call site**, for a policy the
+checker passes clean.
+
+Until a principal builder is exported ([#743]), derive what you can and accept
+that the rest fails closed:
+
+```ts
+import { isApiKeySession } from '@/lib/auth/api-keys';
+
+const viewer = {
+  userId: session.user.id,
+  role: session.user.role,
+  // Derived, never assumed. Getting this wrong widens.
+  credential: isApiKeySession(session) ? ('api-key' as const) : ('session' as const),
+  // Scopes are unreachable from a handler. Omitting them means an
+  // `admin`-scoped key is treated as unscoped, which NARROWS its list —
+  // the safe direction, and a real divergence from what `canRead` allows it.
+};
+```
+
 ### The list
 
 ```ts
 import { subjectScope } from '@/lib/auth/authorization';
 
 export const GET = withAdminAuth(async (request, session) => {
-  const filter = await subjectScope({
-    userId: session.user.id,
-    role: session.user.role,
-    credential: 'session',
-  });
+  const filter = await subjectScope(viewer); // built as above
 
-  // `{}` means every subject, so spreading is the whole mechanism:
-  // an unrestricted viewer adds no clause, a narrowed one adds `createdBy`.
-  const where: Prisma.AiWidgetWhereInput = {
-    ...(filter.userId ? { createdBy: filter.userId } : {}),
-    ...otherFilters,
-  };
+  // `{}` means every subject, so an unrestricted viewer adds no clause and a
+  // narrowed one adds `createdBy`.
+  const ownerClause = filter.userId ? { createdBy: filter.userId } : {};
+
+  // AND, not spread. `{ ...ownerClause, ...otherFilters }` is last-wins, so a
+  // `createdBy` key in `otherFilters` — the most natural extra filter on an
+  // admin list, and usually built from a query parameter — silently deletes
+  // the boundary and returns 200 with the whole table.
+  const where: Prisma.AiWidgetWhereInput = { AND: [ownerClause, otherFilters] };
 
   const [rows, total] = await Promise.all([
     prisma.aiWidget.findMany({ where /* … */ }),
@@ -222,6 +266,11 @@ export const GET = withAdminAuth(async (request, session) => {
   return paginatedResponse(rows, { page, limit, total });
 });
 ```
+
+**Make the security clause unclobberable.** `webhooks/route.ts:26-29` does the
+equivalent by putting `createdBy` in the literal and _assigning_ the optional
+filters onto it. Either shape is fine; a spread with the owner clause first is
+not.
 
 **Count with the same `where` as the query.** A total computed without the filter
 tells the caller how many rows exist that they cannot see — a small leak that
@@ -408,3 +457,4 @@ Keys do not bind an org yet, so "an org-bound key can never carry `admin`" is
 [#738]: https://github.com/human-centric-engineering/sunrise/issues/738
 [#739]: https://github.com/human-centric-engineering/sunrise/issues/739
 [#741]: https://github.com/human-centric-engineering/sunrise/issues/741
+[#743]: https://github.com/human-centric-engineering/sunrise/issues/743

@@ -28,19 +28,22 @@
  * "Every decision is behind the seam" is true of `canAdminister`, whose three
  * call sites are listed above. It is **not** true of
  * `canRead` / `subjectScope`, and the difference matters most to the fork this
- * seam is for. Two core routes decide a read from the platform role inline, and
- * this branch did not migrate them:
+ * seam is for. One core route decides a read from the platform role inline, and
+ * this seam's own PR did not migrate it:
  *
- *  - `app/api/v1/users/[id]/route.ts` (GET) — `session.user.id !== id &&
- *    !isPlatformAdmin(session.user)`. That is `canRead(viewer, subject)` written
- *    out longhand. Its `withAuth` wrapper does consult this module, but with no
- *    `resource` resolver, so the seam is asked about a `null` subject, allows,
- *    and the real decision is still the line below it.
- *  - `app/api/v1/users/me/route.ts` — an admin-only branch, same shape.
+ *  - `app/api/v1/users/[id]/route.ts:52` (GET) — `session.user.id !== id &&
+ *    !isPlatformAdmin(session.user)`. That is `canRead` written out longhand.
+ *    Its `withAuth` wrapper does consult this module, but with no `resource`
+ *    resolver, so the seam is asked about `{ kind: 'nothing' }`, allows, and the
+ *    real decision is still the line below it.
+ *
+ * `app/api/v1/users/me/route.ts` was listed here as a second instance until
+ * 2026-09-09 and is not one: its GET reads `where: { id: session.user.id }`, and
+ * its only `isPlatformAdmin` call guards the last-admin count in DELETE.
  *
  * The consequence is directional, and it is the unsafe direction: a fork
- * registering a policy that NARROWS reads does not narrow those two. A platform
- * `ADMIN` still reads every user row through them, **including in safe mode**,
+ * registering a policy that NARROWS reads does not narrow it. A platform
+ * `ADMIN` still reads every user row through it, **including in safe mode**,
  * whose promise that "every declared read narrows to the reader's own rows"
  * cannot bind a read that was never declared. Migrating them is the first
  * adopter of the `resource` resolver and is tracked in #738 — it changes a

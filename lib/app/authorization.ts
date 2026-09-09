@@ -20,9 +20,9 @@
  * nothing to its 23 handlers.
  *
  * **The read decision is not yet fully behind the seam**, and you need to know
- * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET) and
- * `app/api/v1/users/me` still decide from the platform role inline, so a
- * platform `ADMIN` reads every user row through them whatever your policy says.
+ * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET)
+ * still decides from the platform role inline, so a platform `ADMIN` reads
+ * every user row through it whatever your policy says.
  * `lib/auth/authorization.ts`'s module header carries the detail; #738 tracks it.
  *
  * The two cases this exists for:
