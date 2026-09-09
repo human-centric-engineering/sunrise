@@ -217,12 +217,16 @@ install has one class of admin and nothing to narrow to. The predicate ships for
 the fork whose `AND`-it-into-the-query code needs it, and because shipping
 `canRead` without the thing that keeps it honest is how the two faces diverge.
 
-Owner-scoped core lists do exist — webhooks, the evaluations family, experiments
-— and they are all hand-rolled `createdBy` clauses. That is not an oversight
-waiting on a migration: the default policy answers `{}` for a platform admin, so
-routing one of them through `subjectScope` would _widen_ it to every admin. The
-seam is for the fork that changes that answer, not a replacement for a boundary
-core has already decided.
+Owner-scoped core lists do exist, and they are all hand-rolled — **but not all
+on the same column**, which is the thing to know before grepping for them:
+webhooks and experiments key on `createdBy`, the evaluations family (sessions,
+runs, datasets) on `userId`. A roster assembled by searching for one of those
+two names silently omits the other half.
+
+Hand-rolled is not an oversight waiting on a migration: the default policy
+answers `{}` for a platform admin, so routing one of them through `subjectScope`
+would _widen_ it to every admin. The seam is for the fork that changes that
+answer, not a replacement for a boundary core has already decided.
 
 **The marker cannot see past the route.** The `ownership` declaration below is
 about the handler; a route that declares `{ decidedBy: 'nothing' }` and calls a

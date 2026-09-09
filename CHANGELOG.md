@@ -369,6 +369,16 @@ release process.
   own source. Anyone relying on the list
   being install-wide sees fewer rows after upgrading.
 
+  **One consequence worth knowing before you upgrade.** `AiExperiment.createdBy`
+  is `SetNull`, so an experiment whose creator has been erased under Art. 17 is
+  retained with a null owner — and a null owner now matches nobody, which makes
+  that row unreachable through the API rather than visible to every admin as it
+  was before. The direction is safe (invisible, not exposed) and it is the
+  behaviour `AiDataset` has always had, but it is a real operational gap;
+  #752 tracks giving both models a disposition for orphaned rows, and
+  `.context/privacy/data-erasure.md` now says which retained models this applies
+  to.
+
   The posture matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun` —
   the models an experiment reads from and writes to, all owner-scoped already —
   rather than `AiAgent` and `AiWorkflow`, which stay admin-global. It is spelled

@@ -53,11 +53,33 @@ let an erasure request quietly rewrite the books, so the FK is `SetNull` — the
 spend stays, the person is detached. `scripts/smoke/erasure.ts` asserts exactly
 that against a real database: row retained, `userId` null, amount unchanged.
 
-**Why retain config?** `createdBy` is attribution, not ownership — any admin can
-already manage any agent/workflow/provider regardless of who created it. So a
-departing creator's config keeps working; only the `createdBy`/`uploadedBy` link
-is nulled. Child rows (messages, embeddings, deliveries, steps) already cascade
-from their parents, so only the root `User` relations carry the policy.
+**Why retain config?** For most of these, `createdBy` is attribution, not
+ownership — any admin can already manage any agent/workflow/provider regardless
+of who created it. So a departing creator's config keeps working; only the
+`createdBy`/`uploadedBy` link is nulled. Child rows (messages, embeddings,
+deliveries, steps) already cascade from their parents, so only the root `User`
+relations carry the policy.
+
+**Two of them are owner-scoped, and for those the sentence above does not
+hold.** `AiExperiment` (`createdBy`) and `AiDataset` (`userId`) narrow every one
+of their routes to the caller's own rows, so nulling the link does not
+de-attribute the row so much as **orphan** it: it matches no owner clause, and no
+admin can list, open, edit or delete it through the API afterwards. (Both detail
+routes go through an owner-scoped read — `AiDataset`'s via the `loadDataset`
+helper, which is why grepping the route file for `userId` does not find it.)
+Nothing prunes either model on a schedule. An orphaned `AiExperiment` at least
+still cascades from its agent, whose FK is `onDelete: Cascade` and not nullable;
+an orphaned `AiDataset` has no such parent, so it survives until someone reaches
+the database directly.
+
+That is the safe direction — invisible, not exposed — and it is deliberate for
+both: an owner-scoped read is what makes an experiment's results private to the
+admin who ran it, and re-widening it so an orphan stays deletable would hand
+every admin every other admin's live rows too. But it is a real operational gap
+rather than an intended end state; [#752] tracks giving these two a disposition
+for orphaned rows. Weigh it when you classify the **next** `SetNull` model: the
+retain policy and the route's ownership posture are two decisions, and this row
+of the table only records the first.
 
 ### System-owned runs
 
@@ -280,3 +302,5 @@ demoted or deleted). See
 - [Auth Security](../auth/security.md) — sessions, password handling
 - `lib/privacy/erasure-hooks.ts` — the app erasure cleanup-hook registry
 - [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#4-database-schema) — Building on Sunrise: the satellite profile-table pattern for extending `User`
+
+[#752]: https://github.com/human-centric-engineering/sunrise/issues/752

@@ -12,6 +12,12 @@
  * rest: they exist to prove the ownership boundary, not to reimplement Prisma.
  * A clause absent from the query matches every row — which is precisely how an
  * unscoped route ends up returning a foreign one.
+ *
+ * **`skip`, `take` and `orderBy` are ignored too**, so `ownerScopedFindMany`
+ * returns the whole matching set and `ownerScopedCount` counts it unpaged. A
+ * test that also wants to assert page size or ordering will pass here whatever
+ * the route does with them — assert those against the call arguments, or use a
+ * different fake.
  */
 
 /** The subset of a `where` these fakes interpret. */

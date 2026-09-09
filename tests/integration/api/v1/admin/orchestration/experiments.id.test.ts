@@ -542,8 +542,12 @@ describe('ownership — a cross-user read, edit or delete is a 404', () => {
     const response = await DELETE(makeDeleteRequest(), makeContext());
 
     expect(response.status).toBe(200);
-    expect(vi.mocked(prisma.aiExperiment.delete)).toHaveBeenCalledWith({
-      where: { id: EXPERIMENT_ID },
-    });
+    // Deliberately not an exact match on `{ where: { id } }`. The owner test
+    // is the `findFirst` above, matching how the webhooks family does it; a
+    // later hardening to `deleteMany({ where: { id, createdBy } })` should not
+    // have to fight this route's own ownership test to land.
+    expect(vi.mocked(prisma.aiExperiment.delete)).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: EXPERIMENT_ID }) })
+    );
   });
 });

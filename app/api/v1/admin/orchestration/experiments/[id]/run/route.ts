@@ -178,7 +178,7 @@ export const POST = withAdminAuth<Params>(
     ownership: {
       decidedBy: 'self',
       because:
-        'Every read and write is keyed on createdBy = the caller — the pre-transaction existence check, the in-transaction read, and the dataset it copies from.',
+        'Both experiment reads are keyed on createdBy = the caller — the pre-transaction existence check and the in-transaction read. The dataset is reached through that experiment and verified against userId = the caller before its content is copied, and the runs and sessions this writes are stamped with the same id.',
     },
   }
 );
