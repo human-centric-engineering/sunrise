@@ -485,6 +485,12 @@ describe('the handler receives the principal the guard actually decided with', (
       return ok();
     })(request());
 
+    // Both of these before the identity check, because `toBe` on two
+    // `undefined`s passes: if the guard ever denies BEFORE asking the policy,
+    // `seen` and `administered[0]?.viewer` are both undefined and this test
+    // goes green having exercised nothing.
+    expect(administered).toHaveLength(1);
+    expect(seen).toBeDefined();
     expect(seen).toBe(administered[0]?.viewer);
   });
 
