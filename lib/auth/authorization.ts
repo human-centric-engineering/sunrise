@@ -17,7 +17,7 @@
  *
  * ## The READ axis is not yet fully behind this seam. Read this before relying on it.
  *
- * "Three chokepoints" is true of `canAdminister`. It is **not** true of
+ * "Four chokepoints" is true of `canAdminister`. It is **not** true of
  * `canRead` / `subjectScope`, and the difference matters most to the fork this
  * seam is for. Two core routes decide a read from the platform role inline, and
  * this branch did not migrate them:
@@ -106,8 +106,11 @@
  * not what it was not asked about.
  *
  * @see lib/app/authorization.ts — the fork-owned scaffold
- * @see lib/auth/guards.ts — `withAuth` / `withAdminAuth`, two of the three chokepoints
+ * @see lib/auth/guards.ts — `withAuth` / `withAdminAuth`, two of the four chokepoints
  * @see app/admin/layout.tsx — the third
+ * @see components/maintenance-wrapper.tsx — the fourth
+ * @see .context/auth/authorization.md — the guide: the three inputs, the
+ *   owner-scoped list recipe, and the read paths not yet behind this seam
  * @see .context/architecture/multi-tenancy-design.md — principle 7, and the Q6 ruling on `admin` keys
  */
 

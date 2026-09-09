@@ -12,8 +12,9 @@
  * Register a policy and you replace the **administer** decision at all four
  * places Sunrise makes one: `withAdminAuth`, `withAuth`, the admin layout, and
  * the maintenance-mode bypass.
- * There are 262 guarded handlers behind those three — 257 of them under
- * `/api/v1/admin` — and none of them changes.
+ * There are 262 `withAdminAuth` handlers behind the first of those — 257 of
+ * them under `/api/v1/admin` — plus 23 `withAuth` handlers, and none of them
+ * changes.
  *
  * **The read decision is not yet fully behind the seam**, and you need to know
  * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET) and
@@ -135,7 +136,8 @@
  *    never hold `admin`" is not something this seam can enforce today — that
  *    arrives with the org axis.
  *
- * Full guide: CUSTOMIZATION.md §4 · lib/auth/authorization.ts
+ * Full guide: .context/auth/authorization.md · CUSTOMIZATION.md §4 ·
+ * lib/auth/authorization.ts
  */
 export function initAppAuthorizationPolicy(): void {
   // No app authorization policy by default: platform admin administers

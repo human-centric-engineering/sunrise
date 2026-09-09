@@ -140,10 +140,15 @@ The direct owners (FK `userId` / `createdBy` / `uploadedBy`):
 `AiExperiment`, `AiApiKey`, `AiUserMemory`, `AiWebhookSubscription`,
 `AiEventHook`, `McpApiKey`, `McpExposedPrompt`.
 
+`AiKnowledgeBase` belongs here too, and is the awkward one: it has **no owner
+column at all** — it is a container whose documents are owned — so nothing marks
+it as tenant data until you decide it is. Leave it global and every tenant shares
+one set of knowledge bases.
+
 Plus **child rows** that hang off the above by FK and have no owner column of
 their own (`AiMessage`, `AiMessageEmbedding`, `AiKnowledgeChunk`,
-`AiConversationShare`, `AiCostLog`, the workflow execution children, eval
-case/log rows, …). You have two choices for these, both valid:
+`AiConversationShare`, `AiCostLog`, `AiOutboundMessage`, the workflow execution
+children, eval case/log rows, …). You have two choices for these, both valid:
 
 - **Denormalize `orgId` onto each child** and give it its own policy — simplest
   policy, one extra column per table, must be kept consistent on write.
@@ -159,8 +164,15 @@ config), not a tenant boundary. They are platform configuration shared across
 all tenants:
 
 `AiProviderConfig`, `AiProviderModel`, `AiCapability`, `AiAgentProfile`,
-`AiAgentCapability`, `FeatureFlag`, `KnowledgeTag`, `AiOrchestrationSettings`
-(singleton), `McpServerConfig` (singleton).
+`AiAgentCapability`, `FeatureFlag`, `KnowledgeTag`, `McpExposedTool`,
+`McpExposedResource`, `AiOrchestrationSettings` (singleton), `McpServerConfig`
+(singleton).
+
+**Note the MCP split**, because "scope everything MCP" is the wrong sweep:
+`McpExposedTool` is 1:1 with a global `AiCapability` and `McpExposedResource` is
+a global URI registry — both are the vendor publishing a surface. `McpApiKey`
+and `McpExposedPrompt` carry `createdBy` and are tenant-owned. Four models, two
+planes.
 
 Leaving these global is the right default. A fork **may** decide some should be
 tenant-scoped (e.g. per-org provider API keys) — that is a deliberate product
@@ -181,7 +193,125 @@ variable, which has no per-tenant form. Before scoping either, read
 `User` (gets tenancy via the additive `Org` + `OrgMembership` join, not an
 `orgId` column), `ContactSubmission` (public form), `DataErasureReceipt` and
 `McpAuditLog` and `AiAdminAuditLog` (audit — the `userId` is the actor, retained
-deliberately), `SeedHistory`, `Verification`.
+deliberately), `SeedHistory`, `Verification`, `AuthBootstrap` (the
+first-admin-bootstrap singleton).
+
+### Before you classify: global unique keys
+
+A `@unique` on a would-be tenant-owned table is a tenancy decision hiding as a
+constraint. It stays **global** after you add `orgId`, so two orgs cannot both
+have a knowledge base called `policies` — and the collision surfaces as a write
+error in whichever tenant arrives second, not as a design review. Every such key
+on a table you scope must become `@@unique([orgId, …])` in the same migration.
+
+Present instances: `AiKnowledgeBase.slug` and `AiOutboundMessage.dedupKey`.
+Routing keys that are global **on purpose** — an agent slug an unauthenticated
+embed resolves before any org context exists — are the exception, and design
+decision 4 covers them.
+
+> **This inventory is hand-maintained and nothing checks it.** It was short by
+> five non-child models when the control-plane section below was derived from
+> it, and the playbook's own sync checklist tells you to classify new models
+> against it. [#742] tracks making that a test rather than a habit. Until it is,
+> treat the list as the current state and re-derive it from
+> `prisma/schema/*.prisma` before a retrofit — not as a boundary.
+
+## The control plane: which admin surfaces are whose
+
+Everything above is the **data** plane — which rows exist for whom. This section
+is the **control** plane: which _admin surfaces_ a customer runs and which stay
+the vendor's. A fork adding a customer tier has to split `app/admin/*`, and
+every fork that does it reverse-engineers the same answer.
+
+**The rule, so the table below does not have to be maintained to stay true:**
+
+> A surface belongs to whichever plane its **backing models** sit in, per the
+> inventory above. Tenant-owned models ⇒ the customer's surface. Admin-authored
+> global config and system models ⇒ platform-ops. Where a page reads both, it
+> needs splitting, not assigning.
+
+The mapping is _almost_ 1:1 with the inventory, and the "almost" is the part
+worth reading. The table is a **worked application of the rule against 68 admin
+pages, not an enumeration to keep in sync** — where they disagree, the rule and
+the model inventory win.
+
+### Platform-ops — the vendor's
+
+| Surface                                                      | Backing models                                                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `orchestration/providers`, `orchestration/provider-models`   | `AiProviderConfig`, `AiProviderModel`                              |
+| `orchestration/capabilities`                                 | `AiCapability`                                                     |
+| `orchestration/agent-profiles`                               | `AiAgentProfile`                                                   |
+| `features` (feature flags)                                   | `FeatureFlag`                                                      |
+| `orchestration/knowledge/tags`                               | `KnowledgeTag`                                                     |
+| `orchestration/settings`, `orchestration/mcp/settings`       | The two singletons                                                 |
+| `orchestration/mcp/tools`, `mcp/resources`                   | `McpExposedTool`, `McpExposedResource`                             |
+| `users`, `users/[id]`, `users/invite`                        | `User` — tenancy arrives via the `Org` join, not an `orgId` column |
+| `logs`, `orchestration/audit-log`, `orchestration/mcp/audit` | Audit models — the actor is retained deliberately                  |
+| `orchestration/executions/live`                              | Engine lease state; process-global, plane 3                        |
+| `orchestration/learn`                                        | Static content, no data                                            |
+
+Credentials are the hard stop, not a preference: `AiProviderConfig` keys its
+credential off `apiKeyEnvVar` — the _name_ of a process environment variable —
+which has no per-tenant form. Design decision Q3 keeps every model in this
+group global in v1, with one consequence worth restating: **one embedding model
+per install**, because vector dimension is a schema property.
+
+### The customer's
+
+| Surface                                             | Backing models                                        |
+| --------------------------------------------------- | ----------------------------------------------------- |
+| `orchestration/agents` (+ `new`, `[id]`, `compare`) | `AiAgent`, `AiAgentVersion`, the token models         |
+| `orchestration/workflows`                           | `AiWorkflow`, `AiWorkflowVersion`                     |
+| `orchestration/executions` (list, detail)           | `AiWorkflowExecution`                                 |
+| `orchestration/triggers`                            | `AiWorkflowTrigger`, `AiWorkflowSchedule`             |
+| `orchestration/knowledge`                           | `AiKnowledgeDocument`, `AiKnowledgeBase`              |
+| `orchestration/conversations`                       | `AiConversation`                                      |
+| `orchestration/evaluations` (+ `datasets`, `runs`)  | `AiEvaluationSession`, `AiDataset`, `AiEvaluationRun` |
+| `orchestration/experiments`                         | `AiExperiment`                                        |
+| `orchestration/event-subscriptions` (+ `dlq`)       | `AiWebhookSubscription`, `AiEventHook`                |
+| `orchestration/mcp/keys`, `mcp/prompts`             | `McpApiKey`, `McpExposedPrompt`                       |
+| `orchestration/approvals`                           | Approvals on executions                               |
+
+### Mixed — these need splitting, not assigning
+
+This is the "almost" in "almost 1:1", and skipping it is how a fork ships a
+customer console that leaks an aggregate.
+
+- **`orchestration` (dashboard) and `overview`** — headline counts over both
+  planes. Split the query, not the page.
+- **`orchestration/costs`** — the _settings_ are the global singleton
+  (platform-ops); the _spend_ is `AiCostLog`, per-tenant. Design decision Q10
+  gives that model a durable `userId` and an `orgId` precisely so this page can
+  be split.
+- **`orchestration/analytics`** — topics, unanswered questions, engagement and
+  content gaps are all derived from `AiConversation`. Tenant data presented as a
+  global roll-up: the _page_ is a customer's, the vendor's version of it is a
+  different query.
+- **`orchestration/mcp` (landing) and `mcp/sessions`** — sit above both halves
+  of the MCP split above.
+
+### Why the URL tree is not the answer
+
+The obvious implementation — gate `app/admin/*` by prefix — does not work, and
+`orchestration/mcp/*` is the proof: `keys` and `prompts` are a customer's while
+`tools`, `resources` and `settings` are the vendor's, inside one nav section.
+Route the decision through the authorization policy
+([`.context/auth/authorization.md`](../auth/authorization.md)) with a `tier`
+input, and let each surface answer for itself.
+
+### The within-tenant axis
+
+This section splits surfaces between the **vendor and the customer**. Splitting
+rows _within_ one customer — one leader sees only the questionnaires they
+created — is the orthogonal ownership axis (#367), and it is enforced in the
+application by `subjectScope` / `canRead`, not by RLS. The distinction matters
+because the enforcement differs in kind: a query that forgets its org `where`
+returns **zero** rows under RLS, while a query that forgets its owner filter
+returns **everyone's**. See
+[the leak, stated plainly](../auth/authorization.md#the-leak-stated-plainly).
+
+[#742]: https://github.com/human-centric-engineering/sunrise/issues/742
 
 ## The retrofit recipe
 
@@ -448,6 +578,11 @@ declaration.
   the control plane (#366/#367) and the commercial plane, and assigns each gap
   to platform-tier or fork-tier. Read it before scoping a retrofit; read this
   one when you are building it.
+- [`.context/auth/authorization.md`](../auth/authorization.md) — **the control
+  plane's decision seam.** The section above says which admin surfaces split;
+  that document is the policy they route through, the owner-scoped list recipe
+  for the within-tenant axis, and an honest list of the read paths still
+  deciding from the platform role inline.
 - [`.context/privacy/data-erasure.md`](../privacy/data-erasure.md) — the
   cascade/`SetNull` `onDelete` graph built for GDPR erasure **is** the
   org-delete dependency graph a fork needs for tearing down a tenant.
