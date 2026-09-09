@@ -210,12 +210,19 @@ that costs data rather than access: overriding `canAdminister` alone leaves
 `withAuth` routes wide, and overriding `canRead` alone leaves the admin read
 surface wide.
 
-**No core list endpoint is scoped by subject.** `subjectScope` is now called by
-both guards — that is how `session.subjectFilter` and the ownership check below
-exist — but no Sunrise list route _narrows_ by its answer, because a single-tenant install has one class of admin and nothing to
-narrow to. The predicate ships for the fork whose `AND`-it-into-the-query code
-needs it, and because shipping `canRead` without the thing that keeps it honest
-is how the two faces diverge.
+**No core list endpoint narrows by `subjectScope`.** It is now called by both
+guards — that is how `session.subjectFilter` and the ownership check below exist
+— but no Sunrise list route narrows by its _answer_, because a single-tenant
+install has one class of admin and nothing to narrow to. The predicate ships for
+the fork whose `AND`-it-into-the-query code needs it, and because shipping
+`canRead` without the thing that keeps it honest is how the two faces diverge.
+
+Owner-scoped core lists do exist — webhooks, the evaluations family, experiments
+— and they are all hand-rolled `createdBy` clauses. That is not an oversight
+waiting on a migration: the default policy answers `{}` for a platform admin, so
+routing one of them through `subjectScope` would _widen_ it to every admin. The
+seam is for the fork that changes that answer, not a replacement for a boundary
+core has already decided.
 
 **The marker cannot see past the route.** The `ownership` declaration below is
 about the handler; a route that declares `{ decidedBy: 'nothing' }` and calls a

@@ -6,15 +6,38 @@ The experiments system allows admins to compare multiple agent variants side-by-
 
 ```
 app/api/v1/admin/orchestration/experiments/
-├── route.ts           — GET list, POST create
-├── [id]/route.ts      — GET one, PATCH update, DELETE
-└── [id]/run/route.ts  — POST start experiment
+├── route.ts                — GET list, POST create
+├── [id]/route.ts           — GET one, PATCH update, DELETE
+├── [id]/run/route.ts       — POST start experiment
+├── [id]/compare/route.ts   — GET variant comparison
+└── [id]/verdicts/route.ts  — POST pairwise judge verdict
 
 app/admin/orchestration/experiments/page.tsx
 components/admin/orchestration/experiments/experiments-list.tsx
 ```
 
 Prisma model: `AiExperiment` with `AiExperimentVariant[]`.
+
+## Ownership — an experiment belongs to the admin who created it
+
+**Every one of the eight handlers above is scoped to `createdBy` = the caller.**
+Another admin's experiment is a 404 on read, update, delete, run, compare and
+verdict alike, and it is absent from the list — the `count` included, so the
+total never reports rows the caller cannot see. Each handler says so in its own
+source with `ownership: { decidedBy: 'self' }`.
+
+The 404 (rather than a 403) is deliberate: a 403 confirms the id exists.
+
+This matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun`, which an
+experiment reads from and writes to. It deliberately does **not** match `AiAgent`
+— the agent an experiment tests is shared configuration every admin can see, so
+two admins can run separate experiments against the same agent without seeing
+each other's results.
+
+The clause is hand-rolled rather than taken from `subjectScope`, because the
+default authorization policy answers `{}` — every subject — for a platform
+admin. See [`../auth/authorization.md`](../auth/authorization.md) for the seam
+and why this family does not route through it.
 
 ## Endpoints
 
