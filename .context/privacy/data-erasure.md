@@ -53,11 +53,38 @@ let an erasure request quietly rewrite the books, so the FK is `SetNull` — the
 spend stays, the person is detached. `scripts/smoke/erasure.ts` asserts exactly
 that against a real database: row retained, `userId` null, amount unchanged.
 
-**Why retain config?** `createdBy` is attribution, not ownership — any admin can
-already manage any agent/workflow/provider regardless of who created it. So a
-departing creator's config keeps working; only the `createdBy`/`uploadedBy` link
-is nulled. Child rows (messages, embeddings, deliveries, steps) already cascade
-from their parents, so only the root `User` relations carry the policy.
+**Why retain config?** For most of these, `createdBy` is attribution, not
+ownership — any admin can already manage any agent/workflow/provider regardless
+of who created it. So a departing creator's config keeps working; only the
+`createdBy`/`uploadedBy` link is nulled. Child rows (messages, embeddings,
+deliveries, steps) already cascade from their parents, so only the root `User`
+relations carry the policy.
+
+**Two of them are owner-scoped, and they need a third rule.** `AiExperiment`
+(`createdBy`) and `AiDataset` (`userId`) narrow every one of their routes to the
+caller's own rows. Nulling the link on such a model does not de-attribute the row
+so much as **orphan** it: keyed purely on the caller, every route answers "not
+yours", and a row deliberately retained becomes one nobody can list, open, edit
+or delete.
+
+`AiExperiment` handles that case explicitly, and it is the shape to copy.
+A row belongs to **me**, to **someone else**, or to **nobody**, and the third is
+not a synonym for the second. Its visible set is "mine, plus nobody's" — and who
+gets the second half is `canRead`'s `'unattributed'` arm, which exists for
+exactly this shape. The default policy grants it to platform staff, so an admin
+sees and can delete an orphaned experiment; a fork narrows it by registering a
+policy rather than by editing a route. An admin can also **claim** one
+(`POST /experiments/:id/claim`), which stamps them as the owner so the row
+re-enters the normal rules instead of staying a permanent special case. The
+boundary is untouched: another admin's _owned_ experiment is still a 404.
+
+`AiDataset` still has the gap — it has had it since datasets shipped — and wants
+the same treatment.
+
+**So when you classify the next `SetNull` model, decide two things, not one.**
+This table records the retain policy. Whether the model's routes are owner-scoped
+is a separate decision, and where both are true you owe the orphan rule above or
+you are shipping rows that outlive everyone's ability to reach them.
 
 ### System-owned runs
 

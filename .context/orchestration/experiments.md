@@ -6,15 +6,52 @@ The experiments system allows admins to compare multiple agent variants side-by-
 
 ```
 app/api/v1/admin/orchestration/experiments/
-├── route.ts           — GET list, POST create
-├── [id]/route.ts      — GET one, PATCH update, DELETE
-└── [id]/run/route.ts  — POST start experiment
+├── route.ts                — GET list, POST create
+├── [id]/route.ts           — GET one, PATCH update, DELETE
+├── [id]/run/route.ts       — POST start experiment
+├── [id]/claim/route.ts     — POST adopt an ownerless experiment
+├── [id]/compare/route.ts   — GET variant comparison
+└── [id]/verdicts/route.ts  — POST pairwise judge verdict
 
 app/admin/orchestration/experiments/page.tsx
 components/admin/orchestration/experiments/experiments-list.tsx
 ```
 
 Prisma model: `AiExperiment` with `AiExperimentVariant[]`.
+
+## Ownership — an experiment belongs to the admin who created it
+
+**Every one of the nine handlers above is scoped to `createdBy` = the caller.**
+Another admin's experiment is a 404 on read, update, delete, run, compare and
+verdict alike, and it is absent from the list — the `count` included, so the
+total never reports rows the caller cannot see. Each handler says so in its own
+source with `ownership: { decidedBy: 'self' }`.
+
+The 404 (rather than a 403) is deliberate: a 403 confirms the id exists.
+
+**One exception, and it is not a hole: a row nobody owns.** `createdBy` is
+`onDelete: SetNull`, so erasing an admin under Art. 17 leaves their experiments
+with no owner. Those are visible to a caller whose policy permits an
+`'unattributed'` read — every platform admin, by default — because the
+alternative is a retained row no operator can ever reach. `POST
+/experiments/:id/claim` lets an admin adopt one, after which it is theirs under
+the ordinary rules. Only an unowned row can be taken, and the two refusals are
+deliberately different: another admin's experiment is a **404**, identical to one
+that does not exist, so the route cannot be used to probe for other people's
+experiments; your own is a **409**, which discloses nothing you could not already
+see in your own list. `lib/orchestration/experiments/visible-scope.ts` is the
+single definition every handler uses.
+
+This matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun`, which an
+experiment reads from and writes to. It deliberately does **not** match `AiAgent`
+— the agent an experiment tests is shared configuration every admin can see, so
+two admins can run separate experiments against the same agent without seeing
+each other's results.
+
+The clause is hand-rolled rather than taken from `subjectScope`, because the
+default authorization policy answers `{}` — every subject — for a platform
+admin. See [`../auth/authorization.md`](../auth/authorization.md) for the seam
+and why this family does not route through it.
 
 ## Endpoints
 
@@ -83,6 +120,29 @@ Invalid transitions return 400 VALIDATION_ERROR.
 
 Response 200: { success: true, data: Experiment }
 Audit: experiment.update
+```
+
+### Claim an ownerless experiment
+
+```
+POST /api/v1/admin/orchestration/experiments/:id/claim
+Authorization: Admin
+Rate limit: adminLimiter
+Body: none
+
+Stamps the caller as `createdBy` on an experiment nobody owns — one whose
+creator was erased under Art. 17 (`createdBy` is `SetNull`). After claiming it
+behaves exactly like one the caller created.
+
+Refusals:
+  - owned by another admin, or no such id  → 404 NOT_FOUND (indistinguishable
+    on purpose, so the route cannot probe for other admins' experiments)
+  - already owned by the caller            → 409 CONFLICT
+  - claimed by someone else in the window  → 409 CONFLICT
+  - caller may not read unowned rows       → 404 NOT_FOUND
+
+Response 200: { success: true, data: Experiment }
+Audit: experiment.claim
 ```
 
 ### Delete experiment
@@ -221,5 +281,6 @@ Every non-trivial field has a `<FieldHelp>` popover matching the CLAUDE.md conte
 | Already running/completed       | 400  | `VALIDATION_ERROR`    |
 | Invalid status transition       | 400  | `VALIDATION_ERROR`    |
 | Delete while running            | 400  | `VALIDATION_ERROR`    |
+| Claim an already-owned row      | 409  | `CONFLICT`            |
 | < 2 variants on run             | 400  | `VALIDATION_ERROR`    |
 | Too few/many variants on create | 400  | `VALIDATION_ERROR`    |

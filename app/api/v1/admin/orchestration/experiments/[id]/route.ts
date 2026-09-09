@@ -6,6 +6,12 @@
  * DELETE /api/v1/admin/orchestration/experiments/:id
  *
  * Authentication: Admin role required.
+ *
+ * Ownership: owner-scoped on `createdBy`, matching the rest of the family — a
+ * cross-user read, edit or delete is a 404, so the existence of another admin's
+ * experiment never leaks. See the header of `../route.ts` for why the family is
+ * owner-scoped rather than admin-global (#741), and `visibleExperimentClause`
+ * for why an experiment nobody owns is still reachable here (t-678).
  */
 
 import { z } from 'zod';
@@ -17,6 +23,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 
 type Params = { id: string };
 
@@ -36,101 +43,141 @@ const updateSchema = z
     message: 'At least one field must be provided',
   });
 
-export const GET = withAdminAuth<Params>(async (request, _session, { params }) => {
-  const { id } = await params;
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const { id } = await params;
+    const log = await getRouteLogger(request);
 
-  const experiment = await prisma.aiExperiment.findUnique({
-    where: { id },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: {
-        include: {
-          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+    const experiment = await prisma.aiExperiment.findFirst({
+      where: { AND: [await visibleExperimentClause(session), { id }] },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
         },
+        creator: { select: { id: true, name: true } },
       },
-      creator: { select: { id: true, name: true } },
+    });
+    if (!experiment) throw new NotFoundError('Experiment not found');
+
+    log.info('Experiment fetched', { experimentId: id });
+    return successResponse(experiment);
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads one experiment the caller may see — theirs, or one nobody owns when canRead permits an unattributed read. Never another subject's.",
     },
-  });
-  if (!experiment) throw new NotFoundError('Experiment not found');
+  }
+);
 
-  log.info('Experiment fetched', { experimentId: id });
-  return successResponse(experiment);
-});
+export const PATCH = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-export const PATCH = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+    const { id } = await params;
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, updateSchema);
 
-  const { id } = await params;
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, updateSchema);
+    const existing = await prisma.aiExperiment.findFirst({
+      where: { AND: [await visibleExperimentClause(session), { id }] },
+    });
+    if (!existing) throw new NotFoundError('Experiment not found');
 
-  const existing = await prisma.aiExperiment.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('Experiment not found');
-
-  if (body.status !== undefined) {
-    const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
-    if (!allowed.includes(body.status)) {
-      throw new ValidationError(`Cannot transition from '${existing.status}' to '${body.status}'`);
+    if (body.status !== undefined) {
+      const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
+      if (!allowed.includes(body.status)) {
+        throw new ValidationError(
+          `Cannot transition from '${existing.status}' to '${body.status}'`
+        );
+      }
     }
-  }
 
-  const experiment = await prisma.aiExperiment.update({
-    where: { id },
-    data: {
-      ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.status !== undefined ? { status: body.status } : {}),
-    },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: {
-        include: {
-          evaluationSession: { select: { id: true, status: true, completedAt: true } },
-        },
+    // Pinned to the ownership the read above saw, not just to `id`. An orphan
+    // can now be claimed, so `createdBy` has a null -> someone transition it did
+    // not have before: without this, an admin could edit a row another admin
+    // claimed in the window, which a re-read would have 404'd. A miss throws
+    // P2025, which the shared handler renders as 404 — the honest answer, since
+    // the row is no longer one this caller may write.
+    const experiment = await prisma.aiExperiment.update({
+      where: { id, createdBy: existing.createdBy },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
       },
-      creator: { select: { id: true, name: true } },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
+        },
+        creator: { select: { id: true, name: true } },
+      },
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'experiment.update',
+      entityType: 'experiment',
+      entityId: id,
+      entityName: experiment.name,
+      metadata: { changedKeys: Object.keys(body) },
+      clientIp: clientIP,
+    });
+
+    log.info('Experiment updated', { experimentId: id });
+    return successResponse(experiment);
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "The row is fetched under the caller's visible clause — theirs, or unowned where the policy allows — before it is updated; the update addresses it by its already-checked unique id.",
     },
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'experiment.update',
-    entityType: 'experiment',
-    entityId: id,
-    entityName: experiment.name,
-    metadata: { changedKeys: Object.keys(body) },
-    clientIp: clientIP,
-  });
-
-  log.info('Experiment updated', { experimentId: id });
-  return successResponse(experiment);
-});
-
-export const DELETE = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-
-  const { id } = await params;
-  const log = await getRouteLogger(request);
-
-  const existing = await prisma.aiExperiment.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('Experiment not found');
-
-  if (existing.status === 'running') {
-    throw new ValidationError('Cannot delete a running experiment — stop it first');
   }
+);
 
-  await prisma.aiExperiment.delete({ where: { id } });
+export const DELETE = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'experiment.delete',
-    entityType: 'experiment',
-    entityId: id,
-    entityName: existing.name,
-    clientIp: clientIP,
-  });
+    const { id } = await params;
+    const log = await getRouteLogger(request);
 
-  log.info('Experiment deleted', { experimentId: id });
-  return successResponse({ deleted: true });
-});
+    const existing = await prisma.aiExperiment.findFirst({
+      where: { AND: [await visibleExperimentClause(session), { id }] },
+    });
+    if (!existing) throw new NotFoundError('Experiment not found');
+
+    if (existing.status === 'running') {
+      throw new ValidationError('Cannot delete a running experiment — stop it first');
+    }
+
+    // Pinned to the ownership the read above saw — see the PATCH handler.
+    await prisma.aiExperiment.delete({ where: { id, createdBy: existing.createdBy } });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'experiment.delete',
+      entityType: 'experiment',
+      entityId: id,
+      entityName: existing.name,
+      clientIp: clientIP,
+    });
+
+    log.info('Experiment deleted', { experimentId: id });
+    return successResponse({ deleted: true });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "The row is fetched under the caller's visible clause — theirs, or unowned where the policy allows — before it is deleted; the delete addresses it by its already-checked unique id.",
+    },
+  }
+);

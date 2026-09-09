@@ -20,6 +20,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { ownerScopedFindFirst } from '@/tests/helpers/owner-scoped-prisma';
 
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
@@ -30,7 +31,7 @@ vi.mock('next/headers', () => ({
 }));
 
 vi.mock('@/lib/db/client', () => ({
-  prisma: { aiExperiment: { findUnique: vi.fn() } },
+  prisma: { aiExperiment: { findFirst: vi.fn() } },
 }));
 
 vi.mock('@/lib/api/context', () => ({
@@ -143,17 +144,40 @@ describe('GET /experiments/:id/compare — ownership + not-found', () => {
   });
 
   it('returns 404 when the experiment does not exist', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(null);
     const res = await GET(makeRequest(), ctx());
     expect(res.status).toBe(404);
   });
 
   it('returns 404 when another user owns the experiment (no existence leak)', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
-      makeExperiment({ createdBy: 'someone-else' }) as never
+    // Owner-aware fake, not `mockResolvedValue`: the route has to ASK for its
+    // own rows to get one back, so dropping the `createdBy` clause fails here.
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: 'someone-else' })]) as never
     );
+
     const res = await GET(makeRequest(), ctx());
+
     expect(res.status).toBe(404);
+    // Ownership clause and id as separate AND members; under the default
+    // policy the ownership member is the widened form — the caller, or nobody.
+    expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
+      where: {
+        AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
+      },
+    });
+  });
+
+  it('serves the experiment when the caller owns it — the same fake, same query', async () => {
+    // The control for the case above: with only `createdBy` differing, the
+    // 404 is the filter working rather than the fake refusing everything.
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID })]) as never
+    );
+
+    const res = await GET(makeRequest(), ctx());
+
+    expect(res.status).toBe(200);
   });
 });
 
@@ -163,7 +187,7 @@ describe('GET /experiments/:id/compare — happy path', () => {
   });
 
   it('projects rawScores + means and unions metric slugs across variants', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
 
     const res = await GET(makeRequest(), ctx());
 
@@ -189,7 +213,7 @@ describe('GET /experiments/:id/compare — happy path', () => {
   });
 
   it('falls back to computed mean when summary.stats is missing', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({
         variants: [
           {
@@ -225,7 +249,7 @@ describe('GET /experiments/:id/compare — happy path', () => {
   });
 
   it('drops non-numeric and non-array score entries defensively', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({
         variants: [
           {
@@ -268,7 +292,7 @@ describe('GET /experiments/:id/compare — happy path', () => {
   });
 
   it('returns empty rawScores when a variant has no eval run yet', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({
         variants: [
           {

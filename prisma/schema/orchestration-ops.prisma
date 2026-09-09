@@ -131,6 +131,13 @@ model AiExperiment {
   @@index([agentId])
   @@index([status])
   @@index([datasetId])
+  // The list route filters on createdBy and sorts createdAt desc — see #741.
+  // Compound, matching AiDataset and AiEvaluationRun, whose owner-scoped lists
+  // index [userId, updatedAt]. It serves filter and sort together only on the
+  // narrow clause; the widened `OR createdBy IS NULL` branch (t-678) becomes a
+  // BitmapOr and sorts afterwards. Worth it either way — it is what keeps both
+  // branches off a full scan.
+  @@index([createdBy, createdAt])
   @@map("ai_experiment")
 }
 

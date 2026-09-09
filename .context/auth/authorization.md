@@ -210,12 +210,23 @@ that costs data rather than access: overriding `canAdminister` alone leaves
 `withAuth` routes wide, and overriding `canRead` alone leaves the admin read
 surface wide.
 
-**No core list endpoint is scoped by subject.** `subjectScope` is now called by
-both guards — that is how `session.subjectFilter` and the ownership check below
-exist — but no Sunrise list route _narrows_ by its answer, because a single-tenant install has one class of admin and nothing to
-narrow to. The predicate ships for the fork whose `AND`-it-into-the-query code
-needs it, and because shipping `canRead` without the thing that keeps it honest
-is how the two faces diverge.
+**No core list endpoint narrows by `subjectScope`.** It is now called by both
+guards — that is how `session.subjectFilter` and the ownership check below exist
+— but no Sunrise list route narrows by its _answer_, because a single-tenant
+install has one class of admin and nothing to narrow to. The predicate ships for
+the fork whose `AND`-it-into-the-query code needs it, and because shipping
+`canRead` without the thing that keeps it honest is how the two faces diverge.
+
+Owner-scoped core lists do exist, and they are all hand-rolled — **but not all
+on the same column**, which is the thing to know before grepping for them:
+webhooks and experiments key on `createdBy`, the evaluations family (sessions,
+runs, datasets) on `userId`. A roster assembled by searching for one of those
+two names silently omits the other half.
+
+Hand-rolled is not an oversight waiting on a migration: the default policy
+answers `{}` for a platform admin, so routing one of them through `subjectScope`
+would _widen_ it to every admin. The seam is for the fork that changes that
+answer, not a replacement for a boundary core has already decided.
 
 **The marker cannot see past the route.** The `ownership` declaration below is
 about the handler; a route that declares `{ decidedBy: 'nothing' }` and calls a
@@ -274,11 +285,14 @@ The one shape it gets wrong is a **streamed body**, because the read happens
 after the response is returned. Read `session.subjectFilter` before you hand
 back the stream — you need it to build the query anyway.
 
-That is why Sunrise's 262 `withAdminAuth` handlers carry no declaration and its
-23 `withAuth` handlers do: under the default policy a platform admin is
+That is why all but nine of Sunrise's 263 `withAdminAuth` handlers carry no
+declaration and its 23 `withAuth` handlers do: under the default policy a platform admin is
 unrestricted and a member is not. On a fork whose org admin **is** narrowed, the
 admin routes start asking too, one route at a time, in that fork's own test
 suite.
+
+The nine are the experiments family, which scopes itself by hand and says so
+with `'self'` — see [Experiments](#experiments--the-divergence-this-page-was-written-about-since-closed).
 
 `because` is required on all but `'policy'`, and required rather than
 encouraged. The value of the marker is the sentence; a reviewer reading
@@ -460,8 +474,10 @@ owner predicate belongs with it. Until then:
 
 ## The precedent in this tree
 
-Owner-scoping is not hypothetical here. Sunrise already hand-rolls it in two
-families, and comparing them is the argument for the recipe.
+Owner-scoping is not hypothetical here. Sunrise hand-rolls it in two families,
+and how they got there is the argument for the recipe: one was coherent from the
+start, the other had to be made coherent, and nothing but a reader's attention
+had told them apart.
 
 ### Webhooks — coherent, and what the recipe generalises
 
@@ -489,29 +505,45 @@ directory. A roster of call sites assembled by reading routes will miss the
 library function a route calls — which is the same argument this page makes
 about `createdBy` two sections down, turned on the page itself.
 
-### Experiments — the same idea, applied incoherently
+### Experiments — the divergence this page was written about, since closed
 
-`AiExperiment` is classified tenant-owned, and its routes disagree with each
-other:
+`AiExperiment` is classified tenant-owned, and until [#741] the handlers over it
+disagreed with each other. One admin saw another's experiment in the list,
+opened it, edited it and could **delete** it — but got a "not found" trying to
+run or compare it, from sites whose comments called the 404 deliberate, "so the
+existence of a foreign experiment never leaks", while the list two directories
+up leaked exactly that. The widest verb had the weakest check.
 
-| Route                                 | Scoped by owner?                 |
-| ------------------------------------- | -------------------------------- |
-| `experiments` (GET list)              | **No**                           |
-| `experiments/[id]` GET, PATCH, DELETE | **No**                           |
-| `experiments/[id]/run`                | Yes — `where: { id, createdBy }` |
-| `experiments/[id]/compare`            | Yes — post-fetch, cross-user 404 |
-| `experiments/[id]/verdicts`           | Yes — post-fetch, cross-user 404 |
+All nine are now owner-scoped on `createdBy` — the list and its `count`, the
+create, the detail `GET` / `PATCH` / `DELETE`, the `run` / `compare` /
+`verdicts` routes that already were, and the `claim` route below — and each declares `{ decidedBy: 'self' }`, so a reader of any
+one route sees the posture without reading the other five.
 
-So one admin sees another's experiment in the list, opens it, edits it and can
-**delete** it — but gets a "not found" trying to run or compare it. The comments
-at those sites say the 404 is deliberate, "so the existence of a foreign
-experiment never leaks", while the list two directories up leaks exactly that.
+**It is spelled as a `createdBy` clause, not as `subjectScope`, and that is the
+part worth carrying forward.** The seam cannot express "owner-scoped" here:
+`DEFAULT_AUTHORIZATION_POLICY.subjectScope` widens to `{}` for a platform admin
+and `canRead`'s `'subject'` arm permits `administersEverything`, so routing this
+family through the policy would have been the _admin-global_ choice. Owner-scoped
+and policy-expressed were two options, not one — see [What is not behind the seam
+yet](#what-is-not-behind-the-seam-yet), which is the same fact from the other end.
 
-This is not a hypothetical divergence between a list and a detail read. It is
-that divergence, in `main`, in the family the ownership seam is for — which is
-why the rule needs a name and a checker rather than a convention. Fixing it is
-scheduled separately; it is deliberately not fixed here, because it changes a
-shipped route's behaviour and wants its own review.
+Which of the two to take was decided by what an experiment composes with, not by
+which mechanism was newer: it reads an `AiDataset` and writes `AiEvaluationRun`
+and `AiEvaluationSession` rows, and every route **under `orchestration/evaluations`**
+scopes those three by hand already — on `userId`. Admin-global would have listed
+experiments whose results the viewer cannot open. `AiAgent` and `AiWorkflow` —
+shared configuration rather than personal work product — stay admin-global, which
+is the next section.
+
+**That qualifier is load-bearing here too**, for the same reason it is in the
+webhooks section above: `agents/compare/route.ts` counts `AiEvaluationSession`
+per agent with no owner clause, install-wide. Correct today — it is a count, and
+every caller is a platform admin — and a leak under a customer tier, where it
+would report how many evaluations other tenants have run against a shared agent.
+This paragraph first read "every route over those three models", and that was
+false because of exactly that one file, two directories away ([#753]). Twice on
+one page now: a roster read off a directory misses the call site filed somewhere
+else.
 
 ### The families that record `createdBy` and never read it
 
@@ -579,3 +611,5 @@ Keys do not bind an org yet, so "an org-bound key can never carry `admin`" is
 - [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md) §4 — the fork-facing seam list
 
 [#739]: https://github.com/human-centric-engineering/sunrise/issues/739
+[#741]: https://github.com/human-centric-engineering/sunrise/issues/741
+[#753]: https://github.com/human-centric-engineering/sunrise/issues/753
