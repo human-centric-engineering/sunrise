@@ -30,13 +30,14 @@ release process.
   decision (see the `ownership` entry below) — but **not on every request**: only
   where the answer can be used, which is a route that declared no `ownership` or
   one that declared `{ decidedBy: 'policy' }`. All 23 core `withAuth` routes
-  declare something else, so they skip it; the 262 `withAdminAuth` routes declare
-  nothing, so they do not. The policy
+  declare something else, so they skip it; all but eight of the 262
+  `withAdminAuth` routes declare nothing, so they do not. The policy
   is consulted in four places, and which face each asks matters more than the
   count: `withAdminAuth`, `app/admin/layout.tsx` and the maintenance-mode bypass
   in `components/maintenance-wrapper.tsx` ask `canAdminister`, while `withAuth`
-  asks `canRead`. None of the 262 `withAdminAuth` handlers changed — 257 under
-  `/api/v1/admin` — nor the 23 `withAuth` ones, which is the point: a fork
+  asks `canRead`. Wiring the seam changed none of the 262 `withAdminAuth`
+  handlers — 257 under `/api/v1/admin` — nor the 23 `withAuth` ones, which is the
+  point: a fork
   needing a second admin tier (#366) or owner-scoped visibility (#367) had to
   shadow `lib/auth/guards.ts` or edit all of them.
 
@@ -168,7 +169,9 @@ release process.
   handlers now declare one — 22 `'self'` or `'nothing'` with a reason, and
   `GET /api/v1/users/[id]` `'resource'` — because a member is narrowed to their
   own rows under the default policy. The 262 `withAdminAuth` handlers declare
-  nothing, because a platform admin is unrestricted. A fork's route tests will fail until they declare one — that is
+  nothing, because a platform admin is unrestricted — except the eight
+  experiments handlers, which declare `'self'` because they scope themselves by
+  hand rather than by policy (see the experiments entry under **Changed**). A fork's route tests will fail until they declare one — that is
   the signal, and the error message names the fix. Only the test environment
   refuses; development and production log once per route. That reversal is
   deliberate: the documented one-line `canAdminister` override leaves the default
@@ -354,6 +357,25 @@ release process.
   `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
 
 ### Changed
+
+- **An admin no longer sees, edits or deletes another admin's experiments.**
+  `GET /api/v1/admin/orchestration/experiments` and
+  `GET` / `PATCH` / `DELETE .../experiments/:id` read every admin's rows, while
+  `run`, `compare` and `verdicts` on the same model already returned a
+  cross-user 404 — so one admin could open and **delete** an experiment they
+  could not run. All eight handlers in the family — five route files — are now
+  owner-scoped on `createdBy`, the list's `count` included, and each declares
+  `ownership: { decidedBy: 'self' }` so the posture is readable in the route's
+  own source. Anyone relying on the list
+  being install-wide sees fewer rows after upgrading.
+
+  The posture matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun` —
+  the models an experiment reads from and writes to, all owner-scoped already —
+  rather than `AiAgent` and `AiWorkflow`, which stay admin-global. It is spelled
+  as a `createdBy` clause rather than through `subjectScope`, because the default
+  policy widens that to every subject for a platform admin: routing this family
+  through the seam would have been the admin-global choice, not the owner-scoped
+  one. See `.context/auth/authorization.md`.
 
 - **`hasRole()` and `requireRole()` in `lib/auth/utils.ts` now take `UserRole`
   rather than `string`.** `hasRole('Admin')` used to compile and silently

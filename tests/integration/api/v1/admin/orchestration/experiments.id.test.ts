@@ -16,6 +16,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { ownerScopedFindFirst } from '@/tests/helpers/owner-scoped-prisma';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiExperiment: {
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
     },
@@ -121,7 +122,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/admin/orchestration/experiments/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
   });
 
   it('returns 401 when unauthenticated', async () => {
@@ -142,7 +143,7 @@ describe('GET /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('returns 404 when experiment not found', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(null);
 
     const response = await GET(makeGetRequest(), makeContext('unknown-id'));
 
@@ -165,7 +166,7 @@ describe('GET /api/v1/admin/orchestration/experiments/:id', () => {
 describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     vi.mocked(prisma.aiExperiment.update).mockResolvedValue(makeExperiment() as never);
   });
 
@@ -195,7 +196,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('returns 404 when experiment not found', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(null);
 
     const response = await PATCH(makePatchRequest({ name: 'New Name' }), makeContext());
 
@@ -224,7 +225,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('allows valid status transition draft → completed', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'draft' }) as never
     );
     vi.mocked(prisma.aiExperiment.update).mockResolvedValue(
@@ -238,7 +239,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('allows valid status transition running → completed', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'running' }) as never
     );
     vi.mocked(prisma.aiExperiment.update).mockResolvedValue(
@@ -252,7 +253,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('rejects invalid status transition completed → draft', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'completed' }) as never
     );
 
@@ -263,7 +264,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('rejects invalid status transition running → draft', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'running' }) as never
     );
 
@@ -274,7 +275,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('rejects invalid status transition completed → running', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'completed' }) as never
     );
 
@@ -285,7 +286,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('rejects status transition draft → running (must use /run endpoint)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'draft' }) as never
     );
 
@@ -372,7 +373,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
     // must produce a 400. If the `?? []` guard is removed the access returns
     // `undefined` and `undefined.includes(...)` throws a 500 instead.
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'archived' }) as never
     );
 
@@ -393,7 +394,7 @@ describe('PATCH /api/v1/admin/orchestration/experiments/:id', () => {
 describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     vi.mocked(prisma.aiExperiment.delete).mockResolvedValue(makeExperiment() as never);
   });
 
@@ -418,7 +419,7 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('returns 404 when experiment not found', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(null);
 
     const response = await DELETE(makeDeleteRequest(), makeContext());
 
@@ -427,7 +428,7 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('returns 400 when deleting a running experiment', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'running' }) as never
     );
 
@@ -455,7 +456,7 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
 
   it('deletes completed experiment and returns { deleted: true }', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ status: 'completed' }) as never
     );
 
@@ -465,5 +466,84 @@ describe('DELETE /api/v1/admin/orchestration/experiments/:id', () => {
     const data = await parseJson<{ success: boolean; data: { deleted: boolean } }>(response);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.deleted).toBe(true);
+  });
+});
+
+/**
+ * #741: the list and detail routes read every admin's experiments while
+ * `run` / `compare` / `verdicts` 404'd across users. These pin the posture the
+ * whole family now shares.
+ *
+ * The owner-aware fake is what makes them able to fail: with
+ * `mockResolvedValue(foreignRow)` the route gets its row back whether or not it
+ * asked for its own, so the 404 assertions would pass against an unscoped
+ * `findUnique({ where: { id } })` too.
+ */
+describe('ownership — a cross-user read, edit or delete is a 404', () => {
+  const FOREIGN = [makeExperiment({ createdBy: 'someone-else' })];
+  const OWN = [makeExperiment({ createdBy: ADMIN_ID })];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.update).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.delete).mockResolvedValue(makeExperiment() as never);
+  });
+
+  it('GET returns 404 for another admin’s experiment, and asks for its own', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst(FOREIGN) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeContext());
+
+    expect(response.status).toBe(404);
+    expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
+      where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+    });
+  });
+
+  it('PATCH returns 404 for another admin’s experiment and writes nothing', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst(FOREIGN) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ name: 'Hijacked' }), makeContext());
+
+    expect(response.status).toBe(404);
+    expect(vi.mocked(prisma.aiExperiment.update)).not.toHaveBeenCalled();
+  });
+
+  it('DELETE returns 404 for another admin’s experiment and deletes nothing', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst(FOREIGN) as never
+    );
+
+    const response = await DELETE(makeDeleteRequest(), makeContext());
+
+    expect(response.status).toBe(404);
+    expect(vi.mocked(prisma.aiExperiment.delete)).not.toHaveBeenCalled();
+  });
+
+  // The control for all three: same fake, same fixture, only `createdBy`
+  // differs. Without it a fake that returned null unconditionally would make
+  // the three cases above green while proving nothing.
+  it('GET returns 200 when the caller owns it', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(ownerScopedFindFirst(OWN) as never);
+
+    const response = await GET(makeGetRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+  });
+
+  it('DELETE returns 200 when the caller owns it', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(ownerScopedFindFirst(OWN) as never);
+
+    const response = await DELETE(makeDeleteRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(prisma.aiExperiment.delete)).toHaveBeenCalledWith({
+      where: { id: EXPERIMENT_ID },
+    });
   });
 });

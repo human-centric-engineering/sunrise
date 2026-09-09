@@ -25,6 +25,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { ownerScopedFindFirst } from '@/tests/helpers/owner-scoped-prisma';
 
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
@@ -36,7 +37,7 @@ vi.mock('next/headers', () => ({
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    aiExperiment: { findUnique: vi.fn(), update: vi.fn() },
+    aiExperiment: { findFirst: vi.fn(), update: vi.fn() },
     aiAgent: { findUnique: vi.fn() },
     aiEvaluationCaseResult: { findMany: vi.fn() },
   },
@@ -159,17 +160,25 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
   });
 
   it('returns 404 when the experiment does not exist', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(null);
     const res = await POST(makeRequest(defaultBody()), ctx());
     expect(res.status).toBe(404);
   });
 
   it('returns 404 when another user owns the experiment (no existence leak)', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
-      makeExperiment({ createdBy: 'someone-else' }) as never
+    // Owner-aware fake, not `mockResolvedValue`: the route has to ASK for its
+    // own rows to get one back, so dropping the `createdBy` clause fails here.
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: 'someone-else' })]) as never
     );
+
     const res = await POST(makeRequest(defaultBody()), ctx());
+
     expect(res.status).toBe(404);
+    expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
+      where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+    });
+    expect(prisma.aiExperiment.update).not.toHaveBeenCalled();
   });
 
   it('returns 400 when variantAId === variantBId', async () => {
@@ -178,13 +187,13 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
   });
 
   it('returns 400 when a variantId does not belong to the experiment', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     const res = await POST(makeRequest(defaultBody({ variantBId: 'not-on-experiment' })), ctx());
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when a variant has no evaluationRunId yet', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({
         variants: [
           { id: VARIANT_A, label: 'A', evaluationRunId: 'run-a' },
@@ -197,7 +206,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
   });
 
   it('returns 400 when the experiment has no dataset', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ dataset: null }) as never
     );
     const res = await POST(makeRequest(defaultBody()), ctx());
@@ -205,7 +214,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
   });
 
   it('returns 409 when dataset case count exceeds the 100-case cap', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
       makeExperiment({ dataset: { caseCount: 250 } }) as never
     );
     const res = await POST(makeRequest(defaultBody()), ctx());
@@ -213,14 +222,14 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
   });
 
   it('returns 400 when the judge agent slug does not exist', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
     const res = await POST(makeRequest(defaultBody()), ctx());
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when the named agent is not a judge', async () => {
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
       id: 'a',
       kind: 'chat',
@@ -234,7 +243,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
 describe('POST /experiments/:id/verdicts — happy path', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiExperiment.findUnique).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
       id: 'a',
       kind: 'judge',

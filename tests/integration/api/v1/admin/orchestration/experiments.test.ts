@@ -15,6 +15,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { ownerScopedCount, ownerScopedFindMany } from '@/tests/helpers/owner-scoped-prisma';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -187,6 +188,57 @@ describe('GET /api/v1/admin/orchestration/experiments', () => {
           where: expect.objectContaining({ agentId: 'agent-42' }),
         })
       );
+    });
+  });
+
+  /**
+   * #741: this list read every admin's experiments while `run` / `compare` /
+   * `verdicts` 404'd across users. The fakes below filter on `createdBy` the
+   * way the database does, so removing the clause from the route turns these
+   * red — a fixture containing only the caller's own rows would not.
+   */
+  describe('Ownership', () => {
+    const OWN = makeExperiment({ id: 'exp-own', createdBy: ADMIN_ID });
+    const FOREIGN = makeExperiment({ id: 'exp-foreign', createdBy: 'someone-else' });
+
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiExperiment.findMany).mockImplementation(
+        ownerScopedFindMany([OWN, FOREIGN]) as never
+      );
+      vi.mocked(prisma.aiExperiment.count).mockImplementation(
+        ownerScopedCount([OWN, FOREIGN]) as never
+      );
+    });
+
+    it("omits another admin's experiment from the list", async () => {
+      const response = await GET(makeGetRequest());
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{ data: Array<{ id: string }> }>(response);
+      expect(data.data.map((e) => e.id)).toEqual(['exp-own']);
+    });
+
+    it('counts only the rows it returns, so the total leaks no hidden ones', async () => {
+      // A total computed without the owner clause reports how many rows exist
+      // that the caller cannot see — and every page-level assertion still passes.
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{ meta: { total: number } }>(response);
+      expect(data.meta.total).toBe(1);
+      expect(vi.mocked(prisma.aiExperiment.count).mock.calls[0][0]).toMatchObject({
+        where: { createdBy: ADMIN_ID },
+      });
+    });
+
+    it('keeps the owner clause when a status filter is also applied', async () => {
+      // The clause is assigned onto a literal rather than spread, so an extra
+      // filter cannot overwrite it — `?createdBy=` would be the obvious way in.
+      await GET(makeGetRequest({ status: 'draft' }));
+
+      expect(vi.mocked(prisma.aiExperiment.findMany).mock.calls[0][0]).toMatchObject({
+        where: { createdBy: ADMIN_ID, status: 'draft' },
+      });
     });
   });
 });

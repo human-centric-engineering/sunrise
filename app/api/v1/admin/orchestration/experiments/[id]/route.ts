@@ -6,6 +6,11 @@
  * DELETE /api/v1/admin/orchestration/experiments/:id
  *
  * Authentication: Admin role required.
+ *
+ * Ownership: owner-scoped on `createdBy`, matching the rest of the family — a
+ * cross-user read, edit or delete is a 404, so the existence of another admin's
+ * experiment never leaks. See the header of `../route.ts` for why the family is
+ * owner-scoped rather than admin-global (#741).
  */
 
 import { z } from 'zod';
@@ -36,101 +41,133 @@ const updateSchema = z
     message: 'At least one field must be provided',
   });
 
-export const GET = withAdminAuth<Params>(async (request, _session, { params }) => {
-  const { id } = await params;
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const { id } = await params;
+    const log = await getRouteLogger(request);
 
-  const experiment = await prisma.aiExperiment.findUnique({
-    where: { id },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: {
-        include: {
-          evaluationSession: { select: { id: true, status: true, completedAt: true } },
+    const experiment = await prisma.aiExperiment.findFirst({
+      where: { id, createdBy: session.user.id },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
         },
+        creator: { select: { id: true, name: true } },
       },
-      creator: { select: { id: true, name: true } },
+    });
+    if (!experiment) throw new NotFoundError('Experiment not found');
+
+    log.info('Experiment fetched', { experimentId: id });
+    return successResponse(experiment);
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because: 'Reads one experiment keyed on createdBy = the caller, and nothing else.',
     },
-  });
-  if (!experiment) throw new NotFoundError('Experiment not found');
+  }
+);
 
-  log.info('Experiment fetched', { experimentId: id });
-  return successResponse(experiment);
-});
+export const PATCH = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-export const PATCH = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+    const { id } = await params;
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, updateSchema);
 
-  const { id } = await params;
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, updateSchema);
+    const existing = await prisma.aiExperiment.findFirst({
+      where: { id, createdBy: session.user.id },
+    });
+    if (!existing) throw new NotFoundError('Experiment not found');
 
-  const existing = await prisma.aiExperiment.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('Experiment not found');
-
-  if (body.status !== undefined) {
-    const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
-    if (!allowed.includes(body.status)) {
-      throw new ValidationError(`Cannot transition from '${existing.status}' to '${body.status}'`);
+    if (body.status !== undefined) {
+      const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
+      if (!allowed.includes(body.status)) {
+        throw new ValidationError(
+          `Cannot transition from '${existing.status}' to '${body.status}'`
+        );
+      }
     }
-  }
 
-  const experiment = await prisma.aiExperiment.update({
-    where: { id },
-    data: {
-      ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.status !== undefined ? { status: body.status } : {}),
-    },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: {
-        include: {
-          evaluationSession: { select: { id: true, status: true, completedAt: true } },
-        },
+    const experiment = await prisma.aiExperiment.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
       },
-      creator: { select: { id: true, name: true } },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        variants: {
+          include: {
+            evaluationSession: { select: { id: true, status: true, completedAt: true } },
+          },
+        },
+        creator: { select: { id: true, name: true } },
+      },
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'experiment.update',
+      entityType: 'experiment',
+      entityId: id,
+      entityName: experiment.name,
+      metadata: { changedKeys: Object.keys(body) },
+      clientIp: clientIP,
+    });
+
+    log.info('Experiment updated', { experimentId: id });
+    return successResponse(experiment);
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'The row is fetched keyed on createdBy = the caller before it is updated; the update addresses it by its already-checked unique id.',
     },
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'experiment.update',
-    entityType: 'experiment',
-    entityId: id,
-    entityName: experiment.name,
-    metadata: { changedKeys: Object.keys(body) },
-    clientIp: clientIP,
-  });
-
-  log.info('Experiment updated', { experimentId: id });
-  return successResponse(experiment);
-});
-
-export const DELETE = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-
-  const { id } = await params;
-  const log = await getRouteLogger(request);
-
-  const existing = await prisma.aiExperiment.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('Experiment not found');
-
-  if (existing.status === 'running') {
-    throw new ValidationError('Cannot delete a running experiment — stop it first');
   }
+);
 
-  await prisma.aiExperiment.delete({ where: { id } });
+export const DELETE = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'experiment.delete',
-    entityType: 'experiment',
-    entityId: id,
-    entityName: existing.name,
-    clientIp: clientIP,
-  });
+    const { id } = await params;
+    const log = await getRouteLogger(request);
 
-  log.info('Experiment deleted', { experimentId: id });
-  return successResponse({ deleted: true });
-});
+    const existing = await prisma.aiExperiment.findFirst({
+      where: { id, createdBy: session.user.id },
+    });
+    if (!existing) throw new NotFoundError('Experiment not found');
+
+    if (existing.status === 'running') {
+      throw new ValidationError('Cannot delete a running experiment — stop it first');
+    }
+
+    await prisma.aiExperiment.delete({ where: { id } });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'experiment.delete',
+      entityType: 'experiment',
+      entityId: id,
+      entityName: existing.name,
+      clientIp: clientIP,
+    });
+
+    log.info('Experiment deleted', { experimentId: id });
+    return successResponse({ deleted: true });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'The row is fetched keyed on createdBy = the caller before it is deleted; the delete addresses it by its already-checked unique id.',
+    },
+  }
+);

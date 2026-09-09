@@ -274,11 +274,14 @@ The one shape it gets wrong is a **streamed body**, because the read happens
 after the response is returned. Read `session.subjectFilter` before you hand
 back the stream — you need it to build the query anyway.
 
-That is why Sunrise's 262 `withAdminAuth` handlers carry no declaration and its
-23 `withAuth` handlers do: under the default policy a platform admin is
+That is why all but eight of Sunrise's 262 `withAdminAuth` handlers carry no
+declaration and its 23 `withAuth` handlers do: under the default policy a platform admin is
 unrestricted and a member is not. On a fork whose org admin **is** narrowed, the
 admin routes start asking too, one route at a time, in that fork's own test
 suite.
+
+The eight are the experiments family, which scopes itself by hand and says so
+with `'self'` — see [Experiments](#experiments--the-divergence-this-page-was-written-about-since-closed).
 
 `because` is required on all but `'policy'`, and required rather than
 encouraged. The value of the marker is the sentence; a reviewer reading
@@ -460,8 +463,10 @@ owner predicate belongs with it. Until then:
 
 ## The precedent in this tree
 
-Owner-scoping is not hypothetical here. Sunrise already hand-rolls it in two
-families, and comparing them is the argument for the recipe.
+Owner-scoping is not hypothetical here. Sunrise hand-rolls it in two families,
+and how they got there is the argument for the recipe: one was coherent from the
+start, the other had to be made coherent, and nothing but a reader's attention
+had told them apart.
 
 ### Webhooks — coherent, and what the recipe generalises
 
@@ -489,29 +494,34 @@ directory. A roster of call sites assembled by reading routes will miss the
 library function a route calls — which is the same argument this page makes
 about `createdBy` two sections down, turned on the page itself.
 
-### Experiments — the same idea, applied incoherently
+### Experiments — the divergence this page was written about, since closed
 
-`AiExperiment` is classified tenant-owned, and its routes disagree with each
-other:
+`AiExperiment` is classified tenant-owned, and until [#741] the eight handlers
+over it disagreed with each other. One admin saw another's experiment in the list,
+opened it, edited it and could **delete** it — but got a "not found" trying to
+run or compare it, from sites whose comments called the 404 deliberate, "so the
+existence of a foreign experiment never leaks", while the list two directories
+up leaked exactly that. The widest verb had the weakest check.
 
-| Route                                 | Scoped by owner?                 |
-| ------------------------------------- | -------------------------------- |
-| `experiments` (GET list)              | **No**                           |
-| `experiments/[id]` GET, PATCH, DELETE | **No**                           |
-| `experiments/[id]/run`                | Yes — `where: { id, createdBy }` |
-| `experiments/[id]/compare`            | Yes — post-fetch, cross-user 404 |
-| `experiments/[id]/verdicts`           | Yes — post-fetch, cross-user 404 |
+All eight are now owner-scoped on `createdBy` — the list and its `count`, the
+create, the detail `GET` / `PATCH` / `DELETE`, and the `run` / `compare` /
+`verdicts` routes that already were — and each declares `{ decidedBy: 'self' }`, so a reader of any
+one route sees the posture without reading the other five.
 
-So one admin sees another's experiment in the list, opens it, edits it and can
-**delete** it — but gets a "not found" trying to run or compare it. The comments
-at those sites say the 404 is deliberate, "so the existence of a foreign
-experiment never leaks", while the list two directories up leaks exactly that.
+**It is spelled as a `createdBy` clause, not as `subjectScope`, and that is the
+part worth carrying forward.** The seam cannot express "owner-scoped" here:
+`DEFAULT_AUTHORIZATION_POLICY.subjectScope` widens to `{}` for a platform admin
+and `canRead`'s `'subject'` arm permits `administersEverything`, so routing this
+family through the policy would have been the _admin-global_ choice. Owner-scoped
+and policy-expressed were two options, not one — see [What is not behind the seam
+yet](#what-is-not-behind-the-seam-yet), which is the same fact from the other end.
 
-This is not a hypothetical divergence between a list and a detail read. It is
-that divergence, in `main`, in the family the ownership seam is for — which is
-why the rule needs a name and a checker rather than a convention. Fixing it is
-scheduled separately; it is deliberately not fixed here, because it changes a
-shipped route's behaviour and wants its own review.
+Which of the two to take was decided by what an experiment composes with, not by
+which mechanism was newer: it reads an `AiDataset` and writes `AiEvaluationRun`
+and `AiEvaluationSession` rows, and **every** route over those three models is
+owner-scoped by hand already. Admin-global would have listed experiments whose
+results the viewer cannot open. `AiAgent` and `AiWorkflow` — shared configuration
+rather than personal work product — stay admin-global, which is the next section.
 
 ### The families that record `createdBy` and never read it
 
@@ -579,3 +589,4 @@ Keys do not bind an org yet, so "an org-bound key can never carry `admin`" is
 - [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md) §4 — the fork-facing seam list
 
 [#739]: https://github.com/human-centric-engineering/sunrise/issues/739
+[#741]: https://github.com/human-centric-engineering/sunrise/issues/741

@@ -5,6 +5,14 @@
  * POST /api/v1/admin/orchestration/experiments — create experiment
  *
  * Authentication: Admin role required.
+ *
+ * Ownership: owner-scoped on `createdBy`, every route in the family, which is
+ * the posture `run` / `compare` / `verdicts` already had and the list and the
+ * detail routes did not (#741). An experiment is personal work product, not
+ * shared configuration: it reads an `AiDataset` and writes `AiEvaluationRun` /
+ * `AiEvaluationSession` rows, and every route over those three models is
+ * owner-scoped the same way. A wider parent would list experiments whose
+ * results the viewer cannot open.
  */
 
 import type { Prisma } from '@prisma/client';
@@ -60,23 +68,86 @@ const createSchema = z
     message: 'metricConfigs is required when datasetId is set',
   });
 
-export const GET = withAdminAuth(async (request) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const query = validateQueryParams(searchParams, listSchema);
-  const { page, limit, status, agentId } = query;
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const query = validateQueryParams(searchParams, listSchema);
+    const { page, limit, status, agentId } = query;
 
-  const where = {
-    ...(status ? { status } : {}),
-    ...(agentId ? { agentId } : {}),
-  };
+    // The owner clause goes in the literal and the optional filters are
+    // assigned onto it, so no later key can spread over the boundary.
+    const where: Prisma.AiExperimentWhereInput = { createdBy: session.user.id };
+    if (status) where.status = status;
+    if (agentId) where.agentId = agentId;
 
-  const [experiments, total] = await Promise.all([
-    prisma.aiExperiment.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
+    const [experiments, total] = await Promise.all([
+      prisma.aiExperiment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          agent: { select: { id: true, name: true, slug: true } },
+          variants: {
+            include: {
+              evaluationSession: { select: { id: true, status: true, completedAt: true } },
+            },
+          },
+          creator: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.aiExperiment.count({ where }),
+    ]);
+
+    log.info('Experiments listed', { total, page });
+    return paginatedResponse(experiments, { page, limit, total });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'The list and its count are keyed on createdBy = the caller. Not `policy`: subjectScope widens to {} for a platform admin, which is the admin-global posture this route was fixed away from.',
+    },
+  }
+);
+
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
+
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createSchema);
+
+    // Dataset ownership when the caller opted in.
+    if (body.datasetId) {
+      const dataset = await prisma.aiDataset.findFirst({
+        where: { id: body.datasetId, userId: session.user.id },
+        select: { id: true },
+      });
+      if (!dataset) {
+        throw new NotFoundError(`Dataset ${body.datasetId} not found`);
+      }
+    }
+
+    const experiment = await prisma.aiExperiment.create({
+      data: {
+        name: body.name,
+        description: body.description ?? null,
+        agentId: body.agentId,
+        datasetId: body.datasetId ?? null,
+        metricConfigs:
+          body.metricConfigs && body.metricConfigs.length > 0
+            ? (body.metricConfigs as Prisma.InputJsonValue)
+            : undefined,
+        createdBy: session.user.id,
+        variants: {
+          create: body.variants.map((v) => ({
+            label: v.label,
+            agentVersionId: v.agentVersionId ?? null,
+          })),
+        },
+      },
       include: {
         agent: { select: { id: true, name: true, slug: true } },
         variants: {
@@ -86,70 +157,26 @@ export const GET = withAdminAuth(async (request) => {
         },
         creator: { select: { id: true, name: true } },
       },
-    }),
-    prisma.aiExperiment.count({ where }),
-  ]);
-
-  log.info('Experiments listed', { total, page });
-  return paginatedResponse(experiments, { page, limit, total });
-});
-
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
-
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createSchema);
-
-  // Dataset ownership when the caller opted in.
-  if (body.datasetId) {
-    const dataset = await prisma.aiDataset.findFirst({
-      where: { id: body.datasetId, userId: session.user.id },
-      select: { id: true },
     });
-    if (!dataset) {
-      throw new NotFoundError(`Dataset ${body.datasetId} not found`);
-    }
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'experiment.create',
+      entityType: 'experiment',
+      entityId: experiment.id,
+      entityName: experiment.name,
+      metadata: { agentId: body.agentId, variantCount: body.variants.length },
+      clientIp: clientIP,
+    });
+
+    log.info('Experiment created', { experimentId: experiment.id });
+    return successResponse(experiment, undefined, { status: 201 });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Stamps createdBy = the caller, and the optional dataset is read under the same key. Nothing here reads another subject.',
+    },
   }
-
-  const experiment = await prisma.aiExperiment.create({
-    data: {
-      name: body.name,
-      description: body.description ?? null,
-      agentId: body.agentId,
-      datasetId: body.datasetId ?? null,
-      metricConfigs:
-        body.metricConfigs && body.metricConfigs.length > 0
-          ? (body.metricConfigs as Prisma.InputJsonValue)
-          : undefined,
-      createdBy: session.user.id,
-      variants: {
-        create: body.variants.map((v) => ({
-          label: v.label,
-          agentVersionId: v.agentVersionId ?? null,
-        })),
-      },
-    },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      variants: {
-        include: {
-          evaluationSession: { select: { id: true, status: true, completedAt: true } },
-        },
-      },
-      creator: { select: { id: true, name: true } },
-    },
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'experiment.create',
-    entityType: 'experiment',
-    entityId: experiment.id,
-    entityName: experiment.name,
-    metadata: { agentId: body.agentId, variantCount: body.variants.length },
-    clientIp: clientIP,
-  });
-
-  log.info('Experiment created', { experimentId: experiment.id });
-  return successResponse(experiment, undefined, { status: 201 });
-});
+);
