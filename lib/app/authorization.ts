@@ -9,12 +9,15 @@
  * this once, lazily, before the first read — which happens at the top of every
  * guarded request. You register; you wire nothing.
  *
- * Register a policy and you replace the **administer** decision at all four
- * places Sunrise makes one: `withAdminAuth`, `withAuth`, the admin layout, and
- * the maintenance-mode bypass.
- * There are 262 `withAdminAuth` handlers behind the first of those — 257 of
- * them under `/api/v1/admin` — plus 23 `withAuth` handlers, and none of them
+ * Register a policy and you replace the **administer** decision at all three
+ * places Sunrise makes one: `withAdminAuth`, the admin layout, and the
+ * maintenance-mode bypass. There are 262 `withAdminAuth` handlers behind the
+ * first of those — 257 of them under `/api/v1/admin` — and none of them
  * changes.
+ *
+ * `withAuth` is the fourth place the policy is consulted, but it asks
+ * `canRead`, not `canAdminister`: overriding the administer face alone does
+ * nothing to its 23 handlers.
  *
  * **The read decision is not yet fully behind the seam**, and you need to know
  * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET) and

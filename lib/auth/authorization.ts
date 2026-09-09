@@ -1,11 +1,19 @@
 /**
  * The authorization policy — one decision, three faces, one seam.
  *
- * Sunrise asks "may this principal **administer**?" in exactly four places:
- * `withAdminAuth` and `withAuth` (both in `lib/auth/guards.ts`),
- * `app/admin/layout.tsx`, and `components/maintenance-wrapper.tsx` — the last
- * being the maintenance-mode bypass, which is an access decision rather than a
- * piece of chrome, because getting past that page reaches the whole site. Until this module existed each of them *answered* the
+ * Sunrise consults this policy in exactly four places: `withAdminAuth` and
+ * `withAuth` (both in `lib/auth/guards.ts`), `app/admin/layout.tsx`, and
+ * `components/maintenance-wrapper.tsx` — the last being the maintenance-mode
+ * bypass, which is an access decision rather than a piece of chrome, because
+ * getting past that page reaches the whole site.
+ *
+ * **Three of those four ask `canAdminister`** — `withAdminAuth`, the admin
+ * layout and the maintenance bypass. `withAuth` asks `canRead`, and is the only
+ * core caller of that face. Do not read "four chokepoints" as "four places the
+ * administer decision is made": a fork replacing `canAdminister` alone changes
+ * nothing about a `withAuth` route.
+ *
+ * Until this module existed each of them *answered* the
  * question inline, with a role predicate in the guard body. That made the
  * chokepoint real and the decision unreachable: a fork needing "admin of this
  * org, not of the platform" (#366) or "only the questionnaires I created"
@@ -17,7 +25,8 @@
  *
  * ## The READ axis is not yet fully behind this seam. Read this before relying on it.
  *
- * "Four chokepoints" is true of `canAdminister`. It is **not** true of
+ * "Every decision is behind the seam" is true of `canAdminister`, whose three
+ * call sites are listed above. It is **not** true of
  * `canRead` / `subjectScope`, and the difference matters most to the fork this
  * seam is for. Two core routes decide a read from the platform role inline, and
  * this branch did not migrate them:

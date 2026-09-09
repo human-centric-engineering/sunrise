@@ -47,15 +47,27 @@ synchronous seam to an asynchronous one later is a caller sweep.
 
 ### Where the question is asked
 
-Sunrise asks "may this principal **administer**?" in exactly four places, and
-they are the reason a fork edits nothing else:
+Sunrise consults the policy in exactly four places, and they are the reason a
+fork edits nothing else. **Which face each one asks matters more than the
+count** — three ask `canAdminister`, one asks `canRead`:
 
-| Chokepoint                             | What it gates                                                                                                       |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `withAdminAuth` (`lib/auth/guards.ts`) | 262 handler wrappings across 190 files, 257 of them under `/api/v1/admin`                                           |
-| `withAuth` (`lib/auth/guards.ts`)      | 23 handler wrappings; the admin question only when a route opts in                                                  |
-| `app/admin/layout.tsx`                 | The whole `/admin` page tree                                                                                        |
-| `components/maintenance-wrapper.tsx`   | The maintenance-mode bypass — an access decision, not chrome, because getting past that page reaches the whole site |
+| Chokepoint                             | Face            | What it gates                                                                                                                                      |
+| -------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `withAdminAuth` (`lib/auth/guards.ts`) | `canAdminister` | 262 handler wrappings across 190 files, 257 of them under `/api/v1/admin`                                                                          |
+| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree                                                                                                                       |
+| `components/maintenance-wrapper.tsx`   | `canAdminister` | The maintenance-mode bypass — an access decision, not chrome, because getting past that page reaches the whole site                                |
+| `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them, but no core route declares a `resource` resolver, so it is asked about `{ kind: 'nothing' }` |
+
+Read that table before assuming an override is doing what you meant.
+**Replacing `canAdminister` alone changes nothing about a `withAuth` route**,
+and replacing `canRead` alone changes nothing about the 262 admin handlers.
+`subjectScope` has no core call site at all.
+
+The last row carries a trap. `canRead` runs on every `withAuth` request whether
+or not the route named a resource, so **a policy that denies `'nothing'` takes
+down every core `withAuth` route** — the arm exists precisely so "the route
+declared no resource" is answerable without being confused for "the row has no
+owner". Permit `'nothing'` unless you have migrated every route to a resolver.
 
 ### Registering a policy
 
