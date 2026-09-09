@@ -34,7 +34,13 @@ import {
   type ApiKeyScope,
 } from '@/lib/auth/api-keys';
 import { logger } from '@/lib/logging';
-import { isPlatformAdmin } from '@/lib/auth/roles';
+import {
+  canAdminister,
+  canRead,
+  readTargetFor,
+  type AuthorizationPrincipal,
+  type AuthorizationResource,
+} from '@/lib/auth/authorization';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -65,12 +71,69 @@ export interface AuthSession {
 /**
  * Next.js route params context shape
  */
-interface RouteContext<TParams = Record<string, string>> {
+export interface RouteContext<TParams = Record<string, string>> {
   params: Promise<TParams>;
 }
 
+/**
+ * Tells the authorization policy **what** a request is acting on.
+ *
+ * Without one, the policy is asked about the caller and nothing else — which is
+ * all Sunrise's own policy needs, and is why no core route supplies a resolver.
+ * A fork scoping by owner (#367) or by org (§106) needs the resource, and the
+ * alternative to this hook is rewriting every handler's signature to pass it
+ * down.
+ *
+ * **Naming no resource DENIES.** Returning `null` or `undefined` — or throwing —
+ * refuses the request; it does not mean "this route is unscoped". Those are
+ * opposite answers and the guard cannot tell them apart from the outside, so the
+ * one that is safe to guess wrong is the refusal. The permissive state is
+ * reached by not declaring a resolver at all, which is a decision visible in the
+ * route's source rather than in a row that happened to be missing. Do not add a
+ * resolver to a route that does not act on a resource.
+ *
+ * That matters most for the shape below: a `findUnique` returns `null` for a row
+ * that was deleted, or that the resolver's own `where` excluded. Under the
+ * opposite convention that request would run the handler with no ownership check
+ * at all, on a route that looks scoped in the diff and in the log.
+ *
+ * **Runs before the authorization decision**, not merely before the handler —
+ * the policy cannot be asked about a resource that has not been resolved. So on
+ * an admin route the resolver is reachable by any *authenticated* caller,
+ * including one the policy is about to refuse. Treat its input as hostile: key
+ * off the URL segment, select the few columns the policy needs, and do not do
+ * expensive or side-effecting work in it.
+ *
+ * ```ts
+ * export const GET = withAuth<{ id: string }>(handler, {
+ *   resource: async (_request, context) => {
+ *     const { id } = await context!.params;
+ *     const row = await prisma.thing.findUnique({ where: { id }, select: { createdBy: true } });
+ *     // `null` here refuses the request, which is what a missing row deserves.
+ *     // `createdBy` is nullable on a SetNull model, and an absent `ownerId`
+ *     // reaches `canRead` as its own state — answer it in your policy.
+ *     return row ? { kind: 'thing', id, ownerId: row.createdBy ?? undefined } : null;
+ *   },
+ * });
+ * ```
+ */
+export type AuthorizationResourceResolver<TParams = Record<string, string>> = (
+  request: NextRequest,
+  context?: RouteContext<TParams>
+) => AuthorizationResource | null | Promise<AuthorizationResource | null>;
+
 /** Options for `withAuth`. */
-export interface WithAuthOptions {
+export interface WithAuthOptions<TParams = Record<string, string>> {
+  /**
+   * Names the resource this route acts on, for the authorization policy.
+   *
+   * Sunrise's default policy reads the resolved `ownerId` as the **subject** of
+   * the request and asks `canRead`. With no resolver the subject is `null` and
+   * the default policy allows it, so this option is inert on a stock install —
+   * that is the behaviour-neutrality this seam is built on, and it is asserted
+   * rather than assumed.
+   */
+  resource?: AuthorizationResourceResolver<TParams>;
   /**
    * Scope an **API-key** caller must hold. A cookie session is unaffected — it
    * is the full user, and scopes exist to make a *credential* narrower than the
@@ -90,6 +153,78 @@ export interface WithAuthOptions {
   scope?: ApiKeyScope;
 }
 
+/** Options for `withAdminAuth`. */
+export interface WithAdminAuthOptions<TParams = Record<string, string>> {
+  /**
+   * Names the resource being administered, for the authorization policy.
+   *
+   * `withAdminAuth` takes no resource context otherwise, so a policy could not
+   * scope even with the decision extracted — "admin of THIS org" needs to know
+   * which org. Sunrise's default policy ignores it; with no resolver the policy
+   * is handed `null`, which is the same call it gets today.
+   */
+  resource?: AuthorizationResourceResolver<TParams>;
+}
+
+/**
+ * Describe the caller to the authorization policy.
+ *
+ * The credential kind is passed rather than sniffed, because the guard already
+ * knows it: it is in the API-key branch or it is not. `isApiKeySession()` exists
+ * for callers downstream that only hold a session.
+ */
+function principalOf(
+  session: AuthSession,
+  credential: AuthorizationPrincipal['credential'],
+  scopes?: readonly string[]
+): AuthorizationPrincipal {
+  return { userId: session.user.id, role: session.user.role, credential, scopes };
+}
+
+/**
+ * Run a route's resource resolver, or answer `null` when it has none.
+ *
+ * **Two outcomes are unresolved, not one**, and both deny. A resolver that
+ * throws is the obvious one. A resolver that RETURNS nothing is the one that
+ * looks harmless: a `findUnique` answering `null` for a deleted or filtered row
+ * is the single most likely thing a real resolver does, and reading that as
+ * "this route named nothing" hands the policy the same value a route with no
+ * resolver at all produces — which the default policy permits. The handler would
+ * then run with no ownership check on a route that looks scoped in the diff and
+ * in the log.
+ *
+ * So `UNRESOLVED` is a Symbol distinct from `null`, and only the guard's own
+ * "this route declared no resolver" path yields `null`. A resolver cannot forge
+ * either: it can return an object, or it cannot, and both are answered here.
+ */
+const UNRESOLVED = Symbol('resource-unresolved');
+
+async function resolveResource(
+  resolver: AuthorizationResourceResolver | undefined,
+  request: NextRequest,
+  context: RouteContext | undefined
+): Promise<AuthorizationResource | null | typeof UNRESOLVED> {
+  if (!resolver) return null;
+  try {
+    const resource = await resolver(request, context);
+    if (!resource) {
+      logger.warn('authorization: a route resource resolver named nothing — denying the request', {
+        path: request.nextUrl?.pathname,
+        fix: 'Returning null/undefined from a resource resolver refuses the request; it does not mean "unscoped". A route that acts on no resource should not declare a resolver.',
+      });
+      return UNRESOLVED;
+    }
+    return resource;
+  } catch (error) {
+    logger.error('authorization: a route resource resolver threw — denying the request', {
+      path: request.nextUrl?.pathname,
+      error: error instanceof Error ? error.message : String(error),
+      fix: 'The policy cannot be asked about a resource that could not be resolved, and an unresolved scope is not an absent one.',
+    });
+    return UNRESOLVED;
+  }
+}
+
 /**
  * Wrap an API route handler with authentication.
  *
@@ -97,6 +232,9 @@ export interface WithAuthOptions {
  * - Throws UnauthorizedError (401) if no session
  * - Throws ForbiddenError (403) if `options.scope` is set and an API-key
  *   caller lacks it
+ * - Asks the authorization policy `canRead(principal, subject)`, where `subject`
+ *   is the `ownerId` from `options.resource` — or `null` when the route named
+ *   none, which is every core route and which the default policy allows
  * - Passes the session to the handler
  * - Catches all errors via handleAPIError
  *
@@ -129,7 +267,7 @@ export function withAuth<TParams>(
     session: AuthSession,
     context: RouteContext<TParams>
   ) => Response | Promise<Response>,
-  options?: WithAuthOptions
+  options?: WithAuthOptions<TParams>
 ): (request: NextRequest, context: RouteContext<TParams>) => Promise<Response>;
 
 export function withAuth(
@@ -165,21 +303,48 @@ export function withAuth(
       // browser cookie. Any scope is accepted unless the route asked for one
       // via `options.scope`.
       const apiKey = await resolveApiKey(request as NextRequest);
+      let session: AuthSession;
+      let principal: AuthorizationPrincipal;
+
       if (apiKey) {
         if (options?.scope && !hasScope(apiKey.scopes, options.scope)) {
           // Names the scope the route wants, never the ones the key holds —
           // a 403 should not be a scope-enumeration oracle.
           throw new ForbiddenError(`API key scope '${options.scope}' required`);
         }
-        if (context !== undefined) return await handler(request, apiKey.session, context);
-        return await handler(request, apiKey.session);
+        session = apiKey.session;
+        principal = principalOf(session, 'api-key', apiKey.scopes);
+      } else {
+        const requestHeaders = await headers();
+        const cookieSession = await auth.api.getSession({ headers: requestHeaders });
+
+        if (!cookieSession) {
+          throw new UnauthorizedError();
+        }
+        session = cookieSession;
+        principal = principalOf(session, 'session');
       }
 
-      const requestHeaders = await headers();
-      const session = await auth.api.getSession({ headers: requestHeaders });
-
-      if (!session) {
-        throw new UnauthorizedError();
+      // The read half of the authorization seam. The subject is whoever owns
+      // the resource the route named; with no `resource` resolver there is no
+      // subject, the policy is asked about `null`, and Sunrise's default policy
+      // allows it — so a stock install takes the same branch it took before this
+      // call existed. That is the arm every core route takes, and it has its own
+      // test rather than being assumed.
+      const resource = await resolveResource(
+        options?.resource,
+        request as NextRequest,
+        context as RouteContext | undefined
+      );
+      if (resource === UNRESOLVED) {
+        throw new ForbiddenError('Access denied');
+      }
+      // `readTargetFor` is the one place a resource becomes a read question, so
+      // the three states it can be in are named rather than flattened. This used
+      // to be `resource?.ownerId ?? null`, which collapsed "named nothing" and
+      // "named a row with no owner" onto the value the default policy permits.
+      if (!(await canRead(principal, readTargetFor(resource)))) {
+        throw new ForbiddenError('Access denied');
       }
 
       if (context !== undefined) {
@@ -197,7 +362,11 @@ export function withAuth(
  *
  * - Retrieves the session from better-auth
  * - Throws UnauthorizedError (401) if no session
- * - Throws ForbiddenError (403) if user role is not ADMIN
+ * - Throws ForbiddenError (403) when the authorization policy says the caller
+ *   may not administer. Sunrise's default policy answers exactly what this
+ *   guard used to assert inline — platform role for a cookie session, the
+ *   `admin` scope for an API key — and a fork replaces that answer from
+ *   `lib/app/authorization.ts` without touching a route
  * - Passes the session to the handler
  * - Catches all errors via handleAPIError
  *
@@ -224,7 +393,8 @@ export function withAuth(
  * ```
  */
 export function withAdminAuth(
-  handler: (request: NextRequest, session: AuthSession) => Response | Promise<Response>
+  handler: (request: NextRequest, session: AuthSession) => Response | Promise<Response>,
+  options?: WithAdminAuthOptions
 ): (request: NextRequest) => Promise<Response>;
 
 export function withAdminAuth<TParams>(
@@ -232,11 +402,15 @@ export function withAdminAuth<TParams>(
     request: NextRequest,
     session: AuthSession,
     context: RouteContext<TParams>
-  ) => Response | Promise<Response>
+  ) => Response | Promise<Response>,
+  options?: WithAdminAuthOptions<TParams>
 ): (request: NextRequest, context: RouteContext<TParams>) => Promise<Response>;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function withAdminAuth(handler: (...args: any[]) => Response | Promise<Response>) {
+export function withAdminAuth(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: (...args: any[]) => Response | Promise<Response>,
+  options?: WithAdminAuthOptions
+) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
     try {
@@ -250,22 +424,47 @@ export function withAdminAuth(handler: (...args: any[]) => Response | Promise<Re
       // here with 403 rather than falling through to the cookie path
       // (which would 401 a key-bearing caller and confuse CI).
       const apiKey = await resolveApiKey(request as NextRequest);
+      let session: AuthSession;
+      let principal: AuthorizationPrincipal;
+
       if (apiKey) {
+        // Kept in the guard as a FLOOR, not moved into the policy: it means a
+        // fork's policy can only narrow the key path, never widen it. That is
+        // the whole content of design decision Q6 — the `admin` scope is
+        // platform-only — and leaving the check here is what stops a fork that
+        // forgets to read `viewer.scopes` from handing every key holder the
+        // admin surface. The default policy re-derives the same answer rather
+        // than trusting this, so it is also correct when called directly.
         if (!hasScope(apiKey.scopes, 'admin')) {
           throw new ForbiddenError('Admin scope required');
         }
-        if (context !== undefined) return await handler(request, apiKey.session, context);
-        return await handler(request, apiKey.session);
+        session = apiKey.session;
+        principal = principalOf(session, 'api-key', apiKey.scopes);
+      } else {
+        const requestHeaders = await headers();
+        const cookieSession = await auth.api.getSession({ headers: requestHeaders });
+
+        if (!cookieSession) {
+          throw new UnauthorizedError();
+        }
+        session = cookieSession;
+        principal = principalOf(session, 'session');
       }
 
-      const requestHeaders = await headers();
-      const session = await auth.api.getSession({ headers: requestHeaders });
+      const resource = await resolveResource(
+        options?.resource,
+        request as NextRequest,
+        context as RouteContext | undefined
+      );
 
-      if (!session) {
-        throw new UnauthorizedError();
-      }
-
-      if (!isPlatformAdmin(session.user)) {
+      // 'Admin access required' for BOTH credentials here, and that is not a
+      // regression on the key path: the only thing that used to answer for a key
+      // caller is the scope floor above, which still throws its own
+      // 'Admin scope required' and is unreachable past. What lands here is a
+      // resolver that named nothing, or a policy that refused — neither of which
+      // is a missing scope, and telling an operator debugging safe mode to go
+      // and look at their key would send them to the one place that is fine.
+      if (resource === UNRESOLVED || !(await canAdminister(principal, resource))) {
         throw new ForbiddenError('Admin access required');
       }
 

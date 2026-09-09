@@ -1,12 +1,12 @@
 /**
  * Fork init gates — run a fork's `initApp*` seam once, all-or-nothing.
  *
- * Eleven of the thirteen `initApp*` seams are reached the same way: a core
+ * Twelve of the fourteen `initApp*` seams are reached the same way: a core
  * registry runs the fork's init lazily, before its first read, so a fork can
- * accumulate registrations at module-import time without a startup hook. Ten of
- * them had hand-written a latch, a try/catch and a log line — four of those with
- * a rollback. The eleventh, `capabilities`, had only the latch, and it was set
- * AFTER the call.
+ * accumulate registrations at module-import time without a startup hook. Of the
+ * eleven that existed when this module was written, ten had hand-written a
+ * latch, a try/catch and a log line — four of those with a rollback — and the
+ * eleventh, `capabilities`, had only the latch, set AFTER the call.
  *
  * The other two do not belong here. `initAppNav` is called at module scope from
  * a CLIENT component, because module registries do not cross Next's bundle
@@ -203,7 +203,7 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
         // unguarded `onSuccess`, and then a third time by a thenable probe
         // reading `.then` off a hostile getter — each fixed in the spot it
         // appeared, which is why there was a third. `ensure()` sits at the top of
-        // every public read on eleven registries, several documented as
+        // every public read on a dozen registries, several documented as
         // always-safe-to-call, so the guarantee has to hold for code that does
         // not exist yet.
         //
@@ -307,7 +307,7 @@ function isThenable(returned: unknown): boolean {
  * Run one of the gate's optional callbacks without letting it escape.
  *
  * `ensure()` documents itself as never throwing, and it sits at the top of every
- * public read on eleven registries — several of which are separately documented
+ * public read on a dozen registries — several of which are separately documented
  * as always-safe-to-call. A callback that threw would break that contract after
  * the latch was already set, which is the same "the code does not do what its
  * own docblock says" shape this module exists to fix. So the claim is enforced

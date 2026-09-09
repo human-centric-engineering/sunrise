@@ -24,7 +24,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { MaintenancePage } from '@/components/maintenance-page';
 import { logger } from '@/lib/logging';
-import { isPlatformAdmin } from '@/lib/auth/roles';
+import { canAdminister } from '@/lib/auth/authorization';
 
 interface MaintenanceWrapperProps {
   children: React.ReactNode;
@@ -76,7 +76,18 @@ export async function MaintenanceWrapper({ children }: MaintenanceWrapperProps) 
   try {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders });
-    isAdmin = isPlatformAdmin(session?.user);
+    // The authorization policy, not a role read. Bypassing the maintenance page
+    // reaches the whole site, so this is an access decision and belongs behind
+    // the same seam as the guards — otherwise a fork that narrows
+    // `canAdminister` still lets every stored `role: 'ADMIN'` past here, and
+    // safe mode would close the admin console while leaving this open.
+    isAdmin = session
+      ? await canAdminister({
+          userId: session.user.id,
+          role: session.user.role,
+          credential: 'session',
+        })
+      : false;
   } catch {
     // If session check fails, show maintenance page for safety
   }
@@ -116,7 +127,18 @@ export async function MaintenanceWrapperWithAdminNotice({ children }: Maintenanc
   try {
     const requestHeaders = await headers();
     const session = await auth.api.getSession({ headers: requestHeaders });
-    isAdmin = isPlatformAdmin(session?.user);
+    // The authorization policy, not a role read. Bypassing the maintenance page
+    // reaches the whole site, so this is an access decision and belongs behind
+    // the same seam as the guards — otherwise a fork that narrows
+    // `canAdminister` still lets every stored `role: 'ADMIN'` past here, and
+    // safe mode would close the admin console while leaving this open.
+    isAdmin = session
+      ? await canAdminister({
+          userId: session.user.id,
+          role: session.user.role,
+          credential: 'session',
+        })
+      : false;
   } catch {
     // If session check fails, show maintenance page for safety
   }

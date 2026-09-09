@@ -18,6 +18,77 @@ release process.
 
 ### Added
 
+- **The authorization decision is now a seam, not a role check in a guard body.**
+  `lib/auth/authorization.ts` ships a policy with three faces —
+  `canAdminister(viewer, resource, scope)`, `canRead(viewer, target, scope)` and
+  `subjectScope(viewer, scope)`,
+  the last returning a Prisma `where` fragment so that a fork's list query and
+  its single-row read cannot disagree — **nothing in core calls `subjectScope`
+  yet**, since there is no core list endpoint scoped by subject; it ships now
+  because it is the half of the contract that keeps `canRead` honest. All four
+  chokepoints route through the policy: `withAdminAuth`, `withAuth`,
+  `app/admin/layout.tsx` and the maintenance-mode bypass in
+  `components/maintenance-wrapper.tsx`. None of the 262 guarded handlers behind
+  them changed — 257 under `/api/v1/admin` — which is the point: a fork needing a
+  second admin tier (#366) or owner-scoped visibility (#367) had to shadow
+  `lib/auth/guards.ts` or edit all of them.
+
+  A fork replaces the policy from the new fork-owned `lib/app/authorization.ts`,
+  which is listed among [`VERSIONING.md`](./VERSIONING.md#covered)'s named seams.
+  The primitives it calls are `registerAuthorizationPolicy(policy)` and
+  `DEFAULT_AUTHORIZATION_POLICY` — spread the latter to replace one face, since a
+  policy is registered whole rather than merged, which is what keeps "I overrode
+  `canRead` and forgot `subjectScope`" visible in the fork's own diff.
+  `SAFE_MODE_POLICY`, `getAuthorizationPolicy()`, `subjectFilterSelects()`,
+  `readTargetFor()`, `readSubject()` and the `AuthorizationPolicy` /
+  `AuthorizationPrincipal` / `AuthorizationResource` / `AuthorizationScope` /
+  `ReadTarget` / `SubjectFilter` / `Ownership` types are exported alongside them.
+  Both guards also gain an optional `resource` resolver
+  (`withAuth(handler, { resource })`), so a policy can see *which* resource is
+  being touched without every handler signature changing downstream; `RouteContext`,
+  `WithAdminAuthOptions` and `AuthorizationResourceResolver` are exported from
+  `lib/auth/guards.ts` for it. A resolver that throws **or names nothing** denies
+  the request — returning `null` is a refusal, not "this route is unscoped" — and
+  it runs before the authorization decision, so treat its input as reachable by
+  any authenticated caller.
+
+  The read face takes a `ReadTarget` — a three-arm discriminated union
+  (`'nothing'` · `'unattributed'` · `'subject'`), built by `readTargetFor()` or
+  `readSubject()` — rather than a nullable subject id. A policy must answer all
+  three arms and **the compiler enforces it**: a `switch` that misses one
+  returns `undefined`, which does not satisfy `Promise<boolean>`. That exists
+  because a row with no single owner (an org-owned row, or a nullable
+  `createdBy` on a `SetNull` model) otherwise arrives indistinguishable from
+  "this route named nothing", and the natural line to write against a nullable
+  subject — `subject === null || subject === viewer.userId` — permits every
+  caller while reading exactly like a check. Sunrise's default narrows
+  `'unattributed'` to platform staff and logs it once per kind. **The read axis is
+  not yet fully behind the seam**: `GET /api/v1/users/[id]` and
+  `/api/v1/users/me` still decide from the platform role inline, so a narrowing
+  policy does not narrow those two — named in both module headers, tracked in
+  #738.
+
+  Every face returns a `Promise` from day one — the org input (§106) needs a
+  membership lookup, and a later sync→async conversion would be a sweep of every
+  caller — and `scope` is an open struct `{ ownership?, tier?, org? }` so a new
+  axis is an added key rather than a changed signature. `checkAuthorizationParity()`
+  is exported with no test-framework dependency so a fork can run it over its own
+  policy: `canRead` and `subjectScope` diverging is a real defect, caught in review
+  of the fork-first version of this contract, and it leaks in one direction and
+  hides rows in the other.
+
+  **Behaviour is unchanged with no policy registered**, at all four chokepoints,
+  including the arm every core route takes (no resolver ⇒ the policy is asked
+  about `{ kind: 'nothing' }` and allows it). Two failure behaviours are worth
+  knowing before you fill the seam: a policy method that throws **denies** — and
+  so does one that answers with the wrong shape, since `subjectScope` returning a
+  `userId` key that is not a usable id would otherwise widen a list to every row —
+  and a registration that throws puts the install in a **safe mode** where nobody
+  administers anything — Sunrise deliberately does not fall back to its own default
+  policy, because a fork's policy usually narrows it and falling back would widen
+  access under a log line saying the feature was disabled. The `admin` API-key
+  scope stays **platform-only** and is deliberately *not* routed through the seam.
+
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
   fork-owned `lib/app/llm-providers.ts` — constrains which providers Sunrise may

@@ -56,6 +56,11 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAuthenticatedUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { listValidApiKeyScopes } from '@/lib/auth/api-keys';
+import {
+  DEFAULT_AUTHORIZATION_POLICY,
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+} from '@/lib/auth/authorization';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -193,6 +198,32 @@ describe('API Key Endpoints', () => {
       const res = await POST(makePostRequest({ name: 'Admin Key', scopes: ['admin'] }));
 
       expect(res.status).toBe(403);
+    });
+
+    it('keeps admin-scope minting on PLATFORM standing, not on the authorization policy', async () => {
+      // Q6, pinned. An `admin`-scoped key satisfies every scope and bypasses the
+      // role check in `withAdminAuth`, so it is cross-tenant by construction —
+      // which is why this one check deliberately asks `isPlatformAdmin` rather
+      // than `canAdminister`.
+      //
+      // The policy below admits everyone, which is what a fork's org-admin tier
+      // looks like. If someone ever "tidies" the route to use the seam, this
+      // goes red: an org admin would otherwise be able to mint a credential
+      // reaching every org's admin routes, the day the fork widened its policy
+      // for an unrelated reason.
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canAdminister: () => Promise.resolve(true),
+      });
+
+      try {
+        // Default mock user has role 'USER'.
+        const res = await POST(makePostRequest({ name: 'Admin Key', scopes: ['admin'] }));
+
+        expect(res.status).toBe(403);
+      } finally {
+        __resetAuthorizationPolicyForTests();
+      }
     });
 
     it('allows admin scope for admin users', async () => {

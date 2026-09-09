@@ -78,6 +78,13 @@ import {
   getRegisteredAccountSections,
   __resetAccountSectionRegistryForTests,
 } from '@/lib/account-sections/registry';
+import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
+import {
+  DEFAULT_AUTHORIZATION_POLICY,
+  getAuthorizationPolicy,
+  hasAppAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+} from '@/lib/auth/authorization';
 
 /**
  * One row per `lib/app/*` seam.
@@ -110,6 +117,18 @@ const UNASSERTED_SEAMS = new Set([
 ]);
 
 const SEAM_DEFAULTS: SeamDefault[] = [
+  {
+    seam: 'lib/app/authorization.ts',
+    risk: 'a stray policy would replace the authorization decision at every guarded request and every admin page — the one seam whose default registration would change who can reach what, on every install',
+    assert: () => {
+      initAppAuthorizationPolicy();
+      expect(hasAppAuthorizationPolicy()).toBe(false);
+      // BY IDENTITY: what runs must be Sunrise's own object, not something
+      // equivalent-looking. `getAuthorizationPolicy()` also runs the fork gate,
+      // so this covers the wiring as well as the value.
+      expect(getAuthorizationPolicy()).toBe(DEFAULT_AUTHORIZATION_POLICY);
+    },
+  },
   {
     seam: 'lib/app/llm-providers.ts',
     risk: 'a stray eligibility rule would silently drop provider fallbacks on every install',
@@ -349,6 +368,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
 afterEach(() => {
   __resetNavRegistryForTests();
   __resetAccountSectionRegistryForTests();
+  __resetAuthorizationPolicyForTests();
 });
 
 describe('lib/app/ seams ship empty', () => {

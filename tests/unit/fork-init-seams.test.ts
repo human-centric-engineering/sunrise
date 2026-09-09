@@ -126,7 +126,7 @@ describe('fork init seams', () => {
     // below the real number lets exactly one seam drop out of the scan
     // undetected, which is the case that matters. Update it deliberately when
     // adding a seam.
-    expect(SEAMS.length).toBe(13);
+    expect(SEAMS.length).toBe(14);
     // Same exact-count discipline for the registrar family, and for the same
     // reason: a floor one below the real number lets exactly one scaffold drop
     // out of the scan undetected.

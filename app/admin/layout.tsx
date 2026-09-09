@@ -6,7 +6,7 @@ import { AdminHeader } from '@/components/admin/admin-header';
 import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-flight-execution-banner';
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
-import { isPlatformAdmin } from '@/lib/auth/roles';
+import { canAdminister } from '@/lib/auth/authorization';
 
 export const metadata: Metadata = {
   title: {
@@ -35,8 +35,18 @@ export default async function AdminLayout({
     redirect('/login');
   }
 
-  // Redirect to dashboard if not an admin
-  if (!isPlatformAdmin(session.user)) {
+  // Redirect to dashboard if the authorization policy says this principal does
+  // not administer. The third of the three places Sunrise asks the question —
+  // the guards cover the API, this covers the admin tree's own shell. A cookie
+  // session is the only way to reach a layout, so the credential is not in
+  // doubt here.
+  if (
+    !(await canAdminister({
+      userId: session.user.id,
+      role: session.user.role,
+      credential: 'session',
+    }))
+  ) {
     redirect(AUTH_LANDING_ROUTE);
   }
 
