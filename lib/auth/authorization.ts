@@ -381,9 +381,9 @@ export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
     switch (target.kind) {
       case 'nothing':
         // The route named nothing, so there is no claim for this policy to
-        // narrow. Sunrise ships no `resource` resolvers, so this is the arm
-        // every core `withAuth` route takes, and it is why wiring the seam
-        // changed no behaviour.
+        // narrow. Every core `withAuth` route but `app/api/v1/users/[id]` (GET)
+        // takes this arm, which is why wiring the seam changed no behaviour on
+        // any of them.
         return Promise.resolve(true);
 
       case 'unattributed':
@@ -417,9 +417,9 @@ export const SAFE_MODE_POLICY: AuthorizationPolicy = {
     switch (target.kind) {
       case 'nothing':
         // Safe mode refuses what it WAS asked about. A route that named nothing
-        // asked nothing — and core routes all take this arm, so denying it
-        // would take the whole application down over an authorization seam that
-        // is not yet load-bearing for them.
+        // asked nothing — and all but one core route take this arm, so denying
+        // it would take the whole application down over a seam most of them do
+        // not use. The one that does name a resource IS refused.
         return Promise.resolve(true);
       case 'unattributed':
         return Promise.resolve(false);

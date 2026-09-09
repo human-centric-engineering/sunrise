@@ -460,7 +460,7 @@ GET /api/v1/users?page=1&limit=20&search=john&sortBy=createdAt&sortOrder=desc
 GET /api/v1/users/:id
 ```
 
-**Authentication**: Required (ADMIN role or requesting own profile)
+**Authentication**: Required
 
 **Authorization**: Decided by the authorization policy, not by this handler — it
 is the one core route that declares a `resource` resolver, so the read goes

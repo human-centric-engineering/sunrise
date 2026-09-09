@@ -218,8 +218,9 @@ export interface WithAuthOptions {
  * - Throws ForbiddenError (403) if `options.scope` is set and an API-key
  *   caller lacks it
  * - Asks the authorization policy `canRead(principal, subject)`, where the
- *   subject is the `ownerId` from `options.resource` — or `null` when the route
- *   named none, which every core route does and the default policy allows
+ *   target comes from `options.resource` — or `{ kind: 'nothing' }` when the
+ *   route named none, which the default policy allows. Every core route but
+ *   `app/api/v1/users/[id]` (GET) takes that arm
  * - Passes the session to the handler
  * - Catches all errors via handleAPIError
  */

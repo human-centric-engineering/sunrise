@@ -1913,6 +1913,34 @@ describe('GET /api/v1/users/[id] — the read decision is the policy’s', () =>
     expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the key must not reach the row
   });
 
+  it('refuses a malformed id from a non-admin with 403, not 400', async () => {
+    // The third documented behaviour change, and the only one nothing pinned.
+    // The resolver and the policy run BEFORE `validateQueryParams`, so a
+    // non-admin can no longer tell "not a valid id" from "not yours". Both
+    // pre-existing invalid-id tests use an admin session and so only exercise
+    // the 400 path; reordering validation ahead of the guard would silently
+    // restore the 400 while the CHANGELOG and the API docs assert the 403.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const response = await GET({} as NextRequest, { params: createMockParams('not-a-cuid') });
+    const data = await parseResponse<ErrorResponse>(response);
+
+    expect(response.status).toBe(403);
+    expect(data.error.code).toBe('FORBIDDEN');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the read
+  });
+
+  it('still returns 400 for a malformed id when the policy allows the read', async () => {
+    // The control: an admin gets past the policy, so validation is reached and
+    // the 400 survives. Without this, the test above passes for a policy that
+    // refuses everything, which is a different bug.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await GET({} as NextRequest, { params: createMockParams('not-a-cuid') });
+
+    expect(response.status).toBe(400);
+  });
+
   it('still admits an API key that actually holds the admin scope', async () => {
     // The control for the test above: it must fail on the missing scope, not on
     // "api-key callers are refused", which would pass the previous test for a

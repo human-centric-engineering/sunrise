@@ -164,10 +164,15 @@ export interface WithAuthOptions<TParams = Record<string, string>> {
    * Names the resource this route acts on, for the authorization policy.
    *
    * Sunrise's default policy reads the resolved `ownerId` as the **subject** of
-   * the request and asks `canRead`. With no resolver the subject is `null` and
-   * the default policy allows it, so this option is inert on a stock install —
-   * that is the behaviour-neutrality this seam is built on, and it is asserted
-   * rather than assumed.
+   * the request and asks `canRead`. Omitting it is behaviour-neutral: the policy
+   * is asked about `{ kind: 'nothing' }`, which the default allows.
+   *
+   * **Adding one is not.** Declaring a resolver moves the decision to the
+   * policy, and the policy does not answer identically to a hand-written role
+   * check — most visibly, it judges an API-key caller by the key's scopes rather
+   * than by its owner's role. `app/api/v1/users/[id]` (GET) is the worked
+   * example and its CHANGELOG entry lists what changed. Treat adding a resolver
+   * to a shipped endpoint as a behaviour change and test it as one.
    */
   resource?: AuthorizationResourceResolver<TParams>;
   /**
@@ -268,9 +273,10 @@ async function resolveResource(
  * - Throws UnauthorizedError (401) if no session
  * - Throws ForbiddenError (403) if `options.scope` is set and an API-key
  *   caller lacks it
- * - Asks the authorization policy `canRead(principal, subject)`, where `subject`
- *   is the `ownerId` from `options.resource` — or `null` when the route named
- *   none, which is every core route and which the default policy allows
+ * - Asks the authorization policy `canRead(principal, target)`, where the target
+ *   comes from `options.resource` — or `{ kind: 'nothing' }` when the route
+ *   named none, which the default policy allows. Every core route but
+ *   `app/api/v1/users/[id]` (GET) takes that arm
  * - Passes the session to the handler
  * - Catches all errors via handleAPIError
  *
@@ -363,10 +369,11 @@ export function withAuth(
 
       // The read half of the authorization seam. The subject is whoever owns
       // the resource the route named; with no `resource` resolver there is no
-      // subject, the policy is asked about `null`, and Sunrise's default policy
-      // allows it — so a stock install takes the same branch it took before this
-      // call existed. That is the arm every core route takes, and it has its own
-      // test rather than being assumed.
+      // subject, the policy is asked about `{ kind: 'nothing' }`, and Sunrise's
+      // default policy allows it — so those routes take the same branch they
+      // took before this call existed, which has its own test rather than being
+      // assumed. `app/api/v1/users/[id]` (GET) is the one core route that does
+      // name a resource.
       const resource = await resolveResource(
         options?.resource,
         request as NextRequest,
@@ -380,6 +387,18 @@ export function withAuth(
       // to be `resource?.ownerId ?? null`, which collapsed "named nothing" and
       // "named a row with no owner" onto the value the default policy permits.
       if (!(await canRead(principal, readTargetFor(resource)))) {
+        // Named, because the decision moved in here from the handlers. A route
+        // that used to log its target before checking would otherwise lose that
+        // record on exactly the requests worth recording: `handleAPIError` logs
+        // neither the path nor the resource, so a refused cross-user read would
+        // be an unattributable 'API Error'. Ids, not contents.
+        logger.warn('authorization: canRead refused a request', {
+          path: (request as NextRequest).nextUrl?.pathname,
+          resourceKind: resource?.kind,
+          resourceId: resource?.id,
+          userId: principal.userId,
+          credential: principal.credential,
+        });
         throw new ForbiddenError('Access denied');
       }
 
@@ -504,6 +523,15 @@ export function withAdminAuth(
       // is a missing scope, and telling an operator debugging safe mode to go
       // and look at their key would send them to the one place that is fine.
       if (resource === UNRESOLVED || !(await canAdminister(principal, resource))) {
+        // Same reason as the `canRead` refusal above: the guard owns the
+        // decision, so it owns the record of refusing.
+        logger.warn('authorization: canAdminister refused a request', {
+          path: (request as NextRequest).nextUrl?.pathname,
+          resourceKind: resource === UNRESOLVED ? '(unresolved)' : resource?.kind,
+          resourceId: resource === UNRESOLVED ? undefined : resource?.id,
+          userId: principal.userId,
+          credential: principal.credential,
+        });
         throw new ForbiddenError('Admin access required');
       }
 

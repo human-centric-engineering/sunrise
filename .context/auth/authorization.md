@@ -178,10 +178,29 @@ refuses that read even for a platform admin.
 
 ## What is not behind the seam yet
 
-Read this before trusting a narrowing `canRead`. The read _decision_ is now
-behind the seam everywhere core makes one — `app/api/v1/users/[id]` (GET) was
-the last inline holdout and declares a resolver as of this release. What follows
-is about the _list_ half of the contract.
+Read this before trusting a narrowing `canRead`.
+
+**Not every read of personal data is a `canRead` read.** No core route decides a
+read from the platform role _inline_ any more — `app/api/v1/users/[id]` (GET)
+was the last holdout and declares a resolver as of this release. But two core
+routes read other users' personal data through **`withAdminAuth`**, so
+`canAdminister` governs them, not `canRead`:
+
+| Route                           | Reads                                     | Face            |
+| ------------------------------- | ----------------------------------------- | --------------- |
+| `GET /api/v1/users`             | Every user's id, name, email and role     | `canAdminister` |
+| `GET /api/v1/users/[id]/export` | One user's complete subject-access bundle | `canAdminister` |
+
+So the pattern this page recommends — `{ ...DEFAULT_AUTHORIZATION_POLICY, canRead: narrower }` —
+**does not narrow either of them.** A fork that overrides only `canRead` still
+lets every platform `ADMIN` list all users and export any user's full record.
+Narrowing reads means overriding `canAdminister` too, and giving those routes a
+`resource` resolver so it has something to narrow on.
+
+This is the converse of the warning under the chokepoint table, and it is the one
+that costs data rather than access: overriding `canAdminister` alone leaves
+`withAuth` routes wide, and overriding `canRead` alone leaves the admin read
+surface wide.
 
 **`subjectScope` has no core caller.** There is no list endpoint in Sunrise core
 scoped by subject. It ships because it is the half of the contract a fork's
