@@ -116,6 +116,17 @@ export interface AuthenticatedSession extends AuthSession {
    * the guard notices whether you did — see {@link RouteOwnership}. It is a
    * getter for exactly that reason, which is also why you should read it once
    * into a local rather than reaching for it inside a loop.
+   *
+   * **Do not read it off a COPY of the session.** It is non-enumerable, so
+   * `{ ...session }` does not carry it: the copy still types as an
+   * `AuthenticatedSession`, and `copy.subjectFilter` is `undefined` rather than
+   * a getter. A helper doing `where: { AND: [{ ...copy.subjectFilter }, …] }`
+   * then gets `{}` — every subject — which is the widening this whole type
+   * exists to prevent, arriving through a reshape that looks harmless
+   * (`{ ...session, user: redact(session.user) }`). Non-enumerable is not
+   * squeamishness: an enumerable getter would fire on any spread and record the
+   * filter as consumed by a handler that never used it. Pass the session itself,
+   * or pass the filter you read from it.
    */
   readonly subjectFilter: SubjectFilter;
 }
@@ -347,27 +358,64 @@ async function resolveResource(
 /**
  * What the guard does when a route made no ownership decision it should have.
  *
- * Throws outside production, so the gap lands as a **failing test** and a broken
- * dev request — the loudest signal available at the moment the route is being
- * written. Logs in production, because turning a forgotten annotation into an
- * outage for every caller of that route is a worse trade than a leak that is
- * already narrowed by `canRead` on the detail read; the log line is what an
- * operator greps for.
+ * **Refuses under test, logs everywhere else** — including development, which is
+ * a deliberate reversal of the obvious "everything but production refuses".
  *
- * A fork that would rather refuse flips this to `'refuse'`. It is a constant and
- * not an environment variable on purpose: which way this goes is a property of
- * the product, decided once by whoever owns the fork, not a per-deploy dial that
- * can differ between staging and production and hide the difference.
+ * The reason is what the canonical fork migration actually looks like. The
+ * documented one-line override is
+ * `{ ...DEFAULT_AUTHORIZATION_POLICY, canAdminister: isOrgAdmin }`, and under it
+ * an org admin passes `canAdminister` while the *retained* default
+ * `subjectScope` answers `{ userId }`. Every one of the 262 `withAdminAuth`
+ * handlers then owes a declaration **at once**. Refusing in development would
+ * mean a fork's entire admin console 500s the first time they boot after
+ * upgrading — from following the recipe correctly. The same blast radius is
+ * reachable transiently: a fork's `subjectScope` that throws falls back to
+ * `SAFE_MODE_POLICY`'s `{ userId }`, so one flaky membership lookup would take
+ * the console down on top of the original fault.
+ *
+ * A failing test is what the contract asks for and it is the better instrument
+ * anyway: the fork's suite enumerates the routes, one per failure, in a list
+ * they can work through — instead of a running app that stops working.
+ *
+ * A fork that wants development to refuse too flips this constant. It is a
+ * constant and not an environment variable on purpose: which way this goes is a
+ * property of the product, decided once by whoever owns the fork, not a
+ * per-deploy dial that can differ between staging and production and hide the
+ * difference.
+ *
+ * Written as "development or production ⇒ log" rather than "test ⇒ refuse"
+ * because `env.NODE_ENV` is **undefined** under happy-dom: `lib/env.ts` sees
+ * `typeof window !== 'undefined'` and validates only the client schema, which
+ * does not carry `NODE_ENV`. Keying on `=== 'test'` would silently turn the
+ * check off for every DOM-environment test in the suite.
  *
  * **What `'refuse'` looks like on a mutating route, so it is not a surprise:**
  * the check can only run after the handler, because whether the handler
  * consulted the filter is not knowable before it does. So a `POST` that writes
  * and then turns out to have no ownership declaration returns 500 **with the
- * write committed**. That is a misconfigured route reporting itself in
- * development, not a rollback, and the fix is the one line the error names —
- * but do not read the 500 as "nothing happened".
+ * write committed**. That is a misconfigured route reporting itself under test,
+ * not a rollback — do not read the 500 as "nothing happened".
  */
-const OWNERSHIP_GAP_ACTION: 'refuse' | 'log' = env.NODE_ENV === 'production' ? 'log' : 'refuse';
+const OWNERSHIP_GAP_ACTION: 'refuse' | 'log' =
+  env.NODE_ENV === 'development' || env.NODE_ENV === 'production' ? 'log' : 'refuse';
+
+/**
+ * Route+guard pairs already reported in this process, so the `'log'` branch says
+ * it once instead of once per request.
+ *
+ * A fork mid-migration has every un-annotated route reporting on every request;
+ * without this the signal is buried in its own volume, which is the failure the
+ * `'unattributed'` arm in `lib/auth/authorization.ts` already logs-once-per-kind
+ * to avoid. The `'refuse'` branch is not deduplicated — it throws, so it cannot
+ * be missed, and suppressing the second occurrence would make a test's second
+ * assertion depend on its first.
+ */
+const reportedOwnershipGaps = new Set<string>();
+
+/** Clear the once-per-process report memory. Tests only. */
+export function __resetOwnershipReportsForTests(): void {
+  reportedOwnershipGaps.clear();
+}
 
 /**
  * Raised when a route reached the end of a request without deciding whose rows
@@ -442,6 +490,7 @@ function reportOwnershipGap(options: {
   guard: 'withAuth' | 'withAdminAuth';
   path: string | undefined;
   ownership: RouteOwnership | undefined;
+  declaredResource: boolean;
   responseCarriedRows: boolean;
   filter: SubjectFilter;
   filterRead: boolean;
@@ -452,20 +501,63 @@ function reportOwnershipGap(options: {
   if (!options.responseCarriedRows) return;
 
   const declared = options.ownership?.decidedBy;
-  if (declared === 'resource' || declared === 'self' || declared === 'nothing') return;
-  if (declared === 'policy' && options.filterRead) return;
 
-  const message =
-    declared === 'policy'
-      ? `${options.guard}: this route declares ownership { decidedBy: 'policy' } but never read session.subjectFilter, so the policy did not narrow anything it did.`
-      : `${options.guard}: this route made no ownership decision for a caller the policy narrows to their own rows. Declare an \`ownership\` on the route — 'policy' (and read session.subjectFilter), or 'resource' / 'self' / 'nothing' with a reason.`;
+  // A switch over the union rather than a chain of early returns, and the
+  // difference is not style. Each arm states its OWN requirement, and adding a
+  // `decidedBy` value without stating one stops compiling — `complaint` would be
+  // `undefined`, which `string | null` does not admit. Two review rounds found
+  // one missing condition each on the chain version (`'resource'` declared with
+  // no resolver; the shape below), because a chain has no place that has to be
+  // updated when the union grows. This does.
+  let complaint: string | null;
+  switch (declared) {
+    case undefined:
+      complaint = `${options.guard}: this route made no ownership decision for a caller the policy narrows to their own rows. Declare an \`ownership\` — 'policy' (and read session.subjectFilter), or 'resource' / 'self' / 'nothing' with a reason.`;
+      break;
+    case 'policy':
+      // A 2xx that short-circuits before building its query — `if (!ids.length)
+      // return successResponse({ items: [] })` — lands here honestly, having
+      // answered nobody's query. There is no way to tell it apart from a route
+      // that forgot, so it is reported and the remedy is one line: read the
+      // filter before the early return.
+      complaint = options.filterRead
+        ? null
+        : `${options.guard}: this route declares ownership { decidedBy: 'policy' } but never read session.subjectFilter, so the policy did not narrow anything it did. If the handler returned early without building its query, read the filter before that return.`;
+      break;
+    case 'resource':
+      // The arm whose entire meaning is "the resolver decided". With no
+      // resolver, `canRead` was asked about `{ kind: 'nothing' }` — which the
+      // default policy always permits — so no policy decision about any row ever
+      // happened, and the declaration is exempting a route that reads whatever
+      // it likes. A dropped or renamed `resource` key while copying the
+      // `app/api/v1/users/[id]` recipe is exactly how that arrives.
+      complaint = options.declaredResource
+        ? null
+        : `${options.guard}: this route declares ownership { decidedBy: 'resource' } but supplies no \`resource\` resolver, so the policy was asked about nothing and permitted it. Add the resolver, or declare the ownership this route actually has.`;
+      break;
+    case 'self':
+    case 'nothing':
+      complaint = null;
+      break;
+  }
+
+  if (complaint === null) return;
+
+  // Say it once per route per process on the log branch. A fork mid-migration
+  // has every un-annotated route reporting on every request, and the signal does
+  // not survive its own volume.
+  const key = `${options.guard} ${options.path ?? '(unknown)'} ${declared ?? '(none)'}`;
+  if (OWNERSHIP_GAP_ACTION === 'log') {
+    if (reportedOwnershipGaps.has(key)) return;
+    reportedOwnershipGaps.add(key);
+  }
 
   // `undefined` in the error slot, context in `meta`: the signature is
   // `error(message, error?, meta?)`, so passing this object second would
   // JSON-stringify it into `entry.error.message` under `name: 'UnknownError'`
   // and leave `entry.meta` empty — the fields an operator filters on would not
-  // be fields. That matters most in production, which is the branch that logs
-  // instead of refusing.
+  // be fields. That matters most on the log branch, which is every environment
+  // but test.
   logger.error('authorization: a route made no ownership decision', undefined, {
     path: options.path,
     guard: options.guard,
@@ -473,11 +565,31 @@ function reportOwnershipGap(options: {
     userId: options.principal.userId,
     credential: options.principal.credential,
     action: OWNERSHIP_GAP_ACTION,
-    fix: message,
+    fix: complaint,
   });
 
   if (OWNERSHIP_GAP_ACTION === 'refuse') {
-    throw new OwnershipDecisionMissingError(message);
+    throw new OwnershipDecisionMissingError(complaint);
+  }
+}
+
+/**
+ * Warn at route-definition time about a declaration that cannot be true.
+ *
+ * Boot-time rather than per-request, matching the `scope` warning above: this is
+ * a property of how the route is written, so it surfaces even if nobody calls
+ * the endpoint. The request-time check reports it too — this is the earlier of
+ * the two, not a replacement.
+ */
+function warnOnContradictoryOwnership(
+  guard: 'withAuth' | 'withAdminAuth',
+  options: { ownership?: RouteOwnership; resource?: unknown } | undefined
+): void {
+  if (options?.ownership?.decidedBy === 'resource' && options.resource === undefined) {
+    logger.warn(`${guard}: ownership says 'resource' but the route declares no resource resolver`, {
+      because: options.ownership.because,
+      fix: "Add the `resource` resolver, or declare the ownership this route actually has. Without a resolver the policy is asked about `{ kind: 'nothing' }`, which it permits.",
+    });
   }
 }
 
@@ -547,6 +659,14 @@ export function withAuth(
       declared: listValidApiKeyScopes(),
     });
   }
+
+  // The same shape, for the same reason: a contradiction knowable without a
+  // request, so it is said at boot rather than waiting for traffic.
+  // `{ decidedBy: 'resource' }` means "the resolver decided"; with no resolver
+  // `canRead` is asked about `{ kind: 'nothing' }`, which the default policy
+  // always permits — so nothing decided anything. A dropped or renamed
+  // `resource` key while copying the users/[id] recipe is how it arrives.
+  warnOnContradictoryOwnership('withAuth', options);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
@@ -625,6 +745,7 @@ export function withAuth(
         session,
         principal,
         ownership: options?.ownership,
+        declaredResource: options?.resource !== undefined,
       });
     } catch (error) {
       return handleAPIError(error);
@@ -654,19 +775,30 @@ async function runHandler(args: {
   session: AuthSession;
   principal: AuthorizationPrincipal;
   ownership: RouteOwnership | undefined;
+  declaredResource: boolean;
 }): Promise<Response> {
-  // Asked for every guarded request, and asked HERE rather than left to the
-  // handler, because the check below needs the answer whether or not the handler
-  // wants it. On the default policy this is a pure function of the role; a fork
-  // whose policy does a lookup pays one call per request and the handler reads
-  // the result instead of making a second one.
-  // Asked only when the answer can be used. The check below needs it when the
-  // route declared nothing, and the handler needs it when the route declared
-  // `'policy'`; on every other route — which is 284 of this tree's 285 guarded
-  // handlers — nobody reads it. A fork whose `subjectScope` does a membership
-  // lookup would otherwise pay a round-trip per request for a value that is
-  // discarded.
-  const filterIsUsable = args.ownership === undefined || args.ownership.decidedBy === 'policy';
+  // Asked only where the answer can be used: the check needs it when the route
+  // declared nothing, and the handler needs it when the route declared
+  // `'policy'`. Everything else skips it.
+  //
+  // Be clear about how much that saves, because the first version of this
+  // comment claimed the opposite. `ownership === undefined` is TRUE for all 262
+  // `withAdminAuth` handlers, so they still pay; what the skip covers is the 22
+  // routes that declare `'self'` or `'nothing'`. A fork stops paying on an admin
+  // route by annotating it — which is the same act that resolves the ownership
+  // question, so the two arrive together.
+  // The filter is needed unless the route's declaration settles the question on
+  // its own. `'self'` and `'nothing'` do. `'resource'` does so ONLY when a
+  // resolver actually exists — without one the declaration is a contradiction
+  // the check below has to be able to report, and it cannot report anything
+  // until it knows whether this caller is narrowed. Skipping the lookup there
+  // made the contradiction unreachable, which a test caught after both halves
+  // had been reviewed separately.
+  const declarationSettlesIt =
+    args.ownership !== undefined &&
+    args.ownership.decidedBy !== 'policy' &&
+    (args.ownership.decidedBy !== 'resource' || args.declaredResource);
+  const filterIsUsable = !declarationSettlesIt;
 
   // Copied, not handed straight over. This is the first time a policy's return
   // value reaches route code, and the policy is a fork's. A fork that caches or
@@ -691,6 +823,23 @@ async function runHandler(args: {
       // prevent it. Refusing is the only safe answer to "you did not ask for
       // this".
       if (!filterIsUsable) {
+        // Logged before it throws, and deliberately unlike OWNERSHIP_GAP_ACTION,
+        // which logs instead of refusing outside test. The asymmetry is the
+        // point: a missing annotation is a route that has not been migrated, and
+        // taking it down would be worse than logging. THIS is a handler asking
+        // for a boundary value it declared it does not use, and the only other
+        // answer available is `{}` — every subject — which it might then build a
+        // query from. There is no safe degraded reply, so it refuses in every
+        // environment, and the log is what names the route when it does.
+        logger.error(
+          'authorization: subjectFilter read on a route that did not ask for it',
+          undefined,
+          {
+            path: args.request.nextUrl?.pathname,
+            guard: args.guard,
+            declared: args.ownership?.decidedBy ?? '(none)',
+          }
+        );
         throw new Error(
           `${args.guard}: session.subjectFilter was read on a route that declared ownership { decidedBy: '${args.ownership?.decidedBy ?? 'unknown'}' }, so it was never computed. A handler that needs the policy's filter must declare { decidedBy: 'policy' }.`
         );
@@ -722,6 +871,7 @@ async function runHandler(args: {
     guard: args.guard,
     path: args.request.nextUrl?.pathname,
     ownership: args.ownership,
+    declaredResource: args.declaredResource,
     // A 4xx/5xx answered nobody's query, so it cannot have answered it too
     // widely — and gating on it is what stops the check firing on the early
     // `return createRateLimitResponse(...)` that 38 guarded routes here open
@@ -789,6 +939,8 @@ export function withAdminAuth(
   handler: (...args: any[]) => Response | Promise<Response>,
   options?: WithAdminAuthOptions
 ) {
+  warnOnContradictoryOwnership('withAdminAuth', options);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
     try {
@@ -863,6 +1015,7 @@ export function withAdminAuth(
         session,
         principal,
         ownership: options?.ownership,
+        declaredResource: options?.resource !== undefined,
       });
     } catch (error) {
       return handleAPIError(error);

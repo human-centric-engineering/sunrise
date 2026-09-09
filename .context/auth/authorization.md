@@ -251,7 +251,17 @@ owner-scope marker #367 asked for. Four ways to satisfy it:
 asks `subjectScope(principal)` when the answer can be used; `{}` means this
 caller may see every subject, so there is nothing to forget and nothing to
 declare. `{ userId }` means there is, and a route that declared none of the four
-is reported — a 500 in development and test, a `logger.error` in production.
+is reported — a **failing test**, and a `logger.error` said once per route
+everywhere else, development included.
+
+Development logs rather than refusing because of what the canonical fork
+migration looks like: the documented one-line
+`{ ...DEFAULT_AUTHORIZATION_POLICY, canAdminister: isOrgAdmin }` leaves the
+default `subjectScope`, so an org admin is narrowed and **all 262
+`withAdminAuth` handlers owe a declaration at once**. Refusing in development
+would take a fork's whole admin console down the first time they booted after
+upgrading, for following the recipe. The failing-test list is the better
+instrument anyway: it enumerates the routes instead of withdrawing the app.
 
 **It is also silent on a response that carried no rows.** A handler returning
 4xx — a rate-limit 429, a validation 400, a 404 — answered nobody's query, so it

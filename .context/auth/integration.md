@@ -276,9 +276,9 @@ may also run.
 The guard only asks for a declaration when `subjectScope` narrows the actual
 caller, so on a stock install every `withAdminAuth` route is exempt (a platform
 admin sees every subject) and every `withAuth` route is not (a member sees their
-own). A route that owed a declaration and gave none refuses in development and
-test, and logs in production — but never on a response that carried no rows, so
-an early `return createRateLimitResponse(...)` is safe.
+own). A route that owed a declaration and gave none fails its **test**, and logs
+once per route in every other environment — but never on a response that carried
+no rows, so an early `return createRateLimitResponse(...)` is safe.
 
 The full guide is [`.context/auth/authorization.md`](./authorization.md) — the
 three scope inputs, the owner-scoped list recipe, and an explicit list of what

@@ -216,6 +216,47 @@ describe('the four ways to satisfy the obligation', () => {
     expect(ownershipReports()).toHaveLength(0);
   });
 
+  it("warns at route-definition time about 'resource' with no resolver", () => {
+    // Said at boot, not per request, because it is a property of how the route
+    // is written — the same shape as the `scope` warning above it. This fires
+    // even if nobody ever calls the endpoint.
+    withAuth(() => ok(), {
+      ownership: { decidedBy: 'resource', because: 'Returns only the row the resolver named.' },
+    });
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "withAuth: ownership says 'resource' but the route declares no resource resolver",
+      expect.objectContaining({ fix: expect.stringContaining('Add the `resource` resolver') })
+    );
+  });
+
+  it('does not warn when the resolver is there', () => {
+    // The control. A warning that fires on the correct shape too would be noise
+    // a fork learns to ignore, and then it catches nothing.
+    withAuth(() => ok(), {
+      resource: () => ({ kind: 'widget', id: 'w1', ownerId: 'user_1' }),
+      ownership: { decidedBy: 'resource', because: 'Returns only that widget.' },
+    });
+
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+  });
+
+  it("reports 'resource' declared with no resolver — the arm's whole meaning is gone", async () => {
+    // A dropped or renamed `resource` key while copying the users/[id] recipe.
+    // The declaration says "the resolver decided"; with no resolver `canRead`
+    // was asked about `{ kind: 'nothing' }`, which the default policy always
+    // permits — so no decision about any row was ever made, and the declaration
+    // would be exempting a route that reads whatever it likes.
+    const response = await withAuth(() => ok(), {
+      ownership: { decidedBy: 'resource', because: 'Returns only the row the resolver named.' },
+    })(request());
+
+    expect(response.status).toBe(500);
+    expect(ownershipReports()).toHaveLength(1);
+    const context = vi.mocked(logger.error).mock.calls[0]?.[2] as { fix: string };
+    expect(context.fix).toContain('supplies no `resource` resolver');
+  });
+
   it('does NOT let a bare resolver exempt the handler', async () => {
     // A resolver used to exempt the whole route automatically, on the grounds
     // that `canRead` had already decided. It decided about ONE ROW — it says

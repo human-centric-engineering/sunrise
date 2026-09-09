@@ -162,10 +162,14 @@ release process.
   `withAuth` handlers now declare `'self'` or `'nothing'` with a reason (a member
   is narrowed to their own rows under the default policy); the 262
   `withAdminAuth` handlers declare nothing, because a platform admin is
-  unrestricted. A fork's routes will refuse until they declare one — that is the
-  signal, and the error message names the fix. Production logs rather than
-  refuses: a forgotten annotation should not be an outage, and
-  `OWNERSHIP_GAP_ACTION` is a constant a fork can harden to refuse everywhere.
+  unrestricted. A fork's route tests will fail until they declare one — that is
+  the signal, and the error message names the fix. Only the test environment
+  refuses; development and production log once per route. That reversal is
+  deliberate: the documented one-line `canAdminister` override leaves the default
+  `subjectScope`, so an org admin is narrowed and all 262 admin routes owe a
+  declaration at the same moment — a refusing dev server would mean an admin
+  console that does not start, for following the recipe. `OWNERSHIP_GAP_ACTION`
+  is a constant a fork can harden to refuse everywhere.
 
   It cannot see past the route: a handler declaring `'nothing'` that calls a
   library function reading the whole table is honest and still leaky. Closing
