@@ -380,8 +380,11 @@ release process.
   to.
 
   The posture matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun` —
-  the models an experiment reads from and writes to, all owner-scoped already —
-  rather than `AiAgent` and `AiWorkflow`, which stay admin-global. It is spelled
+  the models an experiment reads from and writes to, which every route under
+  `orchestration/evaluations` already scopes to their owner — rather than
+  `AiAgent` and `AiWorkflow`, which stay admin-global. `AiExperiment` also gains
+  an `@@index([createdBy, createdAt])` to serve the newly filtered and sorted
+  list, matching the owner-column indexes those sibling models carry. It is spelled
   as a `createdBy` clause rather than through `subjectScope`, because the default
   policy widens that to every subject for a platform admin: routing this family
   through the seam would have been the admin-global choice, not the owner-scoped

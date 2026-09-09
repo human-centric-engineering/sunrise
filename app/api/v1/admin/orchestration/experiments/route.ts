@@ -10,9 +10,15 @@
  * the posture `run` / `compare` / `verdicts` already had and the list and the
  * detail routes did not (#741). An experiment is personal work product, not
  * shared configuration: it reads an `AiDataset` and writes `AiEvaluationRun` /
- * `AiEvaluationSession` rows, and every route over those three models is
- * owner-scoped the same way. A wider parent would list experiments whose
- * results the viewer cannot open.
+ * `AiEvaluationSession` rows, and every route under `orchestration/evaluations`
+ * scopes those three to their owner — on `userId`, not `createdBy`. A wider
+ * parent would list experiments whose results the viewer cannot open.
+ *
+ * One read of those models sits outside that family and is NOT owner-scoped:
+ * `agents/compare/route.ts` counts `AiEvaluationSession` per agent across the
+ * install. Correct today (a count, to a platform admin), and named here because
+ * a roster of this family assembled by reading the `evaluations/` directory
+ * misses it. Filed as #753.
  */
 
 import type { Prisma } from '@prisma/client';

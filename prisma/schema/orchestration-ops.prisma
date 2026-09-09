@@ -131,6 +131,10 @@ model AiExperiment {
   @@index([agentId])
   @@index([status])
   @@index([datasetId])
+  // The list route filters on createdBy and sorts createdAt desc — see #741.
+  // Compound so one index serves both halves, matching AiDataset and
+  // AiEvaluationRun, whose owner-scoped lists index [userId, updatedAt].
+  @@index([createdBy, createdAt])
   @@map("ai_experiment")
 }
 

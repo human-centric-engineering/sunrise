@@ -529,10 +529,21 @@ yet](#what-is-not-behind-the-seam-yet), which is the same fact from the other en
 
 Which of the two to take was decided by what an experiment composes with, not by
 which mechanism was newer: it reads an `AiDataset` and writes `AiEvaluationRun`
-and `AiEvaluationSession` rows, and **every** route over those three models is
-owner-scoped by hand already. Admin-global would have listed experiments whose
-results the viewer cannot open. `AiAgent` and `AiWorkflow` — shared configuration
-rather than personal work product — stay admin-global, which is the next section.
+and `AiEvaluationSession` rows, and every route **under `orchestration/evaluations`**
+scopes those three by hand already — on `userId`. Admin-global would have listed
+experiments whose results the viewer cannot open. `AiAgent` and `AiWorkflow` —
+shared configuration rather than personal work product — stay admin-global, which
+is the next section.
+
+**That qualifier is load-bearing here too**, for the same reason it is in the
+webhooks section above: `agents/compare/route.ts` counts `AiEvaluationSession`
+per agent with no owner clause, install-wide. Correct today — it is a count, and
+every caller is a platform admin — and a leak under a customer tier, where it
+would report how many evaluations other tenants have run against a shared agent.
+This paragraph first read "every route over those three models", and that was
+false because of exactly that one file, two directories away ([#753]). Twice on
+one page now: a roster read off a directory misses the call site filed somewhere
+else.
 
 ### The families that record `createdBy` and never read it
 
@@ -601,3 +612,4 @@ Keys do not bind an org yet, so "an org-bound key can never carry `admin`" is
 
 [#739]: https://github.com/human-centric-engineering/sunrise/issues/739
 [#741]: https://github.com/human-centric-engineering/sunrise/issues/741
+[#753]: https://github.com/human-centric-engineering/sunrise/issues/753

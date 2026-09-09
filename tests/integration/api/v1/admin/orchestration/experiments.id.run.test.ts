@@ -14,6 +14,7 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
+import { ownerScopedFindFirst } from '@/tests/helpers/owner-scoped-prisma';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -394,13 +395,20 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
   describe('Cross-user isolation', () => {
     it('returns 404 when the experiment belongs to a different admin (existence does not leak)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      // Outer findFirst returns null because the where clause includes
-      // createdBy = caller.id, and the foreign experiment doesn't match.
-      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(null);
+      // Owner-aware fake rather than `mockResolvedValue(null)`: a mock that
+      // returns null unconditionally gives a 404 whether or not the route's
+      // `where` carries `createdBy`, so the assertion below could not fail.
+      // Here the route has to ASK for its own rows to be handed one.
+      vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+        ownerScopedFindFirst([makeExperiment({ createdBy: 'someone-else' })]) as never
+      );
 
       const response = await POST(makePostRequest(), makeContext());
 
       expect(response.status).toBe(404);
+      expect(vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]).toMatchObject({
+        where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
+      });
       // Crucially, no inserts on either path. Pre-fix, the caller's
       // userId would have ended up on AiEvaluationRun rows hash-pinned
       // to the foreign dataset, letting them exfiltrate its content
