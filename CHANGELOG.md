@@ -159,8 +159,10 @@ release process.
   single-tenant install a route reading every row is right — which is why this is
   a guard check and not a lint rule or a build-time scan.
 
-  `AuthenticatedSession` gains `subjectFilter`, the policy's answer for this
-  caller, so a handler never rebuilds a principal to ask for it.
+  `AuthenticatedSession` gains `subjectFilter`, so a handler never rebuilds a
+  principal to ask for it. On a route that declared `'policy'` it is the policy's
+  answer for this caller; on one that did not, reading it logs and yields
+  `{ userId }` — the narrowest value, never `{}`.
 
   **Breaking for forks, in their test suite.** All 23 of Sunrise's own `withAuth`
   handlers now declare one — 22 `'self'` or `'nothing'` with a reason, and
