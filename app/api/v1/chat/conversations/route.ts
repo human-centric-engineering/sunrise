@@ -17,36 +17,46 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { consumerConversationsQuerySchema } from '@/lib/validations/orchestration';
 
-export const GET = withAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const { page, limit, agentSlug } = validateQueryParams(
-    searchParams,
-    consumerConversationsQuerySchema
-  );
-  const skip = (page - 1) * limit;
+export const GET = withAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const { page, limit, agentSlug } = validateQueryParams(
+      searchParams,
+      consumerConversationsQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiConversationWhereInput = {
-    userId: session.user.id,
-    agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
-  };
-  if (agentSlug) where.agent = { ...(where.agent as object), slug: agentSlug };
+    const where: Prisma.AiConversationWhereInput = {
+      userId: session.user.id,
+      agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
+    };
+    if (agentSlug) where.agent = { ...(where.agent as object), slug: agentSlug };
 
-  const [conversations, total] = await Promise.all([
-    prisma.aiConversation.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      skip,
-      take: limit,
-      include: {
-        agent: { select: { id: true, name: true, slug: true } },
-        _count: { select: { messages: true } },
-      },
-    }),
-    prisma.aiConversation.count({ where }),
-  ]);
+    const [conversations, total] = await Promise.all([
+      prisma.aiConversation.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          agent: { select: { id: true, name: true, slug: true } },
+          _count: { select: { messages: true } },
+        },
+      }),
+      prisma.aiConversation.count({ where }),
+    ]);
 
-  log.info('Consumer conversations listed', { count: conversations.length, total });
+    log.info('Consumer conversations listed', { count: conversations.length, total });
 
-  return paginatedResponse(conversations, { page, limit, total });
-});
+    return paginatedResponse(conversations, { page, limit, total });
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "`where.userId` is the caller's own id, so this list can only ever return the caller's conversations.",
+    },
+  }
+);

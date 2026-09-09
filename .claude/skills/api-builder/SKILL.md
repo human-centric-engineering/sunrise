@@ -40,10 +40,15 @@ Use the helpers in `@/lib/api/responses`:
 ```typescript
 import { withAuth, withAdminAuth } from '@/lib/auth/guards';
 
-// Any authenticated user
-export const GET = withAuth(async (request, session) => {
-  return successResponse({ user: session.user });
-});
+// Any authenticated user. `ownership` says how the route decides WHOSE rows it
+// may read — required once the policy narrows the caller, which it does for any
+// non-admin on a stock install. See RouteOwnership in lib/auth/guards.ts.
+export const GET = withAuth(
+  async (request, session) => {
+    return successResponse({ user: session.user });
+  },
+  { ownership: { decidedBy: 'self', because: 'Returns only the caller’s own session user.' } }
+);
 
 // Admin only
 export const POST = withAdminAuth(async (request, session) => {
@@ -57,6 +62,12 @@ The wrappers:
 - Throw `UnauthorizedError` if no session
 - Throw `ForbiddenError` if `withAdminAuth` and the role isn't admin
 - Route all thrown errors through `handleAPIError(error)` automatically
+- Report a route that read owned rows without deciding whose — pick the
+  `ownership` that is true of the handler you wrote:
+  `{ decidedBy: 'policy' }` and read `session.subjectFilter` for a list the
+  policy scopes, `'resource'` when a `resource` resolver named the only row the
+  handler touches, `'self'` when keyed on `session.user.id`, `'nothing'` when the
+  rows have no owner. All but `'policy'` need a `because`.
 
 Use `getServerSession()` / `requireAuth()` / `requireRole()` from `@/lib/auth/utils` only **outside** route handlers (server components, background jobs, scripts). Inside a route, always use the wrappers.
 

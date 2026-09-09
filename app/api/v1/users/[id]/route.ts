@@ -86,6 +86,14 @@ export const GET = withAuth<{ id: string }>(
     return successResponse(user);
   },
   {
+    // The policy decided about the one row the resolver names, and this handler
+    // reads nothing else — no sibling list, no second query. That second clause
+    // is the part the guard cannot check, which is why it is stated rather than
+    // inferred from the presence of a resolver.
+    ownership: {
+      decidedBy: 'resource',
+      because: 'Returns only the user row the resolver named; the handler runs no other query.',
+    },
     // The subject of this read is the user being read — a user row's owner is
     // that user. Deliberately derived from the URL segment rather than from a
     // `findUnique`: the resolver runs before the authorization decision and so

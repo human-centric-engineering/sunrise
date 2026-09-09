@@ -52,6 +52,21 @@ import {
   type ReadTarget,
 } from '@/lib/auth/authorization';
 
+/**
+ * Most fixtures in this file wrap a stub handler to test *authentication*, and a
+ * bare `withAuth(handler)` is now a violation for a member session: the default
+ * policy narrows a non-admin to their own rows, and a route that never says how
+ * it decides whose rows it reads is what `RouteOwnership` exists to catch. So
+ * these say it — and saying "this test is not about ownership" out loud is more
+ * honest than an admin session quietly sidestepping the check.
+ */
+const NOT_ABOUT_OWNERSHIP = {
+  ownership: {
+    decidedBy: 'nothing',
+    because: 'Fixture: this test is about the guard, not about whose rows the route reads.',
+  },
+} as const;
+
 // No `AuthSession` return annotation on purpose: `auth.api.getSession`'s mocked
 // type infers `role` as REQUIRED, and annotating the helper widens it back to
 // optional, which the mock then rejects. The literal's own inferred type is what
@@ -127,7 +142,7 @@ describe('withAuth asks the policy about the subject', () => {
     registerAuthorizationPolicy(recordingPolicy(true, [], read));
     vi.mocked(auth.api.getSession).mockResolvedValue(session());
 
-    const response = await withAuth(() => ok())(request());
+    const response = await withAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
     expect(read).toEqual([
@@ -216,7 +231,7 @@ describe('withAuth asks the policy about the subject', () => {
     await withAuth(() => ok(), {
       resource: () => ({ kind: 'report', id: 'r1', orgId: 'org_7' }),
     })(request());
-    await withAuth(() => ok())(request());
+    await withAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
 
     // The union names the state instead of leaving it to be inferred from a
     // null: the ownerless row is 'unattributed', the resolver-less route is
@@ -253,7 +268,7 @@ describe('withAuth asks the policy about the subject', () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(session());
     const handler = vi.fn(() => ok());
 
-    const response = await withAuth(handler)(request());
+    const response = await withAuth(handler, NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
@@ -292,7 +307,7 @@ describe('withAuth asks the policy about the subject', () => {
       rateLimitRpm: null,
     });
 
-    await withAuth(() => ok())(request());
+    await withAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
 
     expect(read[0].viewer).toEqual({
       userId: 'key_owner',
@@ -309,7 +324,7 @@ describe('withAdminAuth asks the policy whether to admit', () => {
     registerAuthorizationPolicy(recordingPolicy(true, administered, []));
     vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
 
-    const response = await withAdminAuth(() => ok())(request());
+    const response = await withAdminAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
     expect(administered).toEqual([
@@ -331,7 +346,10 @@ describe('withAdminAuth asks the policy whether to admit', () => {
     });
     vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', 'org_admin'));
 
-    await expect(withAdminAuth(() => ok())(request())).resolves.toHaveProperty('status', 200);
+    await expect(withAdminAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request())).resolves.toHaveProperty(
+      'status',
+      200
+    );
   });
 
   it('refuses a platform admin when the policy says so', async () => {
@@ -342,7 +360,7 @@ describe('withAdminAuth asks the policy whether to admit', () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
     const handler = vi.fn(() => ok());
 
-    const response = await withAdminAuth(handler)(request());
+    const response = await withAdminAuth(handler, NOT_ABOUT_OWNERSHIP)(request());
     const body = (await response.json()) as { error: { message: string } };
 
     expect(response.status).toBe(403);
@@ -376,7 +394,7 @@ describe('withAdminAuth asks the policy whether to admit', () => {
       rateLimitRpm: null,
     });
 
-    const response = await withAdminAuth(() => ok())(request());
+    const response = await withAdminAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
     const body = (await response.json()) as { error: { message: string } };
 
     expect(response.status).toBe(403);
@@ -398,7 +416,7 @@ describe('withAdminAuth asks the policy whether to admit', () => {
       rateLimitRpm: null,
     });
 
-    const response = await withAdminAuth(() => ok())(request());
+    const response = await withAdminAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
     const body = (await response.json()) as { error: { message: string } };
 
     expect(response.status).toBe(403);
@@ -440,7 +458,7 @@ describe('the handler receives the principal the guard actually decided with', (
     await withAuth((_request, s) => {
       seen = s.principal;
       return ok();
-    })(request());
+    }, NOT_ABOUT_OWNERSHIP)(request());
 
     expect(seen).toEqual({
       userId: 'admin_1',
@@ -467,7 +485,7 @@ describe('the handler receives the principal the guard actually decided with', (
     await withAuth((_request, s) => {
       seen = s.principal;
       return ok();
-    })(request());
+    }, NOT_ABOUT_OWNERSHIP)(request());
 
     expect(seen?.credential).toBe('api-key');
     expect(seen?.scopes).toEqual(['chat']);
@@ -483,7 +501,7 @@ describe('the handler receives the principal the guard actually decided with', (
     await withAdminAuth((_request, s) => {
       seen = s.principal;
       return ok();
-    })(request());
+    }, NOT_ABOUT_OWNERSHIP)(request());
 
     // Both of these before the identity check, because `toBe` on two
     // `undefined`s passes: if the guard ever denies BEFORE asking the policy,
@@ -505,7 +523,7 @@ describe('the handler receives the principal the guard actually decided with', (
     const response = await withAuth((_request, s) => {
       seen = s.principal;
       return ok();
-    })(request());
+    }, NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
     expect(seen?.userId).toBe('user_1');
@@ -519,7 +537,7 @@ describe('the handler receives the principal the guard actually decided with', (
     vi.mocked(auth.api.getSession).mockResolvedValue(session());
 
     const legacy = (_request: NextRequest, s: AuthSession) => Response.json({ id: s.user.id });
-    const response = await withAuth(legacy)(request());
+    const response = await withAuth(legacy, NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
   });

@@ -136,7 +136,7 @@ covered by the version contract.
   - fork schema tier (`prisma/schema/app.prisma` — ships empty; the reserved `/app` and `/framework` tiers generally, see [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#the-appplatform-model))
 
 - **Documented public APIs** —
-  - `withAuth()`, `withAdminAuth()` and the `AuthenticatedSession` they hand a handler, from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
+  - `withAuth()`, `withAdminAuth()`, their options (`resource`, `scope`, `ownership`/`RouteOwnership`) and the `AuthenticatedSession` they hand a handler — `principal` and `subjectFilter` — from [`lib/auth/guards.ts`](./lib/auth/guards.ts)
   - `successResponse()`, `errorResponse()` from `lib/api/responses.ts`
   - `serverFetch()` from `lib/api/server-fetch.ts`
   - `logger` from `lib/logging/`

@@ -15,23 +15,33 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 
-export const GET = withAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
 
-  const agents = await prisma.aiAgent.findMany({
-    where: {
-      isActive: true,
-      visibility: 'public',
-    },
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      description: true,
-    },
-    orderBy: { name: 'asc' },
-  });
+    const agents = await prisma.aiAgent.findMany({
+      where: {
+        isActive: true,
+        visibility: 'public',
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+      },
+      orderBy: { name: 'asc' },
+    });
 
-  log.info('Consumer agents listed', { count: agents.length, userId: session.user.id });
-  return successResponse({ agents });
-});
+    log.info('Consumer agents listed', { count: agents.length, userId: session.user.id });
+    return successResponse({ agents });
+  },
+  {
+    // Ownership: this route makes no ownership decision — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        "The consumer agent catalogue is public by construction — `visibility: 'public'` decides what is listed, and an agent row belongs to no caller.",
+    },
+  }
+);

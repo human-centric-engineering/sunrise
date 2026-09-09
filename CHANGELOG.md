@@ -23,9 +23,15 @@ release process.
   `canAdminister(viewer, resource, scope)`, `canRead(viewer, target, scope)` and
   `subjectScope(viewer, scope)`,
   the last returning a Prisma `where` fragment so that a fork's list query and
-  its single-row read cannot disagree — **nothing in core calls `subjectScope`
-  yet**, since there is no core list endpoint scoped by subject; it ships now
-  because it is the half of the contract that keeps `canRead` honest. The policy
+  its single-row read cannot disagree. No core list endpoint _narrows_ by
+  `subjectScope`, since a single-tenant install has one class of admin and
+  nothing to narrow to. Both guards call it all the same — to supply
+  `session.subjectFilter` and to decide whether a route owed an ownership
+  decision (see the `ownership` entry below) — but **not on every request**: only
+  where the answer can be used, which is a route that declared no `ownership` or
+  one that declared `{ decidedBy: 'policy' }`. All 23 core `withAuth` routes
+  declare something else, so they skip it; the 262 `withAdminAuth` routes declare
+  nothing, so they do not. The policy
   is consulted in four places, and which face each asks matters more than the
   count: `withAdminAuth`, `app/admin/layout.tsx` and the maintenance-mode bypass
   in `components/maintenance-wrapper.tsx` ask `canAdminister`, while `withAuth`
@@ -128,6 +134,53 @@ release process.
   Self-read, admin-reads-other and non-admin-reads-other are otherwise
   unchanged. `PATCH` and `DELETE` are untouched — they are `withAdminAuth`, whose
   decision was already behind the seam.
+
+- **`ownership` on `withAuth` / `withAdminAuth` — a route now declares how it
+  decides whose rows it may read** (`RouteOwnership` in `lib/auth/guards.ts`).
+  This is the declarative owner-scope marker #367 asked for, and the half
+  `subjectScope` did not supply: the predicate had one name and one
+  implementation, so owner scoping could not be _inconsistent_, but nothing made
+  forgetting to call it fail. Four ways to satisfy it — `{ decidedBy: 'policy' }`
+  (the handler reads the new `session.subjectFilter`, **and the guard checks that
+  it did**), or `{ decidedBy: 'resource' | 'self' | 'nothing', because }` with a
+  required sentence. A `resource` resolver does not count on its own: `canRead`
+  decided about one row, and says nothing about a list the same handler may also
+  run.
+
+  The check is silent on a response that carried no rows, so an early
+  `return createRateLimitResponse(...)` — the shape 38 guarded routes here open
+  with — is safe. A streamed body is the shape it gets wrong: read the filter
+  before handing back the stream.
+
+  **The obligation only exists when the caller is actually narrowed.** Each guard
+  asks `subjectScope(principal)` when the answer can be used; `{}` means this caller may see
+  every subject, so there is nothing to forget. That runtime fact is the only
+  thing separating a leak from correct behaviour on this axis — in a
+  single-tenant install a route reading every row is right — which is why this is
+  a guard check and not a lint rule or a build-time scan.
+
+  `AuthenticatedSession` gains `subjectFilter`, so a handler never rebuilds a
+  principal to ask for it. On a route that declared `'policy'` it is the policy's
+  answer for this caller; on one that did not, reading it logs and yields
+  `{ userId }` — the narrowest value, never `{}`.
+
+  **Breaking for forks, in their test suite.** All 23 of Sunrise's own `withAuth`
+  handlers now declare one — 22 `'self'` or `'nothing'` with a reason, and
+  `GET /api/v1/users/[id]` `'resource'` — because a member is narrowed to their
+  own rows under the default policy. The 262 `withAdminAuth` handlers declare
+  nothing, because a platform admin is unrestricted. A fork's route tests will fail until they declare one — that is
+  the signal, and the error message names the fix. Only the test environment
+  refuses; development and production log once per route. That reversal is
+  deliberate: the documented one-line `canAdminister` override leaves the default
+  `subjectScope`, so an org admin is narrowed and all 262 admin routes owe a
+  declaration at the same moment — a refusing dev server would mean an admin
+  console that does not start, for following the recipe. `OWNERSHIP_GAP_ACTION`
+  is a constant a fork can harden to refuse everywhere.
+
+  It cannot see past the route: a handler declaring `'nothing'` that calls a
+  library function reading the whole table is honest and still leaky. Closing
+  that needs a control at the query, which is the tenancy chokepoint in
+  `lib/db/client.ts`.
 
 - `registerProviderEligibility(resolver)` in
   `lib/orchestration/llm/provider-eligibility.ts`, registered from the new
