@@ -462,7 +462,16 @@ GET /api/v1/users/:id
 
 **Authentication**: Required (ADMIN role or requesting own profile)
 
-**Authorization**: Users can view their own profile. Admins can view any user profile.
+**Authorization**: Decided by the authorization policy, not by this handler — it
+is the one core route that declares a `resource` resolver, so the read goes
+through `canRead`. Sunrise's default answers what it always did: you may read
+your own profile, and platform staff may read anyone's. A fork that registers a
+narrowing policy narrows this endpoint, and safe mode refuses the cross-user
+read outright. See [`.context/auth/authorization.md`](../auth/authorization.md).
+
+**API keys are judged by scope, not by their owner's role.** A key needs the
+`admin` scope to read another user's profile; the fact that the key belongs to
+an admin is not enough.
 
 **Response** (200 OK):
 
@@ -485,7 +494,10 @@ GET /api/v1/users/:id
 **Error Responses**:
 
 - **401 Unauthorized**: No valid session
-- **403 Forbidden**: User is not ADMIN and not requesting own profile
+- **403 Forbidden** (`Access denied`): the policy refused the read — by default,
+  not ADMIN and not your own profile. A malformed id from a non-admin also lands
+  here rather than on a 400, because the policy decides before the handler
+  validates.
 - **404 Not Found**: User ID does not exist
 
 ## Update User (Admin)

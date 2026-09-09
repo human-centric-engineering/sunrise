@@ -104,14 +104,20 @@ release process.
   platform role.** It is the first core route to declare a `resource` resolver,
   so a fork's narrowing `canRead` narrows it and safe mode refuses it — neither
   of which a decision written inline in the handler could ever do. Three
-  behaviour changes, all narrowing:
+  behaviour changes:
 
   - **An API key is judged by its scopes, not its owner's role.** The inline
     check read `session.user.role`, which for a key-authenticated caller is the
     **key owner's** role, and `withAuth` accepts a key of any scope — so a
     `chat`-scoped key belonging to an admin could read every user's profile
     through this route. It now needs the `admin` scope, matching every other
-    surface.
+    surface. That cuts both ways and the second direction is **permissive**: the
+    inline check re-read the owner's role from the database on every request, so
+    demoting them stopped their key immediately, whereas an `admin`-scoped key is
+    now sufficient here even after its owner is demoted. That is already true of
+    the 257 `/api/v1/admin` routes and of `GET /api/v1/users`, so this route was
+    the inconsistent one rather than the safe one — but nothing revokes a key on
+    demotion, which is issue #746.
   - The 403's message moves from `Forbidden` to `Access denied`, because the
     refusal comes from the guard. Status `403` and code `FORBIDDEN` are
     unchanged.
