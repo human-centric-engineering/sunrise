@@ -90,8 +90,13 @@ describe('in production, a missing ownership decision', () => {
 
     expect(response.status).toBe(200);
     expect(handler).toHaveBeenCalled();
+    // Third argument, not second: `error(message, error?, meta?)`. Passed
+    // second, this object would be JSON-stringified into `entry.error.message`
+    // under `name: 'UnknownError'` and `entry.meta` would be empty — so the
+    // fields this branch exists to give an operator would not be fields.
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
       'authorization: a route made no ownership decision',
+      undefined,
       expect.objectContaining({ action: 'log', path: '/api/v1/widgets' })
     );
   });
@@ -103,7 +108,7 @@ describe('in production, a missing ownership decision', () => {
     // disabled feature in #633.
     await withAuth(() => Response.json({ success: true }))(request());
 
-    const context = vi.mocked(logger.error).mock.calls[0]?.[1] as { action: string };
+    const context = vi.mocked(logger.error).mock.calls[0]?.[2] as { action: string };
     expect(context.action).toBe('log');
   });
 });

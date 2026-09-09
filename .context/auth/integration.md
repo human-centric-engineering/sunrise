@@ -267,14 +267,18 @@ the compiler enforces that rather than a docblock — see
 
 Both guards also take an `ownership`, and it is the one option a new route
 usually has to think about. It says how the route decides **whose** rows it may
-read: a `resource` resolver (the policy decided), `{ decidedBy: 'policy' }` (the
-handler reads `session.subjectFilter`, and the guard checks that it did), or
-`{ decidedBy: 'self' | 'nothing', because }` with a sentence saying why. The
-guard only asks for one when `subjectScope` narrows the actual caller — so on a
-stock install every `withAdminAuth` route is exempt (a platform admin sees every
-subject) and every `withAuth` route is not (a member sees their own). A route
-that owed a declaration and gave none refuses in development and test, and logs
-in production.
+read: `{ decidedBy: 'policy' }` (the handler reads `session.subjectFilter`, and
+the guard checks that it did), or `{ decidedBy: 'resource' | 'self' | 'nothing',
+because }` with a sentence saying why. A `resource` resolver does **not** count
+on its own — `canRead` decided about one row, not about a list the same handler
+may also run.
+
+The guard only asks for a declaration when `subjectScope` narrows the actual
+caller, so on a stock install every `withAdminAuth` route is exempt (a platform
+admin sees every subject) and every `withAuth` route is not (a member sees their
+own). A route that owed a declaration and gave none refuses in development and
+test, and logs in production — but never on a response that carried no rows, so
+an early `return createRateLimitResponse(...)` is safe.
 
 The full guide is [`.context/auth/authorization.md`](./authorization.md) — the
 three scope inputs, the owner-scoped list recipe, and an explicit list of what

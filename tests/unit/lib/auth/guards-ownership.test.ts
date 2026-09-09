@@ -112,7 +112,7 @@ describe('a route that decides nothing, for a caller the policy narrows', () => 
     expect(ownershipReports()).toHaveLength(1);
     // The fix belongs in the log line, not only in a doc: whoever reads this at
     // 2am is reading the log, not `.context/auth/authorization.md`.
-    expect(vi.mocked(logger.error).mock.calls[0]?.[1]).toMatchObject({
+    expect(vi.mocked(logger.error).mock.calls[0]?.[2]).toMatchObject({
       path: '/api/v1/widgets',
       guard: 'withAuth',
       declared: '(none)',
@@ -150,6 +150,39 @@ describe('a route that decides nothing, for a caller the policy narrows', () => 
   });
 });
 
+describe('a response that carried no rows', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+  });
+
+  it("does not report a 'policy' route that returned early", async () => {
+    // The trap this closes. The recipe pairs `decidedBy: 'policy'` with the
+    // handler shape core itself uses, and 38 guarded routes in this tree open
+    // with `if (!rateLimit.success) return createRateLimitResponse(rateLimit)`.
+    // A rate-limited request never reaches the `session.subjectFilter` read, so
+    // without this the check would turn a correct 429 into a 500 — breaking the
+    // routes that were written correctly, on exactly the requests an attacker
+    // can provoke.
+    const response = await withAuth(
+      () => Response.json({ error: 'Too many requests' }, { status: 429 }),
+      { ownership: { decidedBy: 'policy' } }
+    )(request());
+
+    expect(response.status).toBe(429);
+    expect(ownershipReports()).toHaveLength(0);
+  });
+
+  it('still reports the same route when it answers 200', async () => {
+    // The control. Without it, "no report on a 429" is indistinguishable from
+    // "the check stopped working", and the fix for the trap would have quietly
+    // disabled the feature.
+    const response = await withAuth(() => ok(), { ownership: { decidedBy: 'policy' } })(request());
+
+    expect(response.status).toBe(500);
+    expect(ownershipReports()).toHaveLength(1);
+  });
+});
+
 describe('the four ways to satisfy the obligation', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
@@ -173,16 +206,28 @@ describe('the four ways to satisfy the obligation', () => {
     expect(ownershipReports()).toHaveLength(0);
   });
 
-  it('accepts a declared resource, because the policy already decided', async () => {
-    // A resolver means `canRead` ran in the guard against a named row. Asking
-    // the route to ALSO declare an ownership would be asking it to restate a
-    // decision the guard can see it made.
+  it("accepts 'resource' — the policy decided about the row the resolver named", async () => {
     const response = await withAuth(() => ok(), {
       resource: () => ({ kind: 'widget', id: 'w1', ownerId: 'user_1' }),
+      ownership: { decidedBy: 'resource', because: 'Returns only that widget.' },
     })(request());
 
     expect(response.status).toBe(200);
     expect(ownershipReports()).toHaveLength(0);
+  });
+
+  it('does NOT let a bare resolver exempt the handler', async () => {
+    // A resolver used to exempt the whole route automatically, on the grounds
+    // that `canRead` had already decided. It decided about ONE ROW — it says
+    // nothing about a list of siblings the same handler goes on to run, and that
+    // made it the one escape hatch needing no sentence and producing no log
+    // line. Now it has to be claimed like the others.
+    const response = await withAuth(() => ok(), {
+      resource: () => ({ kind: 'widget', id: 'w1', ownerId: 'user_1' }),
+    })(request());
+
+    expect(response.status).toBe(500);
+    expect(ownershipReports()).toHaveLength(1);
   });
 
   it("accepts 'policy' when the handler actually reads the filter", async () => {
@@ -212,7 +257,7 @@ describe('the four ways to satisfy the obligation', () => {
     expect(response.status).toBe(500);
     expect(ownershipReports()).toHaveLength(1);
 
-    const context = vi.mocked(logger.error).mock.calls[0]?.[1] as { declared: string; fix: string };
+    const context = vi.mocked(logger.error).mock.calls[0]?.[2] as { declared: string; fix: string };
     expect(context.declared).toBe('policy');
     expect(context.fix).toContain('never read session.subjectFilter');
   });
@@ -249,7 +294,7 @@ describe('withAdminAuth: inert on this install, obligated on a fork that narrows
 
     expect(response.status).toBe(500);
     expect(ownershipReports()).toHaveLength(1);
-    expect(vi.mocked(logger.error).mock.calls[0]?.[1]).toMatchObject({
+    expect(vi.mocked(logger.error).mock.calls[0]?.[2]).toMatchObject({
       guard: 'withAdminAuth',
       userId: 'org_admin_9',
     });
@@ -309,6 +354,44 @@ describe('the filter the guard hands over', () => {
 
     expect(response.status).toBe(200);
     expect(scopeCalls).toEqual(['user_1']);
+  });
+
+  it('is not computed for a route that said it does not need it', async () => {
+    // The filter is only asked for when the check needs it (nothing declared) or
+    // the handler does (`'policy'`). On the other 284 of this tree's 285 guarded
+    // routes nobody reads it, and a fork whose `subjectScope` does a membership
+    // lookup should not pay a round-trip per request for a discarded value.
+    const scopeCalls: string[] = [];
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      subjectScope: (viewer) => {
+        scopeCalls.push(viewer.userId);
+        return Promise.resolve({ userId: viewer.userId });
+      },
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+
+    await withAuth(() => ok(), {
+      ownership: { decidedBy: 'self', because: 'Reads only session.user.id.' },
+    })(request());
+
+    expect(scopeCalls).toEqual([]);
+  });
+
+  it('THROWS rather than answering "every subject" when it was not computed', async () => {
+    // The dangerous way to implement the optimisation above is to hand back
+    // `{}` — which is the WIDEST value this type can express. A `'self'` route
+    // that read it would be told "every subject" and could build an unnarrowed
+    // query out of it: the exact leak, delivered by the mechanism meant to
+    // prevent it. Refusing is the only safe answer to "you did not ask for this".
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+
+    const response = await withAuth(
+      (_request, s: AuthenticatedSession) => Response.json({ filter: s.subjectFilter }),
+      { ownership: { decidedBy: 'self', because: 'Reads only session.user.id.' } }
+    )(request());
+
+    expect(response.status).toBe(500);
   });
 
   it('is a copy, so a handler cannot contaminate the next request through it', async () => {

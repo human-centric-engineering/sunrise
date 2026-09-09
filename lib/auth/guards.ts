@@ -140,17 +140,24 @@ export interface AuthenticatedSession extends AuthSession {
  *   `'policy'` and must not be migrated to it: `subjectScope` widens to `{}` for
  *   a platform admin, which on a self endpoint would hand an admin everyone
  *   else's rows.
+ * - `'resource'` — the policy decided in the guard, about the row this route's
+ *   `resource` resolver named, **and the handler reads nothing else**. That
+ *   second clause is the whole content of the claim and the guard cannot see it:
+ *   `canRead` was asked about one row, and says nothing about a list of siblings
+ *   the same handler goes on to run. Declaring a resolver used to exempt the
+ *   whole handler automatically, which made it the one escape hatch that needed
+ *   no sentence and produced no log line.
  * - `'nothing'` — the route makes no ownership decision, deliberately.
  *
- * Both of the last two carry a `because`, and it is required rather than
+ * All but `'policy'` carry a `because`, and it is required rather than
  * encouraged: the value of the marker is the sentence, not the enum. A reviewer
  * reading `{ decidedBy: 'nothing' }` alone learns only that somebody typed it.
- *
- * A route that declares a `resource` resolver needs none of this — the policy
- * decided, in the guard, before the handler ran.
+ * `'policy'` is the exception because it is the one the guard can check for
+ * itself — the handler either read the filter or it did not.
  */
 export type RouteOwnership =
   | { decidedBy: 'policy' }
+  | { decidedBy: 'resource'; because: string }
   | { decidedBy: 'self'; because: string }
   | { decidedBy: 'nothing'; because: string };
 
@@ -389,47 +396,77 @@ export class OwnershipDecisionMissingError extends Error {
  * correct. `subjectScope(principal) === {}` says this caller may see every
  * subject, so there is no boundary to forget. `{ userId }` says there is.
  *
- * Four ways to satisfy it, in the order they are cheapest to be sure about:
+ * **It is also silent on a response that carried no rows.** A handler that
+ * returns 4xx — a rate-limit 429, a validation 400, a 404 — answered nobody's
+ * query, so it cannot have answered it too widely. Without this the documented
+ * `'policy'` recipe would be a trap: the shape core itself uses opens with
+ * `if (!rateLimit.success) return createRateLimitResponse(rateLimit)`, and 38
+ * guarded routes in this tree return early like that. Under a narrowing policy
+ * every rate-limited request on such a route would have become a 500 in
+ * development and a log line per request in production — the check breaking the
+ * routes that were written correctly.
  *
- * 1. The route declared a `resource` — the policy already decided, in the guard.
- * 2. `ownership: { decidedBy: 'policy' }` **and** the handler read
+ * Note the asymmetry it removes: a handler that *throws* was never checked
+ * (`runHandler` only reports on a returned response), so before this a route
+ * that refused by throwing was exempt while the same route refusing by
+ * returning was not. Nothing in the design intended that difference.
+ *
+ * Four ways to satisfy it:
+ *
+ * 1. `ownership: { decidedBy: 'policy' }` **and** the handler read
  *    `session.subjectFilter`. Declaring without reading is reported separately,
  *    with its own message, because it is a different mistake: the author knew
  *    the rule and the query still went out unnarrowed.
+ * 2. `ownership: { decidedBy: 'resource', … }` — the policy decided about the
+ *    row the resolver named, and the handler reads nothing else.
  * 3. `ownership: { decidedBy: 'self', … }` — keyed on the caller's own id.
  * 4. `ownership: { decidedBy: 'nothing', … }` — no ownership decision, said out
  *    loud.
  *
- * What it cannot see: a library function called by a satisfied route. A route
- * that declares `'nothing'` and calls an exporter which reads every row is
- * exactly as leaky as before — but the declaration is now in its source, which
- * is the difference between an unreviewed omission and a reviewed decision. The
- * query-level control that would close that gap is the tenancy chokepoint in
- * `lib/db/client.ts`; see `.context/auth/authorization.md`.
+ * Two things it cannot see, and neither is a reason to trust it less than it
+ * deserves:
+ *
+ * - **A library function called by a satisfied route.** A route that declares
+ *   `'nothing'` and calls an exporter reading every row is exactly as leaky as
+ *   before — but the declaration is now in its source, which is the difference
+ *   between an unreviewed omission and a reviewed decision. The query-level
+ *   control that would close it is the tenancy chokepoint in `lib/db/client.ts`.
+ * - **A read that happens after the response is returned**, which is what a
+ *   streamed body is. Read `session.subjectFilter` before you hand back the
+ *   stream — you need it to build the query anyway — or the route will be
+ *   reported despite being correct.
+ *
+ * See `.context/auth/authorization.md`.
  */
 function reportOwnershipGap(options: {
   guard: 'withAuth' | 'withAdminAuth';
   path: string | undefined;
   ownership: RouteOwnership | undefined;
-  declaredResource: boolean;
+  responseCarriedRows: boolean;
   filter: SubjectFilter;
   filterRead: boolean;
   principal: AuthorizationPrincipal;
 }): void {
   // Not narrowed ⇒ every subject is this caller's to see ⇒ nothing to forget.
   if (options.filter.userId === undefined) return;
-  if (options.declaredResource) return;
+  if (!options.responseCarriedRows) return;
 
   const declared = options.ownership?.decidedBy;
-  if (declared === 'self' || declared === 'nothing') return;
+  if (declared === 'resource' || declared === 'self' || declared === 'nothing') return;
   if (declared === 'policy' && options.filterRead) return;
 
   const message =
     declared === 'policy'
       ? `${options.guard}: this route declares ownership { decidedBy: 'policy' } but never read session.subjectFilter, so the policy did not narrow anything it did.`
-      : `${options.guard}: this route made no ownership decision for a caller the policy narrows to their own rows. Declare an \`ownership\` on the route — 'policy' (and read session.subjectFilter), 'self', or 'nothing' with a reason — or give it a \`resource\` resolver.`;
+      : `${options.guard}: this route made no ownership decision for a caller the policy narrows to their own rows. Declare an \`ownership\` on the route — 'policy' (and read session.subjectFilter), or 'resource' / 'self' / 'nothing' with a reason.`;
 
-  logger.error('authorization: a route made no ownership decision', {
+  // `undefined` in the error slot, context in `meta`: the signature is
+  // `error(message, error?, meta?)`, so passing this object second would
+  // JSON-stringify it into `entry.error.message` under `name: 'UnknownError'`
+  // and leave `entry.meta` empty — the fields an operator filters on would not
+  // be fields. That matters most in production, which is the branch that logs
+  // instead of refusing.
+  logger.error('authorization: a route made no ownership decision', undefined, {
     path: options.path,
     guard: options.guard,
     declared: declared ?? '(none)',
@@ -588,7 +625,6 @@ export function withAuth(
         session,
         principal,
         ownership: options?.ownership,
-        declaredResource: options?.resource !== undefined,
       });
     } catch (error) {
       return handleAPIError(error);
@@ -618,13 +654,20 @@ async function runHandler(args: {
   session: AuthSession;
   principal: AuthorizationPrincipal;
   ownership: RouteOwnership | undefined;
-  declaredResource: boolean;
 }): Promise<Response> {
   // Asked for every guarded request, and asked HERE rather than left to the
   // handler, because the check below needs the answer whether or not the handler
   // wants it. On the default policy this is a pure function of the role; a fork
   // whose policy does a lookup pays one call per request and the handler reads
   // the result instead of making a second one.
+  // Asked only when the answer can be used. The check below needs it when the
+  // route declared nothing, and the handler needs it when the route declared
+  // `'policy'`; on every other route — which is 284 of this tree's 285 guarded
+  // handlers — nobody reads it. A fork whose `subjectScope` does a membership
+  // lookup would otherwise pay a round-trip per request for a value that is
+  // discarded.
+  const filterIsUsable = args.ownership === undefined || args.ownership.decidedBy === 'policy';
+
   // Copied, not handed straight over. This is the first time a policy's return
   // value reaches route code, and the policy is a fork's. A fork that caches or
   // memoises its filter would otherwise be handing every request a reference to
@@ -632,7 +675,7 @@ async function runHandler(args: {
   // would contaminate the next request's scope. One spread per request removes
   // the whole class in both directions, and — unlike `Object.freeze` — it does
   // it without reaching into an object this module does not own.
-  const filter: SubjectFilter = { ...(await subjectScope(args.principal)) };
+  const filter: SubjectFilter = filterIsUsable ? { ...(await subjectScope(args.principal)) } : {};
   let filterRead = false;
 
   // One principal, built by the guard and handed on — never rebuilt by the
@@ -641,6 +684,17 @@ async function runHandler(args: {
     ...args.session,
     principal: args.principal,
     get subjectFilter() {
+      // Throws rather than answering `{}`, which is the WIDEST value this type
+      // can express. A route that declared `'self'` and then read the filter
+      // would otherwise be handed "every subject" and could build an unnarrowed
+      // query out of it — the exact leak, delivered by the mechanism meant to
+      // prevent it. Refusing is the only safe answer to "you did not ask for
+      // this".
+      if (!filterIsUsable) {
+        throw new Error(
+          `${args.guard}: session.subjectFilter was read on a route that declared ownership { decidedBy: '${args.ownership?.decidedBy ?? 'unknown'}' }, so it was never computed. A handler that needs the policy's filter must declare { decidedBy: 'policy' }.`
+        );
+      }
       filterRead = true;
       return filter;
     },
@@ -668,7 +722,11 @@ async function runHandler(args: {
     guard: args.guard,
     path: args.request.nextUrl?.pathname,
     ownership: args.ownership,
-    declaredResource: args.declaredResource,
+    // A 4xx/5xx answered nobody's query, so it cannot have answered it too
+    // widely — and gating on it is what stops the check firing on the early
+    // `return createRateLimitResponse(...)` that 38 guarded routes here open
+    // with.
+    responseCarriedRows: response.ok,
     filter,
     filterRead,
     principal: args.principal,
@@ -805,7 +863,6 @@ export function withAdminAuth(
         session,
         principal,
         ownership: options?.ownership,
-        declaredResource: options?.resource !== undefined,
       });
     } catch (error) {
       return handleAPIError(error);

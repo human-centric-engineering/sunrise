@@ -62,11 +62,14 @@ Read that table before assuming an override is doing what you meant.
 **Replacing `canAdminister` alone changes nothing about a `withAuth` route**,
 and replacing `canRead` alone changes nothing about the 262 admin handlers.
 
-`subjectScope` is asked by **both** guards, on every guarded request — that is
-where `session.subjectFilter` comes from, and how the guard knows whether the
-route owed an ownership decision (see [the recipe](#every-route-declares-how-it-decides)).
-It is a third call site rather than a fifth chokepoint: it supplies an answer
-and reports an omission, it does not admit or refuse a request.
+`subjectScope` is asked by **both** guards — that is where
+`session.subjectFilter` comes from, and how the guard knows whether the route
+owed an ownership decision (see
+[the recipe](#every-route-declares-how-it-decides)). Not on every request: only
+where the answer can be used, which is a route that declared nothing (the check
+needs it) or `{ decidedBy: 'policy' }` (the handler does). It is a third call
+site rather than a fifth chokepoint — it supplies an answer and reports an
+omission, it does not admit or refuse a request.
 
 The last row carries a trap. `canRead` runs on every `withAuth` request whether
 or not the route named a resource, so **a policy that denies `'nothing'` takes
@@ -208,9 +211,8 @@ that costs data rather than access: overriding `canAdminister` alone leaves
 surface wide.
 
 **No core list endpoint is scoped by subject.** `subjectScope` is now called by
-both guards on every guarded request — that is how `session.subjectFilter` and
-the ownership check below exist — but no Sunrise list route _narrows_ by its
-answer, because a single-tenant install has one class of admin and nothing to
+both guards — that is how `session.subjectFilter` and the ownership check below
+exist — but no Sunrise list route _narrows_ by its answer, because a single-tenant install has one class of admin and nothing to
 narrow to. The predicate ships for the fork whose `AND`-it-into-the-query code
 needs it, and because shipping `canRead` without the thing that keeps it honest
 is how the two faces diverge.
@@ -238,18 +240,29 @@ a record its own list does not contain.
 `withAuth` and `withAdminAuth` take an `ownership`, and it is the declarative
 owner-scope marker #367 asked for. Four ways to satisfy it:
 
-| Declaration                         | Means                                                                            |
-| ----------------------------------- | -------------------------------------------------------------------------------- |
-| a `resource` resolver               | the policy already decided, in the guard, before the handler ran                 |
-| `{ decidedBy: 'policy' }`           | the handler reads `session.subjectFilter` — **and the guard checks that it did** |
-| `{ decidedBy: 'self', because }`    | keyed on the caller's own id and nothing else                                    |
-| `{ decidedBy: 'nothing', because }` | no ownership decision, deliberately                                              |
+| Declaration                          | Means                                                                                              |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `{ decidedBy: 'policy' }`            | the handler reads `session.subjectFilter` — **and the guard checks that it did**                   |
+| `{ decidedBy: 'resource', because }` | the policy decided about the row the `resource` resolver named, and the handler reads nothing else |
+| `{ decidedBy: 'self', because }`     | keyed on the caller's own id and nothing else                                                      |
+| `{ decidedBy: 'nothing', because }`  | no ownership decision, deliberately                                                                |
 
 **The obligation only exists when the caller is actually narrowed.** The guard
-asks `subjectScope(principal)` once per request; `{}` means this caller may see
-every subject, so there is nothing to forget and nothing to declare. `{ userId }`
-means there is, and a route that declared none of the four is reported — a 500
-in development and test, a `logger.error` in production.
+asks `subjectScope(principal)` when the answer can be used; `{}` means this
+caller may see every subject, so there is nothing to forget and nothing to
+declare. `{ userId }` means there is, and a route that declared none of the four
+is reported — a 500 in development and test, a `logger.error` in production.
+
+**It is also silent on a response that carried no rows.** A handler returning
+4xx — a rate-limit 429, a validation 400, a 404 — answered nobody's query, so it
+cannot have answered it too widely. This matters because the recipe below pairs
+`'policy'` with the handler shape core itself uses, and 38 guarded routes here
+open with `if (!rateLimit.success) return createRateLimitResponse(rateLimit)`.
+Without the gate, every rate-limited request on such a route would be a 500.
+
+The one shape it gets wrong is a **streamed body**, because the read happens
+after the response is returned. Read `session.subjectFilter` before you hand
+back the stream — you need it to build the query anyway.
 
 That is why Sunrise's 262 `withAdminAuth` handlers carry no declaration and its
 23 `withAuth` handlers do: under the default policy a platform admin is
@@ -257,9 +270,22 @@ unrestricted and a member is not. On a fork whose org admin **is** narrowed, the
 admin routes start asking too, one route at a time, in that fork's own test
 suite.
 
-`because` is required rather than encouraged, on both of the last two. The value
-of the marker is the sentence; a reviewer reading `{ decidedBy: 'nothing' }`
-alone learns only that somebody typed it.
+`because` is required on all but `'policy'`, and required rather than
+encouraged. The value of the marker is the sentence; a reviewer reading
+`{ decidedBy: 'nothing' }` alone learns only that somebody typed it. `'policy'`
+is the exception because it is the one the guard can check for itself.
+
+**A `resource` resolver is not a declaration on its own.** It used to exempt the
+whole handler automatically, and that was too generous: `canRead` was asked about
+one row, and says nothing about a list of siblings the same handler goes on to
+run. It was also the only escape hatch that needed no sentence and produced no
+log line. Declare `{ decidedBy: 'resource', because }` and let the sentence carry
+the "and nothing else" — `app/api/v1/users/[id]` (GET) is the worked example.
+
+**Reading `session.subjectFilter` on a route that declared anything but
+`'policy'` throws.** The filter is only computed where it can be used, and the
+alternative to throwing is handing back `{}` — the widest value the type can
+express — to a route that would then build an unnarrowed query out of it.
 
 **`'self'` is not `'policy'` with extra steps, and must not be migrated to it.**
 `subjectScope` widens to `{}` for a platform admin — correct for an admin list,

@@ -35,10 +35,12 @@
  *   {@link ReadTarget} for the three occasions that cost.
  * - {@link AuthorizationPolicy.subjectScope} — the same predicate as a Prisma
  *   `where` fragment: *which* subjects may this principal see? The list face.
- *   **Both guards call it on every guarded request**, and hand the answer to the
- *   handler as `session.subjectFilter`; the guards also use it to decide whether
- *   the route owed an ownership decision at all (`RouteOwnership` in
- *   `lib/auth/guards.ts`). No core list endpoint *narrows* by it, because a
+ *   **Both guards call it**, and hand the answer to the handler as
+ *   `session.subjectFilter`; the guards also use it to decide whether the route
+ *   owed an ownership decision at all (`RouteOwnership` in
+ *   `lib/auth/guards.ts`). Not on every request — only where the answer can be
+ *   used, which is a route that declared no `ownership` or one that declared
+ *   `{ decidedBy: 'policy' }`. No core list endpoint *narrows* by it, because a
  *   single-tenant install has one class of admin and nothing to narrow to — it
  *   ships for the fork whose `AND`-it-into-the-query code needs it, and because
  *   shipping it later would mean shipping `canRead` without the thing that keeps

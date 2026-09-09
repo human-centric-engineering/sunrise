@@ -65,8 +65,9 @@ The wrappers:
 - Report a route that read owned rows without deciding whose — pick the
   `ownership` that is true of the handler you wrote:
   `{ decidedBy: 'policy' }` and read `session.subjectFilter` for a list the
-  policy scopes, `'self'` when keyed on `session.user.id`, `'nothing'` when the
-  rows have no owner. The last two need a `because`.
+  policy scopes, `'resource'` when a `resource` resolver named the only row the
+  handler touches, `'self'` when keyed on `session.user.id`, `'nothing'` when the
+  rows have no owner. All but `'policy'` need a `because`.
 
 Use `getServerSession()` / `requireAuth()` / `requireRole()` from `@/lib/auth/utils` only **outside** route handlers (server components, background jobs, scripts). Inside a route, always use the wrappers.
 

@@ -136,13 +136,20 @@ release process.
   This is the declarative owner-scope marker #367 asked for, and the half
   `subjectScope` did not supply: the predicate had one name and one
   implementation, so owner scoping could not be _inconsistent_, but nothing made
-  forgetting to call it fail. Four ways to satisfy it — a `resource` resolver
-  (the policy already decided), `{ decidedBy: 'policy' }` (the handler reads the
-  new `session.subjectFilter`, **and the guard checks that it did**), or
-  `{ decidedBy: 'self' | 'nothing', because }` with a required sentence.
+  forgetting to call it fail. Four ways to satisfy it — `{ decidedBy: 'policy' }`
+  (the handler reads the new `session.subjectFilter`, **and the guard checks that
+  it did**), or `{ decidedBy: 'resource' | 'self' | 'nothing', because }` with a
+  required sentence. A `resource` resolver does not count on its own: `canRead`
+  decided about one row, and says nothing about a list the same handler may also
+  run.
+
+  The check is silent on a response that carried no rows, so an early
+  `return createRateLimitResponse(...)` — the shape 38 guarded routes here open
+  with — is safe. A streamed body is the shape it gets wrong: read the filter
+  before handing back the stream.
 
   **The obligation only exists when the caller is actually narrowed.** Each guard
-  asks `subjectScope(principal)` once per request; `{}` means this caller may see
+  asks `subjectScope(principal)` when the answer can be used; `{}` means this caller may see
   every subject, so there is nothing to forget. That runtime fact is the only
   thing separating a leak from correct behaviour on this axis — in a
   single-tenant install a route reading every row is right — which is why this is
