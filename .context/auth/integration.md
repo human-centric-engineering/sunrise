@@ -265,6 +265,17 @@ user) or `'subject'` (a user id owns it). A policy must answer all three, and
 the compiler enforces that rather than a docblock — see
 `tests/unit/lib/auth/authorization-exhaustiveness.test.ts`.
 
+Both guards also take an `ownership`, and it is the one option a new route
+usually has to think about. It says how the route decides **whose** rows it may
+read: a `resource` resolver (the policy decided), `{ decidedBy: 'policy' }` (the
+handler reads `session.subjectFilter`, and the guard checks that it did), or
+`{ decidedBy: 'self' | 'nothing', because }` with a sentence saying why. The
+guard only asks for one when `subjectScope` narrows the actual caller — so on a
+stock install every `withAdminAuth` route is exempt (a platform admin sees every
+subject) and every `withAuth` route is not (a member sees their own). A route
+that owed a declaration and gave none refuses in development and test, and logs
+in production.
+
 The full guide is [`.context/auth/authorization.md`](./authorization.md) — the
 three scope inputs, the owner-scoped list recipe, and an explicit list of what
 is **not** behind the seam yet. `app/api/v1/users/[id]/route.ts` (GET) is the
@@ -278,13 +289,18 @@ import { withAuth } from '@/lib/auth/guards';
 import { successResponse } from '@/lib/api/responses';
 import { prisma } from '@/lib/db/client';
 
-export const GET = withAuth(async (request, session) => {
-  // session is guaranteed to be authenticated
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-  });
-  return successResponse(user);
-});
+export const GET = withAuth(
+  async (request, session) => {
+    // session is guaranteed to be authenticated
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+    });
+    return successResponse(user);
+  },
+  // Self-scoped by construction — NOT `'policy'`, which widens to every subject
+  // for a platform admin and would hand them somebody else's row here.
+  { ownership: { decidedBy: 'self', because: 'Reads only session.user.id.' } }
+);
 ```
 
 **Usage - requiring an API-key scope:**

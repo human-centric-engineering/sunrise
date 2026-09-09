@@ -115,6 +115,15 @@
  *  - **`subjectScope` returns `{}` for "everyone", not a wildcard.** No `userId`
  *    key means no narrowing, so widening later is deleting a key rather than
  *    editing every query that `AND`s the fragment in.
+ *  - **The day your policy narrows, your routes start being asked to declare
+ *    how they decide.** Both guards call `subjectScope` per request; when the
+ *    answer narrows a caller and the route declared no `ownership` and no
+ *    `resource`, the guard reports it — a 500 in development and test, a log
+ *    line in production. That is the migration surfacing route by route in your
+ *    own test suite instead of in a support ticket, and each fix is one line:
+ *    `ownership: { decidedBy: 'policy' }` and read `session.subjectFilter`, or
+ *    `'self'` / `'nothing'` with the sentence saying why. See `RouteOwnership`
+ *    in `lib/auth/guards.ts`.
  *  - **It runs on the request hot path** — every guarded API request and every
  *    render of the admin layout. Cache what you look up; do not query per call.
  *  - **Throwing denies, it never permits**, and is logged. A restriction that

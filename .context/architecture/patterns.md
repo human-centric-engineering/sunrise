@@ -364,18 +364,21 @@ import { createUserSchema } from '@/lib/validations/user';
 import { successResponse } from '@/lib/api/responses';
 import { prisma } from '@/lib/db/client';
 
-export const POST = withAuth(async (request, session) => {
-  const body = await request.json();
+export const POST = withAuth(
+  async (request, session) => {
+    const body = await request.json();
 
-  // Validate with Zod - ZodError automatically handled by guard
-  const validatedData = createUserSchema.parse(body);
+    // Validate with Zod - ZodError automatically handled by guard
+    const validatedData = createUserSchema.parse(body);
 
-  const user = await prisma.user.create({
-    data: validatedData,
-  });
+    const user = await prisma.user.create({
+      data: validatedData,
+    });
 
-  return successResponse(user);
-});
+    return successResponse(user);
+  },
+  { ownership: { decidedBy: 'nothing', because: 'Creates a row; reads nobody’s.' } }
+);
 ```
 
 The `handleAPIError` function (called automatically by guards) transforms Zod errors into proper API responses with field-level error details.

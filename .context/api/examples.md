@@ -271,15 +271,18 @@ import { withAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 
-export const GET = withAuth(async (_request, session) => {
-  // session is guaranteed valid - no need for null checks or try/catch
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { id: true, name: true, email: true, role: true },
-  });
+export const GET = withAuth(
+  async (_request, session) => {
+    // session is guaranteed valid - no need for null checks or try/catch
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true, name: true, email: true, role: true },
+    });
 
-  return successResponse(user);
-});
+    return successResponse(user);
+  },
+  { ownership: { decidedBy: 'self', because: 'Keyed on session.user.id.' } }
+);
 ```
 
 ### Admin-Only Route
@@ -328,17 +331,20 @@ import {
 } from '@/lib/api/validation';
 import { updateUserSchema } from '@/lib/validations/user';
 
-export const PATCH = withAuth(async (request, session) => {
-  // Validate request body with Zod schema
-  const body = await validateRequestBody(request, updateUserSchema);
+export const PATCH = withAuth(
+  async (request, session) => {
+    // Validate request body with Zod schema
+    const body = await validateRequestBody(request, updateUserSchema);
 
-  const user = await prisma.user.update({
-    where: { id: session.user.id },
-    data: body,
-  });
+    const user = await prisma.user.update({
+      where: { id: session.user.id },
+      data: body,
+    });
 
-  return successResponse(user);
-});
+    return successResponse(user);
+  },
+  { ownership: { decidedBy: 'self', because: 'Keyed on session.user.id.' } }
+);
 ```
 
 **Note:** Prefer `parsePaginationParams()` over manual `parseInt` for pagination. It handles defaults, bounds checking, and skip calculation.
@@ -393,17 +399,28 @@ import { withAuth } from '@/lib/auth/guards';
 import { paginatedResponse } from '@/lib/api/responses';
 import { parsePaginationParams } from '@/lib/api/validation';
 
-export const GET = withAuth(async (request, _session) => {
-  const { searchParams } = request.nextUrl;
-  const { page, limit, skip } = parsePaginationParams(searchParams);
+export const GET = withAuth(
+  async (request, session) => {
+    const { searchParams } = request.nextUrl;
+    const { page, limit, skip } = parsePaginationParams(searchParams);
 
-  const [users, total] = await Promise.all([
-    prisma.user.findMany({ skip, take: limit }),
-    prisma.user.count(),
-  ]);
+    // The policy's answer for this caller: `{}` for someone who may see every
+    // subject, `{ userId }` for someone who may not. Reading it is what
+    // `decidedBy: 'policy'` promises, and the guard checks that you did.
+    const filter = session.subjectFilter;
+    const where = filter.userId ? { id: filter.userId } : {};
 
-  return paginatedResponse(users, { page, limit, total });
-});
+    const [users, total] = await Promise.all([
+      // Same `where` on both. A count taken without it tells the caller how many
+      // rows exist that they cannot see.
+      prisma.user.findMany({ where, skip, take: limit }),
+      prisma.user.count({ where }),
+    ]);
+
+    return paginatedResponse(users, { page, limit, total });
+  },
+  { ownership: { decidedBy: 'policy' } }
+);
 ```
 
 ### Error Classes
@@ -459,20 +476,32 @@ const listUsersQuerySchema = z.object({
   sortBy: z.enum(['name', 'createdAt']).default('createdAt'),
 });
 
-export const GET = withAuth(async (request, _session) => {
-  const { searchParams } = request.nextUrl;
-  const { role, search, sortBy } = validateQueryParams(searchParams, listUsersQuerySchema);
+export const GET = withAuth(
+  async (request, session) => {
+    const { searchParams } = request.nextUrl;
+    const { role, search, sortBy } = validateQueryParams(searchParams, listUsersQuerySchema);
 
-  const users = await prisma.user.findMany({
-    where: {
-      ...(role && { role }),
-      ...(search && { name: { contains: search, mode: 'insensitive' } }),
-    },
-    orderBy: { [sortBy]: 'desc' },
-  });
+    const filter = session.subjectFilter;
 
-  return successResponse(users);
-});
+    const users = await prisma.user.findMany({
+      // AND, not spread. `{ ...ownerClause, ...queryFilters }` is last-wins, so
+      // a key built from a query parameter can silently delete the boundary.
+      where: {
+        AND: [
+          filter.userId ? { id: filter.userId } : {},
+          {
+            ...(role && { role }),
+            ...(search && { name: { contains: search, mode: 'insensitive' } }),
+          },
+        ],
+      },
+      orderBy: { [sortBy]: 'desc' },
+    });
+
+    return successResponse(users);
+  },
+  { ownership: { decidedBy: 'policy' } }
+);
 ```
 
 ## API Endpoint Constants

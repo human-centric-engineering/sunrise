@@ -61,7 +61,12 @@ count** — three ask `canAdminister`, one asks `canRead`:
 Read that table before assuming an override is doing what you meant.
 **Replacing `canAdminister` alone changes nothing about a `withAuth` route**,
 and replacing `canRead` alone changes nothing about the 262 admin handlers.
-`subjectScope` has no core call site at all.
+
+`subjectScope` is asked by **both** guards, on every guarded request — that is
+where `session.subjectFilter` comes from, and how the guard knows whether the
+route owed an ownership decision (see [the recipe](#every-route-declares-how-it-decides)).
+It is a third call site rather than a fifth chokepoint: it supplies an answer
+and reports an omission, it does not admit or refuse a request.
 
 The last row carries a trap. `canRead` runs on every `withAuth` request whether
 or not the route named a resource, so **a policy that denies `'nothing'` takes
@@ -202,17 +207,24 @@ that costs data rather than access: overriding `canAdminister` alone leaves
 `withAuth` routes wide, and overriding `canRead` alone leaves the admin read
 surface wide.
 
-**`subjectScope` has no core caller.** There is no list endpoint in Sunrise core
-scoped by subject. It ships because it is the half of the contract a fork's
-`AND`-it-into-the-query code needs, and because shipping `canRead` without the
-thing that keeps it honest is how the two faces diverge.
+**No core list endpoint is scoped by subject.** `subjectScope` is now called by
+both guards on every guarded request — that is how `session.subjectFilter` and
+the ownership check below exist — but no Sunrise list route _narrows_ by its
+answer, because a single-tenant install has one class of admin and nothing to
+narrow to. The predicate ships for the fork whose `AND`-it-into-the-query code
+needs it, and because shipping `canRead` without the thing that keeps it honest
+is how the two faces diverge.
 
-**There is no declarative owner-scope marker.** #367 asked for one. What ships is
-the _predicate_ (`subjectScope`) and a resolver on the detail read — not an
-annotation that makes a list endpoint owner-scoped. A new list route that forgets
-to spread the filter still leaks, exactly as one that forgets a `where` clause
-does. The recipe below is a convention, and the next section says plainly what
-that costs.
+**The marker cannot see past the route.** The `ownership` declaration below is
+about the handler; a route that declares `{ decidedBy: 'nothing' }` and calls a
+library function that reads every row is exactly as leaky as it was before. The
+standing example is `lib/orchestration/backup/exporter.ts:93`, reached by
+`GET /api/v1/admin/orchestration/backup/export`, which reads every webhook
+subscription's `url` and `emailAddress` with no owner filter. What changed is
+that the route now has to say so in its own source, which is the difference
+between an unreviewed omission and a reviewed decision. Closing it properly
+needs a control at the query, which is the tenancy chokepoint in
+`lib/db/client.ts` — see [the leak](#the-leak-stated-plainly).
 
 ---
 
@@ -221,61 +233,88 @@ that costs.
 The two faces are **one rule in two shapes**. Use both, or the detail page opens
 a record its own list does not contain.
 
+### Every route declares how it decides
+
+`withAuth` and `withAdminAuth` take an `ownership`, and it is the declarative
+owner-scope marker #367 asked for. Four ways to satisfy it:
+
+| Declaration                         | Means                                                                            |
+| ----------------------------------- | -------------------------------------------------------------------------------- |
+| a `resource` resolver               | the policy already decided, in the guard, before the handler ran                 |
+| `{ decidedBy: 'policy' }`           | the handler reads `session.subjectFilter` — **and the guard checks that it did** |
+| `{ decidedBy: 'self', because }`    | keyed on the caller's own id and nothing else                                    |
+| `{ decidedBy: 'nothing', because }` | no ownership decision, deliberately                                              |
+
+**The obligation only exists when the caller is actually narrowed.** The guard
+asks `subjectScope(principal)` once per request; `{}` means this caller may see
+every subject, so there is nothing to forget and nothing to declare. `{ userId }`
+means there is, and a route that declared none of the four is reported — a 500
+in development and test, a `logger.error` in production.
+
+That is why Sunrise's 262 `withAdminAuth` handlers carry no declaration and its
+23 `withAuth` handlers do: under the default policy a platform admin is
+unrestricted and a member is not. On a fork whose org admin **is** narrowed, the
+admin routes start asking too, one route at a time, in that fork's own test
+suite.
+
+`because` is required rather than encouraged, on both of the last two. The value
+of the marker is the sentence; a reviewer reading `{ decidedBy: 'nothing' }`
+alone learns only that somebody typed it.
+
+**`'self'` is not `'policy'` with extra steps, and must not be migrated to it.**
+`subjectScope` widens to `{}` for a platform admin — correct for an admin list,
+catastrophic on `users/me`, where it would hand an admin everyone else's row.
+A route that is self-scoped by construction stays keyed on `session.user.id`.
+
 ### The principal comes from the guard — never rebuild it
 
-`subjectScope` takes an `AuthorizationPrincipal`, and the guard hands you the
-one it used for its own decision:
+`session` is an `AuthenticatedSession`: `AuthSession`, plus the `principal` the
+guard decided with, plus `subjectFilter` — the policy's answer for this caller,
+already computed. There is nothing to construct.
 
-```ts
-export const GET = withAdminAuth(async (request, session) => {
-  const filter = await subjectScope(session.principal);
-  // …
-});
-```
-
-`session` is an `AuthenticatedSession` — `AuthSession` plus `principal`. That is
-the whole API; there is nothing to construct.
-
-**Do not rebuild it from `session.user`.** `administersEverything` branches on
-`credential` and `scopes`, and a handler cannot see either: the credential kind
-and an API key's scopes are known only inside the guard, and `AuthSession`
-carries neither. The plausible reconstruction — `credential: 'session'`, taken
-from the session object you were handed — is a **widening bug**: `withAuth`
-accepts a key of any scope, so a `chat`-scoped key held by a user whose role is
-`ADMIN` gets judged by the role, and a policy that should answer `{ userId }`
-answers `{}` — every subject.
+**Do not rebuild the principal from `session.user`.** `administersEverything`
+branches on `credential` and `scopes`, and a handler cannot see either: the
+credential kind and an API key's scopes are known only inside the guard, and
+`AuthSession` carries neither. The plausible reconstruction —
+`credential: 'session'`, taken from the session object you were handed — is a
+**widening bug**: `withAuth` accepts a key of any scope, so a `chat`-scoped key
+held by a user whose role is `ADMIN` gets judged by the role, and a policy that
+should answer `{ userId }` answers `{}` — every subject.
 
 It is also invisible to `checkAuthorizationParity`, which is why the fix is one
 object rather than a documented convention. The guard asks `canRead` with the
 true principal; a handler asking `subjectScope` with a reconstruction makes the
 two faces disagree **at the call site**, for a policy the checker passes clean.
-Passing `session.principal` makes them the same object, so there is nothing to
-drift.
+Reading `session.subjectFilter` is the same answer from the same principal, so
+there is nothing to drift.
 
 ### The list
 
 ```ts
-import { subjectScope } from '@/lib/auth/authorization';
+export const GET = withAdminAuth(
+  async (request, session) => {
+    // Reading this is what `decidedBy: 'policy'` promises, and the guard
+    // notices whether you did. Read it once into a local; it is a getter.
+    const filter = session.subjectFilter;
 
-export const GET = withAdminAuth(async (request, session) => {
-  const filter = await subjectScope(session.principal);
+    // `{}` means every subject, so an unrestricted viewer adds no clause and a
+    // narrowed one adds `createdBy`.
+    const ownerClause = filter.userId ? { createdBy: filter.userId } : {};
 
-  // `{}` means every subject, so an unrestricted viewer adds no clause and a
-  // narrowed one adds `createdBy`.
-  const ownerClause = filter.userId ? { createdBy: filter.userId } : {};
+    // AND, not spread. `{ ...ownerClause, ...otherFilters }` is last-wins, so a
+    // `createdBy` key in `otherFilters` — the most natural extra filter on an
+    // admin list, and usually built from a query parameter — silently deletes
+    // the boundary and returns 200 with the whole table.
+    const where: Prisma.AiWidgetWhereInput = { AND: [ownerClause, otherFilters] };
 
-  // AND, not spread. `{ ...ownerClause, ...otherFilters }` is last-wins, so a
-  // `createdBy` key in `otherFilters` — the most natural extra filter on an
-  // admin list, and usually built from a query parameter — silently deletes
-  // the boundary and returns 200 with the whole table.
-  const where: Prisma.AiWidgetWhereInput = { AND: [ownerClause, otherFilters] };
-
-  const [rows, total] = await Promise.all([
-    prisma.aiWidget.findMany({ where /* … */ }),
-    prisma.aiWidget.count({ where }),
-  ]);
-  return paginatedResponse(rows, { page, limit, total });
-});
+    const [rows, total] = await Promise.all([
+      prisma.aiWidget.findMany({ where /* … */ }),
+      prisma.aiWidget.count({ where }),
+    ]);
+    return paginatedResponse(rows, { page, limit, total });
+  },
+  { ownership: { decidedBy: 'policy' } }
+);
 ```
 
 **Make the security clause unclobberable.** `webhooks/route.ts:26-29` does the
@@ -347,19 +386,32 @@ proves nothing must not report success.
 
 ## The leak, stated plainly
 
-**A read that forgets to narrow is silent.** It returns 200 with more rows than
-the caller should see. Nothing throws, no log line is unusual, the page renders,
-and the test that asserts "an admin can list widgets" passes. The failure is
-visible only to someone who knows which rows _should_ have been absent.
+**A read that forgets to narrow used to be silent.** It returned 200 with more
+rows than the caller should see. Nothing threw, no log line was unusual, the page
+rendered, and the test that asserts "an admin can list widgets" passed. The
+failure was visible only to someone who knew which rows _should_ have been
+absent.
 
-This is the same class of failure that row-level security removes for the
-_between_-tenant axis — with RLS, a query that forgets its `where` returns zero
-rows rather than everyone's. Nothing removes it for the _within_-tenant axis.
-`subjectScope` gives the rule one name and one implementation so it cannot be
-_inconsistent_; it does not make forgetting to call it fail. Treat a new
-owner-scoped list route as needing a test that a second user's rows are absent —
-asserting the caller's own rows are present passes just as well without the
-filter.
+The `ownership` marker removes the silence **at the route**: on an install where
+the caller is narrowed, a handler that made no ownership decision is reported
+before its response is returned. What it does not remove is the silence **at the
+query**. It knows the route did not decide; it cannot know whether the decision
+the route claims to have made was applied to every read underneath it. A route
+declaring `{ decidedBy: 'nothing' }` that calls a library function reading the
+whole table is honest and still leaky.
+
+Row-level security removes both for the _between_-tenant axis: a query that
+forgets its `where` returns zero rows, wherever it was written. The equivalent
+for this axis is a control at the Prisma client — the tenancy chokepoint in
+`lib/db/client.ts`, which is where the org axis is going and where a read-side
+owner predicate belongs with it. Until then:
+
+- Treat a new owner-scoped list route as needing a test that **a second user's
+  rows are absent**. Asserting the caller's own rows are present passes just as
+  well without the filter.
+- Prefer `{ decidedBy: 'policy' }` to `{ decidedBy: 'nothing' }` when the route
+  reads anything owned. `'nothing'` is a claim about the whole call tree beneath
+  the handler, and it is the one the marker cannot check.
 
 ---
 
