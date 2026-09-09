@@ -18,52 +18,71 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
 
-export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+export const GET = withAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
+
+    const conversation = await prisma.aiConversation.findFirst({
+      where: {
+        id,
+        userId: session.user.id,
+        agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
+      },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        _count: { select: { messages: true } },
+      },
+    });
+    if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
+
+    log.info('Consumer conversation fetched', { conversationId: id });
+    return successResponse(conversation);
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "The conversation is fetched by `{ id, userId: session.user.id }`, so another user's id is a 404 rather than a read.",
+    },
   }
-  const id = parsed.data;
+);
 
-  const conversation = await prisma.aiConversation.findFirst({
-    where: {
-      id,
-      userId: session.user.id,
-      agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
+export const DELETE = withAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
+
+    const existing = await prisma.aiConversation.findFirst({
+      where: {
+        id,
+        userId: session.user.id,
+        agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
+      },
+    });
+    if (!existing) throw new NotFoundError(`Conversation ${id} not found`);
+
+    await prisma.aiConversation.delete({ where: { id } });
+
+    log.info('Consumer conversation deleted', { conversationId: id, userId: session.user.id });
+    return successResponse({ deleted: true });
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because: 'The delete is gated by the same `{ id, userId: session.user.id }` lookup.',
     },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      _count: { select: { messages: true } },
-    },
-  });
-  if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
-
-  log.info('Consumer conversation fetched', { conversationId: id });
-  return successResponse(conversation);
-});
-
-export const DELETE = withAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
   }
-  const id = parsed.data;
-
-  const existing = await prisma.aiConversation.findFirst({
-    where: {
-      id,
-      userId: session.user.id,
-      agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
-    },
-  });
-  if (!existing) throw new NotFoundError(`Conversation ${id} not found`);
-
-  await prisma.aiConversation.delete({ where: { id } });
-
-  log.info('Consumer conversation deleted', { conversationId: id, userId: session.user.id });
-  return successResponse({ deleted: true });
-});
+);

@@ -42,100 +42,119 @@ import { shareConversationSchema } from '@/lib/validations/orchestration';
  */
 const DEFAULT_EXPIRES_IN_DAYS = 7;
 
-export const POST = withAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const POST = withAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  // Body is optional — POST with no body grants a default 7-day share
-  // with no reason.
-  const rawBody: unknown = await request.json().catch(() => ({}));
-  const body = shareConversationSchema.parse(rawBody);
+    // Body is optional — POST with no body grants a default 7-day share
+    // with no reason.
+    const rawBody: unknown = await request.json().catch(() => ({}));
+    const body = shareConversationSchema.parse(rawBody);
 
-  // Ownership: the caller must own the conversation. Active-agent
-  // filter mirrors the per-id consumer routes — sharing a conversation
-  // whose agent has been deactivated is allowed at the data layer but
-  // would be confusing in practice; keep the same guardrail.
-  const conversation = await prisma.aiConversation.findFirst({
-    where: { id, userId: session.user.id },
-    select: { id: true },
-  });
-  if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
-
-  const expiresInDays = body.expiresInDays ?? DEFAULT_EXPIRES_IN_DAYS;
-  const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
-
-  // Upsert: re-sharing a previously-revoked or expired conversation
-  // refreshes the same row (clear revokedAt, set new expiresAt). One
-  // row per conversation; unique constraint enforces.
-  const share = await prisma.aiConversationShare.upsert({
-    where: { conversationId: id },
-    create: {
-      conversationId: id,
-      reason: body.reason ?? null,
-      expiresAt,
-    },
-    update: {
-      reason: body.reason ?? null,
-      expiresAt,
-      revokedAt: null,
-    },
-  });
-
-  log.info('Conversation share created', {
-    conversationId: id,
-    shareId: share.id,
-    expiresAt: expiresAt.toISOString(),
-    hasReason: body.reason !== undefined,
-  });
-
-  return successResponse({
-    shareId: share.id,
-    conversationId: id,
-    expiresAt: expiresAt.toISOString(),
-  });
-});
-
-export const DELETE = withAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
-
-  // Ownership check first — never disclose other users' conversations.
-  const conversation = await prisma.aiConversation.findFirst({
-    where: { id, userId: session.user.id },
-    select: { id: true },
-  });
-  if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
-
-  // Idempotent: revoking a missing share or already-revoked share both
-  // return 200 OK. The client doesn't need to track share existence
-  // before calling DELETE; they can just call it.
-  const existing = await prisma.aiConversationShare.findUnique({
-    where: { conversationId: id },
-    select: { id: true, revokedAt: true },
-  });
-
-  if (existing && existing.revokedAt === null) {
-    await prisma.aiConversationShare.update({
-      where: { conversationId: id },
-      data: { revokedAt: new Date() },
+    // Ownership: the caller must own the conversation. Active-agent
+    // filter mirrors the per-id consumer routes — sharing a conversation
+    // whose agent has been deactivated is allowed at the data layer but
+    // would be confusing in practice; keep the same guardrail.
+    const conversation = await prisma.aiConversation.findFirst({
+      where: { id, userId: session.user.id },
+      select: { id: true },
     });
-    log.info('Conversation share revoked', { conversationId: id, shareId: existing.id });
-    return successResponse({ revoked: true, conversationId: id });
-  }
+    if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
 
-  log.info('Conversation share revoke is a no-op (no active share)', {
-    conversationId: id,
-    shareExists: existing !== null,
-  });
-  return successResponse({ revoked: false, conversationId: id });
-});
+    const expiresInDays = body.expiresInDays ?? DEFAULT_EXPIRES_IN_DAYS;
+    const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+
+    // Upsert: re-sharing a previously-revoked or expired conversation
+    // refreshes the same row (clear revokedAt, set new expiresAt). One
+    // row per conversation; unique constraint enforces.
+    const share = await prisma.aiConversationShare.upsert({
+      where: { conversationId: id },
+      create: {
+        conversationId: id,
+        reason: body.reason ?? null,
+        expiresAt,
+      },
+      update: {
+        reason: body.reason ?? null,
+        expiresAt,
+        revokedAt: null,
+      },
+    });
+
+    log.info('Conversation share created', {
+      conversationId: id,
+      shareId: share.id,
+      expiresAt: expiresAt.toISOString(),
+      hasReason: body.reason !== undefined,
+    });
+
+    return successResponse({
+      shareId: share.id,
+      conversationId: id,
+      expiresAt: expiresAt.toISOString(),
+    });
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'The share is created only for a conversation fetched by `{ id, userId: session.user.id }`.',
+    },
+  }
+);
+
+export const DELETE = withAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
+
+    // Ownership check first — never disclose other users' conversations.
+    const conversation = await prisma.aiConversation.findFirst({
+      where: { id, userId: session.user.id },
+      select: { id: true },
+    });
+    if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
+
+    // Idempotent: revoking a missing share or already-revoked share both
+    // return 200 OK. The client doesn't need to track share existence
+    // before calling DELETE; they can just call it.
+    const existing = await prisma.aiConversationShare.findUnique({
+      where: { conversationId: id },
+      select: { id: true, revokedAt: true },
+    });
+
+    if (existing && existing.revokedAt === null) {
+      await prisma.aiConversationShare.update({
+        where: { conversationId: id },
+        data: { revokedAt: new Date() },
+      });
+      log.info('Conversation share revoked', { conversationId: id, shareId: existing.id });
+      return successResponse({ revoked: true, conversationId: id });
+    }
+
+    log.info('Conversation share revoke is a no-op (no active share)', {
+      conversationId: id,
+      shareExists: existing !== null,
+    });
+    return successResponse({ revoked: false, conversationId: id });
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because: 'The revoke is gated by the same `{ id, userId: session.user.id }` lookup.',
+    },
+  }
+);

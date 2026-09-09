@@ -21,53 +21,63 @@ import { rateMessageSchema } from '@/lib/validations/orchestration';
 
 type Params = { id: string; messageId: string };
 
-export const POST = withAuth<Params>(async (request, session, { params }) => {
-  const { id: rawConvId, messageId: rawMsgId } = await params;
+export const POST = withAuth<Params>(
+  async (request, session, { params }) => {
+    const { id: rawConvId, messageId: rawMsgId } = await params;
 
-  const convId = cuidSchema.safeParse(rawConvId);
-  if (!convId.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    const convId = cuidSchema.safeParse(rawConvId);
+    if (!convId.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+
+    const msgId = cuidSchema.safeParse(rawMsgId);
+    if (!msgId.success) {
+      throw new ValidationError('Invalid message id', { messageId: ['Must be a valid CUID'] });
+    }
+
+    const body = await validateRequestBody(request, rateMessageSchema);
+
+    // Verify the conversation belongs to this user and the agent is publicly visible
+    const conversation = await prisma.aiConversation.findFirst({
+      where: {
+        id: convId.data,
+        userId: session.user.id,
+        agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
+      },
+    });
+    if (!conversation) throw new NotFoundError('Conversation not found');
+
+    // Verify the message exists, belongs to this conversation, and is an assistant message
+    const message = await prisma.aiMessage.findFirst({
+      where: {
+        id: msgId.data,
+        conversationId: convId.data,
+        role: 'assistant',
+      },
+    });
+    if (!message) throw new NotFoundError('Message not found');
+
+    const updated = await prisma.aiMessage.update({
+      where: { id: message.id },
+      data: {
+        rating: body.rating,
+        ratedAt: new Date(),
+      },
+      select: {
+        id: true,
+        rating: true,
+        ratedAt: true,
+      },
+    });
+
+    return successResponse({ message: updated });
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'The rating is applied only to a message inside a conversation fetched by `{ id, userId: session.user.id }`.',
+    },
   }
-
-  const msgId = cuidSchema.safeParse(rawMsgId);
-  if (!msgId.success) {
-    throw new ValidationError('Invalid message id', { messageId: ['Must be a valid CUID'] });
-  }
-
-  const body = await validateRequestBody(request, rateMessageSchema);
-
-  // Verify the conversation belongs to this user and the agent is publicly visible
-  const conversation = await prisma.aiConversation.findFirst({
-    where: {
-      id: convId.data,
-      userId: session.user.id,
-      agent: { visibility: { in: ['public', 'invite_only'] }, isActive: true },
-    },
-  });
-  if (!conversation) throw new NotFoundError('Conversation not found');
-
-  // Verify the message exists, belongs to this conversation, and is an assistant message
-  const message = await prisma.aiMessage.findFirst({
-    where: {
-      id: msgId.data,
-      conversationId: convId.data,
-      role: 'assistant',
-    },
-  });
-  if (!message) throw new NotFoundError('Message not found');
-
-  const updated = await prisma.aiMessage.update({
-    where: { id: message.id },
-    data: {
-      rating: body.rating,
-      ratedAt: new Date(),
-    },
-    select: {
-      id: true,
-      rating: true,
-      ratedAt: true,
-    },
-  });
-
-  return successResponse({ message: updated });
-});
+);

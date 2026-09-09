@@ -38,9 +38,12 @@ import {
   canAdminister,
   canRead,
   readTargetFor,
+  subjectScope,
   type AuthorizationPrincipal,
   type AuthorizationResource,
+  type SubjectFilter,
 } from '@/lib/auth/authorization';
+import { env } from '@/lib/env';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -101,7 +104,55 @@ export interface AuthSession {
  */
 export interface AuthenticatedSession extends AuthSession {
   principal: AuthorizationPrincipal;
+  /**
+   * Which subjects this caller may see, as a Prisma `where` fragment —
+   * `subjectScope(principal)`, computed once by the guard.
+   *
+   * `{}` is every subject; `{ userId }` narrows to one. `AND` it into a list
+   * query rather than spreading it, so an optional filter built from a query
+   * parameter cannot overwrite the key that is the boundary.
+   *
+   * **Reading this is what `ownership: { decidedBy: 'policy' }` promises**, and
+   * the guard notices whether you did — see {@link RouteOwnership}. It is a
+   * getter for exactly that reason, which is also why you should read it once
+   * into a local rather than reaching for it inside a loop.
+   */
+  readonly subjectFilter: SubjectFilter;
 }
+
+/**
+ * How a route decides **whose** rows it may touch — the declarative owner-scope
+ * marker #367 asked for.
+ *
+ * Every guarded route makes this decision, including the ones that make it by
+ * not having one. Before this existed, "I forgot to narrow the query" and "this
+ * route is platform-wide on purpose" produced identical code, identical logs and
+ * identical passing tests; the only difference was in the author's head. This
+ * type moves that difference into the route's source.
+ *
+ * - `'policy'` — the handler asks the authorization policy, by reading
+ *   `session.subjectFilter`. The guard **checks that it actually did**: a route
+ *   that claims the policy decides and never consults it is the failure this
+ *   whole task is about, so claiming it is not enough.
+ * - `'self'` — self-scoped by construction: the route reads only the caller's
+ *   own rows, keyed on `session.user.id`. `users/me`, a user's own API keys and
+ *   a user's own conversations are this. Note it is **not** the same as
+ *   `'policy'` and must not be migrated to it: `subjectScope` widens to `{}` for
+ *   a platform admin, which on a self endpoint would hand an admin everyone
+ *   else's rows.
+ * - `'nothing'` — the route makes no ownership decision, deliberately.
+ *
+ * Both of the last two carry a `because`, and it is required rather than
+ * encouraged: the value of the marker is the sentence, not the enum. A reviewer
+ * reading `{ decidedBy: 'nothing' }` alone learns only that somebody typed it.
+ *
+ * A route that declares a `resource` resolver needs none of this — the policy
+ * decided, in the guard, before the handler ran.
+ */
+export type RouteOwnership =
+  | { decidedBy: 'policy' }
+  | { decidedBy: 'self'; because: string }
+  | { decidedBy: 'nothing'; because: string };
 
 /**
  * Next.js route params context shape
@@ -192,6 +243,16 @@ export interface WithAuthOptions<TParams = Record<string, string>> {
    * `admin` satisfies any scope (see `hasScope`).
    */
   scope?: ApiKeyScope;
+  /**
+   * How this route decides whose rows it may touch. See {@link RouteOwnership}.
+   *
+   * Required in practice, not in the type: the guard demands one only once the
+   * caller is **actually narrowed** — see {@link reportOwnershipGap}. Making it
+   * a required field would have meant annotating 285 handlers to say nothing on
+   * an install with no ownership boundary, and a field everybody fills in with
+   * the first value that compiles is not a declaration.
+   */
+  ownership?: RouteOwnership;
 }
 
 /** Options for `withAdminAuth`. */
@@ -205,6 +266,16 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * is handed `null`, which is the same call it gets today.
    */
   resource?: AuthorizationResourceResolver<TParams>;
+  /**
+   * How this route decides whose rows it may touch. See {@link RouteOwnership}.
+   *
+   * Sunrise's own admin routes carry none, and that is not an oversight: under
+   * the default policy every caller who gets past `canAdminister` is a platform
+   * admin, whose `subjectScope` is `{}` — unrestricted, so there is nothing to
+   * narrow and nothing to declare. On a fork whose org admin is narrowed, these
+   * are the routes that start asking for one.
+   */
+  ownership?: RouteOwnership;
 }
 
 /**
@@ -263,6 +334,105 @@ async function resolveResource(
       fix: 'The policy cannot be asked about a resource that could not be resolved, and an unresolved scope is not an absent one.',
     });
     return UNRESOLVED;
+  }
+}
+
+/**
+ * What the guard does when a route made no ownership decision it should have.
+ *
+ * Throws outside production, so the gap lands as a **failing test** and a broken
+ * dev request — the loudest signal available at the moment the route is being
+ * written. Logs in production, because turning a forgotten annotation into an
+ * outage for every caller of that route is a worse trade than a leak that is
+ * already narrowed by `canRead` on the detail read; the log line is what an
+ * operator greps for.
+ *
+ * A fork that would rather refuse flips this to `'refuse'`. It is a constant and
+ * not an environment variable on purpose: which way this goes is a property of
+ * the product, decided once by whoever owns the fork, not a per-deploy dial that
+ * can differ between staging and production and hide the difference.
+ */
+const OWNERSHIP_GAP_ACTION: 'refuse' | 'log' = env.NODE_ENV === 'production' ? 'log' : 'refuse';
+
+/**
+ * Raised when a route reached the end of a request without deciding whose rows
+ * it was allowed to touch, on an install where that question has an answer.
+ *
+ * Its own class so a fork can recognise it — `handleAPIError` turns it into a
+ * 500, which is the correct shape for "this route is misconfigured" and the
+ * wrong shape for anything a caller can fix.
+ */
+export class OwnershipDecisionMissingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OwnershipDecisionMissingError';
+  }
+}
+
+/**
+ * The check behind {@link RouteOwnership}: did this request make an ownership
+ * decision, on an install where there was one to make?
+ *
+ * **It is silent unless the caller is actually narrowed**, and that is the whole
+ * reason it can exist at all. A static check cannot tell a leak from correct
+ * behaviour here, because the difference is a runtime fact about the registered
+ * policy: in single-tenant Sunrise a route that reads every row is *right*, and
+ * a build-time scan of this tree flags 97 such reads, nearly all of them
+ * correct. `subjectScope(principal) === {}` says this caller may see every
+ * subject, so there is no boundary to forget. `{ userId }` says there is.
+ *
+ * Four ways to satisfy it, in the order they are cheapest to be sure about:
+ *
+ * 1. The route declared a `resource` — the policy already decided, in the guard.
+ * 2. `ownership: { decidedBy: 'policy' }` **and** the handler read
+ *    `session.subjectFilter`. Declaring without reading is reported separately,
+ *    with its own message, because it is a different mistake: the author knew
+ *    the rule and the query still went out unnarrowed.
+ * 3. `ownership: { decidedBy: 'self', … }` — keyed on the caller's own id.
+ * 4. `ownership: { decidedBy: 'nothing', … }` — no ownership decision, said out
+ *    loud.
+ *
+ * What it cannot see: a library function called by a satisfied route. A route
+ * that declares `'nothing'` and calls an exporter which reads every row is
+ * exactly as leaky as before — but the declaration is now in its source, which
+ * is the difference between an unreviewed omission and a reviewed decision. The
+ * query-level control that would close that gap is the tenancy chokepoint in
+ * `lib/db/client.ts`; see `.context/auth/authorization.md`.
+ */
+function reportOwnershipGap(options: {
+  guard: 'withAuth' | 'withAdminAuth';
+  path: string | undefined;
+  ownership: RouteOwnership | undefined;
+  declaredResource: boolean;
+  filter: SubjectFilter;
+  filterRead: boolean;
+  principal: AuthorizationPrincipal;
+}): void {
+  // Not narrowed ⇒ every subject is this caller's to see ⇒ nothing to forget.
+  if (options.filter.userId === undefined) return;
+  if (options.declaredResource) return;
+
+  const declared = options.ownership?.decidedBy;
+  if (declared === 'self' || declared === 'nothing') return;
+  if (declared === 'policy' && options.filterRead) return;
+
+  const message =
+    declared === 'policy'
+      ? `${options.guard}: this route declares ownership { decidedBy: 'policy' } but never read session.subjectFilter, so the policy did not narrow anything it did.`
+      : `${options.guard}: this route made no ownership decision for a caller the policy narrows to their own rows. Declare an \`ownership\` on the route — 'policy' (and read session.subjectFilter), 'self', or 'nothing' with a reason — or give it a \`resource\` resolver.`;
+
+  logger.error('authorization: a route made no ownership decision', {
+    path: options.path,
+    guard: options.guard,
+    declared: declared ?? '(none)',
+    userId: options.principal.userId,
+    credential: options.principal.credential,
+    action: OWNERSHIP_GAP_ACTION,
+    fix: message,
+  });
+
+  if (OWNERSHIP_GAP_ACTION === 'refuse') {
+    throw new OwnershipDecisionMissingError(message);
   }
 }
 
@@ -402,17 +572,85 @@ export function withAuth(
         throw new ForbiddenError('Access denied');
       }
 
-      // One principal, built by the guard and handed on — never rebuilt by the
-      // handler. See {@link AuthenticatedSession} for what reconstruction cost.
-      const authenticated: AuthenticatedSession = { ...session, principal };
-      if (context !== undefined) {
-        return await handler(request, authenticated, context);
-      }
-      return await handler(request, authenticated);
+      return await runHandler({
+        guard: 'withAuth',
+        handler,
+        request: request as NextRequest,
+        context: context as RouteContext | undefined,
+        session,
+        principal,
+        ownership: options?.ownership,
+        declaredResource: options?.resource !== undefined,
+      });
     } catch (error) {
       return handleAPIError(error);
     }
   };
+}
+
+/**
+ * Hand the handler its session and watch what it does with the ownership half.
+ *
+ * Shared by both guards because the two must not drift here: this is the third
+ * time this seam has had a rule that one guard applied and the other did not
+ * (`readTargetFor` was the first, the principal hand-off the second), and each
+ * time the gap was invisible until somebody read the two bodies side by side.
+ *
+ * `subjectFilter` is a getter rather than a value so that *reading it* is
+ * observable — which is what lets `ownership: { decidedBy: 'policy' }` be a
+ * checkable claim rather than a comment. Nothing else about it is unusual: it
+ * returns the same object every time and computes nothing.
+ */
+async function runHandler(args: {
+  guard: 'withAuth' | 'withAdminAuth';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: (...handlerArgs: any[]) => Response | Promise<Response>;
+  request: NextRequest;
+  context: RouteContext | undefined;
+  session: AuthSession;
+  principal: AuthorizationPrincipal;
+  ownership: RouteOwnership | undefined;
+  declaredResource: boolean;
+}): Promise<Response> {
+  // Asked for every guarded request, and asked HERE rather than left to the
+  // handler, because the check below needs the answer whether or not the handler
+  // wants it. On the default policy this is a pure function of the role; a fork
+  // whose policy does a lookup pays one call per request and the handler reads
+  // the result instead of making a second one.
+  const filter = await subjectScope(args.principal);
+  let filterRead = false;
+
+  // One principal, built by the guard and handed on — never rebuilt by the
+  // handler. See {@link AuthenticatedSession} for what reconstruction cost.
+  const authenticated: AuthenticatedSession = {
+    ...args.session,
+    principal: args.principal,
+    get subjectFilter() {
+      filterRead = true;
+      return filter;
+    },
+  };
+
+  const response =
+    args.context !== undefined
+      ? await args.handler(args.request, authenticated, args.context)
+      : await args.handler(args.request, authenticated);
+
+  // After the handler, not before: whether it consulted the filter is only
+  // knowable once it has run. A handler that threw is not checked — no response
+  // means no rows went out, and reporting a missing ownership decision on top of
+  // a real failure would bury the failure.
+  reportOwnershipGap({
+    guard: args.guard,
+    path: args.request.nextUrl?.pathname,
+    ownership: args.ownership,
+    declaredResource: args.declaredResource,
+    filter,
+    filterRead,
+    principal: args.principal,
+  });
+
+  return response;
 }
 
 /**
@@ -535,13 +773,16 @@ export function withAdminAuth(
         throw new ForbiddenError('Admin access required');
       }
 
-      // One principal, built by the guard and handed on — never rebuilt by the
-      // handler. See {@link AuthenticatedSession} for what reconstruction cost.
-      const authenticated: AuthenticatedSession = { ...session, principal };
-      if (context !== undefined) {
-        return await handler(request, authenticated, context);
-      }
-      return await handler(request, authenticated);
+      return await runHandler({
+        guard: 'withAdminAuth',
+        handler,
+        request: request as NextRequest,
+        context: context as RouteContext | undefined,
+        session,
+        principal,
+        ownership: options?.ownership,
+        declaredResource: options?.resource !== undefined,
+      });
     } catch (error) {
       return handleAPIError(error);
     }

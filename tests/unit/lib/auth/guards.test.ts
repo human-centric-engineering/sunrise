@@ -29,6 +29,21 @@ import { withAuth, withAdminAuth, type AuthSession } from '@/lib/auth/guards';
 import { UnauthorizedError, ForbiddenError } from '@/lib/api/errors';
 
 /**
+ * Most fixtures in this file wrap a stub handler to test *authentication*, and a
+ * bare `withAuth(handler)` is now a violation for a member session: the default
+ * policy narrows a non-admin to their own rows, and a route that never says how
+ * it decides whose rows it reads is what `RouteOwnership` exists to catch. So
+ * these say it — and saying "this test is not about ownership" out loud is more
+ * honest than an admin session quietly sidestepping the check.
+ */
+const NOT_ABOUT_OWNERSHIP = {
+  ownership: {
+    decidedBy: 'nothing',
+    because: 'Fixture: this test is about the guard, not about whose rows the route reads.',
+  },
+} as const;
+
+/**
  * Mock dependencies
  */
 
@@ -162,7 +177,7 @@ describe('withAuth', () => {
         return Response.json({ success: true, data: 'test' });
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -188,7 +203,7 @@ describe('withAuth', () => {
         return Response.json({ success: true, data: { userId: session.user.id } });
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -215,7 +230,7 @@ describe('withAuth', () => {
         return Response.json({ success: true, data: { role: session.user.role } });
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -236,7 +251,7 @@ describe('withAuth', () => {
         return Response.json({ success: true, data: { role: session.user.role } });
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -263,7 +278,7 @@ describe('withAuth', () => {
         return Response.json({ success: true, data: 'ok' });
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -290,7 +305,7 @@ describe('withAuth', () => {
         }
       );
 
-      const wrappedHandler = withAuth<{ id: string }>(handler);
+      const wrappedHandler = withAuth<{ id: string }>(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
       const context = { params: Promise.resolve({ id: 'test-123' }) };
 
@@ -328,7 +343,7 @@ describe('withAuth', () => {
         }
       );
 
-      const wrappedHandler = withAuth<RouteParams>(handler);
+      const wrappedHandler = withAuth<RouteParams>(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
       const context = { params: Promise.resolve({ userId: 'user-1', postId: 'post-2' }) };
 
@@ -354,7 +369,7 @@ describe('withAuth', () => {
 
       const handler = vi.fn(async () => expectedResponse);
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -380,7 +395,7 @@ describe('withAuth', () => {
         throw testError;
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -403,7 +418,7 @@ describe('withAuth', () => {
         throw new UnauthorizedError('Custom auth error');
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -426,7 +441,7 @@ describe('withAuth', () => {
         throw new ForbiddenError('Custom forbidden error');
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -448,7 +463,7 @@ describe('withAuth', () => {
         return Response.json({ success: true, data: 'test' });
       });
 
-      const wrappedHandler = withAuth(handler);
+      const wrappedHandler = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -486,7 +501,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: 'admin data' });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -514,7 +529,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: 'admin data' });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -540,7 +555,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: 'admin data' });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -562,7 +577,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: 'admin data' });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -584,7 +599,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: { userId: session.user.id } });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -618,7 +633,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: 'ok' });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -645,7 +660,7 @@ describe('withAdminAuth', () => {
         }
       );
 
-      const wrappedHandler = withAdminAuth<{ id: string }>(handler);
+      const wrappedHandler = withAdminAuth<{ id: string }>(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
       const context = { params: Promise.resolve({ id: 'admin-123' }) };
 
@@ -674,7 +689,7 @@ describe('withAdminAuth', () => {
 
       const handler = vi.fn(async () => expectedResponse);
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -700,7 +715,7 @@ describe('withAdminAuth', () => {
         throw testError;
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -723,7 +738,7 @@ describe('withAdminAuth', () => {
         throw new UnauthorizedError('Session expired');
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -746,7 +761,7 @@ describe('withAdminAuth', () => {
         throw new ForbiddenError('Insufficient permissions');
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -768,7 +783,7 @@ describe('withAdminAuth', () => {
         return Response.json({ success: true, data: 'admin data' });
       });
 
-      const wrappedHandler = withAdminAuth(handler);
+      const wrappedHandler = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
 
       // Act
@@ -804,7 +819,7 @@ describe('withAdminAuth', () => {
         }
       );
 
-      const wrappedHandler = withAdminAuth<{ id: string }>(handler);
+      const wrappedHandler = withAdminAuth<{ id: string }>(handler, NOT_ABOUT_OWNERSHIP);
       const request = createRequest();
       const context = { params: Promise.resolve({ id: 'async-123' }) };
 
@@ -842,7 +857,7 @@ describe('API-key fallback', () => {
     it('passes the API-key session to the handler without checking the cookie', async () => {
       const session = mockApiKey(['chat']);
       const handler = vi.fn(async () => Response.json({ success: true, data: { ok: true } }));
-      const wrapped = withAuth(handler);
+      const wrapped = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
@@ -855,7 +870,7 @@ describe('API-key fallback', () => {
       const session = createMockSession('USER');
       vi.mocked(auth.api.getSession).mockResolvedValue(session as never);
       const handler = vi.fn(async () => Response.json({ success: true, data: null }));
-      const wrapped = withAuth(handler);
+      const wrapped = withAuth(handler, NOT_ABOUT_OWNERSHIP);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(200);
       expect(auth.api.getSession).toHaveBeenCalledOnce();
@@ -868,7 +883,7 @@ describe('API-key fallback', () => {
     it('403s an API key that lacks the scope the route asked for', async () => {
       mockApiKey(['chat']);
       const handler = vi.fn();
-      const wrapped = withAuth(handler, { scope: 'capture' });
+      const wrapped = withAuth(handler, { scope: 'capture', ...NOT_ABOUT_OWNERSHIP });
 
       const res = await wrapped(createRequest());
 
@@ -880,7 +895,7 @@ describe('API-key fallback', () => {
       // A 403 that echoed the key's scopes would be a scope-enumeration oracle
       // for anyone who found the key but not what it is for.
       mockApiKey(['analytics', 'knowledge']);
-      const wrapped = withAuth(vi.fn(), { scope: 'capture' });
+      const wrapped = withAuth(vi.fn(), { scope: 'capture', ...NOT_ABOUT_OWNERSHIP });
 
       const body = (await (await wrapped(createRequest())).json()) as {
         error: { message: string };
@@ -894,7 +909,7 @@ describe('API-key fallback', () => {
     it('admits an API key that holds the scope', async () => {
       const session = mockApiKey(['capture']);
       const handler = vi.fn(async () => Response.json({ success: true, data: { ok: true } }));
-      const wrapped = withAuth(handler, { scope: 'capture' });
+      const wrapped = withAuth(handler, { scope: 'capture', ...NOT_ABOUT_OWNERSHIP });
 
       const res = await wrapped(createRequest());
 
@@ -906,7 +921,9 @@ describe('API-key fallback', () => {
       mockApiKey(['admin']);
       const handler = vi.fn(async () => Response.json({ success: true, data: null }));
 
-      const res = await withAuth(handler, { scope: 'capture' })(createRequest());
+      const res = await withAuth(handler, { scope: 'capture', ...NOT_ABOUT_OWNERSHIP })(
+        createRequest()
+      );
 
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -920,7 +937,9 @@ describe('API-key fallback', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(createMockSession('USER') as never);
       const handler = vi.fn(async () => Response.json({ success: true, data: null }));
 
-      const res = await withAuth(handler, { scope: 'capture' })(createRequest());
+      const res = await withAuth(handler, { scope: 'capture', ...NOT_ABOUT_OWNERSHIP })(
+        createRequest()
+      );
 
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -933,7 +952,7 @@ describe('API-key fallback', () => {
       mockApiKey(['analytics']);
       const handler = vi.fn(async () => Response.json({ success: true, data: null }));
 
-      const res = await withAuth(handler)(createRequest());
+      const res = await withAuth(handler, NOT_ABOUT_OWNERSHIP)(createRequest());
 
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalled();
@@ -953,8 +972,8 @@ describe('API-key fallback', () => {
     });
 
     it('does not warn for a declared scope, and never warns without one', async () => {
-      withAuth(vi.fn(), { scope: 'capture' });
-      withAuth(vi.fn());
+      withAuth(vi.fn(), { scope: 'capture', ...NOT_ABOUT_OWNERSHIP });
+      withAuth(vi.fn(), NOT_ABOUT_OWNERSHIP);
 
       expect(logger.warn).not.toHaveBeenCalled();
     });
@@ -964,7 +983,10 @@ describe('API-key fallback', () => {
       // worked on the no-params one would be an easy thing to ship broken.
       mockApiKey(['chat']);
       const handler = vi.fn();
-      const wrapped = withAuth<{ id: string }>(handler, { scope: 'capture' });
+      const wrapped = withAuth<{ id: string }>(handler, {
+        scope: 'capture',
+        ...NOT_ABOUT_OWNERSHIP,
+      });
 
       const res = await wrapped(createRequest(), { params: Promise.resolve({ id: 'x' }) });
 
@@ -977,7 +999,7 @@ describe('API-key fallback', () => {
     it('accepts an API key with admin scope and skips the cookie path', async () => {
       const session = mockApiKey(['admin']);
       const handler = vi.fn(async () => Response.json({ success: true, data: { ok: true } }));
-      const wrapped = withAdminAuth(handler);
+      const wrapped = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
@@ -987,7 +1009,7 @@ describe('API-key fallback', () => {
     it("returns 403 for an API key that doesn't include the admin scope", async () => {
       mockApiKey(['chat', 'analytics']);
       const handler = vi.fn();
-      const wrapped = withAdminAuth(handler);
+      const wrapped = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(403);
       expect(handler).not.toHaveBeenCalled();
@@ -1000,7 +1022,7 @@ describe('API-key fallback', () => {
       vi.mocked(resolveApiKey).mockResolvedValue(null);
       vi.mocked(auth.api.getSession).mockResolvedValue(createMockSession('ADMIN') as never);
       const handler = vi.fn(async () => Response.json({ success: true, data: null }));
-      const wrapped = withAdminAuth(handler);
+      const wrapped = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(200);
       expect(auth.api.getSession).toHaveBeenCalledOnce();
@@ -1010,7 +1032,7 @@ describe('API-key fallback', () => {
       vi.mocked(resolveApiKey).mockResolvedValue(null);
       vi.mocked(auth.api.getSession).mockResolvedValue(null);
       const handler = vi.fn();
-      const wrapped = withAdminAuth(handler);
+      const wrapped = withAdminAuth(handler, NOT_ABOUT_OWNERSHIP);
       const res = await wrapped(createRequest());
       expect(res.status).toBe(401);
       expect(handler).not.toHaveBeenCalled();

@@ -28,29 +28,38 @@ import type { UserPreferences } from '@/types';
  * @returns User preferences object
  * @throws UnauthorizedError if not authenticated
  */
-export const GET = withAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  log.info('Fetching user preferences');
+export const GET = withAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    log.info('Fetching user preferences');
 
-  // Fetch user preferences
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      preferences: true,
+    // Fetch user preferences
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: {
+        preferences: true,
+      },
+    });
+
+    if (!user) {
+      log.warn('User not found when fetching preferences');
+      throw new UnauthorizedError('User not found');
+    }
+
+    // Parse preferences or return defaults
+    const preferences = parseUserPreferences(user.preferences);
+
+    log.info('User preferences retrieved');
+    return successResponse(preferences);
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because: "Reads the caller's own preferences, keyed on `session.user.id`.",
     },
-  });
-
-  if (!user) {
-    log.warn('User not found when fetching preferences');
-    throw new UnauthorizedError('User not found');
   }
-
-  // Parse preferences or return defaults
-  const preferences = parseUserPreferences(user.preferences);
-
-  log.info('User preferences retrieved');
-  return successResponse(preferences);
-});
+);
 
 /**
  * PATCH /api/v1/users/me/preferences
@@ -64,53 +73,62 @@ export const GET = withAuth(async (request, session) => {
  * @throws UnauthorizedError if not authenticated
  * @throws ValidationError if invalid data
  */
-export const PATCH = withAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  log.info('Updating user preferences');
+export const PATCH = withAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    log.info('Updating user preferences');
 
-  // Validate request body
-  const body = await validateRequestBody(request, updatePreferencesSchema);
+    // Validate request body
+    const body = await validateRequestBody(request, updatePreferencesSchema);
 
-  // Fetch current preferences
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      preferences: true,
+    // Fetch current preferences
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: {
+        preferences: true,
+      },
+    });
+
+    if (!user) {
+      log.warn('User not found when updating preferences');
+      throw new UnauthorizedError('User not found');
+    }
+
+    // Parse current preferences
+    const currentPreferences = parseUserPreferences(user.preferences);
+
+    // Merge with updates (ensure securityAlerts stays true)
+    const updatedPreferences: UserPreferences = {
+      email: {
+        ...currentPreferences.email,
+        ...(body.email || {}),
+        securityAlerts: true, // Cannot be disabled
+      },
+    };
+
+    // Save updated preferences.
+    // The JSON round-trip converts our validated interface into a plain object
+    // whose type (`{ email: { marketing: boolean; ... } }`) satisfies Prisma's
+    // InputJsonObject without needing a cast on the interface itself.
+    const preferencesForDb = toJsonValue(updatedPreferences);
+    await prisma.user.update({
+      where: { id: session.user.id },
+      data: {
+        preferences: preferencesForDb,
+      },
+    });
+
+    log.info('User preferences updated');
+    return successResponse(updatedPreferences);
+  },
+  {
+    // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
+    ownership: {
+      decidedBy: 'self',
+      because: "Writes the caller's own preferences, keyed on `session.user.id`.",
     },
-  });
-
-  if (!user) {
-    log.warn('User not found when updating preferences');
-    throw new UnauthorizedError('User not found');
   }
-
-  // Parse current preferences
-  const currentPreferences = parseUserPreferences(user.preferences);
-
-  // Merge with updates (ensure securityAlerts stays true)
-  const updatedPreferences: UserPreferences = {
-    email: {
-      ...currentPreferences.email,
-      ...(body.email || {}),
-      securityAlerts: true, // Cannot be disabled
-    },
-  };
-
-  // Save updated preferences.
-  // The JSON round-trip converts our validated interface into a plain object
-  // whose type (`{ email: { marketing: boolean; ... } }`) satisfies Prisma's
-  // InputJsonObject without needing a cast on the interface itself.
-  const preferencesForDb = toJsonValue(updatedPreferences);
-  await prisma.user.update({
-    where: { id: session.user.id },
-    data: {
-      preferences: preferencesForDb,
-    },
-  });
-
-  log.info('User preferences updated');
-  return successResponse(updatedPreferences);
-});
+);
 
 /**
  * Convert a Zod-validated value to a JSON-serializable form that satisfies
