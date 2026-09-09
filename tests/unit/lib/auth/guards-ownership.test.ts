@@ -311,6 +311,44 @@ describe('the filter the guard hands over', () => {
     expect(scopeCalls).toEqual(['user_1']);
   });
 
+  it('is not consumed by a handler that merely spreads the session', async () => {
+    // The way a checkable claim could have been fooled: `{ ...session }` copies
+    // enumerable properties, so an enumerable getter would fire on a handler
+    // that logged the session and never narrowed anything — and the route would
+    // pass while leaking. `subjectFilter` is non-enumerable for exactly this,
+    // and the assertion below is what stops that being a comment.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+
+    const response = await withAuth(
+      (_request, s: AuthenticatedSession) => {
+        const copy = { ...s };
+        expect('subjectFilter' in copy).toBe(false);
+        return ok();
+      },
+      { ownership: { decidedBy: 'policy' } }
+    )(request());
+
+    // Reported: spreading is not reading, so this route still owes its decision.
+    expect(response.status).toBe(500);
+    expect(ownershipReports()).toHaveLength(1);
+  });
+
+  it('is still reachable by name after that', async () => {
+    // The control for the test above: non-enumerable must not mean unreadable,
+    // or the fix would have broken the feature and both tests would still be
+    // green about the wrong thing.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+
+    const response = await withAuth(
+      (_request, s: AuthenticatedSession) => Response.json({ filter: s.subjectFilter }),
+      { ownership: { decidedBy: 'policy' } }
+    )(request());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ filter: { userId: 'user_1' } });
+    expect(ownershipReports()).toHaveLength(0);
+  });
+
   it('still satisfies a handler that only wants the session', async () => {
     // `AuthenticatedSession` gained a required member, so this asserts the
     // additive claim rather than leaving it to the type-checker's mood: a

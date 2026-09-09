@@ -631,6 +631,15 @@ async function runHandler(args: {
     },
   };
 
+  // Non-enumerable, and that is a correctness fix rather than tidiness: a
+  // handler writing `{ ...session }` — to log it, to pass it on — would
+  // otherwise invoke the getter and mark the filter consumed without a single
+  // query having been narrowed by it. That is a route claiming
+  // `decidedBy: 'policy'` and passing while it leaks, which is the one outcome
+  // this whole mechanism exists to prevent. Defined here rather than in the
+  // literal so the accessor still satisfies the interface at construction.
+  Object.defineProperty(authenticated, 'subjectFilter', { enumerable: false });
+
   const response =
     args.context !== undefined
       ? await args.handler(args.request, authenticated, args.context)
