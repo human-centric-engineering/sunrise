@@ -25,13 +25,14 @@ release process.
   the last returning a Prisma `where` fragment so that a fork's list query and
   its single-row read cannot disagree — **nothing in core calls `subjectScope`
   yet**, since there is no core list endpoint scoped by subject; it ships now
-  because it is the half of the contract that keeps `canRead` honest. All four
-  chokepoints route through the policy: `withAdminAuth`, `withAuth`,
-  `app/admin/layout.tsx` and the maintenance-mode bypass in
-  `components/maintenance-wrapper.tsx`. None of the 262 guarded handlers behind
-  them changed — 257 under `/api/v1/admin` — which is the point: a fork needing a
-  second admin tier (#366) or owner-scoped visibility (#367) had to shadow
-  `lib/auth/guards.ts` or edit all of them.
+  because it is the half of the contract that keeps `canRead` honest. The policy
+  is consulted in four places, and which face each asks matters more than the
+  count: `withAdminAuth`, `app/admin/layout.tsx` and the maintenance-mode bypass
+  in `components/maintenance-wrapper.tsx` ask `canAdminister`, while `withAuth`
+  asks `canRead`. None of the 262 `withAdminAuth` handlers changed — 257 under
+  `/api/v1/admin` — nor the 23 `withAuth` ones, which is the point: a fork
+  needing a second admin tier (#366) or owner-scoped visibility (#367) had to
+  shadow `lib/auth/guards.ts` or edit all of them.
 
   A fork replaces the policy from the new fork-owned `lib/app/authorization.ts`,
   which is listed among [`VERSIONING.md`](./VERSIONING.md#covered)'s named seams.
@@ -63,10 +64,9 @@ release process.
   subject — `subject === null || subject === viewer.userId` — permits every
   caller while reading exactly like a check. Sunrise's default narrows
   `'unattributed'` to platform staff and logs it once per kind. **The read axis is
-  not yet fully behind the seam**: `GET /api/v1/users/[id]` and
-  `/api/v1/users/me` still decide from the platform role inline, so a narrowing
-  policy does not narrow those two — named in both module headers, tracked in
-  #738.
+  not yet fully behind the seam**: `GET /api/v1/users/[id]` still decides from
+  the platform role inline, so a narrowing policy does not narrow it and neither
+  does safe mode — named in both module headers.
 
   Every face returns a `Promise` from day one — the org input (§106) needs a
   membership lookup, and a later sync→async conversion would be a sweep of every

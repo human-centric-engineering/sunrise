@@ -215,19 +215,20 @@ error in whichever tenant arrives second, not as a design review. Every such key
 on a table you scope must become `@@unique([orgId, …])` in the same migration.
 
 **Derive this list; do not trust a written one.** The first version of this
-paragraph enumerated two instances and missed four, which is the same failure
-`[#742]` is about:
+paragraph enumerated two instances and missed four — the same failure this
+whole section warns about:
 
 ```bash
 grep -n '@unique' prisma/schema/*.prisma   # then cross-reference the tenant-owned list above
 ```
 
-At the time of writing that yields, on tenant-owned models:
+At the time of writing that yields, on the tenant-owned models above:
 `AiWorkflow.slug`, `AiKnowledgeDocument.slug`, `AiKnowledgeBase.slug`,
-`McpExposedPrompt.name`, `AiWorkflowExecution.dedupKey` and
-`AiOutboundMessage.dedupKey`. Hash and token uniques (`AiApiKey.keyHash`,
-`McpApiKey.keyHash`, `AiAgentEmbedToken.token`, …) are not collision-prone and
-need nothing.
+`AiWorkflowExecution.dedupKey` and `AiOutboundMessage.dedupKey`. Add
+`McpExposedPrompt.name` **if** you scope that model — it is classified as global
+config above, and its global `name` namespace is one of the reasons why. Hash
+and token uniques (`AiApiKey.keyHash`, `McpApiKey.keyHash`,
+`AiAgentEmbedToken.token`, …) are not collision-prone and need nothing.
 Routing keys that are global **on purpose** — an agent slug an unauthenticated
 embed resolves before any org context exists — are the exception, and design
 decision 4 covers them.
@@ -235,8 +236,9 @@ decision 4 covers them.
 > **This inventory is hand-maintained and nothing checks it.** It was short by
 > five non-child models when the control-plane section below was derived from
 > it, and the playbook's own sync checklist tells you to classify new models
-> against it. [#742] tracks making that a test rather than a habit. Until it is,
-> treat the list as the current state and re-derive it from
+> against it. Making that a build failure rather than a habit is scheduled with
+> row isolation, where `orgId` becomes the thing to derive the classification
+> from. Until then, treat the list as the current state and re-derive it from
 > `prisma/schema/*.prisma` before a retrofit — not as a boundary.
 
 ## The control plane: which admin surfaces are whose
@@ -340,8 +342,6 @@ because the enforcement differs in kind: a query that forgets its org `where`
 returns **zero** rows under RLS, while a query that forgets its owner filter
 returns **everyone's**. See
 [the leak, stated plainly](../auth/authorization.md#the-leak-stated-plainly).
-
-[#742]: https://github.com/human-centric-engineering/sunrise/issues/742
 
 ## The retrofit recipe
 

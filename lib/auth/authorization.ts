@@ -46,7 +46,7 @@
  * `ADMIN` still reads every user row through it, **including in safe mode**,
  * whose promise that "every declared read narrows to the reader's own rows"
  * cannot bind a read that was never declared. Migrating them is the first
- * adopter of the `resource` resolver and is tracked in #738 — it changes a
+ * adopter of the `resource` resolver, and is scheduled separately — it changes a
  * shipped route's behaviour and wants its own review, rather than riding along
  * with the extraction.
  *

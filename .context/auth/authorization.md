@@ -148,7 +148,10 @@ degradation:
 
 - A policy method that **throws** denies, and is logged. All three faces then
   answer from `SAFE_MODE_POLICY`, so the degraded behaviour is parity-consistent
-  by construction rather than hand-written per face.
+  by construction rather than hand-written per face. This is **per call**, not a
+  latch: the next request goes back to the fork's policy. An intermittently
+  throwing `subjectScope` therefore produces intermittently narrowed lists and
+  does not close the console — unlike the registration failure below.
 - A **registration** that throws puts the install in safe mode for the life of
   the process: nobody administers anything, and every declared read narrows to
   the reader's own rows.
@@ -176,10 +179,12 @@ resolver, so it is asked about `{ kind: 'nothing' }`, allows, and the real
 decision is the line below it. The consequence is directional and it is the
 unsafe direction: **a fork's narrowing policy does not narrow it, and neither
 does safe mode** — safe mode's promise that every declared read narrows to the
-reader's own rows cannot bind a read that was never declared. Tracked in [#738].
+reader's own rows cannot bind a read that was never declared. Migrating it is
+the first real adopter of the `resource` resolver; it is scheduled, and this
+paragraph goes when it lands.
 
-`app/api/v1/users/me/route.ts` is **not** a second instance, though #738 and
-this document both said so until 2026-09-09. Its `GET` reads
+`app/api/v1/users/me/route.ts` is **not** a second instance, though this
+document said so until 2026-09-09. Its `GET` reads
 `where: { id: session.user.id }` and is self-scoped by construction; its only
 `isPlatformAdmin` call (`:295`) guards the last-admin count inside `DELETE`,
 which is a restriction on admins rather than a read decision.
@@ -224,8 +229,8 @@ with the true principal while the handler asks `subjectScope` with the
 fabricated one, so the two faces disagree **at the call site**, for a policy the
 checker passes clean.
 
-Until a principal builder is exported ([#743]), derive what you can and accept
-that the rest fails closed:
+Until the guards hand the handler their principal, derive what you can and
+accept that the rest fails closed:
 
 ```ts
 import { isApiKeySession } from '@/lib/auth/api-keys';
@@ -359,14 +364,29 @@ families, and comparing them is the argument for the recipe.
 
 ### Webhooks — coherent, and what the recipe generalises
 
-Every read of `AiWebhookSubscription` is narrowed by owner, list and detail
-agreeing: the list (`webhooks/route.ts`), detail GET/PATCH/DELETE
-(`webhooks/[id]/route.ts`), the test action (`[id]/test`), the deliveries list
-(`[id]/deliveries`), the DLQ list and stats through the relation
-(`webhooks/dlq/route.ts`, `webhooks/dlq/stats`), and two post-fetch comparisons on individual
-deliveries (`deliveries/[id]`, `deliveries/[id]/retry`) — **ten sites across
-eight files**, all spelling `createdBy: session.user.id` by hand. That is the
-shape `subjectScope` + `canRead` replace with one rule.
+Every read of `AiWebhookSubscription` **under `/admin/orchestration/webhooks`**
+is narrowed by owner, list and detail agreeing: the list (`webhooks/route.ts`),
+detail GET/PATCH/DELETE (`webhooks/[id]/route.ts`), the test action
+(`[id]/test`), the deliveries list (`[id]/deliveries`), the DLQ list, stats and
+replay through the relation (`webhooks/dlq/route.ts`, `dlq/stats`,
+`dlq/replay`), and two post-fetch comparisons on individual deliveries
+(`deliveries/[id]`, `deliveries/[id]/retry`) — **twelve sites across nine
+files**, all spelling `createdBy: session.user.id` by hand. That is the shape
+`subjectScope` + `canRead` replace with one rule.
+
+**And that qualifier is load-bearing, which is the real lesson.** This paragraph
+first read "every read of `AiWebhookSubscription`", and that was false:
+`lib/orchestration/backup/exporter.ts:93` — reached by
+`GET /api/v1/admin/orchestration/backup/export` — reads every subscription's
+`url` and `emailAddress` with no owner filter. It is correct today, because a
+config backup is a platform-level operation and every caller is already a
+platform admin; under a customer tier it is a leak, and org-filtering that
+exporter is scheduled with the external plane.
+
+So even the family held up here as coherent is coherent only within one
+directory. A roster of call sites assembled by reading routes will miss the
+library function a route calls — which is the same argument this page makes
+about `createdBy` two sections down, turned on the page itself.
 
 ### Experiments — the same idea, applied incoherently
 
@@ -389,7 +409,7 @@ experiment never leaks", while the list two directories up leaks exactly that.
 This is not a hypothetical divergence between a list and a detail read. It is
 that divergence, in `main`, in the family the ownership seam is for — which is
 why the rule needs a name and a checker rather than a convention. Tracked in
-[#741]; it is deliberately not fixed here, because it changes shipped route
+scheduled separately; it is deliberately not fixed here, because it changes shipped route
 behaviour and wants its own review.
 
 ### The families that record `createdBy` and never read it
@@ -402,8 +422,8 @@ noting it followed that precedent deliberately.
 **Stamping `createdBy` on write is not scoping, and the two are indistinguishable
 to a grep.** `createdBy: session.user.id` inside a `create`'s `data` is
 attribution; the same eight characters inside a `where` are a boundary. In the
-webhooks family, ten of the eleven occurrences are the second kind and one is the
-first. That is why "we filter by `createdBy` here" is not a claim a reviewer can
+webhooks routes, twelve of the thirteen occurrences are the second kind and one
+is the first. That is why "we filter by `createdBy` here" is not a claim a reviewer can
 check by searching, and why the rule wants a named function.
 
 **That is correct today and it is not a bug list.** Single-tenant Sunrise has one
@@ -454,7 +474,4 @@ Keys do not bind an org yet, so "an org-bound key can never carry `admin`" is
 - [`../architecture/fork-init-seams.md`](../architecture/fork-init-seams.md) — the init-gate contract every `lib/app/*` seam shares
 - [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md) §4 — the fork-facing seam list
 
-[#738]: https://github.com/human-centric-engineering/sunrise/issues/738
 [#739]: https://github.com/human-centric-engineering/sunrise/issues/739
-[#741]: https://github.com/human-centric-engineering/sunrise/issues/741
-[#743]: https://github.com/human-centric-engineering/sunrise/issues/743

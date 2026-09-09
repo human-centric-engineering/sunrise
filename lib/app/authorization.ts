@@ -23,7 +23,8 @@
  * that before trusting a narrowing `canRead`: `app/api/v1/users/[id]` (GET)
  * still decides from the platform role inline, so a platform `ADMIN` reads
  * every user row through it whatever your policy says.
- * `lib/auth/authorization.ts`'s module header carries the detail; #738 tracks it.
+ * `lib/auth/authorization.ts`'s module header carries the detail. Migrating it
+ * is scheduled; until then, treat that route as outside your policy.
  *
  * The two cases this exists for:
  *
