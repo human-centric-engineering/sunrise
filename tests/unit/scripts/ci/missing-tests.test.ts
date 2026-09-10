@@ -569,6 +569,36 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     expect(exclusions).toContain('lib/env.ts');
   });
 
+  it.each([
+    ['a reason of at least 20 characters', (e: { reason: string }) => e.reason.trim().length >= 20],
+    ['a non-empty pattern', (e: { pattern: string }) => e.pattern.trim().length > 0],
+  ])('every fork coverage exclusion carries %s', (_label, holds) => {
+    // THE CLAIM THIS PR MAKES ELSEWHERE, MADE CHECKABLE. The accounting test
+    // below subtracts the fork tail on the stated grounds that `lib/app/ci.ts`
+    // requires a reason, so a fork's exclusion "arrives already justified" —
+    // but `reason: ''` type-checks, and without this it would sail through the
+    // one guard that otherwise forces a decision about an excluded path.
+    //
+    // 20 characters is not arbitrary: it is the floor
+    // `tests/unit/scripts/ci/scoped-tests.test.ts` already applies to an
+    // always-run reason, and the two lists ship in the same seam file. They
+    // should not disagree about what a reason is.
+    //
+    // Upstream the list is empty, so this asserts nothing until a fork fills
+    // it — which is the checkout where switching the 80% floor off for a path
+    // is a live decision rather than a hypothetical one.
+    for (const entry of appCoverageExclusions) {
+      expect(holds(entry), `${entry.pattern}: ${entry.reason}`).toBe(true);
+    }
+  });
+
+  it('declares each fork coverage pattern once', () => {
+    // A duplicate is the shape that reads as two decisions and is one — and the
+    // always-run list next door is guarded against exactly this.
+    const patterns = forkExclusions();
+    expect(new Set(patterns).size).toBe(patterns.length);
+  });
+
   it('sees whatever the fork seam declares', () => {
     // SAY WHAT THIS PROVES WHERE. Sunrise ships `lib/app/ci.ts` empty, so
     // upstream this loop has nothing to iterate and cannot fail — it is the

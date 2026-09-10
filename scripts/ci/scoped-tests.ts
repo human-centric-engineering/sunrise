@@ -484,14 +484,34 @@ export function validateAlwaysRun(entries: readonly AlwaysRunEntry[]): string | 
     return 'ALWAYS_RUN_TESTS is empty — a scoped run would skip every whole-tree invariant.';
   }
   for (const entry of entries) {
-    // The suffixes `vitest.config.ts`'s `include` glob collects, not `.test.ts`
-    // alone. This validator runs inside `selfTestFailure`, so a rejection does
-    // not skip an entry — it stops the whole scoped gate. A fork declaring a
-    // `.spec.ts` whole-tree test (the selection side accepts those,
-    // deliberately) would have had a seam entry that refuses to run the runner.
-    // `tests/a.ts` is still rejected, which is the case this guards.
-    if (!entry.path.startsWith('tests/') || !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.path)) {
+    // WHERE a test lives is not this validator's business; what it IS, is.
+    //
+    // The rule used to be `tests/` prefix AND `.test.ts` suffix, and both halves
+    // contradicted `coverageTargets` below, which says in as many words that the
+    // selection side was widened for a fork that colocates (`lib/foo.test.ts`)
+    // or writes `.spec.ts` — "so this side has to agree about where tests live".
+    // This one did not. And the cost of disagreeing is not a skipped entry:
+    // this runs inside `selfTestFailure`, so a rejection stops the WHOLE scoped
+    // gate. A fork declaring its own colocated whole-tree test in
+    // `lib/app/ci.ts` would have had a seam entry that refuses to run the
+    // runner — the seam handing back a worse failure than the edit it replaced.
+    //
+    // `tests/a.ts` is still rejected, which is the case the old prefix check was
+    // really buying: the suffix is what says "test file", and it says it
+    // wherever the file sits.
+    if (!/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.path)) {
       return `ALWAYS_RUN_TESTS holds "${entry.path}", which is not a test path.`;
+    }
+    // Dropping the prefix dropped a property something else was leaning on.
+    // These paths become POSITIONAL ARGV for the spawned `vitest run`
+    // (`run-scoped-tests.ts` filters `selection.files` and `coverage` through
+    // `unsafeArgvPaths`, but never the always-run union), and `startsWith
+    // ('tests/')` was structurally why an entry could not present as an option —
+    // a security review named exactly that as the reason the unfiltered path was
+    // safe. So the check moves here, where it is stated rather than implied, and
+    // it now covers the quote and control-character shapes a prefix never did.
+    if (unsafeArgvPaths([entry.path]).length > 0) {
+      return `ALWAYS_RUN_TESTS holds "${entry.path}", which cannot be passed as an argument.`;
     }
     if (entry.reason.trim() === '') {
       return `ALWAYS_RUN_TESTS entry "${entry.path}" has no reason.`;

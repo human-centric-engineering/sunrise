@@ -226,6 +226,13 @@ Before this existed, one fork script and one whole-tree test cost edits to three
 Sunrise-owned files — `vitest.config.ts`, `scripts/ci/missing-tests.ts` and
 `scripts/ci/scoped-tests.ts` — each a "keep mine" conflict on every sync (#759).
 
+Both lists are guarded the way Sunrise's own are, in your checkout: a reason
+under 20 characters and a duplicate entry fail either list, and an always-run
+path additionally has to exist and to be something the runner can pass as an
+argument to `vitest`. A coverage pattern is a glob, so nothing existence-checks
+it — the reason is what a reader has instead, which is why it is a required
+field rather than a comment.
+
 The coverage exclusion is the one worth thinking about twice. It switches the
 80% floor **off** for that path, so extract the logic first and exclude only the
 I/O wrapper: `scripts/smoke/!(*-assertions).ts` is upstream's worked example of

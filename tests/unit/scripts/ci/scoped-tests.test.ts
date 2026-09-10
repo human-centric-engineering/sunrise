@@ -316,16 +316,44 @@ describe('validateAlwaysRun', () => {
     expect(validateAlwaysRun([])).toContain('empty');
   });
 
-  it('rejects a path that is not under tests/', () => {
+  it('rejects a source file, wherever it sits', () => {
     expect(validateAlwaysRun([{ path: 'lib/a.ts', reason: 'x'.repeat(30) }])).toContain(
       'not a test path'
     );
   });
 
-  it('rejects a path that is not a .test.ts file', () => {
+  it('rejects a non-test file inside tests/', () => {
+    // The case the old `tests/` prefix check was really buying. The suffix rule
+    // covers it on its own, which is why dropping the prefix lost nothing.
     expect(validateAlwaysRun([{ path: 'tests/a.ts', reason: 'x'.repeat(30) }])).toContain(
       'not a test path'
     );
+  });
+
+  it('accepts a colocated test outside tests/, which a fork may declare', () => {
+    // `coverageTargets` accepts a fork's colocated and `.spec.ts` files, and
+    // this validator runs inside `selfTestFailure` — so rejecting one here does
+    // not skip an entry, it stops the whole scoped gate. A fork declaring its
+    // own colocated whole-tree test in `lib/app/ci.ts` would have met that.
+    expect(
+      validateAlwaysRun([{ path: 'lib/framework/boot-order.test.ts', reason: 'x'.repeat(30) }])
+    ).toBeNull();
+    expect(
+      validateAlwaysRun([{ path: 'tests/unit/x.spec.tsx', reason: 'x'.repeat(30) }])
+    ).toBeNull();
+  });
+
+  it('rejects a path that could not be passed as an argument', () => {
+    // These become positional argv for the spawned `vitest run`, and the
+    // always-run union is not filtered through `unsafeArgvPaths` by the CLI —
+    // the `tests/` prefix was structurally why an entry could not present as an
+    // option, so dropping it moved that guarantee here rather than losing it.
+    expect(
+      validateAlwaysRun([{ path: '--config=evil.test.ts', reason: 'x'.repeat(30) }])
+    ).toContain('cannot be passed as an argument');
+    expect(
+      validateAlwaysRun([{ path: 'tests/a\u0007b.test.ts', reason: 'x'.repeat(30) }])
+    ).toContain('cannot be passed as an argument');
   });
 
   it('rejects an entry with no reason, because the reason is what stops the list rotting', () => {

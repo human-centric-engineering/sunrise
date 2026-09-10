@@ -92,7 +92,14 @@ export const appCoverageExclusions: AppCoverageExclusion[] = [];
 
 /** One test that must run regardless of what the module graph says. */
 export interface AppAlwaysRunTest {
-  /** Repo-relative path, forward slashes. Must exist — a typo fails the guard. */
+  /**
+   * Repo-relative path, forward slashes. Must exist — a typo fails the guard.
+   *
+   * It does not have to live under `tests/`: a colocated `lib/framework/
+   * boot-order.test.ts` is fine, as is `.spec.ts`, matching what the selection
+   * side already collects. What it must be is a test file the runner can hand
+   * to `vitest` as an argument.
+   */
   path: string;
   /**
    * What tree state it reads, i.e. why no import chain reaches it.
