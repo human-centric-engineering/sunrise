@@ -162,49 +162,57 @@ logAdminAction({
 
 Every `logAdminAction()` call site (as of grep at write time):
 
-| Route                                               | Action                                                              | entityType             |
-| --------------------------------------------------- | ------------------------------------------------------------------- | ---------------------- |
-| `agents/route.ts`                                   | `agent.create`                                                      | `agent`                |
-| `agents/[id]/route.ts`                              | `agent.update`, `agent.delete`                                      | `agent`                |
-| `agents/[id]/clone/route.ts`                        | `agent.clone`                                                       | `agent`                |
-| `agents/[id]/instructions-revert/route.ts`          | `agent.instructions_revert`                                         | `agent`                |
-| `agents/[id]/versions/[versionId]/restore/route.ts` | `agent.version_restore`                                             | `agent`                |
-| `agents/[id]/capabilities/route.ts`                 | `agent.capability_attach`                                           | `agent`                |
-| `agents/[id]/capabilities/[capId]/route.ts`         | `agent.capability_update`, `agent.capability_detach`                | `agent`                |
-| `agents/[id]/invite-tokens/route.ts`                | `agent.invite_token_create`                                         | `agent`                |
-| `agents/[id]/invite-tokens/[tokenId]/route.ts`      | `agent.invite_token_revoke`                                         | `agent`                |
-| `agents/[id]/embed-tokens/route.ts`                 | `embed_token.create`                                                | `embed_token`          |
-| `agents/[id]/embed-tokens/[tokenId]/route.ts`       | `embed_token.update`, `embed_token.delete`                          | `embed_token`          |
-| `agents/import/route.ts`                            | `agent.import`                                                      | `agent`                |
-| `agents/bulk/route.ts`                              | `agent.bulk.activate`, `agent.bulk.deactivate`, `agent.bulk.delete` | `agent`                |
-| `workflows/route.ts`                                | `workflow.create`                                                   | `workflow`             |
-| `workflows/[id]/route.ts`                           | `workflow.update`, `workflow.delete`                                | `workflow`             |
-| `capabilities/route.ts`                             | `capability.create`                                                 | `capability`           |
-| `capabilities/[id]/route.ts`                        | `capability.update`, `capability.delete`                            | `capability`           |
-| `providers/route.ts`                                | `provider.create`                                                   | `provider`             |
-| `providers/[id]/route.ts`                           | `provider.update`, `provider.delete`                                | `provider`             |
-| `mcp/keys/route.ts`                                 | `mcp_api_key.create`                                                | `mcp_api_key`          |
-| `mcp/keys/[id]/route.ts`                            | `mcp_api_key.update`, `mcp_api_key.delete`                          | `mcp_api_key`          |
-| `mcp/keys/[id]/rotate/route.ts`                     | `mcp_api_key.rotate`                                                | `mcp_api_key`          |
-| `knowledge/documents/route.ts`                      | `knowledge_document.create` (×2 — file upload and text paste)       | `knowledge_document`   |
-| `knowledge/documents/bulk/route.ts`                 | `knowledge_document.bulk_create` (only when `successCount > 0`)     | `knowledge_document`   |
-| `knowledge/documents/fetch-url/route.ts`            | `knowledge_document.create`                                         | `knowledge_document`   |
-| `knowledge/documents/[id]/route.ts`                 | `knowledge_document.delete`                                         | `knowledge_document`   |
-| `settings/route.ts`                                 | `settings.update`                                                   | `settings`             |
-| `experiments/route.ts`                              | `experiment.create`                                                 | `experiment`           |
-| `experiments/[id]/route.ts`                         | `experiment.update`, `experiment.delete`                            | `experiment`           |
-| `experiments/[id]/run/route.ts`                     | `experiment.run`                                                    | `experiment`           |
-| `backup/export/route.ts`                            | `backup.export`                                                     | `backup`               |
-| `backup/import/route.ts`                            | `backup.import`                                                     | `backup`               |
-| `hooks/route.ts`                                    | `hook.create`                                                       | `hook`                 |
-| `hooks/[id]/route.ts`                               | `hook.update`, `hook.delete`                                        | `hook`                 |
-| `hooks/[id]/rotate-secret/route.ts`                 | `hook.secret.rotated`, `hook.secret.cleared`                        | `hook`                 |
-| `webhooks/route.ts`                                 | `webhook_subscription.create`                                       | `webhook_subscription` |
-| `webhooks/[id]/route.ts`                            | `webhook_subscription.update`, `webhook_subscription.delete`        | `webhook_subscription` |
-| `webhooks/deliveries/[id]/retry/route.ts`           | `webhook_delivery.retry`                                            | `delivery`             |
-| `hooks/deliveries/[id]/retry/route.ts`              | `hook_delivery.retry`                                               | `delivery`             |
-| `mcp/settings/route.ts`                             | `mcp_settings.update`                                               | `mcp_settings`         |
-| `conversations/clear/route.ts`                      | `conversation.bulk_clear`                                           | `conversation`         |
+| Route                                                      | Action                                                              | entityType             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------- |
+| `agents/route.ts`                                          | `agent.create`                                                      | `agent`                |
+| `agents/[id]/route.ts`                                     | `agent.update`, `agent.delete`                                      | `agent`                |
+| `agents/[id]/clone/route.ts`                               | `agent.clone`                                                       | `agent`                |
+| `agents/[id]/instructions-revert/route.ts`                 | `agent.instructions_revert`                                         | `agent`                |
+| `agents/[id]/versions/[versionId]/restore/route.ts`        | `agent.version_restore`                                             | `agent`                |
+| `agents/[id]/capabilities/route.ts`                        | `agent.capability_attach`                                           | `agent`                |
+| `agents/[id]/capabilities/[capId]/route.ts`                | `agent.capability_update`, `agent.capability_detach`                | `agent`                |
+| `agents/[id]/invite-tokens/route.ts`                       | `agent.invite_token_create`                                         | `agent`                |
+| `agents/[id]/invite-tokens/[tokenId]/route.ts`             | `agent.invite_token_revoke`                                         | `agent`                |
+| `agents/[id]/embed-tokens/route.ts`                        | `embed_token.create`                                                | `embed_token`          |
+| `agents/[id]/embed-tokens/[tokenId]/route.ts`              | `embed_token.update`, `embed_token.delete`                          | `embed_token`          |
+| `agents/import/route.ts`                                   | `agent.import`                                                      | `agent`                |
+| `agents/bulk/route.ts`                                     | `agent.bulk.activate`, `agent.bulk.deactivate`, `agent.bulk.delete` | `agent`                |
+| `workflows/route.ts`                                       | `workflow.create`                                                   | `workflow`             |
+| `workflows/[id]/route.ts`                                  | `workflow.update`, `workflow.delete`                                | `workflow`             |
+| `capabilities/route.ts`                                    | `capability.create`                                                 | `capability`           |
+| `capabilities/[id]/route.ts`                               | `capability.update`, `capability.delete`                            | `capability`           |
+| `providers/route.ts`                                       | `provider.create`                                                   | `provider`             |
+| `providers/[id]/route.ts`                                  | `provider.update`, `provider.delete`                                | `provider`             |
+| `mcp/keys/route.ts`                                        | `mcp_api_key.create`                                                | `mcp_api_key`          |
+| `mcp/keys/[id]/route.ts`                                   | `mcp_api_key.update`, `mcp_api_key.delete`                          | `mcp_api_key`          |
+| `mcp/keys/[id]/rotate/route.ts`                            | `mcp_api_key.rotate`                                                | `mcp_api_key`          |
+| `knowledge/documents/route.ts`                             | `knowledge_document.create` (×2 — file upload and text paste)       | `knowledge_document`   |
+| `knowledge/documents/bulk/route.ts`                        | `knowledge_document.bulk_create` (only when `successCount > 0`)     | `knowledge_document`   |
+| `knowledge/documents/fetch-url/route.ts`                   | `knowledge_document.create`                                         | `knowledge_document`   |
+| `knowledge/documents/[id]/route.ts`                        | `knowledge_document.delete`                                         | `knowledge_document`   |
+| `settings/route.ts`                                        | `settings.update`                                                   | `settings`             |
+| `experiments/route.ts`                                     | `experiment.create`                                                 | `experiment`           |
+| `experiments/[id]/route.ts`                                | `experiment.update`, `experiment.delete`                            | `experiment`           |
+| `experiments/[id]/run/route.ts`                            | `experiment.run`                                                    | `experiment`           |
+| `experiments/[id]/claim/route.ts`                          | `experiment.claim`                                                  | `experiment`           |
+| `evaluations/datasets/[id]/route.ts`                       | `dataset.view`, `dataset.update`, `dataset.delete`                  | `dataset`              |
+| `evaluations/datasets/[id]/claim/route.ts`                 | `dataset.claim`                                                     | `dataset`              |
+| `evaluations/datasets/[id]/cases/route.ts`                 | `dataset.cases_view`                                                | `dataset`              |
+| `evaluations/datasets/[id]/cases/[position]/route.ts`      | `dataset.case_update`                                               | `dataset`              |
+| `evaluations/datasets/[id]/capture/route.ts`               | `dataset.case_capture`                                              | `dataset`              |
+| `evaluations/datasets/[id]/generate-cases/route.ts`        | `dataset.cases_generate`                                            | `dataset`              |
+| `evaluations/datasets/[id]/generate-cases/commit/route.ts` | `dataset.cases_commit`                                              | `dataset`              |
+| `backup/export/route.ts`                                   | `backup.export`                                                     | `backup`               |
+| `backup/import/route.ts`                                   | `backup.import`                                                     | `backup`               |
+| `hooks/route.ts`                                           | `hook.create`                                                       | `hook`                 |
+| `hooks/[id]/route.ts`                                      | `hook.update`, `hook.delete`                                        | `hook`                 |
+| `hooks/[id]/rotate-secret/route.ts`                        | `hook.secret.rotated`, `hook.secret.cleared`                        | `hook`                 |
+| `webhooks/route.ts`                                        | `webhook_subscription.create`                                       | `webhook_subscription` |
+| `webhooks/[id]/route.ts`                                   | `webhook_subscription.update`, `webhook_subscription.delete`        | `webhook_subscription` |
+| `webhooks/deliveries/[id]/retry/route.ts`                  | `webhook_delivery.retry`                                            | `delivery`             |
+| `hooks/deliveries/[id]/retry/route.ts`                     | `hook_delivery.retry`                                               | `delivery`             |
+| `mcp/settings/route.ts`                                    | `mcp_settings.update`                                               | `mcp_settings`         |
+| `conversations/clear/route.ts`                             | `conversation.bulk_clear`                                           | `conversation`         |
 
 Note: bulk agent actions write a **single** audit entry per operation (not per-agent). The `metadata` field records affected agent IDs.
 
@@ -229,3 +237,19 @@ Indexed on `userId`, `action`, `(entityType, entityId)`, and `createdAt`, so bot
 - [Admin API reference](../orchestration/admin-api.md) — full admin HTTP surface.
 - [Orchestration Endpoints](../api/orchestration-endpoints.md) — endpoint-level reference.
 - [Settings page](./orchestration-costs.md) — retention settings live here (webhook, cost log, and audit log).
+
+## Dataset actions are written only for non-owner access
+
+Every `dataset.*` action above is emitted through `logDatasetAccess`
+(`lib/orchestration/access/dataset-access.ts`), which **skips `'owner'`** — an
+admin working on their own dataset writes no audit row, exactly as
+`logConversationAccess` skips a caller reading their own conversation.
+
+What reaches the log is access to a dataset **nobody owns**: one whose creator
+was erased under Art. 17, leaving `userId` null. Those rows carry
+`metadata.accessBasis = 'orphan'`. The basis name differs from the conversations'
+`'system'` deliberately — a `'system'` conversation was never personal, an
+`'orphan'` dataset was somebody's until the erasure detached it.
+
+The dataset **list** is deliberately not logged. One entry per page view would
+bury the rows that matter.

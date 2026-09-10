@@ -124,7 +124,11 @@ export async function datasetVisibilityWhere(
  * Record an admin touching a dataset that is not their own.
  *
  * `'owner'` is routine self-access and is not logged, matching
- * `logConversationAccess`. `'orphan'` is logged: the row was somebody's, an
+ * `logConversationAccess`. Action names are present-tense verbs — `dataset.view`,
+ * `dataset.update` — matching `experiment.*` and every other admin action in the
+ * tree, because `actionBadgeVariant` in the audit-log view keys off the `.update`
+ * / `.delete` suffix and a past-tense name renders as an unremarkable neutral
+ * badge. `'orphan'` is logged: the row was somebody's, an
  * erasure detached it, and who reached it afterwards is worth knowing.
  *
  * **Deliberately weaker than the conversation rule, and here is the line.**

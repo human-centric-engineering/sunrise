@@ -60,7 +60,13 @@ function matches(row: OwnedRow, where: OwnerScopedWhere): boolean {
   // clause (IS NULL), and treating it as "absent" would match every row.
   for (const column of OWNER_COLUMNS) {
     const wanted = where[column];
-    if (wanted !== undefined && (row[column] ?? null) !== wanted) return false;
+    if (wanted === undefined) continue;
+    // A fixture that OMITS the column is not a row whose owner is null. Reading
+    // absence as null would silently classify every under-specified fixture as
+    // an orphan, so "ownerless rows are visible" could pass without the fixture
+    // ever declaring one. Make the fixture say which column it uses.
+    if (!(column in row)) return false;
+    if (row[column] !== wanted) return false;
   }
 
   if (where.AND !== undefined && !where.AND.every((clause) => matches(row, clause))) return false;

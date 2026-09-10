@@ -141,7 +141,7 @@ describe('logDatasetAccess', () => {
       datasetId: 'ds-1',
       datasetName: 'fixtures',
       basis: 'owner',
-      action: 'dataset.viewed',
+      action: 'dataset.view',
     });
 
     expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
@@ -153,14 +153,14 @@ describe('logDatasetAccess', () => {
       datasetId: 'ds-1',
       datasetName: 'fixtures',
       basis: 'orphan',
-      action: 'dataset.deleted',
+      action: 'dataset.delete',
       extra: { fields: ['name'] },
       clientIp: '127.0.0.1',
     });
 
     expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith({
       userId: ADMIN_ID,
-      action: 'dataset.deleted',
+      action: 'dataset.delete',
       entityType: 'dataset',
       entityId: 'ds-1',
       entityName: 'fixtures',

@@ -198,7 +198,7 @@ export const POST = withAdminAuth(
     ownership: {
       decidedBy: 'self',
       because:
-        'Stamps createdBy = the caller, and the optional dataset is read under the same key. Nothing here reads another subject.',
+        "Stamps createdBy = the caller. The optional dataset is read under the dataset visible clause — the caller's own, or one nobody owns where the policy permits — matching [id]/run, which already accepts an ownerless dataset. Never another subject's row.",
     },
   }
 );

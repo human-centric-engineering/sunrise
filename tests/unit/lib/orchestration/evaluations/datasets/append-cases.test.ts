@@ -21,6 +21,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 
+/** The owner the calling route observed — see `appendCasesToDataset`. */
+const OWNER_ID = 'admin-1';
+
 const mockTx = {
   aiDataset: { findUnique: vi.fn(), update: vi.fn() },
   aiDatasetCase: { createMany: vi.fn(), findMany: vi.fn() },
@@ -48,15 +51,16 @@ beforeEach(() => {
 
 describe('appendCasesToDataset — validation', () => {
   it('throws when given an empty cases array', async () => {
-    await expect(appendCasesToDataset({ datasetId: 'ds-1', cases: [] })).rejects.toThrow(
-      /at least one case/i
-    );
+    await expect(
+      appendCasesToDataset({ datasetId: 'ds-1', observedOwnerId: OWNER_ID, cases: [] })
+    ).rejects.toThrow(/at least one case/i);
   });
 
   it('throws when a case fails schema validation (empty input)', async () => {
     await expect(
       appendCasesToDataset({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         cases: [{ input: '' }],
       })
     ).rejects.toThrow(/Case at position 0 is invalid/);
@@ -82,6 +86,7 @@ describe('appendCasesToDataset — happy path', () => {
 
     const result = await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'd' }, { input: 'e' }],
       source: 'conversation_capture',
     });
@@ -100,7 +105,7 @@ describe('appendCasesToDataset — happy path', () => {
       ],
     });
     expect(mockTx.aiDataset.update).toHaveBeenCalledWith({
-      where: { id: 'ds-1' },
+      where: { id: 'ds-1', userId: OWNER_ID },
       data: expect.objectContaining({
         caseCount: 5,
         contentHash: 'new-content-hash',
@@ -124,6 +129,7 @@ describe('appendCasesToDataset — happy path', () => {
 
     await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'b' }],
       source: 'conversation_capture',
     });
@@ -136,7 +142,11 @@ describe('appendCasesToDataset — happy path', () => {
     mockTx.aiDataset.findUnique.mockResolvedValue(null);
 
     await expect(
-      appendCasesToDataset({ datasetId: 'ds-missing', cases: [{ input: 'a' }] })
+      appendCasesToDataset({
+        datasetId: 'ds-missing',
+        observedOwnerId: OWNER_ID,
+        cases: [{ input: 'a' }],
+      })
     ).rejects.toThrow(/Dataset ds-missing not found/);
   });
 
@@ -150,6 +160,7 @@ describe('appendCasesToDataset — happy path', () => {
     await expect(
       appendCasesToDataset({
         datasetId: 'ds-big',
+        observedOwnerId: OWNER_ID,
         cases: [{ input: 'a' }, { input: 'b' }],
       })
     ).rejects.toThrow(/10000-case cap/);
@@ -170,6 +181,7 @@ describe('appendCasesToDataset — happy path', () => {
 
     await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'b' }],
       source: null, // explicit null — preserve existing source
     });
@@ -193,6 +205,7 @@ describe('appendCasesToDataset — happy path', () => {
 
     await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'b' }],
       // no source key at all
     });
@@ -205,6 +218,7 @@ describe('appendCasesToDataset — happy path', () => {
     await expect(
       appendCasesToDataset({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         cases: [
           { input: 'valid-a' },
           { input: 'valid-b' },
@@ -228,6 +242,7 @@ describe('appendCasesToDataset — happy path', () => {
 
     await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'a' }], // no metadata field → undefined
     });
 
@@ -261,6 +276,7 @@ describe('appendCasesToDataset — happy path', () => {
     // Act
     await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'q', metadata: { key: 'val' }, referenceCitations: [{ url: 'x' }] }],
     });
 
@@ -290,6 +306,7 @@ describe('appendCasesToDataset — happy path', () => {
 
     await appendCasesToDataset({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [{ input: 'a' }], // no referenceCitations field → undefined
     });
 

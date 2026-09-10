@@ -16,7 +16,12 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
-import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
+import {
+  datasetVisibilityWhere,
+  datasetAccessBasis,
+  logDatasetAccess,
+} from '@/lib/orchestration/access/dataset-access';
+import { getClientIP } from '@/lib/security/ip';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -49,7 +54,7 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
       where: { AND: [await datasetVisibilityWhere(session), { id: datasetId }] },
       // `userId` so the write below can pin itself to the ownership this read
       // saw — not for the boundary test, which the `where` above settles.
-      select: { id: true, userId: true },
+      select: { id: true, name: true, userId: true },
     });
     if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);
 
@@ -116,6 +121,18 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
       return { updatedCase: updated, newHash: recomputed };
     });
 
+    logDatasetAccess({
+      adminUserId: session.user.id,
+      datasetId,
+      datasetName: dataset.name,
+      // The visibility clause admits only owner and orphan rows, so this
+      // cannot be null. If it somehow were, over-logging is the safe direction.
+      basis: datasetAccessBasis(dataset, session.user.id) ?? 'orphan',
+      action: 'dataset.case_update',
+      extra: { position, fields: Object.keys(body) },
+      clientIp: getClientIP(request),
+    });
+
     log.info('Dataset case patched', {
       datasetId,
       position,
@@ -123,5 +140,12 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
       newContentHash: newHash,
     });
     return successResponse({ case: updatedCase, contentHash: newHash });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Resolves the dataset under the visible clause for this caller — rows they own, or rows nobody owns where canRead permits an unattributed read — before editing a case on it. Never a row belonging to another subject.',
+    },
   }
 );

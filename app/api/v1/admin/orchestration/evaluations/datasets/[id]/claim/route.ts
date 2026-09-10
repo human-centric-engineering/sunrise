@@ -38,48 +38,57 @@ import {
   logDatasetAccess,
 } from '@/lib/orchestration/access/dataset-access';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
 
-  // Read under the same visibility clause as every other route, so a row this
-  // caller could not have seen is not one they can learn about by claiming it.
-  const existing = await prisma.aiDataset.findFirst({
-    where: { AND: [await datasetVisibilityWhere(session), { id }] },
-    select: { id: true, name: true, userId: true },
-  });
-  if (!existing) throw new NotFoundError(`Dataset ${id} not found`);
+    // Read under the same visibility clause as every other route, so a row this
+    // caller could not have seen is not one they can learn about by claiming it.
+    const existing = await prisma.aiDataset.findFirst({
+      where: { AND: [await datasetVisibilityWhere(session), { id }] },
+      select: { id: true, name: true, userId: true },
+    });
+    if (!existing) throw new NotFoundError(`Dataset ${id} not found`);
 
-  if (datasetAccessBasis(existing, session.user.id) !== 'orphan') {
-    // Reachable only when the row is the caller's own — a third party's was
-    // already a 404 above — so saying so leaks nothing.
-    throw new ConflictError('Dataset already has an owner');
+    if (datasetAccessBasis(existing, session.user.id) !== 'orphan') {
+      // Reachable only when the row is the caller's own — a third party's was
+      // already a 404 above — so saying so leaks nothing.
+      throw new ConflictError('Dataset already has an owner');
+    }
+
+    // `updateMany` with the null guard, not `update` by id: two admins claiming
+    // the same orphan at once must not both succeed, and the second one's write
+    // matching zero rows is what makes the race resolve rather than silently
+    // overwrite the first claim.
+    const claimed = await prisma.aiDataset.updateMany({
+      where: { id, userId: null },
+      data: { userId: session.user.id },
+    });
+    if (claimed.count === 0) {
+      throw new ConflictError('Dataset was claimed by another admin');
+    }
+
+    const dataset = await prisma.aiDataset.findUniqueOrThrow({ where: { id } });
+
+    logDatasetAccess({
+      adminUserId: session.user.id,
+      datasetId: id,
+      datasetName: dataset.name,
+      basis: 'orphan',
+      action: 'dataset.claim',
+      clientIp: getClientIP(request),
+    });
+
+    log.info('Ownerless dataset claimed', { datasetId: id });
+    return successResponse(dataset);
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Reads under the visible clause for this caller and writes only where userId IS NULL, so it can take a row nobody owns and never one belonging to another subject.',
+    },
   }
-
-  // `updateMany` with the null guard, not `update` by id: two admins claiming
-  // the same orphan at once must not both succeed, and the second one's write
-  // matching zero rows is what makes the race resolve rather than silently
-  // overwrite the first claim.
-  const claimed = await prisma.aiDataset.updateMany({
-    where: { id, userId: null },
-    data: { userId: session.user.id },
-  });
-  if (claimed.count === 0) {
-    throw new ConflictError('Dataset was claimed by another admin');
-  }
-
-  const dataset = await prisma.aiDataset.findUniqueOrThrow({ where: { id } });
-
-  logDatasetAccess({
-    adminUserId: session.user.id,
-    datasetId: id,
-    datasetName: dataset.name,
-    basis: 'orphan',
-    action: 'dataset.claimed',
-    clientIp: getClientIP(request),
-  });
-
-  log.info('Ownerless dataset claimed', { datasetId: id });
-  return successResponse(dataset);
-});
+);

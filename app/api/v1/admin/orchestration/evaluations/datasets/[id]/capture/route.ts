@@ -30,7 +30,12 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
+import {
+  datasetVisibilityWhere,
+  datasetAccessBasis,
+  logDatasetAccess,
+} from '@/lib/orchestration/access/dataset-access';
+import { getClientIP } from '@/lib/security/ip';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -45,79 +50,108 @@ import {
   captureWorkflowExecutionAsCase,
 } from '@/lib/orchestration/evaluations/datasets/capture';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = cuidSchema.safeParse(rawId);
-  if (!id.success) {
-    throw new ValidationError('Invalid dataset id', { id: ['Must be a valid CUID'] });
-  }
-  const datasetId = id.data;
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = cuidSchema.safeParse(rawId);
+    if (!id.success) {
+      throw new ValidationError('Invalid dataset id', { id: ['Must be a valid CUID'] });
+    }
+    const datasetId = id.data;
 
-  const body = await validateRequestBody(request, captureDatasetCaseSchema);
+    const body = await validateRequestBody(request, captureDatasetCaseSchema);
 
-  // Dataset ownership
-  const dataset = await prisma.aiDataset.findFirst({
-    where: { AND: [await datasetVisibilityWhere(session), { id: datasetId }] },
-    select: { id: true },
-  });
-  if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);
-
-  if (body.kind === 'conversation_turn') {
-    // Source-side ownership: the caller must own the conversation the message
-    // lives in, or nobody must own it. Without this check, a user could
-    // capture another user's prod traffic into their own dataset.
-    //
-    // A `'shared'` basis is deliberately refused: a share grants view consent,
-    // not consent to copy the turn into someone else's dataset, where it
-    // outlives the share and is no longer reachable by a revoke.
-    const message = await prisma.aiMessage.findUnique({
-      where: { id: body.messageId },
-      select: { conversationId: true },
+    // Dataset ownership
+    const dataset = await prisma.aiDataset.findFirst({
+      where: { AND: [await datasetVisibilityWhere(session), { id: datasetId }] },
+      select: { id: true, name: true, userId: true },
     });
-    if (!message) throw new NotFoundError(`Message ${body.messageId} not found`);
+    if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);
 
-    const access = await adminCanViewConversation(message.conversationId, session.user.id);
-    if (access.basis !== 'owner' && access.basis !== 'system') {
-      throw new NotFoundError(`Message ${body.messageId} not found`);
+    if (body.kind === 'conversation_turn') {
+      // Source-side ownership: the caller must own the conversation the message
+      // lives in, or nobody must own it. Without this check, a user could
+      // capture another user's prod traffic into their own dataset.
+      //
+      // A `'shared'` basis is deliberately refused: a share grants view consent,
+      // not consent to copy the turn into someone else's dataset, where it
+      // outlives the share and is no longer reachable by a revoke.
+      const message = await prisma.aiMessage.findUnique({
+        where: { id: body.messageId },
+        select: { conversationId: true },
+      });
+      if (!message) throw new NotFoundError(`Message ${body.messageId} not found`);
+
+      const access = await adminCanViewConversation(message.conversationId, session.user.id);
+      if (access.basis !== 'owner' && access.basis !== 'system') {
+        throw new NotFoundError(`Message ${body.messageId} not found`);
+      }
+
+      const result = await captureConversationTurnAsCase({
+        datasetId,
+        messageId: body.messageId,
+        observedOwnerId: dataset.userId,
+        ...(body.edits ? { edits: body.edits } : {}),
+      });
+      logDatasetAccess({
+        adminUserId: session.user.id,
+        datasetId,
+        datasetName: dataset.name,
+        basis: datasetAccessBasis(dataset, session.user.id) ?? 'orphan',
+        action: 'dataset.case_capture',
+        extra: { kind: 'conversation_turn' },
+        clientIp: getClientIP(request),
+      });
+      log.info('Captured conversation turn', {
+        datasetId,
+        messageId: body.messageId,
+        newCaseCount: result.newCaseCount,
+      });
+      return successResponse(result, undefined, { status: 201 });
     }
 
-    const result = await captureConversationTurnAsCase({
+    // workflow_execution — the caller's own run, or a system-owned one
+    // (schedule/inbound). Capturing a scheduled run's output into a dataset is
+    // a core evaluation workflow; an owner-only check would 404 every one of
+    // them now that they carry `userId = null`.
+    const execution = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: body.executionId },
+      select: { userId: true },
+    });
+    if (!execution || !adminCanViewExecution(execution, session.user.id)) {
+      throw new NotFoundError(`Workflow execution ${body.executionId} not found`);
+    }
+
+    const result = await captureWorkflowExecutionAsCase({
       datasetId,
-      messageId: body.messageId,
+      executionId: body.executionId,
+      selector: body.selector,
+      observedOwnerId: dataset.userId,
       ...(body.edits ? { edits: body.edits } : {}),
     });
-    log.info('Captured conversation turn', {
+    logDatasetAccess({
+      adminUserId: session.user.id,
       datasetId,
-      messageId: body.messageId,
+      datasetName: dataset.name,
+      basis: datasetAccessBasis(dataset, session.user.id) ?? 'orphan',
+      action: 'dataset.case_capture',
+      extra: { kind: 'workflow_execution' },
+      clientIp: getClientIP(request),
+    });
+    log.info('Captured workflow execution', {
+      datasetId,
+      executionId: body.executionId,
+      selectorKind: body.selector.kind,
       newCaseCount: result.newCaseCount,
     });
     return successResponse(result, undefined, { status: 201 });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Resolves the dataset under the visible clause for this caller — rows they own, or rows nobody owns where canRead permits an unattributed read — before touching it. Never a row belonging to another subject.',
+    },
   }
-
-  // workflow_execution — the caller's own run, or a system-owned one
-  // (schedule/inbound). Capturing a scheduled run's output into a dataset is
-  // a core evaluation workflow; an owner-only check would 404 every one of
-  // them now that they carry `userId = null`.
-  const execution = await prisma.aiWorkflowExecution.findUnique({
-    where: { id: body.executionId },
-    select: { userId: true },
-  });
-  if (!execution || !adminCanViewExecution(execution, session.user.id)) {
-    throw new NotFoundError(`Workflow execution ${body.executionId} not found`);
-  }
-
-  const result = await captureWorkflowExecutionAsCase({
-    datasetId,
-    executionId: body.executionId,
-    selector: body.selector,
-    ...(body.edits ? { edits: body.edits } : {}),
-  });
-  log.info('Captured workflow execution', {
-    datasetId,
-    executionId: body.executionId,
-    selectorKind: body.selector.kind,
-    newCaseCount: result.newCaseCount,
-  });
-  return successResponse(result, undefined, { status: 201 });
-});
+);

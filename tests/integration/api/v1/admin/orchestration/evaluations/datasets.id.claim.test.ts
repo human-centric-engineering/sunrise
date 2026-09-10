@@ -133,7 +133,7 @@ describe('POST /datasets/:id/claim — adopting an ownerless dataset', () => {
 
     expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: 'dataset.claimed',
+        action: 'dataset.claim',
         entityId: DATASET_ID,
         metadata: expect.objectContaining({ accessBasis: 'orphan' }),
       })

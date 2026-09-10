@@ -371,10 +371,15 @@ release process.
   New: `lib/orchestration/access/dataset-access.ts` — `datasetVisibilityWhere()`,
   `datasetAccessBasis()`, `adminCanViewDataset()` and `logDatasetAccess()`,
   filed beside the `conversation-access` and `execution-access` helpers it
-  mirrors. Every `AiDataset` read in the tree now composes that fragment,
-  including the three outside the datasets directory — run create, run estimate
-  and experiment create — because a dataset you can see but cannot run against
-  is the incoherence this family already had once.
+  mirrors. Every `AiDataset` read behind an admin **route** now composes that
+  fragment, including the three outside the datasets directory — run create, run
+  estimate and experiment create — because a dataset you can see but cannot run
+  against is the incoherence this family already had once. Two library readers
+  stay unscoped by design and say so at the query
+  (`evaluations/datasets/append-cases.ts`, `cost-estimation/evaluation-cost.ts`);
+  both are reachable only through routes that resolve the dataset first, and the
+  write in the former is pinned to the owner its caller observed. The subject
+  export (`lib/privacy/export-sources.ts`) reads by subject and is unrelated.
 
   New route `POST /api/v1/admin/orchestration/evaluations/datasets/:id/claim`
   lets an admin adopt an ownerless dataset. Only an unowned row can be taken:

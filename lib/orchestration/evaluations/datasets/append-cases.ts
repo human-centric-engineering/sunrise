@@ -60,6 +60,14 @@ export async function appendCasesToDataset(params: {
   datasetId: string;
   cases: AppendCaseInput[];
   source?: 'conversation_capture' | 'workflow_capture' | 'synthetic' | null;
+  /**
+   * The dataset's owner as the CALLING ROUTE observed it, so the write can pin
+   * itself to that state. Required, and deliberately not optional: an orphan can
+   * be claimed mid-request, and without the pin a capture would land its cases
+   * and a new `contentHash` on a dataset somebody else has since adopted.
+   * `null` is a real value here — it means "was ownerless when I looked".
+   */
+  observedOwnerId: string | null;
 }): Promise<AppendCasesResult> {
   const validated = params.cases.map((c, i) => {
     const r = datasetCaseSchema.safeParse(c);
@@ -76,12 +84,12 @@ export async function appendCasesToDataset(params: {
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    // NOT owner-scoped, deliberately, and the caller owes that check. Every
-    // route reaching this resolves the dataset through `datasetVisibilityWhere`
-    // first (`datasets/[id]/generate-cases/commit`, and `datasets/[id]/capture`
-    // via `capture.ts`). A new caller that skips it writes to any dataset by
-    // id — this is the library-function blind spot `.context/auth/authorization.md`
-    // warns about, named here rather than left to be rediscovered.
+    // NOT owner-scoped, and the caller owes that check. Every route reaching
+    // this resolves the dataset through `datasetVisibilityWhere` first
+    // (`datasets/[id]/generate-cases/commit`, and `datasets/[id]/capture` via
+    // `capture.ts`). This read is for the case-count cap; the WRITE below is
+    // pinned to `observedOwnerId`, so a caller that skips the check cannot
+    // silently mutate a dataset it never resolved.
     const dataset = await tx.aiDataset.findUnique({
       where: { id: params.datasetId },
       select: { id: true, caseCount: true, source: true },
@@ -147,8 +155,11 @@ export async function appendCasesToDataset(params: {
     if (params.source && dataset.source !== params.source) {
       updateData.source = params.source;
     }
+    // Pinned to the ownership the route observed, like every other dataset
+    // write. A miss throws P2025, which the shared handler renders as a 404 —
+    // the honest answer, since the dataset is no longer the one that was read.
     await tx.aiDataset.update({
-      where: { id: dataset.id },
+      where: { id: dataset.id, userId: params.observedOwnerId },
       data: updateData,
     });
 
