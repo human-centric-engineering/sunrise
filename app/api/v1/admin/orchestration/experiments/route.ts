@@ -18,7 +18,7 @@
  * `agents/compare/route.ts` counts `AiEvaluationSession` per agent across the
  * install. Correct today (a count, to a platform admin), and named here because
  * a roster of this family assembled by reading the `evaluations/` directory
- * misses it. Filed as #753.
+ * misses it. Tracked as t-682.
  *
  * **Ownerless rows are a third case, and they are the policy's to decide.**
  * `createdBy` is `SetNull`, so erasing an admin leaves their experiments with no
