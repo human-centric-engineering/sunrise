@@ -470,11 +470,16 @@ owner, two of them by birth and two by erasure.
 | `AiDataset`           | `userId`     | `SetNull`  | an Art. 17 erasure detached it |
 | `AiExperiment`        | `createdBy`  | `SetNull`  | an Art. 17 erasure detached it |
 
-The two are disjoint by database constraint, which is why the helpers give them
-different names (`'system'` versus `'orphan'`) and different audit weight. A
-`where` clause keyed on the caller answers "not yours" for all four, which turns
-a deliberately retained row into an unreachable one — invisible to every admin,
-deletable by none, pruned by nothing.
+**Born ownerless and left ownerless are disjoint by database constraint**, which
+is why the helpers give them different names — `'system'` versus `'orphan'` — and
+different audit weight. A `Cascade` row's owner column can only ever have been
+null from the start, because erasing the user would have deleted the row; a
+`SetNull` row's can only ever mean the owner was erased. A stranger's live
+correspondence and a de-attributed test fixture are not the same thing to read.
+
+Either way, a `where` clause keyed on the caller answers "not yours" for all
+four, which turns a deliberately retained row into an unreachable one — invisible
+to every admin, deletable by none, pruned by nothing.
 
 **The guards resolve the answer once per request and hand it over.** It is
 `canRead`'s `'unattributed'` arm asked with `asking: 'any-row-of-this-kind'`,
@@ -493,9 +498,21 @@ export const GET = withAdminAuth(
 
     return successResponse(await prisma.aiExperiment.findMany({ where }));
   },
-  { ownership: { decidedBy: 'self', because: 'Scoped to createdBy, plus rows nobody owns.' } }
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Keyed on createdBy = the caller, widened only to rows with NO owner and ' +
+        'only where the policy permits an unattributed read. Never another subject’s row.',
+    },
+  }
 );
 ```
+
+**`'self'`, not `'policy'`** — the widening is to _nobody's_ rows, not to other
+subjects', so the route is still self-keyed. Declaring `'policy'` would mean
+reading `session.subjectFilter`, which widens to `{}` for a platform admin: the
+admin-global posture the experiments family was fixed away from.
 
 `unattributedReads` is a **total record** — every kind present, `true` or `false`
 — so a denied kind cannot be read the same way as a kind nobody asked about.
@@ -522,6 +539,23 @@ A fork with an ownerless model of its own is not in the record, whose keys are
 the core kinds the guards can enumerate. It calls
 `mayReadUnattributed(session.principal, kind)` and awaits — the same policy, the
 same failure direction, one call.
+
+**Nothing in core reads the record yet, and the example above is the shape it is
+converging on rather than a route you can go and read.** Today the four models
+answer this question in three different ways, which is what the record exists to
+retire:
+
+| Model                 | Helper                                            | Asks the policy?                   |
+| --------------------- | ------------------------------------------------- | ---------------------------------- |
+| `AiExperiment`        | `lib/orchestration/experiments/visible-scope.ts`  | yes, on demand (`await`)           |
+| `AiDataset`           | `lib/orchestration/access/dataset-access.ts`      | yes, on demand (`await`)           |
+| `AiConversation`      | `lib/orchestration/access/conversation-access.ts` | **no — hard-coded to every admin** |
+| `AiWorkflowExecution` | `lib/orchestration/access/execution-access.ts`    | **no — hard-coded to every admin** |
+
+The bottom two predate the seam, so a fork registering a narrowing `canRead`
+changes nothing about who reads a stranger's inbound messages or another tenant's
+scheduled runs. That is the gap this record was built to close; until the sweeps
+land, those two rows are the honest answer to "is this behind the seam?".
 
 ---
 
