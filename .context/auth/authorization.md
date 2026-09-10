@@ -536,14 +536,21 @@ shared configuration rather than personal work product — stay admin-global, wh
 is the next section.
 
 **That qualifier is load-bearing here too**, for the same reason it is in the
-webhooks section above: `agents/compare/route.ts` counts `AiEvaluationSession`
-per agent with no owner clause, install-wide. Correct today — it is a count, and
-every caller is a platform admin — and a leak under a customer tier, where it
-would report how many evaluations other tenants have run against a shared agent.
-This paragraph first read "every route over those three models", and that was
-false because of exactly that one file, two directories away (t-682). Twice on
-one page now: a roster read off a directory misses the call site filed somewhere
-else.
+webhooks section above: `agents/compare/route.ts` reads three of those models
+per agent with no owner clause — `AiConversation` once and `AiEvaluationSession`
+twice — install-wide. This paragraph first read "every route over those three
+models", and that was false because of exactly that one file, two directories
+away. Twice on one page now: a roster read off a directory misses the call site
+filed somewhere else.
+
+**Those counts are now install-wide on purpose rather than by omission** (t-682).
+The screen compares two _shared_ agents, so the figures are about the agents, not
+about the viewer; narrowing them would rank two agents by how much the caller
+happened to use them. The route declares `{ decidedBy: 'nothing' }` saying so,
+and its tests pin the absence of an owner clause, so a later tidy-up has to
+delete a test that explains why not. **A customer tier still has to revisit it** —
+there the same numbers would report other tenants' usage of a shared agent, and
+either the figures narrow or the labels say whose they are.
 
 ### The families that record `createdBy` and never read it
 

@@ -243,6 +243,47 @@ describe('Agent Comparison', () => {
     expect(agentB.evaluations.completed).toBe(5);
   });
 
+  /**
+   * t-682. Three of the six aggregates read models that ARE owner-scoped
+   * everywhere else — conversations via `adminCanViewConversation`, and
+   * evaluation sessions via the evaluations routes. Here they are deliberately
+   * install-wide, because the screen compares two SHARED agents and
+   * `better="higher"` would otherwise rank them by how much the viewer happened
+   * to use them.
+   *
+   * These assertions exist so that stays a decision. Someone "tidying" this
+   * route to match its neighbours would change what an operator reads off the
+   * comparison, and should have to delete a test that says why not.
+   */
+  describe('the figures are install-wide on purpose', () => {
+    it('counts conversations for the agent without an owner clause', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      setupAgentMocks();
+
+      await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+
+      for (const [args] of vi.mocked(prisma.aiConversation.count).mock.calls) {
+        expect(args?.where).toEqual({ agentId: expect.any(String) });
+      }
+    });
+
+    it('counts evaluation sessions for the agent without an owner clause', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      setupAgentMocks();
+
+      await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+
+      const calls = vi.mocked(prisma.aiEvaluationSession.count).mock.calls;
+      // Four: total + completed, for each of the two agents. Asserting the
+      // shape of an empty call list would prove nothing.
+      expect(calls).toHaveLength(4);
+      for (const [args] of calls) {
+        expect(args?.where).not.toHaveProperty('userId');
+        expect(args?.where).toMatchObject({ agentId: expect.any(String) });
+      }
+    });
+  });
+
   it('coerces null cost-aggregate sums to 0 when an agent has no cost logs', async () => {
     // Prisma returns { _sum: { totalCostUsd: null, ... } } for empty aggregates.
     // getAgentStats must apply `?? 0` so the response always carries numbers, not nulls.
