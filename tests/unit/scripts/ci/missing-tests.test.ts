@@ -12,7 +12,22 @@
  * - **Exempting by filename.** Every `index.ts` looks like a barrel; 14 in this
  *   repo carry their own code.
  *
- * @see scripts/ci/missing-tests.ts
+ * ---------------------------------------------------------------------------
+ * FORK NOTE — this file reads `lib/app/ci.ts` for real, on purpose
+ * ---------------------------------------------------------------------------
+ * The drift guard at the bottom subtracts your `appCoverageExclusions` from
+ * what it demands an account for, so it reads the REAL seam rather than a mock.
+ * That is the point: mocking it back to `[]` would restore exactly the failure
+ * #759's seam exists to remove — your own exclusions demanding a line in a
+ * Sunrise-owned list.
+ *
+ * What that means for you: filling the seam changes what this file measures,
+ * and it is meant to. Your entries stop needing an account here; core's still
+ * need one, so a Sunrise exclusion you inherit without a matching
+ * `NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION` row still fails, which is a real
+ * signal about a sync rather than noise. Nothing to pin.
+ *
+ * @see scripts/ci/missing-tests.ts · lib/app/ci.ts
  */
 
 import { describe, it, expect } from 'vitest';

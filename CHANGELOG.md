@@ -18,6 +18,22 @@ release process.
 
 ### Added
 
+- **`lib/app/ci.ts` — a fork declares its own coverage exclusions and always-run
+  tests without editing a platform file.** Two lists, both shipped empty:
+  `appCoverageExclusions` (`{ pattern, reason }`) is spread into
+  `vitest.config.ts`'s `coverage.exclude`, and `appAlwaysRunTests`
+  (`{ path, reason }`) onto the end of `ALWAYS_RUN_TESTS` in
+  `scripts/ci/scoped-tests.ts`. Adding one `tsx` CLI script and one whole-tree
+  test previously cost edits to three Sunrise-owned files — a `tsx` entry point
+  is structurally 0% and fails the per-file floor the first time anyone edits it,
+  and a test that reads the tree is reachable by no import chain — each a "keep
+  mine" conflict on every sync (#759). A fork's entries face the same guards
+  core's do: a path that does not exist, a reason under 20 characters or a
+  duplicate all fail. `/pre-pr` step 4f still asks whether an excluded file wants
+  a test, and still only reports. Sunrise's own exclusions, including
+  `lib/app/eslint.config.mjs`, stay in `vitest.config.ts`, so no fork has to
+  re-declare a file upstream ships.
+
 - **The authorization decision is now a seam, not a role check in a guard body.**
   `lib/auth/authorization.ts` ships a policy with three faces —
   `canAdminister(viewer, resource, scope)`, `canRead(viewer, target, scope)` and
@@ -360,6 +376,20 @@ release process.
   `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
 
 ### Changed
+
+- **The coverage-exclusion drift guard resolves `vitest.config.ts` instead of
+  parsing it.** `tests/unit/scripts/ci/missing-tests.test.ts` used to extract
+  single-quoted literals from the config's text, which cannot see a spread — the
+  fork tail above would have been invisible to it, leaving the guard green while
+  it silently stopped covering half the list, the same shape as #687. It imports
+  the config and reads the evaluated array now, and throws rather than reporting
+  an empty list if that read ever returns a non-array. Forks that copied the
+  parse into a check of their own should do the same.
+- **`validateAlwaysRun` accepts every test suffix `vitest.config.ts` collects**,
+  not `.test.ts` alone. It runs inside the runner's self-test, so a rejected
+  entry stopped the whole scoped gate rather than skipping one test — a fork
+  declaring a `.spec.ts` whole-tree test would have met that. `tests/a.ts` is
+  still rejected.
 
 - **"May this admin see rows nobody owns?" is now asked once per request, by the
   guard, and the answer rides on the session.** Four core models can hold a row

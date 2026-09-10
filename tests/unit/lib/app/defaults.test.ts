@@ -49,6 +49,7 @@ import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
 import { appFrameSrc } from '@/lib/app/csp';
+import { appCoverageExclusions, appAlwaysRunTests } from '@/lib/app/ci';
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 import { collectAppSubjectData } from '@/lib/app/data-export';
@@ -362,6 +363,14 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     // These values are spliced straight into a response header, so an
     // accidental default here is a security change, not a cosmetic one.
     assert: () => expect(appFrameSrc).toEqual([]),
+  },
+  {
+    seam: 'lib/app/ci.ts',
+    risk: 'a stray coverage exclusion would switch the per-file 80% floor OFF for that path on every install, and a stray always-run entry would make every scoped run load a test whose file the install may not even have — one silences a gate, the other breaks the gate that replaced it',
+    assert: () => {
+      expect(appCoverageExclusions).toEqual([]);
+      expect(appAlwaysRunTests).toEqual([]);
+    },
   },
 ];
 
