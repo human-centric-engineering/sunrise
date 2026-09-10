@@ -38,6 +38,7 @@ vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+import { logger } from '@/lib/logging';
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { resolveApiKey } from '@/lib/auth/api-keys';
@@ -49,8 +50,10 @@ import {
   type AuthorizationPrincipal,
   type AuthorizationResource,
   type AuthorizationScope,
+  __resetOwnerlessWarningsForTests,
   type ReadTarget,
 } from '@/lib/auth/authorization';
+import type { UnattributedReads } from '@/lib/auth/orphan-reads';
 
 /**
  * Most fixtures in this file wrap a stub handler to test *authentication*, and a
@@ -126,6 +129,24 @@ function recordingPolicy(verdict: boolean, administered: AdministerCall[], read:
   };
 }
 
+/**
+ * The reads a route's own decision produced, with the guards' per-request
+ * ownerless precompute filtered out.
+ *
+ * Before the handler runs, both guards ask the policy — once per core kind —
+ * whether this caller may read rows nobody owns, to fill
+ * `session.unattributedReads`. Those calls are real, and they have their own
+ * assertions below; in the tests about a route's own read decision they are
+ * noise, and spelling all four into every expectation would bury the one call
+ * each test is about.
+ */
+function routeReads(read: ReadCall[]): ReadCall[] {
+  return read.filter(
+    (call) =>
+      !(call.target.kind === 'unattributed' && call.target.asking === 'any-row-of-this-kind')
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(headers).mockResolvedValue(new Headers());
@@ -145,7 +166,7 @@ describe('withAuth asks the policy about the subject', () => {
     const response = await withAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
-    expect(read).toEqual([
+    expect(routeReads(read)).toEqual([
       {
         viewer: { userId: 'user_1', role: 'USER', credential: 'session', scopes: undefined },
         target: { kind: 'nothing' },
@@ -162,7 +183,7 @@ describe('withAuth asks the policy about the subject', () => {
       resource: () => ({ kind: 'thing', id: 't1', ownerId: 'owner_9' }),
     })(request());
 
-    expect(read.map((call) => call.target)).toEqual([
+    expect(routeReads(read).map((call) => call.target)).toEqual([
       {
         kind: 'subject',
         userId: 'owner_9',
@@ -236,8 +257,14 @@ describe('withAuth asks the policy about the subject', () => {
     // The union names the state instead of leaving it to be inferred from a
     // null: the ownerless row is 'unattributed', the resolver-less route is
     // 'nothing', and neither can be mistaken for the other.
-    expect(seen).toEqual([
-      { kind: 'unattributed', resource: { kind: 'report', id: 'r1', orgId: 'org_7' } },
+    expect(
+      seen.filter((target) => target.kind !== 'unattributed' || target.asking === 'this-row')
+    ).toEqual([
+      {
+        kind: 'unattributed',
+        asking: 'this-row',
+        resource: { kind: 'report', id: 'r1', orgId: 'org_7' },
+      },
       { kind: 'nothing' },
     ]);
   });
@@ -540,5 +567,176 @@ describe('the handler receives the principal the guard actually decided with', (
     const response = await withAuth(legacy, NOT_ABOUT_OWNERSHIP)(request());
 
     expect(response.status).toBe(200);
+  });
+});
+
+describe('the handler receives the ownerless-read answer, already decided', () => {
+  // The property: **one policy call per kind per request, and the readers built
+  // on it are synchronous.** Four core models can hold a row nobody owns —
+  // conversations and executions born that way, datasets and experiments left
+  // that way by an Art. 17 erasure — and the helpers that build their `where`
+  // fragments compose inline inside larger objects, where an `await` has nowhere
+  // clean to go.
+  //
+  // Deliberately eager, including on requests that touch none of those models.
+  // On a default install the built-in rule does no I/O, so it is free; a fork
+  // whose policy hits a database pays a fixed cost per request and should cache
+  // inside its own policy. See `lib/auth/orphan-reads.ts`.
+
+  it('hands a platform admin the default answer for every core kind', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    let seen: UnattributedReads | undefined;
+    const response = await withAdminAuth((_request, s) => {
+      seen = s.unattributedReads;
+      return ok();
+    }, NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual({
+      conversation: true,
+      dataset: true,
+      execution: true,
+      experiment: true,
+    });
+  });
+
+  it('hands a member the same shape with every answer denied', async () => {
+    // Total, not a set of the permitted kinds: a denied kind is present and
+    // `false`, so a handler cannot read "denied" and "nobody asked" the same
+    // way. That collapse is what `ReadTarget` exists to prevent, and it would be
+    // no better here.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', 'user_1'));
+
+    let seen: UnattributedReads | undefined;
+    await withAuth((_request, s) => {
+      seen = s.unattributedReads;
+      return ok();
+    }, NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(seen).toEqual({
+      conversation: false,
+      dataset: false,
+      execution: false,
+      experiment: false,
+    });
+  });
+
+  it('lets a fork narrow one kind and not another, which is the whole capability', async () => {
+    // Today `conversation-access.ts` and `execution-access.ts` hard-code "every
+    // admin sees every ownerless row" and never ask the policy, so this is
+    // impossible. A customer tier needs exactly this shape: a tenant's admin may
+    // audit their own abandoned datasets without reading another tenant's
+    // inbound correspondence.
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed' && target.asking === 'any-row-of-this-kind'
+          ? Promise.resolve(target.resource.kind === 'dataset')
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    let seen: UnattributedReads | undefined;
+    await withAdminAuth((_request, s) => {
+      seen = s.unattributedReads;
+      return ok();
+    }, NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(seen).toEqual({
+      conversation: false,
+      dataset: true,
+      execution: false,
+      experiment: false,
+    });
+  });
+
+  it('asks once per kind per request, however many times the handler reads it', async () => {
+    // The reason for precomputing at all. Before this, each reader asked for
+    // itself: a list and the detail rows it links to could be answered by two
+    // separate policy calls, and a fork policy reading mutable state could
+    // answer them differently within one request.
+    const read: ReadCall[] = [];
+    registerAuthorizationPolicy(recordingPolicy(true, [], read));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    await withAdminAuth((_request, s) => {
+      // Three readers, as a route with a list and two detail lookups would have.
+      void s.unattributedReads.dataset;
+      void s.unattributedReads.dataset;
+      void s.unattributedReads.experiment;
+      return ok();
+    }, NOT_ABOUT_OWNERSHIP)(request());
+
+    const probes = read.filter(
+      (call) => call.target.kind === 'unattributed' && call.target.asking === 'any-row-of-this-kind'
+    );
+    expect(probes).toHaveLength(4);
+    expect(
+      probes.map((call) => (call.target.kind === 'unattributed' ? call.target.resource.kind : null))
+    ).toEqual(['conversation', 'dataset', 'execution', 'experiment']);
+  });
+
+  it('survives a spread of the session, unlike subjectFilter', async () => {
+    // `subjectFilter` is a non-enumerable getter because *reading* it is what
+    // makes `ownership: { decidedBy: 'policy' }` checkable, and a spread would
+    // record it as consumed by a handler that never used it. Nothing observes
+    // this one, so it is an ordinary property — and a helper that reshapes the
+    // session (`{ ...session, user: redact(session.user) }`) still carries it
+    // rather than silently handing on `undefined`.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    let seen: UnattributedReads | undefined;
+    await withAdminAuth((_request, s) => {
+      seen = { ...s }.unattributedReads;
+      return ok();
+    }, NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(seen).toEqual({
+      conversation: true,
+      dataset: true,
+      execution: true,
+      experiment: true,
+    });
+  });
+
+  it('does not log the resolver diagnostic while asking — on any of the four kinds', async () => {
+    // The regression this task closes. The `'unattributed'` arm serves two
+    // questions, and the default policy's warning is written for the other one:
+    // "a route named a resource with no ownerId — give the resolver one". Asking
+    // the capability question used to trip it, so an install serving experiments
+    // and datasets logged two false alarms naming a resolver that does not
+    // exist. Precomputing would have made it four, on every guarded request.
+    __resetOwnerlessWarningsForTests();
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    const response = await withAdminAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+  });
+
+  it('still logs it for a resolver that named a row it could not attribute', async () => {
+    // The control for the test above, through the guard rather than the policy:
+    // a real misconfiguration must still be heard. Without this, "no warning" is
+    // satisfied just as well by having deleted the warning.
+    //
+    // `withAuth`, because it is the guard that asks `canRead` — `withAdminAuth`
+    // hands its resolved resource to `canAdminister`, which has no such
+    // diagnostic to trip.
+    __resetOwnerlessWarningsForTests();
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
+
+    const response = await withAuth(() => ok(), {
+      ...NOT_ABOUT_OWNERSHIP,
+      resource: () => ({ kind: 'report', id: 'r1' }),
+    })(request());
+
+    expect(response.status).toBe(200);
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('no ownerId'),
+      expect.objectContaining({ kind: 'report' })
+    );
   });
 });

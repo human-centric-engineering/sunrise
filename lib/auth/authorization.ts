@@ -32,7 +32,12 @@
  *   {@link ReadTarget} names?" A boolean about one of three states: a subject,
  *   a row with no owner, or a route that named nothing. The states are a union
  *   rather than a nullable id because collapsing them is a silent allow — see
- *   {@link ReadTarget} for the three occasions that cost.
+ *   {@link ReadTarget} for the three occasions that cost. The ownerless arm also
+ *   carries **which** ownerless question is being asked ({@link
+ *   UnattributedQuestion}): one specific row a resolver could not attribute, or
+ *   the capability question `lib/auth/orphan-reads.ts` asks before a handler
+ *   builds a query. The default policy answers both alike and only diagnoses the
+ *   first.
  * - {@link AuthorizationPolicy.subjectScope} — the same predicate as a Prisma
  *   `where` fragment: *which* subjects may this principal see? The list face.
  *   **Both guards call it**, and hand the answer to the handler as
@@ -221,6 +226,27 @@ export interface SubjectFilter {
  * Build one with {@link readTargetFor} (from a resolved resource) or
  * {@link readSubject} (from a user id you already hold).
  */
+export type UnattributedQuestion =
+  /**
+   * A resolver named one specific row and it has no owner. Produced by
+   * {@link readTargetFor}, so it carries whatever the resolver returned —
+   * usually an `id`.
+   *
+   * This is the arm the default policy's diagnostic is written for: an
+   * `ownerId` the resolver could have supplied and did not is a real
+   * misconfiguration, and a fork wants to hear about it once.
+   */
+  | 'this-row'
+  /**
+   * No row was resolved. The caller is asking whether rows of this `kind` that
+   * nobody owns are readable **at all**, before it builds a query — the
+   * capability question {@link readUnattributedKind} exists for.
+   *
+   * Nothing is misconfigured here, so nothing is warned about. The resource
+   * carries a `kind` and nothing else, because there is no row to describe.
+   */
+  | 'any-row-of-this-kind';
+
 export type ReadTarget =
   /**
    * The route named no resource. It is not making a claim a policy can narrow,
@@ -229,12 +255,17 @@ export type ReadTarget =
    */
   | { kind: 'nothing' }
   /**
-   * The route named a resource and it has no owner: an org-owned row, or a
-   * nullable `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates for
-   * retained config and audit models — so this is a common shape, not an exotic
-   * one. Answer it deliberately; it is the arm that used to be invisible.
+   * Nobody owns what is being asked about: an org-owned row, or a nullable
+   * `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates for retained
+   * config and audit models — so this is a common shape, not an exotic one.
+   * Answer it deliberately; it is the arm that used to be invisible.
+   *
+   * `asking` says **which** ownerless question this is, because there are two
+   * and they are not the same question — see {@link UnattributedQuestion}. A
+   * policy that answers them alike simply ignores the field, which is what the
+   * default and safe-mode policies do.
    */
-  | { kind: 'unattributed'; resource: AuthorizationResource }
+  | { kind: 'unattributed'; asking: UnattributedQuestion; resource: AuthorizationResource }
   /**
    * The route named a subject: `userId` owns what is being read. The only arm
    * in the parity relation with {@link AuthorizationPolicy.subjectScope}.
@@ -251,7 +282,7 @@ export type ReadTarget =
  */
 export function readTargetFor(resource: AuthorizationResource | null): ReadTarget {
   if (resource === null) return { kind: 'nothing' };
-  if (resource.ownerId === undefined) return { kind: 'unattributed', resource };
+  if (resource.ownerId === undefined) return { kind: 'unattributed', asking: 'this-row', resource };
   return { kind: 'subject', userId: resource.ownerId, resource };
 }
 
@@ -261,6 +292,20 @@ export function readSubject(
   resource: AuthorizationResource | null = null
 ): ReadTarget {
   return { kind: 'subject', userId, resource };
+}
+
+/**
+ * A {@link ReadTarget} asking whether rows of `kind` that nobody owns are
+ * readable at all — no row, no resolver, nothing to attribute.
+ *
+ * The capability half of the `'unattributed'` arm. Prefer
+ * `lib/auth/orphan-reads.ts`, which is where this question is asked from in
+ * practice and which is what the guards precompute; this builder exists so the
+ * shape is constructed in one place rather than spelled at the call sites, for
+ * the same reason {@link readTargetFor} does.
+ */
+export function readUnattributedKind(kind: string): ReadTarget {
+  return { kind: 'unattributed', asking: 'any-row-of-this-kind', resource: { kind } };
 }
 
 /**
@@ -309,7 +354,7 @@ export interface AuthorizationPolicy {
    * canRead: async (viewer, target) => {
    *   switch (target.kind) {
    *     case 'nothing':      return true;                          // route named nothing
-   *     case 'unattributed': return false;                         // named a row with no owner
+   *     case 'unattributed': return false;                         // nobody owns it
    *     case 'subject':      return target.userId === viewer.userId;
    *   }
    * }
@@ -342,7 +387,22 @@ export function __resetOwnerlessWarningsForTests(): void {
   warnedOwnerlessKinds.clear();
 }
 
-/** Tell a fork, once per kind, that its resolver named a row nobody owns. */
+/**
+ * Tell a fork, once per kind, that its resolver named a row nobody owns.
+ *
+ * **Only for `asking: 'this-row'`.** The other question — "may this caller read
+ * unowned rows of this kind at all?" — reaches the same arm and is not a
+ * misconfiguration: nothing resolved a row, so there is no `ownerId` anyone
+ * failed to supply. Warning on it told every install to go and fix a resolver
+ * that does not exist, once per kind, on a line whose suggested fix was
+ * impossible to apply.
+ *
+ * Narrowing the warning to resources carrying an `id` was tried instead and
+ * reverted: a resolver that returns a kind with no id is exactly the
+ * misconfiguration the diagnostic is for, and suppressing it would trade a real
+ * warning for a cosmetic one. The question being asked is the thing that
+ * differs, so the question is what the arm carries.
+ */
 function warnOnceAboutUnattributed(resource: AuthorizationResource): void {
   const kind = resource.kind ?? '(unnamed kind)';
   if (warnedOwnerlessKinds.has(kind)) return;
@@ -396,7 +456,12 @@ export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
         // every caller through while the diff, and the log, still showed a
         // policy being consulted — an allow wearing the costume of a check. So
         // the default narrows to platform staff and says so.
-        warnOnceAboutUnattributed(target.resource);
+        //
+        // Same answer for both questions, deliberately: whether the caller may
+        // read ownerless rows of a kind is the same question as whether they may
+        // read one. Only the diagnostic differs, because only one of the two can
+        // be a misconfigured resolver.
+        if (target.asking === 'this-row') warnOnceAboutUnattributed(target.resource);
         return Promise.resolve(administersEverything(viewer));
 
       case 'subject':
