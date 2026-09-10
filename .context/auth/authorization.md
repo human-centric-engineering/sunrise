@@ -536,21 +536,27 @@ shared configuration rather than personal work product — stay admin-global, wh
 is the next section.
 
 **That qualifier is load-bearing here too**, for the same reason it is in the
-webhooks section above: `agents/compare/route.ts` reads three of those models
-per agent with no owner clause — `AiConversation` once and `AiEvaluationSession`
-twice — install-wide. This paragraph first read "every route over those three
-models", and that was false because of exactly that one file, two directories
-away. Twice on one page now: a roster read off a directory misses the call site
-filed somewhere else.
+webhooks section above: `agents/compare/route.ts` counts `AiEvaluationSession`
+per agent, twice, with no owner clause. This paragraph first read "every route
+over those three models", and that was false because of exactly that one file,
+two directories away. Twice on one page now: a roster read off a directory
+misses the call site filed somewhere else.
 
-**Those counts are now install-wide on purpose rather than by omission** (t-682).
-The screen compares two _shared_ agents, so the figures are about the agents, not
+**Those counts are install-wide on purpose rather than by omission** (t-682). The
+screen compares two _shared_ agents, so the figures are about the agents, not
 about the viewer; narrowing them would rank two agents by how much the caller
 happened to use them. The route declares `{ decidedBy: 'nothing' }` saying so,
 and its tests pin the absence of an owner clause, so a later tidy-up has to
-delete a test that explains why not. **A customer tier still has to revisit it** —
-there the same numbers would report other tenants' usage of a shared agent, and
-either the figures narrow or the labels say whose they are.
+delete a test that explains why not.
+
+**And the same route is a third instance of the roster problem, found while
+fixing the second.** It reads four narrowable aggregates, not two: besides the
+evaluation counts, `aiConversation.count` and — the one first missed —
+`aiCostLog.aggregate`. `AiCostLog` carries an indexed `userId`, read owner-scoped
+in `lib/privacy/export-sources.ts` for Art. 15, and the comparison sums spend by
+`agentId` alone. Under a customer tier that reports another tenant's spend on a
+shared agent, which is the sharpest of the four. **The missed call site was in
+`lib/privacy/`** — a directory nobody auditing an admin route thinks to read.
 
 ### The families that record `createdBy` and never read it
 

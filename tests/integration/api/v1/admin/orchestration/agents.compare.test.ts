@@ -256,6 +256,23 @@ describe('Agent Comparison', () => {
    * comparison, and should have to delete a test that says why not.
    */
   describe('the figures are install-wide on purpose', () => {
+    it('aggregates cost for the agent without an owner clause', async () => {
+      // The sharpest of the four: `AiCostLog` carries an indexed `userId` and
+      // is read owner-scoped for Art. 15, so spend is the figure most obviously
+      // narrowable — and under a customer tier the one that would report
+      // another tenant's bill for a shared agent.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      setupAgentMocks();
+
+      await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+
+      const calls = vi.mocked(prisma.aiCostLog.aggregate).mock.calls;
+      expect(calls).toHaveLength(2);
+      for (const [args] of calls) {
+        expect(args?.where).toEqual({ agentId: expect.any(String) });
+      }
+    });
+
     it('counts conversations for the agent without an owner clause', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       setupAgentMocks();
@@ -281,10 +298,18 @@ describe('Agent Comparison', () => {
       // Four: total + completed, for each of the two agents. Asserting the
       // shape of an empty call list would prove nothing.
       expect(calls).toHaveLength(4);
-      for (const [args] of calls) {
-        expect(args?.where).not.toHaveProperty('userId');
-        expect(args?.where).toMatchObject({ agentId: expect.any(String) });
-      }
+      // `toEqual`, not `toMatchObject` + `not.toHaveProperty('userId')`: the
+      // realistic tidy-up copies the visibility clause from
+      // `conversations/route.ts`, which is `OR: [{ userId }, { userId: null }]`
+      // — an owner clause with no top-level `userId` key, which the looser
+      // assertion would wave straight through.
+      const seen = calls.map(([args]) => args?.where);
+      expect(seen).toEqual([
+        { agentId: expect.any(String) },
+        { agentId: expect.any(String), status: 'completed' },
+        { agentId: expect.any(String) },
+        { agentId: expect.any(String), status: 'completed' },
+      ]);
     });
   });
 
