@@ -61,8 +61,9 @@ release process.
   any authenticated caller.
 
   The read face takes a `ReadTarget` — a three-arm discriminated union
-  (`'nothing'` · `'unattributed'` · `'subject'`), built by `readTargetFor()` or
-  `readSubject()` — rather than a nullable subject id. A policy must answer all
+  (`'nothing'` · `'unattributed'` · `'subject'`), built by `readTargetFor()`,
+  `readSubject()` or `readUnattributedKind()` — rather than a nullable subject
+  id. A policy must answer all
   three arms and **the compiler enforces it**: a `switch` that misses one
   returns `undefined`, which does not satisfy `Promise<boolean>`. That exists
   because a row with no single owner (an org-owned row, or a nullable
@@ -70,7 +71,9 @@ release process.
   "this route named nothing", and the natural line to write against a nullable
   subject — `subject === null || subject === viewer.userId` — permits every
   caller while reading exactly like a check. Sunrise's default narrows
-  `'unattributed'` to platform staff and logs it once per kind.
+  `'unattributed'` to platform staff, and logs it once per kind **when a
+  resolver named the row** — see the ownerless-read entries under **Changed**
+  and **Fixed** for the second question that arm answers.
 
   Every face returns a `Promise` from day one — the org input (§106) needs a
   membership lookup, and a later sync→async conversion would be a sweep of every
