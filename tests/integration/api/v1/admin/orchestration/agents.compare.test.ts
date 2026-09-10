@@ -243,6 +243,76 @@ describe('Agent Comparison', () => {
     expect(agentB.evaluations.completed).toBe(5);
   });
 
+  /**
+   * t-682. Three of the six aggregates read models that ARE owner-scoped
+   * everywhere else — conversations via `adminCanViewConversation`, and
+   * evaluation sessions via the evaluations routes. Here they are deliberately
+   * install-wide, because the screen compares two SHARED agents and
+   * `better="higher"` would otherwise rank them by how much the viewer happened
+   * to use them.
+   *
+   * These assertions exist so that stays a decision. Someone "tidying" this
+   * route to match its neighbours would change what an operator reads off the
+   * comparison, and should have to delete a test that says why not.
+   */
+  describe('the figures are install-wide on purpose', () => {
+    it('aggregates cost for the agent without an owner clause', async () => {
+      // The sharpest of the four: `AiCostLog` carries an indexed `userId` and
+      // is read owner-scoped for Art. 15, so spend is the figure most obviously
+      // narrowable — and under a customer tier the one that would report
+      // another tenant's bill for a shared agent.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      setupAgentMocks();
+
+      await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+
+      const calls = vi.mocked(prisma.aiCostLog.aggregate).mock.calls;
+      expect(calls).toHaveLength(2);
+      for (const [args] of calls) {
+        expect(args?.where).toEqual({ agentId: expect.any(String) });
+      }
+    });
+
+    it('counts conversations for the agent without an owner clause', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      setupAgentMocks();
+
+      await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+
+      const calls = vi.mocked(prisma.aiConversation.count).mock.calls;
+      // Two: one per agent. Without this the loop below passes vacuously if the
+      // call disappears — the same guard the evaluation case carries.
+      expect(calls).toHaveLength(2);
+      for (const [args] of calls) {
+        expect(args?.where).toEqual({ agentId: expect.any(String) });
+      }
+    });
+
+    it('counts evaluation sessions for the agent without an owner clause', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      setupAgentMocks();
+
+      await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
+
+      const calls = vi.mocked(prisma.aiEvaluationSession.count).mock.calls;
+      // Four: total + completed, for each of the two agents. Asserting the
+      // shape of an empty call list would prove nothing.
+      expect(calls).toHaveLength(4);
+      // `toEqual`, not `toMatchObject` + `not.toHaveProperty('userId')`: the
+      // realistic tidy-up copies the visibility clause from
+      // `conversations/route.ts`, which is `OR: [{ userId }, { userId: null }]`
+      // — an owner clause with no top-level `userId` key, which the looser
+      // assertion would wave straight through.
+      const seen = calls.map(([args]) => args?.where);
+      expect(seen).toEqual([
+        { agentId: expect.any(String) },
+        { agentId: expect.any(String), status: 'completed' },
+        { agentId: expect.any(String) },
+        { agentId: expect.any(String), status: 'completed' },
+      ]);
+    });
+  });
+
   it('coerces null cost-aggregate sums to 0 when an agent has no cost logs', async () => {
     // Prisma returns { _sum: { totalCostUsd: null, ... } } for empty aggregates.
     // getAgentStats must apply `?? 0` so the response always carries numbers, not nulls.

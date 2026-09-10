@@ -537,13 +537,26 @@ is the next section.
 
 **That qualifier is load-bearing here too**, for the same reason it is in the
 webhooks section above: `agents/compare/route.ts` counts `AiEvaluationSession`
-per agent with no owner clause, install-wide. Correct today — it is a count, and
-every caller is a platform admin — and a leak under a customer tier, where it
-would report how many evaluations other tenants have run against a shared agent.
-This paragraph first read "every route over those three models", and that was
-false because of exactly that one file, two directories away (t-682). Twice on
-one page now: a roster read off a directory misses the call site filed somewhere
-else.
+per agent, twice, with no owner clause. This paragraph first read "every route
+over those three models", and that was false because of exactly that one file,
+two directories away. Twice on one page now: a roster read off a directory
+misses the call site filed somewhere else.
+
+**Those counts are install-wide on purpose rather than by omission** (t-682). The
+screen compares two _shared_ agents, so the figures are about the agents, not
+about the viewer; narrowing them would rank two agents by how much the caller
+happened to use them. The route declares `{ decidedBy: 'nothing' }` saying so,
+and its tests pin the absence of an owner clause, so a later tidy-up has to
+delete a test that explains why not.
+
+**And the same route is a third instance of the roster problem, found while
+fixing the second.** It reads four narrowable aggregates, not two: besides the
+evaluation counts, `aiConversation.count` and — the one first missed —
+`aiCostLog.aggregate`. `AiCostLog` carries an indexed `userId`, read owner-scoped
+in `lib/privacy/export-sources.ts` for Art. 15, and the comparison sums spend by
+`agentId` alone. Under a customer tier that reports another tenant's spend on a
+shared agent, which is the sharpest of the four. **The missed call site was in
+`lib/privacy/`** — a directory nobody auditing an admin route thinks to read.
 
 ### The families that record `createdBy` and never read it
 
