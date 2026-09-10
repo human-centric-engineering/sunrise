@@ -41,6 +41,11 @@ import {
   mayReadUnattributed,
   resolveUnattributedReads,
 } from '@/lib/auth/orphan-reads';
+import { DATASET_RESOURCE_KIND } from '@/lib/orchestration/access/dataset-access';
+import {
+  EXPERIMENT_RESOURCE_KIND,
+  DATASET_RESOURCE_KIND as EXPERIMENT_DATASET_RESOURCE_KIND,
+} from '@/lib/orchestration/experiments/visible-scope';
 
 const ADMIN: AuthorizationPrincipal = { userId: 'admin-1', role: 'ADMIN', credential: 'session' };
 const MEMBER: AuthorizationPrincipal = { userId: 'user-1', role: 'USER', credential: 'session' };
@@ -55,6 +60,33 @@ afterEach(() => {
 });
 
 describe('the roster of kinds', () => {
+  it('is the value every model helper asks the policy with', () => {
+    // The annotation on each `*_RESOURCE_KIND` catches a rename OUT of the union
+    // and nothing else: `'dataset'` and `'experiment'` are both members, so
+    // `DATASET_RESOURCE_KIND: UnattributedReadKind = 'experiment'` type-checks
+    // and would have `datasetVisibilityWhere` ask about one kind while the
+    // session carried an answer for another — inside one request, with the whole
+    // suite green. Pinning the literals is what actually closes that.
+    //
+    // Two `DATASET_RESOURCE_KIND` declarations, deliberately both asserted:
+    // `visible-scope.ts` still exports one because the experiments `run` route
+    // imports it from there, and t-687 is what deletes it.
+    expect(DATASET_RESOURCE_KIND).toBe('dataset');
+    expect(EXPERIMENT_DATASET_RESOURCE_KIND).toBe('dataset');
+    expect(EXPERIMENT_RESOURCE_KIND).toBe('experiment');
+
+    // And each is a member, so the guard precomputes an answer under that key.
+    for (const kind of [DATASET_RESOURCE_KIND, EXPERIMENT_RESOURCE_KIND]) {
+      expect(UNATTRIBUTED_READ_KINDS).toContain(kind);
+    }
+
+    // `conversation` and `execution` have no constant to pin: their helpers
+    // hard-code the widening and never name a kind. When t-685 and t-686 give
+    // them one, it belongs in this assertion rather than in a fresh literal.
+    expect(UNATTRIBUTED_READ_KINDS).toContain('conversation');
+    expect(UNATTRIBUTED_READ_KINDS).toContain('execution');
+  });
+
   it('names each model once, so a second spelling cannot split the answer', () => {
     // Not a snapshot of the list for its own sake: a duplicate — or a synonym
     // like 'workflow-execution' beside 'execution' — would mean a fork's policy

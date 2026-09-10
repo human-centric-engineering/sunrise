@@ -651,22 +651,36 @@ describe('the handler receives the ownerless-read answer, already decided', () =
     });
   });
 
-  it('asks once per kind per request, however many times the handler reads it', async () => {
+  it('asks exactly once per kind, in roster order, before the handler runs', async () => {
     // The reason for precomputing at all. Before this, each reader asked for
     // itself: a list and the detail rows it links to could be answered by two
     // separate policy calls, and a fork policy reading mutable state could
     // answer them differently within one request.
+    //
+    // What this asserts is the CALL COUNT and the kinds — not that repeated
+    // reads are free. An earlier version of this test read the record three
+    // times to "prove" that; those reads were decorative, because reading a
+    // plain object property cannot issue a policy call under any implementation
+    // of this design. A test whose demonstration cannot fail is worse than one
+    // that does not attempt it.
     const read: ReadCall[] = [];
     registerAuthorizationPolicy(recordingPolicy(true, [], read));
     vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', 'admin_1'));
 
+    let seenInHandler: UnattributedReads | undefined;
     await withAdminAuth((_request, s) => {
-      // Three readers, as a route with a list and two detail lookups would have.
-      void s.unattributedReads.dataset;
-      void s.unattributedReads.dataset;
-      void s.unattributedReads.experiment;
+      // Read once, to pin that the record is populated by the time the handler
+      // runs rather than filled afterwards.
+      seenInHandler = s.unattributedReads;
       return ok();
     }, NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(seenInHandler).toEqual({
+      conversation: true,
+      dataset: true,
+      execution: true,
+      experiment: true,
+    });
 
     const probes = read.filter(
       (call) => call.target.kind === 'unattributed' && call.target.asking === 'any-row-of-this-kind'

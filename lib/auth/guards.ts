@@ -854,8 +854,10 @@ async function runHandler(args: {
   // Resolved for every guarded request, including the ones touching none of
   // these models — the cost the eager scheme accepts so that its readers can be
   // synchronous. On a default install it is four calls into a policy that does
-  // no I/O; a fork whose policy hits a database pays four lookups it should
-  // cache inside its own policy, and `lib/auth/orphan-reads.ts` says so.
+  // no I/O; a fork whose policy hits a database pays four lookups and will want
+  // to cache them PER REQUEST — never on the policy object, which outlives the
+  // request and would serve a demoted admin their old answer until the next
+  // deploy. `lib/auth/orphan-reads.ts` has the full note.
   //
   // Both guards, not just the admin one. Every core caller today is an admin
   // route, so restricting it would cost nothing measurable and save nothing

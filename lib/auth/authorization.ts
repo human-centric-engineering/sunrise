@@ -208,23 +208,12 @@ export interface SubjectFilter {
 }
 
 /**
- * What a request is asking to read — a **total** answer, so that "we could not
- * determine this" can never be spelled the same way as "there is nothing to
- * check".
+ * Which of the two ownerless questions an `'unattributed'` target is asking.
  *
- * This union is the shape it is because the alternative kept failing. `canRead`
- * used to take `subject: string | null`, and every state that was not a user id
- * arrived as `null`: a route with no resolver, a resolver that returned nothing,
- * and a row with no owner. The first should permit, the other two should not,
- * and the natural line to write — `subject === null || subject === viewer.userId`
- * — permits all three. That mistake was made three times inside a single branch,
- * twice by the author of this module while a reviewer was pointing at it, and
- * once in this file's own documentation example. A comment was not going to hold
- * it, so the type does: a `switch` that misses an arm returns `undefined`, which
- * does not satisfy `Promise<boolean>`, and the fork's build fails.
- *
- * Build one with {@link readTargetFor} (from a resolved resource) or
- * {@link readSubject} (from a user id you already hold).
+ * The arm answers both, and a policy that treats them alike can ignore this
+ * field — the built-in policies do. It exists because the *diagnostic* cannot
+ * treat them alike: one of the two can be a misconfigured resolver and the other
+ * structurally cannot.
  */
 export type UnattributedQuestion =
   /**
@@ -247,6 +236,26 @@ export type UnattributedQuestion =
    */
   | 'any-row-of-this-kind';
 
+/**
+ * What a request is asking to read — a **total** answer, so that "we could not
+ * determine this" can never be spelled the same way as "there is nothing to
+ * check".
+ *
+ * This union is the shape it is because the alternative kept failing. `canRead`
+ * used to take `subject: string | null`, and every state that was not a user id
+ * arrived as `null`: a route with no resolver, a resolver that returned nothing,
+ * and a row with no owner. The first should permit, the other two should not,
+ * and the natural line to write — `subject === null || subject === viewer.userId`
+ * — permits all three. That mistake was made three times inside a single branch,
+ * twice by the author of this module while a reviewer was pointing at it, and
+ * once in this file's own documentation example. A comment was not going to hold
+ * it, so the type does: a `switch` that misses an arm returns `undefined`, which
+ * does not satisfy `Promise<boolean>`, and the fork's build fails.
+ *
+ * Build one with {@link readTargetFor} (from a resolved resource),
+ * {@link readSubject} (from a user id you already hold) or
+ * {@link readUnattributedKind} (to ask about a kind rather than a row).
+ */
 export type ReadTarget =
   /**
    * The route named no resource. It is not making a claim a policy can narrow,

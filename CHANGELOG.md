@@ -413,12 +413,18 @@ release process.
   receives did change**, so read this before assuming the upgrade is free: that
   arm now arrives on *every* guarded request, four times, carrying a resource
   with only a `kind` — no `id`, no `orgId`. A policy that reaches into the
-  resource (`findUnique({ where: { id: target.resource.id } })`, or
-  `target.resource.orgId === viewer.orgId`) was written when the arm only ever
-  came from a resolver, and will now throw or misjudge on every request. The
-  direction is safe — a throwing policy is answered by safe mode, which denies —
-  but the fix is to branch on `asking` and answer
-  `'any-row-of-this-kind'` from the principal alone. That is why this extends
+  resource was written when the arm only ever came from a resolver, and now sees
+  those fields absent. **Two outcomes, and only one of them is safe.** A policy
+  that *dereferences* — `findUnique({ where: { id: target.resource.id } })` —
+  throws, and a throwing policy is answered by safe mode, which denies. A policy
+  that *compares* — `target.resource.orgId === scope.org` — evaluates
+  `undefined === undefined` to **`true`** and grants ownerless reads it was
+  written to refuse. That is a widening, on every guarded request, from an
+  upgrade that compiles clean.
+
+  **So branch on `asking`**: answer `'any-row-of-this-kind'` from the principal
+  alone, and keep the resource-reading logic on the `'this-row'` path where a
+  resolver actually populated it. That is what the field is for. That is why this extends
   the existing arm rather than adding a fourth `ReadTarget` shape, which would
   have broken every exhaustive `switch` including the one
   `lib/app/authorization.ts` ships as its worked example.

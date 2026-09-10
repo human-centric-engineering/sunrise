@@ -37,6 +37,14 @@
  * - **One request cannot disagree with itself.** A list and the rows it links to
  *   ask the policy once, together, rather than once each.
  *
+ * **Neither property holds yet, and this is the file where that has to be said.**
+ * Nothing in core reads `session.unattributedReads`: `visibleExperimentClause`,
+ * `datasetVisibilityWhere` and the experiments `run` route all still `await`
+ * {@link mayReadUnattributed}, so a datasets request asks the policy about
+ * `'dataset'` twice — once in the precompute, once on demand. The cost below is
+ * paid now and the benefit arrives with t-685 / t-686 / t-687, which is the
+ * deliberate shape of an integration checkpoint rather than an oversight.
+ *
  * The cost is a fixed number of policy calls on every guarded request, including
  * requests that touch none of these models. On a default install that is free —
  * the built-in rule does no I/O. **A fork whose policy hits a database pays it
@@ -99,9 +107,20 @@ import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
  * spelling of the same model splits the policy's answer in two with nothing
  * going red** — a helper asking about `'eval-dataset'` while the guard resolved
  * `'dataset'` gets two answers inside one request, which is the disagreement the
- * precompute exists to remove. Each model's own `*_RESOURCE_KIND` constant is
- * annotated {@link UnattributedReadKind} so a rename fails to compile here rather
- * than diverging quietly; t-687 collapses them into one declaration.
+ * precompute exists to remove.
+ *
+ * **Two mechanisms hold that, and neither is complete on its own.** The three
+ * `*_RESOURCE_KIND` constants that exist (`DATASET_RESOURCE_KIND` twice,
+ * `EXPERIMENT_RESOURCE_KIND` once) are annotated {@link UnattributedReadKind}, so
+ * a rename *out of* the union fails to compile — but `'dataset'` and
+ * `'experiment'` are both in the union, so an annotation alone would let one
+ * declaration drift to the other's value and still build. `orphan-reads.test.ts`
+ * pins each constant to its literal for that reason. **`conversation` and
+ * `execution` have no constant anywhere** — `conversation-access.ts` and
+ * `execution-access.ts` hard-code the widening and never name a kind — so
+ * t-685 and t-686 must take their value from this list rather than invent one.
+ * t-687 collapses the lot into one declaration per model, which is the real fix;
+ * this is containment until then.
  *
  * Ordered as declared; nothing depends on the order.
  */

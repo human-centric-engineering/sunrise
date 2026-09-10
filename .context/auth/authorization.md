@@ -171,7 +171,16 @@ resolved row is something a fork can go and fix; there is nothing to fix about
 the capability question, and warning on it told every install to correct a
 resolver that does not exist. `asking` exists so the arm can tell them apart; a
 policy that treats them alike ignores the field, which is what the built-in ones
-do. Narrowing the warning to resources carrying an `id` was tried instead and
+do.
+
+**But read the field before reading the resource.** On the capability question
+there is no row, so `resource` carries a `kind` and nothing else. A policy that
+_dereferences_ one of the absent fields throws, and a throwing policy is answered
+by safe mode — it denies, which is the safe direction. A policy that _compares_
+one does not: `target.resource.orgId === scope.org` is `undefined === undefined`
+on this path, which is **`true`**, granting ownerless reads the policy was
+written to refuse. Answer `'any-row-of-this-kind'` from the principal alone and
+keep resource-reading logic on the `'this-row'` branch. Narrowing the warning to resources carrying an `id` was tried instead and
 reverted — a resolver returning a kind with no id is exactly the misconfiguration
 the diagnostic is for.
 
