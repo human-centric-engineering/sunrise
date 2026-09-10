@@ -541,7 +541,7 @@ per agent with no owner clause, install-wide. Correct today — it is a count, a
 every caller is a platform admin — and a leak under a customer tier, where it
 would report how many evaluations other tenants have run against a shared agent.
 This paragraph first read "every route over those three models", and that was
-false because of exactly that one file, two directories away ([#753]). Twice on
+false because of exactly that one file, two directories away (t-682). Twice on
 one page now: a roster read off a directory misses the call site filed somewhere
 else.
 
@@ -612,4 +612,3 @@ Keys do not bind an org yet, so "an org-bound key can never carry `admin`" is
 
 [#739]: https://github.com/human-centric-engineering/sunrise/issues/739
 [#741]: https://github.com/human-centric-engineering/sunrise/issues/741
-[#753]: https://github.com/human-centric-engineering/sunrise/issues/753

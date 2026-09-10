@@ -62,8 +62,13 @@ export async function captureConversationTurnAsCase(params: {
   datasetId: string;
   messageId: string;
   edits?: CaptureCaseEdits;
+  /**
+   * The dataset's owner as the calling ROUTE observed it — threaded straight
+   * through to `appendCasesToDataset`, which pins its write to it. See there.
+   */
+  observedOwnerId: string | null;
 }): Promise<CaptureResult> {
-  const { datasetId, messageId, edits } = params;
+  const { datasetId, messageId, edits, observedOwnerId } = params;
 
   const assistant = await prisma.aiMessage.findUnique({
     where: { id: messageId },
@@ -111,6 +116,7 @@ export async function captureConversationTurnAsCase(params: {
   const capturedExpectedOutput = assistant.content;
   const capturedMetadata: Record<string, unknown> = {
     source: 'conversation_capture',
+    observedOwnerId,
     conversationId: assistant.conversationId,
     sourceMessageId: assistant.id,
     sourceUserMessageId: userMessage.id,
@@ -132,6 +138,7 @@ export async function captureConversationTurnAsCase(params: {
     datasetId,
     cases: [finalCase],
     source: 'conversation_capture',
+    observedOwnerId,
   });
 
   logger.info('Captured conversation turn as dataset case', {
@@ -164,8 +171,13 @@ export async function captureWorkflowExecutionAsCase(params: {
   executionId: string;
   selector: WorkflowSubjectOutputSelector;
   edits?: CaptureCaseEdits;
+  /**
+   * The dataset's owner as the calling ROUTE observed it — threaded straight
+   * through to `appendCasesToDataset`, which pins its write to it. See there.
+   */
+  observedOwnerId: string | null;
 }): Promise<CaptureResult> {
-  const { datasetId, executionId, selector, edits } = params;
+  const { datasetId, executionId, selector, edits, observedOwnerId } = params;
 
   const execution = await prisma.aiWorkflowExecution.findUnique({
     where: { id: executionId },
@@ -203,6 +215,7 @@ export async function captureWorkflowExecutionAsCase(params: {
 
   const capturedMetadata: Record<string, unknown> = {
     source: 'workflow_capture',
+    observedOwnerId,
     workflowId: execution.workflowId,
     sourceExecutionId: execution.id,
     selector,
@@ -222,6 +235,7 @@ export async function captureWorkflowExecutionAsCase(params: {
     datasetId,
     cases: [finalCase],
     source: 'workflow_capture',
+    observedOwnerId,
   });
 
   logger.info('Captured workflow execution as dataset case', {

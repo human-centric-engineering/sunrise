@@ -39,7 +39,7 @@
  * correct: the arm cannot currently tell "a resolver named a row it could not
  * attribute" from "does this principal may-read unowned rows of kind X at all".
  * So an install with no ownerless rows still sees one line naming `experiment`
- * and one naming `dataset`, and both are false alarms — see #754.
+ * and one naming `dataset`, and both are false alarms — see t-683.
  *
  * Narrowing the warning to resources carrying an `id` was tried and reverted:
  * it would silence a fork whose resolver really is misconfigured and returns no

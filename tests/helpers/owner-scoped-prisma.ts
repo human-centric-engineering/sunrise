@@ -23,31 +23,52 @@
 /**
  * The subset of a `where` these fakes interpret.
  *
- * `createdBy: null` means IS NULL — the ownerless row, not "no clause". `AND`
- * and `OR` are understood because the routes build the visible set as
+ * **Two owner columns, because the tree has two.** `AiExperiment` and the
+ * webhooks family key on `createdBy`; the evaluations family — datasets,
+ * sessions, runs — keys on `userId`. A fake that knew only one silently
+ * matched every row of the other model and reported a leak as a pass. Adding a
+ * model with a third spelling means adding it to {@link OWNER_COLUMNS}, and
+ * the test that forgets will fail loudly rather than pass blindly.
+ *
+ * A null owner value means IS NULL — the ownerless row — not "no clause".
+ * `AND` and `OR` are understood because routes build the visible set as
  * `{ AND: [ownerClause, filters] }` where `ownerClause` may itself be
- * `{ OR: [{ createdBy: me }, { createdBy: null }] }`. A matcher that ignored
- * those keys would match every row and report a leak as a pass — which it did,
- * once, before it understood them.
+ * `{ OR: [{ owner: me }, { owner: null }] }`.
  */
 export interface OwnerScopedWhere {
   id?: string;
   createdBy?: string | null;
+  userId?: string | null;
   AND?: OwnerScopedWhere[];
   OR?: OwnerScopedWhere[];
 }
 
-/** A row addressable by these fakes. `createdBy` is nullable on `SetNull` models. */
+/** A row addressable by these fakes: an id, and whichever owner column it uses. */
 export interface OwnedRow {
   id: string;
-  createdBy: string | null;
+  createdBy?: string | null;
+  userId?: string | null;
 }
+
+/** The owner columns in this tree. Add a spelling here when a model adds one. */
+const OWNER_COLUMNS = ['createdBy', 'userId'] as const;
 
 function matches(row: OwnedRow, where: OwnerScopedWhere): boolean {
   if (where.id !== undefined && row.id !== where.id) return false;
-  // `!== undefined` rather than a truthiness test: `createdBy: null` is a real
+
+  // `!== undefined` rather than a truthiness test: a null owner is a real
   // clause (IS NULL), and treating it as "absent" would match every row.
-  if (where.createdBy !== undefined && row.createdBy !== where.createdBy) return false;
+  for (const column of OWNER_COLUMNS) {
+    const wanted = where[column];
+    if (wanted === undefined) continue;
+    // A fixture that OMITS the column is not a row whose owner is null. Reading
+    // absence as null would silently classify every under-specified fixture as
+    // an orphan, so "ownerless rows are visible" could pass without the fixture
+    // ever declaring one. Make the fixture say which column it uses.
+    if (!(column in row)) return false;
+    if (row[column] !== wanted) return false;
+  }
+
   if (where.AND !== undefined && !where.AND.every((clause) => matches(row, clause))) return false;
   if (where.OR !== undefined && !where.OR.some((clause) => matches(row, clause))) return false;
   return true;

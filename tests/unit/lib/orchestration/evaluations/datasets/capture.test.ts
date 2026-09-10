@@ -34,6 +34,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+/** The owner the calling route observed — see `appendCasesToDataset`. */
+const OWNER_ID = 'admin-1';
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiMessage: { findUnique: vi.fn(), findFirst: vi.fn() },
@@ -82,7 +85,11 @@ describe('captureConversationTurnAsCase', () => {
     } as never);
 
     await expect(
-      captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'm1' })
+      captureConversationTurnAsCase({
+        datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
+        messageId: 'm1',
+      })
     ).rejects.toThrow(/assistant turn/i);
     expect(mockedAppend).not.toHaveBeenCalled();
   });
@@ -91,7 +98,11 @@ describe('captureConversationTurnAsCase', () => {
     mockedPrisma.aiMessage.findUnique.mockResolvedValue(null);
 
     await expect(
-      captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'missing-msg' })
+      captureConversationTurnAsCase({
+        datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
+        messageId: 'missing-msg',
+      })
     ).rejects.toThrow(/Message missing-msg not found/);
     expect(mockedAppend).not.toHaveBeenCalled();
   });
@@ -109,7 +120,11 @@ describe('captureConversationTurnAsCase', () => {
     mockedPrisma.aiMessage.findFirst.mockResolvedValue(null);
 
     await expect(
-      captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'm1' })
+      captureConversationTurnAsCase({
+        datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
+        messageId: 'm1',
+      })
     ).rejects.toThrow(/no preceding user turn/i);
   });
 
@@ -129,10 +144,15 @@ describe('captureConversationTurnAsCase', () => {
       createdAt: new Date('2026-01-01T09:59:00Z'),
     } as never);
 
-    await captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'm-assistant' });
+    await captureConversationTurnAsCase({
+      datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
+      messageId: 'm-assistant',
+    });
 
     expect(mockedAppend).toHaveBeenCalledWith({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [
         expect.objectContaining({
           input: 'What is the refund policy?',
@@ -166,7 +186,11 @@ describe('captureConversationTurnAsCase', () => {
       createdAt: new Date('2026-01-01T09:59:00Z'),
     } as never);
 
-    await captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'm-assistant' });
+    await captureConversationTurnAsCase({
+      datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
+      messageId: 'm-assistant',
+    });
 
     const passedCase = (mockedAppend.mock.calls[0][0] as { cases: Array<Record<string, unknown>> })
       .cases[0];
@@ -189,7 +213,11 @@ describe('captureConversationTurnAsCase', () => {
       createdAt: new Date('2026-01-01T09:59:00Z'),
     } as never);
 
-    await captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'm-assistant' });
+    await captureConversationTurnAsCase({
+      datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
+      messageId: 'm-assistant',
+    });
 
     const passedCase = (mockedAppend.mock.calls[0][0] as { cases: Array<Record<string, unknown>> })
       .cases[0];
@@ -214,6 +242,7 @@ describe('captureConversationTurnAsCase', () => {
 
     await captureConversationTurnAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       messageId: 'm-assistant',
       edits: {
         expectedOutput: 'Tightened answer.',
@@ -223,6 +252,7 @@ describe('captureConversationTurnAsCase', () => {
 
     expect(mockedAppend).toHaveBeenCalledWith({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [
         expect.objectContaining({
           input: 'Original question.', // not overridden
@@ -255,6 +285,7 @@ describe('captureConversationTurnAsCase', () => {
 
     await captureConversationTurnAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       messageId: 'm-assistant',
       edits: { referenceCitations: [] }, // override with empty array
     });
@@ -282,7 +313,11 @@ describe('captureConversationTurnAsCase', () => {
     } as never);
 
     // No edits param at all
-    await captureConversationTurnAsCase({ datasetId: 'ds-1', messageId: 'm-assistant' });
+    await captureConversationTurnAsCase({
+      datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
+      messageId: 'm-assistant',
+    });
 
     const passedCase = (mockedAppend.mock.calls[0][0] as { cases: Array<Record<string, unknown>> })
       .cases[0];
@@ -310,6 +345,7 @@ describe('captureConversationTurnAsCase', () => {
     // edits with only expectedOutput — no metadataPatch
     await captureConversationTurnAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       messageId: 'm-assistant',
       edits: { expectedOutput: 'Overridden.' },
     });
@@ -335,6 +371,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'e1',
         selector: { kind: 'last_step' },
       })
@@ -347,6 +384,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'missing-exec',
         selector: { kind: 'last_step' },
       })
@@ -370,12 +408,14 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'last_step' },
     });
 
     expect(mockedAppend).toHaveBeenCalledWith({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       cases: [
         expect.objectContaining({
           input: { topic: 'refunds' },
@@ -402,6 +442,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'last_step' },
     });
@@ -428,6 +469,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'e1',
         selector: { kind: 'last_step' },
       })
@@ -447,6 +489,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'e1',
         selector: { kind: 'step_id', stepId: 's-missing' },
       })
@@ -466,6 +509,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'e1',
         selector: { kind: 'step_id' }, // no stepId
       })
@@ -485,6 +529,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'e1',
         selector: { kind: 'step_id', stepId: 's-target' },
       })
@@ -504,6 +549,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'step_id', stepId: 's-target' },
     });
@@ -530,6 +576,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'final_report' },
     });
@@ -557,6 +604,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'final_report' },
     });
@@ -583,6 +631,7 @@ describe('captureWorkflowExecutionAsCase', () => {
     await expect(
       captureWorkflowExecutionAsCase({
         datasetId: 'ds-1',
+        observedOwnerId: OWNER_ID,
         executionId: 'e1',
         selector: { kind: 'final_report' },
       })
@@ -601,6 +650,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'final_report' },
     });
@@ -622,6 +672,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'last_step' },
     });
@@ -644,6 +695,7 @@ describe('captureWorkflowExecutionAsCase', () => {
 
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-1',
+      observedOwnerId: OWNER_ID,
       executionId: 'e1',
       selector: { kind: 'last_step' },
     });
@@ -681,6 +733,7 @@ describe('resolveSelectorOutput — round-trip parity with capture', () => {
     mockedPrisma.aiWorkflowExecution.findUnique.mockResolvedValue(execution as never);
     await captureWorkflowExecutionAsCase({
       datasetId: 'ds-rt',
+      observedOwnerId: OWNER_ID,
       executionId: 'e-rt',
       selector,
     });

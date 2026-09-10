@@ -67,19 +67,20 @@ so much as **orphan** it: keyed purely on the caller, every route answers "not
 yours", and a row deliberately retained becomes one nobody can list, open, edit
 or delete.
 
-`AiExperiment` handles that case explicitly, and it is the shape to copy.
-A row belongs to **me**, to **someone else**, or to **nobody**, and the third is
-not a synonym for the second. Its visible set is "mine, plus nobody's" — and who
-gets the second half is `canRead`'s `'unattributed'` arm, which exists for
-exactly this shape. The default policy grants it to platform staff, so an admin
-sees and can delete an orphaned experiment; a fork narrows it by registering a
-policy rather than by editing a route. An admin can also **claim** one
-(`POST /experiments/:id/claim`), which stamps them as the owner so the row
-re-enters the normal rules instead of staying a permanent special case. The
-boundary is untouched: another admin's _owned_ experiment is still a 404.
+Both now handle that case explicitly, and it is the shape to copy. A row belongs
+to **me**, to **someone else**, or to **nobody**, and the third is not a synonym
+for the second. The visible set is "mine, plus nobody's" — and who gets the
+second half is `canRead`'s `'unattributed'` arm, which exists for exactly this.
+The default policy grants it to platform staff, so an admin sees and can delete
+an orphaned row; a fork narrows it by registering a policy rather than by editing
+a route. An admin can also **claim** one (`POST /experiments/:id/claim`,
+`POST /evaluations/datasets/:id/claim`), which stamps them as the owner so the
+row re-enters the normal rules instead of staying a permanent special case. The
+boundary is untouched: another admin's _owned_ row is still a 404.
 
-`AiDataset` still has the gap — it has had it since datasets shipped — and wants
-the same treatment.
+Datasets additionally **log** non-owner access, which experiments do not yet
+(see below). The definitions live in `lib/orchestration/access/dataset-access.ts`
+and `lib/orchestration/experiments/visible-scope.ts`.
 
 **So when you classify the next `SetNull` model, decide two things, not one.**
 This table records the retain policy. Whether the model's routes are owner-scoped

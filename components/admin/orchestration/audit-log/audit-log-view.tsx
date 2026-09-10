@@ -53,6 +53,7 @@ const ENTITY_TYPES = [
   { value: 'webhook', label: 'Event hooks' },
   { value: 'webhook_subscription', label: 'Webhook subscriptions' },
   { value: 'conversation', label: 'Conversations' },
+  { value: 'dataset', label: 'Evaluation datasets' },
 ];
 
 function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {

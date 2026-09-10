@@ -358,6 +358,43 @@ release process.
 
 ### Changed
 
+- **Evaluation datasets orphaned by an erasure are reachable again, and every
+  dataset read now goes through one definition.** `AiDataset.userId` is
+  `SetNull`, so erasing an admin under Art. 17 keeps their datasets and drops
+  the link — and because every dataset route scoped to the caller, those rows
+  were invisible to everyone, deletable by nobody and pruned by nothing. The
+  visible set is now "mine, plus nobody's", with the second half gated on
+  `canRead`'s `'unattributed'` arm so a fork narrows it by registering a policy
+  rather than by editing a route. Another admin's *owned* dataset is still a
+  404, unchanged.
+
+  New: `lib/orchestration/access/dataset-access.ts` — `datasetVisibilityWhere()`,
+  `datasetAccessBasis()`, `adminCanViewDataset()` and `logDatasetAccess()`,
+  filed beside the `conversation-access` and `execution-access` helpers it
+  mirrors. Every `AiDataset` read behind an admin **route** now composes that
+  fragment, including the three outside the datasets directory — run create, run
+  estimate and experiment create — because a dataset you can see but cannot run
+  against is the incoherence this family already had once. Two library readers
+  stay unscoped by design and say so at the query
+  (`evaluations/datasets/append-cases.ts`, `cost-estimation/evaluation-cost.ts`);
+  both are reachable only through routes that resolve the dataset first, and the
+  write in the former is pinned to the owner its caller observed. The subject
+  export (`lib/privacy/export-sources.ts`) reads by subject and is unrelated.
+
+  New route `POST /api/v1/admin/orchestration/evaluations/datasets/:id/claim`
+  lets an admin adopt an ownerless dataset. Only an unowned row can be taken:
+  another admin's is a 404 indistinguishable from a missing one, and one you
+  already own is a 409.
+
+  **Non-owner access is audited.** Reading, updating, deleting or claiming an
+  ownerless dataset writes an admin-audit row carrying `accessBasis: 'orphan'`,
+  following the rule `conversation-access.ts` set for `'system'` rows. List
+  pages are deliberately not logged — burying the rows that matter under one
+  entry per page view helps nobody. The basis is `'orphan'` rather than the
+  conversations' `'system'` on purpose: same column state, different story — a
+  `'system'` row was never personal, an `'orphan'` was somebody's until an
+  erasure detached it.
+
 - **An admin no longer sees, edits or deletes another admin's experiments.**
   `GET /api/v1/admin/orchestration/experiments` and
   `GET` / `PATCH` / `DELETE .../experiments/:id` read every admin's rows, while

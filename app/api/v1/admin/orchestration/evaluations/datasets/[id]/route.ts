@@ -14,6 +14,13 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
+import { getClientIP } from '@/lib/security/ip';
+import {
+  datasetVisibilityWhere,
+  datasetAccessBasis,
+  logDatasetAccess,
+} from '@/lib/orchestration/access/dataset-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ConflictError } from '@/lib/api/errors';
@@ -22,67 +29,135 @@ import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
 import { patchDatasetSchema } from '@/lib/validations/orchestration-evaluations';
 
-async function loadDataset(id: string, userId: string) {
+/**
+ * The dataset, if this caller may see it — theirs, or one nobody owns where the
+ * policy allows (t-679). A miss is a 404 rather than a 403: "it exists but is
+ * not yours" is an id-enumeration vector.
+ *
+ * Returns the row and its access basis, because a caller acting on a row that
+ * is not their own has to say so in the audit log.
+ */
+async function loadDataset(id: string, session: AuthenticatedSession) {
   const dataset = await prisma.aiDataset.findFirst({
-    where: { id, userId },
+    where: { AND: [await datasetVisibilityWhere(session), { id }] },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${id} not found`);
-  return dataset;
+  const basis = datasetAccessBasis(dataset, session.user.id);
+  // The query above admits only 'owner' and 'orphan' rows, so this cannot be
+  // null — narrowing for the type, not re-checking the boundary.
+  if (!basis) throw new NotFoundError(`Dataset ${id} not found`);
+  return { dataset, basis };
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
 
-  const dataset = await loadDataset(id, session.user.id);
-  const cases = await prisma.aiDatasetCase.findMany({
-    where: { datasetId: id },
-    orderBy: { position: 'asc' },
-    take: 50,
-  });
-  log.info('Loaded dataset', { datasetId: id, casePreviewCount: cases.length });
-  return successResponse({ dataset, cases });
-});
-
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
-
-  await loadDataset(id, session.user.id);
-  const body = await validateRequestBody(request, patchDatasetSchema);
-  const updated = await prisma.aiDataset.update({
-    where: { id },
-    data: {
-      ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.description !== undefined ? { description: body.description } : {}),
-      ...(body.tags !== undefined ? { tags: body.tags } : {}),
+    const { dataset, basis } = await loadDataset(id, session);
+    const cases = await prisma.aiDatasetCase.findMany({
+      where: { datasetId: id },
+      orderBy: { position: 'asc' },
+      take: 50,
+    });
+    logDatasetAccess({
+      adminUserId: session.user.id,
+      datasetId: id,
+      datasetName: dataset.name,
+      basis,
+      action: 'dataset.view',
+      clientIp: getClientIP(request),
+    });
+    log.info('Loaded dataset', { datasetId: id, casePreviewCount: cases.length });
+    return successResponse({ dataset, cases });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Resolves the dataset under the visible clause for this caller — rows they own, or rows nobody owns where canRead permits an unattributed read — before touching it. Never a row belonging to another subject.',
     },
-  });
-  log.info('Dataset patched', { datasetId: id, fields: Object.keys(body) });
-  return successResponse(updated);
-});
-
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
-
-  await loadDataset(id, session.user.id);
-  // Block delete when a non-terminal run still references this dataset —
-  // worker must not pick up a run mid-delete and fail mid-pipeline.
-  const blockingRun = await prisma.aiEvaluationRun.findFirst({
-    where: { datasetId: id, status: { in: ['queued', 'running'] } },
-    select: { id: true, name: true, status: true },
-  });
-  if (blockingRun) {
-    throw new ConflictError(
-      `Cannot delete dataset: it is referenced by an active run "${blockingRun.name}" (${blockingRun.status})`
-    );
   }
+);
 
-  await prisma.aiDataset.delete({ where: { id } });
-  log.info('Dataset deleted', { datasetId: id });
-  return successResponse({ deleted: true, id });
-});
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
+
+    const { dataset, basis } = await loadDataset(id, session);
+    const body = await validateRequestBody(request, patchDatasetSchema);
+    // Pinned to the ownership the read saw. An orphan can now be claimed, so
+    // `userId` has a null -> someone transition it did not have before; without
+    // this an admin could edit a dataset another claimed in the window.
+    const updated = await prisma.aiDataset.update({
+      where: { id, userId: dataset.userId },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.tags !== undefined ? { tags: body.tags } : {}),
+      },
+    });
+    logDatasetAccess({
+      adminUserId: session.user.id,
+      datasetId: id,
+      datasetName: updated.name,
+      basis,
+      action: 'dataset.update',
+      extra: { fields: Object.keys(body) },
+      clientIp: getClientIP(request),
+    });
+    log.info('Dataset patched', { datasetId: id, fields: Object.keys(body) });
+    return successResponse(updated);
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Resolves the dataset under the visible clause for this caller — rows they own, or rows nobody owns where canRead permits an unattributed read — before touching it. Never a row belonging to another subject.',
+    },
+  }
+);
+
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'dataset id' });
+
+    const { dataset, basis } = await loadDataset(id, session);
+    // Block delete when a non-terminal run still references this dataset —
+    // worker must not pick up a run mid-delete and fail mid-pipeline.
+    const blockingRun = await prisma.aiEvaluationRun.findFirst({
+      where: { datasetId: id, status: { in: ['queued', 'running'] } },
+      select: { id: true, name: true, status: true },
+    });
+    if (blockingRun) {
+      throw new ConflictError(
+        `Cannot delete dataset: it is referenced by an active run "${blockingRun.name}" (${blockingRun.status})`
+      );
+    }
+
+    // Pinned to the ownership the read saw — see the PATCH handler.
+    await prisma.aiDataset.delete({ where: { id, userId: dataset.userId } });
+    logDatasetAccess({
+      adminUserId: session.user.id,
+      datasetId: id,
+      datasetName: dataset.name,
+      basis,
+      action: 'dataset.delete',
+      clientIp: getClientIP(request),
+    });
+    log.info('Dataset deleted', { datasetId: id });
+    return successResponse({ deleted: true, id });
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Resolves the dataset under the visible clause for this caller — rows they own, or rows nobody owns where canRead permits an unattributed read — before touching it. Never a row belonging to another subject.',
+    },
+  }
+);

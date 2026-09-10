@@ -25,6 +25,11 @@ import {
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+  computeChanges: vi.fn(),
+}));
+
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
 }));
@@ -129,7 +134,7 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets/:id/cases', () =>
     expect(response.status).toBe(404);
     expect(vi.mocked(prisma.aiDataset.findFirst)).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: DATASET_ID, userId: ADMIN_ID }),
+        where: { AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }, { id: DATASET_ID }] },
       })
     );
   });

@@ -18,7 +18,7 @@
  * `agents/compare/route.ts` counts `AiEvaluationSession` per agent across the
  * install. Correct today (a count, to a platform admin), and named here because
  * a roster of this family assembled by reading the `evaluations/` directory
- * misses it. Filed as #753.
+ * misses it. Tracked as t-682.
  *
  * **Ownerless rows are a third case, and they are the policy's to decide.**
  * `createdBy` is `SetNull`, so erasing an admin leaves their experiments with no
@@ -33,6 +33,7 @@
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
@@ -138,10 +139,12 @@ export const POST = withAdminAuth(
     const log = await getRouteLogger(request);
     const body = await validateRequestBody(request, createSchema);
 
-    // Dataset ownership when the caller opted in.
+    // Dataset visibility when the caller opted in — theirs, or one nobody
+    // owns where the policy allows. Matches `[id]/run`, which already permits
+    // an ownerless dataset (t-678); binding and running must agree.
     if (body.datasetId) {
       const dataset = await prisma.aiDataset.findFirst({
-        where: { id: body.datasetId, userId: session.user.id },
+        where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
         select: { id: true },
       });
       if (!dataset) {
@@ -195,7 +198,7 @@ export const POST = withAdminAuth(
     ownership: {
       decidedBy: 'self',
       because:
-        'Stamps createdBy = the caller, and the optional dataset is read under the same key. Nothing here reads another subject.',
+        "Stamps createdBy = the caller. The optional dataset is read under the dataset visible clause — the caller's own, or one nobody owns where the policy permits — matching [id]/run, which already accepts an ownerless dataset. Never another subject's row.",
     },
   }
 );

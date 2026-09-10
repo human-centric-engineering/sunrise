@@ -21,7 +21,7 @@
  * - POST JSON 400 on malformed body (no name)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/evaluations/datasets/route';
 import {
@@ -30,6 +30,12 @@ import {
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
 import { ValidationError } from '@/lib/api/errors';
+import { ownerScopedCount, ownerScopedFindMany } from '@/tests/helpers/owner-scoped-prisma';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -191,14 +197,15 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets', () => {
 
       expect(vi.mocked(prisma.aiDataset.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: ADMIN_ID }),
+          where: { AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }, expect.anything()] },
         })
       );
-      expect(vi.mocked(prisma.aiDataset.count)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ userId: ADMIN_ID }),
-        })
-      );
+      // The total must be computed from the SAME clause as the page, whatever
+      // that clause looks like — a count built from a wider one reports rows
+      // the caller cannot see, and every page-level assertion still passes.
+      const [findManyArgs] = vi.mocked(prisma.aiDataset.findMany).mock.calls[0];
+      const [countArgs] = vi.mocked(prisma.aiDataset.count).mock.calls[0];
+      expect(countArgs?.where).toEqual(findManyArgs?.where);
     });
   });
 
@@ -229,15 +236,19 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets', () => {
 
       await GET(makeGetRequest({ q: 'demo', tag: 'fixtures' }));
 
-      expect(vi.mocked(prisma.aiDataset.findMany)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            userId: ADMIN_ID,
-            name: expect.objectContaining({ contains: 'demo', mode: 'insensitive' }),
-            tags: expect.objectContaining({ has: 'fixtures' }),
-          }),
-        })
-      );
+      // Visibility and the query filters are separate AND members, so no
+      // query parameter can reach the key that is the boundary.
+      expect(vi.mocked(prisma.aiDataset.findMany).mock.calls[0][0]).toMatchObject({
+        where: {
+          AND: [
+            { OR: [{ userId: ADMIN_ID }, { userId: null }] },
+            {
+              name: expect.objectContaining({ contains: 'demo', mode: 'insensitive' }),
+              tags: expect.objectContaining({ has: 'fixtures' }),
+            },
+          ],
+        },
+      });
     });
 
     it('honours page / limit pagination params', async () => {
@@ -477,5 +488,84 @@ describe('POST /api/v1/admin/orchestration/evaluations/datasets (multipart)', ()
     expect(vi.mocked(uploadDataset)).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'd', userId: ADMIN_ID })
     );
+  });
+});
+
+/**
+ * t-679. `AiDataset.userId` is `SetNull`, so erasing an admin leaves their
+ * datasets owned by nobody. Owner-scoping alone made those unreachable by
+ * everyone. The visible set is now "mine, plus nobody's" — and which half a
+ * caller gets is the policy's answer, not the route's.
+ *
+ * The fakes filter on `userId` the way the database does, including the `AND`
+ * / `OR` shape and `userId: null` as IS NULL. A `mockResolvedValue` fixture
+ * would return whatever it was handed and could not fail.
+ */
+describe('GET /evaluations/datasets — ownerless rows', () => {
+  const OWN = makeDatasetRow({ id: 'ds-own', userId: ADMIN_ID });
+  const FOREIGN = makeDatasetRow({ id: 'ds-foreign', userId: 'another-admin' });
+  const ORPHAN = makeDatasetRow({ id: 'ds-orphan', userId: null });
+
+  /** A fork's narrower tier: this admin may not read rows nobody owns. */
+  function denyUnattributedReads() {
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(false)
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiDataset.findMany).mockImplementation(
+      ownerScopedFindMany([OWN, FOREIGN, ORPHAN]) as never
+    );
+    vi.mocked(prisma.aiDataset.count).mockImplementation(
+      ownerScopedCount([OWN, FOREIGN, ORPHAN]) as never
+    );
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  it('shows an ownerless dataset under the default policy', async () => {
+    const response = await GET(makeGetRequest());
+
+    const body = await parseJson<{ data: Array<{ id: string }>; meta: { total: number } }>(
+      response
+    );
+    expect(body.data.map((d) => d.id).sort()).toEqual(['ds-orphan', 'ds-own']);
+    expect(body.meta.total).toBe(2);
+  });
+
+  it('hides it again when the policy denies an unattributed read', async () => {
+    // If the route decided this for itself rather than asking the policy, this
+    // returns two rows and fails — which is the whole point of the seam.
+    denyUnattributedReads();
+
+    const response = await GET(makeGetRequest());
+
+    const body = await parseJson<{ data: Array<{ id: string }>; meta: { total: number } }>(
+      response
+    );
+    expect(body.data.map((d) => d.id)).toEqual(['ds-own']);
+    expect(body.meta.total).toBe(1);
+  });
+
+  it("never shows another admin's owned dataset on either branch", async () => {
+    const permitted = await parseJson<{ data: Array<{ id: string }> }>(await GET(makeGetRequest()));
+    denyUnattributedReads();
+    const denied = await parseJson<{ data: Array<{ id: string }> }>(await GET(makeGetRequest()));
+
+    // Non-empty on both branches, or "does not contain" proves nothing.
+    expect(permitted.data.length).toBeGreaterThan(0);
+    expect(denied.data.length).toBeGreaterThan(0);
+    for (const body of [permitted, denied]) {
+      expect(body.data.map((d) => d.id)).not.toContain('ds-foreign');
+    }
   });
 });
