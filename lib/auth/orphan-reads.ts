@@ -135,6 +135,12 @@ export function mayReadUnattributed(
  * would defeat that on the first request of every process. There is no I/O to
  * overlap on a default install.
  *
+ * Asked with an empty {@link AuthorizationScope}, which is what every core
+ * caller passes today — so the precomputed answer is identical to the on-demand
+ * one it replaces. **§106 is the trigger to revisit it**: once a fork's `canRead`
+ * reads `scope.org`, an answer computed with no org in context is the wrong one
+ * to cache on the session, and this is the line that has to change.
+ *
  * Written as a seeded literal filled by a loop, rather than either half alone.
  * The literal is what makes the record total at the type level — add a kind to
  * {@link UNATTRIBUTED_READ_KINDS} and this stops compiling until it is answered
