@@ -139,9 +139,14 @@ enforced by the compiler:
 
 ```ts
 type ReadTarget =
-  | { kind: 'nothing' }                                        // route declared no resolver
-  | { kind: 'unattributed'; resource: AuthorizationResource }  // a row with no owner
-  | { kind: 'subject'; userId: string; resource: … | null };   // a row owned by someone
+  | { kind: 'nothing' }                                      // route declared no resolver
+  | { kind: 'unattributed'; asking: UnattributedQuestion;    // nobody owns it
+      resource: AuthorizationResource }
+  | { kind: 'subject'; userId: string; resource: … | null }; // a row owned by someone
+
+type UnattributedQuestion =
+  | 'this-row'               // a resolver named one row and could not attribute it
+  | 'any-row-of-this-kind';  // may this caller read unowned rows of this kind at all?
 ```
 
 A `switch` that misses an arm returns `undefined`, which does not satisfy
@@ -152,10 +157,23 @@ caller on any ownerless row while reading exactly like a check. Build the target
 with `readTargetFor(resource)` or `readSubject(userId)`; do not construct it by
 hand at a call site, which is how two guards drifted apart in the first place.
 
-`'unattributed'` is the arm to think hardest about. It is a row the resolver
-named and could not attribute — an org-owned row, or a nullable `createdBy` on a
-`SetNull` model, which `CLAUDE.md` mandates for retained config and audit models.
-The default narrows it to platform staff and logs once per resource kind.
+`'unattributed'` is the arm to think hardest about, and it answers **two**
+questions. One is a row the resolver named and could not attribute — an org-owned
+row, or a nullable `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates
+for retained config and audit models. The other has no row at all: _may this
+caller read unowned rows of this kind, before I build a query?_ — the capability
+question the guards precompute, and the one
+[Rows nobody owns](#rows-nobody-owns) is about.
+
+The default policy answers both alike — platform staff, nobody else — and
+**diagnoses only the first**, once per resource kind. A missing `ownerId` on a
+resolved row is something a fork can go and fix; there is nothing to fix about
+the capability question, and warning on it told every install to correct a
+resolver that does not exist. `asking` exists so the arm can tell them apart; a
+policy that treats them alike ignores the field, which is what the built-in ones
+do. Narrowing the warning to resources carrying an `id` was tried instead and
+reverted — a resolver returning a kind with no id is exactly the misconfiguration
+the diagnostic is for.
 
 ### What a failure does
 
@@ -438,6 +456,72 @@ every self-inclusive policy, correct or divergent, because both faces agree
 trivially about the viewer. The checker reports that as a violation rather than
 passing it — along with zero cases and zero subjects, because a parity check that
 proves nothing must not report success.
+
+### Rows nobody owns
+
+`session.subjectFilter` answers "whose rows may I read?" and has no way to say
+**nobody's**. That is not a corner: four core models can hold a row with a null
+owner, two of them by birth and two by erasure.
+
+| Model                 | Owner column | `onDelete` | A null owner means             |
+| --------------------- | ------------ | ---------- | ------------------------------ |
+| `AiConversation`      | `userId`     | `Cascade`  | born ownerless — inbound       |
+| `AiWorkflowExecution` | `userId`     | `Cascade`  | born ownerless — scheduled     |
+| `AiDataset`           | `userId`     | `SetNull`  | an Art. 17 erasure detached it |
+| `AiExperiment`        | `createdBy`  | `SetNull`  | an Art. 17 erasure detached it |
+
+The two are disjoint by database constraint, which is why the helpers give them
+different names (`'system'` versus `'orphan'`) and different audit weight. A
+`where` clause keyed on the caller answers "not yours" for all four, which turns
+a deliberately retained row into an unreachable one — invisible to every admin,
+deletable by none, pruned by nothing.
+
+**The guards resolve the answer once per request and hand it over.** It is
+`canRead`'s `'unattributed'` arm asked with `asking: 'any-row-of-this-kind'`,
+once for each kind in `UNATTRIBUTED_READ_KINDS` (`lib/auth/orphan-reads.ts`),
+before the handler runs:
+
+```ts
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const mine = { createdBy: session.user.id };
+
+    // No await: the answer was decided before this handler was called.
+    const where: Prisma.AiExperimentWhereInput = session.unattributedReads.experiment
+      ? { OR: [mine, { createdBy: null }] }
+      : mine;
+
+    return successResponse(await prisma.aiExperiment.findMany({ where }));
+  },
+  { ownership: { decidedBy: 'self', because: 'Scoped to createdBy, plus rows nobody owns.' } }
+);
+```
+
+`unattributedReads` is a **total record** — every kind present, `true` or `false`
+— so a denied kind cannot be read the same way as a kind nobody asked about.
+Unlike `subjectFilter` it is an ordinary enumerable property, so a spread of the
+session carries it; nothing observes whether it was read, because there is no
+`ownership` claim for it to make checkable.
+
+**Never widen the owner clause instead.** "Nobody's" is a third case, not a
+softer spelling of "someone else's" — re-admitting every admin to every other
+admin's rows is the divergence [#741] closed.
+
+**The cost is eager, and a fork inherits it.** The policy is asked once per kind
+on **every** guarded request, including requests touching none of these models,
+and including `withAuth` routes. On a default install that is free: the built-in
+rule does no I/O. **A fork whose `canRead` hits a database pays those lookups per
+request and should cache inside its own policy.** Eager was chosen over asking on
+demand because the readers built on it compose `where` fragments inline inside
+larger objects — `lib/orchestration/admin/live-engine-snapshot.ts` is the awkward
+one — where an `await` has nowhere clean to go; making them async would put one
+at every call site for a question most requests never ask. Switching to on-demand
+later is possible but not free: it is exactly that sweep.
+
+A fork with an ownerless model of its own is not in the record, whose keys are
+the core kinds the guards can enumerate. It calls
+`mayReadUnattributed(session.principal, kind)` and awaits — the same policy, the
+same failure direction, one call.
 
 ---
 
