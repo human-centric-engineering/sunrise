@@ -23,6 +23,8 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import vitestConfig from '@/vitest.config';
+
 import {
   ALWAYS_RUN_TESTS,
   alwaysRunPaths,
@@ -61,6 +63,43 @@ describe('ALWAYS_RUN_TESTS', () => {
 
   it('has no duplicates', () => {
     expect(new Set(alwaysRunPaths()).size).toBe(ALWAYS_RUN_TESTS.length);
+  });
+
+  it('names only files vitest would collect, not ones its own exclude drops', () => {
+    // EXISTING IS NOT THE SAME AS RUNNING, and the difference is silent.
+    // vitest ignores a positional filter that matches no collected file: it
+    // runs the rest and exits 0 with no warning. So an entry naming a real file
+    // that `test.exclude` drops passes the existence check above, passes
+    // `validateAlwaysRun`, passes `--self-test`, and then never runs — the
+    // "quietly runs fewer tests than it claims" shape this module's header is
+    // written against.
+    //
+    // `tests/e2e/**` is the live instance. The config excludes it so that a
+    // fork's Playwright specs are not run by vitest, and its comment names
+    // `.spec.ts` as the convention forks use THERE — which this branch newly
+    // accepts in `validateAlwaysRun`. A fork putting a tree-reading spec in
+    // that directory would have declared a test that silently never runs.
+    //
+    // DERIVED FROM THE CONFIG, not from a list of directories written here. An
+    // enumeration would be right until upstream adds the next exclusion and
+    // then wrong in silence, which is the failure this whole file is about.
+    // Prefix-matching a de-globbed entry is coarser than picomatch — no matcher
+    // is a direct dependency of this repo — so it is deliberately biased toward
+    // reporting: it can name an entry vitest would in fact have collected, and
+    // the answer to that is a line in the config, not a looser check here.
+    const excluded = (vitestConfig.test?.exclude ?? [])
+      .filter((pattern): pattern is string => typeof pattern === 'string')
+      .map((pattern) => pattern.replace(/\*.*$/, ''))
+      .filter((prefix) => prefix.includes('/'));
+    expect(excluded.length, 'read no directory exclusions from the config').toBeGreaterThan(0);
+
+    const dropped = alwaysRunPaths().filter((path) =>
+      excluded.some((prefix) => path.startsWith(prefix))
+    );
+    expect(
+      dropped,
+      "vitest's own test.exclude drops these, so declaring them here selects nothing"
+    ).toEqual([]);
   });
 
   it('includes the privacy export manifest guard, which no module graph reaches', () => {

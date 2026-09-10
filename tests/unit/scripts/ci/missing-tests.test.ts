@@ -592,11 +592,24 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     }
   });
 
-  it('declares each fork coverage pattern once', () => {
-    // A duplicate is the shape that reads as two decisions and is one — and the
-    // always-run list next door is guarded against exactly this.
-    const patterns = forkExclusions();
-    expect(new Set(patterns).size).toBe(patterns.length);
+  it('declares each coverage pattern once, across core and fork together', () => {
+    // Across the WHOLE effective list rather than within the fork tail, because
+    // the collision that matters is a fork re-declaring a pattern Sunrise
+    // already ships: the exclusion is not doubled (it already applied), but the
+    // fork carries a line it does not need and would keep carrying after
+    // upstream removed its own. The always-run list next door is checked the
+    // same way, over core and fork together, and the two should not disagree.
+    const patterns = coverageExclusions();
+    // `!seen.add(p)` is the tempting one-liner and it is always false — `add`
+    // returns the Set, not a boolean — so the first version of this could not
+    // fail. Caught by running it against a deliberately duplicated pattern.
+    const seen = new Set<string>();
+    const duplicated = patterns.filter((pattern) => {
+      const already = seen.has(pattern);
+      seen.add(pattern);
+      return already;
+    });
+    expect(duplicated, 'declared twice in the effective coverage.exclude').toEqual([]);
   });
 
   it('sees whatever the fork seam declares', () => {
@@ -644,14 +657,31 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     // account for its own file in a SUNRISE-owned list — that was the whole of
     // #759. Core entries are unaffected: this still fails on an undeclared one.
     const declared = new Set(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((e) => e.pattern));
-    const forkDeclared = new Set(forkExclusions());
-    const unaccounted = coverageExclusions().filter(
-      (pattern) =>
-        !declared.has(pattern) &&
-        !forkDeclared.has(pattern) &&
-        !BUILD_OUTPUT.includes(pattern) &&
-        pathExemption(samplePathFor(pattern)) === null
-    );
+    // BY COUNT, not by membership. A set would let ONE fork entry account for a
+    // core pattern that happens to be spelled identically — the fork's own line
+    // silencing the decision Sunrise's new exclusion was supposed to force,
+    // which is the one thing this test must not allow the seam to buy. Spending
+    // a budget instead means a fork's entry accounts for exactly itself.
+    const forkBudget = new Map<string, number>();
+    for (const pattern of forkExclusions()) {
+      forkBudget.set(pattern, (forkBudget.get(pattern) ?? 0) + 1);
+    }
+    const unaccounted: string[] = [];
+    for (const pattern of coverageExclusions()) {
+      if (
+        declared.has(pattern) ||
+        BUILD_OUTPUT.includes(pattern) ||
+        pathExemption(samplePathFor(pattern)) !== null
+      ) {
+        continue;
+      }
+      const remaining = forkBudget.get(pattern) ?? 0;
+      if (remaining > 0) {
+        forkBudget.set(pattern, remaining - 1);
+        continue;
+      }
+      unaccounted.push(pattern);
+    }
     expect(
       unaccounted,
       'A coverage exclusion this check neither honours nor deliberately ignores. ' +

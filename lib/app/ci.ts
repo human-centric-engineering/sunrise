@@ -95,10 +95,17 @@ export interface AppAlwaysRunTest {
   /**
    * Repo-relative path, forward slashes. Must exist — a typo fails the guard.
    *
-   * It does not have to live under `tests/`: a colocated `lib/framework/
-   * boot-order.test.ts` is fine, as is `.spec.ts`, matching what the selection
-   * side already collects. What it must be is a test file the runner can hand
-   * to `vitest` as an argument.
+   * It does not have to live under `tests/`: a colocated
+   * `lib/billing/boot-order.test.ts` is fine, as is `.spec.ts`, matching what
+   * the selection side already collects. What it must be is a test file the
+   * runner can hand to `vitest` as an argument, in a directory
+   * `vitest.config.ts` collects — `tests/e2e/**` is excluded there, so a spec
+   * declared inside it would exist, pass every other check, and never run.
+   *
+   * (The example is deliberately not `lib/framework/…`. That tier is reserved
+   * and `tests/unit/reserved-fork-tiers.test.ts` holds it empty unless the
+   * checkout declares it in `lib/app/reserved-tiers.ts` — a second decision,
+   * and not one this seam should walk you into by example.)
    */
   path: string;
   /**

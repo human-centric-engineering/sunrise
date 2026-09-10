@@ -28,10 +28,13 @@ release process.
   is structurally 0% and fails the per-file floor the first time anyone edits it,
   and a test that reads the tree is reachable by no import chain — each a "keep
   mine" conflict on every sync (#759). A fork's entries are guarded, not merely
-  typed: an always-run entry whose file does not exist, a path that could not be
-  passed as an argument, a reason under 20 characters or a duplicate pattern all
-  fail — the checks core's own entries face. (A coverage pattern is a glob, so
-  there is nothing to existence-check; the other three apply to both lists.) `/pre-pr` step 4f still asks whether an excluded file wants
+  typed: a reason under 20 characters and a duplicate
+  entry fail either list, and an always-run path additionally has to exist, to be
+  something the runner can pass to `vitest` as an argument, and not to sit under
+  a directory `vitest.config.ts` excludes from collection — a file that exists
+  but is never collected is a declared test that silently never runs. A coverage
+  pattern is a glob, so nothing existence-checks it; its required `reason` is
+  what a reader has instead. `/pre-pr` step 4f still asks whether an excluded file wants
   a test, and still only reports. Sunrise's own exclusions, including
   `lib/app/eslint.config.mjs`, stay in `vitest.config.ts`, so no fork has to
   re-declare a file upstream ships.
