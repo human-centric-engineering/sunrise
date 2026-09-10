@@ -33,6 +33,7 @@
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
 import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
@@ -138,10 +139,12 @@ export const POST = withAdminAuth(
     const log = await getRouteLogger(request);
     const body = await validateRequestBody(request, createSchema);
 
-    // Dataset ownership when the caller opted in.
+    // Dataset visibility when the caller opted in — theirs, or one nobody
+    // owns where the policy allows. Matches `[id]/run`, which already permits
+    // an ownerless dataset (t-678); binding and running must agree.
     if (body.datasetId) {
       const dataset = await prisma.aiDataset.findFirst({
-        where: { id: body.datasetId, userId: session.user.id },
+        where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
         select: { id: true },
       });
       if (!dataset) {

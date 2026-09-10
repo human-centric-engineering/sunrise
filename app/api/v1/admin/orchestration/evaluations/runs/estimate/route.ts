@@ -14,6 +14,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
@@ -26,9 +27,9 @@ export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, estimateRunCostSchema);
 
-  // Dataset ownership — same posture as the run-create route.
+  // Dataset visibility — same posture as the run-create route.
   const dataset = await prisma.aiDataset.findFirst({
-    where: { id: body.datasetId, userId: session.user.id },
+    where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
     select: { id: true },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);

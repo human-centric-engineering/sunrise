@@ -7,6 +7,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -26,7 +27,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   const { cursor, limit } = validateQueryParams(searchParams, listDatasetCasesQuerySchema);
 
   const dataset = await prisma.aiDataset.findFirst({
-    where: { id: id.data, userId: session.user.id },
+    where: { AND: [await datasetVisibilityWhere(session), { id: id.data }] },
     select: { id: true, caseCount: true },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${id.data} not found`);

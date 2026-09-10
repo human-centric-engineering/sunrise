@@ -28,6 +28,7 @@ import {
 } from '@/lib/validations/orchestration-evaluations';
 import { uploadDataset } from '@/lib/orchestration/evaluations/datasets/upload-handler';
 import { hashParsedCases } from '@/lib/orchestration/evaluations/datasets/hash';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB — datasets are structured rows, not free text
 
@@ -37,9 +38,15 @@ export const GET = withAdminAuth(async (request, session) => {
   const { page, limit, q, tag } = validateQueryParams(searchParams, listDatasetsQuerySchema);
   const skip = (page - 1) * limit;
 
-  const where: Prisma.AiDatasetWhereInput = { userId: session.user.id };
-  if (q) where.name = { contains: q, mode: 'insensitive' };
-  if (tag) where.tags = { has: tag };
+  // Mine, plus rows nobody owns when the policy allows it (t-679). `AND`, not
+  // a spread: the query filters go in their own object so neither `?q=` nor
+  // `?tag=` can reach the key that is the boundary.
+  const filters: Prisma.AiDatasetWhereInput = {};
+  if (q) filters.name = { contains: q, mode: 'insensitive' };
+  if (tag) filters.tags = { has: tag };
+  const where: Prisma.AiDatasetWhereInput = {
+    AND: [await datasetVisibilityWhere(session), filters],
+  };
 
   const [datasets, total] = await Promise.all([
     prisma.aiDataset.findMany({

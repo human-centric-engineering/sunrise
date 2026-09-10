@@ -361,7 +361,7 @@ describe('POST /api/v1/admin/orchestration/evaluations/runs', () => {
     expect(response.status).toBe(404);
     expect(vi.mocked(prisma.aiDataset.findFirst)).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: DATASET_ID, userId: ADMIN_ID }),
+        where: { AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }, { id: DATASET_ID }] },
       })
     );
   });

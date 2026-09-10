@@ -422,6 +422,10 @@ async function loadDatasetMeta(
   datasetId: string
 ): Promise<{ caseCount: number; contentHash: string | null }> {
   try {
+    // NOT owner-scoped, deliberately, and the caller owes that check — the
+    // estimate route resolves the dataset through `datasetVisibilityWhere`
+    // before calling in. It reads only a hash and a count, so the exposure of
+    // a caller that forgets is small, but it is not nothing.
     const dataset = await prisma.aiDataset.findUnique({
       where: { id: datasetId },
       select: { contentHash: true, caseCount: true },

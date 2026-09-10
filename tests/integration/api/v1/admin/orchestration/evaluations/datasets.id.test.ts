@@ -168,7 +168,7 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets/:id', () => {
     // Confirm the scoping clause was actually applied.
     expect(vi.mocked(prisma.aiDataset.findFirst)).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: DATASET_ID, userId: ADMIN_ID }),
+        where: { AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }, { id: DATASET_ID }] },
       })
     );
   });
@@ -260,7 +260,7 @@ describe('PATCH /api/v1/admin/orchestration/evaluations/datasets/:id', () => {
 
     expect(response.status).toBe(200);
     expect(vi.mocked(prisma.aiDataset.update)).toHaveBeenCalledWith({
-      where: { id: DATASET_ID },
+      where: { id: DATASET_ID, userId: ADMIN_ID },
       data: { name: 'renamed', tags: ['x'] },
     });
   });
@@ -277,7 +277,7 @@ describe('PATCH /api/v1/admin/orchestration/evaluations/datasets/:id', () => {
 
     expect(response.status).toBe(200);
     expect(vi.mocked(prisma.aiDataset.update)).toHaveBeenCalledWith({
-      where: { id: DATASET_ID },
+      where: { id: DATASET_ID, userId: ADMIN_ID },
       data: { description: null },
     });
   });
@@ -352,6 +352,8 @@ describe('DELETE /api/v1/admin/orchestration/evaluations/datasets/:id', () => {
     const data = await parseJson<{ data: { deleted: boolean; id: string } }>(response);
     expect(data.data.deleted).toBe(true);
     expect(data.data.id).toBe(DATASET_ID);
-    expect(vi.mocked(prisma.aiDataset.delete)).toHaveBeenCalledWith({ where: { id: DATASET_ID } });
+    expect(vi.mocked(prisma.aiDataset.delete)).toHaveBeenCalledWith({
+      where: { id: DATASET_ID, userId: ADMIN_ID },
+    });
   });
 });

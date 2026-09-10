@@ -16,6 +16,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -88,9 +89,11 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // 2. Dataset ownership + hash capture ------------------------------------
+  // 2. Dataset visibility + hash capture ------------------------------------
+  // Theirs, or one nobody owns where the policy allows (t-679). An orphan the
+  // caller can see but cannot run against is the incoherence #741 was about.
   const dataset = await prisma.aiDataset.findFirst({
-    where: { id: body.datasetId, userId: session.user.id },
+    where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
     select: { id: true, contentHash: true, caseCount: true },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);

@@ -76,6 +76,12 @@ export async function appendCasesToDataset(params: {
   }
 
   const result = await prisma.$transaction(async (tx) => {
+    // NOT owner-scoped, deliberately, and the caller owes that check. Every
+    // route reaching this resolves the dataset through `datasetVisibilityWhere`
+    // first (`datasets/[id]/generate-cases/commit`, and `datasets/[id]/capture`
+    // via `capture.ts`). A new caller that skips it writes to any dataset by
+    // id — this is the library-function blind spot `.context/auth/authorization.md`
+    // warns about, named here rather than left to be rediscovered.
     const dataset = await tx.aiDataset.findUnique({
       where: { id: params.datasetId },
       select: { id: true, caseCount: true, source: true },

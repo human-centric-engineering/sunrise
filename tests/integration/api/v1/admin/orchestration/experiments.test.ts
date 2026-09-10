@@ -467,7 +467,7 @@ describe('POST /api/v1/admin/orchestration/experiments', () => {
       // Verify the ownership filter was applied: userId must equal the session user
       expect(vi.mocked(prisma.aiDataset.findFirst)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: 'ds-1', userId: ADMIN_ID }),
+          where: { AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }, { id: 'ds-1' }] },
         })
       );
     });
