@@ -262,7 +262,11 @@ describe('Agent Comparison', () => {
 
       await GET(makeRequest(`${AGENT_A},${AGENT_B}`));
 
-      for (const [args] of vi.mocked(prisma.aiConversation.count).mock.calls) {
+      const calls = vi.mocked(prisma.aiConversation.count).mock.calls;
+      // Two: one per agent. Without this the loop below passes vacuously if the
+      // call disappears — the same guard the evaluation case carries.
+      expect(calls).toHaveLength(2);
+      for (const [args] of calls) {
         expect(args?.where).toEqual({ agentId: expect.any(String) });
       }
     });
