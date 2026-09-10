@@ -8,10 +8,18 @@
  * getting past that page reaches the whole site.
  *
  * **Three of those four ask `canAdminister`** — `withAdminAuth`, the admin
- * layout and the maintenance bypass. `withAuth` asks `canRead`, and is the only
- * core caller of that face. Do not read "four chokepoints" as "four places the
- * administer decision is made": a fork replacing `canAdminister` alone changes
- * nothing about a `withAuth` route.
+ * layout and the maintenance bypass — and `withAuth` asks `canRead` to admit or
+ * refuse. Do not read "four chokepoints" as "four places the administer decision
+ * is made": a fork replacing `canAdminister` alone changes nothing about a
+ * `withAuth` route.
+ *
+ * **But `canRead` is no longer only `withAuth`'s question.** Both guards ask it
+ * — four times per request, once per kind — to fill `session.unattributedReads`
+ * (`lib/auth/orphan-reads.ts`). Those calls decide nothing about admission; they
+ * answer "may this caller read rows nobody owns?" for the handler. So a fork
+ * overriding `canRead` alone still admits every admin its `canAdminister` admits,
+ * and now also changes what every admin route's handler is told about ownerless
+ * rows. The two effects are worth keeping apart when reading an override.
  *
  * Until this module existed each of them *answered* the
  * question inline, with a role predicate in the guard body. That made the

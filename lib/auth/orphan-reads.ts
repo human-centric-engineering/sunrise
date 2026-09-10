@@ -55,6 +55,14 @@
  * (`AsyncLocalStorage`, or a value threaded from wherever the fork already
  * resolves the org) so a permission change takes effect on the next request.
  *
+ * **It is also paid by a request that is about to be shed.** The guard runs
+ * before the handler body, and 38 guarded routes open with an in-handler
+ * per-flow cap (`return createRateLimitResponse(...)`), so a caller being rate
+ * limited still costs a fork four policy lookups. The eager argument does not
+ * cover that case — nothing in the guard can see a cap that lives inside the
+ * handler — and moving the work later would mean the route opt-in this scheme
+ * deliberately does not have.
+ *
  * That cost was weighed against asking on demand and accepted, because the
  * alternative restructures every call site that builds a query filter inline.
  * See `.context/auth/authorization.md`.

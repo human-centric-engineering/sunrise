@@ -64,7 +64,11 @@
  *     canRead: async (viewer, target) => {
  *       switch (target.kind) {
  *         case 'nothing':      return true;   // the route named no resource
- *         case 'unattributed': return false;  // named a row with no owner
+ *         // Nobody owns it. `asking` says whether a resolver named one row
+ *         // ('this-row') or whether the guard is asking about the kind
+ *         // ('any-row-of-this-kind'). Read `target.resource` only on the first:
+ *         // on the second there is no row, so its fields are absent.
+ *         case 'unattributed': return false;
  *         case 'subject':
  *           return (
  *             target.userId === viewer.userId ||
@@ -97,12 +101,26 @@
  *    each case a subject the viewer is not**: a self-only case is clean under
  *    every self-inclusive policy, correct or not, and the checker now reports
  *    that as a fault rather than passing it.
- *  - **`'unattributed'` is the arm to think hardest about.** It is a row your
- *    resolver named and could not attribute: an org-owned row, or a nullable
- *    `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates for retained
- *    config and audit models. Sunrise's default narrows it to platform staff
- *    and logs once per kind; if you spread the default and do not answer it
- *    yourself, your org members are denied rather than silently permitted.
+ *  - **`'unattributed'` is the arm to think hardest about, and it answers two
+ *    questions.** One is a row your resolver named and could not attribute: an
+ *    org-owned row, or a nullable `createdBy` on a `SetNull` model, which
+ *    `CLAUDE.md` mandates for retained config and audit models. The other has no
+ *    row behind it at all — both guards ask it, once per resource kind, on
+ *    **every** request, to tell the handler whether this caller may read rows
+ *    nobody owns. `target.asking` tells you which you are being asked.
+ *
+ *    **Check `asking` before you read `target.resource`.** On the capability
+ *    question the resource carries a `kind` and nothing else. Dereferencing an
+ *    absent field throws, which is safe — a throwing policy is answered by safe
+ *    mode, which denies. *Comparing* one is not:
+ *    `target.resource.orgId === myOrg` is `undefined === undefined` there, which
+ *    is `true`, and hands out ownerless rows you meant to refuse, on every
+ *    request, from a policy that compiles clean. Answer
+ *    `'any-row-of-this-kind'` from the viewer alone.
+ *
+ *    Sunrise's default narrows both to platform staff and logs the resolver one
+ *    per kind; if you spread the default and do not answer the arm yourself,
+ *    your org members are denied rather than silently permitted.
  *  - **A resolver that returns `null`, or throws, denies the request** before
  *    your policy is consulted — it is not a state you can widen, and it never
  *    reaches `canRead`. `'nothing'` means the route declared no resolver at

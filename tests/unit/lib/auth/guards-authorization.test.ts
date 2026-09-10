@@ -53,7 +53,7 @@ import {
   __resetOwnerlessWarningsForTests,
   type ReadTarget,
 } from '@/lib/auth/authorization';
-import type { UnattributedReads } from '@/lib/auth/orphan-reads';
+import { UNATTRIBUTED_READ_KINDS, type UnattributedReads } from '@/lib/auth/orphan-reads';
 
 /**
  * Most fixtures in this file wrap a stub handler to test *authentication*, and a
@@ -685,10 +685,13 @@ describe('the handler receives the ownerless-read answer, already decided', () =
     const probes = read.filter(
       (call) => call.target.kind === 'unattributed' && call.target.asking === 'any-row-of-this-kind'
     );
-    expect(probes).toHaveLength(4);
+    // Derived from the roster, not spelled again: `orphan-reads.ts` says nothing
+    // depends on the order, and a hard-coded list here would quietly make that
+    // false — adding a kind would fail this test for the wrong reason.
+    expect(probes).toHaveLength(UNATTRIBUTED_READ_KINDS.length);
     expect(
       probes.map((call) => (call.target.kind === 'unattributed' ? call.target.resource.kind : null))
-    ).toEqual(['conversation', 'dataset', 'execution', 'experiment']);
+    ).toEqual([...UNATTRIBUTED_READ_KINDS]);
   });
 
   it('survives a spread of the session, unlike subjectFilter', async () => {

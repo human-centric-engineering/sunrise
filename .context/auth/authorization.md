@@ -59,8 +59,17 @@ count** — three ask `canAdminister`, one asks `canRead`:
 | `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them; all but one declare no `resource` resolver, so it is asked about `{ kind: 'nothing' }`. The exception is `app/api/v1/users/[id]` (GET) |
 
 Read that table before assuming an override is doing what you meant.
-**Replacing `canAdminister` alone changes nothing about a `withAuth` route**,
-and replacing `canRead` alone changes nothing about the 262 admin handlers.
+**Replacing `canAdminister` alone changes nothing about a `withAuth` route.**
+
+The converse used to be just as clean, and no longer is. `canRead` is still the
+only face that **admits or refuses** a `withAuth` request and nothing else — but
+both guards now also ask it, four times per request, to fill
+`session.unattributedReads` ([Rows nobody owns](#rows-nobody-owns)). Those calls
+decide no admission; they answer "may this caller read rows nobody owns?" for the
+handler. So overriding `canRead` alone still admits every admin your
+`canAdminister` admits, **and** changes what all 262 admin handlers are told
+about ownerless rows. If your policy does I/O, that is also four lookups on every
+admin request.
 
 `subjectScope` is asked by **both** guards — that is where
 `session.subjectFilter` comes from, and how the guard knows whether the route
@@ -154,8 +163,10 @@ A `switch` that misses an arm returns `undefined`, which does not satisfy
 previous signature was `subject: string | null`, and the natural line to write
 against it — `subject === null || subject === viewer.userId` — permitted every
 caller on any ownerless row while reading exactly like a check. Build the target
-with `readTargetFor(resource)` or `readSubject(userId)`; do not construct it by
-hand at a call site, which is how two guards drifted apart in the first place.
+with `readTargetFor(resource)`, `readSubject(userId)` or
+`readUnattributedKind(kind)`; do not construct it by hand at a call site, which
+is how two guards drifted apart in the first place — and, since the arm gained
+`asking`, a hand-built literal no longer compiles anyway.
 
 `'unattributed'` is the arm to think hardest about, and it answers **two**
 questions. One is a row the resolver named and could not attribute — an org-owned
@@ -171,7 +182,9 @@ resolved row is something a fork can go and fix; there is nothing to fix about
 the capability question, and warning on it told every install to correct a
 resolver that does not exist. `asking` exists so the arm can tell them apart; a
 policy that treats them alike ignores the field, which is what the built-in ones
-do.
+do. Narrowing the warning to resources carrying an `id` was tried instead and
+reverted — a resolver returning a kind with no id is exactly the misconfiguration
+the diagnostic is for.
 
 **But read the field before reading the resource.** On the capability question
 there is no row, so `resource` carries a `kind` and nothing else. A policy that
@@ -180,9 +193,7 @@ by safe mode — it denies, which is the safe direction. A policy that _compares
 one does not: `target.resource.orgId === scope.org` is `undefined === undefined`
 on this path, which is **`true`**, granting ownerless reads the policy was
 written to refuse. Answer `'any-row-of-this-kind'` from the principal alone and
-keep resource-reading logic on the `'this-row'` branch. Narrowing the warning to resources carrying an `id` was tried instead and
-reverted — a resolver returning a kind with no id is exactly the misconfiguration
-the diagnostic is for.
+keep resource-reading logic on the `'this-row'` branch.
 
 ### What a failure does
 
