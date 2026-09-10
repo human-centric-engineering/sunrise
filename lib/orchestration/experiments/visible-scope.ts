@@ -25,23 +25,29 @@
 
 import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
-import { mayReadUnattributed } from '@/lib/auth/orphan-reads';
+import { mayReadUnattributed, type UnattributedReadKind } from '@/lib/auth/orphan-reads';
 
-/** The resource kind the policy sees for this model. */
-export const EXPERIMENT_RESOURCE_KIND = 'experiment';
+/**
+ * The resource kind the policy sees for this model.
+ *
+ * Annotated rather than left inferred, so a value that stops matching
+ * `UNATTRIBUTED_READ_KINDS` fails to compile instead of quietly asking the
+ * policy a question the guard precomputed a different answer for.
+ */
+export const EXPERIMENT_RESOURCE_KIND: UnattributedReadKind = 'experiment';
 
 /**
  * The resource kind for `AiDataset`.
  *
- * It lives here, rather than in a datasets module, because there is no datasets
- * equivalent of this file yet — `AiDataset` has the same `SetNull` orphan gap
- * and has not been given the same treatment. The `run` route needs the string
- * today to ask whether the caller may read an experiment's ownerless dataset.
- * When datasets get their own visible-scope module, move this there and reuse
- * the value; a second spelling of the same kind would silently split the
- * policy's answer in two.
+ * **A second declaration of the same string**, and it should not have outlived
+ * the module it was waiting for: `lib/orchestration/access/dataset-access.ts`
+ * now exports its own `DATASET_RESOURCE_KIND`. This one stays only because the
+ * `run` route imports it from here, and deleting it means editing that route —
+ * t-687's work, not this file's. Both are annotated {@link UnattributedReadKind},
+ * so they cannot drift to different values without failing the build; that is
+ * containment, not a fix.
  */
-export const DATASET_RESOURCE_KIND = 'dataset';
+export const DATASET_RESOURCE_KIND: UnattributedReadKind = 'dataset';
 
 /**
  * A `where` fragment selecting the experiments `session` may read.

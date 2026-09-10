@@ -59,8 +59,17 @@ count** — three ask `canAdminister`, one asks `canRead`:
 | `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them; all but one declare no `resource` resolver, so it is asked about `{ kind: 'nothing' }`. The exception is `app/api/v1/users/[id]` (GET) |
 
 Read that table before assuming an override is doing what you meant.
-**Replacing `canAdminister` alone changes nothing about a `withAuth` route**,
-and replacing `canRead` alone changes nothing about the 262 admin handlers.
+**Replacing `canAdminister` alone changes nothing about a `withAuth` route.**
+
+The converse used to be just as clean, and no longer is. `canRead` is still the
+only face that **admits or refuses** a `withAuth` request and nothing else — but
+both guards now also ask it, four times per request, to fill
+`session.unattributedReads` ([Rows nobody owns](#rows-nobody-owns)). Those calls
+decide no admission; they answer "may this caller read rows nobody owns?" for the
+handler. So overriding `canRead` alone still admits every admin your
+`canAdminister` admits, **and** changes what all 262 admin handlers are told
+about ownerless rows. If your policy does I/O, that is also four lookups on every
+admin request.
 
 `subjectScope` is asked by **both** guards — that is where
 `session.subjectFilter` comes from, and how the guard knows whether the route
@@ -139,9 +148,14 @@ enforced by the compiler:
 
 ```ts
 type ReadTarget =
-  | { kind: 'nothing' }                                        // route declared no resolver
-  | { kind: 'unattributed'; resource: AuthorizationResource }  // a row with no owner
-  | { kind: 'subject'; userId: string; resource: … | null };   // a row owned by someone
+  | { kind: 'nothing' }                                      // route declared no resolver
+  | { kind: 'unattributed'; asking: UnattributedQuestion;    // nobody owns it
+      resource: AuthorizationResource }
+  | { kind: 'subject'; userId: string; resource: … | null }; // a row owned by someone
+
+type UnattributedQuestion =
+  | 'this-row'               // a resolver named one row and could not attribute it
+  | 'any-row-of-this-kind';  // may this caller read unowned rows of this kind at all?
 ```
 
 A `switch` that misses an arm returns `undefined`, which does not satisfy
@@ -149,13 +163,37 @@ A `switch` that misses an arm returns `undefined`, which does not satisfy
 previous signature was `subject: string | null`, and the natural line to write
 against it — `subject === null || subject === viewer.userId` — permitted every
 caller on any ownerless row while reading exactly like a check. Build the target
-with `readTargetFor(resource)` or `readSubject(userId)`; do not construct it by
-hand at a call site, which is how two guards drifted apart in the first place.
+with `readTargetFor(resource)`, `readSubject(userId)` or
+`readUnattributedKind(kind)`; do not construct it by hand at a call site, which
+is how two guards drifted apart in the first place — and, since the arm gained
+`asking`, a hand-built literal no longer compiles anyway.
 
-`'unattributed'` is the arm to think hardest about. It is a row the resolver
-named and could not attribute — an org-owned row, or a nullable `createdBy` on a
-`SetNull` model, which `CLAUDE.md` mandates for retained config and audit models.
-The default narrows it to platform staff and logs once per resource kind.
+`'unattributed'` is the arm to think hardest about, and it answers **two**
+questions. One is a row the resolver named and could not attribute — an org-owned
+row, or a nullable `createdBy` on a `SetNull` model, which `CLAUDE.md` mandates
+for retained config and audit models. The other has no row at all: _may this
+caller read unowned rows of this kind, before I build a query?_ — the capability
+question the guards precompute, and the one
+[Rows nobody owns](#rows-nobody-owns) is about.
+
+The default policy answers both alike — platform staff, nobody else — and
+**diagnoses only the first**, once per resource kind. A missing `ownerId` on a
+resolved row is something a fork can go and fix; there is nothing to fix about
+the capability question, and warning on it told every install to correct a
+resolver that does not exist. `asking` exists so the arm can tell them apart; a
+policy that treats them alike ignores the field, which is what the built-in ones
+do. Narrowing the warning to resources carrying an `id` was tried instead and
+reverted — a resolver returning a kind with no id is exactly the misconfiguration
+the diagnostic is for.
+
+**But read the field before reading the resource.** On the capability question
+there is no row, so `resource` carries a `kind` and nothing else. A policy that
+_dereferences_ one of the absent fields throws, and a throwing policy is answered
+by safe mode — it denies, which is the safe direction. A policy that _compares_
+one does not: `target.resource.orgId === scope.org` is `undefined === undefined`
+on this path, which is **`true`**, granting ownerless reads the policy was
+written to refuse. Answer `'any-row-of-this-kind'` from the principal alone and
+keep resource-reading logic on the `'this-row'` branch.
 
 ### What a failure does
 
@@ -168,6 +206,15 @@ degradation:
   latch: the next request goes back to the fork's policy. An intermittently
   throwing `subjectScope` therefore produces intermittently narrowed lists and
   does not close the console — unlike the registration failure below.
+
+  Because it is per call, a `canRead` that throws for everything now costs
+  **five** error lines per guarded request, not one: the route's own read plus
+  the four ownerless-read questions the guard precomputes
+  ([Rows nobody owns](#rows-nobody-owns)). That is deliberate rather than
+  overlooked — latching the log would hide exactly the intermittent case this
+  bullet exists for — but expect the volume, and read the **registration** error
+  at process start for the cause rather than trying to find it in the flood.
+
 - A **registration** that throws puts the install in safe mode for the life of
   the process: nobody administers anything, and every declared read narrows to
   the reader's own rows.
@@ -438,6 +485,124 @@ every self-inclusive policy, correct or divergent, because both faces agree
 trivially about the viewer. The checker reports that as a violation rather than
 passing it — along with zero cases and zero subjects, because a parity check that
 proves nothing must not report success.
+
+### Rows nobody owns
+
+`session.subjectFilter` answers "whose rows may I read?" and has no way to say
+**nobody's**. That is not a corner: the schema has **19 nullable `User` relations
+declared `onDelete: SetNull`**, every one of which can hold a row an Art. 17
+erasure detached, plus the models whose rows are born ownerless.
+
+**Four models have a read path that asks the policy about it**, and those four
+are what the guards precompute. The rest are admin-global — every admin reads
+every row — so there is no owner clause for an orphan to fall outside of, and
+nothing to precompute:
+
+| Model                 | Owner column | `onDelete` | A null owner means             |
+| --------------------- | ------------ | ---------- | ------------------------------ |
+| `AiConversation`      | `userId`     | `Cascade`  | born ownerless — inbound       |
+| `AiWorkflowExecution` | `userId`     | `Cascade`  | born ownerless — scheduled     |
+| `AiDataset`           | `userId`     | `SetNull`  | an Art. 17 erasure detached it |
+| `AiExperiment`        | `createdBy`  | `SetNull`  | an Art. 17 erasure detached it |
+
+**Born ownerless and left ownerless are disjoint by database constraint**, which
+is why the helpers give them different names — `'system'` versus `'orphan'` — and
+different audit weight. A `Cascade` row's owner column can only ever have been
+null from the start, because erasing the user would have deleted the row; a
+`SetNull` row's can only ever mean the owner was erased. A stranger's live
+correspondence and a de-attributed test fixture are not the same thing to read.
+
+Either way, a `where` clause keyed on the caller answers "not yours" for all
+four, which turns a deliberately retained row into an unreachable one — invisible
+to every admin, deletable by none, pruned by nothing.
+
+**So `UNATTRIBUTED_READ_KINDS` is a consequence, not a roster**, and that is what
+makes it easy to get wrong. Owner-scoping one of the other models — `AiWorkflow`,
+`AiAgent`, `AiKnowledgeDocument` and the rest all record a nullable `createdBy` —
+means adding its kind to that list **in the same change**. Leave it out and its
+orphans become unreachable exactly as above, with nothing going red. It cannot be
+derived from the schema the way `SUBJECT_DATA_SOURCES` is, because what decides
+membership lives in the route rather than the column.
+
+**The guards resolve the answer once per request and hand it over.** It is
+`canRead`'s `'unattributed'` arm asked with `asking: 'any-row-of-this-kind'`,
+once for each kind in `UNATTRIBUTED_READ_KINDS` (`lib/auth/orphan-reads.ts`),
+before the handler runs:
+
+```ts
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const mine = { createdBy: session.user.id };
+
+    // No await: the answer was decided before this handler was called.
+    const where: Prisma.AiExperimentWhereInput = session.unattributedReads.experiment
+      ? { OR: [mine, { createdBy: null }] }
+      : mine;
+
+    return successResponse(await prisma.aiExperiment.findMany({ where }));
+  },
+  {
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Keyed on createdBy = the caller, widened only to rows with NO owner and ' +
+        'only where the policy permits an unattributed read. Never another subject’s row.',
+    },
+  }
+);
+```
+
+**`'self'`, not `'policy'`** — the widening is to _nobody's_ rows, not to other
+subjects', so the route is still self-keyed. Declaring `'policy'` would mean
+reading `session.subjectFilter`, which widens to `{}` for a platform admin: the
+admin-global posture the experiments family was fixed away from.
+
+`unattributedReads` is a **total record** — every kind present, `true` or `false`
+— so a denied kind cannot be read the same way as a kind nobody asked about.
+Unlike `subjectFilter` it is an ordinary enumerable property, so a spread of the
+session carries it; nothing observes whether it was read, because there is no
+`ownership` claim for it to make checkable.
+
+**Never widen the owner clause instead.** "Nobody's" is a third case, not a
+softer spelling of "someone else's" — re-admitting every admin to every other
+admin's rows is the divergence [#741] closed.
+
+**The cost is eager, and a fork inherits it.** The policy is asked once per kind
+on **every** guarded request, including requests touching none of these models,
+and including `withAuth` routes. On a default install that is free: the built-in
+rule does no I/O. **A fork whose `canRead` hits a database pays those lookups per
+request and will want to cache — but per request, not per process.** The policy
+object is registered once for the life of the process, so the obvious `Map` keyed
+on `userId` hung off it serves a demoted admin their old answer until the next
+deploy. Scope it to the request (`AsyncLocalStorage`, or a value threaded from
+wherever the fork already resolves the org). Eager was chosen over asking on
+demand because the readers built on it compose `where` fragments inline inside
+larger objects — `lib/orchestration/admin/live-engine-snapshot.ts` is the awkward
+one — where an `await` has nowhere clean to go; making them async would put one
+at every call site for a question most requests never ask. Switching to on-demand
+later is possible but not free: it is exactly that sweep.
+
+A fork with an ownerless model of its own is not in the record, whose keys are
+the core kinds the guards can enumerate. It calls
+`mayReadUnattributed(session.principal, kind)` and awaits — the same policy, the
+same failure direction, one call.
+
+**Nothing in core reads the record yet, and the example above is the shape it is
+converging on rather than a route you can go and read.** Today the four models
+answer this question in three different ways, which is what the record exists to
+retire:
+
+| Model                 | Helper                                            | Asks the policy?                   |
+| --------------------- | ------------------------------------------------- | ---------------------------------- |
+| `AiExperiment`        | `lib/orchestration/experiments/visible-scope.ts`  | yes, on demand (`await`)           |
+| `AiDataset`           | `lib/orchestration/access/dataset-access.ts`      | yes, on demand (`await`)           |
+| `AiConversation`      | `lib/orchestration/access/conversation-access.ts` | **no — hard-coded to every admin** |
+| `AiWorkflowExecution` | `lib/orchestration/access/execution-access.ts`    | **no — hard-coded to every admin** |
+
+The bottom two predate the seam, so a fork registering a narrowing `canRead`
+changes nothing about who reads a stranger's inbound messages or another tenant's
+scheduled runs. That is the gap this record was built to close; until the sweeps
+land, those two rows are the honest answer to "is this behind the seam?".
 
 ---
 

@@ -61,8 +61,9 @@ release process.
   any authenticated caller.
 
   The read face takes a `ReadTarget` — a three-arm discriminated union
-  (`'nothing'` · `'unattributed'` · `'subject'`), built by `readTargetFor()` or
-  `readSubject()` — rather than a nullable subject id. A policy must answer all
+  (`'nothing'` · `'unattributed'` · `'subject'`), built by `readTargetFor()`,
+  `readSubject()` or `readUnattributedKind()` — rather than a nullable subject
+  id. A policy must answer all
   three arms and **the compiler enforces it**: a `switch` that misses one
   returns `undefined`, which does not satisfy `Promise<boolean>`. That exists
   because a row with no single owner (an org-owned row, or a nullable
@@ -70,7 +71,9 @@ release process.
   "this route named nothing", and the natural line to write against a nullable
   subject — `subject === null || subject === viewer.userId` — permits every
   caller while reading exactly like a check. Sunrise's default narrows
-  `'unattributed'` to platform staff and logs it once per kind.
+  `'unattributed'` to platform staff, and logs it once per kind **when a
+  resolver named the row** — see the ownerless-read entries under **Changed**
+  and **Fixed** for the second question that arm answers.
 
   Every face returns a `Promise` from day one — the org input (§106) needs a
   membership lookup, and a later sync→async conversion would be a sweep of every
@@ -358,6 +361,74 @@ release process.
 
 ### Changed
 
+- **"May this admin see rows nobody owns?" is now asked once per request, by the
+  guard, and the answer rides on the session.** Four core models can hold a row
+  with a null owner — `AiConversation` and `AiWorkflowExecution` born that way
+  (inbound threads, scheduled runs), `AiDataset` and `AiExperiment` left that way
+  by an Art. 17 erasure — and an owner clause keyed on the caller answers "not
+  yours" for all of them. `AuthenticatedSession` gains `unattributedReads`, a
+  total record `{ conversation, dataset, execution, experiment }` of booleans,
+  each one `canRead`'s `'unattributed'` arm answered for that kind before the
+  handler ran. Read it, do not call for it:
+
+  ```ts
+  const where = session.unattributedReads.experiment
+    ? { OR: [{ createdBy: session.user.id }, { createdBy: null }] }
+    : { createdBy: session.user.id };
+  ```
+
+  **No behaviour moved.** Nothing in core reads it yet — the two hard-coded
+  helpers (`conversation-access.ts`, `execution-access.ts`) and the two that ask
+  on demand (`dataset-access.ts`, `experiments/visible-scope.ts`) are converged
+  onto it in follow-up work. A default install serves exactly what it served
+  before.
+
+  **The cost is eager and a fork inherits it.** The policy is asked once per kind
+  on **every** guarded request, `withAuth` included, and on requests touching
+  none of these models. On a default install that is free — the built-in rule
+  does no I/O. **A fork whose `canRead` hits a database will want to cache — per
+  request, not per process.** The policy object lives for the life of the
+  process, so a `Map` keyed on `userId` hung off it serves a demoted admin their
+  old answer until the next deploy. Eager was chosen over asking on demand so the readers stay
+  synchronous: they compose `where` fragments inline inside larger objects, where
+  an `await` has nowhere clean to go, and making them async would put one at
+  every call site for a question most requests never ask.
+
+  New in `lib/auth/orphan-reads.ts`: `UNATTRIBUTED_READ_KINDS` (the canonical
+  spelling of each kind — a second spelling elsewhere splits the policy's answer
+  in two silently), `resolveUnattributedReads()`, and the `UnattributedReads` /
+  `UnattributedReadKind` types. `mayReadUnattributed(principal, kind)` stays, and
+  is what a fork with an ownerless model of its own calls: its `kind` is open,
+  while the precomputed record is closed over the core kinds the guards can
+  enumerate.
+
+  **Breaking for a fork that builds a `ReadTarget` by hand.** The
+  `'unattributed'` arm gains a required
+  `asking: 'this-row' | 'any-row-of-this-kind'` (`UnattributedQuestion`), so
+  `{ kind: 'unattributed', resource }` no longer type-checks — use
+  `readTargetFor(resource)` or the new `readUnattributedKind(kind)`, which is
+  what the docblock has always said. A fork's `canRead` still **compiles**
+  unchanged: it switches on `kind`, the arm is still called `'unattributed'`, and
+  a policy answering both questions alike can ignore the new field. **What it
+  receives did change**, so read this before assuming the upgrade is free: that
+  arm now arrives on *every* guarded request, four times, carrying a resource
+  with only a `kind` — no `id`, no `orgId`. A policy that reaches into the
+  resource was written when the arm only ever came from a resolver, and now sees
+  those fields absent. **Two outcomes, and only one of them is safe.** A policy
+  that *dereferences* — `findUnique({ where: { id: target.resource.id } })` —
+  throws, and a throwing policy is answered by safe mode, which denies. A policy
+  that *compares* — `target.resource.orgId === scope.org` — evaluates
+  `undefined === undefined` to **`true`** and grants ownerless reads it was
+  written to refuse. That is a widening, on every guarded request, from an
+  upgrade that compiles clean.
+
+  **So branch on `asking`**: answer `'any-row-of-this-kind'` from the principal
+  alone, and keep the resource-reading logic on the `'this-row'` path where a
+  resolver actually populated it. That is what the field is for. That is why this extends
+  the existing arm rather than adding a fourth `ReadTarget` shape, which would
+  have broken every exhaustive `switch` including the one
+  `lib/app/authorization.ts` ships as its worked example.
+
 - **Evaluation datasets orphaned by an erasure are reachable again, and every
   dataset read now goes through one definition.** `AiDataset.userId` is
   `SetNull`, so erasing an admin under Art. 17 keeps their datasets and drops
@@ -638,6 +709,19 @@ release process.
   `npm run db:drift-check` passes all 9 probes against the applied migration.
 
 ### Fixed
+
+- **Every install logged two authorization warnings about a resolver that does
+  not exist.** `canRead`'s `'unattributed'` arm answers two questions — "a
+  resolver named this row and could not attribute it" and "may this caller read
+  rows of this kind that nobody owns at all?" — and the default policy's
+  diagnostic is written for the first: it says `"a route named a resource with no
+  ownerId"` and tells you to give the resolver an `ownerId`. Since the
+  experiments and datasets routes started asking the second, every install
+  emitted one line naming `experiment` and one naming `dataset`, pointing at a
+  fix impossible to apply. The arm now carries which question is being asked, and
+  only the resolver one is diagnosed. A resolver returning a kind with **no id**
+  still warns — narrowing the warning on that instead was tried and reverted,
+  because that is exactly the misconfiguration the diagnostic exists for.
 
 - **An imported event subscription could reach a destination nothing had
   validated** — two ways, and the second is quieter than the first — a server-side request forgery reachable by following

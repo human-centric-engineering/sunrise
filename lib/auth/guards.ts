@@ -43,6 +43,7 @@ import {
   type AuthorizationResource,
   type SubjectFilter,
 } from '@/lib/auth/authorization';
+import { resolveUnattributedReads, type UnattributedReads } from '@/lib/auth/orphan-reads';
 import { env } from '@/lib/env';
 
 /**
@@ -129,6 +130,37 @@ export interface AuthenticatedSession extends AuthSession {
    * or pass the filter you read from it.
    */
   readonly subjectFilter: SubjectFilter;
+  /**
+   * Which kinds of ownerless row this caller may read — the policy's answer to
+   * "may this admin see rows nobody owns?", resolved once by the guard.
+   *
+   * A plain record, `{ conversation: false, dataset: true, … }`, with every core
+   * kind present. Read it and branch:
+   *
+   * ```ts
+   * const mine = { createdBy: session.user.id };
+   * const where = session.unattributedReads.experiment
+   *   ? { OR: [mine, { createdBy: null }] }
+   *   : mine;
+   * ```
+   *
+   * **Synchronous on purpose, and that is what the eager resolution buys.** The
+   * readers built on it — the `lib/orchestration/access/` family — compose
+   * `where` fragments inline inside larger objects, where there is nowhere clean
+   * to `await`; making them async would put an `await` at every one of their
+   * call sites for a question most requests never ask.
+   *
+   * Unlike {@link subjectFilter} this is an ordinary enumerable property, so a
+   * spread of the session carries it. Nothing observes whether it was read —
+   * there is no `ownership` claim for it to make checkable — so there is no
+   * getter to be fooled by a reshape.
+   *
+   * A fork with an ownerless model of its own is not in this record; it calls
+   * `mayReadUnattributed(session.principal, kind)` and awaits.
+   *
+   * @see lib/auth/orphan-reads.ts — the kinds, the cost, and the on-demand form
+   */
+  readonly unattributedReads: UnattributedReads;
 }
 
 /**
@@ -819,6 +851,23 @@ async function runHandler(args: {
     (args.ownership.decidedBy !== 'resource' || args.declaredResource);
   const filterIsUsable = !declarationSettlesIt;
 
+  // Resolved for every guarded request, including the ones touching none of
+  // these models — the cost the eager scheme accepts so that its readers can be
+  // synchronous. On a default install it is four calls into a policy that does
+  // no I/O; a fork whose policy hits a database pays four lookups and will want
+  // to cache them PER REQUEST — never on the policy object, which outlives the
+  // request and would serve a demoted admin their old answer until the next
+  // deploy. `lib/auth/orphan-reads.ts` has the full note.
+  //
+  // Both guards, not just the admin one. Every core caller today is an admin
+  // route, so restricting it would cost nothing measurable and save nothing
+  // measurable — but a rule one guard applies and the other does not is the
+  // defect this seam has already had three times (`readTargetFor`, the
+  // principal hand-off, the ownership check), and a `withAuth` route handed a
+  // silent `false` for a platform admin would be wrong rather than merely
+  // narrow.
+  const unattributedReads = await resolveUnattributedReads(args.principal);
+
   // Copied, not handed straight over. This is the first time a policy's return
   // value reaches route code, and the policy is a fork's. A fork that caches or
   // memoises its filter would otherwise be handing every request a reference to
@@ -834,6 +883,7 @@ async function runHandler(args: {
   const authenticated: AuthenticatedSession = {
     ...args.session,
     principal: args.principal,
+    unattributedReads,
     get subjectFilter() {
       // Throws rather than answering `{}`, which is the WIDEST value this type
       // can express. A route that declared `'self'` and then read the filter

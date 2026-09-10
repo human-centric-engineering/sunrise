@@ -50,11 +50,19 @@
 
 import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
-import { mayReadUnattributed } from '@/lib/auth/orphan-reads';
+import { mayReadUnattributed, type UnattributedReadKind } from '@/lib/auth/orphan-reads';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-/** The resource kind the authorization policy sees for this model. */
-export const DATASET_RESOURCE_KIND = 'dataset';
+/**
+ * The resource kind the authorization policy sees for this model.
+ *
+ * Annotated rather than left inferred: the guards precompute an answer per kind,
+ * so a value this constant no longer shares with `UNATTRIBUTED_READ_KINDS` would
+ * have this helper asking the policy about one string while the session carried
+ * an answer for another — two answers inside one request, silently. The
+ * annotation makes that a compile error. t-687 collapses the two declarations.
+ */
+export const DATASET_RESOURCE_KIND: UnattributedReadKind = 'dataset';
 
 /** Why an admin may see a dataset. */
 export type DatasetAccessBasis = 'owner' | 'orphan';

@@ -30,6 +30,7 @@ import {
   DEFAULT_AUTHORIZATION_POLICY,
   readTargetFor,
   readSubject,
+  readUnattributedKind,
   type AuthorizationPolicy,
 } from '@/lib/auth/authorization';
 
@@ -97,7 +98,20 @@ describe('readTargetFor is the one mapping from a resource to a question', () =>
     expect(readTargetFor(null)).toEqual({ kind: 'nothing' });
 
     const ownerless = { kind: 'report', id: 'r1', orgId: 'org-7' };
-    expect(readTargetFor(ownerless)).toEqual({ kind: 'unattributed', resource: ownerless });
+    // `asking` names WHICH ownerless question this is. A resolver produced this
+    // one, so it is `'this-row'` — the arm the default policy's "give the
+    // resolver an ownerId" diagnostic is written for. The capability question
+    // (`readUnattributedKind`) reaches the same arm and must not be diagnosed.
+    expect(readTargetFor(ownerless)).toEqual({
+      kind: 'unattributed',
+      asking: 'this-row',
+      resource: ownerless,
+    });
+    expect(readUnattributedKind('report')).toEqual({
+      kind: 'unattributed',
+      asking: 'any-row-of-this-kind',
+      resource: { kind: 'report' },
+    });
 
     const owned = { kind: 'thing', id: 't1', ownerId: 'u9' };
     expect(readTargetFor(owned)).toEqual({ kind: 'subject', userId: 'u9', resource: owned });
