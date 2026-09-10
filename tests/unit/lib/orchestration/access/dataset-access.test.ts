@@ -111,9 +111,16 @@ describe('datasetVisibilityWhere', () => {
     await datasetVisibilityWhere(sessionFor(ADMIN_ID, 'ADMIN'));
 
     // A generic label would make a fork unable to answer differently per model.
+    // `asking` says WHICH ownerless question this is: nothing resolved a row, so
+    // it is the capability question, and the default policy's "give the resolver
+    // an ownerId" diagnostic must not fire for it.
     expect(canRead).toHaveBeenCalledWith(
       expect.objectContaining({ userId: ADMIN_ID }),
-      { kind: 'unattributed', resource: { kind: DATASET_RESOURCE_KIND } },
+      {
+        kind: 'unattributed',
+        asking: 'any-row-of-this-kind',
+        resource: { kind: DATASET_RESOURCE_KIND },
+      },
       expect.anything()
     );
   });
