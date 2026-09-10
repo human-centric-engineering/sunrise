@@ -58,6 +58,13 @@
  * @see .context/testing/scoped-runs.md — the operator-facing version of this
  */
 
+// FORK NOTE: this module reads `lib/app/ci.ts` for real — no mock — so what
+// your fork declares there becomes part of `ALWAYS_RUN_TESTS` in this checkout,
+// and every guard written over that list judges your entries alongside
+// Sunrise's. Expect a rejected entry to name YOUR file: the path has to exist,
+// carry a reason of at least 20 characters, be a test file vitest would
+// actually collect, and be something the runner can pass to `vitest` as an
+// argument. Nothing here needs pinning when you fill the seam.
 import { appAlwaysRunTests } from '@/lib/app/ci';
 
 /** One test that must run regardless of what the module graph says. */

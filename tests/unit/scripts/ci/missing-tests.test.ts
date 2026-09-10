@@ -668,16 +668,24 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     }
     const unaccounted: string[] = [];
     for (const pattern of coverageExclusions()) {
+      // THE FORK BUDGET IS SPENT FIRST, and the order is load-bearing rather
+      // than tidy. `samplePathFor` THROWS on an extglob with no
+      // `SAMPLE_PATH_OVERRIDES` row — and an extglob is the shape `lib/app/ci.ts`
+      // recommends by example, because it is how you exclude a CLI wrapper while
+      // keeping its extracted `*-assertions.ts` gated. Reaching it with a fork's
+      // pattern would fail this suite with a fix available only in THIS file: a
+      // Sunrise-owned test, i.e. the platform-file conflict #759 exists to
+      // remove, re-created by the seam meant to remove it.
+      const remaining = forkBudget.get(pattern) ?? 0;
+      if (remaining > 0) {
+        forkBudget.set(pattern, remaining - 1);
+        continue;
+      }
       if (
         declared.has(pattern) ||
         BUILD_OUTPUT.includes(pattern) ||
         pathExemption(samplePathFor(pattern)) !== null
       ) {
-        continue;
-      }
-      const remaining = forkBudget.get(pattern) ?? 0;
-      if (remaining > 0) {
-        forkBudget.set(pattern, remaining - 1);
         continue;
       }
       unaccounted.push(pattern);
