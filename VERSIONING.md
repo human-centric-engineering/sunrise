@@ -102,6 +102,7 @@ covered by the version contract.
   - `lib/app/bootstrap.ts` → `initApp()` — the app boot hook, awaited by `instrumentation.ts`
   - `lib/app/brand.ts` → `appBrandName` / `appBrandLegalName` / `appBrandDescription` — brand overrides
   - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
+  - `lib/app/ci.ts` → `appCoverageExclusions` / `appAlwaysRunTests` — the fork's own coverage exclusions and whole-tree always-run tests
   - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
   - `lib/app/csp.ts` → `appFrameSrc` — extra CSP `frame-src` origins
   - `lib/app/data-export.ts` → `initAppSubjectSources()` / `collectAppSubjectData()` — Art. 15 export sources

@@ -12,11 +12,29 @@
  * - **Exempting by filename.** Every `index.ts` looks like a barrel; 14 in this
  *   repo carry their own code.
  *
- * @see scripts/ci/missing-tests.ts
+ * ---------------------------------------------------------------------------
+ * FORK NOTE — this file reads `lib/app/ci.ts` for real, on purpose
+ * ---------------------------------------------------------------------------
+ * The drift guard at the bottom subtracts your `appCoverageExclusions` from
+ * what it demands an account for, so it reads the REAL seam rather than a mock.
+ * That is the point: mocking it back to `[]` would restore exactly the failure
+ * #759's seam exists to remove — your own exclusions demanding a line in a
+ * Sunrise-owned list.
+ *
+ * What that means for you: filling the seam changes what this file measures,
+ * and it is meant to. Your entries stop needing an account here; core's still
+ * need one, so a Sunrise exclusion you inherit without a matching
+ * `NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION` row still fails, which is a real
+ * signal about a sync rather than noise. Nothing to pin.
+ *
+ * @see scripts/ci/missing-tests.ts · lib/app/ci.ts
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+
+import vitestConfig from '@/vitest.config';
+import { appCoverageExclusions } from '@/lib/app/ci';
 
 import {
   aspectTestsFor,
@@ -499,53 +517,114 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     }
   });
 
-  /** `coverage.exclude`'s string entries, read from the config itself. */
+  /**
+   * `coverage.exclude` as the config itself evaluates it.
+   *
+   * RESOLVED, not parsed. This used to read `vitest.config.ts` as text and
+   * pull out single-quoted literals, which worked exactly as long as the list
+   * was written entirely as literals — and #687 is the record of how quietly it
+   * stopped: a `]` inside one of the prose reasons ended the list early and the
+   * parse handed back the first six patterns, looking healthy while describing
+   * a shorter config than the one on disk.
+   *
+   * The fork-owned tail (#759) is the same failure a second time and worse.
+   * `...appCoverageExclusions.map(...)` contributes no quoted literal at all, so
+   * every entry a fork added would be invisible here: the guard below would keep
+   * passing, keep reporting a complete account of the list, and silently stop
+   * covering the half that changed. Importing the config gets whatever the array
+   * actually evaluates to, spreads included, and retires the comment-stripping
+   * and bracket-matching the text parse needed.
+   */
   function coverageExclusions(): string[] {
-    const config = readFileSync('vitest.config.ts', 'utf8');
-    const start = config.indexOf('coverage: {');
-    expect(start).toBeGreaterThan(-1);
-    // Strip `//` to end of line FIRST, before either finding the closing bracket
-    // or reading string literals. Entries in that list carry prose reasons both
-    // ABOVE them and TRAILING on the same line (`'app/**/layout.tsx', // Exclude
-    // layouts from coverage`), and an apostrophe in either ("a fork's sync
-    // merge") would otherwise open a string literal and hand back paragraphs of
-    // comment as if they were patterns. Dropping only whole-line comments — the
-    // first attempt at this — left the trailing ones live. Safe to strip to end
-    // of line because no pattern in the list contains `//`, which the assertion
-    // below pins.
-    //
-    // Stripping BEFORE `indexOf(']')` is what #687 had to fix. The bracket
-    // search used to run against the raw text, so a `]` written inside one of
-    // those prose reasons — an exclusion explained as "Sunrise ships this as
-    // `export default []`" — ended the list early and silently handed back the
-    // first six patterns. The parse still looked healthy; it just described a
-    // shorter config than the one on disk.
-    const block = config.slice(config.indexOf('exclude: [', start));
-    const stripped = block
-      .split('\n')
-      .map((line) => line.replace(/\/\/.*$/, ''))
-      .join('\n');
-    const body = stripped.slice('exclude: ['.length, stripped.indexOf(']'));
-    return Array.from(body.matchAll(/'([^']+)'/g)).map((match) => match[1]);
+    const exclude = vitestConfig.test?.coverage?.exclude;
+    // Not a cast and not a `?? []`. Both of those turn a wrong property path —
+    // or a vitest release that moves `coverage` — into an empty list, and an
+    // empty list makes every assertion below pass while checking nothing.
+    if (!Array.isArray(exclude)) {
+      throw new Error(
+        'Could not read test.coverage.exclude from vitest.config.ts — ' +
+          `got ${typeof exclude}. The drift guard below is vacuous until this reads the real list.`
+      );
+    }
+    return exclude.filter((entry): entry is string => typeof entry === 'string');
   }
 
-  it('no exclusion pattern contains `//`, which the comment stripper assumes', () => {
-    // The stripper cuts at the first `//` on a line. That is only safe while no
-    // pattern contains one; if a fork adds a URL-ish entry this fails here
-    // rather than silently truncating that pattern.
-    for (const pattern of coverageExclusions()) expect(pattern).not.toContain('//');
-  });
+  /** The fork tail, which a fork owns and accounts for in its own checkout. */
+  function forkExclusions(): string[] {
+    return appCoverageExclusions.map((entry) => entry.pattern);
+  }
 
   it('reads the real exclusion list', () => {
-    // A parse that silently returns [] would make every assertion below vacuous.
+    // A parse that silently returned [] would make every assertion below
+    // vacuous. Resolving the config removes the truncation failure mode, not
+    // this one: reading the wrong property still yields nothing, so the shape
+    // of the answer is still worth pinning.
     const exclusions = coverageExclusions();
     expect(exclusions.length).toBeGreaterThan(10);
     expect(exclusions).toContain('tests/');
-    // The LAST entry specifically. A truncating parse keeps the early ones and
-    // loses the tail, so asserting only on `tests/` (the second entry) passes
-    // happily against a list cut off six patterns in — which is exactly how the
-    // `]`-in-a-comment bug reached a full suite run before anything noticed.
+    // The LAST core entry specifically, which is what a truncating read loses.
+    // The text parse this replaced was cut off six patterns in for a whole
+    // suite run before anything noticed, and `tests/` — the second entry —
+    // passed happily throughout.
     expect(exclusions).toContain('lib/env.ts');
+  });
+
+  it.each([
+    ['a reason of at least 20 characters', (e: { reason: string }) => e.reason.trim().length >= 20],
+    ['a non-empty pattern', (e: { pattern: string }) => e.pattern.trim().length > 0],
+  ])('every fork coverage exclusion carries %s', (_label, holds) => {
+    // THE CLAIM THIS PR MAKES ELSEWHERE, MADE CHECKABLE. The accounting test
+    // below subtracts the fork tail on the stated grounds that `lib/app/ci.ts`
+    // requires a reason, so a fork's exclusion "arrives already justified" —
+    // but `reason: ''` type-checks, and without this it would sail through the
+    // one guard that otherwise forces a decision about an excluded path.
+    //
+    // 20 characters is not arbitrary: it is the floor
+    // `tests/unit/scripts/ci/scoped-tests.test.ts` already applies to an
+    // always-run reason, and the two lists ship in the same seam file. They
+    // should not disagree about what a reason is.
+    //
+    // Upstream the list is empty, so this asserts nothing until a fork fills
+    // it — which is the checkout where switching the 80% floor off for a path
+    // is a live decision rather than a hypothetical one.
+    for (const entry of appCoverageExclusions) {
+      expect(holds(entry), `${entry.pattern}: ${entry.reason}`).toBe(true);
+    }
+  });
+
+  it('declares each coverage pattern once, across core and fork together', () => {
+    // Across the WHOLE effective list rather than within the fork tail, because
+    // the collision that matters is a fork re-declaring a pattern Sunrise
+    // already ships: the exclusion is not doubled (it already applied), but the
+    // fork carries a line it does not need and would keep carrying after
+    // upstream removed its own. The always-run list next door is checked the
+    // same way, over core and fork together, and the two should not disagree.
+    const patterns = coverageExclusions();
+    // `!seen.add(p)` is the tempting one-liner and it is always false — `add`
+    // returns the Set, not a boolean — so the first version of this could not
+    // fail. Caught by running it against a deliberately duplicated pattern.
+    const seen = new Set<string>();
+    const duplicated = patterns.filter((pattern) => {
+      const already = seen.has(pattern);
+      seen.add(pattern);
+      return already;
+    });
+    expect(duplicated, 'declared twice in the effective coverage.exclude').toEqual([]);
+  });
+
+  it('sees whatever the fork seam declares', () => {
+    // SAY WHAT THIS PROVES WHERE. Sunrise ships `lib/app/ci.ts` empty, so
+    // upstream this loop has nothing to iterate and cannot fail — it is the
+    // fork-facing half of the guarantee, and it starts asserting the moment a
+    // fork declares an entry. What holds upstream is the check above: the list
+    // resolves, and it is the real one.
+    //
+    // It is here rather than in the fork because the failure it catches is a
+    // CORE regression — reverting the config to a text parse, or dropping the
+    // spread, silently empties a fork's tail — and a fork would meet that as a
+    // guard that quietly stopped covering its entries.
+    const exclusions = coverageExclusions();
+    for (const pattern of forkExclusions()) expect(exclusions).toContain(pattern);
   });
 
   it.each(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((entry) => entry.pattern))(
@@ -570,13 +649,47 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     // walked the config. Adding `components/ui/` to `coverage.exclude`
     // upstream would have passed every assertion here while silently widening
     // what step 3 ignores and step 4f does not.
+    //
+    // The fork tail is subtracted, and that is a decision rather than an
+    // oversight. `lib/app/ci.ts` requires a reason on every entry, so a fork's
+    // exclusion arrives already justified; and 4f keeps asking about it, since
+    // nothing adds it to `PATH_EXEMPTIONS`. What a fork must not have to do is
+    // account for its own file in a SUNRISE-owned list — that was the whole of
+    // #759. Core entries are unaffected: this still fails on an undeclared one.
     const declared = new Set(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((e) => e.pattern));
-    const unaccounted = coverageExclusions().filter(
-      (pattern) =>
-        !declared.has(pattern) &&
-        !BUILD_OUTPUT.includes(pattern) &&
-        pathExemption(samplePathFor(pattern)) === null
-    );
+    // BY COUNT, not by membership. A set would let ONE fork entry account for a
+    // core pattern that happens to be spelled identically — the fork's own line
+    // silencing the decision Sunrise's new exclusion was supposed to force,
+    // which is the one thing this test must not allow the seam to buy. Spending
+    // a budget instead means a fork's entry accounts for exactly itself.
+    const forkBudget = new Map<string, number>();
+    for (const pattern of forkExclusions()) {
+      forkBudget.set(pattern, (forkBudget.get(pattern) ?? 0) + 1);
+    }
+    const unaccounted: string[] = [];
+    for (const pattern of coverageExclusions()) {
+      // THE FORK BUDGET IS SPENT FIRST, and the order is load-bearing rather
+      // than tidy. `samplePathFor` THROWS on an extglob with no
+      // `SAMPLE_PATH_OVERRIDES` row — and an extglob is the shape `lib/app/ci.ts`
+      // recommends by example, because it is how you exclude a CLI wrapper while
+      // keeping its extracted `*-assertions.ts` gated. Reaching it with a fork's
+      // pattern would fail this suite with a fix available only in THIS file: a
+      // Sunrise-owned test, i.e. the platform-file conflict #759 exists to
+      // remove, re-created by the seam meant to remove it.
+      const remaining = forkBudget.get(pattern) ?? 0;
+      if (remaining > 0) {
+        forkBudget.set(pattern, remaining - 1);
+        continue;
+      }
+      if (
+        declared.has(pattern) ||
+        BUILD_OUTPUT.includes(pattern) ||
+        pathExemption(samplePathFor(pattern)) !== null
+      ) {
+        continue;
+      }
+      unaccounted.push(pattern);
+    }
     expect(
       unaccounted,
       'A coverage exclusion this check neither honours nor deliberately ignores. ' +

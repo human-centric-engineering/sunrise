@@ -322,7 +322,15 @@ export function main(
   if (broken !== null) {
     console.error('Self-test failed — this runner cannot be trusted to select tests:');
     console.error(`  ${broken}`);
-    console.error('Fix `scripts/ci/scoped-tests.ts` before reading any result from it.');
+    // Both files, because `ALWAYS_RUN_TESTS` no longer lives in one place: a
+    // fork's entries are declared in `lib/app/ci.ts` and spread onto the end of
+    // it (#759). Naming only the platform file sends a fork to look for an entry
+    // that is not there — the seam moved the declaration out, so the diagnostic
+    // has to say so too.
+    console.error(
+      'Fix `scripts/ci/scoped-tests.ts` — or `lib/app/ci.ts`, if the entry is your ' +
+        "fork's — before reading any result from it."
+    );
     return 1;
   }
   if (argv.includes('--self-test')) {

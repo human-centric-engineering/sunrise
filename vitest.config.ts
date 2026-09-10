@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { availableParallelism } from 'node:os';
 import { nextFontStub } from './tests/mocks/next-font-plugin';
+// Relative, not `@/` — the alias below is what THIS file defines for the test
+// runtime; vite's own config loading does not apply it to the config itself.
+import { appCoverageExclusions } from './lib/app/ci';
 
 export default defineConfig({
   // `nextFontStub` stands in for `next/font/*`, which the Next compiler strips
@@ -220,6 +223,17 @@ export default defineConfig({
         // tests/unit/app/route-module-distinctness.test.ts.
         'app/\\(public\\)/page.tsx', // parens are picomatch syntax — escape or it matches nothing
         'lib/env.ts', // Exclude env validation
+        // The fork-owned tail (#759). Everything above is Sunrise's; a fork's
+        // own `tsx` CLI entry point is structurally 0% for exactly the reasons
+        // the entries above are, and had nowhere to be declared but here — a
+        // merge conflict on a platform file, once per fork, forever.
+        //
+        // Read by `tests/unit/scripts/ci/missing-tests.test.ts`, which RESOLVES
+        // this config rather than parsing it as text, so a spread is visible to
+        // the drift guard where a `...` in a text parse contributed nothing.
+        // That is why this list is spread here rather than concatenated
+        // somewhere less obvious: the config's evaluated value is the authority.
+        ...appCoverageExclusions.map((entry) => entry.pattern),
       ],
       // Coverage thresholds
       thresholds: {

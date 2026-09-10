@@ -86,6 +86,12 @@ file layout, a manifest against the schema, a roster of call sites — goes in
 "parses `prisma/schema/*.prisma`" is. The reason is what tells the next person
 whether their test belongs there.
 
+**A fork adds its own to `lib/app/ci.ts` instead** (`appAlwaysRunTests`), which
+`scripts/ci/scoped-tests.ts` spreads onto the end of `ALWAYS_RUN_TESTS`. Same
+entry shape, same checks — a path that does not exist, a reason under 20
+characters and a duplicate all fail the same guards core's entries face — but in
+a file Sunrise never edits, so your list and Sunrise's never conflict.
+
 ## Coverage, scoped
 
 `--coverage.include` is limited to the changed source files and
@@ -208,11 +214,42 @@ the runner fetches `origin/main` by default and exits 1 rather than guessing.
 
 ## For forks
 
-`ALWAYS_RUN_TESTS` is append-only from a fork's point of view: add your own
-whole-tree invariants, and upstream changes stay merge-clean because Sunrise
-only ever adds entries of its own. If you delete one of Sunrise's tests, remove
-its entry too — the runner warns about an entry it cannot find rather than
-skipping it quietly, so it will tell you.
+**Declare your own entries in `lib/app/ci.ts`, not in the platform files.** It is
+a fork-owned scaffold that ships empty and exports two lists:
+
+| Export                  | Folded into                             | For                                                                     |
+| ----------------------- | --------------------------------------- | ----------------------------------------------------------------------- |
+| `appCoverageExclusions` | `vitest.config.ts`'s `coverage.exclude` | a file the per-file floor cannot fairly gate — a `tsx` CLI entry point  |
+| `appAlwaysRunTests`     | `scripts/ci/scoped-tests.ts`'s list     | a test whose subject is the repository, which `--changed` never selects |
+
+Before this existed, one fork script and one whole-tree test cost edits to three
+Sunrise-owned files — `vitest.config.ts`, `scripts/ci/missing-tests.ts` and
+`scripts/ci/scoped-tests.ts` — each a "keep mine" conflict on every sync (#759).
+
+Both lists are guarded the way Sunrise's own are, in your checkout: a reason
+under 20 characters and a duplicate entry fail either list, and an always-run
+path additionally has to exist and to be something the runner can pass as an
+argument to `vitest`. A coverage pattern is a glob, so nothing existence-checks
+it — the reason is what a reader has instead, which is why it is a required
+field rather than a comment.
+
+The coverage exclusion is the one worth thinking about twice. It switches the
+80% floor **off** for that path, so extract the logic first and exclude only the
+I/O wrapper — **usually by naming the wrapper file**, which keeps everything
+beside it gated whatever it is called. `scripts/smoke/!(*-assertions).ts` is
+upstream's directory form of the same idea, and its carve-out is literal: it
+spares files named `*-assertions.ts` and nothing else, so a sibling called
+`lib.ts` is excluded along with the harness. Use it only if your extracted half
+follows that naming; otherwise it un-gates the code you separated out in order
+to test it. `/pre-pr`
+step 4f still asks whether an excluded file wants a test — it reports and never
+gates, so the answer is given in review rather than silenced by the entry.
+
+`ALWAYS_RUN_TESTS` is otherwise append-only from a fork's point of view:
+upstream changes stay merge-clean because Sunrise only ever adds entries of its
+own. If you delete one of Sunrise's tests, remove its entry too — the runner
+warns about an entry it cannot find rather than skipping it quietly, so it will
+tell you.
 
 **On a sync merge**, `npm run test:changed:coverage` runs every test the merge
 can affect but holds only your own files to the 80% floor, so a clean sync
