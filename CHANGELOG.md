@@ -386,8 +386,10 @@ release process.
   **The cost is eager and a fork inherits it.** The policy is asked once per kind
   on **every** guarded request, `withAuth` included, and on requests touching
   none of these models. On a default install that is free — the built-in rule
-  does no I/O. **A fork whose `canRead` hits a database should cache inside its
-  own policy.** Eager was chosen over asking on demand so the readers stay
+  does no I/O. **A fork whose `canRead` hits a database will want to cache — per
+  request, not per process.** The policy object lives for the life of the
+  process, so a `Map` keyed on `userId` hung off it serves a demoted admin their
+  old answer until the next deploy. Eager was chosen over asking on demand so the readers stay
   synchronous: they compose `where` fragments inline inside larger objects, where
   an `await` has nowhere clean to go, and making them async would put one at
   every call site for a question most requests never ask.
@@ -405,9 +407,18 @@ release process.
   `asking: 'this-row' | 'any-row-of-this-kind'` (`UnattributedQuestion`), so
   `{ kind: 'unattributed', resource }` no longer type-checks — use
   `readTargetFor(resource)` or the new `readUnattributedKind(kind)`, which is
-  what the docblock has always said. A fork's `canRead` is **not** affected: it
-  switches on `kind`, the arm is still called `'unattributed'`, and a policy that
-  answers both questions alike ignores the new field. That is why this extends
+  what the docblock has always said. A fork's `canRead` still **compiles**
+  unchanged: it switches on `kind`, the arm is still called `'unattributed'`, and
+  a policy answering both questions alike can ignore the new field. **What it
+  receives did change**, so read this before assuming the upgrade is free: that
+  arm now arrives on *every* guarded request, four times, carrying a resource
+  with only a `kind` — no `id`, no `orgId`. A policy that reaches into the
+  resource (`findUnique({ where: { id: target.resource.id } })`, or
+  `target.resource.orgId === viewer.orgId`) was written when the arm only ever
+  came from a resolver, and will now throw or misjudge on every request. The
+  direction is safe — a throwing policy is answered by safe mode, which denies —
+  but the fix is to branch on `asking` and answer
+  `'any-row-of-this-kind'` from the principal alone. That is why this extends
   the existing arm rather than adding a fourth `ReadTarget` shape, which would
   have broken every exhaustive `switch` including the one
   `lib/app/authorization.ts` ships as its worked example.

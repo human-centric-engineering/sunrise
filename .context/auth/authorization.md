@@ -186,6 +186,15 @@ degradation:
   latch: the next request goes back to the fork's policy. An intermittently
   throwing `subjectScope` therefore produces intermittently narrowed lists and
   does not close the console — unlike the registration failure below.
+
+  Because it is per call, a `canRead` that throws for everything now costs
+  **five** error lines per guarded request, not one: the route's own read plus
+  the four ownerless-read questions the guard precomputes
+  ([Rows nobody owns](#rows-nobody-owns)). That is deliberate rather than
+  overlooked — latching the log would hide exactly the intermittent case this
+  bullet exists for — but expect the volume, and read the **registration** error
+  at process start for the cause rather than trying to find it in the flood.
+
 - A **registration** that throws puts the install in safe mode for the life of
   the process: nobody administers anything, and every declared read narrows to
   the reader's own rows.
@@ -460,8 +469,14 @@ proves nothing must not report success.
 ### Rows nobody owns
 
 `session.subjectFilter` answers "whose rows may I read?" and has no way to say
-**nobody's**. That is not a corner: four core models can hold a row with a null
-owner, two of them by birth and two by erasure.
+**nobody's**. That is not a corner: the schema has **19 nullable `User` relations
+declared `onDelete: SetNull`**, every one of which can hold a row an Art. 17
+erasure detached, plus the models whose rows are born ownerless.
+
+**Four models have a read path that asks the policy about it**, and those four
+are what the guards precompute. The rest are admin-global — every admin reads
+every row — so there is no owner clause for an orphan to fall outside of, and
+nothing to precompute:
 
 | Model                 | Owner column | `onDelete` | A null owner means             |
 | --------------------- | ------------ | ---------- | ------------------------------ |
@@ -480,6 +495,14 @@ correspondence and a de-attributed test fixture are not the same thing to read.
 Either way, a `where` clause keyed on the caller answers "not yours" for all
 four, which turns a deliberately retained row into an unreachable one — invisible
 to every admin, deletable by none, pruned by nothing.
+
+**So `UNATTRIBUTED_READ_KINDS` is a consequence, not a roster**, and that is what
+makes it easy to get wrong. Owner-scoping one of the other models — `AiWorkflow`,
+`AiAgent`, `AiKnowledgeDocument` and the rest all record a nullable `createdBy` —
+means adding its kind to that list **in the same change**. Leave it out and its
+orphans become unreachable exactly as above, with nothing going red. It cannot be
+derived from the schema the way `SUBJECT_DATA_SOURCES` is, because what decides
+membership lives in the route rather than the column.
 
 **The guards resolve the answer once per request and hand it over.** It is
 `canRead`'s `'unattributed'` arm asked with `asking: 'any-row-of-this-kind'`,
@@ -528,7 +551,11 @@ admin's rows is the divergence [#741] closed.
 on **every** guarded request, including requests touching none of these models,
 and including `withAuth` routes. On a default install that is free: the built-in
 rule does no I/O. **A fork whose `canRead` hits a database pays those lookups per
-request and should cache inside its own policy.** Eager was chosen over asking on
+request and will want to cache — but per request, not per process.** The policy
+object is registered once for the life of the process, so the obvious `Map` keyed
+on `userId` hung off it serves a demoted admin their old answer until the next
+deploy. Scope it to the request (`AsyncLocalStorage`, or a value threaded from
+wherever the fork already resolves the org). Eager was chosen over asking on
 demand because the readers built on it compose `where` fragments inline inside
 larger objects — `lib/orchestration/admin/live-engine-snapshot.ts` is the awkward
 one — where an `await` has nowhere clean to go; making them async would put one

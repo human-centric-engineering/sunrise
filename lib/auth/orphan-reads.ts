@@ -40,10 +40,16 @@
  * The cost is a fixed number of policy calls on every guarded request, including
  * requests that touch none of these models. On a default install that is free —
  * the built-in rule does no I/O. **A fork whose policy hits a database pays it
- * per request, and should cache inside its own policy**; that cost was weighed
- * against asking on demand and accepted, because the alternative restructures
- * every call site that builds a query filter inline. See
- * `.context/auth/authorization.md`.
+ * per request and will want to cache — but cache PER REQUEST, not per process.**
+ * The policy object is registered once for the life of the process, so the
+ * obvious `Map` keyed on `userId` hanging off it serves a demoted admin their
+ * old answer until the next deploy. Scope the cache to the request
+ * (`AsyncLocalStorage`, or a value threaded from wherever the fork already
+ * resolves the org) so a permission change takes effect on the next request.
+ *
+ * That cost was weighed against asking on demand and accepted, because the
+ * alternative restructures every call site that builds a query filter inline.
+ * See `.context/auth/authorization.md`.
  *
  * {@link mayReadUnattributed} remains for the caller the precompute cannot serve
  * — chiefly a fork with an ownerless model of its own, whose kind is not in the
@@ -67,15 +73,35 @@ import { canRead, readUnattributedKind } from '@/lib/auth/authorization';
 import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 
 /**
- * The core models that can hold a row nobody owns — the kinds the guards
- * precompute an answer for.
+ * The kinds the guards precompute an answer for.
  *
- * This is the canonical spelling of each kind, and a second spelling elsewhere
- * would split the policy's answer in two without anything going red: a fork
- * answering for `'execution'` would silently not answer for `'workflow-execution'`.
+ * **Not "the models that can hold an ownerless row" — that is a much longer
+ * list.** The schema has 19 nullable `User` relations declared `onDelete:
+ * SetNull`, every one of which can hold a row an Art. 17 erasure detached:
+ * `AiWorkflow`, `AiAgent`, `AiKnowledgeDocument`, `McpApiKey` and a dozen more.
+ * What these four have that the others do not is a **read path that asks the
+ * policy about it**. The rest are admin-global — every admin reads every row —
+ * so there is no owner clause for an orphan to fall outside of, and nothing to
+ * precompute.
+ *
+ * **That makes this list a consequence, not a roster, and it is the thing to
+ * extend when the consequence changes.** Owner-scoping one of those models means
+ * adding its kind here in the same change; leave it out and its orphans become
+ * invisible to everyone, deletable by nobody and pruned by nothing — the t-678
+ * defect, arriving silently. It cannot be derived from the schema the way
+ * `SUBJECT_DATA_SOURCES` is, because the property that decides membership lives
+ * in the route, not the column: a schema-derived check would demand a key for
+ * every admin-global model and precompute 19 answers nobody asked for.
+ *
  * The value is what a fork's `canRead` sees as `resource.kind`, and what the
  * default policy's per-kind log line names, so it is the model's own noun and
- * matches the `entityType` the admin audit log already uses for it.
+ * matches the `entityType` the admin audit log already uses for it. **A second
+ * spelling of the same model splits the policy's answer in two with nothing
+ * going red** — a helper asking about `'eval-dataset'` while the guard resolved
+ * `'dataset'` gets two answers inside one request, which is the disagreement the
+ * precompute exists to remove. Each model's own `*_RESOURCE_KIND` constant is
+ * annotated {@link UnattributedReadKind} so a rename fails to compile here rather
+ * than diverging quietly; t-687 collapses them into one declaration.
  *
  * Ordered as declared; nothing depends on the order.
  */
@@ -130,10 +156,14 @@ export function mayReadUnattributed(
 /**
  * Ask the policy about every core kind at once. Called by the guards.
  *
- * Sequential rather than `Promise.all`, because a fork's policy is likely to be
- * doing one lookup it can cache across the four calls, and firing them together
- * would defeat that on the first request of every process. There is no I/O to
- * overlap on a default install.
+ * Sequential rather than `Promise.all`, and the trade is real in both
+ * directions: sequential lets a fork's per-request cache serve calls two to four
+ * from the first one's lookup, while `Promise.all` would fire all four before
+ * any of them populated it — but an **uncached** fork policy pays four
+ * serialized round trips where it could have paid one. Sequential is the
+ * conservative half of that: its worst case is bounded latency, whereas running
+ * a fork's policy four times concurrently assumes a concurrency-safety property
+ * nothing here can check. There is no I/O to overlap on a default install.
  *
  * Asked with an empty {@link AuthorizationScope}, which is what every core
  * caller passes today — so the precomputed answer is identical to the on-demand
