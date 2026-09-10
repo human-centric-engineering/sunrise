@@ -63,12 +63,20 @@ export interface AppCoverageExclusion {
  * it in, i.e. the first time anyone edits it, where the per-file 80% floor then
  * fails on a file no test could ever have covered.
  *
- * **Extract the logic first, exclude second.** Upstream's convention is the
- * `*-assertions.ts` split: the pure logic a harness or probe extracts to be
- * testable stays gated like any other source file, and only the I/O wrapper is
- * excluded — which is why `scripts/smoke/!(*-assertions).ts` spares one and not
- * the other. An exclusion covering logic you could have tested buys silence,
- * not a gate.
+ * **Exclude the file, not the directory it sits in.** Naming the wrapper is
+ * almost always right: one CLI entry point, one line, and everything beside it
+ * stays gated whatever it is called.
+ *
+ * **The directory form has one carve-out and it is spelled, not implied.**
+ * `scripts/smoke/!(*-assertions).ts` excludes the whole directory *except*
+ * files named `*-assertions.ts`, which is upstream's convention for the pure
+ * logic a harness extracts to be testable. It spares that and nothing else — a
+ * sibling called `lib.ts`, `helpers.ts` or anything else is excluded along with
+ * the wrapper, tests or no tests. So reach for it only if your extracted half
+ * follows that naming; otherwise the pattern silently un-gates the code you
+ * separated out in order to test it, which is the opposite of what extracting
+ * it was for. (Coverage `exclude` honours no `!`-negated ENTRY, which is why
+ * the carve-out has to live inside the pattern.)
  *
  * **What an entry here does NOT do.** `/pre-pr` step 4f
  * (`npm run check:missing-tests`) still asks whether an excluded file should
@@ -79,11 +87,15 @@ export interface AppCoverageExclusion {
  * ```ts
  * export const appCoverageExclusions: AppCoverageExclusion[] = [
  *   {
- *     pattern: 'scripts/boundary/!(*-assertions).ts',
+ *     // The wrapper by name. `scripts/boundary/!(*-assertions).ts` would have
+ *     // taken `lib.ts` with it — the tested half — because that split is
+ *     // `check.ts`/`lib.ts`, not the `*-assertions.ts` naming the carve-out
+ *     // keys on.
+ *     pattern: 'scripts/boundary/check.ts',
  *     reason:
- *       '`scripts/boundary/check.ts` is a tsx CLI run by `npm run framework:boundary` ' +
- *       'in the lint job — filesystem and ESLint I/O that nothing imports. Its pure ' +
- *       'logic lives in scripts/boundary/lib.ts and is unit-tested.',
+ *       'a tsx CLI run by `npm run framework:boundary` in the lint job — ' +
+ *       'filesystem and ESLint I/O that nothing imports. Its pure logic lives ' +
+ *       'in scripts/boundary/lib.ts, which stays gated and has its own tests.',
  *   },
  * ];
  * ```

@@ -235,8 +235,13 @@ field rather than a comment.
 
 The coverage exclusion is the one worth thinking about twice. It switches the
 80% floor **off** for that path, so extract the logic first and exclude only the
-I/O wrapper: `scripts/smoke/!(*-assertions).ts` is upstream's worked example of
-excluding the harness while keeping its extracted assertions gated. `/pre-pr`
+I/O wrapper — **usually by naming the wrapper file**, which keeps everything
+beside it gated whatever it is called. `scripts/smoke/!(*-assertions).ts` is
+upstream's directory form of the same idea, and its carve-out is literal: it
+spares files named `*-assertions.ts` and nothing else, so a sibling called
+`lib.ts` is excluded along with the harness. Use it only if your extracted half
+follows that naming; otherwise it un-gates the code you separated out in order
+to test it. `/pre-pr`
 step 4f still asks whether an excluded file wants a test — it reports and never
 gates, so the answer is given in review rather than silenced by the entry.
 
