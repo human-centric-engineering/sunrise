@@ -58,6 +58,8 @@
  * @see .context/testing/scoped-runs.md — the operator-facing version of this
  */
 
+import { appAlwaysRunTests } from '@/lib/app/ci';
+
 /** One test that must run regardless of what the module graph says. */
 export interface AlwaysRunEntry {
   /** Repo-relative path, forward slashes. */
@@ -74,8 +76,10 @@ export interface AlwaysRunEntry {
  * `prisma/schema/*.prisma`" is — because the reason is what tells the next
  * person whether their new test belongs here.
  *
- * A fork adding its own whole-tree invariant appends to this list. Nothing
- * upstream removes entries, so the merge is additive.
+ * A fork adding its own whole-tree invariant declares it in `lib/app/ci.ts`
+ * instead, and the tail below folds it in — so a fork's list and Sunrise's stay
+ * in different files and never conflict (#759). Nothing upstream removes
+ * entries, so the merge is additive either way.
  */
 export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
@@ -235,6 +239,16 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'own version of the guard, rather than carry a red suite about a file it ' +
       'no longer shares.',
   },
+  // The fork-owned tail. Sunrise ships it empty; everything above is core's.
+  //
+  // Spread rather than left as a second list every caller must remember to
+  // union, so every guard already written over `ALWAYS_RUN_TESTS` covers a
+  // fork's entries too: `validateAlwaysRun` below rejects a non-test path or a
+  // bare reason, and `tests/unit/scripts/ci/scoped-tests.test.ts` fails on an
+  // entry whose file does not exist, a reason under 20 characters, or a
+  // duplicate path. A fork's declaration gets the checks core's gets, in the
+  // fork, without a line of its own.
+  ...appAlwaysRunTests,
 ];
 
 /** Just the paths, for argv building and set arithmetic. */
@@ -470,7 +484,13 @@ export function validateAlwaysRun(entries: readonly AlwaysRunEntry[]): string | 
     return 'ALWAYS_RUN_TESTS is empty — a scoped run would skip every whole-tree invariant.';
   }
   for (const entry of entries) {
-    if (!entry.path.startsWith('tests/') || !entry.path.endsWith('.test.ts')) {
+    // The suffixes `vitest.config.ts`'s `include` glob collects, not `.test.ts`
+    // alone. This validator runs inside `selfTestFailure`, so a rejection does
+    // not skip an entry — it stops the whole scoped gate. A fork declaring a
+    // `.spec.ts` whole-tree test (the selection side accepts those,
+    // deliberately) would have had a seam entry that refuses to run the runner.
+    // `tests/a.ts` is still rejected, which is the case this guards.
+    if (!entry.path.startsWith('tests/') || !/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.path)) {
       return `ALWAYS_RUN_TESTS holds "${entry.path}", which is not a test path.`;
     }
     if (entry.reason.trim() === '') {

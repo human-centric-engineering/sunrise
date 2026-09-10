@@ -16,7 +16,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+
+import vitestConfig from '@/vitest.config';
+import { appCoverageExclusions } from '@/lib/app/ci';
 
 import {
   aspectTestsFor,
@@ -499,53 +502,71 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     }
   });
 
-  /** `coverage.exclude`'s string entries, read from the config itself. */
+  /**
+   * `coverage.exclude` as the config itself evaluates it.
+   *
+   * RESOLVED, not parsed. This used to read `vitest.config.ts` as text and
+   * pull out single-quoted literals, which worked exactly as long as the list
+   * was written entirely as literals — and #687 is the record of how quietly it
+   * stopped: a `]` inside one of the prose reasons ended the list early and the
+   * parse handed back the first six patterns, looking healthy while describing
+   * a shorter config than the one on disk.
+   *
+   * The fork-owned tail (#759) is the same failure a second time and worse.
+   * `...appCoverageExclusions.map(...)` contributes no quoted literal at all, so
+   * every entry a fork added would be invisible here: the guard below would keep
+   * passing, keep reporting a complete account of the list, and silently stop
+   * covering the half that changed. Importing the config gets whatever the array
+   * actually evaluates to, spreads included, and retires the comment-stripping
+   * and bracket-matching the text parse needed.
+   */
   function coverageExclusions(): string[] {
-    const config = readFileSync('vitest.config.ts', 'utf8');
-    const start = config.indexOf('coverage: {');
-    expect(start).toBeGreaterThan(-1);
-    // Strip `//` to end of line FIRST, before either finding the closing bracket
-    // or reading string literals. Entries in that list carry prose reasons both
-    // ABOVE them and TRAILING on the same line (`'app/**/layout.tsx', // Exclude
-    // layouts from coverage`), and an apostrophe in either ("a fork's sync
-    // merge") would otherwise open a string literal and hand back paragraphs of
-    // comment as if they were patterns. Dropping only whole-line comments — the
-    // first attempt at this — left the trailing ones live. Safe to strip to end
-    // of line because no pattern in the list contains `//`, which the assertion
-    // below pins.
-    //
-    // Stripping BEFORE `indexOf(']')` is what #687 had to fix. The bracket
-    // search used to run against the raw text, so a `]` written inside one of
-    // those prose reasons — an exclusion explained as "Sunrise ships this as
-    // `export default []`" — ended the list early and silently handed back the
-    // first six patterns. The parse still looked healthy; it just described a
-    // shorter config than the one on disk.
-    const block = config.slice(config.indexOf('exclude: [', start));
-    const stripped = block
-      .split('\n')
-      .map((line) => line.replace(/\/\/.*$/, ''))
-      .join('\n');
-    const body = stripped.slice('exclude: ['.length, stripped.indexOf(']'));
-    return Array.from(body.matchAll(/'([^']+)'/g)).map((match) => match[1]);
+    const exclude = vitestConfig.test?.coverage?.exclude;
+    // Not a cast and not a `?? []`. Both of those turn a wrong property path —
+    // or a vitest release that moves `coverage` — into an empty list, and an
+    // empty list makes every assertion below pass while checking nothing.
+    if (!Array.isArray(exclude)) {
+      throw new Error(
+        'Could not read test.coverage.exclude from vitest.config.ts — ' +
+          `got ${typeof exclude}. The drift guard below is vacuous until this reads the real list.`
+      );
+    }
+    return exclude.filter((entry): entry is string => typeof entry === 'string');
   }
 
-  it('no exclusion pattern contains `//`, which the comment stripper assumes', () => {
-    // The stripper cuts at the first `//` on a line. That is only safe while no
-    // pattern contains one; if a fork adds a URL-ish entry this fails here
-    // rather than silently truncating that pattern.
-    for (const pattern of coverageExclusions()) expect(pattern).not.toContain('//');
-  });
+  /** The fork tail, which a fork owns and accounts for in its own checkout. */
+  function forkExclusions(): string[] {
+    return appCoverageExclusions.map((entry) => entry.pattern);
+  }
 
   it('reads the real exclusion list', () => {
-    // A parse that silently returns [] would make every assertion below vacuous.
+    // A parse that silently returned [] would make every assertion below
+    // vacuous. Resolving the config removes the truncation failure mode, not
+    // this one: reading the wrong property still yields nothing, so the shape
+    // of the answer is still worth pinning.
     const exclusions = coverageExclusions();
     expect(exclusions.length).toBeGreaterThan(10);
     expect(exclusions).toContain('tests/');
-    // The LAST entry specifically. A truncating parse keeps the early ones and
-    // loses the tail, so asserting only on `tests/` (the second entry) passes
-    // happily against a list cut off six patterns in — which is exactly how the
-    // `]`-in-a-comment bug reached a full suite run before anything noticed.
+    // The LAST core entry specifically, which is what a truncating read loses.
+    // The text parse this replaced was cut off six patterns in for a whole
+    // suite run before anything noticed, and `tests/` — the second entry —
+    // passed happily throughout.
     expect(exclusions).toContain('lib/env.ts');
+  });
+
+  it('sees whatever the fork seam declares', () => {
+    // SAY WHAT THIS PROVES WHERE. Sunrise ships `lib/app/ci.ts` empty, so
+    // upstream this loop has nothing to iterate and cannot fail — it is the
+    // fork-facing half of the guarantee, and it starts asserting the moment a
+    // fork declares an entry. What holds upstream is the check above: the list
+    // resolves, and it is the real one.
+    //
+    // It is here rather than in the fork because the failure it catches is a
+    // CORE regression — reverting the config to a text parse, or dropping the
+    // spread, silently empties a fork's tail — and a fork would meet that as a
+    // guard that quietly stopped covering its entries.
+    const exclusions = coverageExclusions();
+    for (const pattern of forkExclusions()) expect(exclusions).toContain(pattern);
   });
 
   it.each(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((entry) => entry.pattern))(
@@ -570,10 +591,19 @@ describe('the deliberate differences from vitest coverage exclusions', () => {
     // walked the config. Adding `components/ui/` to `coverage.exclude`
     // upstream would have passed every assertion here while silently widening
     // what step 3 ignores and step 4f does not.
+    //
+    // The fork tail is subtracted, and that is a decision rather than an
+    // oversight. `lib/app/ci.ts` requires a reason on every entry, so a fork's
+    // exclusion arrives already justified; and 4f keeps asking about it, since
+    // nothing adds it to `PATH_EXEMPTIONS`. What a fork must not have to do is
+    // account for its own file in a SUNRISE-owned list — that was the whole of
+    // #759. Core entries are unaffected: this still fails on an undeclared one.
     const declared = new Set(NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION.map((e) => e.pattern));
+    const forkDeclared = new Set(forkExclusions());
     const unaccounted = coverageExclusions().filter(
       (pattern) =>
         !declared.has(pattern) &&
+        !forkDeclared.has(pattern) &&
         !BUILD_OUTPUT.includes(pattern) &&
         pathExemption(samplePathFor(pattern)) === null
     );
