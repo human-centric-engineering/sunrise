@@ -47,7 +47,9 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
 
     const dataset = await prisma.aiDataset.findFirst({
       where: { AND: [await datasetVisibilityWhere(session), { id: datasetId }] },
-      select: { id: true },
+      // `userId` so the write below can pin itself to the ownership this read
+      // saw — not for the boundary test, which the `where` above settles.
+      select: { id: true, userId: true },
     });
     if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);
 
@@ -102,8 +104,12 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
       });
       const recomputed = hashDatasetCases(allCases);
 
+      // Pinned to the ownership the visibility check saw, like every other
+      // dataset write. An orphan can now be claimed mid-request, and a case
+      // edit landing on a dataset somebody else just adopted is a surprise for
+      // both of them.
       await tx.aiDataset.update({
-        where: { id: datasetId },
+        where: { id: datasetId, userId: dataset.userId },
         data: { contentHash: recomputed, updatedAt: new Date() },
       });
 

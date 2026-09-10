@@ -152,7 +152,11 @@ export function logDatasetAccess(params: {
     entityType: 'dataset',
     entityId: params.datasetId,
     entityName: params.datasetName,
-    metadata: { accessBasis: params.basis, ...params.extra },
+    // `extra` first: the basis is the one field an audit reader trusts, and a
+    // caller passing an `accessBasis` key must not be able to relabel their own
+    // access. Same rule as the `where` clauses — the security key goes last, so
+    // nothing can spread over it.
+    metadata: { ...params.extra, accessBasis: params.basis },
     clientIp: params.clientIp ?? null,
   });
 }
