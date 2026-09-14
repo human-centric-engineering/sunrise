@@ -37,12 +37,15 @@
  *   correspondence is not a de-attributed test fixture. Datasets are never born
  *   ownerless: all three create paths stamp `userId`.
  *
- * - **The widening is policy-gated; theirs is unconditional.** Those helpers
- *   hard-code "every admin sees every ownerless row". This asks
- *   {@link mayReadUnattributed}, so a fork narrows it by registering a policy
- *   and editing no route — which the multi-tenancy programme needs and they
- *   predate. Converging the three onto one mechanism is its own task; doing it
- *   here would mean editing shipped conversation and execution routes.
+ * - **This asks on demand; executions read a precomputed answer and
+ *   conversations do not ask at all.** All three are meant to end up on
+ *   `session.unattributedReads`, which the guards resolve once per request:
+ *   `execution-access.ts` got there in t-685 and is synchronous because of it,
+ *   this helper and `visibleExperimentClause` still `await`
+ *   {@link mayReadUnattributed} — the same policy, the same answer, asked a
+ *   second time — and `conversation-access.ts` still hard-codes "every admin
+ *   sees every ownerless row". Converging the three is t-686's and t-687's
+ *   work.
  *
  * @see `lib/orchestration/access/execution-access.ts` — the closest analogue
  * @see `.context/privacy/data-erasure.md` — why these rows exist at all

@@ -18,8 +18,10 @@
  * with `triggeredBy: 'in_workflow' | 'retroactive'`.
  *
  * Ownership: the caller's own runs, plus system-owned runs (`userId = null`
- * — schedule- and inbound-triggered). Another admin's own run returns 404
- * (not 403) — we never confirm existence of a row the caller cannot see.
+ * — schedule- and inbound-triggered) where the authorization policy permits
+ * an unattributed read, which a default install does. Another admin's own run
+ * returns 404 (not 403) — we never confirm existence of a row the caller
+ * cannot see.
  *
  * 403 if the provider-eligibility seam bars the provider the chat task
  * default resolves to — only when neither `modelOverride` nor

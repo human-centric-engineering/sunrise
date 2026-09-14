@@ -27,8 +27,9 @@
  * version). A malformed stored scope is dropped and the rerun runs unscoped.
  *
  * Authorization: admin role required. The original must be one the caller
- * can see — their own run or a system-owned one (`userId = null`); anything
- * else returns 404 (not 403) so existence isn't leaked. The rerun inherits
+ * can see — their own run, or a system-owned one (`userId = null`) where the
+ * authorization policy permits an unattributed read; anything else returns
+ * 404 (not 403) so existence isn't leaked. The rerun inherits
  * the original's attribution, so rerunning a system-owned run produces
  * another system-owned run.
  */

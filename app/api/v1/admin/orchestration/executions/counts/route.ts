@@ -5,7 +5,8 @@
  *
  * Returns a count per requested status as a single groupBy query, over the
  * same rows the executions list shows: the caller's own runs plus
- * system-owned ones. Drives the admin-sidebar badge polling that previously
+ * system-owned ones, the latter where the authorization policy permits an
+ * unattributed read. Drives the admin-sidebar badge polling that previously
  * fanned out into N list-endpoint requests.
  *
  * The visibility clause must match the list route's exactly — a badge

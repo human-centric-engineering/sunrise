@@ -587,22 +587,28 @@ the core kinds the guards can enumerate. It calls
 `mayReadUnattributed(session.principal, kind)` and awaits — the same policy, the
 same failure direction, one call.
 
-**Nothing in core reads the record yet, and the example above is the shape it is
-converging on rather than a route you can go and read.** Today the four models
-answer this question in three different ways, which is what the record exists to
-retire:
+**One model reads the record so far, and the example above is still a shape
+rather than a route you can go and read** — executions reach it through the
+helper below, not inline. The four models answer this question in three
+different ways, which is what the record exists to retire:
 
 | Model                 | Helper                                            | Asks the policy?                   |
 | --------------------- | ------------------------------------------------- | ---------------------------------- |
+| `AiWorkflowExecution` | `lib/orchestration/access/execution-access.ts`    | yes, from the record (synchronous) |
 | `AiExperiment`        | `lib/orchestration/experiments/visible-scope.ts`  | yes, on demand (`await`)           |
 | `AiDataset`           | `lib/orchestration/access/dataset-access.ts`      | yes, on demand (`await`)           |
 | `AiConversation`      | `lib/orchestration/access/conversation-access.ts` | **no — hard-coded to every admin** |
-| `AiWorkflowExecution` | `lib/orchestration/access/execution-access.ts`    | **no — hard-coded to every admin** |
 
-The bottom two predate the seam, so a fork registering a narrowing `canRead`
-changes nothing about who reads a stranger's inbound messages or another tenant's
-scheduled runs. That is the gap this record was built to close; until the sweeps
-land, those two rows are the honest answer to "is this behind the seam?".
+Executions moved onto the record in t-685, which is what the eager resolution was
+for: the three helpers stayed synchronous across all 19 call sites, including the
+live-engine snapshot's inline fragments. The middle two reach the same policy and
+get the same answer, one `await` at a time — so they are behind the seam, and pay
+for the answer twice: once in the precompute, once on demand. Folding them in is
+t-687's work.
+
+The bottom row predates the seam, so a fork registering a narrowing `canRead`
+still changes nothing about who reads a stranger's inbound messages. That is the
+remaining gap this record was built to close, and t-686 closes it.
 
 ---
 

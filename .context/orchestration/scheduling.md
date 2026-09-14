@@ -82,9 +82,10 @@ scheduled-run history with it ([#502](https://github.com/human-centric-engineeri
 Two things follow:
 
 - **Admin visibility comes from the system basis.** Every admin can see and act
-  on system-owned runs via `lib/orchestration/access/execution-access.ts`. A new
-  surface that compares `userId` to the session id directly will show no
-  scheduled runs at all.
+  on system-owned runs via `lib/orchestration/access/execution-access.ts` — on a
+  default install; the helper reads the authorization policy's answer, so a fork
+  can narrow it. A new surface that compares `userId` to the session id directly
+  will show no scheduled runs at all, and will not follow that policy either.
 - **`judge_call` cannot run on a schedule.** It needs a real account to file the
   judge transcript against and throws `judge_call_requires_user_context`
   instead of borrowing the schedule author's. Grade through the evaluations

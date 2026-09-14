@@ -14,8 +14,8 @@
  * is a write-capability secret and must never reach the browser.
  *
  * Authentication: Admin role required. Ownership: the caller's own runs,
- * plus system-owned runs (`userId = null`) — any other admin's own run
- * returns 404.
+ * plus system-owned runs (`userId = null`) where the authorization policy
+ * permits an unattributed read — any other admin's own run returns 404.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';

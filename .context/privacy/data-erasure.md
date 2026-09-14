@@ -126,10 +126,12 @@ Two consequences follow for anything you build on these rows:
 
 - **Admin surfaces need the system basis, not an owner match.** A null owner
   matches no admin, so `lib/orchestration/access/execution-access.ts` and
-  `conversation-access.ts` grant every admin access to unowned rows (basis
-  `'system'`, audit-logged like `'shared'`). Route a new surface through those
-  helpers; a hand-rolled `userId === session.user.id` check will silently hide
-  every scheduled and inbound run.
+  `conversation-access.ts` grant admins access to unowned rows (basis
+  `'system'`, audit-logged like `'shared'`) — every admin on a default install,
+  and for executions whichever admins the authorization policy permits. Route a
+  new surface through those helpers; a hand-rolled
+  `userId === session.user.id` check will silently hide every scheduled and
+  inbound run.
 - **Steps that require a real account must refuse, not borrow one.**
   `judge_call` throws `judge_call_requires_user_context` on a system-owned run
   because it files a transcript into an account's chat history. Borrowing the

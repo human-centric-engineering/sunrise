@@ -22,9 +22,10 @@
  *     distinguish admin termination from natural failure.
  *
  * Authentication: Admin role required. Ownership: same as the cancel
- * route — the caller's own runs plus system-owned ones (`userId = null`);
- * any other admin's own run returns 404 (not 403) so admins cannot probe
- * for each other's rows.
+ * route — the caller's own runs plus system-owned ones (`userId = null`)
+ * where the authorization policy permits an unattributed read; any other
+ * admin's own run returns 404 (not 403) so admins cannot probe for each
+ * other's rows.
  */
 
 import { z } from 'zod';

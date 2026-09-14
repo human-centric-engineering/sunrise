@@ -37,13 +37,16 @@
  * - **One request cannot disagree with itself.** A list and the rows it links to
  *   ask the policy once, together, rather than once each.
  *
- * **Neither property holds yet, and this is the file where that has to be said.**
- * Nothing in core reads `session.unattributedReads`: `visibleExperimentClause`,
- * `datasetVisibilityWhere` and the experiments `run` route all still `await`
- * {@link mayReadUnattributed}, so a datasets request asks the policy about
- * `'dataset'` twice — once in the precompute, once on demand. The cost below is
- * paid now and the benefit arrives with t-685 / t-686 / t-687, which is the
- * deliberate shape of an integration checkpoint rather than an oversight.
+ * **Both properties hold for executions and for nothing else yet, and this is the
+ * file where that has to be said.** `lib/orchestration/access/execution-access.ts`
+ * reads `session.unattributedReads.execution` and is synchronous across all 19 of
+ * its call sites (t-685). `visibleExperimentClause`, `datasetVisibilityWhere` and
+ * the experiments `run` route still `await` {@link mayReadUnattributed}, so a
+ * datasets request asks the policy about `'dataset'` twice — once in the
+ * precompute, once on demand — and `conversation-access.ts` does not ask at all.
+ * The cost below is paid in full now and the benefit arrives across t-686 and
+ * t-687, which is the deliberate shape of an integration checkpoint rather than
+ * an oversight.
  *
  * The cost is a fixed number of policy calls on every guarded request, including
  * requests that touch none of these models. On a default install that is free —
@@ -123,12 +126,18 @@ import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
  * a rename *out of* the union fails to compile — but `'dataset'` and
  * `'experiment'` are both in the union, so an annotation alone would let one
  * declaration drift to the other's value and still build. `orphan-reads.test.ts`
- * pins each constant to its literal for that reason. **`conversation` and
- * `execution` have no constant anywhere** — `conversation-access.ts` and
- * `execution-access.ts` hard-code the widening and never name a kind — so
- * t-685 and t-686 must take their value from this list rather than invent one.
- * t-687 collapses the lot into one declaration per model, which is the real fix;
- * this is containment until then.
+ * pins each constant to its literal for that reason. t-687 collapses the lot into
+ * one declaration per model, which is the real fix; this is containment until
+ * then.
+ *
+ * **A reader of {@link UnattributedReads} needs no constant at all**, and
+ * `execution-access.ts` is the demonstration: the record's keys *are* this list,
+ * so `session.unattributedReads.execution` cannot drift out of it without failing
+ * to compile. The constants exist for the callers that pass a `string` to
+ * {@link mayReadUnattributed}; a helper that reads the precomputed record has no
+ * string to get wrong. **`conversation` still has neither** —
+ * `conversation-access.ts` hard-codes the widening and never names a kind — so
+ * t-686 must take its value from this list rather than invent one.
  *
  * Ordered as declared; nothing depends on the order.
  */

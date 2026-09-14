@@ -4,8 +4,9 @@
  * GET /api/v1/admin/orchestration/executions
  *
  * Returns the caller's own workflow executions plus system-owned runs
- * (schedule- and inbound-triggered, `userId = null`), with optional
- * filtering by workflowId, status, and date range.
+ * (schedule- and inbound-triggered, `userId = null`) where the authorization
+ * policy permits an unattributed read, with optional filtering by
+ * workflowId, status, and date range.
  *
  * Authentication: Admin role required.
  */

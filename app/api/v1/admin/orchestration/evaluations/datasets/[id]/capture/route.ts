@@ -15,12 +15,16 @@
  *      conversation, or nobody does (a system-owned inbound thread).
  *      A `'shared'` basis is refused — see below.
  *   3. (workflow_execution) The caller owns the source execution, or
- *      nobody does (a schedule- or inbound-triggered run).
+ *      nobody does (a schedule- or inbound-triggered run) and the
+ *      authorization policy permits them an unattributed read.
  *
  * Both source checks go through the shared access helpers so that
  * system-owned rows stay capturable; a hand-rolled `userId ===
  * session.user.id` comparison 404s every scheduled and inbound row now
- * that they carry `userId = null` (#502).
+ * that they carry `userId = null` (#502). Going through the helper is also
+ * what puts the execution arm behind the policy seam — a fork that narrows
+ * `canRead` stops this route capturing other tenants' scheduled runs
+ * without editing it.
  *
  * The capture helpers themselves are ownership-agnostic — they only
  * verify the cross-reference between message/execution and dataset.
