@@ -597,18 +597,26 @@ different ways, which is what the record exists to retire:
 | `AiWorkflowExecution` | `lib/orchestration/access/execution-access.ts`    | yes, from the record (synchronous) |
 | `AiExperiment`        | `lib/orchestration/experiments/visible-scope.ts`  | yes, on demand (`await`)           |
 | `AiDataset`           | `lib/orchestration/access/dataset-access.ts`      | yes, on demand (`await`)           |
-| `AiConversation`      | `lib/orchestration/access/conversation-access.ts` | **no — hard-coded to every admin** |
+| `AiConversation`      | `lib/orchestration/access/conversation-access.ts` | yes, from the record (synchronous) |
 
-Executions moved onto the record in t-685, which is what the eager resolution was
-for: the three helpers stayed synchronous across all 19 call sites, including the
-live-engine snapshot's inline fragments. The middle two reach the same policy and
-get the same answer, one `await` at a time — so they are behind the seam, and pay
-for the answer twice: once in the precompute, once on demand. Folding them in is
-t-687's work.
+Executions moved onto the record in t-685 and conversations in t-686, which is
+what the eager resolution was for: their helpers stayed synchronous, including
+the live-engine snapshot's inline fragments. The middle two reach the same policy
+and get the same answer, one `await` at a time — so they are behind the seam, and
+pay for the answer twice: once in the precompute, once on demand. Folding them in
+is t-687's work, and it is now the only thing left on this axis.
 
-The bottom row predates the seam, so a fork registering a narrowing `canRead`
-still changes nothing about who reads a stranger's inbound messages. That is the
-remaining gap this record was built to close, and t-686 closes it.
+**Conversations were the last model with no policy in the loop, and the one that
+mattered most**: an inbound thread holds a living third party's correspondence,
+from someone with no account here and no way to see who read it. A fork
+registering a narrowing `canRead` now keeps one tenant's admins out of another
+tenant's customers' messages, with no route diff.
+
+One caveat a fork should know: only the **ownerless** arm asks. Owning a
+conversation and holding an active share are facts about one caller and one row,
+so they are outside the policy — an admin handed a share still reads that thread
+whatever `canRead` says about unattributed reads. Widening _that_ is the identity
+work's question, not this seam's.
 
 ---
 

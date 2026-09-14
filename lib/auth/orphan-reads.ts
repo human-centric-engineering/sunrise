@@ -43,10 +43,9 @@
  * its call sites (t-685). `visibleExperimentClause`, `datasetVisibilityWhere` and
  * the experiments `run` route still `await` {@link mayReadUnattributed}, so a
  * datasets request asks the policy about `'dataset'` twice — once in the
- * precompute, once on demand — and `conversation-access.ts` does not ask at all.
- * The cost below is paid in full now and the benefit arrives across t-686 and
- * t-687, which is the deliberate shape of an integration checkpoint rather than
- * an oversight.
+ * precompute, once on demand. The cost below is paid in full now and the last of
+ * the benefit arrives with t-687, which is the deliberate shape of an integration
+ * checkpoint rather than an oversight.
  *
  * The cost is a fixed number of policy calls on every guarded request, including
  * requests that touch none of these models. On a default install that is free —
@@ -131,13 +130,12 @@ import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
  * then.
  *
  * **A reader of {@link UnattributedReads} needs no constant at all**, and
- * `execution-access.ts` is the demonstration: the record's keys *are* this list,
- * so `session.unattributedReads.execution` cannot drift out of it without failing
- * to compile. The constants exist for the callers that pass a `string` to
- * {@link mayReadUnattributed}; a helper that reads the precomputed record has no
- * string to get wrong. **`conversation` still has neither** —
- * `conversation-access.ts` hard-codes the widening and never names a kind — so
- * t-686 must take its value from this list rather than invent one.
+ * `execution-access.ts` and `conversation-access.ts` are the demonstration: the
+ * record's keys *are* this list, so `session.unattributedReads.execution` cannot
+ * drift out of it without failing to compile. The constants exist for the callers
+ * that pass a `string` to {@link mayReadUnattributed}; a helper that reads the
+ * precomputed record has no string to get wrong, which is why neither of those
+ * two declares one and neither needs to.
  *
  * Ordered as declared; nothing depends on the order.
  */

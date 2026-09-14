@@ -127,8 +127,9 @@ Two consequences follow for anything you build on these rows:
 - **Admin surfaces need the system basis, not an owner match.** A null owner
   matches no admin, so `lib/orchestration/access/execution-access.ts` and
   `conversation-access.ts` grant admins access to unowned rows on a `'system'`
-  basis — every admin on a default install, and for executions whichever admins
-  the authorization policy permits. **Only the conversation routes log that
+  basis — every admin on a default install, and beyond that whichever admins the
+  authorization policy permits, which both helpers now ask. **Only the
+  conversation routes log that
   access** (`accessBasis` on the admin audit row, as they do for `'shared'`); no
   execution route logs a read, so do not rely on this for an audit trail over
   scheduled runs. Route a new surface through those helpers; a hand-rolled
