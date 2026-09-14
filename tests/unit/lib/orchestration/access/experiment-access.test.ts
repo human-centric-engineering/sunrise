@@ -26,7 +26,6 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import {
   experimentAccessBasis,
-  adminCanViewExperiment,
   experimentVisibilityWhere,
   logExperimentAccess,
 } from '@/lib/orchestration/access/experiment-access';
@@ -85,15 +84,6 @@ describe('experimentAccessBasis', () => {
   });
 });
 
-describe('adminCanViewExperiment', () => {
-  it('is the yes/no form of the same rule', () => {
-    expect(adminCanViewExperiment({ createdBy: ADMIN_ID }, ADMIN_ID)).toBe(true);
-    expect(adminCanViewExperiment({ createdBy: null }, ADMIN_ID)).toBe(true);
-    expect(adminCanViewExperiment({ createdBy: OTHER_ID }, ADMIN_ID)).toBe(false);
-    expect(adminCanViewExperiment(null, ADMIN_ID)).toBe(false);
-  });
-});
-
 describe('experimentVisibilityWhere', () => {
   it('admits ownerless rows when the guard resolved a permitting policy', () => {
     expect(experimentVisibilityWhere(sessionFor(ADMIN_ID, true))).toEqual({
@@ -108,15 +98,6 @@ describe('experimentVisibilityWhere', () => {
     expect(experimentVisibilityWhere(sessionFor(ADMIN_ID, false))).toEqual({
       createdBy: ADMIN_ID,
     });
-  });
-
-  it('keys on createdBy, not userId — the column this model actually uses', () => {
-    // `AiExperiment` is the one model of the four whose owner column is
-    // `createdBy`. A fragment spelled `userId` would be a clause Prisma accepts
-    // against no row and silently return nothing, or worse, be dropped.
-    const widened = experimentVisibilityWhere(sessionFor(ADMIN_ID, true));
-
-    expect(JSON.stringify(widened)).not.toContain('userId');
   });
 
   it("never admits another admin's rows, on either branch", () => {

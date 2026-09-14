@@ -132,6 +132,17 @@ export function datasetVisibilityWhere(session: AuthenticatedSession): Prisma.Ai
  * badge. `'orphan'` is logged: the row was somebody's, an
  * erasure detached it, and who reached it afterwards is worth knowing.
  *
+ * **Six call sites pass `datasetAccessBasis(...) ?? 'orphan'`, and the
+ * experiments sibling deliberately stopped doing that.** A null basis means the
+ * row was not admitted by the visibility clause — the exact state a widening
+ * regression produces — and the fallback files it as an ordinary orphan read, in
+ * the log an operator would use to notice. Unreachable today: every one of those
+ * sites fetches under {@link datasetVisibilityWhere} first, and the detail route
+ * already narrows properly inside its own `loadDataset`. t-687 fixed the
+ * experiment sites because it was writing them; changing six dataset routes it
+ * only touched to drop an `await` was scope it had no business taking. Worth
+ * doing next time this family is opened.
+ *
  * **Deliberately weaker than the conversation rule, and here is the line.**
  * A `'system'` conversation holds a living third party's correspondence, so
  * every read of one is logged. An orphan dataset holds test fixtures whose

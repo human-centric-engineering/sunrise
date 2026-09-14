@@ -65,6 +65,14 @@ export const GET = withAdminAuth<Params>(
     });
     if (!experiment) throw new NotFoundError('Experiment not found');
 
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // fall back to `?? 'orphan'`, which filed a null — the exact state a
+    // widening regression produces — as an ordinary orphan read, in the log an
+    // operator would use to notice that regression. A 404 keeps the signal.
+    const basis = experimentAccessBasis(experiment, session.user.id);
+    if (!basis) throw new NotFoundError('Experiment not found');
+
     // The row reached the caller, so the policy already said yes — this only
     // names WHICH of the two reasons it was. Reading a row whose creator was
     // erased is worth a record; reading your own is not.
@@ -72,7 +80,7 @@ export const GET = withAdminAuth<Params>(
       adminUserId: session.user.id,
       experimentId: id,
       experimentName: experiment.name,
-      basis: experimentAccessBasis(experiment, session.user.id) ?? 'orphan',
+      basis,
       action: 'experiment.view',
       record: 'non-owner-only',
       clientIp: getClientIP(request),
@@ -102,6 +110,14 @@ export const PATCH = withAdminAuth<Params>(
       where: { AND: [experimentVisibilityWhere(session), { id }] },
     });
     if (!existing) throw new NotFoundError('Experiment not found');
+
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // fall back to `?? 'orphan'`, which filed a null — the exact state a
+    // widening regression produces — as an ordinary orphan read, in the log an
+    // operator would use to notice that regression. A 404 keeps the signal.
+    const basis = experimentAccessBasis(existing, session.user.id);
+    if (!basis) throw new NotFoundError('Experiment not found');
 
     if (body.status !== undefined) {
       const allowed = ALLOWED_TRANSITIONS[existing.status] ?? [];
@@ -144,7 +160,7 @@ export const PATCH = withAdminAuth<Params>(
       adminUserId: session.user.id,
       experimentId: id,
       experimentName: experiment.name,
-      basis: experimentAccessBasis(existing, session.user.id) ?? 'orphan',
+      basis,
       action: 'experiment.update',
       record: 'always',
       extra: { changedKeys: Object.keys(body) },
@@ -175,6 +191,14 @@ export const DELETE = withAdminAuth<Params>(
     });
     if (!existing) throw new NotFoundError('Experiment not found');
 
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // fall back to `?? 'orphan'`, which filed a null — the exact state a
+    // widening regression produces — as an ordinary orphan read, in the log an
+    // operator would use to notice that regression. A 404 keeps the signal.
+    const basis = experimentAccessBasis(existing, session.user.id);
+    if (!basis) throw new NotFoundError('Experiment not found');
+
     if (existing.status === 'running') {
       throw new ValidationError('Cannot delete a running experiment — stop it first');
     }
@@ -186,7 +210,7 @@ export const DELETE = withAdminAuth<Params>(
       adminUserId: session.user.id,
       experimentId: id,
       experimentName: existing.name,
-      basis: experimentAccessBasis(existing, session.user.id) ?? 'orphan',
+      basis,
       action: 'experiment.delete',
       record: 'always',
       clientIp: clientIP,

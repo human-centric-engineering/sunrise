@@ -587,9 +587,9 @@ the core kinds the guards can enumerate. It calls
 `mayReadUnattributed(session.principal, kind)` and awaits — the same policy, the
 same failure direction, one call.
 
-**The example above is a shape, not a route you can go and read** — every model
-reaches the record through a helper in `lib/orchestration/access/`, one module
-per model, rather than inline. That directory is the roster:
+**The example above is a shape, not a route you can go and read** — every
+model's visible _set_ comes from a helper in `lib/orchestration/access/`, one
+module per model. That directory is the roster:
 
 | Model                 | Owner column | Helper                                            | Bases it can return           | Reaches the policy |
 | --------------------- | ------------ | ------------------------------------------------- | ----------------------------- | ------------------ |
@@ -597,6 +597,14 @@ per model, rather than inline. That directory is the roster:
 | `AiWorkflowExecution` | `userId`     | `lib/orchestration/access/execution-access.ts`    | `owner` / `system`            | from the record    |
 | `AiDataset`           | `userId`     | `lib/orchestration/access/dataset-access.ts`      | `owner` / `orphan`            | from the record    |
 | `AiExperiment`        | `createdBy`  | `lib/orchestration/access/experiment-access.ts`   | `owner` / `orphan`            | from the record    |
+
+**Two production call sites read the record directly rather than through a
+helper, and both are shapes a `where` fragment cannot serve.** The conversation
+search route builds its predicate in raw SQL, because a pgvector
+cosine-distance query is not expressible through Prisma's query builder; and the
+experiments `run` route reads `.dataset` to answer a yes/no about a **dataset**
+row it already holds, as defence in depth on a different model than its own. A
+third site appearing without one of those reasons is the drift to watch for.
 
 **The absence of that table is how the second mechanism got built**, so it is
 part of the fix rather than a description of it: the experiments helper lived

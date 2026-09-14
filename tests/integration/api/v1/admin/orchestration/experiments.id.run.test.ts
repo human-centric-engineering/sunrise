@@ -143,8 +143,14 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Outer findUnique: 404 check (select: { id: true })
-    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+    // Outer findFirst: the 404 check, which also settles the audit basis, so it
+    // selects `createdBy` too. Omitting the column here is not "owned by
+    // nobody" — it is "owner unknown", which the basis helper answers with a
+    // 404. The fixture has to say.
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({
+      id: EXPERIMENT_ID,
+      createdBy: ADMIN_ID,
+    } as never);
     // Inner tx findUnique: full experiment with variants
     mockTxFindUnique.mockResolvedValue(makeExperiment());
     mockTxUpdate.mockResolvedValue(makeExperimentWithAgent({ status: 'running' }));
@@ -317,7 +323,7 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
           where: {
             AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: EXPERIMENT_ID }],
           },
-          select: { id: true },
+          select: { id: true, createdBy: true },
         })
       );
       const outerWhere = vi.mocked(prisma.aiExperiment.findFirst).mock.calls[0][0]?.where;
@@ -444,7 +450,10 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
       // POST /experiments enforces dataset ownership at write time —
       // but the defence-in-depth check protects against a future writer
       // adding a new experiment-create path that misses it.
-      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({
+        id: EXPERIMENT_ID,
+        createdBy: ADMIN_ID,
+      } as never);
       mockTxFindUnique.mockResolvedValue({
         id: EXPERIMENT_ID,
         name: 'Test Experiment',
@@ -503,7 +512,10 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
 
     beforeEach(() => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue({
+        id: EXPERIMENT_ID,
+        createdBy: ADMIN_ID,
+      } as never);
       mockTxFindUnique.mockResolvedValue(orphanDatasetExperiment());
     });
 

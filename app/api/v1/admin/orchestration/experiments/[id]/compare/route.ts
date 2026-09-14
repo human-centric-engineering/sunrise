@@ -103,6 +103,14 @@ export const GET = withAdminAuth<Params>(
       throw new NotFoundError(`Experiment ${id} not found`);
     }
 
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // fall back to `?? 'orphan'`, which filed a null — the exact state a
+    // widening regression produces — as an ordinary orphan read, in the log an
+    // operator would use to notice that regression. A 404 keeps the signal.
+    const basis = experimentAccessBasis(experiment, session.user.id);
+    if (!basis) throw new NotFoundError(`Experiment ${id} not found`);
+
     // The second read of one experiment's contents, so the same rule as the
     // detail route: a row whose creator was erased is worth a record, your own
     // is not. Leaving it out would let an admin read an orphan's scores through
@@ -111,7 +119,7 @@ export const GET = withAdminAuth<Params>(
       adminUserId: session.user.id,
       experimentId: id,
       experimentName: experiment.name,
-      basis: experimentAccessBasis(experiment, session.user.id) ?? 'orphan',
+      basis,
       action: 'experiment.compare_view',
       record: 'non-owner-only',
       clientIp: getClientIP(request),

@@ -21,13 +21,13 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import {
+  experimentVisibilityWhere,
   experimentAccessBasis,
   logExperimentAccess,
 } from '@/lib/orchestration/access/experiment-access';
@@ -54,9 +54,21 @@ export const POST = withAdminAuth<Params>(
 
     const exists = await prisma.aiExperiment.findFirst({
       where: { AND: [visible, { id }] },
-      select: { id: true },
+      // `createdBy` so the audit basis is settled here, before the transaction
+      // opens. Reading it off the updated row at the end would mean a null —
+      // the state a widening regression produces — either being filed as an
+      // ordinary orphan run or throwing after the run had already started.
+      select: { id: true, createdBy: true },
     });
     if (!exists) throw new NotFoundError('Experiment not found');
+
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // fall back to `?? 'orphan'`, which filed a null — the exact state a
+    // widening regression produces — as an ordinary orphan read, in the log an
+    // operator would use to notice that regression. A 404 keeps the signal.
+    const basis = experimentAccessBasis(exists, session.user.id);
+    if (!basis) throw new NotFoundError('Experiment not found');
 
     const now = new Date();
 
@@ -178,7 +190,7 @@ export const POST = withAdminAuth<Params>(
       adminUserId: session.user.id,
       experimentId: id,
       experimentName: updated.name,
-      basis: experimentAccessBasis(updated, session.user.id) ?? 'orphan',
+      basis,
       action: 'experiment.run',
       record: 'always',
       extra: {

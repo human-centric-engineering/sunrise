@@ -85,6 +85,16 @@ export const POST = withAdminAuth<Params>(
       throw new NotFoundError(`Experiment ${id} not found`);
     }
 
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // fall back to `?? 'orphan'`, which filed a null — the exact state a
+    // widening regression produces — as an ordinary orphan read, in the log an
+    // operator would use to notice that regression. A 404 keeps the signal.
+    // Read here rather than beside the audit call at the end: the judging below
+    // is slow, and this must not be the thing that throws after it.
+    const basis = experimentAccessBasis(experiment, session.user.id);
+    if (!basis) throw new NotFoundError(`Experiment ${id} not found`);
+
     const variantA = experiment.variants.find((v) => v.id === body.variantAId);
     const variantB = experiment.variants.find((v) => v.id === body.variantBId);
     if (!variantA || !variantB) {
@@ -254,7 +264,7 @@ export const POST = withAdminAuth<Params>(
       adminUserId: session.user.id,
       experimentId: id,
       experimentName: experiment.name,
-      basis: experimentAccessBasis(experiment, session.user.id) ?? 'orphan',
+      basis,
       action: 'experiment.verdict_compute',
       record: 'always',
       extra: {

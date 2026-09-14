@@ -638,6 +638,26 @@ describe('audit — who reached a row that was not theirs', () => {
     );
   });
 
+  it('404s rather than filing a foreign row as an orphan, if the clause ever regresses', async () => {
+    // The one place `mockResolvedValue` is the RIGHT tool: it simulates the
+    // thing the filtering fake cannot, a visibility clause that has stopped
+    // narrowing and hands back a row it should have excluded.
+    //
+    // This is what the `?? 'orphan'` fallback used to swallow. A null basis
+    // means "not admitted by the clause" — exactly the state a widening
+    // regression produces — and defaulting it to 'orphan' filed a cross-user
+    // read as an ordinary orphan access, in the audit log an operator would be
+    // reading to notice the regression. Now it 404s and writes nothing.
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+      makeExperiment({ createdBy: 'someone-else' }) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeContext());
+
+    expect(response.status).toBe(404);
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+
   it('marks a write to an orphan as such', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
       ownerScopedFindFirst([makeExperiment({ createdBy: null })]) as never

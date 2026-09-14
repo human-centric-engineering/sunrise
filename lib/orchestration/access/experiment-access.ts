@@ -109,6 +109,13 @@ export function experimentVisibilityWhere(
  *
  * The claim route uses this to tell "unowned, so adoptable" from "mine, so
  * nothing to adopt" — a third party's row was a 404 before it got there.
+ *
+ * **There is deliberately no `adminCanViewExperiment` yes/no wrapper.**
+ * `dataset-access.ts` exports one and nothing calls it; written here it would
+ * read as an authorization answer while giving a weaker one, because it returns
+ * `true` for every ownerless row whatever the policy said. A caller holding a
+ * row fetched some other way needs {@link experimentVisibilityWhere} in the
+ * query, not a predicate afterwards.
  */
 export function experimentAccessBasis(
   experiment: ExperimentOwner | null | undefined,
@@ -118,14 +125,6 @@ export function experimentAccessBasis(
   if (experiment.createdBy === null) return 'orphan';
   if (experiment.createdBy === adminUserId) return 'owner';
   return null;
-}
-
-/** Whether the admin may see an already-fetched experiment row. */
-export function adminCanViewExperiment(
-  experiment: ExperimentOwner | null | undefined,
-  adminUserId: string
-): boolean {
-  return experimentAccessBasis(experiment, adminUserId) !== null;
 }
 
 /**
