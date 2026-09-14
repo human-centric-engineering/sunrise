@@ -95,7 +95,9 @@ export const GET = withAdminAuth<Params>(
             },
           },
         },
-        dataset: { select: { caseCount: true } },
+        // `userId` gates `caseCount` below — a fact about a dataset row,
+        // not about this experiment.
+        dataset: { select: { caseCount: true, userId: true } },
         creator: { select: { id: true } },
       },
     });
@@ -115,6 +117,30 @@ export const GET = withAdminAuth<Params>(
     // detail route: a row whose creator was erased is worth a record, your own
     // is not. Leaving it out would let an admin read an orphan's scores through
     // this route while `GET /:id` left a trail for the same rows.
+    // Defence in depth on the bound dataset, the third of three in this family
+    // and the only one that degrades a FIELD rather than refusing the route.
+    // `run` and `verdicts` both need the dataset to do their job at all, so a
+    // dataset the caller may not read makes the whole operation refusable. This
+    // route's job is showing the caller their own variants' scores; only
+    // `caseCount` is a fact about the dataset, so 404ing the page would deny
+    // them their own data to withhold one integer. It reports null instead —
+    // the same value the response already carries for an experiment with no
+    // dataset bound, which the compare view already renders.
+    //
+    // Unreachable today by the same margin as its two siblings: `POST
+    // /experiments` is the only path that binds a dataset and it enforces
+    // `datasetVisibilityWhere`, and the update schema deliberately refuses
+    // `datasetId`.
+    const boundDatasetOwner = experiment.dataset?.userId ?? null;
+    const mayReadBoundDataset =
+      // `!experiment.dataset` rather than `=== null`: the field is absent on a
+      // legacy experiment, and "no dataset bound" must not read as "a dataset
+      // you may not see", which would swap one null for an identical one while
+      // meaning something different.
+      !experiment.dataset ||
+      boundDatasetOwner === session.user.id ||
+      (boundDatasetOwner === null && session.unattributedReads.dataset);
+
     logExperimentAccess({
       adminUserId: session.user.id,
       experimentId: id,
@@ -156,7 +182,7 @@ export const GET = withAdminAuth<Params>(
       experimentName: experiment.name,
       variants,
       metricSlugs: Array.from(allMetricSlugs).sort(),
-      caseCount: experiment.dataset?.caseCount ?? null,
+      caseCount: mayReadBoundDataset ? (experiment.dataset?.caseCount ?? null) : null,
       pairwiseVerdict: (experiment.pairwiseVerdict as PairwiseVerdictSummary | null) ?? null,
     };
     return successResponse(payload);

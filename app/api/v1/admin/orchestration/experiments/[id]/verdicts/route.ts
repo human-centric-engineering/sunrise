@@ -134,7 +134,10 @@ export const POST = withAdminAuth<Params>(
     const mayUseDataset =
       datasetOwner === session.user.id ||
       (datasetOwner === null && session.unattributedReads.dataset);
-    if (!mayUseDataset) throw new NotFoundError(`Experiment ${id} not found`);
+    // Names the DATASET, not the experiment — see the same refusal in `run`.
+    // Reachable with an experiment that is unambiguously the caller's, once
+    // another admin claims an orphan dataset they had legitimately bound.
+    if (!mayUseDataset) throw new NotFoundError(`Experiment ${id} dataset not found`);
     if (experiment.dataset.caseCount > MAX_CASES_FOR_SYNC) {
       throw new ConflictError(
         `Pairwise verdicts cap at ${MAX_CASES_FOR_SYNC} cases — this dataset has ${experiment.dataset.caseCount}. Use a smaller dataset.`

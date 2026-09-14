@@ -49,6 +49,7 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { GET } from '@/app/api/v1/admin/orchestration/experiments/[id]/compare/route';
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -70,7 +71,12 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 function makeExperiment(
   overrides: Partial<{
-    createdBy: string;
+    // `string | null`, and read with `in` rather than `??` below: an ownerless
+    // experiment is the whole third case this family exists to handle, and
+    // `overrides.createdBy ?? ADMIN_ID` silently turns an explicit null back
+    // into the caller's own id — a fixture that cannot express the state under
+    // test, passing for the wrong reason.
+    createdBy: string | null;
     name: string;
     variants: Array<{
       id: string;
@@ -87,7 +93,7 @@ function makeExperiment(
   return {
     id: EXPERIMENT_ID,
     name: overrides.name ?? 'A/B refund prompts',
-    createdBy: overrides.createdBy ?? ADMIN_ID,
+    createdBy: 'createdBy' in overrides ? (overrides.createdBy ?? null) : ADMIN_ID,
     variants: overrides.variants ?? [
       {
         id: 'v1',
@@ -326,5 +332,51 @@ describe('GET /experiments/:id/compare — happy path', () => {
     expect(body.data.metricSlugs).toEqual([]);
     expect(body.data.variants[0].rawScores).toEqual({});
     expect(body.data.variants[0].runStatus).toBeNull();
+  });
+});
+
+/**
+ * t-687: `experiment.compare_view` is a new audit action, and four documents
+ * promise operators will start seeing it. Nothing asserted it existed — this
+ * file mocked `logAdminAction` and never looked at it, so a route that stopped
+ * calling `logExperimentAccess`, or a mis-mocked logger, stayed green while the
+ * docs kept promising the row.
+ *
+ * Both directions, because the negative one cannot fail alone.
+ */
+describe('audit — reading someone else’s abandoned comparison', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('writes no row when the caller compares their own experiment', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID })]) as never
+    );
+
+    const res = await GET(makeRequest(), ctx());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+
+  it('writes exactly one row, carrying the basis, for an orphan', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: null })]) as never
+    );
+
+    const res = await GET(makeRequest(), ctx());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'experiment.compare_view',
+        entityType: 'experiment',
+        entityId: EXPERIMENT_ID,
+        metadata: { accessBasis: 'orphan' },
+      })
+    );
   });
 });

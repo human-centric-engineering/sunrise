@@ -111,10 +111,18 @@ export const POST = withAdminAuth<Params>(
       // experiment. Testing only `!== session.user.id` made a claimed orphan
       // impossible to run: the claim succeeded, the row stayed visible, and
       // `run` answered 404 for an experiment the caller now owned (t-678).
+      //
+      // The refusal names the DATASET, not the experiment. The caller can reach
+      // this holding an experiment that is unambiguously theirs — bind an
+      // orphan dataset, have another admin claim it, and the owner check above
+      // now answers "someone else's" for a row this caller legitimately bound.
+      // Saying "Experiment not found" there is false and unactionable: the
+      // experiment is in their list and opens on the detail route. It discloses
+      // nothing extra, because the caller supplied the `datasetId` themselves.
       if (datasetDriven && experiment.dataset) {
         const owner = experiment.dataset.userId;
         const mayUse = owner === session.user.id || (owner === null && mayReadUnownedDataset);
-        if (!mayUse) throw new NotFoundError('Experiment not found');
+        if (!mayUse) throw new NotFoundError('Experiment dataset not found');
       }
 
       for (const variant of experiment.variants) {

@@ -598,13 +598,19 @@ module per model. That directory is the roster:
 | `AiDataset`           | `userId`     | `lib/orchestration/access/dataset-access.ts`      | `owner` / `orphan`            | from the record    |
 | `AiExperiment`        | `createdBy`  | `lib/orchestration/access/experiment-access.ts`   | `owner` / `orphan`            | from the record    |
 
-**Two production call sites read the record directly rather than through a
-helper, and both are shapes a `where` fragment cannot serve.** The conversation
+**Four production call sites read the record directly rather than through a
+helper, and each is a shape a `where` fragment cannot serve.** The conversation
 search route builds its predicate in raw SQL, because a pgvector
-cosine-distance query is not expressible through Prisma's query builder; and the
-experiments `run` route reads `.dataset` to answer a yes/no about a **dataset**
-row it already holds, as defence in depth on a different model than its own. A
-third site appearing without one of those reasons is the drift to watch for.
+cosine-distance query is not expressible through Prisma's query builder. The
+other three — the experiments `run`, `verdicts` and `compare` routes — read
+`.dataset` to answer a yes/no about a **dataset** row they already hold, as
+defence in depth on a different model than their own.
+
+This list was written saying "two" and was wrong within the same PR: the
+`verdicts` guard landed a review round after it, and `compare`'s the round
+after that. That is the drift it exists to catch, caught on itself. Keep it
+current, and treat a site appearing here without one of those two reasons —
+raw SQL, or a cross-model check on a row in hand — as the thing to question.
 
 **The absence of that table is how the second mechanism got built**, so it is
 part of the fix rather than a description of it: the experiments helper lived

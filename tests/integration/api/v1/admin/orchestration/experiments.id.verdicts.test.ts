@@ -83,6 +83,7 @@ vi.mock('@/lib/orchestration/evaluations/graders/pairwise/judge-agent', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { POST } from '@/app/api/v1/admin/orchestration/experiments/[id]/verdicts/route';
 import {
   registerAuthorizationPolicy,
@@ -128,7 +129,7 @@ function defaultBody(
 
 function makeExperiment(
   overrides: Partial<{
-    createdBy: string;
+    createdBy: string | null;
     variants: Array<{ id: string; label: string; evaluationRunId: string | null }>;
     dataset: { caseCount: number; userId: string | null } | null;
   }> = {}
@@ -136,7 +137,9 @@ function makeExperiment(
   return {
     id: EXPERIMENT_ID,
     name: 'Test Experiment',
-    createdBy: overrides.createdBy ?? ADMIN_ID,
+    // `in` rather than `??`: an explicit null is the ownerless case, and
+    // `?? ADMIN_ID` would turn it back into the caller's own id.
+    createdBy: 'createdBy' in overrides ? (overrides.createdBy ?? null) : ADMIN_ID,
     datasetId: 'ds-1',
     variants: overrides.variants ?? [
       { id: VARIANT_A, label: 'Control', evaluationRunId: 'run-a' },
@@ -495,5 +498,64 @@ describe('POST /experiments/:id/verdicts — rate limit', () => {
     limiterCheck.mockReturnValueOnce({ success: false, remaining: 0, reset: Date.now() + 1000 });
     const res = await POST(makeRequest(defaultBody()), ctx());
     expect(res.status).toBe(429);
+  });
+});
+
+/**
+ * t-687: `experiment.verdict_compute` is a new audit action — the only mutation
+ * in this family that recorded nothing at all before — and four documents
+ * promise operators will start seeing it. Nothing asserted it existed: this
+ * file mocked `logAdminAction` so the route would stop 500ing, and never looked
+ * at it, so a route that stopped calling `logExperimentAccess` stayed green
+ * while the docs kept promising the row.
+ *
+ * Unlike the two read actions, this one is `record: 'always'` — a write, logged
+ * whoever makes it — so the owner case is the positive one here rather than the
+ * silent one.
+ */
+describe('audit — a verdict overwrite leaves a record whoever made it', () => {
+  beforeEach(() => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: 'a',
+      kind: 'judge',
+      isActive: true,
+    } as never);
+    vi.mocked(prisma.aiEvaluationCaseResult.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiExperiment.update).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+  });
+
+  it("records the owner's own verdict run, carrying the basis", async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+      makeExperiment({ createdBy: ADMIN_ID }) as never
+    );
+
+    const res = await POST(makeRequest(defaultBody()), ctx());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'experiment.verdict_compute',
+        entityType: 'experiment',
+        entityId: EXPERIMENT_ID,
+        metadata: expect.objectContaining({ accessBasis: 'owner' }),
+      })
+    );
+  });
+
+  it('marks the same run against an orphan as such', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+      makeExperiment({ createdBy: null, dataset: { caseCount: 3, userId: null } }) as never
+    );
+
+    const res = await POST(makeRequest(defaultBody()), ctx());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'experiment.verdict_compute',
+        metadata: expect.objectContaining({ accessBasis: 'orphan' }),
+      })
+    );
   });
 });
