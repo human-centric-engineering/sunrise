@@ -390,8 +390,9 @@ release process.
   fork registering a narrowing `canRead` changed nothing, because the helper
   never asked. It now reads `session.unattributedReads.execution`, so a policy
   that refuses `'unattributed'` reads closes the executions list, the sidebar
-  status counts, the live-engine dashboard, the observability dashboard, the
-  workflow-execute resume path and the `workflow_execution` arm of the
+  status counts, the live-engine dashboard, **the execution counts on** the
+  observability dashboard (its conversation counts are not behind the policy
+  yet), the workflow-execute resume path and the `workflow_execution` arm of the
   evaluation-dataset capture route, and turns nine of the twelve
   `/executions/:id` routes into 404s — `rerun` among them, which is narrowed by
   the `where` fragment rather than by the yes/no helper. Another admin's *own* run stays invisible
@@ -406,8 +407,20 @@ release process.
   than an answer to the ownerless question, so it is left exactly as it was — the
   same line `conversation-access.ts` draws around its `'shared'` basis.
 
-  **That carve-out covers the act and not the discovery, so do not read it as
-  "approvals keep working".** The list, detail and live routes have no approver
+  **Know what a narrowing policy costs you before you register one — there are
+  two operator paths with no fallback.** A wedged scheduled run counts as zero
+  on every live-engine card, and `force-fail`, the escape hatch for exactly that
+  situation, is gated solely on `adminCanViewExecution` with no second grant of
+  any kind — so the run cannot be seen, drilled into, or killed by anybody. And
+  a run paused at an approval gate is absent from the approvals queue, zero in
+  the badge, and 404 on its detail route, though a named approver could still
+  clear it if they learned the id from somewhere. Neither is reachable on a
+  default install. A fork that narrows this arm wants a vendor-level operator
+  role its own policy still admits, or it has no recovery story for
+  system-owned runs; both are tracked on the multi-tenancy programme.
+
+  **The approver carve-out below covers the act and not the discovery, so do not
+  read it as "approvals keep working".** The list, detail and live routes have no approver
   arm, so under a narrowing policy a scheduled run paused at a gate is absent
   from the approvals queue, counted as zero by the sidebar badge, and 404 on its
   detail route — while the `approve` POST would still succeed for the named
