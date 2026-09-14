@@ -216,6 +216,12 @@ describe('a policy that denies unattributed reads', () => {
     // the recent-failure list — carry the same boundary. One of them left
     // behind would show an error rate computed over rows the operator cannot
     // open.
+    //
+    // The count is asserted BEFORE the loop, and that is the load-bearing line:
+    // an empty `mock.calls` runs the body zero times and passes green, so if
+    // this page ever folds its two counts into a `groupBy` the loop would stop
+    // checking anything while still reporting success.
+    expect(vi.mocked(prisma.aiWorkflowExecution.count).mock.calls).toHaveLength(2);
     for (const call of vi.mocked(prisma.aiWorkflowExecution.count).mock.calls) {
       expect(boundaryOf(call[0]?.where)).toEqual({ userId: ADMIN_ID });
     }

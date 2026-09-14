@@ -192,7 +192,9 @@ The rest are admin-global: every admin sees the same data.
 
 **Rows nobody owns are visible to every admin on a default install.** Schedule- and inbound-triggered runs, and the conversations inbound messages create, carry `userId = null` — the data on them belongs to a third party with no account here, not to the operator who configured the schedule or channel ([#502](https://github.com/human-centric-engineering/sunrise/issues/502)). Access to them is granted on a `'system'` basis by [`lib/orchestration/access/execution-access.ts`](../../lib/orchestration/access/execution-access.ts) and [`conversation-access.ts`](../../lib/orchestration/access/conversation-access.ts). Without it a scheduled run would be invisible in the executions list and a run paused at an approval gate could never be cleared. Conversation accesses on this basis are audit-logged.
 
-For executions that grant is the **authorization policy's** answer, not a fixed rule: a fork registering a `canRead` that refuses `'unattributed'` reads narrows every execution surface at once, and its admins see only runs they started. Conversations do not ask yet. See [`.context/auth/authorization.md`](../auth/authorization.md).
+For executions that grant is the **authorization policy's** answer, not a fixed rule: a fork registering a `canRead` that refuses `'unattributed'` reads narrows every execution read surface at once, and its admins see only runs they started. Conversations do not ask yet. See [`.context/auth/authorization.md`](../auth/authorization.md).
+
+**One exception, and it is act-only.** `approve`, `reject` and `cancel` still admit an admin the run's own trace names in `approverUserIds` — a per-run nomination, not an answer to the ownerless question (`cancel` only while the run is `paused_for_approval`). The read surfaces have no such arm, so under a narrowing policy that approver can clear a gate but cannot **find** it: the run is absent from `GET /executions`, zero in `/executions/counts`, and 404 on `GET /executions/:id`. A fork that narrows `canRead` must surface pending approvals some other way.
 
 ---
 

@@ -53,16 +53,35 @@
  * `mayReadUnattributed`; there is no string to get wrong on this path, so there
  * is no constant to keep in step.
  *
- * ## One grant this module does not decide
+ * ## One grant this module does not decide — and it only covers the act
  *
- * `approve`, `reject` and `cancel` admit a caller this module refuses, when the
- * run's own trace names them in `approverUserIds`. That is deliberate and was
- * left alone: it is a per-run nomination the workflow made, not an answer to the
- * ownerless question, and narrowing it here would strand a scheduled run at its
- * gate forever — nobody owns it, so with the delegation gone there is nobody
- * left to approve it, which is the #502 failure the `'system'` basis exists to
- * prevent. `conversation-access.ts` draws the same line around its `'shared'`
- * basis. A fork narrowing `canRead` inherits that exception, so it is pinned in
+ * `approve` and `reject` admit a caller this module refuses, when the run's own
+ * trace names them in `approverUserIds`; `cancel` does the same but **only while
+ * the run is `paused_for_approval`**, so a named approver cannot cancel a
+ * running system-owned run a narrowing policy hides from them. That carve-out is
+ * deliberate and was left alone: it is a per-run nomination the workflow made,
+ * not an answer to the ownerless question, and `conversation-access.ts` draws the
+ * same line around its `'shared'` basis.
+ *
+ * **It is not enough to keep the approval flow working under a narrowing policy,
+ * and this is the part to read before relying on it.** The delegation lives on
+ * the three act routes and nowhere else. The list, the detail route and the live
+ * route have no approver arm, so for a fork whose policy denies unattributed
+ * reads a scheduled run paused at a gate is absent from the approvals queue
+ * (which is `GET /executions?status=paused_for_approval`), counted as zero by the
+ * sidebar badge, and 404 on the detail route — while `POST .../approve` would
+ * still succeed for the named approver, if they could learn the id. Acting is
+ * preserved; **discovery is not**, which leaves the run stuck for want of a
+ * surface rather than for want of a permission.
+ *
+ * That is the #502 failure arriving by a different route, and closing it is a
+ * design question this task did not settle: giving the list an approver arm means
+ * querying `approverUserIds` inside the `executionTrace` JSON, which no index
+ * covers, and it would widen what a default install shows. Tracked as a defect on
+ * `f-mt-authz`. Until then, **a fork that narrows `canRead` must surface pending
+ * approvals some other way.**
+ *
+ * The act-side carve-out is pinned in
  * `tests/unit/app/api/v1/admin/orchestration/executions/policy-narrowing.test.ts`
  * rather than left to be rediscovered.
  *
