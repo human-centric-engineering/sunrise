@@ -87,7 +87,11 @@ export const POST = withAdminAuth<{ id: string }>(
       });
       if (!message) throw new NotFoundError(`Message ${body.messageId} not found`);
 
-      const access = await adminCanViewConversation(message.conversationId, session.user.id);
+      const access = await adminCanViewConversation(message.conversationId, session);
+      // `'shared'` is refused here on purpose — see the header. A narrowing
+      // policy additionally makes `basis` null for an inbound thread, which
+      // this same condition catches: the refusal widens, and the 404 it
+      // produces is the one it always produced.
       if (access.basis !== 'owner' && access.basis !== 'system') {
         throw new NotFoundError(`Message ${body.messageId} not found`);
       }

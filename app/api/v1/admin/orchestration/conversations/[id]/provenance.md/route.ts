@@ -42,7 +42,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   const id = parsed.data;
 
   // Consent-gated access: owner OR active share.
-  const access = await adminCanViewConversation(id, session.user.id);
+  const access = await adminCanViewConversation(id, session);
   if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
   const conversation = await prisma.aiConversation.findUnique({

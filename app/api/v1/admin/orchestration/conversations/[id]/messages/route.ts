@@ -39,7 +39,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   }
   const id = parsed.data;
 
-  const access = await adminCanViewConversation(id, session.user.id);
+  const access = await adminCanViewConversation(id, session);
   if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
   // We still need the agentId + title for the response payload + audit

@@ -49,7 +49,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   }
   const id = parsed.data;
 
-  const access = await adminCanViewConversation(id, session.user.id);
+  const access = await adminCanViewConversation(id, session);
   if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
   const conversation = await prisma.aiConversation.findUnique({
@@ -90,7 +90,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   // Own it or nobody owns it. A `'shared'` basis is view-only, so it is
   // rejected here exactly as before.
-  const access = await adminCanViewConversation(id, session.user.id);
+  const access = await adminCanViewConversation(id, session);
   if (access.basis !== 'owner' && access.basis !== 'system') {
     throw new NotFoundError(`Conversation ${id} not found`);
   }
@@ -138,7 +138,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   // 404 (not 403) if missing, owned by another admin, or merely shared with
   // this one — a view grant is not a destroy grant.
-  const access = await adminCanViewConversation(id, session.user.id);
+  const access = await adminCanViewConversation(id, session);
   if (access.basis !== 'owner' && access.basis !== 'system') {
     throw new NotFoundError(`Conversation ${id} not found`);
   }
