@@ -12,7 +12,11 @@
  * `POST /workflows/:workflowId/execute?resumeFromExecutionId=<id>`
  * to resume streaming from the failed step.
  *
- * Follows the same ownership and pattern as the approve endpoint.
+ * Follows the same pattern as the approve endpoint, but **not** the same
+ * ownership: `approve` additionally admits an admin the run's trace names in
+ * `approverUserIds`, and this route has no such arm. Under a policy that
+ * denies unattributed reads, a delegated approver can clear a gate here and
+ * then get a 404 retrying the step they just released.
  *
  * Authentication: Admin role required.
  */

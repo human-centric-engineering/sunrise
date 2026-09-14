@@ -471,7 +471,8 @@ release process.
   ```
 
   **No behaviour moved when this landed.** `execution-access.ts` was converged
-  onto the record later in this same release (see **Changed**, below);
+  onto the record later in this same release (the execution entry at the top of
+  **Changed**, above);
   `conversation-access.ts` still hard-codes its answer, and `dataset-access.ts`
   and `experiments/visible-scope.ts` still ask on demand. A default install
   serves exactly what it served before, at every stage.
