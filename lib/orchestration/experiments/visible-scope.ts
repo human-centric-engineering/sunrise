@@ -16,8 +16,12 @@
  * Living in one module is the point. #741 existed because eight handlers over
  * one model disagreed about the answer; a second rule spelled out eight times
  * would decay the same way, and a list that admits orphans while its detail
- * route refuses them is the exact list/detail divergence `checkAuthorizationParity`
- * exists to catch.
+ * route refuses them is a divergence **nothing mechanical catches**. It is not
+ * what `checkAuthorizationParity` covers: that relates `canRead`'s `'subject'`
+ * arm to `subjectScope` inside one policy — the `'unattributed'` arm these
+ * helpers ask about is explicitly outside the relation — and it compares a
+ * policy's two faces, never two routes. One module is the only thing keeping
+ * the list and the detail route honest with each other.
  *
  * @see `@/lib/auth/orphan-reads` — who may read an unowned row, and why the
  *      policy rather than this module decides it

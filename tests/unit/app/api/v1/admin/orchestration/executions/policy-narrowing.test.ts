@@ -10,8 +10,15 @@
  * Together is the point, and it is why these live in one file rather than one
  * case each in four. A list that hides a scheduled run while its detail route
  * still opens it, or a sidebar badge counting rows the list refuses to show, is
- * the list/detail divergence `checkAuthorizationParity` exists to catch — and
- * four separate cases would each pass while the set of them disagreed.
+ * a divergence **nothing else here can catch** — and four separate cases would
+ * each pass while the set of them disagreed.
+ *
+ * `checkAuthorizationParity` is not that safety net, despite the family
+ * resemblance. It relates `canRead`'s `'subject'` arm to `subjectScope` within
+ * one policy (`lib/auth/authorization.ts:363-368` says the other two arms are
+ * outside the relation, and `'unattributed'` is the only arm exercised here),
+ * and it compares a policy's two faces rather than two routes. Nothing
+ * mechanical checks that these four surfaces agree. This file is the check.
  *
  * The real `withAdminAuth` runs here: only `auth.api.getSession` is mocked, so
  * the guard resolves `session.unattributedReads` from the registered policy the

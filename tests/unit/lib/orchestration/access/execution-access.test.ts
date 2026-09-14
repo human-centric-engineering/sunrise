@@ -154,12 +154,19 @@ describe('executionVisibilityWhere', () => {
     expect(executionVisibilityWhere(narrowedAdmin)).toEqual({ userId: ADMIN_ID });
   });
 
-  it('is never empty, so a narrowed caller cannot fall through to every row', () => {
-    // `{}` is the widest value this type can express. If the narrowed branch
-    // ever produced one, every list and count would silently go global for
-    // exactly the fork that asked to be narrowed.
-    for (const session of [admin, narrowedAdmin]) {
-      expect(Object.keys(executionVisibilityWhere(session))).not.toHaveLength(0);
-    }
+  it('carries a usable id on the narrowed branch, not merely a key', () => {
+    // `{}` is the widest value this type can express: produce one here and
+    // every list and count goes global for exactly the fork that asked to be
+    // narrowed. But counting keys is too weak to catch that, and the narrowed
+    // branch is the one that fails OPEN — `{ userId: undefined }` has a key,
+    // passes a non-empty check, and is then dropped by Prisma, leaving no
+    // filter at all. So assert the value, not the shape.
+    const narrowed = executionVisibilityWhere(narrowedAdmin) as { userId?: unknown };
+    expect(narrowed.userId).toBe(ADMIN_ID);
+    expect(typeof narrowed.userId).toBe('string');
+
+    // The widened branch has its own arm-level guard above; here we only need
+    // it to be non-empty, since an empty OR would be a different bug.
+    expect(Object.keys(executionVisibilityWhere(admin))).not.toHaveLength(0);
   });
 });

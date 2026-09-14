@@ -10,10 +10,16 @@
  *   - Last 5 failed executions
  *   - Top 10 capabilities by invocation count
  *
- * Everything except the cost-log count is scoped to what the caller can
- * see: their own rows, plus system-owned ones where the authorization policy
- * permits an unattributed read. See `executionVisibilityWhere` in
- * `lib/orchestration/access/execution-access.ts`.
+ * Everything except the cost-log count is scoped to what the caller can see:
+ * their own rows plus system-owned ones. **The two models reach that answer
+ * differently, and the page can therefore disagree with itself.** The three
+ * execution reads go through `executionVisibilityWhere`
+ * (`lib/orchestration/access/execution-access.ts`), which asks the
+ * authorization policy; the two conversation reads use the hard-coded
+ * `conversationVisibility` below, which asks nothing. So a fork whose `canRead`
+ * refuses unattributed reads gets narrowed execution counts beside unchanged
+ * conversation counts. `conversation-access.ts` moves behind the policy in
+ * t-686, and this note goes with it.
  *
  * All queries run in a single Promise.all batch.
  *
@@ -51,6 +57,10 @@ export const GET = withAdminAuth(async (request, session) => {
   // with this admin is still someone else's, so counting it as one of *their*
   // active conversations would overstate the number; an inbound thread has no
   // owner and belongs to the deployment, so it counts.
+  //
+  // Hard-coded, unlike the execution clause above: this is the pre-seam shape
+  // `conversation-access.ts` still has, so no fork policy reaches it. Do not
+  // read the two as equivalent — see the header.
   const conversationVisibility: Prisma.AiConversationWhereInput = {
     OR: [{ userId: session.user.id }, { userId: null }],
   };
