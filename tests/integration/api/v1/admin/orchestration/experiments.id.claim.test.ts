@@ -187,6 +187,25 @@ describe('POST /experiments/:id/claim — what cannot be claimed', () => {
     expect(vi.mocked(prisma.aiExperiment.updateMany)).not.toHaveBeenCalled();
   });
 
+  it('404s rather than 409s a foreign row, if the visibility clause ever regresses', async () => {
+    // `mockResolvedValue`, deliberately — the filtering fake cannot simulate a
+    // clause that has stopped filtering, which is the case under test.
+    //
+    // Claim was the last handler folding a null basis into its `!== 'orphan'`
+    // test, so a foreign row arriving here answered 409 "Experiment already has
+    // an owner" — a reply that CONFIRMS the row exists, which is exactly what
+    // this family's 404-not-403 posture is for. Every sibling narrows first;
+    // this one now does too.
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+      makeExperiment({ createdBy: 'someone-else' }) as never
+    );
+
+    const res = await POST(makeRequest(), ctx());
+
+    expect(res.status).toBe(404);
+    expect(vi.mocked(prisma.aiExperiment.updateMany)).not.toHaveBeenCalled();
+  });
+
   it('returns 409 when the caller already owns it', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
       ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID })]) as never

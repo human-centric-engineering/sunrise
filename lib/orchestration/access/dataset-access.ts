@@ -132,16 +132,23 @@ export function datasetVisibilityWhere(session: AuthenticatedSession): Prisma.Ai
  * badge. `'orphan'` is logged: the row was somebody's, an
  * erasure detached it, and who reached it afterwards is worth knowing.
  *
- * **Six call sites pass `datasetAccessBasis(...) ?? 'orphan'`, and the
- * experiments sibling deliberately stopped doing that.** A null basis means the
- * row was not admitted by the visibility clause — the exact state a widening
- * regression produces — and the fallback files it as an ordinary orphan read, in
- * the log an operator would use to notice. Unreachable today: every one of those
- * sites fetches under {@link datasetVisibilityWhere} first, and the detail route
- * already narrows properly inside its own `loadDataset`. t-687 fixed the
- * experiment sites because it was writing them; changing six dataset routes it
- * only touched to drop an `await` was scope it had no business taking. Worth
- * doing next time this family is opened.
+ * **Six call sites still pass `datasetAccessBasis(...) ?? 'orphan'`, and the
+ * experiments sibling no longer does.** A null basis means the row was not
+ * admitted by the visibility clause — the exact state a widening regression
+ * produces — so the fallback files it as an ordinary `'orphan'` read, in the log
+ * an operator would use to notice that regression. Unreachable today: every one
+ * of those sites fetches under {@link datasetVisibilityWhere} first, and the
+ * detail route already narrows properly inside its own `loadDataset`.
+ *
+ * Sites: `cases/route.ts`, `cases/[position]/route.ts`, `capture/route.ts`
+ * (twice), `generate-cases/route.ts`, `generate-cases/commit/route.ts`.
+ *
+ * **Tracked as t-693.** t-687 fixed the seven experiment sites because it was
+ * writing them, and attempted these too — the change is two lines per site, but
+ * it turns out to need an owner on nine test fixtures across five files, two of
+ * which have no `ADMIN_ID` to give them. That is a coherent small task and a bad
+ * thing to bolt onto an unrelated sweep's fourth review round, where no reviewer
+ * would see it.
  *
  * **Deliberately weaker than the conversation rule, and here is the line.**
  * A `'system'` conversation holds a living third party's correspondence, so

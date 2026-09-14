@@ -118,28 +118,31 @@ export const GET = withAdminAuth<Params>(
     // is not. Leaving it out would let an admin read an orphan's scores through
     // this route while `GET /:id` left a trail for the same rows.
     // Defence in depth on the bound dataset, the third of three in this family
-    // and the only one that degrades a FIELD rather than refusing the route.
-    // `run` and `verdicts` both need the dataset to do their job at all, so a
-    // dataset the caller may not read makes the whole operation refusable. This
-    // route's job is showing the caller their own variants' scores; only
-    // `caseCount` is a fact about the dataset, so 404ing the page would deny
-    // them their own data to withhold one integer. It reports null instead —
-    // the same value the response already carries for an experiment with no
-    // dataset bound, which the compare view already renders.
+    // and now spelled the same way as the other two: refuse, naming the
+    // dataset.
+    //
+    // Round 3 of this PR gated the `caseCount` FIELD instead, reasoning that
+    // this route's job is showing the caller their own variants' scores and
+    // 404ing would deny them their own data to withhold one integer. That
+    // rested on a claim about the consumer — "the compare view already renders
+    // null" — which was asserted without reading the view and is wrong:
+    // `pairwise-verdict-card.tsx` sets `noDataset = caseCount === null` and
+    // tells the operator "This experiment has no dataset". Withholding the
+    // count made the page state something false about an experiment that does
+    // have one. A refusal is honest, matches `run` and `verdicts`, and leaves
+    // no bespoke case whose UI contract has to be kept in step.
     //
     // Unreachable today by the same margin as its two siblings: `POST
     // /experiments` is the only path that binds a dataset and it enforces
-    // `datasetVisibilityWhere`, and the update schema deliberately refuses
-    // `datasetId`.
+    // `datasetVisibilityWhere`, and the update schema refuses `datasetId`.
     const boundDatasetOwner = experiment.dataset?.userId ?? null;
     const mayReadBoundDataset =
       // `!experiment.dataset` rather than `=== null`: the field is absent on a
-      // legacy experiment, and "no dataset bound" must not read as "a dataset
-      // you may not see", which would swap one null for an identical one while
-      // meaning something different.
+      // legacy experiment, and "nothing bound" is not "bound but not yours".
       !experiment.dataset ||
       boundDatasetOwner === session.user.id ||
       (boundDatasetOwner === null && session.unattributedReads.dataset);
+    if (!mayReadBoundDataset) throw new NotFoundError(`Experiment ${id} dataset not found`);
 
     logExperimentAccess({
       adminUserId: session.user.id,
@@ -182,7 +185,7 @@ export const GET = withAdminAuth<Params>(
       experimentName: experiment.name,
       variants,
       metricSlugs: Array.from(allMetricSlugs).sort(),
-      caseCount: mayReadBoundDataset ? (experiment.dataset?.caseCount ?? null) : null,
+      caseCount: experiment.dataset?.caseCount ?? null,
       pairwiseVerdict: (experiment.pairwiseVerdict as PairwiseVerdictSummary | null) ?? null,
     };
     return successResponse(payload);

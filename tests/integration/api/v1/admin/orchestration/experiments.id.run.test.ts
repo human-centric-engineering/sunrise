@@ -234,14 +234,19 @@ describe('POST /api/v1/admin/orchestration/experiments/:id/run', () => {
       expect(data.data.status).toBe('running');
     });
 
-    it('calls tx.aiExperiment.update with status "running"', async () => {
+    it('pins the status write to the ownership its read saw', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
       await POST(makePostRequest(), makeContext());
 
+      // `createdBy` in the `where`, not just `id`. An orphan can be claimed, so
+      // `createdBy` has a null -> someone transition; without the pin an admin
+      // could flip an experiment another admin claimed mid-run to `running` and
+      // hang their own eval runs off it. Matches PATCH, DELETE and verdicts —
+      // `run` was the last write in the family not pinned.
       expect(mockTxUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: EXPERIMENT_ID },
+          where: { id: EXPERIMENT_ID, createdBy: ADMIN_ID },
           data: { status: 'running' },
         })
       );

@@ -391,53 +391,71 @@ describe('audit — reading someone else’s abandoned comparison', () => {
 });
 
 /**
- * t-687 round 3: `caseCount` is a fact about the bound DATASET, not about the
- * experiment, so it is gated on whether the caller may read that dataset.
+ * Defence in depth on the BOUND DATASET, the third of three in this family.
  *
- * This route degrades the field rather than refusing, which is where it parts
- * company with `run` and `verdicts`. Those two need the dataset to do their job
- * at all; this one's job is showing the caller their own variants' scores, and
- * 404ing the page would deny them their own data to withhold one integer.
+ * Round 3 of this PR gated the `caseCount` field instead of refusing, so the
+ * caller kept their own variants' scores. Round 4 killed that: the consumer,
+ * `pairwise-verdict-card.tsx`, reads `caseCount === null` as `noDataset` and
+ * tells the operator "This experiment has no dataset" — so withholding the
+ * count made the page state something false about an experiment that has one.
+ * Refusing is honest and matches `run` and `verdicts`.
+ *
+ * The distinction these cases exist to keep is therefore between a 404 and a
+ * 200-with-null: "bound but not yours" and "nothing bound" must not be the same
+ * response, which is the conflation that produced the lie.
  *
  * Unreachable through today's routes — `POST /experiments` is the only path
  * that binds a dataset and it enforces `datasetVisibilityWhere`, and the update
  * schema refuses `datasetId`. The check is there so a future second create path
  * cannot silently re-open it.
  */
-describe('the bound dataset’s case count', () => {
+describe('the bound dataset', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
   });
 
-  async function caseCountFor(dataset: { caseCount: number; userId: string | null } | null) {
+  async function compareWith(dataset: { caseCount: number; userId: string | null } | null) {
     vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
       ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID, dataset })]) as never
     );
-    const res = await GET(makeRequest(), ctx());
-    expect(res.status).toBe(200);
+    return GET(makeRequest(), ctx());
+  }
+
+  async function caseCountOf(res: Response) {
     const body = (await res.json()) as { data: { caseCount: number | null } };
     return body.data.caseCount;
   }
 
-  it('reports it when the caller owns the dataset', async () => {
-    // The control. Without it the two nulls below would pass against a route
-    // that reports null unconditionally — which is exactly what this fixture
+  it('reports the count when the caller owns the dataset', async () => {
+    // The control for the 404 below. Without it that refusal would pass against
+    // a route that refuses everything — which is what this fixture effectively
     // did before it could carry a dataset at all.
-    expect(await caseCountFor({ caseCount: 42, userId: ADMIN_ID })).toBe(42);
+    const res = await compareWith({ caseCount: 42, userId: ADMIN_ID });
+
+    expect(res.status).toBe(200);
+    expect(await caseCountOf(res)).toBe(42);
   });
 
   it('reports it for an ownerless dataset the policy admits', async () => {
-    expect(await caseCountFor({ caseCount: 42, userId: null })).toBe(42);
+    const res = await compareWith({ caseCount: 42, userId: null });
+
+    expect(res.status).toBe(200);
+    expect(await caseCountOf(res)).toBe(42);
   });
 
-  it('withholds it when the dataset belongs to another admin', async () => {
-    expect(await caseCountFor({ caseCount: 42, userId: 'someone-else' })).toBeNull();
+  it('404s when the dataset belongs to another admin', async () => {
+    const res = await compareWith({ caseCount: 42, userId: 'someone-else' });
+
+    expect(res.status).toBe(404);
   });
 
-  it('still reports null when no dataset is bound', async () => {
-    // "Nothing bound" and "bound but not yours" deliberately look identical to
-    // the client — the compare view already renders null for the first.
-    expect(await caseCountFor(null)).toBeNull();
+  it('still answers 200 with a null count when no dataset is bound', async () => {
+    // The case that must NOT become a 404: "nothing bound" is a legitimate
+    // state of a legacy experiment, and the card renders it correctly.
+    const res = await compareWith(null);
+
+    expect(res.status).toBe(200);
+    expect(await caseCountOf(res)).toBeNull();
   });
 });

@@ -48,9 +48,19 @@ export const POST = withAdminAuth<Params>(
     });
     if (!existing) throw new NotFoundError('Experiment not found');
 
-    if (experimentAccessBasis(existing, session.user.id) !== 'orphan') {
-      // Reachable only when the row is the caller's own — a third party's was
-      // already a 404 above — so saying so leaks nothing.
+    // Two refusals, in this order, and the order is the point. A null basis
+    // means the row was not admitted by the clause above — the state a widening
+    // regression produces — and folding it into the `!== 'orphan'` test below
+    // would answer a foreign row with a 409 that CONFIRMS it exists, which is
+    // exactly what this family's 404 posture prevents. Every other handler in
+    // the PR narrows this way; this one kept the old `isUnowned` shape and was
+    // the last to.
+    const basis = experimentAccessBasis(existing, session.user.id);
+    if (!basis) throw new NotFoundError('Experiment not found');
+
+    if (basis !== 'orphan') {
+      // Now reachable only when the row is the caller's own, so saying so leaks
+      // nothing.
       throw new ConflictError('Experiment already has an owner');
     }
 

@@ -173,8 +173,14 @@ export const POST = withAdminAuth<Params>(
         }
       }
 
+      // Pinned to the ownership the in-transaction read saw, matching PATCH,
+      // DELETE and verdicts. An orphan can be claimed, so `createdBy` has a
+      // null -> someone transition, and without the pin an admin could flip an
+      // experiment another admin claimed in the window to `running` and hang
+      // their own eval runs off it. A miss throws P2025 inside the transaction,
+      // so the eval rows created above roll back with it.
       return tx.aiExperiment.update({
-        where: { id },
+        where: { id, createdBy: experiment.createdBy },
         data: { status: 'running' },
         include: {
           agent: { select: { id: true, name: true, slug: true } },
