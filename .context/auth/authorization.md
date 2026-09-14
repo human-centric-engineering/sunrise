@@ -587,24 +587,49 @@ the core kinds the guards can enumerate. It calls
 `mayReadUnattributed(session.principal, kind)` and awaits — the same policy, the
 same failure direction, one call.
 
-**One model reads the record so far, and the example above is still a shape
-rather than a route you can go and read** — executions reach it through the
-helper below, not inline. The four models answer this question in three
-different ways, which is what the record exists to retire:
+**The example above is a shape, not a route you can go and read** — every model
+reaches the record through a helper in `lib/orchestration/access/`, one module
+per model, rather than inline. That directory is the roster:
 
-| Model                 | Helper                                            | Asks the policy?                   |
-| --------------------- | ------------------------------------------------- | ---------------------------------- |
-| `AiWorkflowExecution` | `lib/orchestration/access/execution-access.ts`    | yes, from the record (synchronous) |
-| `AiExperiment`        | `lib/orchestration/experiments/visible-scope.ts`  | yes, on demand (`await`)           |
-| `AiDataset`           | `lib/orchestration/access/dataset-access.ts`      | yes, on demand (`await`)           |
-| `AiConversation`      | `lib/orchestration/access/conversation-access.ts` | yes, from the record (synchronous) |
+| Model                 | Owner column | Helper                                            | Bases it can return           | Reaches the policy |
+| --------------------- | ------------ | ------------------------------------------------- | ----------------------------- | ------------------ |
+| `AiConversation`      | `userId`     | `lib/orchestration/access/conversation-access.ts` | `owner` / `shared` / `system` | from the record    |
+| `AiWorkflowExecution` | `userId`     | `lib/orchestration/access/execution-access.ts`    | `owner` / `system`            | from the record    |
+| `AiDataset`           | `userId`     | `lib/orchestration/access/dataset-access.ts`      | `owner` / `orphan`            | from the record    |
+| `AiExperiment`        | `createdBy`  | `lib/orchestration/access/experiment-access.ts`   | `owner` / `orphan`            | from the record    |
 
-Executions moved onto the record in t-685 and conversations in t-686, which is
-what the eager resolution was for: their helpers stayed synchronous, including
-the live-engine snapshot's inline fragments. The middle two reach the same policy
-and get the same answer, one `await` at a time — so they are behind the seam, and
-pay for the answer twice: once in the precompute, once on demand. Folding them in
-is t-687's work, and it is now the only thing left on this axis.
+**The absence of that table is how the second mechanism got built**, so it is
+part of the fix rather than a description of it: the experiments helper lived
+outside this directory as `lib/orchestration/experiments/visible-scope.ts`,
+answering the same question through `mayReadUnattributed` and a
+`*_RESOURCE_KIND` constant, and nothing in the tree put the two side by side.
+
+Executions moved onto the record in t-685, conversations in t-686, and datasets
+and experiments in t-687, which finished the axis. All four helpers are
+**synchronous** — that is what the eager resolution bought, and what lets the
+live-engine snapshot build fragments inline inside a larger object. None of them
+declares a resource-kind constant any more: the record's keys _are_
+`UNATTRIBUTED_READ_KINDS`, so `session.unattributedReads.dataset` cannot drift out
+of that list without failing to compile, and there is no `string` on the path to
+spell wrong. `mayReadUnattributed` survives for the caller the precompute cannot
+serve — a fork with an ownerless model of its own.
+
+**Two vocabularies, deliberately, and the schema is the reason.** `'system'` and
+`'orphan'` are the same column state and disjoint facts: the `Cascade` models'
+null can only mean _born_ ownerless, the `SetNull` models' can only mean
+_erased_. One name for both would assert something the database forbids, and
+would put a stranger's live correspondence and a de-attributed test fixture under
+the same audit weight. So t-687 converged the **mechanism** and kept the names
+apart; anyone arriving with "why are there two names for null?" should be pointed
+at the two `onDelete` clauses in the table above this one.
+
+**Reaching a row that is not your own is logged, and the two `SetNull` models
+differ on the writes.** Both log the detail read and every write with
+`metadata.accessBasis`; neither logs its list. Datasets skip `'owner'` on all of
+it, experiments skip it on reads only — every experiment mutation already wrote a
+config-change row for every caller before the basis existed, and narrowing that
+to match datasets would have deleted rows an operator can read. See
+[`../admin/orchestration-audit-log.md`](../admin/orchestration-audit-log.md).
 
 **Conversations were the last model with no policy in the loop, and the one that
 mattered most**: an inbound thread holds a living third party's correspondence,

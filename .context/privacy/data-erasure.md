@@ -78,9 +78,19 @@ a route. An admin can also **claim** one (`POST /experiments/:id/claim`,
 row re-enters the normal rules instead of staying a permanent special case. The
 boundary is untouched: another admin's _owned_ row is still a 404.
 
-Datasets additionally **log** non-owner access, which experiments do not yet
-(see below). The definitions live in `lib/orchestration/access/dataset-access.ts`
-and `lib/orchestration/experiments/visible-scope.ts`.
+Both **log** access to a row nobody owns — the detail read and every write carry
+`metadata.accessBasis = 'orphan'`, so who reached a de-attributed row after the
+erasure is answerable. Experiments gained that in t-687; datasets have had it
+since t-679. The definitions live in `lib/orchestration/access/dataset-access.ts`
+and `lib/orchestration/access/experiment-access.ts` — one module per model, all
+four of them in that directory, each reading the policy answer
+`session.unattributedReads` carries.
+
+The two differ on one point, and it is the one to decide rather than copy when
+you add a model: experiments log a **write** whoever makes it, owner included,
+because every experiment mutation already wrote a config-change row before the
+basis existed and narrowing it would have deleted rows an operator can read.
+Datasets log only non-owner writes. Neither logs its list.
 
 **So when you classify the next `SetNull` model, decide two things, not one.**
 This table records the retain policy. Whether the model's routes are owner-scoped

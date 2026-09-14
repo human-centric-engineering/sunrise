@@ -39,8 +39,11 @@ the ordinary rules. Only an unowned row can be taken, and the two refusals are
 deliberately different: another admin's experiment is a **404**, identical to one
 that does not exist, so the route cannot be used to probe for other people's
 experiments; your own is a **409**, which discloses nothing you could not already
-see in your own list. `lib/orchestration/experiments/visible-scope.ts` is the
-single definition every handler uses.
+see in your own list. `lib/orchestration/access/experiment-access.ts` is the
+single definition every handler uses — it lived at
+`lib/orchestration/experiments/visible-scope.ts` until t-687, and moved so the
+tree has one access module per model, all four reading the same precomputed
+policy answer.
 
 This matches `AiDataset`, `AiEvaluationSession` and `AiEvaluationRun`, which an
 experiment reads from and writes to. It deliberately does **not** match `AiAgent`
@@ -48,10 +51,22 @@ experiment reads from and writes to. It deliberately does **not** match `AiAgent
 two admins can run separate experiments against the same agent without seeing
 each other's results.
 
-The clause is hand-rolled rather than taken from `subjectScope`, because the
-default authorization policy answers `{}` — every subject — for a platform
-admin. See [`../auth/authorization.md`](../auth/authorization.md) for the seam
-and why this family does not route through it.
+The **owner** clause is hand-rolled rather than taken from `subjectScope`,
+because the default authorization policy answers `{}` — every subject — for a
+platform admin, which is the admin-global posture this family was fixed away
+from. The **ownerless** arm is a different matter and does go through the seam:
+it is `canRead`'s `'unattributed'` answer, resolved once per request by the guard
+and read from `session.unattributedReads.experiment`. See
+[`../auth/authorization.md`](../auth/authorization.md) for both.
+
+**Reaching a row that is not your own leaves a record.** An admin who reads,
+edits, deletes, claims, runs, compares or scores an experiment nobody owns writes
+an audit row carrying `metadata.accessBasis = 'orphan'`; reading your own writes
+nothing, and the list writes nothing for anyone. Writes are logged whoever makes
+them, owner included — which is one step wider than the dataset rule, and
+deliberate, because every experiment mutation already wrote a config-change row
+before the basis existed. See
+[`../admin/orchestration-audit-log.md`](../admin/orchestration-audit-log.md).
 
 ## Endpoints
 
@@ -97,6 +112,7 @@ Audit: experiment.create
 ```
 GET /api/v1/admin/orchestration/experiments/:id
 Response 200: { success: true, data: Experiment }
+Audit: experiment.view — only when the row is an orphan; reading your own is not logged
 ```
 
 ### Update experiment

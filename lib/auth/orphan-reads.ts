@@ -37,15 +37,15 @@
  * - **One request cannot disagree with itself.** A list and the rows it links to
  *   ask the policy once, together, rather than once each.
  *
- * **Both properties hold for executions and for nothing else yet, and this is the
- * file where that has to be said.** `lib/orchestration/access/execution-access.ts`
- * reads `session.unattributedReads.execution` and is synchronous across all 19 of
- * its call sites (t-685). `visibleExperimentClause`, `datasetVisibilityWhere` and
- * the experiments `run` route still `await` {@link mayReadUnattributed}, so a
- * datasets request asks the policy about `'dataset'` twice — once in the
- * precompute, once on demand. The cost below is paid in full now and the last of
- * the benefit arrives with t-687, which is the deliberate shape of an integration
- * checkpoint rather than an oversight.
+ * **Both properties now hold for all four kinds**, which is what makes this
+ * module the single primitive: it is called once per request, by the guard, and
+ * by nothing else in core. Every reader is a helper in
+ * `lib/orchestration/access/` — one module per model — and every one of them is
+ * synchronous because it reads the record rather than asking again. Executions
+ * arrived in t-685, conversations in t-686, datasets and experiments in t-687.
+ * Until then the cost below was paid in full while two of the four still asked
+ * on demand, which was the deliberate shape of an integration checkpoint rather
+ * than an oversight.
  *
  * The cost is a fixed number of policy calls on every guarded request, including
  * requests that touch none of these models. On a default install that is free —
@@ -119,23 +119,20 @@ import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
  * `'dataset'` gets two answers inside one request, which is the disagreement the
  * precompute exists to remove.
  *
- * **Two mechanisms hold that, and neither is complete on its own.** The three
- * `*_RESOURCE_KIND` constants that exist (`DATASET_RESOURCE_KIND` twice,
- * `EXPERIMENT_RESOURCE_KIND` once) are annotated {@link UnattributedReadKind}, so
- * a rename *out of* the union fails to compile — but `'dataset'` and
- * `'experiment'` are both in the union, so an annotation alone would let one
- * declaration drift to the other's value and still build. `orphan-reads.test.ts`
- * pins each constant to its literal for that reason. t-687 collapses the lot into
- * one declaration per model, which is the real fix; this is containment until
- * then.
+ * **No core helper spells a kind any more, and that is what holds it.** There
+ * used to be three `*_RESOURCE_KIND` constants annotated
+ * {@link UnattributedReadKind}, which catches a rename *out of* the union and
+ * nothing else — `'dataset'` and `'experiment'` are both members, so one
+ * declaration could drift to the other's value and still build, and
+ * `orphan-reads.test.ts` had to pin each to its literal as well. t-687 deleted
+ * them: every reader of {@link UnattributedReads} accesses the record by
+ * property, the record's keys *are* this list, and
+ * `session.unattributedReads.experiment` cannot drift out of it without failing
+ * to compile. There is no `string` left on that path to get wrong.
  *
- * **A reader of {@link UnattributedReads} needs no constant at all**, and
- * `execution-access.ts` and `conversation-access.ts` are the demonstration: the
- * record's keys *are* this list, so `session.unattributedReads.execution` cannot
- * drift out of it without failing to compile. The constants exist for the callers
- * that pass a `string` to {@link mayReadUnattributed}; a helper that reads the
- * precomputed record has no string to get wrong, which is why neither of those
- * two declares one and neither needs to.
+ * {@link mayReadUnattributed} still takes an open `string`, because a fork's own
+ * ownerless model is not in the record. A fork adding one gets the constant
+ * problem back, and the annotation is the tool for it.
  *
  * Ordered as declared; nothing depends on the order.
  */

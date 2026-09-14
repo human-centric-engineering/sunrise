@@ -382,6 +382,76 @@ release process.
 
 ### Changed
 
+- **One mechanism for "nobody owns this", and an admin reaching an experiment
+  that is not their own now leaves a trace.** Four models can hold a row nobody
+  owns, and until now they answered the question through two mechanisms: the
+  `lib/orchestration/access/` family returned a named **basis**, while
+  `lib/orchestration/experiments/visible-scope.ts` returned a **boolean**. That
+  difference was not cosmetic — a handler holding only a boolean cannot say
+  whether the row it just touched was its own, which is why experiments logged
+  nothing when an admin reached a de-attributed one while datasets and
+  conversations did.
+
+  `visible-scope.ts` is gone. `lib/orchestration/access/experiment-access.ts`
+  takes its place, and the directory is now the roster: one module per model, all
+  four returning a basis and a `where` fragment, all four reading
+  `session.unattributedReads`. `.context/auth/authorization.md` carries the table
+  — model, owner column, helper, bases — because the absence of it is how the
+  second mechanism came to be built without anyone noticing the first.
+
+  **All four readers are synchronous.** `datasetVisibilityWhere(session)` and the
+  experiments helper used to `await mayReadUnattributed`, asking the policy a
+  second time for an answer the guard had already resolved; 20 `await`s at call
+  sites across 16 route files go with them. Neither module declares a
+  `*_RESOURCE_KIND` constant any more, and that is a fix rather than a
+  deduplication: the record's keys *are* `UNATTRIBUTED_READ_KINDS`, so
+  `session.unattributedReads.dataset` cannot drift out of the list without
+  failing to compile, where an annotated constant could drift to a **sibling's**
+  value and still build — `'dataset'` and `'experiment'` are both members of the
+  union. `mayReadUnattributed` stays for a fork with an ownerless model of its
+  own.
+
+  **`'system'` and `'orphan'` stay distinct, and the schema is why.**
+  `AiConversation.userId` and `AiWorkflowExecution.userId` are
+  `onDelete: Cascade`, so a null there can only mean the row was *born*
+  ownerless; `AiDataset.userId` and `AiExperiment.createdBy` are `SetNull`, so a
+  null there can only mean an erasure *detached* it. One name for both would
+  assert something the database forbids, and would put a stranger's live
+  correspondence and a de-attributed test fixture under the same audit weight.
+  This converged the mechanism, deliberately not the vocabulary.
+
+  **Operators will see audit rows that were not there before.** Seven of the
+  eight `experiment.*` actions now carry `metadata.accessBasis`, and three are
+  new: `experiment.view` and `experiment.compare_view` (written only when the row
+  is an orphan) and `experiment.verdict_compute` (the one mutation in the family
+  that recorded nothing at all). The experiment list writes no row, as the
+  dataset list does not.
+
+  **The two `SetNull` models differ on writes, deliberately.** Datasets skip
+  `'owner'` everywhere, so an admin renaming their own dataset leaves no record.
+  Experiments skip it on **reads only**: every experiment mutation already wrote
+  a config-change row for every caller before the basis existed, and narrowing
+  that to match datasets would have deleted rows an operator can read today.
+  Which rule applies is a **required field at each call site**
+  (`ExperimentAuditRule`), with no default, so a new experiment route cannot
+  inherit the decision by accident.
+
+  **Breaking for a fork** in three ways, all compile-time.
+  `datasetVisibilityWhere(session)` returns a `where` fragment rather than a
+  promise — drop the `await`; a fork that keeps it gets a passing type-check and
+  a working query, because `await` on a non-promise is legal, so lint
+  (`@typescript-eslint/await-thenable`) rather than `tsc` is what flags the
+  leftovers. `DATASET_RESOURCE_KIND` and `EXPERIMENT_RESOURCE_KIND` are removed —
+  read `session.unattributedReads.<kind>` instead of passing a string. And
+  `@/lib/orchestration/experiments/visible-scope` no longer resolves:
+  `visibleExperimentClause` is `experimentVisibilityWhere` and `isUnowned(row)`
+  is `experimentAccessBasis(row, session.user.id) === 'orphan'`, both from
+  `@/lib/orchestration/access/experiment-access`.
+
+  A default install is unchanged across all four models. This moved no
+  visibility, only the machinery under it — plus the audit rows above, which are
+  additive.
+
 - **A fork can finally narrow who reads a stranger's inbound messages.** When a
   member of the public texts, emails or Slacks an agent, the thread is stored
   owned by nobody (`AiConversation.userId = null`, #502) — the correspondence is
@@ -562,12 +632,12 @@ release process.
     : { createdBy: session.user.id };
   ```
 
-  **No behaviour moved when this landed.** `execution-access.ts` was converged
-  onto the record later in this same release (the execution entry at the top of
-  **Changed**, above);
-  `conversation-access.ts` still hard-codes its answer, and `dataset-access.ts`
-  and `experiments/visible-scope.ts` still ask on demand. A default install
-  serves exactly what it served before, at every stage.
+  **No behaviour moved when this landed**, and a default install served exactly
+  what it served before at every stage. All four readers were converged onto the
+  record later in this same release — executions, then conversations, then
+  datasets and experiments together (the three entries at the top of
+  **Changed**, above). This paragraph used to say the other three still asked on
+  demand; they do not, and `experiments/visible-scope.ts` no longer exists.
 
   **The cost is eager and a fork inherits it.** The policy is asked once per kind
   on **every** guarded request, `withAuth` included, and on requests touching

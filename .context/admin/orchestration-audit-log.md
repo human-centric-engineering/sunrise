@@ -192,9 +192,11 @@ Every `logAdminAction()` call site (as of grep at write time):
 | `knowledge/documents/[id]/route.ts`                        | `knowledge_document.delete`                                         | `knowledge_document`   |
 | `settings/route.ts`                                        | `settings.update`                                                   | `settings`             |
 | `experiments/route.ts`                                     | `experiment.create`                                                 | `experiment`           |
-| `experiments/[id]/route.ts`                                | `experiment.update`, `experiment.delete`                            | `experiment`           |
+| `experiments/[id]/route.ts`                                | `experiment.view`, `experiment.update`, `experiment.delete`         | `experiment`           |
 | `experiments/[id]/run/route.ts`                            | `experiment.run`                                                    | `experiment`           |
 | `experiments/[id]/claim/route.ts`                          | `experiment.claim`                                                  | `experiment`           |
+| `experiments/[id]/compare/route.ts`                        | `experiment.compare_view`                                           | `experiment`           |
+| `experiments/[id]/verdicts/route.ts`                       | `experiment.verdict_compute`                                        | `experiment`           |
 | `evaluations/datasets/[id]/route.ts`                       | `dataset.view`, `dataset.update`, `dataset.delete`                  | `dataset`              |
 | `evaluations/datasets/[id]/claim/route.ts`                 | `dataset.claim`                                                     | `dataset`              |
 | `evaluations/datasets/[id]/cases/route.ts`                 | `dataset.cases_view`                                                | `dataset`              |
@@ -253,3 +255,31 @@ was erased under Art. 17, leaving `userId` null. Those rows carry
 
 The dataset **list** is deliberately not logged. One entry per page view would
 bury the rows that matter.
+
+## Experiment actions carry the basis too, and writes are wider
+
+Since t-687 seven of the eight `experiment.*` actions above go through
+`logExperimentAccess` (`lib/orchestration/access/experiment-access.ts`) and carry
+the same `metadata.accessBasis`, `'owner'` or `'orphan'`, for the same reason:
+`AiExperiment.createdBy` is `SetNull`, so a null owner means an Art. 17 erasure
+detached one. **Operators will see rows in the audit log that were not there
+before** — `experiment.view`, `experiment.compare_view` and
+`experiment.verdict_compute` are all new, and the first two appear only for
+orphans.
+
+**Reads follow the dataset rule; writes do not.** The two reads —
+`experiment.view` and `experiment.compare_view` — skip `'owner'`, exactly as
+datasets do. The five writes — `update`, `delete`, `run`, `claim` and
+`verdict_compute` — are recorded whoever makes them, owner included, because four
+of them already wrote a config-change row for every caller before the basis
+existed, and narrowing them to match datasets would delete rows an operator can
+read today. (`verdict_compute` is the fifth and wrote nothing at all before
+t-687.) The rule is a
+**required field at each call site** (`ExperimentAuditRule`: `'always'` or
+`'non-owner-only'`), so a new experiment route cannot inherit one by accident.
+
+`experiment.create` stays on the plain `logAdminAction` path: the route stamps
+`createdBy` to the caller, so its basis can only ever be `'owner'`.
+
+The experiment **list** is not logged, for the same reason the dataset list is
+not. Two models, two audit rules, one place each to read them.

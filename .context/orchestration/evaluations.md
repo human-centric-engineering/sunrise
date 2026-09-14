@@ -816,6 +816,12 @@ the half-shipped pairwise flow.
 - Unpaired positions (one variant missing a result for that case)
   are recorded in `perCase` with an `error` string and counted in
   `casesFailed`; the grader is not invoked for them.
+- Audit: `experiment.verdict_compute`, written for every caller and
+  carrying `metadata.accessBasis` (`'owner'` or `'orphan'`). New in
+  t-687 — this was the one mutation in the experiments family that
+  recorded nothing at all, and it overwrites a stored verdict whoever
+  reads the result afterwards may need to place. See
+  [`../admin/orchestration-audit-log.md`](../admin/orchestration-audit-log.md).
 
 ### Compare-view card
 
