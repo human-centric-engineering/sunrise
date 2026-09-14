@@ -59,6 +59,16 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
+// Only the approve route reaches these; every other case in this file stops at
+// the visibility decision.
+vi.mock('@/lib/orchestration/approval-actions', () => ({
+  executeApproval: vi.fn(() => Promise.resolve({ status: 'running' })),
+}));
+
+vi.mock('@/lib/orchestration/scheduling', () => ({
+  resumeApprovedExecution: vi.fn(() => Promise.resolve()),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: {
     info: vi.fn(),
@@ -87,6 +97,7 @@ import { GET as listExecutions } from '@/app/api/v1/admin/orchestration/executio
 import { GET as executionCounts } from '@/app/api/v1/admin/orchestration/executions/counts/route';
 import { GET as executionDetail } from '@/app/api/v1/admin/orchestration/executions/[id]/route';
 import { GET as dashboardStats } from '@/app/api/v1/admin/orchestration/observability/dashboard-stats/route';
+import { POST as approveExecution } from '@/app/api/v1/admin/orchestration/executions/[id]/approve/route';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -112,6 +123,39 @@ function makeRequest(path: string): NextRequest {
     url: `http://localhost:3000/api/v1/admin/orchestration${path}`,
     nextUrl: { pathname: `/api/v1/admin/orchestration${path}` },
   } as unknown as NextRequest;
+}
+
+function makePostRequest(path: string, body: unknown): NextRequest {
+  return {
+    method: 'POST',
+    headers: new Headers({ 'content-type': 'application/json' }),
+    url: `http://localhost:3000/api/v1/admin/orchestration${path}`,
+    nextUrl: { pathname: `/api/v1/admin/orchestration${path}` },
+    json: () => Promise.resolve(body),
+  } as unknown as NextRequest;
+}
+
+/** A run paused at a gate that names `approverUserId` as its approver. */
+function pausedSystemRunAwaiting(approverUserId: string) {
+  return {
+    id: EXEC_ID,
+    userId: null,
+    status: 'paused_for_approval',
+    executionTrace: [
+      {
+        stepId: 'approval-step',
+        stepType: 'human_approval',
+        label: 'Review',
+        status: 'awaiting_approval',
+        output: { prompt: 'Approve?', approverUserIds: [approverUserId] },
+        tokensUsed: 0,
+        costUsd: 0,
+        startedAt: '2026-01-01T00:00:00Z',
+        completedAt: '2026-01-01T00:00:00Z',
+        durationMs: 0,
+      },
+    ],
+  };
 }
 
 /** The first `AND` arm of a where clause — where the visibility boundary sits. */
@@ -215,5 +259,53 @@ describe('a policy that denies unattributed reads', () => {
     });
 
     expect(response.status).toBe(200);
+  });
+});
+
+// ─── The grant the policy deliberately does not reach ────────────────────────
+
+describe('delegated approvers, under a policy that denies unattributed reads', () => {
+  it('still clears the gate on a system-owned run they are named on', async () => {
+    // `approve`, `reject` and `cancel` carry a second, independent grant: an
+    // admin named in that run's own trace may act on it even when they cannot
+    // otherwise see it. It is a per-run nomination the workflow made, not an
+    // answer to the ownerless question, so t-685 left it alone — the same line
+    // `conversation-access.ts` draws around its `'shared'` basis.
+    //
+    // Pinned because it is the claim the CHANGELOG makes to forks, and because
+    // narrowing it by accident would strand a scheduled run at its gate
+    // forever: nobody owns it, so with the delegation gone there is no one left
+    // to approve it. That is the #502 failure the `'system'` basis was built to
+    // prevent, re-arriving through the seam.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      pausedSystemRunAwaiting(ADMIN_ID) as never
+    );
+
+    const response = await approveExecution(
+      makePostRequest(`/executions/${EXEC_ID}/approve`, {
+        approvalPayload: { decision: 'approved' },
+      }),
+      { params: Promise.resolve({ id: EXEC_ID }) }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it('404s the same run for an admin the trace does not name', async () => {
+    // The control: the delegation is what admits the caller above, not some
+    // gap that admits everyone. Without this, the case above would pass just as
+    // well if the route had stopped checking visibility altogether.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      pausedSystemRunAwaiting('cmjbv4i3x00003wsloputgwx1') as never
+    );
+
+    const response = await approveExecution(
+      makePostRequest(`/executions/${EXEC_ID}/approve`, {
+        approvalPayload: { decision: 'approved' },
+      }),
+      { params: Promise.resolve({ id: EXEC_ID }) }
+    );
+
+    expect(response.status).toBe(404);
   });
 });

@@ -392,9 +392,19 @@ release process.
   that refuses `'unattributed'` reads closes the executions list, the sidebar
   status counts, the live-engine dashboard, the observability dashboard, the
   workflow-execute resume path and the `workflow_execution` arm of the
-  evaluation-dataset capture route, and turns the eleven `/executions/:id`
-  routes into 404s. Another admin's *own* run stays invisible whatever the policy says:
-  "nobody owns this" is a third case, not a softer spelling of "someone else's".
+  evaluation-dataset capture route, and turns eight of the eleven
+  `/executions/:id` routes into 404s. Another admin's *own* run stays invisible
+  whatever the policy says: "nobody owns this" is a third case, not a softer
+  spelling of "someone else's".
+
+  **The other three are `approve`, `reject` and `cancel`, and they are
+  deliberately not fully behind the seam.** Each carries a second, independent
+  grant: an admin named as an approver in that run's own trace may act on it even
+  when they cannot otherwise see it. That is a per-run nomination the workflow
+  made rather than an answer to the ownerless question, so it is left exactly as
+  it was — the same line `conversation-access.ts` draws around its `'shared'`
+  basis. A fork narrowing `canRead` should know a delegated approver still clears
+  their gate.
 
   **A default install is unchanged** — every system-owned run stays visible to a
   platform admin, and the helper's existing tests prove it by still passing.

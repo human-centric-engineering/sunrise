@@ -53,6 +53,19 @@
  * `mayReadUnattributed`; there is no string to get wrong on this path, so there
  * is no constant to keep in step.
  *
+ * ## One grant this module does not decide
+ *
+ * `approve`, `reject` and `cancel` admit a caller this module refuses, when the
+ * run's own trace names them in `approverUserIds`. That is deliberate and was
+ * left alone: it is a per-run nomination the workflow made, not an answer to the
+ * ownerless question, and narrowing it here would strand a scheduled run at its
+ * gate forever — nobody owns it, so with the delegation gone there is nobody
+ * left to approve it, which is the #502 failure the `'system'` basis exists to
+ * prevent. `conversation-access.ts` draws the same line around its `'shared'`
+ * basis. A fork narrowing `canRead` inherits that exception, so it is pinned in
+ * `tests/unit/app/api/v1/admin/orchestration/executions/policy-narrowing.test.ts`
+ * rather than left to be rediscovered.
+ *
  * @see lib/auth/orphan-reads.ts — the kinds, who answers, and what it costs
  * @see lib/orchestration/access/conversation-access.ts — same model for
  *      conversations, where the third basis is `'shared'`
