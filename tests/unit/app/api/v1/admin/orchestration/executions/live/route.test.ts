@@ -126,13 +126,21 @@ describe('GET /api/v1/admin/orchestration/executions/live', () => {
     await GET(makeRequest());
 
     expect(getLiveEngineSnapshot).toHaveBeenCalledTimes(1);
-    // The route now scopes the snapshot to the authenticated admin's
-    // userId so the counts match what they can see on the executions
-    // list. Asserting the exact call argument guards against a future
-    // regression that drops the scope and silently returns a global
-    // count to a partner admin.
-    expect(getLiveEngineSnapshot).toHaveBeenCalledWith({
-      userId: mockAdminUser().user.id,
+    // The route scopes the snapshot to the authenticated admin so the counts
+    // match what they can see on the executions list. The whole session goes
+    // over, not a user id: the visibility clause needs the policy's answer to
+    // "may this caller see runs nobody started", which the guard resolved onto
+    // `unattributedReads`. Asserting both halves guards against a regression
+    // that drops the scope and silently returns a global count to a partner
+    // admin, and against one that hands over a reshaped session the answer did
+    // not survive.
+    const [options] = vi.mocked(getLiveEngineSnapshot).mock.calls[0];
+    expect(options?.session?.user.id).toBe(mockAdminUser().user.id);
+    expect(options?.session?.unattributedReads).toEqual({
+      conversation: true,
+      dataset: true,
+      execution: true,
+      experiment: true,
     });
   });
 

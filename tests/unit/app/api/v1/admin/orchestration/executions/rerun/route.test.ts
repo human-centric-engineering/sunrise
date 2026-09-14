@@ -247,13 +247,14 @@ describe('POST /executions/:id/rerun', () => {
     await POST(makeRequest(), makeContext());
 
     // Visibility is enforced in the query, so an id the caller can't see
-    // resolves to null and 404s without a second round-trip.
+    // resolves to null and 404s without a second round-trip. `AND`-composed
+    // like every other site: the id and the boundary are separate arms, so no
+    // later filter spread in beside them can replace the `OR`.
     const where = vi.mocked(prisma.aiWorkflowExecution.findFirst).mock.calls[0][0]?.where as {
-      id: string;
-      OR: { userId: string | null }[];
+      AND: [{ OR: { userId: string | null }[] }, { id: string }];
     };
-    expect(where.id).toBe(EXEC_ID);
-    expect(where.OR.map((arm) => arm.userId)).toEqual([USER_ID, null]);
+    expect(where.AND[1]).toEqual({ id: EXEC_ID });
+    expect(where.AND[0].OR.map((arm) => arm.userId)).toEqual([USER_ID, null]);
   });
 
   it('explicit versionId override pins the helper to that version', async () => {

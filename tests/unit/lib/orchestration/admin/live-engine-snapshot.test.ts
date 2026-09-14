@@ -39,8 +39,30 @@ vi.mock('@/lib/logging', () => ({
 import { prisma } from '@/lib/db/client';
 import { getInFlightCounts } from '@/lib/orchestration/llm/in-flight-counter';
 import { getLiveEngineSnapshot, percentile } from '@/lib/orchestration/admin/live-engine-snapshot';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Enough of an `AuthenticatedSession` for the snapshot's visibility clause.
+ *
+ * `unattributedReads.execution` is the policy's answer to "may this caller see
+ * runs nobody started", resolved by the guard before the handler ran. The
+ * snapshot takes the whole session rather than a user id precisely so it reads
+ * that answer instead of restating the rule.
+ */
+function sessionFor(userId: string, mayReadUnowned = true): AuthenticatedSession {
+  return {
+    user: { id: userId, role: 'ADMIN' },
+    principal: { userId, role: 'ADMIN', credential: 'session' },
+    unattributedReads: {
+      conversation: mayReadUnowned,
+      dataset: mayReadUnowned,
+      execution: mayReadUnowned,
+      experiment: mayReadUnowned,
+    },
+  } as unknown as AuthenticatedSession;
+}
 
 /** Frozen system time used across all snapshot tests. */
 const FROZEN_ISO = '2026-05-20T12:00:00.000Z';
@@ -268,15 +290,20 @@ describe('getLiveEngineSnapshot', () => {
     expect(snapshot.generatedAt).toBe(FROZEN_ISO);
   });
 
-  // User-scope tests — the live route passes `{ userId: session.user.id }`
-  // so the snapshot matches the per-user executions list. The provider
-  // in-flight card is intentionally NOT scoped (process-wide counter
-  // with no user attribution) — that behaviour is also asserted here.
-  describe('user-scoped snapshot', () => {
+  // Caller-scope tests — the live route passes `{ session }` so the snapshot
+  // matches the executions list it links into. The provider in-flight card is
+  // intentionally NOT scoped (process-wide counter with no user attribution) —
+  // that behaviour is also asserted here.
+  describe('caller-scoped snapshot', () => {
+    /** Pull the `AND` arms off a where clause the snapshot built. */
+    function andArms(where: unknown): Record<string, unknown>[] {
+      return (where as { AND: Record<string, unknown>[] }).AND;
+    }
+
     it('applies the visibility clause to all three execution-row queries when provided', async () => {
       const userId = 'user-abc';
 
-      await getLiveEngineSnapshot({ userId });
+      await getLiveEngineSnapshot({ session: sessionFor(userId) });
 
       // The running count, queued aggregate, and orphaned count must each
       // carry the caller's own runs plus system-owned ones (`userId: null`).
@@ -286,16 +313,20 @@ describe('getLiveEngineSnapshot', () => {
       const runningCall = vi.mocked(prisma.aiWorkflowExecution.count).mock.calls[0]?.[0];
       const queuedCall = vi.mocked(prisma.aiWorkflowExecution.aggregate).mock.calls[0]?.[0];
       const orphanedCall = vi.mocked(prisma.aiWorkflowExecution.count).mock.calls[1]?.[0];
-      expect(runningCall?.where).toMatchObject(visibility);
-      expect(queuedCall?.where).toMatchObject(visibility);
-      expect(orphanedCall?.where).toMatchObject(visibility);
+      // `AND`-composed, so the boundary cannot be flattened by a filter added
+      // beside it later. Asserted as the first arm rather than anywhere in the
+      // clause: a `toMatchObject` on the whole `where` would pass just as
+      // happily if the visibility had been dropped into a nested `OR`.
+      expect(andArms(runningCall?.where)[0]).toEqual(visibility);
+      expect(andArms(queuedCall?.where)[0]).toEqual(visibility);
+      expect(andArms(orphanedCall?.where)[0]).toEqual(visibility);
     });
 
     it('does not admit another admin\u2019s runs into the counts', async () => {
-      await getLiveEngineSnapshot({ userId: 'user-abc' });
+      await getLiveEngineSnapshot({ session: sessionFor('user-abc') });
 
       const runningCall = vi.mocked(prisma.aiWorkflowExecution.count).mock.calls[0]?.[0];
-      const arms = (runningCall?.where as { OR: { userId: string | null }[] }).OR;
+      const arms = (andArms(runningCall?.where)[0] as { OR: { userId: string | null }[] }).OR;
 
       // Two arms only. A third would mean the dashboard counts rows the
       // executions list refuses to show.
@@ -306,35 +337,55 @@ describe('getLiveEngineSnapshot', () => {
     it('applies the visibility clause to the running-step age query via the execution relation', async () => {
       const userId = 'user-def';
 
-      await getLiveEngineSnapshot({ userId });
+      await getLiveEngineSnapshot({ session: sessionFor(userId) });
 
       const stepCall = vi.mocked(prisma.aiWorkflowRunningStep.findMany).mock.calls[0]?.[0];
       // The step table has no userId column — scoping goes through the
       // parent execution relation so a partner admin doesn't see ages
       // from other partners' running steps.
-      expect(stepCall?.where).toMatchObject({
-        completedAt: null,
-        execution: { OR: [{ userId }, { userId: null }] },
-      });
+      expect(andArms(stepCall?.where)).toEqual([
+        { execution: { OR: [{ userId }, { userId: null }] } },
+        { completedAt: null },
+      ]);
     });
 
-    it('omits userId scope when no options are passed (backwards compat path)', async () => {
+    it('drops scheduled and inbound runs when the policy denies unattributed reads', async () => {
+      // The capability t-685 delivers, seen on this surface: a fork whose
+      // policy refuses ownerless reads gets a dashboard counting only its
+      // caller's own runs. Before this, the widening was hard-coded here and
+      // no policy could reach it.
+      const userId = 'user-ghi';
+
+      await getLiveEngineSnapshot({ session: sessionFor(userId, false) });
+
+      const runningCall = vi.mocked(prisma.aiWorkflowExecution.count).mock.calls[0]?.[0];
+      const orphanedCall = vi.mocked(prisma.aiWorkflowExecution.count).mock.calls[1]?.[0];
+      const queuedCall = vi.mocked(prisma.aiWorkflowExecution.aggregate).mock.calls[0]?.[0];
+      const stepCall = vi.mocked(prisma.aiWorkflowRunningStep.findMany).mock.calls[0]?.[0];
+
+      expect(andArms(runningCall?.where)[0]).toEqual({ userId });
+      expect(andArms(orphanedCall?.where)[0]).toEqual({ userId });
+      expect(andArms(queuedCall?.where)[0]).toEqual({ userId });
+      expect(andArms(stepCall?.where)[0]).toEqual({ execution: { userId } });
+    });
+
+    it('omits caller scope when no options are passed (backwards compat path)', async () => {
       await getLiveEngineSnapshot();
 
       const runningCall = vi.mocked(prisma.aiWorkflowExecution.count).mock.calls[0]?.[0];
       const stepCall = vi.mocked(prisma.aiWorkflowRunningStep.findMany).mock.calls[0]?.[0];
-      expect(runningCall?.where).not.toHaveProperty('userId');
-      expect(stepCall?.where).not.toHaveProperty('execution');
+      expect(andArms(runningCall?.where)[0]).toEqual({});
+      expect(andArms(stepCall?.where)[0]).toEqual({});
     });
 
-    it('returns provider in-flight counts unchanged regardless of userId scope', async () => {
+    it('returns provider in-flight counts unchanged regardless of caller scope', async () => {
       const { getInFlightCounts } = await import('@/lib/orchestration/llm/in-flight-counter');
       vi.mocked(getInFlightCounts).mockReturnValue([
         { provider: 'anthropic', inFlight: 3 },
         { provider: 'openai', inFlight: 1 },
       ]);
 
-      const scoped = await getLiveEngineSnapshot({ userId: 'user-xyz' });
+      const scoped = await getLiveEngineSnapshot({ session: sessionFor('user-xyz') });
 
       // Provider counts are process-wide — no user attribution exists
       // at the proxy boundary, and they reflect the whole worker's
