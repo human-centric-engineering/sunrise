@@ -151,22 +151,14 @@ describe('executionVisibilityWhere', () => {
     // Not `{ OR: [{ userId }] }` — a single-armed OR would work, but the
     // narrowed fragment is what a caller composes filters against, and the
     // flat form is the one a reader can see is closed.
+    //
+    // **`toEqual`, and it is load-bearing.** This is the branch that fails
+    // OPEN: `{ userId: undefined }` is what a regression here would most likely
+    // produce, Prisma drops an undefined key, and the query then returns every
+    // row — for exactly the fork that asked to be narrowed. A weaker check that
+    // counted keys would pass on that shape, because `{ userId: undefined }`
+    // has one. Pinning the whole object rejects it, and rejects a stray extra
+    // key with it.
     expect(executionVisibilityWhere(narrowedAdmin)).toEqual({ userId: ADMIN_ID });
-  });
-
-  it('carries a usable id on the narrowed branch, not merely a key', () => {
-    // `{}` is the widest value this type can express: produce one here and
-    // every list and count goes global for exactly the fork that asked to be
-    // narrowed. But counting keys is too weak to catch that, and the narrowed
-    // branch is the one that fails OPEN — `{ userId: undefined }` has a key,
-    // passes a non-empty check, and is then dropped by Prisma, leaving no
-    // filter at all. So assert the value, not the shape.
-    const narrowed = executionVisibilityWhere(narrowedAdmin) as { userId?: unknown };
-    expect(narrowed.userId).toBe(ADMIN_ID);
-    expect(typeof narrowed.userId).toBe('string');
-
-    // The widened branch has its own arm-level guard above; here we only need
-    // it to be non-empty, since an empty OR would be a different bug.
-    expect(Object.keys(executionVisibilityWhere(admin))).not.toHaveLength(0);
   });
 });
