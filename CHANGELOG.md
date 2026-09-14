@@ -436,7 +436,8 @@ release process.
   (`ExperimentAuditRule`), with no default, so a new experiment route cannot
   inherit the decision by accident.
 
-  **Breaking for a fork** in three ways, all compile-time.
+  **Breaking for a fork** in three ways — two that fail the build, one that only
+  lint catches.
   `datasetVisibilityWhere(session)` returns a `where` fragment rather than a
   promise — drop the `await`; a fork that keeps it gets a passing type-check and
   a working query, because `await` on a non-promise is legal, so lint

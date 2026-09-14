@@ -78,7 +78,9 @@ export const POST = withAdminAuth<Params>(
         variants: {
           select: { id: true, label: true, evaluationRunId: true },
         },
-        dataset: { select: { caseCount: true } },
+        // `userId` for the defence-in-depth check below, not for the
+        // experiment's own ownership — the `where` above settled that.
+        dataset: { select: { caseCount: true, userId: true } },
       },
     });
     if (!experiment) {
@@ -111,6 +113,28 @@ export const POST = withAdminAuth<Params>(
         'Experiment has no dataset — verdicts need dataset-driven variants'
       );
     }
+
+    // Defence in depth on the bound dataset, the same check `run` makes and for
+    // the same reason: create-time validation at `POST /experiments` is the only
+    // thing binding a dataset today, and a future writer adding a second
+    // create path — or a PATCH that accepts `datasetId`, which the update schema
+    // deliberately does not — would otherwise re-open the cross-user hole here.
+    //
+    // This route needs it more than `run` does. `run` reads the dataset's
+    // `contentHash` and `caseCount`; this one returns `datasetCase.input` and
+    // `expectedOutput` for every case in the `perCase` payload, so the same
+    // miss would hand back another admin's dataset content rather than start a
+    // run against it.
+    //
+    // Three cases, exactly as for the experiment itself: `AiDataset.userId` is
+    // `SetNull` too, so an erasure orphans the dataset alongside the experiment
+    // and a bare `!== session.user.id` would make a claimed orphan unscoreable
+    // (t-678).
+    const datasetOwner = experiment.dataset.userId;
+    const mayUseDataset =
+      datasetOwner === session.user.id ||
+      (datasetOwner === null && session.unattributedReads.dataset);
+    if (!mayUseDataset) throw new NotFoundError(`Experiment ${id} not found`);
     if (experiment.dataset.caseCount > MAX_CASES_FOR_SYNC) {
       throw new ConflictError(
         `Pairwise verdicts cap at ${MAX_CASES_FOR_SYNC} cases — this dataset has ${experiment.dataset.caseCount}. Use a smaller dataset.`

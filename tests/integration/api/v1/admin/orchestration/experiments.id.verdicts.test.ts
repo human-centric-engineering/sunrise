@@ -18,7 +18,7 @@
  * @see app/api/v1/admin/orchestration/experiments/[id]/verdicts/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import {
   mockAdminUser,
@@ -84,6 +84,11 @@ vi.mock('@/lib/orchestration/evaluations/graders/pairwise/judge-agent', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { POST } from '@/app/api/v1/admin/orchestration/experiments/[id]/verdicts/route';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const EXPERIMENT_ID = 'exp-1';
@@ -125,18 +130,24 @@ function makeExperiment(
   overrides: Partial<{
     createdBy: string;
     variants: Array<{ id: string; label: string; evaluationRunId: string | null }>;
-    dataset: { caseCount: number } | null;
+    dataset: { caseCount: number; userId: string | null } | null;
   }> = {}
 ) {
   return {
     id: EXPERIMENT_ID,
+    name: 'Test Experiment',
     createdBy: overrides.createdBy ?? ADMIN_ID,
     datasetId: 'ds-1',
     variants: overrides.variants ?? [
       { id: VARIANT_A, label: 'Control', evaluationRunId: 'run-a' },
       { id: VARIANT_B, label: 'Variant', evaluationRunId: 'run-b' },
     ],
-    dataset: overrides.dataset === undefined ? { caseCount: 3 } : overrides.dataset,
+    // `userId` because the route now checks the bound dataset is one the caller
+    // may read, the same defence in depth `run` has. A fixture omitting it is
+    // not an ownerless dataset but one whose owner is unknown, which the check
+    // answers with a 404 — fail-closed, so the fixture has to say.
+    dataset:
+      overrides.dataset === undefined ? { caseCount: 3, userId: ADMIN_ID } : overrides.dataset,
   };
 }
 
@@ -222,9 +233,81 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
     expect(res.status).toBe(400);
   });
 
+  /**
+   * Defence in depth on the BOUND DATASET, not on the experiment — the `where`
+   * above settles that. `run` has carried this since t-678; `verdicts` did not
+   * until t-687, and it is the member of the family that leaks most without it:
+   * the response returns `datasetCase.input` and `expectedOutput` for every
+   * case, where `run` only reads the hash and the count.
+   *
+   * Unreachable through today's routes — `POST /experiments` is the only path
+   * that binds a dataset and it enforces `datasetVisibilityWhere`, and the
+   * update schema deliberately does not accept `datasetId`. The check exists so
+   * a future second create path cannot silently re-open it.
+   */
+  describe('the bound dataset', () => {
+    afterEach(() => {
+      __resetAuthorizationPolicyForTests();
+    });
+
+    it('404s when the dataset belongs to a different admin', async () => {
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+        makeExperiment({ dataset: { caseCount: 3, userId: 'someone-else' } }) as never
+      );
+
+      const res = await POST(makeRequest(defaultBody()), ctx());
+
+      expect(res.status).toBe(404);
+      // Before the case-count cap, deliberately: that 409 names how many cases
+      // the dataset has, which is a fact about a dataset this caller may not
+      // read.
+      expect(vi.mocked(prisma.aiEvaluationCaseResult.findMany)).not.toHaveBeenCalled();
+    });
+
+    it('scores an ownerless dataset when the policy permits unattributed reads', async () => {
+      // The control for the case above: same fake, same route, only the owner
+      // differs. An erasure orphans the dataset alongside the experiment, and a
+      // bare `!== session.user.id` would make a claimed orphan unscoreable
+      // (t-678).
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+        makeExperiment({ dataset: { caseCount: 3, userId: null } }) as never
+      );
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+        id: 'judge-1',
+        kind: 'judge',
+        isActive: true,
+      } as never);
+      vi.mocked(prisma.aiEvaluationCaseResult.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiExperiment.update).mockResolvedValue({ id: EXPERIMENT_ID } as never);
+
+      const res = await POST(makeRequest(defaultBody()), ctx());
+
+      expect(res.status).toBe(200);
+    });
+
+    it('404s that same ownerless dataset under a policy that denies them', async () => {
+      // The half that was unreachable before this seam existed: no route code
+      // changes, the fork's policy does it.
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canRead: (viewer, target, scope) =>
+          target.kind === 'unattributed'
+            ? Promise.resolve(false)
+            : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+      });
+      vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
+        makeExperiment({ dataset: { caseCount: 3, userId: null } }) as never
+      );
+
+      const res = await POST(makeRequest(defaultBody()), ctx());
+
+      expect(res.status).toBe(404);
+    });
+  });
+
   it('returns 409 when dataset case count exceeds the 100-case cap', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
-      makeExperiment({ dataset: { caseCount: 250 } }) as never
+      makeExperiment({ dataset: { caseCount: 250, userId: ADMIN_ID } }) as never
     );
     const res = await POST(makeRequest(defaultBody()), ctx());
     expect(res.status).toBe(409);

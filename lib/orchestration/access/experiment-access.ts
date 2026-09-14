@@ -155,9 +155,19 @@ export type ExperimentAuditRule = 'always' | 'non-owner-only';
  * Record an admin touching an experiment.
  *
  * Action names are present-tense verbs — `experiment.view`, `experiment.update`
- * — matching `dataset.*` and every other admin action in the tree, because
- * `actionBadgeVariant` in the audit-log view keys off the `.update` / `.delete`
- * suffix and a past-tense name renders as an unremarkable neutral badge.
+ * — matching `dataset.*` and every other admin action in the tree. Where a name
+ * ends in `.create` / `.update` / `.delete` the tense is load-bearing:
+ * `actionBadgeVariant` in the audit-log view keys off those suffixes, so a
+ * past-tense `experiment.updated` would render as an unremarkable neutral badge
+ * instead of a coloured one.
+ *
+ * **Several legitimate mutations render neutral anyway, and that is the badge's
+ * limit rather than a naming mistake.** `experiment.run`, `experiment.claim` and
+ * `experiment.verdict_compute` all change a row and all end in `outline`,
+ * because the view distinguishes only the three CRUD suffixes. Renaming one of
+ * them to earn a colour would say something false about what it does — a verdict
+ * compute is not an `.update` in the sense the badge means. Widening what the
+ * view colours is the fix if that ever matters; it is not this module's call.
  *
  * **The list is deliberately not logged, on either rule.** A page of the
  * caller's own experiments that happens to include a few orphans is not an
