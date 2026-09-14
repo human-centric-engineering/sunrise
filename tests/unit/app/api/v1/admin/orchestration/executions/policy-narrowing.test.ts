@@ -15,8 +15,8 @@
  *
  * `checkAuthorizationParity` is not that safety net, despite the family
  * resemblance. It relates `canRead`'s `'subject'` arm to `subjectScope` within
- * one policy (`lib/auth/authorization.ts:363-368` says the other two arms are
- * outside the relation, and `'unattributed'` is the only arm exercised here),
+ * one policy (`AuthorizationPolicy.canRead`'s docblock says the other two arms
+ * are outside the relation, and `'unattributed'` is the only arm exercised here),
  * and it compares a policy's two faces rather than two routes. Nothing
  * mechanical checks that these four surfaces agree. This file is the check.
  *

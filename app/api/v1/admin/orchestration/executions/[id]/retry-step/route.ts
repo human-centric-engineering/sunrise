@@ -14,9 +14,11 @@
  *
  * Follows the same pattern as the approve endpoint, but **not** the same
  * ownership: `approve` additionally admits an admin the run's trace names in
- * `approverUserIds`, and this route has no such arm. Under a policy that
- * denies unattributed reads, a delegated approver can clear a gate here and
- * then get a 404 retrying the step they just released.
+ * `approverUserIds`, and this route has no such arm. Under a policy that denies
+ * unattributed reads, a delegated approver who released a gate on a system-owned
+ * run gets a 404 here if that run later fails at some other step — not on the
+ * step they released, which is `completed` and would be a 400 for its owner
+ * too.
  *
  * Authentication: Admin role required.
  */

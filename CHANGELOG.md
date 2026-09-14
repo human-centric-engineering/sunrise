@@ -407,17 +407,27 @@ release process.
   than an answer to the ownerless question, so it is left exactly as it was — the
   same line `conversation-access.ts` draws around its `'shared'` basis.
 
-  **Know what a narrowing policy costs you before you register one — there are
-  two operator paths with no fallback.** A wedged scheduled run counts as zero
-  on every live-engine card, and `force-fail`, the escape hatch for exactly that
-  situation, is gated solely on `adminCanViewExecution` with no second grant of
-  any kind — so the run cannot be seen, drilled into, or killed by anybody. And
-  a run paused at an approval gate is absent from the approvals queue, zero in
-  the badge, and 404 on its detail route, though a named approver could still
-  clear it if they learned the id from somewhere. Neither is reachable on a
-  default install. A fork that narrows this arm wants a vendor-level operator
-  role its own policy still admits, or it has no recovery story for
-  system-owned runs; both are tracked on the multi-tenancy programme.
+  **Know what a narrowing policy costs you before you register one — two
+  operator paths lose their manual controls.** A wedged scheduled run counts as
+  zero on the live-engine Running / Queued / Orphaned cards (the Provider
+  in-flight card is process-wide and unaffected), and `force-fail`, the escape
+  hatch for exactly that situation, is gated solely on `adminCanViewExecution`
+  with no second grant of any kind — so the run cannot be seen, drilled into, or
+  killed **by hand**. And a run paused at an approval gate is absent from the
+  approvals queue, zero in the badge, and 404 on its detail route, though a named
+  approver could still clear it if they learned the id from somewhere. Neither is
+  reachable on a default install.
+
+  **Automatic recovery is unaffected**, which is the difference between an
+  annoyance and an outage: `reapZombieExecutions` (the `zombieReaper` platform
+  job) filters on status and a time cutoff with no `userId` and no policy, so it
+  still force-fails a stuck `running` row after 30 minutes, a `pending` one after
+  an hour, and an abandoned approval after 7 days. What a narrowing fork loses is
+  **operator-initiated** recovery inside those windows. Keep a vendor-level
+  operator role your own policy admits if you want an engineer able to act
+  sooner. The approvals half is tracked as a defect on the multi-tenancy
+  programme; the force-fail half is recorded beside it rather than separately,
+  since the 7-day approval sweep is the slower of the two.
 
   **The approver carve-out below covers the act and not the discovery, so do not
   read it as "approvals keep working".** The list, detail and live routes have no approver
