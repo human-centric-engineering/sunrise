@@ -24,12 +24,17 @@
 
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
-import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
+import {
+  experimentVisibilityWhere,
+  experimentAccessBasis,
+  logExperimentAccess,
+} from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
+import { getClientIP } from '@/lib/security/ip';
 import { runPairwiseVerdictSchema } from '@/lib/validations/orchestration-evaluations';
 import { pairwiseVerdictLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { pairwiseJudgeAgentGrader } from '@/lib/orchestration/evaluations/graders/pairwise/judge-agent';
@@ -65,8 +70,10 @@ export const POST = withAdminAuth<Params>(
       select: {
         id: true,
         // Not for the ownership test — the `where` above settles that — but so
-        // the write at the end can pin itself to the owner this read saw.
+        // the write at the end can pin itself to the owner this read saw, and
+        // so the audit row can say which of the two reasons admitted it.
         createdBy: true,
+        name: true,
         datasetId: true,
         variants: {
           select: { id: true, label: true, evaluationRunId: true },
@@ -237,6 +244,27 @@ export const POST = withAdminAuth<Params>(
     await prisma.aiExperiment.update({
       where: { id, createdBy: experiment.createdBy },
       data: { pairwiseVerdict: summary as unknown as Prisma.InputJsonValue },
+    });
+
+    // This write recorded nothing before t-687 — the only mutation in the
+    // family that left no audit row at all. `'always'`, like the other three:
+    // overwriting an experiment's stored verdict is a config change whoever
+    // reads the result afterwards may need to place.
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: experiment.name,
+      basis: experimentAccessBasis(experiment, session.user.id) ?? 'orphan',
+      action: 'experiment.verdict_compute',
+      record: 'always',
+      extra: {
+        judgeAgentSlug: body.judgeAgentSlug,
+        variantAId: variantA.id,
+        variantBId: variantB.id,
+        casesScored,
+        casesFailed,
+      },
+      clientIp: getClientIP(request),
     });
 
     log.info('Pairwise verdict computed', {

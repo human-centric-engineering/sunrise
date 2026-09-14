@@ -12,11 +12,16 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
+import {
+  experimentVisibilityWhere,
+  experimentAccessBasis,
+  logExperimentAccess,
+} from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { getClientIP } from '@/lib/security/ip';
 import type { PairwiseVerdictSummary } from '@/types/orchestration';
 
 type Params = { id: string };
@@ -97,6 +102,20 @@ export const GET = withAdminAuth<Params>(
     if (!experiment) {
       throw new NotFoundError(`Experiment ${id} not found`);
     }
+
+    // The second read of one experiment's contents, so the same rule as the
+    // detail route: a row whose creator was erased is worth a record, your own
+    // is not. Leaving it out would let an admin read an orphan's scores through
+    // this route while `GET /:id` left a trail for the same rows.
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: experiment.name,
+      basis: experimentAccessBasis(experiment, session.user.id) ?? 'orphan',
+      action: 'experiment.compare_view',
+      record: 'non-owner-only',
+      clientIp: getClientIP(request),
+    });
 
     const allMetricSlugs = new Set<string>();
     const variants: VariantCompareRow[] = experiment.variants.map((v) => {

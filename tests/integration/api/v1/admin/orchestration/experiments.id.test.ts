@@ -556,3 +556,101 @@ describe('ownership — a cross-user read, edit or delete is a 404', () => {
     );
   });
 });
+
+/**
+ * t-687: an admin reaching an experiment that is not their own leaves a trace.
+ *
+ * Before this, experiments recorded config changes and nothing about *whose*
+ * row had been touched — so an admin reading, editing or deleting a row whose
+ * creator had been erased under Art. 17 was indistinguishable in the audit log
+ * from one working on their own. Datasets had carried the basis since t-679;
+ * experiments were the model with the same `SetNull` column and none of it.
+ *
+ * Both directions are asserted, and the negative one is the reason the positive
+ * one is here: `expect(logAdminAction).not.toHaveBeenCalled()` also passes when
+ * the logger is unreachable — mis-mocked, or a route that stopped calling it —
+ * so the orphan case immediately below pins that it fires at all.
+ *
+ * The owner-aware fake is what makes the basis assertions able to fail: with
+ * `mockResolvedValue` the route gets its row whatever it asked for, so the
+ * basis would be read off whichever fixture the test happened to hand back.
+ */
+describe('audit — who reached a row that was not theirs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiExperiment.update).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiExperiment.delete).mockResolvedValue(makeExperiment() as never);
+  });
+
+  it('writes no access row when an admin reads their own experiment', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID })]) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+    // Routine self-access. One row per page view of your own work would bury
+    // the reads that matter.
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+
+  it('writes exactly one access row, carrying the basis, when the row is an orphan', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: null })]) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: ADMIN_ID,
+        action: 'experiment.view',
+        entityType: 'experiment',
+        entityId: EXPERIMENT_ID,
+        // `'orphan'`, not `'system'`: `createdBy` is `SetNull`, so a null here
+        // can only mean an erasure detached a real owner.
+        metadata: { accessBasis: 'orphan' },
+      })
+    );
+  });
+
+  it('still records the owner’s own write, now saying so', async () => {
+    // The rule that differs from datasets, deliberately: every mutation of an
+    // experiment wrote an audit row before t-687, including the owner's, and
+    // narrowing that to match `logDatasetAccess` would delete rows an operator
+    // can read today.
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID })]) as never
+    );
+
+    const response = await PATCH(makePatchRequest({ name: 'Renamed' }), makeContext());
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'experiment.update',
+        metadata: { changedKeys: ['name'], accessBasis: 'owner' },
+      })
+    );
+  });
+
+  it('marks a write to an orphan as such', async () => {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: null })]) as never
+    );
+
+    const response = await DELETE(makeDeleteRequest(), makeContext());
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'experiment.delete',
+        metadata: { accessBasis: 'orphan' },
+      })
+    );
+  });
+});

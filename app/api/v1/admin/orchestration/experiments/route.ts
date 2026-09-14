@@ -121,6 +121,11 @@ export const GET = withAdminAuth(
       prisma.aiExperiment.count({ where }),
     ]);
 
+    // No audit row, deliberately: a page of the caller's own experiments that
+    // happens to include a few orphans is not an access worth a row each, and
+    // logging impressions would bury the detail reads and writes that are. Same
+    // call datasets make — stated here because the absence of a call is not
+    // something a reader can tell was decided. See `ExperimentAuditRule`.
     log.info('Experiments listed', { total, page });
     return paginatedResponse(experiments, { page, limit, total });
   },
@@ -182,6 +187,9 @@ export const POST = withAdminAuth(
       },
     });
 
+    // Stays on `logAdminAction` rather than moving to `logExperimentAccess`:
+    // this route stamps `createdBy` to the caller, so the basis can only ever be
+    // `'owner'` and recording it would add a field that carries no information.
     logAdminAction({
       userId: session.user.id,
       action: 'experiment.create',

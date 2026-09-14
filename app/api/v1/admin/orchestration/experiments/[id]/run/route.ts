@@ -27,7 +27,10 @@ import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  experimentAccessBasis,
+  logExperimentAccess,
+} from '@/lib/orchestration/access/experiment-access';
 
 type Params = { id: string };
 
@@ -171,13 +174,14 @@ export const POST = withAdminAuth<Params>(
 
     const datasetDriven = updated.variants.some((v) => v.evaluationRunId !== null);
 
-    logAdminAction({
-      userId: session.user.id,
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: updated.name,
+      basis: experimentAccessBasis(updated, session.user.id) ?? 'orphan',
       action: 'experiment.run',
-      entityType: 'experiment',
-      entityId: id,
-      entityName: updated.name,
-      metadata: {
+      record: 'always',
+      extra: {
         variantCount: updated.variants.length,
         mode: datasetDriven ? 'dataset_driven' : 'session_legacy',
       },

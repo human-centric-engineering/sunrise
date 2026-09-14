@@ -26,10 +26,10 @@ import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { ConflictError, NotFoundError } from '@/lib/api/errors';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   experimentVisibilityWhere,
   experimentAccessBasis,
+  logExperimentAccess,
 } from '@/lib/orchestration/access/experiment-access';
 
 type Params = { id: string };
@@ -79,13 +79,18 @@ export const POST = withAdminAuth<Params>(
       },
     });
 
-    logAdminAction({
-      userId: session.user.id,
+    // The basis is the state BEFORE the claim — `'orphan'`, checked above and
+    // re-checked by the null guard on the write. Reading it off `experiment`
+    // would say `'owner'`, which is true a millisecond later and useless as a
+    // record of why this admin was allowed to take it.
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: experiment.name,
+      basis: 'orphan',
       action: 'experiment.claim',
-      entityType: 'experiment',
-      entityId: id,
-      entityName: experiment.name,
-      metadata: { previousOwner: null },
+      record: 'always',
+      extra: { previousOwner: null },
       clientIp: clientIP,
     });
 

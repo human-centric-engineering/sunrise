@@ -22,8 +22,11 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
-import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
+import {
+  experimentVisibilityWhere,
+  experimentAccessBasis,
+  logExperimentAccess,
+} from '@/lib/orchestration/access/experiment-access';
 
 type Params = { id: string };
 
@@ -61,6 +64,19 @@ export const GET = withAdminAuth<Params>(
       },
     });
     if (!experiment) throw new NotFoundError('Experiment not found');
+
+    // The row reached the caller, so the policy already said yes — this only
+    // names WHICH of the two reasons it was. Reading a row whose creator was
+    // erased is worth a record; reading your own is not.
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: experiment.name,
+      basis: experimentAccessBasis(experiment, session.user.id) ?? 'orphan',
+      action: 'experiment.view',
+      record: 'non-owner-only',
+      clientIp: getClientIP(request),
+    });
 
     log.info('Experiment fetched', { experimentId: id });
     return successResponse(experiment);
@@ -120,13 +136,18 @@ export const PATCH = withAdminAuth<Params>(
       },
     });
 
-    logAdminAction({
-      userId: session.user.id,
+    // `'always'`, not `'non-owner-only'`: every mutation of an experiment wrote
+    // an audit row before this helper existed, including the owner's own, and
+    // narrowing that to match `logDatasetAccess` would delete rows an operator
+    // can read today. See `ExperimentAuditRule`.
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: experiment.name,
+      basis: experimentAccessBasis(existing, session.user.id) ?? 'orphan',
       action: 'experiment.update',
-      entityType: 'experiment',
-      entityId: id,
-      entityName: experiment.name,
-      metadata: { changedKeys: Object.keys(body) },
+      record: 'always',
+      extra: { changedKeys: Object.keys(body) },
       clientIp: clientIP,
     });
 
@@ -161,12 +182,13 @@ export const DELETE = withAdminAuth<Params>(
     // Pinned to the ownership the read above saw — see the PATCH handler.
     await prisma.aiExperiment.delete({ where: { id, createdBy: existing.createdBy } });
 
-    logAdminAction({
-      userId: session.user.id,
+    logExperimentAccess({
+      adminUserId: session.user.id,
+      experimentId: id,
+      experimentName: existing.name,
+      basis: experimentAccessBasis(existing, session.user.id) ?? 'orphan',
       action: 'experiment.delete',
-      entityType: 'experiment',
-      entityId: id,
-      entityName: existing.name,
+      record: 'always',
       clientIp: clientIP,
     });
 
