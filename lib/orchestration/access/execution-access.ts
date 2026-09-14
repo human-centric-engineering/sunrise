@@ -63,8 +63,9 @@
  * not an answer to the ownerless question, and `conversation-access.ts` draws the
  * same line around its `'shared'` basis.
  *
- * **It is not enough to keep the approval flow working under a narrowing policy,
- * and this is the part to read before relying on it.** The delegation lives on
+ * **That carve-out is not enough to keep the approval flow working under a
+ * narrowing policy, and this is the part to read before relying on it.** The
+ * delegation lives on
  * the three act routes and nowhere else. The list, the detail route and the live
  * route have no approver arm, so for a fork whose policy denies unattributed
  * reads a scheduled run paused at a gate is absent from the approvals queue
@@ -75,11 +76,12 @@
  * surface rather than for want of a permission.
  *
  * That is the #502 failure arriving by a different route, and closing it is a
- * design question this task did not settle: giving the list an approver arm means
+ * design question the sweep that wrote this block did not settle: giving the list
+ * an approver arm means
  * querying `approverUserIds` inside the `executionTrace` JSON, which no index
- * covers, and it would widen what a default install shows. Tracked as a defect on
- * `f-mt-authz`. Until then, **a fork that narrows `canRead` must surface pending
- * approvals some other way.**
+ * covers, and it would widen what a default install shows. Tracked as t-690 on
+ * `f-mt-authz`, with the four options weighed. Until then, **a fork that narrows
+ * `canRead` must surface pending approvals some other way.**
  *
  * The act-side carve-out is pinned in
  * `tests/unit/app/api/v1/admin/orchestration/executions/policy-narrowing.test.ts`
