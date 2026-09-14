@@ -449,9 +449,26 @@ release process.
   is `experimentAccessBasis(row, session.user.id) === 'orphan'`, both from
   `@/lib/orchestration/access/experiment-access`.
 
+  **Four refusals were tightened along the way, none of them reachable through
+  today's routes.** `POST /experiments/:id/verdicts` and `GET
+  /experiments/:id/compare` gained the defence-in-depth check on their bound
+  dataset that `POST /experiments/:id/run` has carried since t-678 — the dataset
+  must be one the caller may read, and all three now answer a 404 naming the
+  **dataset** rather than claiming the experiment does not exist. `run`'s status
+  write is pinned to the ownership its read saw, matching PATCH, DELETE and
+  verdicts, so an orphan claimed mid-run can no longer be flipped to `running` by
+  the admin who no longer holds it. And `POST /experiments/:id/claim` answers a
+  row it cannot see with 404 rather than a 409 that would confirm the row exists.
+
+  Reachability is the same for all four: `POST /experiments` is the only path
+  that binds a dataset and it enforces `datasetVisibilityWhere`, and the update
+  schema refuses `datasetId`, so a fork that has **added a second
+  experiment-create path** is the one that will notice these.
+
   A default install is unchanged across all four models. This moved no
   visibility, only the machinery under it — plus the audit rows above, which are
-  additive.
+  additive, and the four refusals above, which are unreachable without a fork's
+  own second create path.
 
 - **A fork can finally narrow who reads a stranger's inbound messages.** When a
   member of the public texts, emails or Slacks an agent, the thread is stored
