@@ -440,9 +440,12 @@ release process.
   Two things worth knowing about the shape. Semantic search keeps a hand-written
   SQL predicate — a pgvector distance query is not expressible through Prisma's
   query builder — so the rule genuinely exists twice; the copies are pinned
-  against each other in `conversation-access.test.ts`, including the expiry
+  against each other in `policy-narrowing.test.ts`, including the expiry
   boundary, where `gt` versus `gte` decides whether a share expiring exactly now
-  appears in a list that its detail route would refuse. And narrowing visibility
+  appears in a list that its detail route would refuse. The share arm also
+  excludes ownerless rows in both spellings, which is what keeps the set form in
+  step with the yes/no one: that decides an ownerless row on the policy alone and
+  never reaches its share check. And narrowing visibility
   narrows the audit trail with it, in the safe direction: a thread that is no
   longer returned is not read, so there is nothing to record. A row returned
   *without* a log would be the defect, which is why the basis is still derived

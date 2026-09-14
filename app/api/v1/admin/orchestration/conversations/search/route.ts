@@ -95,12 +95,12 @@ export const GET = withAdminAuth(async (request, session) => {
   // `limit` rows and leak the existence of the omitted ones through the count.
   const ownerlessArm = session.unattributedReads.conversation ? ` OR c."userId" IS NULL` : '';
   const conditions: string[] = [
-    `(c."userId" = $4${ownerlessArm} OR EXISTS (
+    `(c."userId" = $4${ownerlessArm} OR (c."userId" IS NOT NULL AND EXISTS (
        SELECT 1 FROM "ai_conversation_share" s
        WHERE s."conversationId" = c.id
          AND s."revokedAt" IS NULL
          AND (s."expiresAt" IS NULL OR s."expiresAt" > NOW())
-     ))`,
+     )))`,
   ];
   const params: unknown[] = [embeddingStr, threshold, limit, session.user.id];
   let paramIdx = 5;

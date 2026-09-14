@@ -193,6 +193,19 @@ export function conversationVisibilityWhere(
 
   if (!options.excludeShared) {
     arms.push({
+      // `userId: { not: null }` is what keeps this arm in step with
+      // {@link adminCanViewConversation}, which decides an ownerless row on the
+      // policy alone and never reaches its share check. Without it the two faces
+      // disagree about one row — ownerless AND carrying an active share — which
+      // the list would show and the detail route would 404. Unreachable today
+      // (only an owner can create a share, and `AiConversation.user` is
+      // `onDelete: Cascade`, so a share cannot outlive its owner), and pinned
+      // anyway: the guarantee this module states is what the next reader builds
+      // on, and "currently unreachable" is not the same as "cannot happen".
+      //
+      // It is also the right answer on its own terms. A share is the owner's
+      // consent; a row nobody owns has nobody who could have given it.
+      userId: { not: null },
       share: {
         revokedAt: null,
         OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],

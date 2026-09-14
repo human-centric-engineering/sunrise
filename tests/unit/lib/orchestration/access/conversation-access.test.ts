@@ -292,8 +292,16 @@ describe('adminCanViewConversation under a narrowing policy', () => {
 });
 
 describe('conversationVisibilityWhere', () => {
-  /** The share arm as the fragment spells it. */
+  /**
+   * The share arm as the fragment spells it.
+   *
+   * `userId: { not: null }` is load-bearing, not decoration: the yes/no face
+   * decides an ownerless row on the policy alone and never reaches its share
+   * check, so without this the two faces disagree about a row that is ownerless
+   * AND shared — the list would show it and the detail route would 404.
+   */
   const SHARE_ARM = {
+    userId: { not: null },
     share: { revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }] },
   };
 

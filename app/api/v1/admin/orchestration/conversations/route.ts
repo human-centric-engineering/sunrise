@@ -3,11 +3,17 @@
  *
  * GET /api/v1/admin/orchestration/conversations
  *
- * Returns the calling admin's own conversations, plus actively-shared ones
- * and system-owned inbound threads (`userId IS NULL`). Matches the scoping
- * used by the detail, PATCH, and DELETE endpoints. Supports filtering by
- * agent, date range, and text search. Any `userId` query parameter is
- * ignored — callers never see another admin's own conversations.
+ * Returns the calling admin's own conversations, plus actively-shared ones and
+ * system-owned inbound threads (`userId IS NULL`) where the authorization
+ * policy permits an unattributed read.
+ *
+ * Matches the scoping used by the **detail** endpoint, which reads the same
+ * answer through `adminCanViewConversation`. **PATCH and DELETE are narrower**
+ * and always were: they refuse a `'shared'` basis, because a view grant is not
+ * a destroy grant. Saying they match was never true.
+ *
+ * Supports filtering by agent, date range, and text search. Any `userId` query
+ * parameter is ignored — callers never see another admin's own conversations.
  *
  * Authentication: Admin role required.
  */

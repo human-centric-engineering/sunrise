@@ -74,6 +74,8 @@ import {
 import { GET as listConversations } from '@/app/api/v1/admin/orchestration/conversations/route';
 import { GET as conversationDetail } from '@/app/api/v1/admin/orchestration/conversations/[id]/route';
 import { GET as searchConversations } from '@/app/api/v1/admin/orchestration/conversations/search/route';
+import { conversationVisibilityWhere } from '@/lib/orchestration/access/conversation-access';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -89,6 +91,15 @@ function registerNoUnattributedReads(): void {
         ? Promise.resolve(false)
         : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
   });
+}
+
+/** A session whose policy permits unattributed reads — the default install. */
+function sessionAllowing(): AuthenticatedSession {
+  return {
+    user: { id: ADMIN_ID, role: 'ADMIN' },
+    principal: { userId: ADMIN_ID, role: 'ADMIN', credential: 'session' },
+    unattributedReads: { conversation: true, dataset: true, execution: true, experiment: true },
+  } as unknown as AuthenticatedSession;
 }
 
 function makeRequest(path: string): NextRequest {
@@ -228,5 +239,76 @@ describe('audit logging tracks the basis that admitted the row', () => {
     expect(logConversationAccess).toHaveBeenCalledWith(
       expect.objectContaining({ accessBasis: 'system' })
     );
+  });
+});
+
+// ─── The SQL is a fourth spelling of the rule, so pin it against the third ────
+
+describe('the search route’s SQL and the Prisma fragment agree', () => {
+  // Round 2 of review found this group missing, and found the comment claiming
+  // it existed. Before it, deleting `ownerlessArm` outright left every test in
+  // the repo green while semantic search silently stopped returning inbound
+  // threads on a DEFAULT install — the only SQL assertion anywhere was the
+  // negative one above, which passes when the arm is gone for the wrong reason.
+
+  async function sqlFor(policy: 'default' | 'narrowed'): Promise<string> {
+    // Cleared per call, not per test: two invocations in one test otherwise
+    // accumulate on the same mock and `calls[0]` hands back the FIRST query.
+    // The delta assertion below caught exactly that, which is the argument for
+    // comparing the two strings rather than asserting on each separately.
+    vi.mocked(prisma.$queryRawUnsafe).mockClear();
+    __resetAuthorizationPolicyForTests();
+    if (policy === 'narrowed') registerNoUnattributedReads();
+    await searchConversations(makeRequest('/conversations/search?q=refund'));
+    return vi.mocked(prisma.$queryRawUnsafe).mock.calls[0]?.[0];
+  }
+
+  it('emits the ownerless arm on a default install', async () => {
+    // The positive half. Without it, "the arm is absent" passes whether the
+    // policy refused it or somebody deleted it.
+    expect(await sqlFor('default')).toContain('c."userId" IS NULL');
+  });
+
+  it('omits it, and nothing else, when the policy refuses', async () => {
+    const [allowed, refused] = [await sqlFor('default'), await sqlFor('narrowed')];
+    // Exactly one difference between the two, and it is the arm. Asserted as a
+    // string delta rather than two `toContain`s, so an edit that also changed
+    // the share subquery under a narrowing policy could not slip through.
+    expect(allowed.replace(' OR c."userId" IS NULL', '')).toBe(refused);
+  });
+
+  it('spells the active-share test the same way the fragment does', async () => {
+    // The rule exists twice by construction: Prisma takes data, not a function,
+    // and a pgvector distance query is not expressible through its builder. So
+    // the copies are compared here — including `>` against `gt`, which is the
+    // character that decides whether a share expiring exactly now shows in a
+    // list whose detail route refuses it.
+    const sql = await sqlFor('default');
+    const arm = (
+      conversationVisibilityWhere(sessionAllowing()) as {
+        OR: { share?: { revokedAt: null; OR: { expiresAt: unknown }[] } }[];
+      }
+    ).OR.find((a) => a.share)!;
+
+    expect(arm.share!.revokedAt).toBeNull();
+    expect(sql).toContain('s."revokedAt" IS NULL');
+
+    expect(arm.share!.OR[0]).toEqual({ expiresAt: null });
+    expect(sql).toContain('s."expiresAt" IS NULL');
+
+    expect(Object.keys(arm.share!.OR[1].expiresAt as object)).toEqual(['gt']);
+    expect(sql).toContain('s."expiresAt" > NOW()');
+    expect(sql).not.toContain('s."expiresAt" >= NOW()');
+  });
+
+  it('excludes ownerless rows from the share arm, as the helper does', async () => {
+    // `adminCanViewConversation` decides an ownerless row on the policy alone
+    // and never reaches its share check. Both set-forms must match, or a row
+    // that is ownerless AND shared appears in a list that 404s on click.
+    const arm = (
+      conversationVisibilityWhere(sessionAllowing()) as { OR: Record<string, unknown>[] }
+    ).OR.find((a) => 'share' in a)!;
+    expect(arm.userId).toEqual({ not: null });
+    expect(await sqlFor('default')).toContain('c."userId" IS NOT NULL AND EXISTS');
   });
 });

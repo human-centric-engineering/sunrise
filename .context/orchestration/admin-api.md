@@ -1075,7 +1075,7 @@ Four routes over `AiConversation` / `AiMessage`. **Every endpoint gates on `admi
 >
 > **Cross-user access returns 404, not 403.** We do not confirm the existence of resources owned by another user. Every mutating route does the ownership check via `findFirst({ where: { id, userId: session.user.id } })` — a null result becomes `NotFoundError`. Don't "helpfully" switch this to 403: the information leak is the whole point 404 is avoiding.
 >
-> Every conversation route contains the literal `userId: session.user.id` pattern. This is enforced by a pre-PR grep check.
+> Conversation routes reach their owner clause through `lib/orchestration/access/conversation-access.ts` — `adminCanViewConversation` for a single row, `conversationVisibilityWhere` for a set — so the literal `userId: session.user.id` no longer appears in the list route at all. **No grep check enforces this**; an earlier version of this note claimed one and none exists. What does exist is the coupling itself: both faces read the same policy answer, so they cannot disagree. A mechanical check is proposed in [#775](https://github.com/human-centric-engineering/sunrise/issues/775).
 
 ### List conversations
 
@@ -1083,7 +1083,7 @@ Four routes over `AiConversation` / `AiMessage`. **Every endpoint gates on `admi
 curl '/api/v1/admin/orchestration/conversations?page=1&limit=20&agentId=<cuid>&isActive=true&q=support'
 ```
 
-Validated by `listConversationsQuerySchema`. Filters: `agentId` (CUID), `isActive` (coerced bool), `q` (case-insensitive `contains` on `title`). Response includes `_count.messages`. Always scoped to `userId: session.user.id` — the filter is non-negotiable.
+Validated by `listConversationsQuerySchema`. Filters: `agentId` (CUID), `isActive` (coerced bool), `q` (case-insensitive `contains` on `title`). Response includes `_count.messages`. Scoped by `conversationVisibilityWhere(session)`: the caller's own rows, actively-shared ones, and ownerless inbound threads where the authorization policy permits an unattributed read. The owner arm is non-negotiable — it is emitted unconditionally, so no combination of policy answers can widen the clause to every row.
 
 ### Read messages
 

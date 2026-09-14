@@ -31,8 +31,12 @@ Returns `{ ok, basis: 'owner' | 'shared' | 'system' | null, ownerId }`.
 
 **It takes the session, not a user id** — the `'system'` arm reads the policy's
 answer from `session.unattributedReads.conversation`, which the guard resolved
-before the handler ran. Passing `session.user.id` will not compile; casting
-around that gives you a `TypeError` on every conversation read.
+before the handler ran. Passing `session.user.id` will not compile, and what a
+cast does next depends on what you cast: a bare string throws `TypeError` on
+every conversation read, while a hand-built object carrying only `user` reads
+its owner arm fine and throws only when it reaches an ownerless row — a quiet,
+partial failure that looks like a data problem. Pass the session the guard gave
+you.
 
 The set form is `conversationVisibilityWhere(session)` in the same module, and
 the list route uses it. The two faces are written next to each other and read the
@@ -58,7 +62,9 @@ where: {
 **Two routes do not use either face, and both are deliberate.** Semantic search
 hand-writes the predicate in SQL, because a pgvector distance query is not
 expressible through Prisma's query builder — the copies are pinned against each
-other in `conversation-access.test.ts`. And `GET /conversations/export` is
+other in `policy-narrowing.test.ts`, in both directions: the arm is asserted
+present on a default install and absent under a narrowing policy, and the
+active-share test is compared character for character against the fragment's. And `GET /conversations/export` is
 hard-scoped to `{ userId: session.user.id }`: bulk export of other people's
 conversations is a privacy footgun, so it is owner-only by design and sees
 neither shared nor ownerless rows.
