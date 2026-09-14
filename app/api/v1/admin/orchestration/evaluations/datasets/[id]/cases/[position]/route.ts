@@ -51,7 +51,7 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
     const body = await validateRequestBody(request, patchDatasetCaseSchema);
 
     const dataset = await prisma.aiDataset.findFirst({
-      where: { AND: [await datasetVisibilityWhere(session), { id: datasetId }] },
+      where: { AND: [datasetVisibilityWhere(session), { id: datasetId }] },
       // `userId` so the write below can pin itself to the ownership this read
       // saw — not for the boundary test, which the `where` above settles.
       select: { id: true, name: true, userId: true },

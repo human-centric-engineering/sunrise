@@ -33,7 +33,7 @@ export const GET = withAdminAuth<{ id: string }>(
     const { cursor, limit } = validateQueryParams(searchParams, listDatasetCasesQuerySchema);
 
     const dataset = await prisma.aiDataset.findFirst({
-      where: { AND: [await datasetVisibilityWhere(session), { id: id.data }] },
+      where: { AND: [datasetVisibilityWhere(session), { id: id.data }] },
       select: { id: true, name: true, userId: true, caseCount: true },
     });
     if (!dataset) throw new NotFoundError(`Dataset ${id.data} not found`);

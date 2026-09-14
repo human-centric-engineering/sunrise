@@ -46,7 +46,7 @@ export const GET = withAdminAuth(
     if (q) filters.name = { contains: q, mode: 'insensitive' };
     if (tag) filters.tags = { has: tag };
     const where: Prisma.AiDatasetWhereInput = {
-      AND: [await datasetVisibilityWhere(session), filters],
+      AND: [datasetVisibilityWhere(session), filters],
     };
 
     const [datasets, total] = await Promise.all([

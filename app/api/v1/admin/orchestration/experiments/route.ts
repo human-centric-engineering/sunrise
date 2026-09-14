@@ -26,15 +26,16 @@
  * here reads them too — but only when `canRead` permits an `'unattributed'`
  * read, which the default policy grants platform staff and a fork narrows by
  * registering a policy. Without that, scoping to the owner would make a retained
- * row unreachable by everyone (t-678). `mayReadUnattributed` is the one place
- * that question is asked.
+ * row unreachable by everyone (t-678). `lib/orchestration/access/experiment-access.ts`
+ * is the one place that question is asked, and it reads the answer the guard
+ * already resolved onto the session rather than asking a second time.
  */
 
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
-import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
+import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
@@ -95,7 +96,7 @@ export const GET = withAdminAuth(
     // Mine, plus nobody's when the policy allows it. `AND`, not a spread: the
     // optional filters are assigned onto their own object so no query parameter
     // can reach the key that is the boundary.
-    const ownerClause = await visibleExperimentClause(session);
+    const ownerClause = experimentVisibilityWhere(session);
     const filters: Prisma.AiExperimentWhereInput = {};
     if (status) filters.status = status;
     if (agentId) filters.agentId = agentId;
@@ -144,7 +145,7 @@ export const POST = withAdminAuth(
     // an ownerless dataset (t-678); binding and running must agree.
     if (body.datasetId) {
       const dataset = await prisma.aiDataset.findFirst({
-        where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
+        where: { AND: [datasetVisibilityWhere(session), { id: body.datasetId }] },
         select: { id: true },
       });
       if (!dataset) {

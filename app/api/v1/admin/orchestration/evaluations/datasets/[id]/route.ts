@@ -39,7 +39,7 @@ import { patchDatasetSchema } from '@/lib/validations/orchestration-evaluations'
  */
 async function loadDataset(id: string, session: AuthenticatedSession) {
   const dataset = await prisma.aiDataset.findFirst({
-    where: { AND: [await datasetVisibilityWhere(session), { id }] },
+    where: { AND: [datasetVisibilityWhere(session), { id }] },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${id} not found`);
   const basis = datasetAccessBasis(dataset, session.user.id);

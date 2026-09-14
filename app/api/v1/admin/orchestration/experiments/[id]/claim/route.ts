@@ -27,7 +27,10 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { ConflictError, NotFoundError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { visibleExperimentClause, isUnowned } from '@/lib/orchestration/experiments/visible-scope';
+import {
+  experimentVisibilityWhere,
+  experimentAccessBasis,
+} from '@/lib/orchestration/access/experiment-access';
 
 type Params = { id: string };
 
@@ -40,12 +43,12 @@ export const POST = withAdminAuth<Params>(
     // Read under the same visible clause as every other route, so a row this
     // caller could not have seen is not one they can learn about by claiming it.
     const existing = await prisma.aiExperiment.findFirst({
-      where: { AND: [await visibleExperimentClause(session), { id }] },
+      where: { AND: [experimentVisibilityWhere(session), { id }] },
       select: { id: true, name: true, createdBy: true },
     });
     if (!existing) throw new NotFoundError('Experiment not found');
 
-    if (!isUnowned(existing)) {
+    if (experimentAccessBasis(existing, session.user.id) !== 'orphan') {
       // Reachable only when the row is the caller's own — a third party's was
       // already a 404 above — so saying so leaks nothing.
       throw new ConflictError('Experiment already has an owner');

@@ -21,11 +21,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import {
-  visibleExperimentClause,
-  DATASET_RESOURCE_KIND,
-} from '@/lib/orchestration/experiments/visible-scope';
-import { mayReadUnattributed } from '@/lib/auth/orphan-reads';
+import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
@@ -45,14 +41,13 @@ export const POST = withAdminAuth<Params>(
     // Quick 404 check before opening a transaction. Cross-user 404 (not
     // 403) so the existence of another admin's experiment never leaks —
     // the posture every route in this family uses (#741).
-    const visible = await visibleExperimentClause(session);
+    const visible = experimentVisibilityWhere(session);
 
-    // Asked before the transaction, not inside it: a fork's policy may do a
-    // membership lookup, and that should not run with a transaction open.
-    const mayReadUnownedDataset = await mayReadUnattributed(
-      session.principal,
-      DATASET_RESOURCE_KIND
-    );
+    // The guard asked the policy before this handler ran, so reading the answer
+    // costs nothing and — more to the point — cannot run a fork's membership
+    // lookup with a transaction open, which is what the `await` this replaced
+    // was carefully sequenced to avoid.
+    const mayReadUnownedDataset = session.unattributedReads.dataset;
 
     const exists = await prisma.aiExperiment.findFirst({
       where: { AND: [visible, { id }] },

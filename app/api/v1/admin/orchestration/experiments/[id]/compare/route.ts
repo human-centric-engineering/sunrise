@@ -12,7 +12,7 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
-import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
+import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
@@ -81,7 +81,7 @@ export const GET = withAdminAuth<Params>(
     // then visible at the query, which is where every other route in this family
     // spells it. Cross-user 404 so a foreign experiment's existence never leaks.
     const experiment = await prisma.aiExperiment.findFirst({
-      where: { AND: [await visibleExperimentClause(session), { id }] },
+      where: { AND: [experimentVisibilityWhere(session), { id }] },
       include: {
         variants: {
           include: {

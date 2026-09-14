@@ -93,7 +93,7 @@ export const POST = withAdminAuth(async (request, session) => {
   // Theirs, or one nobody owns where the policy allows (t-679). An orphan the
   // caller can see but cannot run against is the incoherence #741 was about.
   const dataset = await prisma.aiDataset.findFirst({
-    where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
+    where: { AND: [datasetVisibilityWhere(session), { id: body.datasetId }] },
     select: { id: true, contentHash: true, caseCount: true },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);

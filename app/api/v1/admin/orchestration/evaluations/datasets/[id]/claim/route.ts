@@ -47,7 +47,7 @@ export const POST = withAdminAuth<{ id: string }>(
     // Read under the same visibility clause as every other route, so a row this
     // caller could not have seen is not one they can learn about by claiming it.
     const existing = await prisma.aiDataset.findFirst({
-      where: { AND: [await datasetVisibilityWhere(session), { id }] },
+      where: { AND: [datasetVisibilityWhere(session), { id }] },
       select: { id: true, name: true, userId: true },
     });
     if (!existing) throw new NotFoundError(`Dataset ${id} not found`);

@@ -68,7 +68,7 @@ export const POST = withAdminAuth<{ id: string }>(
 
     // Dataset ownership
     const dataset = await prisma.aiDataset.findFirst({
-      where: { AND: [await datasetVisibilityWhere(session), { id: datasetId }] },
+      where: { AND: [datasetVisibilityWhere(session), { id: datasetId }] },
       select: { id: true, name: true, userId: true },
     });
     if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);

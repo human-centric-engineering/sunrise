@@ -29,7 +29,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // Dataset visibility — same posture as the run-create route.
   const dataset = await prisma.aiDataset.findFirst({
-    where: { AND: [await datasetVisibilityWhere(session), { id: body.datasetId }] },
+    where: { AND: [datasetVisibilityWhere(session), { id: body.datasetId }] },
     select: { id: true },
   });
   if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);

@@ -24,46 +24,38 @@
  *
  * ---
  *
- * **This sits beside two older siblings and deliberately differs from them in
- * two ways.** `conversation-access.ts` and `execution-access.ts` solve the same
- * shape for rows that arrive ownerless — an inbound SMS thread, a scheduled
- * run — and they are worth reading before changing anything here.
+ * **This sits beside three siblings and deliberately differs from two of them
+ * in one way.** `conversation-access.ts` and `execution-access.ts` solve the
+ * same shape for rows that arrive ownerless — an inbound SMS thread, a
+ * scheduled run — and they are worth reading before changing anything here.
  *
- * - **The basis is `'orphan'`, not `'system'`.** Same column state, different
- *   story. A `'system'` conversation was *never* personal: it belongs to the
- *   deployment and always did. An `'orphan'` dataset *was* somebody's, and the
- *   link was removed by an erasure. Calling that `'system'` would assert
- *   something false, and the two deserve different audit weight — a stranger's
- *   correspondence is not a de-attributed test fixture. Datasets are never born
- *   ownerless: all three create paths stamp `userId`.
+ * **The basis is `'orphan'`, not `'system'`.** Same column state, different
+ * story, and disjoint by database constraint. A `'system'` conversation was
+ * *never* personal: `AiConversation.userId` is `onDelete: Cascade`, so erasing
+ * the user would have deleted the row, and a null there can only mean the row
+ * was born ownerless. `AiDataset.userId` is `onDelete: SetNull`, so a null here
+ * can only mean an erasure detached it — the dataset *was* somebody's. Calling
+ * that `'system'` would assert something the schema forbids, and the two deserve
+ * different audit weight: a stranger's correspondence is not a de-attributed
+ * test fixture. Datasets are never born ownerless — all three create paths stamp
+ * `userId`.
  *
- * - **This asks on demand; both siblings read a precomputed answer.** All of
- *   them are meant to end up on `session.unattributedReads`, which the guards
- *   resolve once per request: `execution-access.ts` got there in t-685 and
- *   `conversation-access.ts` in t-686, both synchronous because of it. This
- *   helper and `visibleExperimentClause` still `await`
- *   {@link mayReadUnattributed} — the same policy, the same answer, asked a
- *   second time — and folding them in is t-687's work, the last of it.
+ * `experiment-access.ts` is the other `SetNull` model and the closest analogue
+ * of the three; it names its third case `'orphan'` for exactly this reason.
  *
- * @see `lib/orchestration/access/execution-access.ts` — the closest analogue
+ * Since t-687 all four read the same precomputed answer and are synchronous.
+ * This helper used to `await` `mayReadUnattributed`, asking the policy a
+ * second time for an answer the guard already had.
+ *
+ * @see `lib/orchestration/access/experiment-access.ts` — the closest analogue
+ * @see `.context/auth/authorization.md` — the roster: which model, which helper,
+ *      which basis
  * @see `.context/privacy/data-erasure.md` — why these rows exist at all
  */
 
 import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
-import { mayReadUnattributed, type UnattributedReadKind } from '@/lib/auth/orphan-reads';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-
-/**
- * The resource kind the authorization policy sees for this model.
- *
- * Annotated rather than left inferred: the guards precompute an answer per kind,
- * so a value this constant no longer shares with `UNATTRIBUTED_READ_KINDS` would
- * have this helper asking the policy about one string while the session carried
- * an answer for another — two answers inside one request, silently. The
- * annotation makes that a compile error. t-687 collapses the two declarations.
- */
-export const DATASET_RESOURCE_KIND: UnattributedReadKind = 'dataset';
 
 /** Why an admin may see a dataset. */
 export type DatasetAccessBasis = 'owner' | 'orphan';
@@ -113,20 +105,20 @@ export function adminCanViewDataset(
  * replace:
  *
  * ```ts
- * const where = { AND: [await datasetVisibilityWhere(session), ...filters] };
+ * const where = { AND: [datasetVisibilityWhere(session), filters] };
  * ```
  *
- * One policy call per request. Ask once and reuse the answer inside a handler
- * so its own reads cannot disagree with each other.
+ * Synchronous: the guard resolved `session.unattributedReads` before the handler
+ * ran, so there is no policy call to wait for here. Reading the record is also
+ * what retires this module's `DATASET_RESOURCE_KIND` — the record's keys *are*
+ * `UNATTRIBUTED_READ_KINDS`, so `.dataset` cannot drift out of that list without
+ * failing to compile, and there is no `string` on this path to spell wrong. One
+ * answer per request, so a handler's own reads cannot disagree with each other.
  */
-export async function datasetVisibilityWhere(
-  session: AuthenticatedSession
-): Promise<Prisma.AiDatasetWhereInput> {
+export function datasetVisibilityWhere(session: AuthenticatedSession): Prisma.AiDatasetWhereInput {
   const mine = { userId: session.user.id };
 
-  return (await mayReadUnattributed(session.principal, DATASET_RESOURCE_KIND))
-    ? { OR: [mine, { userId: null }] }
-    : mine;
+  return session.unattributedReads.dataset ? { OR: [mine, { userId: null }] } : mine;
 }
 
 /**

@@ -9,7 +9,7 @@
  * hard-coded rule, so both branches are exercised.
  */
 
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
@@ -21,33 +21,45 @@ import {
   adminCanViewDataset,
   datasetVisibilityWhere,
   logDatasetAccess,
-  DATASET_RESOURCE_KIND,
 } from '@/lib/orchestration/access/dataset-access';
-import {
-  registerAuthorizationPolicy,
-  __resetAuthorizationPolicyForTests,
-  DEFAULT_AUTHORIZATION_POLICY,
-} from '@/lib/auth/authorization';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 
 const ADMIN_ID = 'admin-1';
 const OTHER_ID = 'admin-2';
 
-/** Enough of an AuthenticatedSession for these two faces. */
-function sessionFor(userId: string, role: string): AuthenticatedSession {
+/**
+ * Enough of an `AuthenticatedSession` for these two faces.
+ *
+ * `unattributedReads` is the record the guard resolved from the policy before
+ * the handler ran; `dataset` is the only key this module reads. Setting it
+ * directly is the unit-level contract, matching `execution-access.test.ts` —
+ * that the guard fills it from `canRead` is pinned in
+ * `tests/unit/lib/auth/guards-authorization.test.ts`, that each helper reads
+ * its OWN key in `tests/unit/lib/auth/orphan-reads.test.ts`, and that a fork's
+ * policy reaches these routes end to end in the route tests.
+ *
+ * This used to register a policy and await the helper. t-687 made the helper
+ * synchronous, which moved the policy out of this module's reach — so the three
+ * cases that drove `canRead` from here (its `resource.kind`, and safe mode on a
+ * throwing policy) moved to the two files named above rather than being
+ * deleted.
+ */
+function sessionFor(userId: string, mayReadUnowned: boolean): AuthenticatedSession {
   return {
-    user: { id: userId, role },
-    principal: { userId, role, credential: 'session' },
+    user: { id: userId, role: 'ADMIN' },
+    principal: { userId, role: 'ADMIN', credential: 'session' },
+    unattributedReads: {
+      conversation: mayReadUnowned,
+      dataset: mayReadUnowned,
+      execution: mayReadUnowned,
+      experiment: mayReadUnowned,
+    },
   } as unknown as AuthenticatedSession;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-});
-
-afterEach(() => {
-  __resetAuthorizationPolicyForTests();
 });
 
 describe('datasetAccessBasis', () => {
@@ -82,62 +94,27 @@ describe('adminCanViewDataset', () => {
 });
 
 describe('datasetVisibilityWhere', () => {
-  it('admits ownerless rows for a platform admin under the default policy', async () => {
-    await expect(datasetVisibilityWhere(sessionFor(ADMIN_ID, 'ADMIN'))).resolves.toEqual({
+  it('admits ownerless rows when the guard resolved a permitting policy', () => {
+    expect(datasetVisibilityWhere(sessionFor(ADMIN_ID, true))).toEqual({
       OR: [{ userId: ADMIN_ID }, { userId: null }],
     });
   });
 
-  it('narrows to the caller when the policy denies an unattributed read', async () => {
+  it('narrows to the caller when the policy denied an unattributed read', () => {
     // The whole point of the seam: the same admin, a fork's narrower policy,
     // and the fragment changes without a line of route code changing.
-    registerAuthorizationPolicy({
-      ...DEFAULT_AUTHORIZATION_POLICY,
-      canRead: (viewer, target, scope) =>
-        target.kind === 'unattributed'
-          ? Promise.resolve(false)
-          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
-    });
-
-    await expect(datasetVisibilityWhere(sessionFor(ADMIN_ID, 'ADMIN'))).resolves.toEqual({
-      userId: ADMIN_ID,
-    });
+    expect(datasetVisibilityWhere(sessionFor(ADMIN_ID, false))).toEqual({ userId: ADMIN_ID });
   });
 
-  it('asks the policy about this model by name', async () => {
-    const canRead = vi.fn().mockResolvedValue(true);
-    registerAuthorizationPolicy({ ...DEFAULT_AUTHORIZATION_POLICY, canRead });
-
-    await datasetVisibilityWhere(sessionFor(ADMIN_ID, 'ADMIN'));
-
-    // A generic label would make a fork unable to answer differently per model.
-    // `asking` says WHICH ownerless question this is: nothing resolved a row, so
-    // it is the capability question, and the default policy's "give the resolver
-    // an ownerId" diagnostic must not fire for it.
-    expect(canRead).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: ADMIN_ID }),
-      {
-        kind: 'unattributed',
-        asking: 'any-row-of-this-kind',
-        resource: { kind: DATASET_RESOURCE_KIND },
-      },
-      expect.anything()
-    );
-  });
-
-  it('narrows rather than widens when the policy throws', async () => {
-    // Safe mode denies the unattributed arm, so the failure direction is
-    // "orphans stay hidden", never "orphans become public".
-    registerAuthorizationPolicy({
-      ...DEFAULT_AUTHORIZATION_POLICY,
-      canRead: () => {
-        throw new Error('policy exploded');
-      },
-    });
-
-    await expect(datasetVisibilityWhere(sessionFor(ADMIN_ID, 'ADMIN'))).resolves.toEqual({
-      userId: ADMIN_ID,
-    });
+  it('never admits another admin’s rows, on either branch', () => {
+    // The direction no policy value may move. `'nobody owns this'` is a third
+    // case, not a softer spelling of `'someone else owns this'` — widening the
+    // owner clause instead of adding the third case is what #741 closed.
+    for (const mayReadUnowned of [true, false]) {
+      expect(
+        JSON.stringify(datasetVisibilityWhere(sessionFor(ADMIN_ID, mayReadUnowned)))
+      ).not.toContain(OTHER_ID);
+    }
   });
 });
 

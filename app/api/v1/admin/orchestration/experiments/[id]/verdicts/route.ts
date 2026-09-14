@@ -24,7 +24,7 @@
 
 import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
-import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
+import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -61,7 +61,7 @@ export const POST = withAdminAuth<Params>(
     // every other route in this family. Cross-user 404 so a foreign experiment's
     // existence never leaks.
     const experiment = await prisma.aiExperiment.findFirst({
-      where: { AND: [await visibleExperimentClause(session), { id }] },
+      where: { AND: [experimentVisibilityWhere(session), { id }] },
       select: {
         id: true,
         // Not for the ownership test — the `where` above settles that — but so

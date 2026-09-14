@@ -10,8 +10,8 @@
  * Ownership: owner-scoped on `createdBy`, matching the rest of the family — a
  * cross-user read, edit or delete is a 404, so the existence of another admin's
  * experiment never leaks. See the header of `../route.ts` for why the family is
- * owner-scoped rather than admin-global (#741), and `visibleExperimentClause`
- * for why an experiment nobody owns is still reachable here (t-678).
+ * owner-scoped rather than admin-global (#741), and `experiment-access.ts` for
+ * why an experiment nobody owns is still reachable here (t-678).
  */
 
 import { z } from 'zod';
@@ -23,7 +23,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { visibleExperimentClause } from '@/lib/orchestration/experiments/visible-scope';
+import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 
 type Params = { id: string };
 
@@ -49,7 +49,7 @@ export const GET = withAdminAuth<Params>(
     const log = await getRouteLogger(request);
 
     const experiment = await prisma.aiExperiment.findFirst({
-      where: { AND: [await visibleExperimentClause(session), { id }] },
+      where: { AND: [experimentVisibilityWhere(session), { id }] },
       include: {
         agent: { select: { id: true, name: true, slug: true } },
         variants: {
@@ -83,7 +83,7 @@ export const PATCH = withAdminAuth<Params>(
     const body = await validateRequestBody(request, updateSchema);
 
     const existing = await prisma.aiExperiment.findFirst({
-      where: { AND: [await visibleExperimentClause(session), { id }] },
+      where: { AND: [experimentVisibilityWhere(session), { id }] },
     });
     if (!existing) throw new NotFoundError('Experiment not found');
 
@@ -150,7 +150,7 @@ export const DELETE = withAdminAuth<Params>(
     const log = await getRouteLogger(request);
 
     const existing = await prisma.aiExperiment.findFirst({
-      where: { AND: [await visibleExperimentClause(session), { id }] },
+      where: { AND: [experimentVisibilityWhere(session), { id }] },
     });
     if (!existing) throw new NotFoundError('Experiment not found');
 

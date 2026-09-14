@@ -41,11 +41,11 @@ import {
   mayReadUnattributed,
   resolveUnattributedReads,
 } from '@/lib/auth/orphan-reads';
-import { DATASET_RESOURCE_KIND } from '@/lib/orchestration/access/dataset-access';
-import {
-  EXPERIMENT_RESOURCE_KIND,
-  DATASET_RESOURCE_KIND as EXPERIMENT_DATASET_RESOURCE_KIND,
-} from '@/lib/orchestration/experiments/visible-scope';
+import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
+import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
+import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
+import { conversationVisibilityWhere } from '@/lib/orchestration/access/conversation-access';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
 
 const ADMIN: AuthorizationPrincipal = { userId: 'admin-1', role: 'ADMIN', credential: 'session' };
 const MEMBER: AuthorizationPrincipal = { userId: 'user-1', role: 'USER', credential: 'session' };
@@ -60,31 +60,47 @@ afterEach(() => {
 });
 
 describe('the roster of kinds', () => {
-  it('is the value every model helper asks the policy with', () => {
-    // The annotation on each `*_RESOURCE_KIND` catches a rename OUT of the union
-    // and nothing else: `'dataset'` and `'experiment'` are both members, so
-    // `DATASET_RESOURCE_KIND: UnattributedReadKind = 'experiment'` type-checks
-    // and would have `datasetVisibilityWhere` ask about one kind while the
-    // session carried an answer for another — inside one request, with the whole
-    // suite green. Pinning the literals is what actually closes that.
+  it('reaches each model helper under its own key, so one answer cannot serve two', async () => {
+    // This replaces three assertions that pinned `DATASET_RESOURCE_KIND` (twice)
+    // and `EXPERIMENT_RESOURCE_KIND` to their literals. Those constants existed
+    // because a helper passed a `string` to `mayReadUnattributed`, and an
+    // annotation alone could not stop one drifting to the other's value —
+    // `'dataset'` and `'experiment'` are both members of the union, so the
+    // mis-assignment type-checked and the whole suite stayed green.
     //
-    // Two `DATASET_RESOURCE_KIND` declarations, deliberately both asserted:
-    // `visible-scope.ts` still exports one because the experiments `run` route
-    // imports it from there, and t-687 is what deletes it.
-    expect(DATASET_RESOURCE_KIND).toBe('dataset');
-    expect(EXPERIMENT_DATASET_RESOURCE_KIND).toBe('dataset');
-    expect(EXPERIMENT_RESOURCE_KIND).toBe('experiment');
+    // t-687 deleted the last of them: all four helpers read
+    // `session.unattributedReads.<kind>`, so there is no string left to spell
+    // wrong. Pinning the constants would now be pinning nothing, and asserting
+    // that the record's keys equal the roster would be worse — the seed literal
+    // is typed `Record<UnattributedReadKind, boolean>`, so a missing or extra
+    // key fails to compile and such a test could never go red.
+    //
+    // The property that CAN still break is the one the constants were really
+    // protecting: each helper must read the key for its own model. A policy
+    // that answers for exactly one kind is what exposes it — swap `.experiment`
+    // for `.dataset` in either helper and two of these four lines flip.
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(target.resource.kind === 'dataset')
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    });
 
-    // And each is a member, so the guard precomputes an answer under that key.
-    for (const kind of [DATASET_RESOURCE_KIND, EXPERIMENT_RESOURCE_KIND]) {
-      expect(UNATTRIBUTED_READ_KINDS).toContain(kind);
-    }
+    const session = {
+      user: { id: ADMIN.userId, role: 'ADMIN' },
+      principal: ADMIN,
+      unattributedReads: await resolveUnattributedReads(ADMIN),
+    } as unknown as AuthenticatedSession;
 
-    // `conversation` and `execution` have no constant to pin: their helpers
-    // hard-code the widening and never name a kind. When t-685 and t-686 give
-    // them one, it belongs in this assertion rather than in a fresh literal.
-    expect(UNATTRIBUTED_READ_KINDS).toContain('conversation');
-    expect(UNATTRIBUTED_READ_KINDS).toContain('execution');
+    expect(datasetVisibilityWhere(session)).toEqual({
+      OR: [{ userId: ADMIN.userId }, { userId: null }],
+    });
+    expect(experimentVisibilityWhere(session)).toEqual({ createdBy: ADMIN.userId });
+    expect(executionVisibilityWhere(session)).toEqual({ userId: ADMIN.userId });
+    expect(conversationVisibilityWhere(session, { excludeShared: true })).toEqual({
+      OR: [{ userId: ADMIN.userId }],
+    });
   });
 
   it('names each model once, so a second spelling cannot split the answer', () => {
