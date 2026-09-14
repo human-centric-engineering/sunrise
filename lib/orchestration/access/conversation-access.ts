@@ -4,13 +4,22 @@
  * Single source of truth for "can this admin view this conversation?".
  *
  * Every per-id conversation route gates through {@link adminCanViewConversation},
- * and the list through {@link conversationVisibilityWhere}. **Two do neither, on
- * purpose.** Semantic search hand-writes the predicate in SQL, because a pgvector
- * distance query is not expressible through Prisma's query builder; the copies
- * are pinned against each other in the tests. And `conversations/export` is
- * hard-scoped to the caller's own rows — bulk export of other people's
- * conversations is a privacy footgun, so it sees neither shared nor ownerless
- * threads and has no reason to consult this module.
+ * and the list through {@link conversationVisibilityWhere}. **Three surfaces do
+ * neither, and only two of those are on purpose.**
+ *
+ * Semantic search hand-writes the predicate in SQL, because a pgvector distance
+ * query is not expressible through Prisma's query builder; the copies are pinned
+ * against each other in the tests. `conversations/export` is hard-scoped to the
+ * caller's own rows — bulk export of other people's conversations is a privacy
+ * footgun, so it sees neither shared nor ownerless threads and has no reason to
+ * consult this module.
+ *
+ * The third is `conversations/clear`, whose `allUsers` scope `deleteMany`s
+ * ownerless threads consulting nothing at all. That one is not deliberate, it is
+ * unsettled: writes over rows nobody owns are not behind this seam, and #776
+ * weighs what they should be. **Before adding a surface here, check it against
+ * all three rather than assuming this module is the only door.** The analytics
+ * routes read `AiMessage.content` without passing through any of them.
  *
  * The rule: an admin can view a conversation iff
  *
@@ -39,7 +48,8 @@
  *
  * Before t-686 the second face did not exist: `conversations/route.ts` and
  * `conversations/search/route.ts` each spelled the three arms out again, the
- * search route in raw SQL. Those are the copies that disagree.
+ * search route in raw SQL. The list now calls the fragment; search still holds
+ * its copy, of necessity, and the tests compare the two.
  *
  * **Why the `'system'` basis exists.** Inbound conversations used to be
  * stamped with the operator who configured the trigger, which made a third

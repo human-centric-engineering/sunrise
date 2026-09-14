@@ -610,7 +610,23 @@ is t-687's work, and it is now the only thing left on this axis.
 mattered most**: an inbound thread holds a living third party's correspondence,
 from someone with no account here and no way to see who read it. A fork
 registering a narrowing `canRead` now keeps one tenant's admins out of another
-tenant's customers' messages, with no route diff.
+tenant's customers' messages **on the conversation surfaces** — list, search,
+detail, messages, provenance, the dashboard counts and dataset capture — with no
+route diff.
+
+**It does not cover every surface those messages reach, and that gap is wider
+than it looks.** The analytics routes (`/analytics/unanswered`,
+`/analytics/topics`, `/feedback`, `/content-gaps`) read `AiMessage.content`
+directly with no owner clause and no policy in the loop, and `unanswered`
+returns the verbatim text of both the agent's reply and the member of the
+public's question. `POST /conversations/clear` with `allUsers` deletes ownerless
+threads the same way. Neither is a regression — both are consistent with the
+rule this seam replaced — but a fork that narrows `canRead`, confirms an inbound
+thread 404s, and concludes the correspondence is contained will be wrong. See
+[#775](https://github.com/human-centric-engineering/sunrise/issues/775) for the
+check that would catch surfaces like these mechanically, and
+[#776](https://github.com/human-centric-engineering/sunrise/issues/776) for the
+write side.
 
 One caveat a fork should know: only the **ownerless** arm asks. Owning a
 conversation and holding an active share are facts about one caller and one row,
