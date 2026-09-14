@@ -76,13 +76,26 @@ export const GET = withAdminAuth(async (request, session) => {
   // Build dynamic WHERE conditions.
   //
   // Visibility: caller can see conversations they own, system-owned inbound
-  // threads (`"userId" IS NULL`), and conversations the owner has actively
-  // shared. The three arms mirror the three bases in
-  // `adminCanViewConversation`; "active" mirrors `isShareActive` there:
-  // revokedAt IS NULL AND (expiresAt IS NULL OR expiresAt > now()). The OR is
-  // fixed (no params); the caller id ($4) binds only to the owner branch.
+  // threads (`"userId" IS NULL`) where the authorization policy permits an
+  // unattributed read, and conversations the owner has actively shared. The
+  // three arms mirror the three bases in `adminCanViewConversation`; "active"
+  // mirrors `isShareActive` there: revokedAt IS NULL AND (expiresAt IS NULL OR
+  // expiresAt > now()). The caller id ($4) binds only to the owner branch.
+  //
+  // **This is the fourth spelling of the rule and the only one that cannot use
+  // `conversationVisibilityWhere`** — the search is a pgvector cosine-distance
+  // query over `ai_message_embedding`, which Prisma's query builder cannot
+  // express, so the predicate is SQL. It is pinned against the fragment in
+  // `conversation-access.test.ts` rather than left to drift.
+  //
+  // The ownerless arm is a **fixed string chosen by a boolean**, not
+  // interpolated data: nothing the caller sends reaches the SQL text, and the
+  // parameter list is unchanged. Filtering here rather than dropping rows after
+  // the query is deliberate — post-filtering would silently return fewer than
+  // `limit` rows and leak the existence of the omitted ones through the count.
+  const ownerlessArm = session.unattributedReads.conversation ? ` OR c."userId" IS NULL` : '';
   const conditions: string[] = [
-    `(c."userId" = $4 OR c."userId" IS NULL OR EXISTS (
+    `(c."userId" = $4${ownerlessArm} OR EXISTS (
        SELECT 1 FROM "ai_conversation_share" s
        WHERE s."conversationId" = c.id
          AND s."revokedAt" IS NULL
@@ -197,12 +210,18 @@ export const GET = withAdminAuth(async (request, session) => {
       },
     }));
 
-  // Audit-of-audits for matches that aren't the caller's own. The
-  // OR-subquery in the SQL above pulls in actively-shared conversations and
-  // system-owned inbound threads alongside the caller's own; for any
-  // returned row the caller doesn't own, write one row under the basis that
-  // admitted it. Owner-basis matches no-op via `logConversationAccess`. One
-  // log per unique conversation (grouped is already deduped).
+  // Audit-of-audits for matches that aren't the caller's own. The OR-subquery
+  // in the SQL above pulls in actively-shared conversations, and system-owned
+  // inbound threads when the policy admits them, alongside the caller's own;
+  // for any returned row the caller doesn't own, write one row under the basis
+  // that admitted it. Owner-basis matches no-op via `logConversationAccess`.
+  // One log per unique conversation (grouped is already deduped).
+  //
+  // **The log narrows with the visibility, and that is the correct direction.**
+  // Under a policy that refuses unattributed reads, no inbound thread is
+  // returned, so none is logged — there was no access to record. What must
+  // never happen is the inverse: a row returned without a log. That is why the
+  // basis is derived from the row here rather than assumed from the query.
   const clientIp = getClientIP(request);
   for (const row of grouped) {
     if (row.userId === session.user.id) continue;
