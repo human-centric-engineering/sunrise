@@ -19,11 +19,14 @@ import { getLiveEngineSnapshot } from '@/lib/orchestration/admin/live-engine-sna
 
 export const GET = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
-  // User-scope the counts so they match the executions list, the
-  // force-fail / lease / cancel routes — all of which are scoped to
-  // `session.user.id`. The provider in-flight counts are process-wide
-  // (no user attribution available) and are intentionally not scoped.
-  const snapshot = await getLiveEngineSnapshot({ userId: session.user.id });
+  // Scope the counts so they match the executions list, the force-fail /
+  // lease / cancel routes — all of which gate through the same visibility
+  // clause. The session is handed over whole because that clause needs the
+  // policy's answer to "may this caller see runs nobody owns", which the
+  // guard has already resolved onto it. The provider in-flight counts are
+  // process-wide (no user attribution available) and are intentionally not
+  // scoped.
+  const snapshot = await getLiveEngineSnapshot({ session });
   log.info('Live engine snapshot served', {
     running: snapshot.running.count,
     queued: snapshot.queued.count,

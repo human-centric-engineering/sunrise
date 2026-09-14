@@ -37,7 +37,7 @@ export const GET = withAdminAuth(async (request, session) => {
   const grouped = await prisma.aiWorkflowExecution.groupBy({
     by: ['status'],
     where: {
-      AND: [executionVisibilityWhere(session.user.id), { status: { in: statuses } }],
+      AND: [executionVisibilityWhere(session), { status: { in: statuses } }],
     },
     _count: { _all: true },
   });

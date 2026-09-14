@@ -11,8 +11,9 @@
  *   - Top 10 capabilities by invocation count
  *
  * Everything except the cost-log count is scoped to what the caller can
- * see: their own rows plus system-owned ones. See `executionVisibilityWhere`
- * in `lib/orchestration/access/execution-access.ts`.
+ * see: their own rows, plus system-owned ones where the authorization policy
+ * permits an unattributed read. See `executionVisibilityWhere` in
+ * `lib/orchestration/access/execution-access.ts`.
  *
  * All queries run in a single Promise.all batch.
  *
@@ -38,11 +39,13 @@ export const GET = withAdminAuth(async (request, session) => {
 
   // Same visibility as the executions list and the live-engine dashboard:
   // the caller's own runs plus system-owned ones (`userId = null` —
-  // schedule- and inbound-triggered, #502). Scoping these counts to a bare
-  // `userId` match would hide exactly the runs an operator most needs this
-  // page to surface, and would put this dashboard and the live-engine one
-  // into open disagreement about the same rows.
-  const executionVisibility = executionVisibilityWhere(session.user.id);
+  // schedule- and inbound-triggered, #502), the latter as the policy answers
+  // it. Scoping these counts to a bare `userId` match would hide exactly the
+  // runs an operator most needs this page to surface, and would put this
+  // dashboard and the live-engine one into open disagreement about the same
+  // rows — which is also why the answer is read from the session rather than
+  // asked for again here.
+  const executionVisibility = executionVisibilityWhere(session);
 
   // Conversations use the owner-or-system arm only. A conversation shared
   // with this admin is still someone else's, so counting it as one of *their*

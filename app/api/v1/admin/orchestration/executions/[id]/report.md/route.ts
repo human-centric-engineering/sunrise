@@ -53,7 +53,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
     where: { id },
     include: { workflow: { select: { name: true } } },
   });
-  if (!execution || !adminCanViewExecution(execution, session.user.id)) {
+  if (!execution || !adminCanViewExecution(execution, session)) {
     throw new NotFoundError(`Execution ${id} not found`);
   }
 

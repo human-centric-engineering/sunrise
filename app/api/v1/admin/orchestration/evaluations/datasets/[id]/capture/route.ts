@@ -119,7 +119,7 @@ export const POST = withAdminAuth<{ id: string }>(
       where: { id: body.executionId },
       select: { userId: true },
     });
-    if (!execution || !adminCanViewExecution(execution, session.user.id)) {
+    if (!execution || !adminCanViewExecution(execution, session)) {
       throw new NotFoundError(`Workflow execution ${body.executionId} not found`);
     }
 

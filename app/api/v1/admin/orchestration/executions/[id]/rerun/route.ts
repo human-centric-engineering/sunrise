@@ -66,10 +66,15 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const body = await validateRequestBody(request, rerunExecutionBodySchema);
 
   // Load the original execution. Scope visibility at the query — an id the
-  // caller can't see resolves to null and surfaces as 404, not 403. The
-  // spread yields `AND(id, OR(own, system))`.
+  // caller can't see resolves to null and surfaces as 404, not 403.
+  //
+  // `AND`-composed like every other site rather than spread. The keys do not
+  // collide today, but the widened fragment's key is `OR` and the narrowed
+  // one's is `userId`: a later filter spread in beside them could replace
+  // either, and a visibility clause that a future edit can flatten is the
+  // shape `.context/auth/authorization.md` warns about.
   const original = await prisma.aiWorkflowExecution.findFirst({
-    where: { id: originalId, ...executionVisibilityWhere(session.user.id) },
+    where: { AND: [executionVisibilityWhere(session), { id: originalId }] },
     select: {
       id: true,
       workflowId: true,

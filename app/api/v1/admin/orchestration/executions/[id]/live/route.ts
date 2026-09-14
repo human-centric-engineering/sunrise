@@ -83,7 +83,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
       executionTrace: true,
     },
   });
-  if (!execution || !adminCanViewExecution(execution, session.user.id)) {
+  if (!execution || !adminCanViewExecution(execution, session)) {
     throw new NotFoundError(`Execution ${id} not found`);
   }
 

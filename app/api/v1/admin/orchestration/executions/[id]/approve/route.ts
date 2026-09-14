@@ -53,7 +53,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // system-owned run has no owner to fall back on, so without it an
   // approval gate reached by a scheduled or inbound run could never be
   // cleared by anyone (#502).
-  const canAct = adminCanViewExecution(execution, session.user.id);
+  const canAct = adminCanViewExecution(execution, session);
   const isApprover = !canAct && isApproverInTrace(execution.executionTrace, session.user.id);
   if (!canAct && !isApprover) {
     throw new NotFoundError(`Execution ${id} not found`);

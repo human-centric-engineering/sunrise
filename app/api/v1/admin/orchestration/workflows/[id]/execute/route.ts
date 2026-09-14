@@ -76,7 +76,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     });
     if (
       !existing ||
-      !adminCanViewExecution(existing, session.user.id) ||
+      !adminCanViewExecution(existing, session) ||
       existing.workflowId !== parsedWorkflowId.data
     ) {
       throw new NotFoundError(`Execution ${resumeFromExecutionId} not found`);

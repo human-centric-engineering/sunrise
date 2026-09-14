@@ -14,6 +14,7 @@
  * `AiWorkflowRunningStep[executionId]`).
  */
 
+import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
@@ -49,10 +50,18 @@ const RUNNING_AGE_SAMPLE_CAP = 500;
 /**
  * Options for the live-engine snapshot.
  *
- * `userId`, when provided, restricts the running / queued / orphaned
- * counts and the age sample to executions that user may see: their own,
+ * `session`, when provided, restricts the running / queued / orphaned
+ * counts and the age sample to executions that caller may see: their own,
  * plus system-owned runs (`userId = null` — schedule- and inbound-
- * triggered; see `lib/orchestration/access/execution-access.ts`).
+ * triggered) where the authorization policy permits an unattributed read.
+ * See `lib/orchestration/access/execution-access.ts`.
+ *
+ * **The session, not a user id.** The widening is the policy's answer, not a
+ * rule this module or its caller may restate, and the answer the route's guard
+ * already resolved is carried on the session. Taking a bare id would leave this
+ * dashboard hard-coding "every admin sees every scheduled run" while the
+ * executions list it links into had narrowed — the disagreement the paragraph
+ * below exists to prevent, arriving through the type.
  *
  * The four executions-row counts MUST use the same visibility clause as
  * the executions list, force-fail, lease inspector, and cancel routes.
@@ -69,31 +78,35 @@ const RUNNING_AGE_SAMPLE_CAP = 500;
  * "the worker my admin tab hit is currently handling N calls."
  */
 export interface LiveEngineSnapshotOptions {
-  userId?: string;
+  session?: AuthenticatedSession;
 }
 
 export async function getLiveEngineSnapshot(
   options: LiveEngineSnapshotOptions = {}
 ): Promise<LiveEngineSnapshot> {
   const now = new Date();
-  const visibility = options.userId ? executionVisibilityWhere(options.userId) : {};
+  // `AND`-composed into every query below rather than spread, matching the
+  // executions list, counts and rerun routes. The narrowed branch's key is
+  // `userId` and the widened one's is `OR`, so a spread puts the boundary on
+  // the same level as whatever filter is added next — flattenable by an edit
+  // that looks harmless. `{}` for an unscoped call is an empty `AND` arm,
+  // which Prisma ignores.
+  const visibility = options.session ? executionVisibilityWhere(options.session) : {};
 
   // Four reads in parallel — each is small (count or capped page) and
   // hits an existing index. Provider counts come from in-memory state.
   const [runningCount, queuedAgg, orphanedCount, runningAges] = await Promise.all([
     prisma.aiWorkflowExecution.count({
-      where: { status: WorkflowStatus.RUNNING, ...visibility },
+      where: { AND: [visibility, { status: WorkflowStatus.RUNNING }] },
     }),
     prisma.aiWorkflowExecution.aggregate({
-      where: { status: WorkflowStatus.PENDING, ...visibility },
+      where: { AND: [visibility, { status: WorkflowStatus.PENDING }] },
       _count: { _all: true },
       _min: { createdAt: true },
     }),
     prisma.aiWorkflowExecution.count({
       where: {
-        status: WorkflowStatus.RUNNING,
-        leaseExpiresAt: { lt: now },
-        ...visibility,
+        AND: [visibility, { status: WorkflowStatus.RUNNING, leaseExpiresAt: { lt: now } }],
       },
     }),
     // Age of each running execution's current step. Joined off the
@@ -105,8 +118,10 @@ export async function getLiveEngineSnapshot(
     // partner admin doesn't see step ages from other partners' rows.
     prisma.aiWorkflowRunningStep.findMany({
       where: {
-        completedAt: null,
-        ...(options.userId ? { execution: executionVisibilityWhere(options.userId) } : {}),
+        AND: [
+          options.session ? { execution: executionVisibilityWhere(options.session) } : {},
+          { completedAt: null },
+        ],
       },
       select: { executionId: true, startedAt: true },
       orderBy: { startedAt: 'asc' },

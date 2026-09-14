@@ -47,7 +47,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // executions only. `adminCanViewExecution` also admits system-owned runs
   // (`userId = null`), so a runaway scheduled or inbound run stays
   // cancellable by any admin (#502).
-  const canAct = adminCanViewExecution(execution, session.user.id);
+  const canAct = adminCanViewExecution(execution, session);
   const isApprover =
     !canAct &&
     execution.status === WorkflowStatus.PAUSED_FOR_APPROVAL &&

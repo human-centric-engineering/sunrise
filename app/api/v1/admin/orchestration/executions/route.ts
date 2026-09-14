@@ -41,7 +41,7 @@ export const GET = withAdminAuth(async (request, session) => {
   }
 
   const where: Prisma.AiWorkflowExecutionWhereInput = {
-    AND: [executionVisibilityWhere(session.user.id), filters],
+    AND: [executionVisibilityWhere(session), filters],
   };
 
   const [executions, total] = await Promise.all([

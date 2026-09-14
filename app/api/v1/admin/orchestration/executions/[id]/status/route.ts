@@ -43,7 +43,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
       userId: true,
     },
   });
-  if (!execution || !adminCanViewExecution(execution, session.user.id)) {
+  if (!execution || !adminCanViewExecution(execution, session)) {
     throw new NotFoundError(`Execution ${parsed.data} not found`);
   }
 

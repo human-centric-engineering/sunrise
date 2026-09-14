@@ -83,7 +83,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   if (!existing) {
     throw new NotFoundError(`Execution ${id} not found`);
   }
-  if (!adminCanViewExecution(existing, session.user.id)) {
+  if (!adminCanViewExecution(existing, session)) {
     // Same scoping as the cancel route — don't leak existence of rows the
     // caller can't see. Admin role gates the endpoint; row visibility gates
     // the action. System-owned runs (`userId = null`) are visible to every
