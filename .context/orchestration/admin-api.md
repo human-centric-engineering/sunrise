@@ -1067,7 +1067,7 @@ Builds a hierarchical node/link graph: central KB node → document nodes → ch
 
 ## Conversations
 
-Four routes over `AiConversation` / `AiMessage`. **Every endpoint gates on `adminCanViewConversation`** — the caller's own, actively shared with them, or system-owned (an inbound thread nobody owns).
+Four routes over `AiConversation` / `AiMessage`. **Every endpoint gates on `adminCanViewConversation`** — the caller's own, actively shared with them, or system-owned (an inbound thread nobody owns) where the authorization policy permits an unattributed read. Only that last arm asks the policy; owning a thread and holding an active share are facts about one caller and one row.
 
 ### Ownership model (read this)
 

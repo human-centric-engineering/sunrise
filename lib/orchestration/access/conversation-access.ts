@@ -2,8 +2,15 @@
  * Conversation access authorization
  *
  * Single source of truth for "can this admin view this conversation?".
- * Every conversation route — list, detail, messages, provenance, export —
- * gates through this helper rather than hand-rolling its own check.
+ *
+ * Every per-id conversation route gates through {@link adminCanViewConversation},
+ * and the list through {@link conversationVisibilityWhere}. **Two do neither, on
+ * purpose.** Semantic search hand-writes the predicate in SQL, because a pgvector
+ * distance query is not expressible through Prisma's query builder; the copies
+ * are pinned against each other in the tests. And `conversations/export` is
+ * hard-scoped to the caller's own rows — bulk export of other people's
+ * conversations is a privacy footgun, so it sees neither shared nor ownerless
+ * threads and has no reason to consult this module.
  *
  * The rule: an admin can view a conversation iff
  *

@@ -416,6 +416,21 @@ release process.
   which is what stops "nobody owns this" being rewritten into "somebody else owns
   this".
 
+  **Read the next paragraph before you register a narrowing policy.** `canRead`
+  is a read predicate, and `PATCH` / `DELETE /conversations/:id` gate on it —
+  so refusing unattributed reads also closes the per-thread **erasure** route for
+  inbound threads. That route matters more than it sounds: the person who sent
+  those messages has no account, so `eraseUser()` cannot reach them and deleting
+  the thread is the only Art. 17 remedy they have. `POST /conversations/clear`
+  with `allUsers` still reaches those rows because it consults no policy at all,
+  which is a blunter instrument rather than an answer, and an incoherent posture
+  we have not settled: writes over ownerless rows are not behind the seam, and
+  deciding what they should be is its own piece of work — tracked as #776, with
+  four costed options. **A fork narrowing this arm must keep some principal its
+  own policy admits for ownerless threads.**
+  `lib/auth/orphan-reads.ts` already warned that widening this arm grants more
+  than reading; this is the same coupling seen from the other side.
+
   **Breaking for a fork that calls the helper**, which
   [`.context/privacy/data-erasure.md`](./.context/privacy/data-erasure.md) tells
   you to rather than hand-rolling a `userId` comparison:

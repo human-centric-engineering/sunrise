@@ -178,7 +178,7 @@ The LLM still sees the un-redacted result on its turn (the redactor's output is 
 
 ## The bundle endpoint
 
-`GET /api/v1/admin/orchestration/conversations/[id]/provenance` returns the typed bundle as JSON. The sibling `provenance.md` route returns the deterministic Markdown rendering. Both are admin-only, rate-limited (`adminLimiter`), and gated by `adminCanViewConversation` — the caller's own conversation, one actively shared with them, or a system-owned inbound thread. Anything else returns 404, not 403, so an attacker can't enumerate other users.
+`GET /api/v1/admin/orchestration/conversations/[id]/provenance` returns the typed bundle as JSON. The sibling `provenance.md` route returns the deterministic Markdown rendering. Both are admin-only, rate-limited (`adminLimiter`), and gated by `adminCanViewConversation` — the caller's own conversation, one actively shared with them, or a system-owned inbound thread where the authorization policy permits an unattributed read. Anything else returns 404, not 403, so an attacker can't enumerate other users.
 
 The Markdown renderer ([`lib/orchestration/trace/render-conversation-markdown.ts`](../../lib/orchestration/trace/render-conversation-markdown.ts)) emits HTML-ready GitHub-flavoured Markdown so a future Gotenberg PDF adapter can convert without surprises. PDF is not yet built — it's a thin downstream wrapper once Gotenberg infrastructure is provisioned.
 

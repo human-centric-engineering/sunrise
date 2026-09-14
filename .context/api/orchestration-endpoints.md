@@ -924,7 +924,7 @@ Paginated list of the caller's conversations **plus conversations actively share
 
 ### `DELETE /conversations/:id`
 
-Owner or system-owned. Gated by `adminCanViewConversation`; a `'shared'` basis is refused, so missing, another admin's, or merely-shared → `404`. Messages cascade. PATCH follows the same posture. Deleting a system-owned thread writes a `conversation.deleted` audit row.
+Owner or system-owned. Gated by `adminCanViewConversation`; a `'shared'` basis is refused, so missing, another admin's, or merely-shared → `404`. Messages cascade. PATCH follows the same posture. Deleting a system-owned thread writes a `conversation.deleted` audit row. **Note this is a read predicate gating a write**: a fork whose policy refuses unattributed reads also loses the per-thread erasure route for inbound threads, which is the only one a data subject with no account has.
 
 ### `GET /conversations/:id/messages`
 
