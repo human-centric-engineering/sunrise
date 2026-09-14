@@ -88,12 +88,21 @@ function makeExperiment(
         summary: Record<string, unknown> | null;
       } | null;
     }>;
+    /**
+     * The bound dataset. Absent by default, which is what every case here
+     * needed before t-687 — and the reason the field gate below shipped
+     * untested for a round: with no dataset on the fixture, `caseCount` is null
+     * whether or not the route gates it, so removing the gate changed nothing
+     * and the control run said "confirmed" about a mutation nothing observed.
+     */
+    dataset: { caseCount: number; userId: string | null } | null;
   }> = {}
 ) {
   return {
     id: EXPERIMENT_ID,
     name: overrides.name ?? 'A/B refund prompts',
     createdBy: 'createdBy' in overrides ? (overrides.createdBy ?? null) : ADMIN_ID,
+    dataset: overrides.dataset ?? null,
     variants: overrides.variants ?? [
       {
         id: 'v1',
@@ -378,5 +387,57 @@ describe('audit — reading someone else’s abandoned comparison', () => {
         metadata: { accessBasis: 'orphan' },
       })
     );
+  });
+});
+
+/**
+ * t-687 round 3: `caseCount` is a fact about the bound DATASET, not about the
+ * experiment, so it is gated on whether the caller may read that dataset.
+ *
+ * This route degrades the field rather than refusing, which is where it parts
+ * company with `run` and `verdicts`. Those two need the dataset to do their job
+ * at all; this one's job is showing the caller their own variants' scores, and
+ * 404ing the page would deny them their own data to withhold one integer.
+ *
+ * Unreachable through today's routes — `POST /experiments` is the only path
+ * that binds a dataset and it enforces `datasetVisibilityWhere`, and the update
+ * schema refuses `datasetId`. The check is there so a future second create path
+ * cannot silently re-open it.
+ */
+describe('the bound dataset’s case count', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  async function caseCountFor(dataset: { caseCount: number; userId: string | null } | null) {
+    vi.mocked(prisma.aiExperiment.findFirst).mockImplementation(
+      ownerScopedFindFirst([makeExperiment({ createdBy: ADMIN_ID, dataset })]) as never
+    );
+    const res = await GET(makeRequest(), ctx());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { caseCount: number | null } };
+    return body.data.caseCount;
+  }
+
+  it('reports it when the caller owns the dataset', async () => {
+    // The control. Without it the two nulls below would pass against a route
+    // that reports null unconditionally — which is exactly what this fixture
+    // did before it could carry a dataset at all.
+    expect(await caseCountFor({ caseCount: 42, userId: ADMIN_ID })).toBe(42);
+  });
+
+  it('reports it for an ownerless dataset the policy admits', async () => {
+    expect(await caseCountFor({ caseCount: 42, userId: null })).toBe(42);
+  });
+
+  it('withholds it when the dataset belongs to another admin', async () => {
+    expect(await caseCountFor({ caseCount: 42, userId: 'someone-else' })).toBeNull();
+  });
+
+  it('still reports null when no dataset is bound', async () => {
+    // "Nothing bound" and "bound but not yours" deliberately look identical to
+    // the client — the compare view already renders null for the first.
+    expect(await caseCountFor(null)).toBeNull();
   });
 });
