@@ -12,7 +12,20 @@
  *   - default: caller's own conversations (`session.user.id`)
  *   - `userId`: a specific other user's conversations
  *   - `allUsers: true`: across all users (still narrowed by the
- *     `olderThan` / `agentId` filters)
+ *     `olderThan` / `agentId` filters), **plus the threads nobody owns** —
+ *     inbound SMS / email / Slack conversations carry `userId = null` (#502) —
+ *     when the authorization policy permits this caller an unattributed read
+ *     of conversations, which a default install does.
+ *
+ * That last clause is the same rule `DELETE /conversations/:id` applies, and
+ * it is here because the two used to disagree: the targeted delete gated an
+ * ownerless thread on `adminCanViewConversation` while this route consulted
+ * nothing, so a fork narrowing `canRead` refused an admin one inbound thread
+ * and let them destroy every inbound thread through the bulk route. A
+ * narrowed caller's `allUsers` now means "every user's conversations" and
+ * not "every conversation" — the rows they may not see are not in their set,
+ * exactly as they are not in their list. The exclusion is logged; the
+ * response shape is unchanged.
  *
  * All deletions (including self-scoped) are recorded in the admin audit
  * log so there's an immutable trail. `AiMessage` rows cascade via the
@@ -39,9 +52,15 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const scope: 'self' | 'user' | 'all' = body.allUsers ? 'all' : body.userId ? 'user' : 'self';
 
+  // `allUsers` reaches ownerless rows only where the policy admits the caller
+  // to them — the answer the guard resolved once, and the same one the
+  // targeted DELETE reads through `adminCanViewConversation`.
+  const excludeOwnerless = scope === 'all' && !session.unattributedReads.conversation;
+
   const where: Prisma.AiConversationWhereInput = {};
   if (scope === 'self') where.userId = session.user.id;
   else if (scope === 'user') where.userId = body.userId!;
+  else if (excludeOwnerless) where.userId = { not: null };
   if (body.agentId) where.agentId = body.agentId;
   if (body.olderThan) where.createdAt = { lt: new Date(body.olderThan) };
 
@@ -54,6 +73,9 @@ export const POST = withAdminAuth(async (request, session) => {
     deletedCount: result.count,
     agentId: body.agentId,
     olderThan: body.olderThan,
+    // True only for a narrowed caller: inbound threads were left in place
+    // because the policy refuses this admin unattributed reads.
+    ownerlessExcluded: excludeOwnerless,
   });
 
   logAdminAction({

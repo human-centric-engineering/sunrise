@@ -34,7 +34,13 @@ vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Header
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    aiConversation: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+    aiConversation: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      delete: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     $queryRawUnsafe: vi.fn(),
   },
 }));
@@ -72,7 +78,11 @@ import {
   DEFAULT_AUTHORIZATION_POLICY,
 } from '@/lib/auth/authorization';
 import { GET as listConversations } from '@/app/api/v1/admin/orchestration/conversations/route';
-import { GET as conversationDetail } from '@/app/api/v1/admin/orchestration/conversations/[id]/route';
+import {
+  GET as conversationDetail,
+  DELETE as deleteConversation,
+} from '@/app/api/v1/admin/orchestration/conversations/[id]/route';
+import { POST as clearConversations } from '@/app/api/v1/admin/orchestration/conversations/clear/route';
 import { GET as searchConversations } from '@/app/api/v1/admin/orchestration/conversations/search/route';
 import { conversationVisibilityWhere } from '@/lib/orchestration/access/conversation-access';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
@@ -111,6 +121,16 @@ function makeRequest(path: string): NextRequest {
   } as unknown as NextRequest;
 }
 
+function makeMutatingRequest(method: 'POST' | 'DELETE', path: string, body?: unknown): NextRequest {
+  return {
+    method,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    url: `http://localhost:3000/api/v1/admin/orchestration${path}`,
+    nextUrl: { pathname: `/api/v1/admin/orchestration${path}` },
+    json: () => Promise.resolve(body),
+  } as unknown as NextRequest;
+}
+
 /** The arms of the visibility clause a route handed Prisma. */
 function armsOf(where: unknown): Record<string, unknown>[] {
   const and = (where as { AND?: unknown[] }).AND;
@@ -124,6 +144,8 @@ beforeEach(() => {
   vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
   vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+  vi.mocked(prisma.aiConversation.delete).mockResolvedValue({} as never);
+  vi.mocked(prisma.aiConversation.deleteMany).mockResolvedValue({ count: 0 });
 });
 
 afterEach(() => {
@@ -194,6 +216,118 @@ describe('a policy that denies unattributed reads', () => {
     });
 
     expect(response.status).toBe(200);
+  });
+});
+
+// ─── The writes follow the same rule as the reads, on both routes ─────────────
+
+/**
+ * `canRead`'s ownerless arm decides writes as well as reads, and until t-691
+ * the two write routes over an inbound thread disagreed about it: the targeted
+ * `DELETE /conversations/:id` gated on the policy while `POST /conversations/clear`
+ * with `allUsers` consulted nothing — so a narrowed admin was refused one
+ * inbound thread and could destroy every inbound thread through the bulk route.
+ *
+ * These cases pin one rule against both routes, in both directions. They are in
+ * one `describe` because the property is that the two AGREE; a case each in two
+ * files would pass while the pair diverged, which is the shape this file exists
+ * to catch.
+ */
+describe('writes over an inbound thread, targeted and bulk', () => {
+  /** The `where` the bulk route handed `deleteMany`. */
+  function bulkWhere(): Record<string, unknown> {
+    const call = vi.mocked(prisma.aiConversation.deleteMany).mock.calls[0]?.[0];
+    expect(call).toBeDefined();
+    return call!.where as Record<string, unknown>;
+  }
+
+  describe('under a policy that denies unattributed reads', () => {
+    beforeEach(registerNoUnattributedReads);
+
+    it('404s the targeted delete', async () => {
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+        userId: null,
+        share: null,
+      } as never);
+
+      const response = await deleteConversation(
+        makeMutatingRequest('DELETE', `/conversations/${CONV_ID}`),
+        { params: Promise.resolve({ id: CONV_ID }) }
+      );
+
+      expect(response.status).toBe(404);
+      expect(prisma.aiConversation.delete).not.toHaveBeenCalled();
+    });
+
+    it('leaves ownerless threads out of a bulk clear across all users', async () => {
+      const response = await clearConversations(
+        makeMutatingRequest('POST', '/conversations/clear', {
+          allUsers: true,
+          olderThan: '2025-01-01T00:00:00Z',
+        })
+      );
+
+      expect(response.status).toBe(200);
+      // `userId: { not: null }` is the whole of the narrowing — the same rows
+      // the list omits, and nothing else. The `olderThan` filter beside it is
+      // untouched, so the route still clears every OWNED thread it did before.
+      expect(bulkWhere()).toEqual({
+        userId: { not: null },
+        createdAt: { lt: new Date('2025-01-01T00:00:00Z') },
+      });
+    });
+
+    it('still clears the caller’s own threads, so the narrowing is only the ownerless arm', async () => {
+      // The control for the case above: a bulk route that had simply started
+      // refusing narrowed callers would pass it just as well.
+      const response = await clearConversations(
+        makeMutatingRequest('POST', '/conversations/clear', {
+          olderThan: '2025-01-01T00:00:00Z',
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(bulkWhere()).toEqual({
+        userId: ADMIN_ID,
+        createdAt: { lt: new Date('2025-01-01T00:00:00Z') },
+      });
+    });
+  });
+
+  describe('on a default install', () => {
+    // No policy registered — the outer `afterEach` has reset it, so this is
+    // the built-in rule, which admits platform staff to ownerless rows.
+    it('deletes the inbound thread on the targeted route', async () => {
+      vi.mocked(prisma.aiConversation.findUnique)
+        .mockResolvedValueOnce({ userId: null, share: null } as never)
+        .mockResolvedValueOnce({ title: 'Inbound from +44…' } as never);
+
+      const response = await deleteConversation(
+        makeMutatingRequest('DELETE', `/conversations/${CONV_ID}`),
+        { params: Promise.resolve({ id: CONV_ID }) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiConversation.delete).toHaveBeenCalledWith({ where: { id: CONV_ID } });
+      // Destroying a third party's messages is never routine self-service.
+      expect(logConversationAccess).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'conversation.deleted', accessBasis: 'system' })
+      );
+    });
+
+    it('reaches ownerless threads in a bulk clear across all users', async () => {
+      const response = await clearConversations(
+        makeMutatingRequest('POST', '/conversations/clear', {
+          allUsers: true,
+          olderThan: '2025-01-01T00:00:00Z',
+        })
+      );
+
+      expect(response.status).toBe(200);
+      // No `userId` key at all — a platform admin's `allUsers` is every
+      // conversation, inbound threads included, exactly as before t-691.
+      expect(bulkWhere()).toEqual({ createdAt: { lt: new Date('2025-01-01T00:00:00Z') } });
+    });
   });
 });
 

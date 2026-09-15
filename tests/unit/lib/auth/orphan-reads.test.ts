@@ -17,6 +17,14 @@
  * The contrast test is the load-bearing one — the diagnostic must still fire for
  * a real misconfiguration, or this "fix" is just a deleted warning.
  *
+ * A third property arrived with t-690 / t-691: **a policy that admits nobody to
+ * a kind of ownerless row has closed routes with no other door** — an inbound
+ * thread's only erasure route, a scheduled run's approval gate — and
+ * `checkOwnerlessReachability` is how a fork finds that out in its own test
+ * suite. The cases below are the same shape as the parity checker's: the
+ * default policy passes, a fixture proves the check can fail, and a roster that
+ * could not have found anything is reported rather than passed.
+ *
  * @see lib/auth/orphan-reads.ts · lib/auth/authorization.ts
  */
 
@@ -38,9 +46,11 @@ import {
 } from '@/lib/auth/authorization';
 import {
   UNATTRIBUTED_READ_KINDS,
+  checkOwnerlessReachability,
   mayReadUnattributed,
   resolveUnattributedReads,
 } from '@/lib/auth/orphan-reads';
+import type { AuthorizationPolicy } from '@/lib/auth/authorization';
 import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
@@ -229,5 +239,140 @@ describe('asking is not an alarm', () => {
       expect.stringContaining('no ownerId'),
       expect.objectContaining({ kind: 'report' })
     );
+  });
+});
+
+describe('checkOwnerlessReachability', () => {
+  /** What a fork with tenants registers first: org admins see nobody's rows. */
+  const REFUSES_EVERYONE: AuthorizationPolicy = {
+    ...DEFAULT_AUTHORIZATION_POLICY,
+    canRead: (viewer, target, scope) =>
+      target.kind === 'unattributed'
+        ? Promise.resolve(false)
+        : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+  };
+
+  it('passes the default policy when the roster names platform staff', async () => {
+    await expect(
+      checkOwnerlessReachability(DEFAULT_AUTHORIZATION_POLICY, [
+        { label: 'a member', viewer: MEMBER },
+        { label: 'platform staff', viewer: ADMIN },
+      ])
+    ).resolves.toEqual([]);
+  });
+
+  it('reports every kind when the roster names only principals the policy refuses', async () => {
+    // The default policy, asked about a member only. This is the case a fork
+    // writes first — the narrowed principal its policy is FOR — and on its own
+    // it proves the doors are closed to everyone named, which is the finding.
+    const violations = await checkOwnerlessReachability(DEFAULT_AUTHORIZATION_POLICY, [
+      { label: 'a member', viewer: MEMBER },
+    ]);
+
+    expect(violations.map((v) => v.kind)).toEqual([...UNATTRIBUTED_READ_KINDS]);
+    for (const violation of violations) {
+      expect(violation.asked).toEqual(['a member']);
+      expect(violation.message).toContain('a member');
+    }
+  });
+
+  it('fails a policy that refuses everyone, whoever is on the roster', async () => {
+    // The fixture that proves the check can fail: platform staff are named,
+    // and the policy still admits nobody. Without this the passing case above
+    // would pass just as well against a checker that returned `[]` for anything.
+    const violations = await checkOwnerlessReachability(REFUSES_EVERYONE, [
+      { label: 'platform staff', viewer: ADMIN },
+      { label: 'a member', viewer: MEMBER },
+    ]);
+
+    expect(violations).toHaveLength(UNATTRIBUTED_READ_KINDS.length);
+  });
+
+  it('names what each kind closes, so the fork knows what it is choosing', async () => {
+    const violations = await checkOwnerlessReachability(REFUSES_EVERYONE, [
+      { label: 'platform staff', viewer: ADMIN },
+    ]);
+    const messageFor = (kind: string) => violations.find((v) => v.kind === kind)?.message ?? '';
+
+    // The two consequences the check exists for. A message that only said
+    // "unreachable" would be true and useless; these are the sentences a fork
+    // reads before deciding whether to add an operator principal.
+    expect(messageFor('conversation')).toContain('Art. 17');
+    expect(messageFor('conversation')).toContain('DELETE /conversations/:id');
+    expect(messageFor('execution')).toContain('human_approval');
+    expect(messageFor('execution')).toContain('7-day');
+  });
+
+  it('passes once any one principal on the roster reaches the kind', async () => {
+    // A fork narrows its org admins and keeps an operator: the roster carries
+    // both, the operator reaches every kind, and the org admin's refusal is
+    // not a finding — it is the policy doing its job.
+    const operator: AuthorizationPrincipal = {
+      userId: 'operator-1',
+      role: 'USER',
+      credential: 'session',
+    };
+    const policy: AuthorizationPolicy = {
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(viewer.userId === operator.userId)
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    };
+
+    await expect(
+      checkOwnerlessReachability(policy, [
+        { label: 'an org admin', viewer: ADMIN },
+        { label: 'the operator', viewer: operator },
+      ])
+    ).resolves.toEqual([]);
+    // The control: the same policy with the operator off the roster.
+    await expect(
+      checkOwnerlessReachability(policy, [{ label: 'an org admin', viewer: ADMIN }])
+    ).resolves.toHaveLength(UNATTRIBUTED_READ_KINDS.length);
+  });
+
+  it('checks the policy it is handed, not the registered one', async () => {
+    // Safe to run over a candidate before registering it — and a test that
+    // reset the registry between cases would otherwise be checking the wrong
+    // policy without noticing.
+    registerAuthorizationPolicy(REFUSES_EVERYONE);
+
+    await expect(
+      checkOwnerlessReachability(DEFAULT_AUTHORIZATION_POLICY, [
+        { label: 'platform staff', viewer: ADMIN },
+      ])
+    ).resolves.toEqual([]);
+  });
+
+  it('checks the kinds it is given, so a fork can add its own or accept a gap visibly', async () => {
+    const violations = await checkOwnerlessReachability(
+      REFUSES_EVERYONE,
+      [{ label: 'platform staff', viewer: ADMIN }],
+      ['conversation', 'questionnaire']
+    );
+
+    expect(violations.map((v) => v.kind)).toEqual(['conversation', 'questionnaire']);
+    // A kind the core roster does not know still gets a sentence, not a crash.
+    expect(violations[1]?.message).toContain('"questionnaire"');
+    // And an empty list is the fork saying, at the call site, that it has
+    // accepted every gap — which is a decision, not a setup fault.
+    await expect(
+      checkOwnerlessReachability(REFUSES_EVERYONE, [{ viewer: ADMIN }], [])
+    ).resolves.toEqual([]);
+  });
+
+  it('reports an empty roster as a fault rather than a pass', async () => {
+    const violations = await checkOwnerlessReachability(DEFAULT_AUTHORIZATION_POLICY, []);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.kind).toBe('(none)');
+    expect(violations[0]?.message).toContain('no principals');
+  });
+
+  it('labels a case by its user id when no label is given', async () => {
+    const violations = await checkOwnerlessReachability(REFUSES_EVERYONE, [{ viewer: ADMIN }]);
+
+    expect(violations[0]?.asked).toEqual([ADMIN.userId]);
   });
 });
