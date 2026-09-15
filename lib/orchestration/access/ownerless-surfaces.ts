@@ -370,14 +370,6 @@ export interface OwnerlessSurfaceViolation {
   message: string;
 }
 
-/** One thing wrong: a file that reads outside the helpers, or an entry that has rotted. */
-export interface OwnerlessSurfaceViolation {
-  /** The file, or `'(roster)'` for a setup fault. */
-  path: string;
-  /** What is wrong, in a sentence an assertion message can print verbatim. */
-  message: string;
-}
-
 /** Sanity of the roster itself: reasons, dispositions, duplicates. Pure. */
 export function validateExceptions(
   exceptions: readonly OwnerlessSurfaceException[]
