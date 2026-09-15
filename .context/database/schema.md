@@ -29,7 +29,6 @@ erDiagram
     Account {
         string id PK
         string userId FK
-        string issuer
         string accountId
         string providerId
         string accessToken
@@ -307,7 +306,7 @@ Indexes speed up queries but slow down writes. Index fields that are:
 
 ```prisma
 email String @unique              // Single field unique
-@@unique([issuer, accountId])  // Compound unique — one external identity per (issuer, subject)
+@@unique([agentId, version])      // Compound unique — one row per agent version
 ```
 
 **Purpose**:

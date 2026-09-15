@@ -17,21 +17,45 @@
  * nobody exercised the callback, and the credential path only broke once
  * `node_modules` actually caught up to the locked version.
  *
- * The requirement is therefore DERIVED, not listed: `getAuthTables()` is
- * better-auth's own schema authority, the same one its CLI generates from. A
- * future release adding another column fails this test on the version bump
- * rather than in production. Do not replace it with a hand-written field list —
- * that reintroduces the exact gap it exists to close, one column at a time.
+ * Then 1.7.3 reverted the re-keying. Identity is `(providerId, accountId)`
+ * again, better-auth never writes `issuer`, and the column #672 added to
+ * survive 1.7.1 became the opposite defect: a REQUIRED column nothing supplies,
+ * which fails every insert into `account` — sign-up, first social sign-in,
+ * account link — on the NOT NULL constraint. The same bump, the same silence
+ * from the toolchain, the outage one layer down.
+ *
+ * Both directions are therefore DERIVED, not listed. `getAuthTables()` is
+ * better-auth's own schema authority, the same one its CLI generates from, and
+ * `diffSchema()` is the comparison its adapters run at init. A future release
+ * adding a column fails here on the version bump rather than in production; so
+ * does one that stops writing a column this schema still requires. Do not
+ * replace either with a hand-written field list — that reintroduces the exact
+ * gap it exists to close, one column at a time.
+ *
+ * Why the second direction lives here and not in better-auth's own init check:
+ * since 1.7.3 the Prisma adapter diffs the generated client's
+ * `_runtimeDataModel`, and Prisma 7 emits that model in a compact form with no
+ * `isRequired`, so the adapter — by its own docblock — "reports missing tables
+ * and columns but never a required column". It could not see `issuer`. This
+ * test feeds the same `diffSchema()` the Prisma SOURCE, which can.
  *
  * ---------------------------------------------------------------------------
  * IF THIS TEST IS FAILING
  * ---------------------------------------------------------------------------
- * A better-auth upgrade changed the auth schema. Add the reported column(s) or
- * index to the named model in `prisma/schema/auth.prisma`, then write a
- * migration that BACKFILLS existing rows — a required column cannot be added
- * bare to a populated table. Check the release's upgrade guide for the value
- * each existing row should get; `20260825120000_add_account_issuer` is the
- * worked example.
+ * A better-auth upgrade changed the auth schema, in one of two directions:
+ *
+ * - **"missing"** — it now reads a column or index this schema lacks. Add it to
+ *   the named model in `prisma/schema/auth.prisma`, then write a migration that
+ *   BACKFILLS existing rows — a required column cannot be added bare to a
+ *   populated table. Check the release's upgrade guide for the value each
+ *   existing row should get; `20260825120000_add_account_issuer` is the worked
+ *   example (and `20260915180000_drop_account_issuer` is what removing it
+ *   again looked like when 1.7.3 stopped reading it).
+ * - **"required but Better Auth never writes it"** — this schema requires a
+ *   column the release no longer supplies. Make it optional, give it a default,
+ *   or drop it with a migration. Do NOT silence it with
+ *   `advanced.database.validateSchema: false` — that hides the finding, not
+ *   the constraint violation.
  *
  * @see .context/auth/oauth.md
  */
@@ -39,14 +63,18 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { getAuthTables, createLocalAccountIssuer } from '@better-auth/core/db';
-import { google } from '@better-auth/core/social-providers';
-import { CREDENTIAL_ACCOUNT_ISSUER } from '@/lib/auth/constants';
+import { getAuthTables } from '@better-auth/core/db';
+import {
+  diffSchema,
+  formatSchemaFinding,
+  getExpectedSchema,
+  type IntrospectedTable,
+} from '@better-auth/core/db/internal';
 
 const SCHEMA_PATH = path.join(process.cwd(), 'prisma/schema/auth.prisma');
 const MIGRATION_PATH = path.join(
   process.cwd(),
-  'prisma/migrations/20260825120000_add_account_issuer/migration.sql'
+  'prisma/migrations/20260915180000_drop_account_issuer/migration.sql'
 );
 
 /** What better-auth can require of a single column, read off the Prisma field. */
@@ -55,6 +83,12 @@ interface ParsedColumn {
   optional: boolean;
   /** Inline `@unique`. Table-level `@@unique([one])` is folded in below. */
   unique: boolean;
+  /**
+   * `@default(...)` or `@updatedAt` — an insert may omit the column. The only
+   * thing that stops a required column better-auth never writes from failing
+   * every insert, so it is read for the reverse check below.
+   */
+  hasDefault: boolean;
 }
 
 interface ParsedModel {
@@ -85,9 +119,14 @@ function parseModelsByTable(source: string): Map<string, ParsedModel> {
       const field = /^(\w+)\s+(\S+)/.exec(line);
       if (!field) continue;
       const [, fieldName, fieldType] = field;
+      // A relation field is not a column. `user User @relation(...)` is
+      // required and has no default, which the reverse check below would read
+      // as a column better-auth never writes — a finding about nothing.
+      if (fieldType.endsWith('[]') || /@relation\(/.test(line)) continue;
       columns.set(/@map\("([^"]+)"\)/.exec(line)?.[1] ?? fieldName, {
         optional: fieldType.endsWith('?'),
         unique: /(^|\s)@unique(\s|$|\()/.test(line),
+        hasDefault: /(^|\s)@(default\(|updatedAt(\s|$))/.test(line),
       });
     }
 
@@ -190,58 +229,68 @@ describe('prisma/schema/auth.prisma satisfies better-auth', () => {
   });
 });
 
-describe('Account identity is keyed on (issuer, accountId)', () => {
-  // The specific regression 0.11.0 shipped, pinned by name so the failure says
-  // what broke rather than only which column is absent.
-  it('has issuer, and does not key identity on providerId', () => {
-    const account = parsed.get('account');
-    expect(account?.columns.has('issuer')).toBe(true);
-    expect(account?.uniques).toContainEqual(['issuer', 'accountId']);
+describe('nothing this schema requires is something better-auth never writes', () => {
+  // better-auth's own comparison, fed the input its Prisma adapter cannot get.
+  // `IntrospectedTable` is the adapter's shape: one entry per table, columns
+  // with nullability and default-ness — which is all `diffSchema` reads.
+  const actual: IntrospectedTable[] = [...parsed].map(([table, model]) => ({
+    name: table,
+    columns: [...model.columns].map(([name, column]) => ({
+      name,
+      nullable: column.optional,
+      hasDefault: column.hasDefault,
+    })),
+  }));
+
+  it('parsed defaults (guards the parser against a syntax change)', () => {
+    // Without this, a parser that stopped seeing `@default(` would report
+    // every defaulted column as an unexpected required one and the failure
+    // would blame the schema rather than the regex. Anchor on columns known to
+    // carry each spelling.
+    const user = parsed.get('user');
+    expect(user?.columns.get('createdAt')?.hasDefault, '@default(now())').toBe(true);
+    expect(user?.columns.get('updatedAt')?.hasDefault, '@updatedAt').toBe(true);
+    expect(user?.columns.get('email')?.hasDefault, 'a bare required column').toBe(false);
+    // And relation fields are not columns.
+    expect(parsed.get('account')?.columns.has('user')).toBe(false);
+  });
+
+  it('reports no findings from better-auth’s own diff', () => {
+    // `{}` again: options only WIDEN the written set (additional fields,
+    // plugins), so the baseline is the stricter input for this direction. A
+    // required column that only an additional field writes would fail here
+    // and would need this test to pass the real options — say so if it does.
+    const findings = diffSchema(getExpectedSchema({}), actual);
     expect(
-      account?.uniques.some((group) => group.includes('providerId')),
-      'providerId is local configuration in better-auth >= 1.7, never an identity key'
-    ).toBe(false);
+      findings,
+      findings.map((finding) => formatSchemaFinding(finding, 'prisma')).join('\n')
+    ).toEqual([]);
   });
 });
 
-describe('the issuer values we write match the ones better-auth writes', () => {
-  // The migration backfills existing rows; better-auth writes every row after
-  // it. If the two disagree, an existing user's row stops matching the identity
-  // better-auth looks up and they simply cannot sign in — silently, with a
-  // "invalid email or password" for credential users and a fresh duplicate
-  // account for social ones. Neither value is derivable, so both are pinned to
-  // better-auth's own source rather than to a copy of the string.
-  const migration = readFileSync(MIGRATION_PATH, 'utf8');
-
-  /** providerId -> the issuer literal the migration backfills for it. */
-  const backfilled = new Map(
-    [
-      ...migration.matchAll(
-        /UPDATE "account" SET "issuer" = '([^']+)' WHERE "providerId" = '([^']+)'/g
-      ),
-    ].map(([, issuer, providerId]) => [providerId, issuer])
-  );
-
-  it('extracted the backfill statements (guards the regex against a rewrite)', () => {
-    // Without this, a reworded migration would empty the map and every
-    // assertion below would compare undefined to undefined... loudly, since
-    // toBe would fail — but the failure would blame better-auth rather than
-    // the parse. Name the real cause up front.
-    expect([...backfilled.keys()].sort()).toEqual(['credential', 'google']);
+describe('Account identity is keyed on (providerId, accountId), as in 1.6', () => {
+  // The specific regression 0.11.0 shipped and 0.12.0 unshipped, pinned by
+  // name so the failure says what broke rather than only which column moved.
+  // 1.7.0–1.7.2 keyed identity on `issuer`; 1.7.3 reverted it and better-auth
+  // has said the core schema stays stable for the rest of v1. If `issuer`
+  // comes back, it comes back through the derived checks above, with a
+  // backfill — not by reviving this column.
+  it('has no issuer column and no unique index on it', () => {
+    const account = parsed.get('account');
+    expect(account?.columns.has('issuer')).toBe(false);
+    expect(
+      account?.uniques.some((group) => group.includes('issuer')),
+      'no @@unique may name issuer — the column is gone'
+    ).toBe(false);
   });
 
-  it("backfills credential accounts with better-auth's credential issuer", () => {
-    expect(backfilled.get('credential')).toBe(createLocalAccountIssuer('credential'));
-  });
-
-  it('backfills google accounts with the issuer the google provider declares', () => {
-    const provider = google({ clientId: 'test-client-id', clientSecret: 'test-client-secret' });
-    expect(backfilled.get('google')).toBe(provider.accountIssuer);
-  });
-
-  it("CREDENTIAL_ACCOUNT_ISSUER is better-auth's value, not a copy that can drift", () => {
-    expect(CREDENTIAL_ACCOUNT_ISSUER).toBe(createLocalAccountIssuer('credential'));
-    // And the migration and the constant cannot disagree with each other.
-    expect(backfilled.get('credential')).toBe(CREDENTIAL_ACCOUNT_ISSUER);
+  it('the drop migration removes the column and the index Prisma actually named', () => {
+    // Prisma names a `@@unique([issuer, accountId])` index
+    // `account_issuer_accountId_key`; the upstream cleanup recipe drops
+    // `account_issuer_accountId_uidx`, which never existed here. A migration
+    // that copied the recipe would be a no-op and leave the index in place.
+    const migration = readFileSync(MIGRATION_PATH, 'utf8');
+    expect(migration).toMatch(/DROP INDEX IF EXISTS "account_issuer_accountId_key"/);
+    expect(migration).toMatch(/ALTER TABLE "account" DROP COLUMN IF EXISTS "issuer"/);
   });
 });

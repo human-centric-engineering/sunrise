@@ -113,7 +113,7 @@
     "@tailwindcss/typography": "^0.5.20",
     "@vercel/blob": "^2.8.0",
     "@xyflow/react": "^12.11.6",
-    "better-auth": "^1.7.2",
+    "better-auth": "^1.7.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cron-parser": "^5.10.0",
@@ -158,7 +158,7 @@
     "valibot": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive valibot. @prisma/dev pins 1.4.2 today, which already satisfies this range, so the entry is a floor rather than a live force."
   },
   "devDependencies": {
-    "@better-auth/core": "1.7.2",
+    "@better-auth/core": "1.7.4",
     "@eslint/eslintrc": "^3.3.7",
     "@eslint/js": "^9.39.5",
     "@next/eslint-plugin-next": "^16.3.5",

@@ -232,13 +232,12 @@ export function OAuthButtons({ callbackUrl }: { callbackUrl?: string }) {
 }
 ```
 
-### 5. Decide the provider's `issuer`
+### 5. No schema change
 
-New providers need no schema change, and none is needed once
-`20260825120000_add_account_issuer` has been applied — better-auth writes
-`issuer` on every row it creates. Only a database that already holds rows for
-the new provider when that migration first runs needs it extended.
-See [Account Identity](#account-identity-issuer-accountid).
+A new provider needs nothing in `prisma/schema/auth.prisma`. An `Account` row
+is identified by `(providerId, accountId)` and better-auth writes both. See
+[Account Identity](#account-identity-providerid-accountid) for what a row
+written outside better-auth must carry.
 
 ## OAuth Flow
 
@@ -252,53 +251,45 @@ See [Account Identity](#account-identity-issuer-accountid).
    - Creates session
 6. User redirected to callback URL (dashboard)
 
-## Account Identity: `(issuer, accountId)`
+## Account Identity: `(providerId, accountId)`
 
-Since better-auth 1.7, an `Account` row is identified by the pair
-**`(issuer, accountId)`** — enforced by `@@unique([issuer, accountId])`.
-`providerId` is local configuration only and is **never** an identity key.
-
-| Account kind                   | `issuer`                           | `accountId`              |
-| ------------------------------ | ---------------------------------- | ------------------------ |
-| Email/password                 | `local:credential`                 | the owning `User.id`     |
-| Google (and any OIDC provider) | `https://accounts.google.com`      | the verified `sub` claim |
-| OAuth2 provider with no issuer | `local:oauth:<encoded providerId>` | the provider's subject   |
-
-`issuer` names the authority that vouched for the subject, so two providers can
-never collide on a subject string. better-auth derives it from the provider's
-`accountIssuer`; `lib/auth/constants.ts` exports `CREDENTIAL_ACCOUNT_ISSUER`
-for the credential case.
+An `Account` row is identified by the pair **`(providerId, accountId)`**, as in
+better-auth 1.6. `accountId` is the provider's subject — the verified `sub`
+claim for Google — and for a credential (email/password) row it is the owning
+`User.id`. Sign-in asserts that last one: a credential row whose `accountId` is
+not its user's id simply cannot be signed in to.
 
 **Anything that writes an `Account` outside better-auth — a smoke fixture, a
-seed, a fork's importer — must set `issuer`,** and a credential row must also
-set `accountId` to the owning user's id. Sign-in checks all three; a row that
-disagrees simply cannot be signed in to.
+seed, a fork's importer — sets `providerId`, `accountId` and `userId`, and for
+a credential row sets `accountId = userId`.** Nothing else is an identity key.
 
-### Adding a provider that is not in the table above
+### The `issuer` detour (better-auth 1.7.0–1.7.2)
 
-**In most cases you need to do nothing.** better-auth writes `issuer` on every
-row it creates, so a provider you add _after_
-`20260825120000_add_account_issuer` has already run needs no migration change —
-and editing an applied migration is actively harmful, because Prisma compares
-checksums and will refuse with "migration was modified after it was applied".
+Those three releases keyed identity on an `issuer` column instead — the OIDC
+issuer for social accounts, `local:credential` for email/password — and 0.11.0
+shipped 1.7.1 without the column, which took out every sign-in in production.
+`20260825120000_add_account_issuer` (#672) added and backfilled it.
 
-The one case that needs work is a database that **already holds rows** for the
-new provider when the migration first runs — a fork that added the provider
-before taking this upgrade. The migration deliberately **refuses to guess**
-there: it raises on a `providerId` whose issuer it does not know. Extend it,
-before it has been applied, with that provider's verified issuer (Microsoft,
-for example, is `https://login.microsoftonline.com/<tenant>/v2.0`), because an
-issuer cannot be derived from a provider's name. A plain OAuth2 provider with
-no issuer of its own uses `local:oauth:` + the percent-encoded `providerId`.
+**1.7.3 reverted the re-keying** and committed to keeping the core account
+schema stable for the rest of v1. From then on better-auth never writes
+`issuer`, and a `NOT NULL` column nothing writes fails every insert into
+`account` — sign-up, first social sign-in and account linking — while existing
+users keep signing in and nothing in the toolchain says why.
+`20260915180000_drop_account_issuer` drops the column and its index. Both
+statements are `IF EXISTS`, so a database on which an operator already ran the
+upstream cleanup by hand takes the migration as a no-op. Note the index name:
+Prisma called it `account_issuer_accountId_key`; the upstream recipe's
+`account_issuer_accountId_uidx` never existed on a Sunrise database.
 
-Getting this wrong does not fail loudly at runtime — it strands the affected
-users at the login screen — which is why the migration stops instead. Note what
-stopping costs: `prisma migrate deploy` records the migration as failed, and
-every later deploy stops with P3009 until you clear it with
-`prisma migrate resolve --rolled-back 20260825120000_add_account_issuer` (on
-Neon, prefix `PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true`). The same applies to
-the collision guard, which raises if two rows would share an
-`(issuer, accountId)`.
+**Do not revive the column.** `tests/unit/prisma/auth-schema-parity.test.ts`
+derives both directions from better-auth's own tables — every column it reads
+must exist, and nothing this schema requires may be a column it never writes —
+so a future release that needs `issuer` back fails that test on the version
+bump, with a backfill to write, rather than in production. The reverse check
+lives in that test rather than in better-auth's own init-time validation
+because, under Prisma 7's compact runtime data model, the adapter cannot see
+whether a column is required and so — by its own docblock — "reports missing
+tables and columns but never a required column".
 
 ## Linking Social Accounts
 

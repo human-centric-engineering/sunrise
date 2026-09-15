@@ -1103,6 +1103,35 @@ release process.
   hand-folded out, as the comment block above `AiKnowledgeChunk` instructs.
   `npm run db:drift-check` passes all 9 probes against the applied migration.
 
+### Removed
+
+- **`Account.issuer` and its `@@unique([issuer, accountId])` index, with
+  `CREDENTIAL_ACCOUNT_ISSUER` from `lib/auth/constants.ts` — because better-auth
+  1.7.3 reverted the identity model they existed for, and Sunrise now runs
+  1.7.4.** 0.11.1 added the column so 1.7.1 could sign anyone in; 1.7.3 restored
+  the 1.6 identity `(providerId, accountId)` and committed to keeping the core
+  schema stable for the rest of v1, so from 1.7.3 on better-auth never writes
+  `issuer` — and a `NOT NULL` column nothing writes fails every insert into
+  `account`: sign-up, first social sign-in and account linking, while existing
+  users keep signing in and nothing in the toolchain says why. Migration
+  `20260915180000_drop_account_issuer` drops both; each statement is
+  `IF EXISTS`, so a database on which the upstream cleanup was already run by
+  hand takes it as a no-op. (Prisma named the index
+  `account_issuer_accountId_key`; the upstream recipe's
+  `account_issuer_accountId_uidx` never existed here.)
+  `tests/unit/prisma/auth-schema-parity.test.ts` now checks the reverse
+  direction too — nothing the schema requires may be a column better-auth never
+  writes — fed from the Prisma source, because under Prisma 7's compact runtime
+  data model better-auth's own init-time check cannot see whether a column is
+  required. Closes t-695 (§112).
+
+> **Fork action.** Merging the release brings the migration; nothing to extend
+> this time. **If your own seed, smoke or importer writes `issuer` on an
+> `Account` row, the merge fails type-check at that write — delete the field.**
+> A fork that already relaxed or dropped the column by hand following the
+> upstream guide is fine: the migration is a no-op there. Do not re-add the
+> column; the parity test fails on it.
+
 ### Fixed
 
 - **Every install logged two authorization warnings about a resolver that does
