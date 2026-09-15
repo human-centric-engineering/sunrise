@@ -63,6 +63,13 @@ export const POST = withAdminAuth<{ id: string }>(
       select: { id: true, name: true, userId: true },
     });
     if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // be `?? 'orphan'` at the log site, which filed a null — the state a
+    // widening regression produces — as an ordinary orphan read. A 404 keeps
+    // the signal; `loadDataset` in the detail route has always done this.
+    const basis = datasetAccessBasis(dataset, session.user.id);
+    if (!basis) throw new NotFoundError(`Dataset ${datasetId} not found`);
 
     // Subject agent ownership: a synthesis run pulls KB chunks / failure
     // seeds from the agent, so the caller must be able to see it. We
@@ -88,7 +95,7 @@ export const POST = withAdminAuth<{ id: string }>(
       datasetName: dataset.name,
       // The visibility clause admits only owner and orphan rows, so this
       // cannot be null. If it somehow were, over-logging is the safe direction.
-      basis: datasetAccessBasis(dataset, session.user.id) ?? 'orphan',
+      basis,
       action: 'dataset.cases_generate',
       clientIp: getClientIP(request),
     });

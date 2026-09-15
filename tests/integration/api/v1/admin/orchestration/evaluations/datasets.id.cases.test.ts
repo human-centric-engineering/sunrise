@@ -57,11 +57,24 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const DATASET_ID = 'cmjbv4i3x00003wsloputgwu7';
+
+/**
+ * The dataset the route resolves under its visibility clause, stated with the
+ * owner it always implied. A fixture that omits `userId` is not an ownerless
+ * dataset — it is one whose owner is UNKNOWN, which `datasetAccessBasis` reads
+ * as "not admitted by the clause" and the route answers with a 404 (t-693).
+ * These fixtures used to omit it and passed only because the log site papered
+ * the null over with `?? 'orphan'`.
+ */
+function ownedDataset() {
+  return { id: DATASET_ID, userId: ADMIN_ID };
+}
 const INVALID_ID = 'not-a-cuid';
 
 function makeCase(position: number) {
@@ -139,10 +152,56 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets/:id/cases', () =>
     );
   });
 
+  it('404s a foreign row the clause let through, and writes no audit row for it', async () => {
+    // The clause in the test above is what keeps a stranger's dataset out; this
+    // simulates that clause having stopped filtering — the state a widening
+    // regression produces — by handing the route a row it should never have
+    // been given. `mockResolvedValue` rather than a filtering fake, because a
+    // filtering fake cannot simulate a clause that has stopped filtering.
+    //
+    // Before t-693 the log site wrote `datasetAccessBasis(...) ?? 'orphan'`, so
+    // this request answered 200 and filed a stranger's dataset in the audit log
+    // as an abandoned one. A 404 with no row is the signal an operator would
+    // need to notice the regression at all.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({
+      ...ownedDataset(),
+      userId: 'cmjbv4i3x00003wsloputgwx1',
+      caseCount: 2,
+    } as never);
+    vi.mocked(prisma.aiDatasetCase.findMany).mockResolvedValue([makeCase(0)] as never);
+
+    const response = await GET(makeGetRequest(DATASET_ID), makeParams(DATASET_ID));
+
+    expect(response.status).toBe(404);
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    expect(vi.mocked(prisma.aiDatasetCase.findMany)).not.toHaveBeenCalled();
+  });
+
+  it('opens the caller’s own row under the same fixture — the control for the 404 above', async () => {
+    // Same fixture shape with the owner set to the caller. Without this the
+    // case above would pass just as well against a route that had started
+    // refusing everything.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({
+      ...ownedDataset(),
+      caseCount: 2,
+    } as never);
+    vi.mocked(prisma.aiDatasetCase.findMany).mockResolvedValue([makeCase(0)] as never);
+
+    const response = await GET(makeGetRequest(DATASET_ID), makeParams(DATASET_ID));
+
+    expect(response.status).toBe(200);
+    // An owner read is routine and deliberately unlogged, so "no audit row" on
+    // its own would not distinguish this control from the case above — the
+    // status does.
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+
   it('returns 200 with items, nextCursor=null when fewer than limit results', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({
-      id: DATASET_ID,
+      ...ownedDataset(),
       caseCount: 2,
     } as never);
     // limit defaults to 50; route requests take=limit+1; return 2 items.
@@ -163,7 +222,7 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets/:id/cases', () =>
   it('returns nextCursor set to last item position when results exceed limit', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({
-      id: DATASET_ID,
+      ...ownedDataset(),
       caseCount: 100,
     } as never);
     // Limit=2 → take=3 → return 3 rows; last is sliced off and nextCursor = items[last].position.
@@ -186,7 +245,7 @@ describe('GET /api/v1/admin/orchestration/evaluations/datasets/:id/cases', () =>
   it('passes cursor (gt-filter) into the WHERE clause', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({
-      id: DATASET_ID,
+      ...ownedDataset(),
       caseCount: 10,
     } as never);
     vi.mocked(prisma.aiDatasetCase.findMany).mockResolvedValue([] as never);

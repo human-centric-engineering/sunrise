@@ -104,18 +104,46 @@ import { prisma } from '@/lib/db/client';
 
 export type AccessBasis = 'owner' | 'shared' | 'system';
 
-export interface AdminCanViewResult {
-  /** True when the admin can access the conversation. */
-  ok: boolean;
-  /** Why access was granted, or `null` when denied / not found. */
-  basis: AccessBasis | null;
-  /**
-   * The conversation's owner userId. Surfaced so audit-log callers can
-   * record cross-user accesses (`basis === 'shared'`) without an extra
-   * DB round-trip. `null` when the conversation does not exist.
-   */
-  ownerId: string | null;
-}
+/**
+ * The answer, as a discriminated union on `ok`.
+ *
+ * **A permitted result always carries a basis, and the type says so.** This
+ * used to be one shape with `basis: AccessBasis | null` for both outcomes, so
+ * a caller that had already thrown on `!ok` still held a nullable basis and
+ * wrote `access.basis ?? 'owner'` to satisfy the audit logger — which skips
+ * `'owner'`. Every one of those four sites was therefore ready to write **no
+ * audit row at all** on the one model that holds a living third party's
+ * correspondence, should a null ever arrive. It cannot arrive: this helper
+ * fetches and classifies the row itself, and every `ok: true` branch below
+ * names its basis. So the two-state type was the defect, not the callers, and
+ * narrowing on `ok` is now what removes the `??` (t-693).
+ *
+ * Read together with the "ownership axis is becoming three-valued" note on
+ * `dataset-access.ts`: {@link AccessBasis} names three reasons, and the
+ * moment a policy admits a fourth kind of row — an org peer's thread under
+ * §106's `'team'` — this union must grow it in the same change, or the audit
+ * row over a newly-admitted row is wrong. Here that is a compile error at the
+ * `switch`-shaped sites, which is the loud failure the type is for.
+ */
+export type AdminCanViewResult =
+  | {
+      /** The admin can access the conversation. */
+      ok: true;
+      /** Why. Never `null` on a permitted result. */
+      basis: AccessBasis;
+      /**
+       * The conversation's owner userId. Surfaced so audit-log callers can
+       * record cross-user accesses (`basis === 'shared'`) without an extra
+       * DB round-trip. `null` on a system-owned thread.
+       */
+      ownerId: string | null;
+    }
+  | {
+      /** Denied, or no such conversation — the two are deliberately one answer. */
+      ok: false;
+      basis: null;
+      ownerId: null;
+    };
 
 const DENY: AdminCanViewResult = { ok: false, basis: null, ownerId: null };
 

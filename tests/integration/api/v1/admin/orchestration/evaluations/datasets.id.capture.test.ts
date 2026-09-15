@@ -71,6 +71,18 @@ import { POST } from '@/app/api/v1/admin/orchestration/evaluations/datasets/[id]
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const DATASET_ID = 'cmjbv4i3x00003wsloputgwu1';
+
+/**
+ * The dataset the route resolves under its visibility clause, stated with the
+ * owner it always implied. A fixture that omits `userId` is not an ownerless
+ * dataset — it is one whose owner is UNKNOWN, which `datasetAccessBasis` reads
+ * as "not admitted by the clause" and the route answers with a 404 (t-693).
+ * These fixtures used to omit it and passed only because the log site papered
+ * the null over with `?? 'orphan'`.
+ */
+function ownedDataset() {
+  return { id: DATASET_ID, userId: ADMIN_ID };
+}
 const CONVERSATION_ID = 'cmjbv4i3x00003wsloputgwu2';
 
 /**
@@ -180,7 +192,7 @@ describe('POST /evaluations/datasets/:id/capture — dataset ownership', () => {
 describe('POST /evaluations/datasets/:id/capture — source ownership', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
   });
 
   it('returns 404 when the source message belongs to another user', async () => {
@@ -240,7 +252,7 @@ describe('POST /evaluations/datasets/:id/capture — system-owned sources (#502)
   // would make a scheduled run's output impossible to capture into a dataset.
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
   });
 
   it('captures a turn from a system-owned inbound conversation', async () => {
@@ -253,6 +265,10 @@ describe('POST /evaluations/datasets/:id/capture — system-owned sources (#502)
     expect(vi.mocked(captureConversationTurnAsCase)).toHaveBeenCalledWith({
       datasetId: DATASET_ID,
       messageId: 'm-1',
+      // The dataset's owner, pinned into the write so a claim racing this
+      // capture cannot land it in someone else's dataset. It is the owner the
+      // fixture always implied and never stated.
+      observedOwnerId: ADMIN_ID,
     });
   });
 
@@ -276,6 +292,7 @@ describe('POST /evaluations/datasets/:id/capture — system-owned sources (#502)
       datasetId: DATASET_ID,
       executionId: 'e-1',
       selector: { kind: 'last_step' },
+      observedOwnerId: ADMIN_ID,
     });
   });
 });
@@ -283,7 +300,7 @@ describe('POST /evaluations/datasets/:id/capture — system-owned sources (#502)
 describe('POST /evaluations/datasets/:id/capture — happy path', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
   });
 
   it('conversation_turn: returns 201 with the AppendCasesResult', async () => {
@@ -299,6 +316,10 @@ describe('POST /evaluations/datasets/:id/capture — happy path', () => {
     expect(vi.mocked(captureConversationTurnAsCase)).toHaveBeenCalledWith({
       datasetId: DATASET_ID,
       messageId: 'm-1',
+      // The dataset's owner, pinned into the write so a claim racing this
+      // capture cannot land it in someone else's dataset. It is the owner the
+      // fixture always implied and never stated.
+      observedOwnerId: ADMIN_ID,
     });
   });
 
@@ -324,6 +345,7 @@ describe('POST /evaluations/datasets/:id/capture — happy path', () => {
       executionId: 'e-1',
       selector: { kind: 'step_id', stepId: 'final-report' },
       edits: { expectedOutput: 'tightened' },
+      observedOwnerId: ADMIN_ID,
     });
   });
 });

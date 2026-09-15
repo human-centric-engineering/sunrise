@@ -74,6 +74,20 @@ import { POST as PreviewPOST } from '@/app/api/v1/admin/orchestration/evaluation
 import { POST as CommitPOST } from '@/app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/commit/route';
 
 const DATASET_ID = 'cmjbv4i3x00003wsloputgwu1';
+/** The id `mockAdminUser()` issues — the fixture's owner must be exactly it. */
+const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
+
+/**
+ * The dataset the route resolves under its visibility clause, stated with the
+ * owner it always implied. A fixture that omits `userId` is not an ownerless
+ * dataset — it is one whose owner is UNKNOWN, which `datasetAccessBasis` reads
+ * as "not admitted by the clause" and the route answers with a 404 (t-693).
+ * These fixtures used to omit it and passed only because the log site papered
+ * the null over with `?? 'orphan'`.
+ */
+function ownedDataset() {
+  return { id: DATASET_ID, userId: ADMIN_ID };
+}
 
 function makeRequest(body: Record<string, unknown>, suffix = ''): NextRequest {
   return {
@@ -171,7 +185,7 @@ describe('POST /generate-cases (preview) — validation + ownership', () => {
   });
 
   it('returns 404 when the subject agent does not exist', async () => {
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
     const res = await PreviewPOST(makeRequest({ agentId: 'missing', mode: 'kb' }), ctx());
     expect(res.status).toBe(404);
@@ -181,7 +195,7 @@ describe('POST /generate-cases (preview) — validation + ownership', () => {
 describe('POST /generate-cases (preview) — happy path', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'a' } as never);
   });
 
@@ -283,7 +297,7 @@ describe('POST /generate-cases/commit — happy path + guardrails', () => {
   });
 
   it('returns 400 when no cases are provided', async () => {
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
     const res = await CommitPOST(makeRequest({}, '/commit'), ctx());
     expect(res.status).toBe(400);
   });
@@ -299,7 +313,7 @@ describe('POST /generate-cases/commit — happy path + guardrails', () => {
   });
 
   it('201 happy path: writes via appendCasesToDataset with source=synthetic', async () => {
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
     vi.mocked(appendCasesToDataset).mockResolvedValue({
       datasetId: DATASET_ID,
       appendedCount: 1,
@@ -317,6 +331,8 @@ describe('POST /generate-cases/commit — happy path + guardrails', () => {
       datasetId: DATASET_ID,
       cases: [{ input: 'q', expectedOutput: 'a' }],
       source: 'synthetic',
+      // The owner the fixture always implied, pinned into the write.
+      observedOwnerId: ADMIN_ID,
     });
     // Assert response body — a broken successResponse serialiser would not be caught otherwise
     const body = await parseJson<{

@@ -55,7 +55,21 @@ import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-/** Why an admin may see an experiment. */
+/**
+ * Why an admin may see an experiment.
+ *
+ * **Two-valued, and the ownership axis is becoming three-valued.** Encodes the
+ * assumption that the visible set is exactly *{mine} ∪ {nobody's}*, which is
+ * what lets {@link experimentAccessBasis}'s `null` mean "not admitted by the
+ * clause". `scope.ownership` in `.context/auth/authorization.md` carries
+ * `'team'` — a row the caller may read and does not own — which this type
+ * cannot name. **Whoever widens {@link experimentVisibilityWhere} past those
+ * two sets must widen this union in the same change**, or every audit row over
+ * a newly-admitted row is wrong. The seven handlers throw `NotFoundError` on a
+ * null (t-687) so that a widened clause 404s on the rows the policy just
+ * admitted — loud, on the first test run — rather than writing a false record.
+ * Same note on `DatasetAccessBasis`.
+ */
 export type ExperimentAccessBasis = 'owner' | 'orphan';
 
 /** The subset of an experiment row this module needs. */

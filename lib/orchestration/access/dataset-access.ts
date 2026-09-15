@@ -57,7 +57,24 @@ import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-/** Why an admin may see a dataset. */
+/**
+ * Why an admin may see a dataset.
+ *
+ * **Two-valued, and the ownership axis is becoming three-valued.** This union
+ * encodes the assumption that the visible set is exactly *{mine} ∪ {nobody's}*
+ * — true of every route today, and what makes {@link datasetAccessBasis}'s
+ * `null` mean "not admitted by the clause" rather than a third case.
+ * `.context/auth/authorization.md` already carries the target that breaks it:
+ * `scope.ownership` is `'own' | 'team' | 'all'`, and `'team'` is a row the
+ * caller may legitimately read and does not own — a case this type cannot
+ * name. **Whoever widens {@link datasetVisibilityWhere} past those two sets
+ * must widen this union in the same change**, or every audit row written over
+ * a newly-admitted row is wrong, and wrong in the direction that matters: the
+ * audit log is where an operator would look to find out reads had widened.
+ * The handlers narrow a null to a 404 (t-693) precisely so that a widened
+ * clause fails loudly on its first test run instead of filing a colleague's
+ * dataset as an abandoned one. Same note on `ExperimentAccessBasis`.
+ */
 export type DatasetAccessBasis = 'owner' | 'orphan';
 
 /** The subset of a dataset row this module needs. */
@@ -132,23 +149,12 @@ export function datasetVisibilityWhere(session: AuthenticatedSession): Prisma.Ai
  * badge. `'orphan'` is logged: the row was somebody's, an
  * erasure detached it, and who reached it afterwards is worth knowing.
  *
- * **Six call sites still pass `datasetAccessBasis(...) ?? 'orphan'`, and the
- * experiments sibling no longer does.** A null basis means the row was not
- * admitted by the visibility clause — the exact state a widening regression
- * produces — so the fallback files it as an ordinary `'orphan'` read, in the log
- * an operator would use to notice that regression. Unreachable today: every one
- * of those sites fetches under {@link datasetVisibilityWhere} first, and the
- * detail route already narrows properly inside its own `loadDataset`.
- *
- * Sites: `cases/route.ts`, `cases/[position]/route.ts`, `capture/route.ts`
- * (twice), `generate-cases/route.ts`, `generate-cases/commit/route.ts`.
- *
- * **Tracked as t-693.** t-687 fixed the seven experiment sites because it was
- * writing them, and attempted these too — the change is two lines per site, but
- * it turns out to need an owner on nine test fixtures across five files, two of
- * which have no `ADMIN_ID` to give them. That is a coherent small task and a bad
- * thing to bolt onto an unrelated sweep's fourth review round, where no reviewer
- * would see it.
+ * **`basis` is never defaulted by a caller.** Every site narrows the helper's
+ * `null` to a 404 immediately after its guarded fetch, as `loadDataset` in the
+ * detail route always has: a null means the row was not admitted by the
+ * visibility clause — the state a widening regression produces — and a
+ * `?? 'orphan'` there would file it as an ordinary orphan read in the log an
+ * operator would use to notice that regression (t-693).
  *
  * **Deliberately weaker than the conversation rule, and here is the line.**
  * A `'system'` conversation holds a living third party's correspondence, so

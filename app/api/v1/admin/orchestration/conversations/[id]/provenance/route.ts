@@ -103,7 +103,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     conversationId: id,
     conversationTitle: conversation.title,
     conversationOwnerId: conversation.userId,
-    accessBasis: access.basis ?? 'owner',
+    accessBasis: access.basis,
     action: 'conversation.provenance_export',
     extra: { format: 'json', messageCount: messages.length },
     clientIp: getClientIP(request),

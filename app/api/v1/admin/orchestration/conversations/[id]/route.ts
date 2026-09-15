@@ -68,7 +68,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     conversationId: id,
     conversationTitle: conversation.title,
     conversationOwnerId: conversation.userId,
-    accessBasis: access.basis ?? 'owner',
+    accessBasis: access.basis,
     action: 'conversation.metadata_viewed',
     clientIp: getClientIP(request),
   });

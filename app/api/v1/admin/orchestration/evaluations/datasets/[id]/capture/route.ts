@@ -72,6 +72,13 @@ export const POST = withAdminAuth<{ id: string }>(
       select: { id: true, name: true, userId: true },
     });
     if (!dataset) throw new NotFoundError(`Dataset ${datasetId} not found`);
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. It used to
+    // be `?? 'orphan'` at the log site, which filed a null — the state a
+    // widening regression produces — as an ordinary orphan read. A 404 keeps
+    // the signal; `loadDataset` in the detail route has always done this.
+    const basis = datasetAccessBasis(dataset, session.user.id);
+    if (!basis) throw new NotFoundError(`Dataset ${datasetId} not found`);
 
     if (body.kind === 'conversation_turn') {
       // Source-side ownership: the caller must own the conversation the message
@@ -106,7 +113,7 @@ export const POST = withAdminAuth<{ id: string }>(
         adminUserId: session.user.id,
         datasetId,
         datasetName: dataset.name,
-        basis: datasetAccessBasis(dataset, session.user.id) ?? 'orphan',
+        basis,
         action: 'dataset.case_capture',
         extra: { kind: 'conversation_turn' },
         clientIp: getClientIP(request),
@@ -142,7 +149,7 @@ export const POST = withAdminAuth<{ id: string }>(
       adminUserId: session.user.id,
       datasetId,
       datasetName: dataset.name,
-      basis: datasetAccessBasis(dataset, session.user.id) ?? 'orphan',
+      basis,
       action: 'dataset.case_capture',
       extra: { kind: 'workflow_execution' },
       clientIp: getClientIP(request),

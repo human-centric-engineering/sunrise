@@ -59,6 +59,20 @@ import { prisma } from '@/lib/db/client';
 import { PATCH } from '@/app/api/v1/admin/orchestration/evaluations/datasets/[id]/cases/[position]/route';
 
 const DATASET_ID = 'cmjbv4i3x00003wsloputgwu1';
+/** The id `mockAdminUser()` issues — the fixture's owner must be exactly it. */
+const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
+
+/**
+ * The dataset the route resolves under its visibility clause, stated with the
+ * owner it always implied. A fixture that omits `userId` is not an ownerless
+ * dataset — it is one whose owner is UNKNOWN, which `datasetAccessBasis` reads
+ * as "not admitted by the clause" and the route answers with a 404 (t-693).
+ * These fixtures used to omit it and passed only because the log site papered
+ * the null over with `?? 'orphan'`.
+ */
+function ownedDataset() {
+  return { id: DATASET_ID, userId: ADMIN_ID };
+}
 
 function makeRequest(body: Record<string, unknown>): NextRequest {
   return {
@@ -147,7 +161,7 @@ describe('PATCH /datasets/:id/cases/:position — ownership', () => {
   });
 
   it('returns 404 when no case exists at the requested position', async () => {
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
     vi.mocked(prisma.aiDatasetCase.findUnique).mockResolvedValue(null);
     const res = await PATCH(makeRequest({ input: 'new' }), ctx('42'));
     expect(res.status).toBe(404);
@@ -157,7 +171,7 @@ describe('PATCH /datasets/:id/cases/:position — ownership', () => {
 describe('PATCH /datasets/:id/cases/:position — happy path', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({ id: DATASET_ID } as never);
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(ownedDataset() as never);
     vi.mocked(prisma.aiDatasetCase.findUnique).mockResolvedValue({
       id: 'case-1',
       position: 0,
@@ -199,7 +213,9 @@ describe('PATCH /datasets/:id/cases/:position — happy path', () => {
     expect(body.data.contentHash).toBe('new-hash-deadbeef');
     expect(vi.mocked(prisma.aiDataset.update)).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: DATASET_ID },
+        // Pinned to the ownership the read saw — the owner the fixture always
+        // implied and never stated.
+        where: { id: DATASET_ID, userId: ADMIN_ID },
         data: expect.objectContaining({ contentHash: 'new-hash-deadbeef' }),
       })
     );

@@ -70,6 +70,22 @@ beforeEach(() => {
 });
 
 describe('adminCanViewConversation', () => {
+  it('types a permitted result with a non-null basis, so a caller cannot default it away', async () => {
+    // A compile-time pin as much as a runtime one. `AdminCanViewResult` is a
+    // discriminated union on `ok`; after narrowing, `basis` is `AccessBasis`
+    // with no `null` — so the `?? 'owner'` four routes used to write (which
+    // made `logConversationAccess` skip the row entirely) no longer
+    // type-checks as necessary and has no null to paper over. Revert the union
+    // to a single nullable shape and the assignment below fails `tsc`.
+    findUnique.mockResolvedValue({ userId: ADMIN_ID, share: null });
+
+    const result = await adminCanViewConversation(CONV_ID, admin);
+    if (!result.ok) throw new Error('expected a permitted result');
+
+    const basis: 'owner' | 'shared' | 'system' = result.basis;
+    expect(basis).toBe('owner');
+  });
+
   it('returns ok=true with basis=owner when caller owns the conversation', async () => {
     findUnique.mockResolvedValue({ userId: ADMIN_ID, share: null });
 
