@@ -125,11 +125,7 @@
  */
 
 import { canRead, readUnattributedKind } from '@/lib/auth/authorization';
-import type {
-  AuthorizationPolicy,
-  AuthorizationPrincipal,
-  AuthorizationScope,
-} from '@/lib/auth/authorization';
+import type { AuthorizationPolicy, AuthorizationPrincipal } from '@/lib/auth/authorization';
 
 /**
  * The kinds the guards precompute an answer for.
@@ -266,12 +262,22 @@ export async function resolveUnattributedReads(
   return reads;
 }
 
-/** One principal to test a policy's ownerless arm against. */
+/**
+ * One principal to test a policy's ownerless arm against.
+ *
+ * **No `scope`, deliberately.** The answer the routes consume is resolved by
+ * {@link resolveUnattributedReads} with the **empty** scope, so that is the
+ * only question worth asking here: a policy whose ownerless arm reads
+ * `scope.org` would pass a check run with `{ org }` while every real request —
+ * asked with `{}` — denied, which is a check vouching for a door the guard
+ * keeps shut. When the org axis (§106) makes the guard pass a scope, this grows
+ * one in the same change; until then a case cannot carry what the runtime does
+ * not.
+ */
 export interface OwnerlessReachabilityCase {
   /** Names the case in a violation. Defaults to the principal's user id. */
   label?: string;
   viewer: AuthorizationPrincipal;
-  scope?: AuthorizationScope;
 }
 
 /** A kind of ownerless row that none of the named principals may read. */
@@ -345,6 +351,11 @@ function consequenceOf(kind: string): string {
  * zero principals it could not have found anything, and a check that passes
  * while proving nothing is the failure this module is written against.
  *
+ * **Asked with the empty scope, as the guard asks.** `resolveUnattributedReads`
+ * fills `session.unattributedReads` with `{}`, so a case carries no `scope`; a
+ * policy that admits ownerless rows only when `scope.org` is set is unreachable
+ * at runtime today, and this check says so rather than being told otherwise.
+ *
  * `kinds` defaults to the core roster. A fork with an ownerless model of its own
  * adds that model's kind; a fork that has decided, deliberately, that a kind is
  * unreachable on its install passes the kinds it does want checked — the
@@ -381,10 +392,11 @@ export async function checkOwnerlessReachability(
     const target = readUnattributedKind(kind);
     let reached = false;
     for (const testCase of cases) {
-      // `=== true`, as the runtime `canRead` wrapper requires: a policy that
-      // returns a truthy non-boolean is DENIED on a request, and a check that
-      // counted it as reached would pass while the door stayed shut.
-      if ((await policy.canRead(testCase.viewer, target, testCase.scope ?? {})) === true) {
+      // `{}` because that is the scope the guard asks with (see the case type),
+      // and `=== true` because that is what the runtime `canRead` wrapper
+      // requires — a policy returning a truthy non-boolean is DENIED on a
+      // request. Either mismatch is a check passing while the door stays shut.
+      if ((await policy.canRead(testCase.viewer, target, {})) === true) {
         reached = true;
         break;
       }

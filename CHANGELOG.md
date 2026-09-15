@@ -412,8 +412,9 @@ release process.
   deployment through the blunt instrument. The bulk route now reads the same
   answer (`session.unattributedReads.conversation`) and, for a caller the policy
   refuses, adds `userId: { not: null }` — the rows they may not see are not in
-  their set, exactly as they are not in their list; the route log carries
-  `ownerlessExcluded: true` and the response shape is unchanged. **A default
+  their set, exactly as they are not in their list; the route log and the
+  `conversation.bulk_clear` audit row both carry `ownerlessExcluded: true`, and
+  the response shape is unchanged. **A default
   install is unchanged**: the built-in policy admits a platform admin, so
   `allUsers` still clears inbound threads, and the route's existing tests prove
   it by still passing. Pinned against both routes, in both directions, in

@@ -71,7 +71,10 @@ vi.mock('@/lib/logging', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { logConversationAccess } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  logConversationAccess,
+  logAdminAction,
+} from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   registerAuthorizationPolicy,
   __resetAuthorizationPolicyForTests,
@@ -275,6 +278,15 @@ describe('writes over an inbound thread, targeted and bulk', () => {
         userId: { not: null },
         createdAt: { lt: new Date('2025-01-01T00:00:00Z') },
       });
+      // The immutable trail says so too. `scope: 'all'` alone would read, to a
+      // compliance officer after an Art. 17 request, as "the inbound thread
+      // was destroyed" — and it was not.
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'conversation.bulk_clear',
+          metadata: expect.objectContaining({ scope: 'all', ownerlessExcluded: true }),
+        })
+      );
     });
 
     it('still clears the caller’s own threads, so the narrowing is only the ownerless arm', async () => {

@@ -378,6 +378,34 @@ describe('checkOwnerlessReachability', () => {
     expect(violations).toHaveLength(UNATTRIBUTED_READ_KINDS.length);
   });
 
+  it('asks with the empty scope the guard uses, so a scope-gated arm is reported unreachable', async () => {
+    // `resolveUnattributedReads` asks with `{}`. A §106-shaped policy that
+    // admits ownerless rows only inside an org is therefore closed on every
+    // request today, and the check must say so — a case cannot smuggle in a
+    // scope the runtime never passes.
+    const orgGated: AuthorizationPolicy = {
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(scope.org !== undefined)
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    };
+
+    const violations = await checkOwnerlessReachability(orgGated, [
+      { label: 'platform staff', viewer: ADMIN },
+    ]);
+
+    expect(violations).toHaveLength(UNATTRIBUTED_READ_KINDS.length);
+    // And the premise: the same policy resolves to "denied" on the request path.
+    registerAuthorizationPolicy(orgGated);
+    await expect(resolveUnattributedReads(ADMIN)).resolves.toEqual({
+      conversation: false,
+      dataset: false,
+      execution: false,
+      experiment: false,
+    });
+  });
+
   it('reports an empty roster as a fault rather than a pass', async () => {
     const violations = await checkOwnerlessReachability(DEFAULT_AUTHORIZATION_POLICY, []);
 

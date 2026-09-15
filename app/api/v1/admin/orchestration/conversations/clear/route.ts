@@ -24,8 +24,9 @@
  * and let them destroy every inbound thread through the bulk route. A
  * narrowed caller's `allUsers` now means "every user's conversations" and
  * not "every conversation" — the rows they may not see are not in their set,
- * exactly as they are not in their list. The exclusion is logged; the
- * response shape is unchanged.
+ * exactly as they are not in their list. The exclusion is recorded on the
+ * route log and on the `conversation.bulk_clear` audit row
+ * (`metadata.ownerlessExcluded`); the response shape is unchanged.
  *
  * All deletions (including self-scoped) are recorded in the admin audit
  * log so there's an immutable trail. `AiMessage` rows cascade via the
@@ -88,6 +89,10 @@ export const POST = withAdminAuth(async (request, session) => {
       agentId: body.agentId ?? null,
       olderThan: body.olderThan ?? null,
       deletedCount: result.count,
+      // On the immutable row, not only the route log: a compliance reader
+      // seeing `scope: 'all'` after an Art. 17 request must be able to tell
+      // that a narrowed caller's clear left the inbound threads in place.
+      ownerlessExcluded: excludeOwnerless,
     },
     clientIp: clientIP,
   });
