@@ -18,6 +18,29 @@ release process.
 
 ### Added
 
+- **A test now fails when a source file reads `AiWorkflowExecution`,
+  `AiConversation` or `AiMessage` outside the access helpers — and forks
+  inherit it.** `lib/orchestration/access/ownerless-surfaces.ts` derives the
+  roster from the tree (every file under `app/`, `lib/` and `components/` that
+  touches one of the three models, by Prisma accessor on any receiver or by
+  table name in raw SQL) and its always-run test names any file that neither
+  imports the helper for that model nor appears in `OWNERLESS_SURFACE_EXCEPTIONS`
+  with a reason. A bare import nothing uses does not satisfy it. Exceptions are
+  `'by-design'` (no caller to scope to) or `'known-gap'` (must name the issue or
+  task that closes it, and is reported as stale once the file goes through the
+  helper); reasons under 20 characters, duplicate paths and a by-design entry
+  claiming to be tracked all fail. The first pass measured 54 files: 23 through
+  the helpers, 29 by design, and two known gaps — `approvals/history` (#773) and
+  the analytics service (t-694, new). **A fork's own routes and jobs are in the
+  roster the moment they exist, so the merge that brings this in goes red on any
+  fork file that reads these models directly** — that is the check working.
+  Import the helper if it is an admin surface; otherwise declare it in
+  **`appOwnerlessSurfaceExceptions`, the third list in `lib/app/ci.ts`**
+  (`AppOwnerlessSurfaceException`), which is spread into the core roster and
+  validated identically, with no platform file to edit. **It raises the floor;
+  it is not a proof** — a file that imports the helper and runs an unscoped
+  query beside it passes. Closes #775 as t-692.
+
 - **`checkOwnerlessReachability()` in `lib/auth/orphan-reads.ts` — the test a
   fork runs to prove its authorization policy has not closed a door nobody else
   has a key to.** `canRead`'s `'unattributed'` arm decides the writes over
