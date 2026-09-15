@@ -373,6 +373,16 @@ const TABLE_TO_MODEL: Record<string, OwnerlessModel> = {
 const HELPER_IMPORT =
   /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]@\/lib\/orchestration\/access\/(execution-access|conversation-access)['"]/g;
 
+function isOwnerlessModel(value: string): value is OwnerlessModel {
+  return Object.hasOwn(OWNERLESS_MODELS, value);
+}
+
+type HelperModule = (typeof OWNERLESS_MODELS)[OwnerlessModel];
+
+function isHelperModule(value: string): value is HelperModule {
+  return value === 'execution-access' || value === 'conversation-access';
+}
+
 /** A comment line: docblock body, line comment, or block opener. */
 function isCommentLine(line: string): boolean {
   const t = line.trimStart();
@@ -384,24 +394,31 @@ export function modelsRead(source: string): Set<OwnerlessModel> {
   const found = new Set<OwnerlessModel>();
   for (const line of source.split('\n')) {
     if (isCommentLine(line)) continue;
-    for (const m of line.matchAll(MODEL_ACCESSOR)) found.add(m[1] as OwnerlessModel);
-    for (const m of line.matchAll(RAW_TABLE)) found.add(TABLE_TO_MODEL[m[1].toLowerCase()]);
+    // The regexes' alternations are the three names, so these guards cannot
+    // fail; they are how the capture group becomes the union without a cast.
+    for (const m of line.matchAll(MODEL_ACCESSOR)) {
+      if (isOwnerlessModel(m[1])) found.add(m[1]);
+    }
+    for (const m of line.matchAll(RAW_TABLE)) {
+      const model = TABLE_TO_MODEL[m[1].toLowerCase()];
+      if (model) found.add(model);
+    }
   }
   return found;
 }
 
 interface HelperImports {
   /** Which helper modules the file imports from. */
-  modules: Set<'execution-access' | 'conversation-access'>;
+  modules: Set<HelperModule>;
   /** Each imported value binding, so an unused one can be named. */
   names: string[];
 }
 
 function helperImports(source: string): HelperImports {
-  const modules = new Set<'execution-access' | 'conversation-access'>();
+  const modules = new Set<HelperModule>();
   const names: string[] = [];
   for (const m of source.matchAll(HELPER_IMPORT)) {
-    modules.add(m[2] as 'execution-access' | 'conversation-access');
+    if (isHelperModule(m[2])) modules.add(m[2]);
     for (const raw of m[1].split(',')) {
       const spec = raw.trim();
       if (!spec || spec.startsWith('type ')) continue;
