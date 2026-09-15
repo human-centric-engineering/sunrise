@@ -486,6 +486,28 @@ trivially about the viewer. The checker reports that as a violation rather than
 passing it — along with zero cases and zero subjects, because a parity check that
 proves nothing must not report success.
 
+**Run its companion over the same roster.** `checkOwnerlessReachability`
+(`lib/auth/orphan-reads.ts`) asks a different question of the same policy: for
+every kind of row nobody owns, does at least one principal you named reach it?
+Parity proves the faces agree; this proves the policy has not closed a door that
+has no other key — and there are two of those, explained under
+[Rows nobody owns](#rows-nobody-owns) below.
+
+```ts
+const unreachable = await checkOwnerlessReachability(myPolicy, [
+  { label: 'an org admin', viewer: { userId: 'u1', credential: 'session' } },
+  { label: 'platform staff', viewer: { userId: 'u2', role: 'ADMIN', credential: 'session' } },
+]);
+expect(unreachable).toEqual([]);
+```
+
+**Name the operator principal, not only the narrowed ones.** The first case a
+fork writes is the org admin its policy is _for_, and that case is _supposed_ to
+be refused. The check passes when any one case reaches each kind, so the roster
+has to carry whichever principal you intend to hold that reach. A roster of zero
+is a fault, not a pass; a `kinds` list of your own says, visibly at the call
+site, which gaps you have accepted.
+
 ### Rows nobody owns
 
 `session.subjectFilter` answers "whose rows may I read?" and has no way to say
@@ -658,14 +680,37 @@ than it looks.** The analytics routes (`/analytics/unanswered`,
 `/analytics/topics`, `/feedback`, `/content-gaps`) read `AiMessage.content`
 directly with no owner clause and no policy in the loop, and `unanswered`
 returns the verbatim text of both the agent's reply and the member of the
-public's question. `POST /conversations/clear` with `allUsers` deletes ownerless
-threads the same way. Neither is a regression — both are consistent with the
-rule this seam replaced — but a fork that narrows `canRead`, confirms an inbound
+public's question. That is not a regression — it is consistent with the rule
+this seam replaced — but a fork that narrows `canRead`, confirms an inbound
 thread 404s, and concludes the correspondence is contained will be wrong. See
 [#775](https://github.com/human-centric-engineering/sunrise/issues/775) for the
-check that would catch surfaces like these mechanically, and
-[#776](https://github.com/human-centric-engineering/sunrise/issues/776) for the
-write side.
+check that would catch surfaces like these mechanically. (`POST
+/conversations/clear` with `allUsers` used to be on this list; since t-691 it
+reads the same policy answer as the targeted delete.)
+
+**The same answer decides the writes, deliberately, and that closes two doors a
+policy must leave someone a key to.** There is no `canWrite` face: every core
+write over an ownerless row — `PATCH` / `DELETE /conversations/:id`, the
+`allUsers` scope of `/conversations/clear`, `approve` / `reject` / `cancel` /
+`force-fail` / `retry-step` / `rerun` on an execution — follows the
+`'unattributed'` answer, so a principal the policy refuses cannot find the row
+and cannot act on it. Two of those actions have no other route. An inbound
+thread's sender has no account, so `eraseUser()` cannot reach their messages and
+deleting the thread is their only Art. 17 remedy (t-691). A scheduled run paused
+at a `human_approval` gate names its approvers, and the act routes honour that
+nomination whatever the policy says — but the approvals queue is the executions
+list, so an approver the policy refuses can clear a gate they have no surface to
+find (t-690); that is the documented position of every delegated approver on
+every install, extended to rows nobody owns. Both were weighed against a write
+face, an approver arm on the read routes and a denormalised approver column, and
+settled the same way: **the fork's policy must admit at least one principal to
+each kind of ownerless row**, and `checkOwnerlessReachability` is how it proves
+it has. The principal that holds that reach under a customer tier — a platform
+operator — is the identity work's (§106) to define, and once `canRead` sees
+`scope.org` an org's own scheduled runs and inbound threads stop being ownerless
+for that org's admins. The trigger to revisit a write face is a fork that needs
+read-yes / write-no over these rows; the reasoning is on
+`lib/auth/orphan-reads.ts` and in the `f-mt-authz` journal.
 
 One caveat a fork should know: only the **ownerless** arm asks. Owning a
 conversation and holding an active share are facts about one caller and one row,

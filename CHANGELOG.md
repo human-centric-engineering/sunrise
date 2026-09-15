@@ -18,6 +18,26 @@ release process.
 
 ### Added
 
+- **`checkOwnerlessReachability()` in `lib/auth/orphan-reads.ts` — the test a
+  fork runs to prove its authorization policy has not closed a door nobody else
+  has a key to.** `canRead`'s `'unattributed'` arm decides the writes over
+  ownerless rows as well as the reads, deliberately — there is no `canWrite`
+  face (that file says why, and what would change it). So a policy that admits
+  _no_ principal to a kind of ownerless row has closed two routes with no other
+  door: `DELETE /conversations/:id` on an inbound thread, the only Art. 17 remedy
+  a sender with no account has; and the approvals queue for a scheduled run
+  paused at a `human_approval` gate, which then waits for the 7-day reap. The
+  companion to `checkAuthorizationParity`, run over the same roster of
+  principals: pure, no test-framework import, checks the policy it is handed
+  rather than the registered one, reports a setup fault (zero principals) as a
+  violation, and names each unreachable kind with its consequence. **Name the
+  operator principal on the roster, not only the narrowed ones** — the org admin
+  your policy is for is _supposed_ to be refused. A default install passes with
+  a platform admin named; a `kinds` argument of your own says, at the call site,
+  which gaps you have accepted. Settles t-690 and t-691 (the latter moved from
+  #776): the seam gains no approver arm on the execution read routes and no
+  write face, and the decision with its costs is on the `f-mt-authz` journal.
+
 - **`lib/app/ci.ts` — a fork declares its own coverage exclusions and always-run
   tests without editing a platform file.** Two lists, both shipped empty:
   `appCoverageExclusions` (`{ pattern, reason }`) is spread into
@@ -382,6 +402,24 @@ release process.
 
 ### Changed
 
+- **`POST /api/v1/admin/orchestration/conversations/clear` with `allUsers` now
+  asks the authorization policy about the threads nobody owns, as the targeted
+  `DELETE /conversations/:id` always has.** Inbound SMS / email / Slack threads
+  carry `userId = null` (#502). The targeted delete gated one of them on
+  `adminCanViewConversation`, which reads the policy's `'unattributed'` answer;
+  the bulk route consulted nothing — so a fork narrowing `canRead` refused an
+  admin a single inbound thread and let them destroy every inbound thread in the
+  deployment through the blunt instrument. The bulk route now reads the same
+  answer (`session.unattributedReads.conversation`) and, for a caller the policy
+  refuses, adds `userId: { not: null }` — the rows they may not see are not in
+  their set, exactly as they are not in their list; the route log carries
+  `ownerlessExcluded: true` and the response shape is unchanged. **A default
+  install is unchanged**: the built-in policy admits a platform admin, so
+  `allUsers` still clears inbound threads, and the route's existing tests prove
+  it by still passing. Pinned against both routes, in both directions, in
+  `tests/unit/app/api/v1/admin/orchestration/conversations/policy-narrowing.test.ts`
+  (t-691).
+
 - **One mechanism for "nobody owns this", and an admin reaching an experiment
   that is not their own now leaves a trace.** Four models can hold a row nobody
   owns, and until now they answered the question through two mechanisms: the
@@ -506,18 +544,18 @@ release process.
 
   **Read the next paragraph before you register a narrowing policy.** `canRead`
   is a read predicate, and `PATCH` / `DELETE /conversations/:id` gate on it —
-  so refusing unattributed reads also closes the per-thread **erasure** route for
-  inbound threads. That route matters more than it sounds: the person who sent
-  those messages has no account, so `eraseUser()` cannot reach them and deleting
-  the thread is the only Art. 17 remedy they have. `POST /conversations/clear`
-  with `allUsers` still reaches those rows because it consults no policy at all,
-  which is a blunter instrument rather than an answer, and an incoherent posture
-  we have not settled: writes over ownerless rows are not behind the seam, and
-  deciding what they should be is its own piece of work — tracked as #776, with
-  four costed options. **A fork narrowing this arm must keep some principal its
-  own policy admits for ownerless threads.**
-  `lib/auth/orphan-reads.ts` already warned that widening this arm grants more
-  than reading; this is the same coupling seen from the other side.
+  so refusing a caller unattributed reads also refuses them the per-thread
+  **erasure** route for inbound threads. That route matters more than it sounds:
+  the person who sent those messages has no account, so `eraseUser()` cannot
+  reach them and deleting the thread is the only Art. 17 remedy they have. This
+  is settled, not pending: there is deliberately no separate write question for
+  ownerless rows, `POST /conversations/clear` with `allUsers` now reads the same
+  policy answer (see the entry under **Changed**), and **a fork narrowing this arm
+  must keep some principal its own policy admits for ownerless threads** —
+  `checkOwnerlessReachability` (under **Added**) is the test that fails, naming
+  this consequence, when it has not. `lib/auth/orphan-reads.ts` already warned
+  that widening this arm grants more than reading; this is the same coupling
+  seen from the other side, and that file now carries the reasoning for both.
 
   **Breaking for a fork that calls the helper**, which
   [`.context/privacy/data-erasure.md`](./.context/privacy/data-erasure.md) tells
@@ -580,22 +618,26 @@ release process.
   job) filters on status and a time cutoff with no `userId` and no policy, so it
   still force-fails a stuck `running` row after 30 minutes, a `pending` one after
   an hour, and an abandoned approval after 7 days. What a narrowing fork loses is
-  **operator-initiated** recovery inside those windows. Keep a vendor-level
-  operator role your own policy admits if you want an engineer able to act
-  sooner. The approvals half is tracked as a defect on the multi-tenancy
-  programme; the force-fail half is recorded beside it rather than separately,
-  since the 7-day approval sweep is the slower of the two.
+  **operator-initiated** recovery inside those windows, for the callers its
+  policy refuses. Keep a vendor-level operator role your own policy admits so an
+  engineer can act sooner — that is the settled answer for both halves, below.
 
-  **The approver carve-out below covers the act and not the discovery, so do not
-  read it as "approvals keep working".** The list, detail and live routes have no approver
-  arm, so under a narrowing policy a scheduled run paused at a gate is absent
-  from the approvals queue, counted as zero by the sidebar badge, and 404 on its
-  detail route — while the `approve` POST would still succeed for the named
-  approver, if they could learn the id. **A fork that narrows `canRead` must
-  surface pending approvals some other way** until that is closed; it is tracked
-  as a defect rather than settled here, because giving the list an approver arm
-  means querying `approverUserIds` inside the `executionTrace` JSON, which no
-  index covers, and would widen what a default install shows.
+  **The approver carve-out covers the act and not the discovery, so do not read
+  it as "approvals keep working" for a caller the policy refuses.** The list,
+  detail and live routes have no approver arm — on any install: a delegated
+  approver who is neither the run's owner nor admitted to it has always reached
+  their gate by notification link, as `orchestration-approvals.md` documents.
+  Under a narrowing policy that extends to scheduled runs: absent from the
+  approvals queue, zero in the badge, 404 on the detail route, while the
+  `approve` POST would still succeed for the named approver if they learned the
+  id. **Settled with t-690 rather than fixed: the read routes keep no approver
+  arm, and a fork that narrows `canRead` must admit some principal to ownerless
+  `execution` rows** or its scheduled workflows' gates wait for the 7-day reap.
+  An approver arm on the read side would be a product change for every install
+  (a named approver would see another admin's owned paused run, which they
+  cannot today) and needs the approver set denormalised off the trace JSON; it
+  is captured separately. `checkOwnerlessReachability` (under **Added**) is the
+  test that fails, naming this consequence, when a policy admits nobody.
 
   **A default install is unchanged** — every system-owned run stays visible to a
   platform admin, and the helper's existing tests prove it by still passing.

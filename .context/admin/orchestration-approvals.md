@@ -37,8 +37,8 @@ Admin UI for reviewing, approving, and rejecting paused workflow executions that
 
 ## What admins cannot do from the UI (API-only)
 
-- Filter by workflow, date range, or user. The page shows pending approvals for executions owned by the current admin. Delegated approvers cannot see executions they are authorised to approve in this list — they must use the notification link or direct URL.
-- View delegated approvals in the queue (the list endpoint scopes to execution ownership, not approver authorisation).
+- Filter by workflow, date range, or user. The page shows pending approvals for executions the current admin may see — their own, plus system-owned (schedule- and inbound-triggered) runs where the authorization policy permits an unattributed read, which a default install does. Delegated approvers cannot see executions they are authorised to approve in this list — they must use the notification link or direct URL.
+- View delegated approvals in the queue (the list endpoint scopes to execution visibility, not approver authorisation). Lifting this is a product change for every install — a named approver would see another admin's owned paused run — and needs the approver set denormalised off the trace JSON to be queryable; it is captured as its own piece of work, not folded into the tenancy programme.
 - Bulk approve/reject multiple executions at once.
 - Resume a rejected execution (cancellation is final).
 
@@ -178,9 +178,11 @@ Tokens are stateless HMAC-SHA256 signatures using `BETTER_AUTH_SECRET`:
 
 By default only the execution owner can approve/reject via the admin endpoints. Adding `approverUserIds` to the step config enables delegated approval:
 
-- **Admin endpoints**: Allow access if `session.user.id` matches `execution.userId` (owner) OR is in the `approverUserIds` list from the trace's `awaiting_approval` output entry.
+- **Admin endpoints**: Allow access if the caller may see the run — the owner, or a system-owned run the authorization policy admits them to — OR `session.user.id` is in the `approverUserIds` list from the trace's `awaiting_approval` output entry.
 - **Token endpoints**: Token is the authorization — anyone with a valid unexpired token can act. No ownership check.
 - Non-authorized admin users receive 404 (not 403) to avoid confirming existence.
+
+**Before you put a `human_approval` step on a scheduled or inbound-triggered workflow under a narrowing authorization policy, read this.** Those runs carry `userId = null` — nobody owns them — so the only admins who find their gates in the queue are the ones the policy admits to ownerless executions. A fork whose `canRead` refuses `'unattributed'` reads to its org admins has therefore made those gates discoverable by nobody it narrowed: the named approver can still `approve` by id, and by notification link if one is wired, but the queue and badge are empty for them and the run otherwise waits for the 7-day abandoned-approval reap. This is decided (t-690), not a gap awaiting a fix: the platform adds no approver arm to the read routes, and **the fork keeps a principal its own policy admits to ownerless `execution` rows** — a vendor-level operator today; under a customer tier, the identity work (§106) defines that role and attributes an org's scheduled runs to the org, at which point they stop being ownerless for that org's admins. Prove your policy leaves the queue workable with `checkOwnerlessReachability` from `lib/auth/orphan-reads.ts`, which fails naming exactly this consequence when it does not.
 
 ## Trace Entry Output Shape
 

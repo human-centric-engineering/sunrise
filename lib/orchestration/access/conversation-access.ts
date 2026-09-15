@@ -5,7 +5,8 @@
  *
  * Every per-id conversation route gates through {@link adminCanViewConversation},
  * and the list through {@link conversationVisibilityWhere}. **Three surfaces do
- * neither, and only two of those are on purpose.**
+ * neither, each on purpose, and one of them reads the same policy answer by a
+ * shorter road.**
  *
  * Semantic search hand-writes the predicate in SQL, because a pgvector distance
  * query is not expressible through Prisma's query builder; the copies are pinned
@@ -14,12 +15,16 @@
  * footgun, so it sees neither shared nor ownerless threads and has no reason to
  * consult this module.
  *
- * The third is `conversations/clear`, whose `allUsers` scope `deleteMany`s
- * ownerless threads consulting nothing at all. That one is not deliberate, it is
- * unsettled: writes over rows nobody owns are not behind this seam, and #776
- * weighs what they should be. **Before adding a surface here, check it against
- * all three rather than assuming this module is the only door.** The analytics
- * routes read `AiMessage.content` without passing through any of them.
+ * The third is `conversations/clear`, whose `allUsers` scope is a bulk
+ * `deleteMany` over every user's rows — wider than any per-id rule, by design.
+ * It reads `session.unattributedReads.conversation` directly for the one arm
+ * this module decides: ownerless threads are in a narrowed caller's set exactly
+ * when they are in their list (t-691). Until then it consulted nothing, so a
+ * fork narrowing `canRead` refused an admin one inbound thread on `DELETE
+ * /conversations/:id` and let them destroy every inbound thread here. **Before
+ * adding a surface, check it against all three rather than assuming this module
+ * is the only door.** The analytics routes read `AiMessage.content` without
+ * passing through any of them.
  *
  * The rule: an admin can view a conversation iff
  *
@@ -59,6 +64,16 @@
  * basis every inbound thread would drop out of the admin UI entirely — no
  * list entry, no transcript, and no way to delete one when the person who
  * sent the messages asks you to.
+ *
+ * **That last route is the one a narrowing policy must not close to everyone.**
+ * `PATCH` and `DELETE /conversations/:id` accept the `'owner'` and `'system'`
+ * bases, so the policy's answer decides the writes as well as the reads — and
+ * the sender of an inbound thread has no account, so `eraseUser()` cannot
+ * reach their messages and deleting the thread is their only Art. 17 remedy.
+ * There is deliberately no separate write predicate (`lib/auth/orphan-reads.ts`
+ * says why, and what would change that). A fork narrowing this arm keeps some
+ * principal its policy admits to ownerless conversations, and proves it with
+ * `checkOwnerlessReachability`, which names this consequence when none is.
  *
  * The person on the other end of an inbound thread is a data subject with no
  * account here, so nothing about `'system'` access is routine: it is logged

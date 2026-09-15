@@ -63,25 +63,31 @@
  * not an answer to the ownerless question, and `conversation-access.ts` draws the
  * same line around its `'shared'` basis.
  *
- * **That carve-out is not enough to keep the approval flow working under a
- * narrowing policy, and this is the part to read before relying on it.** The
- * delegation lives on
- * the three act routes and nowhere else. The list, the detail route and the live
- * route have no approver arm, so for a fork whose policy denies unattributed
- * reads a scheduled run paused at a gate is absent from the approvals queue
- * (which is `GET /executions?status=paused_for_approval`), counted as zero by the
- * sidebar badge, and 404 on the detail route — while `POST .../approve` would
- * still succeed for the named approver, if they could learn the id. Acting is
- * preserved; **discovery is not**, which leaves the run stuck for want of a
- * surface rather than for want of a permission.
+ * **The nomination admits an approver to the act and not to the discovery, on
+ * every install.** The list, the detail route and the live route have no
+ * approver arm, so a delegated approver who is neither the run's owner nor
+ * admitted to it by the policy can clear a gate they have no surface to find:
+ * absent from the approvals queue (`GET /executions?status=paused_for_approval`),
+ * zero in the sidebar badge, 404 on the detail route. On a default install that
+ * is the position of every approver named on another admin's *owned* run, and
+ * `.context/admin/orchestration-approvals.md` documents it — the notification
+ * link the engine emits on `workflow.paused_for_approval` is their route. Under
+ * a narrowing policy it extends to system-owned runs (t-690).
  *
- * That is the #502 failure arriving by a different route, and closing it is a
- * design question the sweep that wrote this block did not settle: giving the list
- * an approver arm means
- * querying `approverUserIds` inside the `executionTrace` JSON, which no index
- * covers, and it would widen what a default install shows. Tracked as t-690 on
- * `f-mt-authz`, with the four options weighed. Until then, **a fork that narrows
- * `canRead` must surface pending approvals some other way.**
+ * **Decided, not deferred: the read routes keep no approver arm, and a policy
+ * must admit some principal to ownerless executions.** Lifting the limitation
+ * — an approver arm on the read side — is a product change for every install
+ * (a named approver would see another admin's owned paused run, which they
+ * cannot today), and needs the approver set denormalised off the trace JSON to
+ * be queryable; it is not tenancy work and is captured separately. Under a
+ * customer tier the principal that holds reach over rows nobody owns is the
+ * platform operator, which is §106's to define — and once `canRead` sees
+ * `scope.org`, an org's scheduled runs stop being *ownerless* for that org's
+ * admins at all. Until then a fork proves its policy leaves the queue workable
+ * by someone with `checkOwnerlessReachability` (`lib/auth/orphan-reads.ts`),
+ * which names the consequence when nobody it lists may read ownerless
+ * `execution` rows: a gate reached by a scheduled run waits for the 7-day
+ * abandoned-approval reap.
  *
  * The act-side carve-out is pinned in
  * `tests/unit/app/api/v1/admin/orchestration/executions/policy-narrowing.test.ts`

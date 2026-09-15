@@ -121,6 +121,19 @@
  *    Sunrise's default narrows both to platform staff and logs the resolver one
  *    per kind; if you spread the default and do not answer the arm yourself,
  *    your org members are denied rather than silently permitted.
+ *
+ *    **And someone you admit must reach each kind, because the arm decides
+ *    the writes too.** There is no separate write question for ownerless rows:
+ *    a principal your `canRead` refuses cannot find an inbound thread, so it
+ *    cannot delete one — and deleting it is the only Art. 17 route the sender,
+ *    who has no account here, has. Likewise a scheduled run paused at a
+ *    `human_approval` gate is found in the queue only by a principal admitted
+ *    to ownerless executions; refuse everyone and the gate waits for the 7-day
+ *    reap. Keep a principal your policy admits to each kind — a vendor-level
+ *    operator, until the identity work defines the role — and prove it with
+ *    `checkOwnerlessReachability(yourPolicy, principals)` from
+ *    `lib/auth/orphan-reads.ts`, run beside the parity check over the same
+ *    roster. It fails naming the kind nobody reaches and what that closes.
  *  - **A resolver that returns `null`, or throws, denies the request** before
  *    your policy is consulted — it is not a state you can widen, and it never
  *    reaches `canRead`. `'nothing'` means the route declared no resolver at
