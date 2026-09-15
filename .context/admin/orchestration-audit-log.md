@@ -256,6 +256,22 @@ was erased under Art. 17, leaving `userId` null. Those rows carry
 The dataset **list** is deliberately not logged. One entry per page view would
 bury the rows that matter.
 
+**A basis is never guessed.** Every dataset handler fetches under its visibility
+clause and then narrows the helper's answer: `'owner'`, `'orphan'`, or — for a
+row the clause should not have admitted — a **404 and no row at all**. Until
+t-693 six handlers wrote `datasetAccessBasis(...) ?? 'orphan'` and four
+conversation handlers wrote `access.basis ?? 'owner'` (which
+`logConversationAccess` skips, so nothing was written). Both defaults are gone:
+the dataset sites 404 on a null as `loadDataset` always has, and
+`adminCanViewConversation`'s result is now a discriminated union whose permitted
+arm has no `null` to default. Unreachable through today's routes — every clause
+admits only the caller's rows and nobody's — so this changes what _would_ be
+recorded once the ownership axis widens (`scope.ownership` carries `'team'`),
+not what is recorded now. The coupling is written on `DatasetAccessBasis` and
+`ExperimentAccessBasis`: widen a visibility clause and you widen the basis in
+the same change, or the log over the newly-admitted rows is wrong in the one
+place an operator would look to notice reads had widened.
+
 ## Experiment actions carry the basis too, and writes are wider
 
 Since t-687 seven of the eight `experiment.*` actions above go through

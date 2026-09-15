@@ -402,6 +402,27 @@ release process.
 
 ### Changed
 
+- **`adminCanViewConversation()` returns a discriminated union on `ok`, so a
+  permitted result's `basis` is never `null`.** `AdminCanViewResult` used to be
+  one shape with `basis: AccessBasis | null` for both outcomes; a caller that
+  had already thrown on `!ok` still held a nullable basis, and four routes
+  answered that with `access.basis ?? 'owner'` — which `logConversationAccess`
+  skips, so an unclassifiable read of a stranger's inbound thread would have
+  written **no audit row at all**. The state is unrepresentable in behaviour
+  (the helper classifies the row itself and every permitted branch names its
+  basis), so the two-state type was the defect. Narrowing on `ok` now gives
+  `basis: AccessBasis`; the six evaluation-dataset handlers that wrote
+  `datasetAccessBasis(...) ?? 'orphan'` narrow a null to a 404 instead, as the
+  detail route's `loadDataset` always has. **No behaviour moves on a default
+  install** — the null arm is unreachable through today's routes — so this
+  changes what _would_ be recorded once the ownership axis widens, not what is
+  recorded now. A fork reading the result: property access is unchanged and a
+  `?? 'owner'` after an `ok` check is now merely redundant; a fork
+  _constructing_ one as `{ ok: true, basis: null }` no longer compiles, which
+  is the point. The coupling — widen a visibility clause, widen its basis type
+  in the same change — is written on `DatasetAccessBasis` and
+  `ExperimentAccessBasis` (t-693).
+
 - **`POST /api/v1/admin/orchestration/conversations/clear` with `allUsers` now
   asks the authorization policy about the threads nobody owns, as the targeted
   `DELETE /conversations/:id` always has.** Inbound SMS / email / Slack threads
