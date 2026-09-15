@@ -267,7 +267,11 @@ describe('analyzeSource — which imports count', () => {
     const conv = decisionExportsOf(
       readFileSync('lib/orchestration/access/conversation-access.ts', 'utf8')
     );
-    expect([...conv].sort()).toEqual(['adminCanViewConversation', 'conversationVisibilityWhere']);
+    expect([...conv].sort()).toEqual([
+      'adminCanViewConversation',
+      'conversationVisibilityWhere',
+      'deploymentWideConversationWhere',
+    ]);
     expect(conv.has('isShareActive')).toBe(false);
   });
 

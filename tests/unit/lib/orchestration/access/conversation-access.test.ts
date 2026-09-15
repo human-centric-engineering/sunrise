@@ -30,8 +30,12 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 const { prisma } = await import('@/lib/db/client');
-const { adminCanViewConversation, conversationVisibilityWhere, isShareActive } =
-  await import('@/lib/orchestration/access/conversation-access');
+const {
+  adminCanViewConversation,
+  conversationVisibilityWhere,
+  deploymentWideConversationWhere,
+  isShareActive,
+} = await import('@/lib/orchestration/access/conversation-access');
 type AuthenticatedSession = import('@/lib/auth/guards').AuthenticatedSession;
 
 const findUnique = prisma.aiConversation.findUnique as ReturnType<typeof vi.fn>;
@@ -358,6 +362,50 @@ describe('conversationVisibilityWhere', () => {
         expect(arms.length).toBeGreaterThan(0);
         expect(arms[0]).toEqual({ userId: ADMIN_ID });
       }
+    }
+  });
+});
+
+describe('deploymentWideConversationWhere', () => {
+  // The face for a reader that aggregates EVERY user's threads by design — the
+  // analytics service — and asks the policy only about the ones nobody owns.
+  // It is not the per-caller set with an arm removed; it is one arm, applied to
+  // a set the per-caller fragment never selects (a member's chat with a public
+  // agent is nobody's own, nobody's share, and not ownerless).
+
+  it('is the empty clause on a default install, so no aggregate moves', () => {
+    // `{}` and not `{ userId: { not: undefined } }` or an `OR` with one arm:
+    // spread into a reader's `where`, the empty object leaves it byte-for-byte
+    // what it was before this face existed, which is what lets the readers'
+    // own tests stand as the proof that a default install's numbers are
+    // unchanged.
+    expect(deploymentWideConversationWhere(admin)).toEqual({});
+  });
+
+  it('excludes ownerless rows, and only those, when the policy refuses them', () => {
+    // Asserted as the whole object: an owner arm here would turn a
+    // deployment-wide aggregate into a personal one for exactly the fork that
+    // asked to be narrowed, and the dashboard would go quiet rather than wrong.
+    expect(deploymentWideConversationWhere(narrowedAdmin)).toEqual({ userId: { not: null } });
+  });
+
+  it('never names the caller, whichever way the policy answers', () => {
+    // The property that distinguishes it from `conversationVisibilityWhere`.
+    for (const session of [admin, narrowedAdmin]) {
+      expect(JSON.stringify(deploymentWideConversationWhere(session))).not.toContain(ADMIN_ID);
+    }
+  });
+
+  it('agrees with the per-caller fragment about the ownerless arm', () => {
+    // Two faces reading one answer. The list admits `{ userId: null }` exactly
+    // when the aggregate stops excluding it; if these ever disagree, an inbound
+    // thread is in an admin's analytics and not in their list, or the reverse.
+    for (const session of [admin, narrowedAdmin]) {
+      const listAdmitsOwnerless = (
+        conversationVisibilityWhere(session) as { OR: Record<string, unknown>[] }
+      ).OR.some((arm) => 'userId' in arm && arm.userId === null);
+      const aggregateExcludesOwnerless = 'userId' in deploymentWideConversationWhere(session);
+      expect(aggregateExcludesOwnerless).toBe(!listAdmitsOwnerless);
     }
   });
 });

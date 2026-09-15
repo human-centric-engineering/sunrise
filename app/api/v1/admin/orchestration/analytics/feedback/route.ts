@@ -13,11 +13,11 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { analyticsQuerySchema } from '@/lib/validations/orchestration';
 import { getFeedbackSummary } from '@/lib/orchestration/analytics';
 
-export const GET = withAdminAuth(async (request) => {
+export const GET = withAdminAuth(async (request, session) => {
   const { searchParams } = new URL(request.url);
   const query = validateQueryParams(searchParams, analyticsQuerySchema);
 
-  const feedback = await getFeedbackSummary(query);
+  const feedback = await getFeedbackSummary(query, session);
 
   return successResponse({ feedback });
 });

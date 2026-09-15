@@ -126,15 +126,6 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'or inbound run is missing from approval history on every install — including ' +
       "the caller's own decisions. Found one directory sideways during #774.",
   },
-  {
-    path: 'lib/orchestration/analytics/analytics-service.ts',
-    disposition: 'known-gap',
-    tracking: 't-694',
-    reason:
-      'reads `AiMessage.content` and `AiConversation` with no owner clause and no ' +
-      'policy; `/analytics/unanswered` returns a member of the public’s question ' +
-      'verbatim to an admin a narrowing policy refuses the thread itself.',
-  },
 
   // ── Admin surfaces that scope by a road the helper does not offer ─────────
   {

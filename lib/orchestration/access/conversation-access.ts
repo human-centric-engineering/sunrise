@@ -23,8 +23,15 @@
  * fork narrowing `canRead` refused an admin one inbound thread on `DELETE
  * /conversations/:id` and let them destroy every inbound thread here. **Before
  * adding a surface, check it against all three rather than assuming this module
- * is the only door.** The analytics routes read `AiMessage.content` without
- * passing through any of them.
+ * is the only door.**
+ *
+ * The analytics service is a fourth kind of reader, and it has its own face:
+ * {@link deploymentWideConversationWhere}. Analytics aggregate over every
+ * user's threads by design — "what are people asking my agents?" is the
+ * product, and an admin's own conversations would answer a different question
+ * — so the per-caller set is the wrong clause for it. What the policy decides
+ * is still only the ownerless arm, and that face applies that arm alone (t-694).
+ * `conversations/clear` reads the same answer inline for its `allUsers` scope.
  *
  * The rule: an admin can view a conversation iff
  *
@@ -270,6 +277,38 @@ export function conversationVisibilityWhere(
   // cannot fall through to every row. A single-arm `OR` is left as an `OR`
   // rather than flattened, so every caller composes against the same shape.
   return { OR: arms };
+}
+
+/**
+ * Prisma `where` fragment for a surface that reads **every user's** conversations
+ * by design and asks the policy only about the ones nobody owns.
+ *
+ * {@link conversationVisibilityWhere} is the set one admin may open; this is
+ * the set a deployment-wide reader may aggregate. They differ on arm 1 — a
+ * member's chat with a public agent is not the admin's own, is not shared with
+ * them, and is not ownerless, so it is outside the per-caller set and inside
+ * this one. The analytics service is the reader (t-694): narrowing it to the
+ * per-caller set would have emptied the dashboard of every member's
+ * conversation on every install, which nobody asked for and which is not what
+ * the policy decides.
+ *
+ * What the policy decides is arm 3, and this is arm 3 alone: `{}` when the
+ * policy admits the caller to ownerless threads — the default install, where
+ * the clause is byte-for-byte what the reader emitted before it existed — and
+ * `{ userId: { not: null } }` when it refuses, which drops an inbound thread's
+ * messages out of every aggregate the same way the list, search and detail
+ * routes drop the thread. The `allUsers` scope of `conversations/clear` spells
+ * this same fragment inline.
+ *
+ * Its only key is `userId`, so it spreads safely beside date and agent filters;
+ * a reader that also filters by owner has no business calling it — that reader
+ * wants the per-caller set. When §106 attributes threads to an org, the
+ * customer tier's analytics land here as a `'team'` arm, not in the readers.
+ */
+export function deploymentWideConversationWhere(
+  session: AuthenticatedSession
+): Prisma.AiConversationWhereInput {
+  return session.unattributedReads.conversation ? {} : { userId: { not: null } };
 }
 
 /**

@@ -14,11 +14,11 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { analyticsQuerySchema } from '@/lib/validations/orchestration';
 import { getUnansweredQuestions } from '@/lib/orchestration/analytics';
 
-export const GET = withAdminAuth(async (request) => {
+export const GET = withAdminAuth(async (request, session) => {
   const { searchParams } = new URL(request.url);
   const query = validateQueryParams(searchParams, analyticsQuerySchema);
 
-  const questions = await getUnansweredQuestions(query);
+  const questions = await getUnansweredQuestions(query, session);
 
   return successResponse({ questions });
 });

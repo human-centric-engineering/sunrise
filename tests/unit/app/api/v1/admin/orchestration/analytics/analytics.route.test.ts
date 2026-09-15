@@ -58,6 +58,18 @@ import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/**
+ * The second argument every route hands its service: the guard's session, with
+ * the policy's answer on ownerless threads already resolved. The service is
+ * mocked here, so this asserts only that the routes pass the session through
+ * — what the service does with it is `analytics-service.test.ts`, and the two
+ * together through the real guard is `policy-narrowing.test.ts` (t-694).
+ */
+const GUARD_SESSION = expect.objectContaining({
+  user: expect.objectContaining({ role: 'ADMIN' }),
+  unattributedReads: expect.objectContaining({ conversation: expect.any(Boolean) }),
+});
+
 function makeGetRequest(queryString = ''): NextRequest {
   return {
     method: 'GET',
@@ -100,7 +112,8 @@ describe('Analytics API', () => {
           from: '2026-04-01',
           to: '2026-04-19',
           limit: 5,
-        })
+        }),
+        GUARD_SESSION
       );
     });
 
@@ -211,7 +224,8 @@ describe('Analytics API', () => {
       await getGaps(makeGetRequest('?agentId=cmjbv4i3x00003wsloputgwu2'));
 
       expect(getContentGaps).toHaveBeenCalledWith(
-        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' })
+        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' }),
+        GUARD_SESSION
       );
     });
   });
@@ -264,7 +278,8 @@ describe('Analytics API', () => {
         expect.objectContaining({
           from: '2026-04-01',
           to: '2026-04-19',
-        })
+        }),
+        GUARD_SESSION
       );
     });
 
@@ -278,7 +293,8 @@ describe('Analytics API', () => {
       await getFeedback(makeGetRequest('?agentId=cmjbv4i3x00003wsloputgwu2'));
 
       expect(getFeedbackSummary).toHaveBeenCalledWith(
-        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' })
+        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' }),
+        GUARD_SESSION
       );
     });
 
@@ -326,7 +342,8 @@ describe('Analytics API', () => {
         expect.objectContaining({
           from: '2026-03-01',
           to: '2026-04-01',
-        })
+        }),
+        GUARD_SESSION
       );
     });
 
@@ -344,7 +361,8 @@ describe('Analytics API', () => {
       await getEngagement(makeGetRequest('?agentId=cmjbv4i3x00003wsloputgwu2'));
 
       expect(getEngagementMetrics).toHaveBeenCalledWith(
-        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' })
+        expect.objectContaining({ agentId: 'cmjbv4i3x00003wsloputgwu2' }),
+        GUARD_SESSION
       );
     });
 

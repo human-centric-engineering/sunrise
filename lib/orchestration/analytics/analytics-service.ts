@@ -5,11 +5,33 @@
  * interact with their content via AI agents. All queries are scoped
  * by date range and optionally by agent.
  *
- * Platform-agnostic: no Next.js imports. Requires Prisma.
+ * **Deployment-wide by design, and the policy still has a vote.** Every
+ * function aggregates over every user's conversations — that is the product;
+ * an admin's own threads would answer a different question — so none of them
+ * takes the per-caller set `conversationVisibilityWhere` selects. What the
+ * authorization policy decides is only whether this caller may read threads
+ * nobody owns, and every read here applies exactly that arm through
+ * `deploymentWideConversationWhere`: on a default install the clause is `{}`
+ * and no number moves; under a policy that refuses the caller unattributed
+ * reads, an inbound thread's messages leave every aggregate — `unanswered`
+ * stops returning the sender's question verbatim — the same way the thread
+ * leaves the list (t-694). Until then these reads consulted nothing, so a fork
+ * that narrowed `canRead` and confirmed the thread 404d was still handing the
+ * correspondence over here.
+ *
+ * The clause goes on **every** read, the follow-up queries keyed on ids from an
+ * already-scoped result included. Those are safe by construction today, and
+ * "every read carries it" is a property a test can assert without a carve-out
+ * that the next edit to the first query would silently invalidate.
+ *
+ * Platform-agnostic: no Next.js imports (the session is a type). Requires Prisma.
  */
 
+import type { Prisma } from '@prisma/client';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import type { AnalyticsQuery } from '@/lib/validations/orchestration';
+import { deploymentWideConversationWhere } from '@/lib/orchestration/access/conversation-access';
 import { resolveAnalyticsDateRange } from '@/lib/orchestration/analytics/date-range';
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
@@ -18,8 +40,21 @@ function resolveDateRange(query: AnalyticsQuery) {
   return resolveAnalyticsDateRange(query);
 }
 
-function agentFilter(agentId?: string): { agentId?: string } {
-  return agentId ? { agentId } : {};
+/**
+ * The conversation clause every read composes: the optional agent filter and
+ * the policy's ownerless arm. Spread rather than `AND`ed so that on a default
+ * install — where the arm is `{}` — the `where` handed to Prisma is
+ * byte-for-byte what it was before the arm existed; the two fragments' keys
+ * (`agentId`, `userId`) cannot collide.
+ */
+function conversationScope(
+  session: AuthenticatedSession,
+  agentId?: string
+): Prisma.AiConversationWhereInput {
+  return {
+    ...(agentId ? { agentId } : {}),
+    ...deploymentWideConversationWhere(session),
+  };
 }
 
 // ─── Popular Topics ──────────────────────────────────────────────────────────
@@ -34,7 +69,10 @@ export interface TopicEntry {
  * Returns the most frequently asked user messages, grouped case-insensitively.
  * This gives IP owners a view of what users are asking about most.
  */
-export async function getPopularTopics(query: AnalyticsQuery): Promise<TopicEntry[]> {
+export async function getPopularTopics(
+  query: AnalyticsQuery,
+  session: AuthenticatedSession
+): Promise<TopicEntry[]> {
   const { from, to } = resolveDateRange(query);
   const limit = query.limit ?? 20;
 
@@ -42,7 +80,7 @@ export async function getPopularTopics(query: AnalyticsQuery): Promise<TopicEntr
     where: {
       role: 'user',
       createdAt: { gte: from, lte: to },
-      conversation: { ...agentFilter(query.agentId) },
+      conversation: conversationScope(session, query.agentId),
     },
     select: { content: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
@@ -107,7 +145,10 @@ export interface UnansweredEntry {
  *
  * Returns individual message pairs (user question + assistant reply).
  */
-export async function getUnansweredQuestions(query: AnalyticsQuery): Promise<UnansweredEntry[]> {
+export async function getUnansweredQuestions(
+  query: AnalyticsQuery,
+  session: AuthenticatedSession
+): Promise<UnansweredEntry[]> {
   const { from, to } = resolveDateRange(query);
   const limit = query.limit ?? 20;
 
@@ -116,7 +157,7 @@ export async function getUnansweredQuestions(query: AnalyticsQuery): Promise<Una
     where: {
       role: 'assistant',
       createdAt: { gte: from, lte: to },
-      conversation: { ...agentFilter(query.agentId) },
+      conversation: conversationScope(session, query.agentId),
       OR: HEDGING_PHRASES.map((phrase) => ({ content: { contains: phrase } })),
     },
     select: {
@@ -141,6 +182,7 @@ export async function getUnansweredQuestions(query: AnalyticsQuery): Promise<Una
     where: {
       conversationId: { in: conversationIds },
       role: 'user',
+      conversation: conversationScope(session, query.agentId),
     },
     select: { conversationId: true, content: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
@@ -190,28 +232,31 @@ export interface EngagementMetrics {
  * Computes engagement metrics: conversation count, unique users,
  * average depth, return rate, and daily conversation trend.
  */
-export async function getEngagementMetrics(query: AnalyticsQuery): Promise<EngagementMetrics> {
+export async function getEngagementMetrics(
+  query: AnalyticsQuery,
+  session: AuthenticatedSession
+): Promise<EngagementMetrics> {
   const { from, to } = resolveDateRange(query);
-  const af = agentFilter(query.agentId);
+  const scope = conversationScope(session, query.agentId);
 
   const [totalConversations, totalMessages, uniqueUsersResult, userConvCounts, conversations] =
     await Promise.all([
       // Total conversations in range
       prisma.aiConversation.count({
-        where: { createdAt: { gte: from, lte: to }, ...af },
+        where: { createdAt: { gte: from, lte: to }, ...scope },
       }),
 
       // Total messages in range (user + assistant)
       prisma.aiMessage.count({
         where: {
           createdAt: { gte: from, lte: to },
-          conversation: { ...af },
+          conversation: scope,
         },
       }),
 
       // Unique users
       prisma.aiConversation.findMany({
-        where: { createdAt: { gte: from, lte: to }, ...af },
+        where: { createdAt: { gte: from, lte: to }, ...scope },
         select: { userId: true },
         distinct: ['userId'],
       }),
@@ -219,14 +264,14 @@ export async function getEngagementMetrics(query: AnalyticsQuery): Promise<Engag
       // Returning users (users with >1 conversation in the period)
       prisma.aiConversation.groupBy({
         by: ['userId'],
-        where: { createdAt: { gte: from, lte: to }, ...af },
+        where: { createdAt: { gte: from, lte: to }, ...scope },
         _count: { id: true },
         having: { id: { _count: { gt: 1 } } },
       }),
 
       // Daily conversation counts
       prisma.aiConversation.findMany({
-        where: { createdAt: { gte: from, lte: to }, ...af },
+        where: { createdAt: { gte: from, lte: to }, ...scope },
         select: { createdAt: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -279,15 +324,18 @@ export interface ContentGap {
  *
  * Returns topics sorted by gap ratio (high unanswered / total queries).
  */
-export async function getContentGaps(query: AnalyticsQuery): Promise<ContentGap[]> {
+export async function getContentGaps(
+  query: AnalyticsQuery,
+  session: AuthenticatedSession
+): Promise<ContentGap[]> {
   const { from, to } = resolveDateRange(query);
   const limit = query.limit ?? 20;
-  const af = agentFilter(query.agentId);
+  const scope = conversationScope(session, query.agentId);
 
   // Get conversations with user activity in the date range
   const conversations = await prisma.aiConversation.findMany({
     where: {
-      ...af,
+      ...scope,
       messages: { some: { createdAt: { gte: from, lte: to }, role: 'user' } },
     },
     select: {
@@ -375,9 +423,12 @@ export interface FeedbackSummary {
  * Aggregates message ratings by agent and overall.
  * Also returns recent negatively-rated messages for review.
  */
-export async function getFeedbackSummary(query: AnalyticsQuery): Promise<FeedbackSummary> {
+export async function getFeedbackSummary(
+  query: AnalyticsQuery,
+  session: AuthenticatedSession
+): Promise<FeedbackSummary> {
   const { from, to } = resolveDateRange(query);
-  const af = agentFilter(query.agentId);
+  const scope = conversationScope(session, query.agentId);
   const limit = query.limit ?? 20;
 
   // Count ratings overall
@@ -386,14 +437,14 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
       where: {
         rating: 1,
         ratedAt: { gte: from, lte: to },
-        conversation: { ...af },
+        conversation: scope,
       },
     }),
     prisma.aiMessage.count({
       where: {
         rating: -1,
         ratedAt: { gte: from, lte: to },
-        conversation: { ...af },
+        conversation: scope,
       },
     }),
   ]);
@@ -406,7 +457,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
     where: {
       rating: { not: null },
       ratedAt: { gte: from, lte: to },
-      conversation: { ...af },
+      conversation: scope,
     },
     select: {
       rating: true,
@@ -447,7 +498,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
     where: {
       rating: -1,
       ratedAt: { gte: from, lte: to },
-      conversation: { ...af },
+      conversation: scope,
     },
     select: {
       id: true,
@@ -469,6 +520,7 @@ export async function getFeedbackSummary(query: AnalyticsQuery): Promise<Feedbac
           where: {
             conversationId: { in: negConversationIds },
             role: 'user',
+            conversation: scope,
           },
           select: { conversationId: true, content: true, createdAt: true },
           orderBy: { createdAt: 'desc' },
