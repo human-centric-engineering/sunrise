@@ -381,7 +381,10 @@ export async function checkOwnerlessReachability(
     const target = readUnattributedKind(kind);
     let reached = false;
     for (const testCase of cases) {
-      if (await policy.canRead(testCase.viewer, target, testCase.scope ?? {})) {
+      // `=== true`, as the runtime `canRead` wrapper requires: a policy that
+      // returns a truthy non-boolean is DENIED on a request, and a check that
+      // counted it as reached would pass while the door stayed shut.
+      if ((await policy.canRead(testCase.viewer, target, testCase.scope ?? {})) === true) {
         reached = true;
         break;
       }

@@ -362,6 +362,22 @@ describe('checkOwnerlessReachability', () => {
     ).resolves.toEqual([]);
   });
 
+  it('counts only a literal `true` as reached, as the runtime wrapper does', async () => {
+    // `canRead()` in authorization.ts admits on `=== true`, so a policy that
+    // answers with a truthy non-boolean denies every request. The check must
+    // not vouch for a door the runtime keeps shut.
+    const truthyButNotTrue: AuthorizationPolicy = {
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: () => Promise.resolve('yes' as unknown as boolean),
+    };
+
+    const violations = await checkOwnerlessReachability(truthyButNotTrue, [
+      { label: 'platform staff', viewer: ADMIN },
+    ]);
+
+    expect(violations).toHaveLength(UNATTRIBUTED_READ_KINDS.length);
+  });
+
   it('reports an empty roster as a fault rather than a pass', async () => {
     const violations = await checkOwnerlessReachability(DEFAULT_AUTHORIZATION_POLICY, []);
 
