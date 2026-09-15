@@ -41,7 +41,7 @@ import {
   findUndeclaredOwnerlessReads,
   mentionsModel,
   unexplainedMentions,
-  valueExportsOf,
+  decisionExportsOf,
 } from '@/scripts/ci/ownerless-surfaces';
 import {
   validateExceptions,
@@ -253,19 +253,33 @@ describe('analyzeSource — which imports count', () => {
     expect(a.unusedImports).toEqual(['access']);
   });
 
-  it("reads the helpers' value exports off their source, never their types", () => {
-    const exec = valueExportsOf(
+  it("reads the helpers' decisions off their source: functions that take the session, and nothing else", () => {
+    // A decision takes `AuthenticatedSession`, because that is where the
+    // policy's answer lives. A type is not one; nor is a predicate on a row.
+    const exec = decisionExportsOf(
       readFileSync('lib/orchestration/access/execution-access.ts', 'utf8')
     );
-    expect(exec.has('executionVisibilityWhere')).toBe(true);
-    expect(exec.has('adminCanViewExecution')).toBe(true);
-    expect(exec.has('ExecutionOwner')).toBe(false);
-    expect(exec.has('ExecutionAccessBasis')).toBe(false);
-    const conv = valueExportsOf(
+    expect([...exec].sort()).toEqual([
+      'adminCanViewExecution',
+      'executionAccessBasis',
+      'executionVisibilityWhere',
+    ]);
+    const conv = decisionExportsOf(
       readFileSync('lib/orchestration/access/conversation-access.ts', 'utf8')
     );
-    expect(conv.has('conversationVisibilityWhere')).toBe(true);
-    expect(conv.has('AdminCanViewResult')).toBe(false);
+    expect([...conv].sort()).toEqual(['adminCanViewConversation', 'conversationVisibilityWhere']);
+    expect(conv.has('isShareActive')).toBe(false);
+  });
+
+  it('a helper export that is not a decision covers nothing', () => {
+    // `isShareActive(share)` is a predicate on a row the file already holds;
+    // importing it asks the policy nothing about the caller.
+    const a = analyzeSource(
+      'app/api/x/route.ts',
+      `import { isShareActive } from '@/lib/orchestration/access/conversation-access';\nexport const r = prisma.aiConversation.findMany({ where: { userId: s.user.id } }).filter(isShareActive);`
+    );
+    expect([...a.helperModules]).toEqual([]);
+    expect(a.unusedImports).toEqual([]);
   });
 
   it('a whole `import type` covers nothing', () => {
@@ -378,6 +392,23 @@ describe('findUndeclaredOwnerlessReads', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]?.message).toContain('aiConversation');
     expect(violations[0]?.message).toContain('conversation-access');
+  });
+
+  it('scans a file whose only mention is an UPPERCASE table name', () => {
+    // Postgres folds an unquoted `FROM AI_MESSAGE` to `ai_message`, so the
+    // query works. The pre-filter that decides whether a file is parsed at all
+    // used to be case-sensitive in front of a case-insensitive detector, so
+    // this file was never looked at — and `analyzeSource` alone would have
+    // said it was handled. The rule has to be driven through the tree path.
+    const src =
+      'import { prisma } from "@/lib/db/client";\nexport const q = prisma.$queryRaw`SELECT 1 FROM AI_MESSAGE m`;';
+    const { files, read } = tree({ 'app/api/x/route.ts': src });
+
+    const violations = findUndeclaredOwnerlessReads(files, read, []);
+
+    expect(violations.map((v) => v.message)).toEqual([expect.stringContaining('aiMessage')]);
+    // And the oracle's population is gated the same way.
+    expect(mentionsModel(src)).toBe(true);
   });
 
   it('reports a bare import as unused rather than counting it as coverage', () => {

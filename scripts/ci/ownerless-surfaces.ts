@@ -35,15 +35,15 @@
  *
  * ## What satisfies it
  *
- * An import of one of the helper's **value exports** — named, aliased or
- * through a namespace — that the file uses in a value position. Which names
- * are value exports is read off the helper's own source
- * ({@link valueExportsOf}), so an interface imported without the `type`
- * keyword — legal under `isolatedModules`, and the helpers export
- * `AccessBasis`, `AdminCanViewResult` and `ExecutionOwner` — covers nothing:
- * a type reaches nothing at runtime, so it cannot be the road a query took. An
- * import nothing uses is reported by name, so the check cannot be silenced with
- * one line.
+ * An import of one of the helper's **access decisions** — named, aliased or
+ * through a namespace — that the file uses in a value position. A decision is
+ * an exported function that takes the `AuthenticatedSession`, because that is
+ * where the policy's answer lives; which names qualify is read off the
+ * helper's own source ({@link decisionExportsOf}). So an interface imported
+ * with or without the `type` keyword covers nothing, and neither does
+ * `isShareActive(share)` — a predicate on a row, not a question about the
+ * caller. An import nothing uses is reported by name, so the check cannot be
+ * silenced with one line.
  *
  * ## What it still cannot see, said plainly
  *
@@ -91,9 +91,15 @@ const TABLE_TO_MODEL: Readonly<Record<string, OwnerlessModel>> = {
 const RAW_TABLE =
   /\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:["\w?]+\.)?"?(ai_workflow_execution|ai_conversation|ai_message)\b/gi;
 
-/** Any spelling of any of the three models, anywhere in the text — the cheap pre-filter and the oracle's population. */
+/**
+ * Any spelling of any of the three models, anywhere in the text — the cheap
+ * pre-filter and the oracle's population. Case-insensitive, as the SQL
+ * detector is: Postgres folds an unquoted `FROM AI_MESSAGE` to `ai_message`,
+ * so the query works, and a case-sensitive gate in front of a case-insensitive
+ * detector skipped that file before it was ever parsed.
+ */
 const ANY_MENTION =
-  /aiWorkflowExecution|aiConversation|aiMessage|ai_workflow_execution|ai_conversation|ai_message/;
+  /aiWorkflowExecution|aiConversation|aiMessage|ai_workflow_execution|ai_conversation|ai_message/i;
 
 /** The two helper modules, which query Prisma directly by definition. Named files, not a directory. */
 const SKIPPED_FILES = new Set([
@@ -129,37 +135,58 @@ export function mentionsModel(source: string): boolean {
 }
 
 /**
- * The names a helper module exports **as values** — functions and constants,
- * not types — read off the helper's own source rather than listed here.
+ * The names a helper module exports **as access decisions** — read off the
+ * helper's own source rather than listed here.
  *
- * This is what decides whether an import counts as coverage. `import {
- * ExecutionOwner } from '…/execution-access'` is legal without the `type`
- * keyword under `isolatedModules`, is used only in annotations, and reaches
- * nothing at runtime; counting it would let the exact bug this check exists
- * for pass on the strength of an interface. Deriving the set from the helper
- * means a new helper function is covered the day it is exported, and a new
- * exported type never is.
+ * An access decision is an exported function that takes the
+ * `AuthenticatedSession`, because that is where the policy's answer lives
+ * (`session.unattributedReads`): `adminCanViewExecution(row, session)`,
+ * `executionVisibilityWhere(session)`, `adminCanViewConversation(id, session)`.
+ * A helper also exports things that are not decisions — `isShareActive(share)`
+ * is a predicate on a share row, and the types `ExecutionOwner`,
+ * `AdminCanViewResult` — and importing one of those is not the road a query
+ * took. Deriving the set from the signature means a new decision is covered
+ * the day it is exported, and a new predicate or type never is.
+ *
+ * `import { ExecutionOwner } from '…/execution-access'` is legal without the
+ * `type` keyword under `isolatedModules`, is used only in annotations, and
+ * reaches nothing at runtime; counting it would let the exact bug this check
+ * exists for pass on the strength of an interface.
  */
-export function valueExportsOf(source: string): Set<string> {
+export function decisionExportsOf(source: string): Set<string> {
   const sf = ts.createSourceFile('helper.ts', source, ts.ScriptTarget.Latest, true);
   const names = new Set<string>();
   const isExported = (node: ts.Node): boolean =>
     (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
+  const takesSession = (params: ts.NodeArray<ts.ParameterDeclaration>): boolean =>
+    params.some(
+      (p) =>
+        p.type !== undefined &&
+        ts.isTypeReferenceNode(p.type) &&
+        ts.isIdentifier(p.type.typeName) &&
+        p.type.typeName.text === 'AuthenticatedSession'
+    );
   for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && isExported(stmt)) {
-      names.add(stmt.name.text);
+      if (takesSession(stmt.parameters)) names.add(stmt.name.text);
     } else if (ts.isVariableStatement(stmt) && isExported(stmt)) {
       for (const d of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) names.add(d.name.text);
+        const init = d.initializer;
+        if (
+          ts.isIdentifier(d.name) &&
+          init !== undefined &&
+          (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) &&
+          takesSession(init.parameters)
+        ) {
+          names.add(d.name.text);
+        }
       }
-    } else if (ts.isClassDeclaration(stmt) && stmt.name && isExported(stmt)) {
-      names.add(stmt.name.text);
     }
   }
   return names;
 }
 
-/** The helper modules' value exports, keyed by module, read from disk once. */
+/** The helper modules' decision exports, keyed by module, read from disk once. */
 export type HelperValueExports = Readonly<Record<HelperModule, ReadonlySet<string>>>;
 
 let helperExportsFromDisk: HelperValueExports | null = null;
@@ -167,7 +194,7 @@ let helperExportsFromDisk: HelperValueExports | null = null;
 function defaultHelperExports(): HelperValueExports {
   if (helperExportsFromDisk === null) {
     const read = (m: HelperModule): ReadonlySet<string> =>
-      valueExportsOf(readFileSync(`lib/orchestration/access/${m}.ts`, 'utf8'));
+      decisionExportsOf(readFileSync(`lib/orchestration/access/${m}.ts`, 'utf8'));
     helperExportsFromDisk = {
       'execution-access': read('execution-access'),
       'conversation-access': read('conversation-access'),
@@ -199,7 +226,7 @@ function isStringish(node: ts.Node): node is ts.StringLiteral | ts.NoSubstitutio
 
 /**
  * Read a file's shape off the AST. Parses once. `helperExports` defaults to
- * the real helpers' value exports read from disk; a test passes its own.
+ * the real helpers' decision exports read from disk; a test passes its own.
  */
 export function analyzeSource(
   path: string,
@@ -209,7 +236,7 @@ export function analyzeSource(
   const models = new Set<OwnerlessModel>();
   const helperModules = new Set<HelperModule>();
   const bindings: string[] = [];
-  /** Namespace bindings, so `access.executionVisibilityWhere` can be checked against the export list. */
+  /** Namespace bindings, so `access.executionVisibilityWhere` can be checked against the decision list. */
   const namespaces = new Map<string, HelperModule>();
   const uses = new Map<string, number>();
   const namespaceValueUses = new Set<string>();
@@ -227,7 +254,7 @@ export function analyzeSource(
       if (!clause || clause.isTypeOnly || !clause.namedBindings) return;
       const exported = helperExports[helper];
       if (ts.isNamespaceImport(clause.namedBindings)) {
-        // Counts once a value export is reached through it — see the
+        // Counts once a decision export is reached through it — see the
         // PropertyAccess branch below.
         namespaces.set(clause.namedBindings.name.text, helper);
         bindings.push(clause.namedBindings.name.text);
@@ -236,9 +263,9 @@ export function analyzeSource(
       const valueBindings: string[] = [];
       for (const el of clause.namedBindings.elements) {
         // `el.propertyName` is the exported name when aliased (`a as b`);
-        // `el.name` otherwise. Only a VALUE export can be the road a query
+        // `el.name` otherwise. Only a DECISION export can be the road a query
         // took — an interface imported without the `type` keyword is legal
-        // and reaches nothing.
+        // and reaches nothing, and a row predicate asks the caller nothing.
         const exportedName = (el.propertyName ?? el.name).text;
         if (!el.isTypeOnly && exported.has(exportedName)) valueBindings.push(el.name.text);
       }
@@ -336,7 +363,7 @@ export function unexplainedMentions(path: string, source: string): string[] {
       `${path}:${line + 1} — \`${text}\` appears in code but no read of ${model} was detected in this file. Either the detector is missing a shape, or a local is named like a model.`
     );
   };
-  const TABLE_TOKEN = /\b(ai_workflow_execution|ai_conversation|ai_message)\b/g;
+  const TABLE_TOKEN = /\b(ai_workflow_execution|ai_conversation|ai_message)\b/gi;
 
   const isNamePosition = (id: ts.Identifier): boolean => {
     const p = id.parent;
