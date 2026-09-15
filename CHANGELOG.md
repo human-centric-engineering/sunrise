@@ -20,8 +20,10 @@ release process.
 
 - **A test now fails when a source file reads `AiWorkflowExecution`,
   `AiConversation` or `AiMessage` outside the access helpers — and forks
-  inherit it.** `scripts/ci/ownerless-surfaces.ts` parses every file under
-  `app/`, `lib/` and `components/` with the TypeScript compiler and finds each
+  inherit it.** The always-run test `tests/unit/scripts/ci/ownerless-surfaces.test.ts`
+  lists every file under `app/`, `lib/` and `components/` and, through the
+  library `scripts/ci/ownerless-surfaces.ts` (a library, not a `check:*` CLI),
+  parses each with the TypeScript compiler and finds each
   read of the three models — a property or element access on any receiver, a
   destructured client, a table name in SQL text — and the always-run test names
   any file that neither value-imports the helper for that model nor appears in

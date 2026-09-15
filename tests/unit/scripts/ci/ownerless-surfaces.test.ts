@@ -271,6 +271,18 @@ describe('analyzeSource — which imports count', () => {
     expect(conv.has('isShareActive')).toBe(false);
   });
 
+  it('recognises a decision whose session parameter is wrapped or unioned', () => {
+    const helper = [
+      "import type { AuthenticatedSession } from '@/lib/auth/guards';",
+      'export function a(s: AuthenticatedSession | null) { return s; }',
+      'export function b(s: Readonly<AuthenticatedSession>) { return s; }',
+      'export const c = (row: unknown, s: AuthenticatedSession) => row;',
+      'export function notOne(share: { revokedAt: Date | null }) { return share; }',
+      'export const alsoNot = 3;',
+    ].join('\n');
+    expect([...decisionExportsOf(helper)].sort()).toEqual(['a', 'b', 'c']);
+  });
+
   it('a helper export that is not a decision covers nothing', () => {
     // `isShareActive(share)` is a predicate on a row the file already holds;
     // importing it asks the policy nothing about the caller.
@@ -420,6 +432,20 @@ describe('findUndeclaredOwnerlessReads', () => {
     expect(violations.map((v) => v.message)).toEqual([expect.stringContaining('never uses it')]);
   });
 
+  it('says a namespace never REACHED a decision, rather than that it is unused', () => {
+    const src =
+      "import * as access from '@/lib/orchestration/access/conversation-access';\nexport const r = prisma.aiConversation.findMany({}).filter(access.isShareActive);";
+    const { files, read } = tree({ 'app/api/x/route.ts': src });
+
+    const messages = findUndeclaredOwnerlessReads(files, read, []).map((v) => v.message);
+
+    expect(messages).toEqual([
+      expect.stringContaining('never reaches a decision through it'),
+      expect.stringContaining('without a value import'),
+    ]);
+    expect(messages[0]).not.toContain('never uses it');
+  });
+
   it('does not exempt a sibling of the helpers for living in the same directory', () => {
     const { files, read } = tree({
       'lib/orchestration/access/dataset-access.ts': HELPERLESS_ROUTE,
@@ -515,6 +541,37 @@ describe('unexplainedMentions', () => {
       unexplainedMentions(
         'app/api/x/route.ts',
         `const q = sql\`SELECT 1 FROM ai_message\`; const t = '"ai_message"';`
+      )
+    ).toEqual([]);
+  });
+
+  it('reports a model name held in a string, the static half of a dynamic delegate', () => {
+    // `prisma[model]` is not a detected read, but `'aiMessage'` is right there.
+    const found = unexplainedMentions(
+      'app/api/x/route.ts',
+      "export function countFor(model: 'aiMessage' | 'aiConversation') { return prisma[model].count({}); }"
+    );
+    expect(found.map((f) => f.split(' — ')[1]?.slice(0, 16))).toEqual([
+      '`aiMessage` appe',
+      '`aiConversation`',
+    ]);
+  });
+
+  it('reports a model name used as a class-field or enum initializer', () => {
+    // `PropertyDeclaration` and `EnumMember` both have a name AND an
+    // initializer; only the name is a name position.
+    const found = unexplainedMentions(
+      'app/api/x/route.ts',
+      'class Repo { private delegate = aiMessage; }\nenum E { A = aiConversation }'
+    );
+    expect(found).toHaveLength(2);
+  });
+
+  it("skips the roster module, whose reason strings describe other files' reads by design", () => {
+    expect(
+      unexplainedMentions(
+        'lib/orchestration/access/ownerless-surfaces.ts',
+        "export const reason = 'one `aiConversation.count()` among five aggregates';"
       )
     ).toEqual([]);
   });

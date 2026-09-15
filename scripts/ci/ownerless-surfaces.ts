@@ -5,8 +5,11 @@
  * `lib/orchestration/access/ownerless-surfaces.ts`, beside the helpers they
  * carve out of; read that first. This module is the mechanics: given a source
  * file, which of `AiWorkflowExecution`, `AiConversation`, `AiMessage` does it
- * read, and does it import the access helper for each? The always-run test
- * `tests/unit/scripts/ci/ownerless-surfaces.test.ts` runs it over the tree.
+ * read, and does it import the access helper for each? **A library, not a
+ * CLI**: unlike its `check:*` siblings in this directory it has no entry point,
+ * and `npx tsx` on it does nothing. The always-run test
+ * `tests/unit/scripts/ci/ownerless-surfaces.test.ts` is what runs it over the
+ * tree.
  *
  * **It is the TypeScript parser, not a regex over text — and that is a lesson,
  * not a preference.** The first draft tokenized source by hand and three
@@ -50,9 +53,9 @@
  * A read through a **relation include** — `prisma.aiWorkflow.findMany({
  * include: { executions: true } })` — names no model and is not detected; the
  * test pins that as a fact. A file that imports the helper and runs an
- * unscoped query beside it passes. And a **dynamic** model name
- * (`prisma[name]`) is invisible to any static check. It raises the floor; it
- * is not a proof.
+ * unscoped query beside it passes. A **dynamic** model name (`prisma[name]`)
+ * is not a detected read — but where the name is held in a string in the same
+ * file, the oracle reports it. It raises the floor; it is not a proof.
  *
  * {@link unexplainedMentions} is the oracle the detector does not control:
  * every identifier spelled like a model that sits in expression position, and
@@ -107,6 +110,17 @@ const SKIPPED_FILES = new Set([
   'lib/orchestration/access/conversation-access.ts',
 ]);
 
+/**
+ * The oracle additionally skips the roster module: its reason strings describe
+ * other files' reads in prose — "one `aiConversation.count(...)` among five
+ * aggregates" — by construction, so a string scan there reports the roster
+ * for doing its job. The detector still scans it; it reads nothing.
+ */
+const ORACLE_SKIPPED_FILES = new Set([
+  ...SKIPPED_FILES,
+  'lib/orchestration/access/ownerless-surfaces.ts',
+]);
+
 function isOwnerlessModel(value: string): value is OwnerlessModel {
   return Object.hasOwn(OWNERLESS_MODELS, value);
 }
@@ -158,14 +172,28 @@ export function decisionExportsOf(source: string): Set<string> {
   const names = new Set<string>();
   const isExported = (node: ts.Node): boolean =>
     (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
+  // Anywhere inside the parameter's type — `AuthenticatedSession | null`,
+  // `Readonly<AuthenticatedSession>` — not only a bare reference. An
+  // `export { fn }` list is not read: the helpers export inline, and a
+  // decision behind a list would be reported as "no import" rather than
+  // passing, which is the loud direction.
+  const mentionsSession = (type: ts.TypeNode): boolean => {
+    let found = false;
+    const walk = (n: ts.Node): void => {
+      if (
+        ts.isTypeReferenceNode(n) &&
+        ts.isIdentifier(n.typeName) &&
+        n.typeName.text === 'AuthenticatedSession'
+      ) {
+        found = true;
+      }
+      if (!found) ts.forEachChild(n, walk);
+    };
+    walk(type);
+    return found;
+  };
   const takesSession = (params: ts.NodeArray<ts.ParameterDeclaration>): boolean =>
-    params.some(
-      (p) =>
-        p.type !== undefined &&
-        ts.isTypeReferenceNode(p.type) &&
-        ts.isIdentifier(p.type.typeName) &&
-        p.type.typeName.text === 'AuthenticatedSession'
-    );
+    params.some((p) => p.type !== undefined && mentionsSession(p.type));
   for (const stmt of sf.statements) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && isExported(stmt)) {
       if (takesSession(stmt.parameters)) names.add(stmt.name.text);
@@ -209,8 +237,10 @@ export interface SourceAnalysis {
   models: Set<OwnerlessModel>;
   /** The helper modules the file value-imports. */
   helperModules: Set<HelperModule>;
-  /** Value bindings imported from a helper that nothing in the file references. */
+  /** Decision bindings imported from a helper that nothing in the file references, and namespaces that never reach a decision. */
   unusedImports: string[];
+  /** The bindings among those that are namespace imports, so the report can say what "unused" means for them. */
+  namespaceImports: Set<string>;
 }
 
 function tablesIn(text: string, into: Set<OwnerlessModel>): void {
@@ -336,6 +366,7 @@ export function analyzeSource(
     unusedImports: bindings.filter((b) =>
       namespaces.has(b) ? !namespaceValueUses.has(b) : (uses.get(b) ?? 0) === 0
     ),
+    namespaceImports: new Set(namespaces.keys()),
   };
 }
 
@@ -354,6 +385,7 @@ export function analyzeSource(
  * left out.
  */
 export function unexplainedMentions(path: string, source: string): string[] {
+  if (ORACLE_SKIPPED_FILES.has(path)) return [];
   const { models } = analyzeSource(path, source);
   const sf = parse(path, source);
   const found: string[] = [];
@@ -363,7 +395,11 @@ export function unexplainedMentions(path: string, source: string): string[] {
       `${path}:${line + 1} — \`${text}\` appears in code but no read of ${model} was detected in this file. Either the detector is missing a shape, or a local is named like a model.`
     );
   };
-  const TABLE_TOKEN = /\b(ai_workflow_execution|ai_conversation|ai_message)\b/gi;
+  // Both spellings: a table name in SQL text, and a model name held in a
+  // string — `prisma[model]` with `model: 'aiMessage'` names the model
+  // statically even though the access is dynamic.
+  const NAME_TOKEN =
+    /\b(ai_workflow_execution|ai_conversation|ai_message|aiWorkflowExecution|aiConversation|aiMessage)\b/gi;
 
   const isNamePosition = (id: ts.Identifier): boolean => {
     const p = id.parent;
@@ -372,8 +408,8 @@ export function unexplainedMentions(path: string, source: string): string[] {
       ts.isPropertySignature(p) ||
       ts.isMethodSignature(p) ||
       ts.isMethodDeclaration(p) ||
-      ts.isPropertyDeclaration(p) ||
-      ts.isEnumMember(p) ||
+      (ts.isPropertyDeclaration(p) && p.name === id) ||
+      (ts.isEnumMember(p) && p.name === id) ||
       ts.isImportSpecifier(p) ||
       ts.isExportSpecifier(p) ||
       ts.isTypeReferenceNode(p) ||
@@ -391,9 +427,10 @@ export function unexplainedMentions(path: string, source: string): string[] {
     if (ts.isIdentifier(node) && isOwnerlessModel(node.text) && !models.has(node.text)) {
       if (!isNamePosition(node)) report(node, node.text, node.text);
     }
-    // A table name in any string or template piece, when no read of that
-    // model was detected: `Prisma.raw('"ai_message"')`, a table held in a
-    // constant and interpolated later, a quoting the SQL regex did not expect.
+    // A table or model name in any string or template piece, when no read of
+    // that model was detected: `Prisma.raw('"ai_message"')`, a table held in
+    // a constant and interpolated later, `prisma[model]` with the model in a
+    // string, a quoting the SQL regex did not expect.
     // An audit `entityType: 'ai_conversation'` in a file that also reads the
     // model is filtered by `models.has`; one in a file that does not is worth
     // the glance.
@@ -403,9 +440,10 @@ export function unexplainedMentions(path: string, source: string): string[] {
       ts.isTemplateMiddle(node) ||
       ts.isTemplateTail(node)
     ) {
-      for (const m of node.text.matchAll(TABLE_TOKEN)) {
-        const model = TABLE_TO_MODEL[m[1].toLowerCase()];
-        if (model && !models.has(model)) report(node, m[1], model);
+      for (const m of node.text.matchAll(NAME_TOKEN)) {
+        const token = m[1];
+        const model = isOwnerlessModel(token) ? token : TABLE_TO_MODEL[token.toLowerCase()];
+        if (model && !models.has(model)) report(node, token, model);
       }
     }
     ts.forEachChild(node, visit);
@@ -456,6 +494,7 @@ export function findUndeclaredOwnerlessReads(
           models: new Set<OwnerlessModel>(),
           helperModules: new Set<HelperModule>(),
           unusedImports: [],
+          namespaceImports: new Set<string>(),
         };
 
     if (analysis.models.size === 0) {
@@ -471,7 +510,9 @@ export function findUndeclaredOwnerlessReads(
     for (const name of analysis.unusedImports) {
       violations.push({
         path,
-        message: `Imports \`${name}\` from the access helper and never uses it. A bare import satisfies nothing — the query has to go through the helper, not sit beside it.`,
+        message: analysis.namespaceImports.has(name)
+          ? `Imports the access helper as \`${name}\` and never reaches a decision through it — a function that takes the session. Using a row predicate or a type through the namespace satisfies nothing.`
+          : `Imports \`${name}\` from the access helper and never uses it. A bare import satisfies nothing — the query has to go through the helper, not sit beside it.`,
       });
     }
 

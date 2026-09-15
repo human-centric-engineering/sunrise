@@ -287,8 +287,10 @@ needs a control at the query, which is the tenancy chokepoint in
 `lib/db/client.ts` — see [the leak](#the-leak-stated-plainly).
 
 **Which files read rows nobody owns outside the helpers is derived, not
-recalled.** `scripts/ci/ownerless-surfaces.ts` parses every source file under
-`app/`, `lib/` and `components/` with the TypeScript compiler and finds each
+recalled.** The always-run test `tests/unit/scripts/ci/ownerless-surfaces.test.ts`
+lists every source file under `app/`, `lib/` and `components/` and, through the
+library `scripts/ci/ownerless-surfaces.ts` (no entry point of its own), parses
+each with the TypeScript compiler and finds each
 read of `AiWorkflowExecution`, `AiConversation` or `AiMessage` — a property or
 element access on any receiver, a destructured client, a table name in SQL text
 — and the always-run test fails unless the file value-imports the access helper
