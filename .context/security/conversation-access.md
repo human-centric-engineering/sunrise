@@ -18,11 +18,11 @@ An admin can access a conversation iff:
    messages **on the conversation surfaces** — including the writes:
    `PATCH` / `DELETE /conversations/:id`, and since t-691 the `allUsers` scope
    of `POST /conversations/clear`, which leaves ownerless threads in place for
-   a caller the policy refuses. It does not reach the analytics routes, which
-   read `AiMessage.content` with no owner clause and no policy —
-   `/analytics/unanswered` returns the sender's question verbatim. That is not
-   a regression, and it is why "narrowed the policy" is not the same as
-   "contained the correspondence". And because the same answer decides the
+   a caller the policy refuses — and since t-694 the analytics routes, which
+   aggregate every user's threads by design and apply this one arm through
+   `deploymentWideConversationWhere`, so `/analytics/unanswered` no longer
+   returns the sender's question verbatim to a caller the policy refuses the
+   thread itself. Because the same answer decides the
    delete, a policy must admit _some_ principal to ownerless conversations or
    the sender's only Art. 17 route is closed — `checkOwnerlessReachability`
    (`lib/auth/orphan-reads.ts`) fails naming that when it is. See

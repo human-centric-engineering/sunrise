@@ -33,6 +33,10 @@ The analytics dashboard at `/admin/orchestration/analytics` provides:
 
 6. **Unanswered Questions** — full-width table of user messages where the assistant hedged, showing the user question, assistant reply, and date.
 
+## Whose conversations
+
+The five query functions aggregate **every user's** conversations — that is the product — and each takes the guard's `AuthenticatedSession` as its second argument for one reason: the authorization policy's answer on threads nobody owns. Every Prisma read in `analytics-service.ts` spreads `deploymentWideConversationWhere(session)` (`lib/orchestration/access/conversation-access.ts`) into its conversation clause: `{}` on a default install, `{ userId: { not: null } }` when the policy refuses the caller unattributed reads, which removes inbound threads from every aggregate. The functions deliberately do not use `conversationVisibilityWhere` — the per-caller set would drop every member's chat from the dashboard (t-694).
+
 ## API Endpoints
 
 All endpoints require admin auth and accept the same query parameters:

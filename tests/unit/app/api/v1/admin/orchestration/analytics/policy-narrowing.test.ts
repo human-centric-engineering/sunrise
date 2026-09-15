@@ -149,8 +149,35 @@ type Where = Record<string, unknown>;
  * not modelled: every fixture is in range and every reply hedges, so they
  * would admit everything anyway.
  */
+const CONVERSATION_KEYS = new Set(['agentId', 'userId', 'createdAt', 'updatedAt', 'messages']);
+const MESSAGE_KEYS = new Set([
+  'role',
+  'conversationId',
+  'rating',
+  'ratedAt',
+  'createdAt',
+  'OR',
+  'conversation',
+]);
+
+/**
+ * A clause the fake does not model is an error, not an admit-all. A service
+ * that switched to the per-caller fragment would hand these fakes an `OR`,
+ * and a fake that shrugged at it would admit both threads and pass the
+ * "still aggregates the member's thread" control for the wrong reason.
+ */
+function onlyKnownKeys(where: Where, known: Set<string>, model: string): void {
+  const unknown = Object.keys(where).filter((k) => !known.has(k));
+  if (unknown.length > 0) {
+    throw new Error(
+      `the ${model} fake does not model ${unknown.join(', ')}: ${JSON.stringify(where)}`
+    );
+  }
+}
+
 function conversationAdmitted(conversation: Conversation, where: Where | undefined): boolean {
   if (!where) return true;
+  onlyKnownKeys(where, CONVERSATION_KEYS, 'conversation');
   if ('agentId' in where && where.agentId !== conversation.agentId) return false;
   if ('userId' in where) {
     const userId = where.userId as { not?: unknown } | string | null;
@@ -171,6 +198,7 @@ function conversationOf(m: Message): Conversation {
 }
 
 function messageAdmitted(m: Message, where: Where): boolean {
+  onlyKnownKeys(where, MESSAGE_KEYS, 'message');
   if ('role' in where && where.role !== m.role) return false;
   const idFilter = where.conversationId as { in?: string[] } | undefined;
   if (idFilter?.in && !idFilter.in.includes(m.conversationId)) return false;

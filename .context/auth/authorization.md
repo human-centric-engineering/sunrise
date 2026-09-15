@@ -304,8 +304,9 @@ consumer route keyed on `session.user.id`), and `'known-gap'` for one that
 should go through the helper and does not yet, which must name the issue or
 task that closes it and is reported as stale the moment the file starts
 importing the helper. The first pass (t-692) measured 54 files touching the
-three models — 23 through the helpers, 29 by design, and **two known gaps**:
-`approvals/history` (#773) and the analytics service (t-694). Three earlier
+three models — 23 through the helpers, 29 by design, and two known gaps:
+`approvals/history` (#773) and the analytics service, which t-694 has since
+moved through the helper, so the roster now carries **one**. Three earlier
 coverage claims on this page were each written from the files their author had
 read and each was wrong; this is what replaces them. **It raises the floor; it
 is not a proof** — a file that imports the helper and runs an unscoped query
@@ -708,20 +709,25 @@ tenant's customers' messages **on the conversation surfaces** — list, search,
 detail, messages, provenance, the dashboard counts and dataset capture — with no
 route diff.
 
-**It does not cover every surface those messages reach, and that gap is wider
-than it looks.** The analytics routes (`/analytics/unanswered`,
-`/analytics/topics`, `/feedback`, `/content-gaps`) read `AiMessage.content`
-directly with no owner clause and no policy in the loop, and `unanswered`
-returns the verbatim text of both the agent's reply and the member of the
-public's question. That is not a regression — it is consistent with the rule
-this seam replaced — but a fork that narrows `canRead`, confirms an inbound
-thread 404s, and concludes the correspondence is contained will be wrong. The
-gap is now held open mechanically rather than by this paragraph: the analytics
-service is a `'known-gap'` entry in `OWNERLESS_SURFACE_EXCEPTIONS`
-(`lib/orchestration/access/ownerless-surfaces.ts`, tracked as t-694), and the
-roster test reports the entry as stale the day it starts going through the
-helper. (`POST /conversations/clear` with `allUsers` used to be on this list;
-since t-691 it reads the same policy answer as the targeted delete.)
+**The analytics routes are the one reader that is deployment-wide by design,
+and they apply the policy's answer too — but only the arm the policy decides.**
+`/analytics/unanswered`, `/topics`, `/engagement`, `/feedback` and
+`/content-gaps` aggregate every user's conversations: "what are people asking
+my agents?" is the product, and a member's chat with a public agent is outside
+the per-caller set above (not the admin's own, not shared, not ownerless) and
+inside the aggregate. So the analytics service does not take
+`conversationVisibilityWhere` — that would have emptied the dashboard on every
+install — and takes `deploymentWideConversationWhere(session)` instead, the
+helper's fourth face: `{}` when the policy admits the caller to threads nobody
+owns, `{ userId: { not: null } }` when it refuses. Every read in
+`lib/orchestration/analytics/analytics-service.ts` carries it, so under a
+narrowing policy an inbound thread's messages leave every aggregate the way the
+thread leaves the list, and `unanswered` stops returning the sender's question
+verbatim (t-694; until then these routes consulted nothing, and a fork that
+narrowed `canRead` and confirmed the thread 404d was still handed the
+correspondence here). On a default install the clause is empty and no number
+moves. `POST /conversations/clear` with `allUsers` reads the same arm inline
+(t-691).
 
 **The same answer decides the writes, deliberately, and that closes two doors a
 policy must leave someone a key to.** There is no `canWrite` face: every core

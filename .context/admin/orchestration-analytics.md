@@ -65,6 +65,8 @@ The shell uses `thirtyDaysAgo` / `today` only to populate the filter **inputs** 
 
 Every route is `withAdminAuth` + `adminLimiter` + `validateQueryParams(analyticsQuerySchema)`. Same query shape across all five: `from`, `to` (`YYYY-MM-DD`), `agentId` (CUID), `limit` (1–100, default 20).
 
+**Whose conversations these numbers cover.** Every user's — the dashboard is deployment-wide by design, so it includes members' chats that the admin conversation list does not show (that list is the caller's own, shared, and inbound threads). The one exception follows the authorization policy: each route passes the guard's session to its service, which applies `deploymentWideConversationWhere` to every read, so on a fork whose policy refuses this admin threads nobody owns, inbound threads (SMS, WhatsApp, email, Slack) drop out of every section — counts, topics, gaps, feedback, and the verbatim questions under Unanswered — exactly as they drop out of the list. On a default install the clause is empty and nothing changes. See [`.context/auth/authorization.md`](../auth/authorization.md).
+
 | Section              | Method & path                                            | Route file                                                       |
 | -------------------- | -------------------------------------------------------- | ---------------------------------------------------------------- |
 | Engagement           | `GET /api/v1/admin/orchestration/analytics/engagement`   | `app/api/v1/admin/orchestration/analytics/engagement/route.ts`   |
