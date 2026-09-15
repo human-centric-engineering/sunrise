@@ -1002,7 +1002,7 @@ Scope:
 
 - default → caller's own conversations (`userId = session.user.id`)
 - `userId` → a specific user
-- `allUsers: true` → across all users (mutually exclusive with `userId`), **plus the threads nobody owns** — inbound SMS / email / Slack conversations, `userId = null` — where the authorization policy permits this caller an unattributed read of conversations. A default install does; a fork's narrowing policy may not, in which case those rows are left in place (`where.userId = { not: null }`) exactly as they are absent from that caller's list, and both the route log and the `conversation.bulk_clear` audit row carry `ownerlessExcluded: true`. That is the same rule `DELETE /conversations/:id` applies to one thread; the two used to disagree (t-691).
+- `allUsers: true` → across all users (mutually exclusive with `userId`), **plus the threads nobody owns** — inbound SMS / email / Slack conversations, `userId = null` — where the authorization policy permits this caller an unattributed read of conversations. A default install does; a fork's narrowing policy may not, in which case those rows are left in place (`where.userId = { not: null }`) exactly as they are absent from that caller's list — other users' owned rows stay in `allUsers` whatever the policy says, as before; only the ownerless arm is policy-gated — and both the route log and the `conversation.bulk_clear` audit row carry `ownerlessExcluded: true`. That is the same rule `DELETE /conversations/:id` applies to one thread; the two used to disagree (t-691).
 
 Cross-user deletions emit an `AiAdminAuditLog` entry (`conversation.bulk_clear`). Returns `{ deletedCount }`.
 

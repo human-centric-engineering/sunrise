@@ -23,8 +23,12 @@
  * nothing, so a fork narrowing `canRead` refused an admin one inbound thread
  * and let them destroy every inbound thread through the bulk route. A
  * narrowed caller's `allUsers` now means "every user's conversations" and
- * not "every conversation" — the rows they may not see are not in their set,
- * exactly as they are not in their list. The exclusion is recorded on the
+ * not "every conversation": ownerless rows are in their set exactly when they
+ * are in their list. **Only the ownerless arm is policy-gated.** Other users'
+ * owned rows stay in `allUsers` (and in the `userId` scope) whatever the
+ * policy says, as they always have — this bulk route is wider than the per-id
+ * rule by design, and the policy's `subjectScope` is the seam that would
+ * narrow that, not this one. The exclusion is recorded on the
  * route log and on the `conversation.bulk_clear` audit row
  * (`metadata.ownerlessExcluded`); the response shape is unchanged.
  *

@@ -411,8 +411,11 @@ release process.
   admin a single inbound thread and let them destroy every inbound thread in the
   deployment through the blunt instrument. The bulk route now reads the same
   answer (`session.unattributedReads.conversation`) and, for a caller the policy
-  refuses, adds `userId: { not: null }` — the rows they may not see are not in
-  their set, exactly as they are not in their list; the route log and the
+  refuses, adds `userId: { not: null }` — ownerless rows are in their set
+  exactly when they are in their list. **Only that arm is policy-gated**: other
+  users' owned rows stay in `allUsers` whatever the policy says, as they always
+  have, because the bulk route is wider than the per-id rule by design and
+  `subjectScope` — not this seam — is what would narrow it. The route log and the
   `conversation.bulk_clear` audit row both carry `ownerlessExcluded: true`, and
   the response shape is unchanged. **A default
   install is unchanged**: the built-in policy admits a platform admin, so
