@@ -304,11 +304,14 @@ const OWNERLESS_KIND_CONSEQUENCE: Readonly<Record<UnattributedReadKind, string>>
     'an experiment an erasure de-attributed is readable and claimable by nobody you named, and pruned by nothing.',
 };
 
+function isCoreKind(kind: string): kind is UnattributedReadKind {
+  return UNATTRIBUTED_READ_KINDS.some((known) => known === kind);
+}
+
 function consequenceOf(kind: string): string {
-  return (
-    (OWNERLESS_KIND_CONSEQUENCE as Readonly<Record<string, string | undefined>>)[kind] ??
-    `rows of kind "${kind}" that nobody owns are reachable by none of the principals you named.`
-  );
+  return isCoreKind(kind)
+    ? OWNERLESS_KIND_CONSEQUENCE[kind]
+    : `rows of kind "${kind}" that nobody owns are reachable by none of the principals you named.`;
 }
 
 /**
