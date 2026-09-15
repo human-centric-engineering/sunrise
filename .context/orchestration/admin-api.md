@@ -1120,7 +1120,7 @@ curl -X POST /api/v1/admin/orchestration/conversations/clear \
 
 - default → `userId = session.user.id` (caller's own conversations)
 - `{ userId: "<cuid>" }` → that specific user's conversations
-- `{ allUsers: true }` → across all users — still narrowed by the `olderThan` / `agentId` filters
+- `{ allUsers: true }` → across all users — still narrowed by the `olderThan` / `agentId` filters — plus the threads nobody owns (inbound, `userId = null`) where the authorization policy permits this caller an unattributed read of conversations; a caller it refuses gets `userId: { not: null }` added, the same rule `DELETE /conversations/:id` applies (t-691). A default install reaches them.
 
 `userId` and `allUsers` are mutually exclusive. `allUsers: true` alone (no narrowing filter) is rejected by the same `.refine()` safety rail. Cross-user deletions (`userId` or `allUsers`) append an `AiAdminAuditLog` entry (`conversation.bulk_clear`). Returns `{ deletedCount }`. `AiMessage` rows cascade.
 

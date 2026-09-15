@@ -15,12 +15,17 @@ An admin can access a conversation iff:
    `'system'`, it is audit-logged like `'shared'`, and since t-686 it is the
    **policy's** answer rather than a fixed rule: a fork registering a narrowing
    `canRead` keeps one tenant's admins out of another tenant's customers'
-   messages **on the conversation surfaces**. It does not reach the analytics
-   routes, which read `AiMessage.content` with no owner clause and no policy —
-   `/analytics/unanswered` returns the sender's question verbatim — nor
-   `POST /conversations/clear?allUsers`, which deletes ownerless threads
-   unguarded. Neither is a regression, and both are why "narrowed the policy"
-   is not the same as "contained the correspondence". See
+   messages **on the conversation surfaces** — including the writes:
+   `PATCH` / `DELETE /conversations/:id`, and since t-691 the `allUsers` scope
+   of `POST /conversations/clear`, which leaves ownerless threads in place for
+   a caller the policy refuses. It does not reach the analytics routes, which
+   read `AiMessage.content` with no owner clause and no policy —
+   `/analytics/unanswered` returns the sender's question verbatim. That is not
+   a regression, and it is why "narrowed the policy" is not the same as
+   "contained the correspondence". And because the same answer decides the
+   delete, a policy must admit _some_ principal to ownerless conversations or
+   the sender's only Art. 17 route is closed — `checkOwnerlessReachability`
+   (`lib/auth/orphan-reads.ts`) fails naming that when it is. See
    [`.context/auth/authorization.md`](../auth/authorization.md).
 
 1. They are the participant (`AiConversation.userId == session.user.id`), or
