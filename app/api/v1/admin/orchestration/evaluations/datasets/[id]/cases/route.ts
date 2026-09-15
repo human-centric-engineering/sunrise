@@ -58,8 +58,6 @@ export const GET = withAdminAuth<{ id: string }>(
       adminUserId: session.user.id,
       datasetId: id.data,
       datasetName: dataset.name,
-      // The visibility clause admits only owner and orphan rows, so this
-      // cannot be null. If it somehow were, over-logging is the safe direction.
       basis,
       action: 'dataset.cases_view',
       clientIp: getClientIP(request),

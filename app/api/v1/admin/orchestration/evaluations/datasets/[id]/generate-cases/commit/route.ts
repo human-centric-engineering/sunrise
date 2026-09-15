@@ -62,8 +62,6 @@ export const POST = withAdminAuth<{ id: string }>(
       adminUserId: session.user.id,
       datasetId: datasetId,
       datasetName: dataset.name,
-      // The visibility clause admits only owner and orphan rows, so this
-      // cannot be null. If it somehow were, over-logging is the safe direction.
       basis,
       action: 'dataset.cases_commit',
       clientIp: getClientIP(request),

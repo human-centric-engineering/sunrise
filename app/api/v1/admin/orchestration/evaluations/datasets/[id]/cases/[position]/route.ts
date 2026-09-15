@@ -132,8 +132,6 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
       adminUserId: session.user.id,
       datasetId,
       datasetName: dataset.name,
-      // The visibility clause admits only owner and orphan rows, so this
-      // cannot be null. If it somehow were, over-logging is the safe direction.
       basis,
       action: 'dataset.case_update',
       extra: { position, fields: Object.keys(body) },
