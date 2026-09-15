@@ -54,11 +54,16 @@
  *
  * A file that imports the helper and also runs an unscoped query beside it
  * passes. The second rule below narrows that a little — an import nothing in
- * the file uses is reported, so the check cannot be silenced with a bare
- * import — but it cannot tell a helper applied to one query from a helper
- * applied to all of them. Treat a clean run as "every file that touches these
- * tables either imports the helper or has said why not", never as "every query
- * is scoped".
+ * the file uses is reported, and a type-only import counts for nothing, so the
+ * check cannot be silenced with one line — but it cannot tell a helper applied
+ * to one query from a helper applied to all of them. **Nor does it see a read
+ * through a relation**: `prisma.aiWorkflow.findMany({ include: { executions:
+ * true } })`, an agent's `conversations`, a conversation's `messages` — the row
+ * arrives without its model being named. Today every such read outside a
+ * `_count` is in a file already on the roster, and that is a fact about the
+ * tree, not a property of the check. Treat a clean run as "every file that
+ * names these tables either imports the helper or has said why not", never as
+ * "every query is scoped".
  *
  * Row-level security (§107) answers the *between-tenant* axis: a query that
  * forgets its `where` returns zero rows wherever it was written. It does not
@@ -354,6 +359,19 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
   ...appOwnerlessSurfaceExceptions,
 ];
 
+/**
+ * The files the rule cannot apply to: the two helpers, which query Prisma
+ * directly by definition, and this module, whose regex literals name the
+ * models. Named files, not the directory — a future sibling in
+ * `lib/orchestration/access/` that reads one of the three models gets no free
+ * pass for living next door.
+ */
+const SKIPPED_FILES = new Set([
+  'lib/orchestration/access/execution-access.ts',
+  'lib/orchestration/access/conversation-access.ts',
+  'lib/orchestration/access/ownerless-surfaces.ts',
+]);
+
 /** One thing wrong: a file that reads outside the helpers, or an entry that has rotted. */
 export interface OwnerlessSurfaceViolation {
   /** The file, or `'(roster)'` for a setup fault. */
@@ -364,10 +382,11 @@ export interface OwnerlessSurfaceViolation {
 
 /**
  * A model reached through a Prisma client, by any of the shapes TypeScript
- * offers: `prisma.aiConversation`, `tx?.aiConversation`, `prisma['aiConversation']`.
+ * offers: `prisma.aiConversation`, `tx?.aiConversation`, `prisma['aiConversation']`,
+ * `(tx ?? prisma).aiMessage`, `getDb().aiWorkflowExecution`. No receiver is
+ * required — a receiver pattern only ever buys false negatives.
  */
-const MODEL_ACCESSOR =
-  /\b[\w$]+\s*(?:\?\.|\.|\[\s*['"])(aiWorkflowExecution|aiConversation|aiMessage)\b/g;
+const MODEL_ACCESSOR = /(?:\?\.|\.|\[\s*['"])(aiWorkflowExecution|aiConversation|aiMessage)\b/g;
 /** A model pulled off a client by destructuring: `const { aiMessage } = prisma`. */
 const MODEL_DESTRUCTURE =
   /\{[^{}]*\b(aiWorkflowExecution|aiConversation|aiMessage)\b[^{}]*\}\s*=\s*[\w$.?]+/g;
@@ -384,8 +403,15 @@ const TABLE_TO_MODEL: Record<string, OwnerlessModel> = {
   ai_conversation: 'aiConversation',
   ai_message: 'aiMessage',
 };
+/**
+ * A value import from one of the two helper modules. `import type { … }` is
+ * deliberately not matched, and an inline `type X` spec is dropped below: a
+ * type reaches nothing at runtime, so it cannot be the road a query took. The
+ * helpers export `AccessBasis`, `AdminCanViewResult` and `ExecutionOwner`, so
+ * the type-only shape is an easy accident as well as an easy dodge.
+ */
 const HELPER_IMPORT =
-  /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]@\/lib\/orchestration\/access\/(execution-access|conversation-access)['"]/g;
+  /import\s+\{([^}]*)\}\s+from\s+['"]@\/lib\/orchestration\/access\/(execution-access|conversation-access)['"]/g;
 
 function isOwnerlessModel(value: string): value is OwnerlessModel {
   return Object.hasOwn(OWNERLESS_MODELS, value);
@@ -478,15 +504,19 @@ interface HelperImports {
 function helperImports(source: string): HelperImports {
   const modules = new Set<HelperModule>();
   const names: string[] = [];
-  for (const m of source.matchAll(HELPER_IMPORT)) {
-    if (isHelperModule(m[2])) modules.add(m[2]);
+  // Over the stripped source, as `modelsRead` is: a commented-out import is
+  // not an import.
+  for (const m of stripComments(source).matchAll(HELPER_IMPORT)) {
+    const bound: string[] = [];
     for (const raw of m[1].split(',')) {
       const spec = raw.trim();
       if (!spec || spec.startsWith('type ')) continue;
       // `a as b` binds `b`; a bare `a` binds `a`.
-      const bound = spec.includes(' as ') ? spec.split(' as ')[1].trim() : spec;
-      names.push(bound);
+      bound.push(spec.includes(' as ') ? spec.split(' as ')[1].trim() : spec);
     }
+    // The module counts only if something with a runtime existence came from it.
+    if (bound.length > 0 && isHelperModule(m[2])) modules.add(m[2]);
+    names.push(...bound);
   }
   return { modules, names };
 }
@@ -542,8 +572,8 @@ export function validateExceptions(
  *
  * Pure: `files` is the roster of source paths to consider and `read` returns a
  * file's text (or `null` to skip it), so a test can hand it synthetic files and
- * prove it goes red. Files under `lib/orchestration/access/` are skipped — they
- * are the helpers, and they query Prisma directly by definition.
+ * prove it goes red. The two helper modules and this file are skipped by name
+ * ({@link SKIPPED_FILES}) — the helpers query Prisma directly by definition.
  *
  * Reports a setup fault as a violation: run over zero files it could not have
  * found anything, and a glob that silently matched nothing is the quiet green
@@ -569,7 +599,7 @@ export function findUndeclaredOwnerlessReads(
   const seenPaths = new Set<string>();
 
   for (const path of files) {
-    if (path.startsWith('lib/orchestration/access/')) continue;
+    if (SKIPPED_FILES.has(path)) continue;
     const source = read(path);
     if (source === null) continue;
     seenPaths.add(path);

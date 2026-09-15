@@ -153,6 +153,52 @@ describe('findUndeclaredOwnerlessReads — the direction that fails', () => {
     expect(violations.map((v) => v.message)).toEqual([expect.stringContaining('never uses it')]);
   });
 
+  it('is not satisfied by a type-only import', () => {
+    // The helpers export types (`AccessBasis`, `ExecutionOwner`), so this is an
+    // easy accident as well as an easy dodge. A type reaches nothing at
+    // runtime and cannot be the road a query took.
+    const wholeImportType =
+      "import type { ExecutionOwner } from '@/lib/orchestration/access/execution-access';\n" +
+      "import { prisma } from '@/lib/db/client';\n" +
+      'export async function GET(o: ExecutionOwner) { return Response.json(await prisma.aiWorkflowExecution.findMany({ where: o })); }\n';
+    const inlineType =
+      "import { type ExecutionOwner } from '@/lib/orchestration/access/execution-access';\n" +
+      "import { prisma } from '@/lib/db/client';\n" +
+      'export async function GET(o: ExecutionOwner) { return Response.json(await prisma.aiWorkflowExecution.findMany({ where: o })); }\n';
+
+    for (const src of [wholeImportType, inlineType]) {
+      const { files, read } = tree({ 'app/api/x/route.ts': src });
+      const violations = findUndeclaredOwnerlessReads(files, read, []);
+      expect(violations.map((v) => v.message)).toEqual([
+        expect.stringContaining('without importing'),
+      ]);
+    }
+  });
+
+  it('is not satisfied by a commented-out import', () => {
+    const src =
+      "// import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';\n" +
+      "import { prisma } from '@/lib/db/client';\n" +
+      "export async function GET() { const s = 'executionVisibilityWhere'; return Response.json(await prisma.aiWorkflowExecution.findMany({})); }\n";
+    const { files, read } = tree({ 'app/api/x/route.ts': src });
+
+    const violations = findUndeclaredOwnerlessReads(files, read, []);
+
+    expect(violations.map((v) => v.message)).toEqual([
+      expect.stringContaining('without importing'),
+    ]);
+  });
+
+  it('does not exempt a sibling of the helpers for living in the same directory', () => {
+    const { files, read } = tree({
+      'lib/orchestration/access/dataset-access.ts': HELPERLESS_ROUTE,
+    });
+
+    const violations = findUndeclaredOwnerlessReads(files, read, []);
+
+    expect(violations).toHaveLength(1);
+  });
+
   it('is not silenced by a bare import nothing in the file uses', () => {
     // The dodge the "imports the helper" rule invites: add the import, change
     // nothing else. The name is imported and never referenced again.
@@ -235,6 +281,8 @@ describe('modelsRead — what counts as touching a model', () => {
       "sql`SELECT 1 FROM ${Prisma.raw('ai_workflow_execution')}`",
       'aiWorkflowExecution',
     ],
+    ['a computed receiver', '(tx ?? prisma).aiMessage.findMany({})', 'aiMessage'],
+    ['a call-expression receiver', 'getDb().aiWorkflowExecution.count()', 'aiWorkflowExecution'],
   ])('sees %s', (_label, source, model) => {
     expect([...modelsRead(source)]).toEqual([model]);
   });
@@ -344,11 +392,5 @@ describe('the tree', () => {
     const violations = findUndeclaredOwnerlessReads(files, read, OWNERLESS_SURFACE_EXCEPTIONS);
 
     expect(violations.map((v) => `${v.path}\n    ${v.message}`).join('\n\n')).toBe('');
-  });
-
-  it('every known gap names where its fix lives', () => {
-    const gaps = OWNERLESS_SURFACE_EXCEPTIONS.filter((e) => e.disposition === 'known-gap');
-    expect(gaps.length).toBeGreaterThan(0);
-    for (const gap of gaps) expect(gap.tracking).toMatch(/^(#\d+|t-\d+)$/);
   });
 });

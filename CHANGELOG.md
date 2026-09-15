@@ -25,7 +25,8 @@ release process.
   touches one of the three models, by Prisma accessor on any receiver or by
   table name in raw SQL) and its always-run test names any file that neither
   imports the helper for that model nor appears in `OWNERLESS_SURFACE_EXCEPTIONS`
-  with a reason. A bare import nothing uses does not satisfy it. Exceptions are
+  with a reason. A bare import nothing uses does not satisfy it, nor does a
+  type-only one, nor a commented-out one. Exceptions are
   `'by-design'` (no caller to scope to) or `'known-gap'` (must name the issue or
   task that closes it, and is reported as stale once the file goes through the
   helper); reasons under 20 characters, duplicate paths and a by-design entry
