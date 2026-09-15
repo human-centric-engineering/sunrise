@@ -5,16 +5,18 @@
  * this file after release, so your edits here merge cleanly on upgrade (the
  * stable contract is this file's exports, not their values).
  *
- * Auto-wired in two places: `vitest.config.ts` spreads
- * {@link appCoverageExclusions} into `coverage.exclude`, and
+ * Auto-wired in three places: `vitest.config.ts` spreads
+ * {@link appCoverageExclusions} into `coverage.exclude`;
  * `scripts/ci/scoped-tests.ts` spreads {@link appAlwaysRunTests} into
  * `ALWAYS_RUN_TESTS`, which `npm run test:changed` and `/pre-pr` union into
- * every scoped run.
+ * every scoped run; and `lib/orchestration/access/ownerless-surfaces.ts`
+ * spreads {@link appOwnerlessSurfaceExceptions} into the roster of files
+ * allowed to read an ownerless-capable model outside the access helpers.
  *
  * ## Why this exists
  *
- * Both platform lists are *core* registries with core guards over them, and
- * neither had anywhere for a fork to put its own entry. A fork that added one
+ * All three platform lists are *core* registries with core guards over them,
+ * and none had anywhere for a fork to put its own entry. A fork that added one
  * `tsx` CLI script and one whole-tree test had to edit three Sunrise-owned
  * files it had never touched (#759) — `vitest.config.ts`,
  * `scripts/ci/missing-tests.ts` and `scripts/ci/scoped-tests.ts` — to declare
@@ -30,7 +32,8 @@
  * framework-agnostic boundary and can be read by a vite config, a `tsx` script
  * and a test alike.
  *
- * Full guide: CUSTOMIZATION.md §4 · .context/testing/scoped-runs.md
+ * Full guide: CUSTOMIZATION.md §4 · .context/testing/scoped-runs.md ·
+ * .context/auth/authorization.md (the ownerless-surface roster)
  */
 
 /** One path the coverage reporter should not have an opinion about. */
@@ -159,3 +162,66 @@ export interface AppAlwaysRunTest {
  * ```
  */
 export const appAlwaysRunTests: AppAlwaysRunTest[] = [];
+
+/**
+ * One source file allowed to read `AiWorkflowExecution`, `AiConversation` or
+ * `AiMessage` without going through `lib/orchestration/access/`.
+ *
+ * The shape mirrors the core roster's — see
+ * `lib/orchestration/access/ownerless-surfaces.ts` for the rule, the reasons
+ * the core entries give, and what each disposition means.
+ */
+export interface AppOwnerlessSurfaceException {
+  /** Repo-relative path, forward slashes. Must exist and must still read one of the models. */
+  path: string;
+  /**
+   * `'by-design'` — the file has no caller to scope to, or scopes by a road
+   * the helper does not offer, and that is the intended end state.
+   * `'known-gap'` — it should go through the helper and does not yet; `tracking`
+   * names where the fix lives, and the entry leaves when the fix lands.
+   */
+  disposition: 'by-design' | 'known-gap';
+  /**
+   * Why, in the terms the next person needs — at least 20 characters, and
+   * concrete: *"a machine caller authenticated by HMAC, with no admin whose
+   * rows it could be narrowed to"* is a reason; *"background job"* is not.
+   */
+  reason: string;
+  /** For `'known-gap'` only: the issue or Hub task that closes it (`#773`, `t-694`). */
+  tracking?: string;
+}
+
+/**
+ * Files in this fork that read an ownerless-capable model outside the access
+ * helpers, and why each is allowed to.
+ *
+ * The case this is for: a fork route or job of its own that queries
+ * `prisma.aiConversation` / `aiWorkflowExecution` / `aiMessage` (or the tables
+ * in raw SQL) and legitimately does not go through `adminCanViewConversation`,
+ * `conversationVisibilityWhere`, `adminCanViewExecution` or
+ * `executionVisibilityWhere`. The roster test
+ * (`tests/unit/lib/orchestration/access/ownerless-surfaces.test.ts`) is
+ * derived from the source, so **your file fails it the first time it lands** —
+ * that is the check working. Import the helper if the read is an admin
+ * surface; declare it here if it is not, and say why.
+ *
+ * The entry is validated the way core's are: the file must exist and still
+ * read one of the models (an entry for a file that now imports the helper is
+ * reported as stale), the reason must be at least 20 characters, a
+ * `'known-gap'` must carry `tracking`, and a path may appear once.
+ *
+ * @example
+ * ```ts
+ * export const appOwnerlessSurfaceExceptions: AppOwnerlessSurfaceException[] = [
+ *   {
+ *     path: 'lib/app/billing/usage-rollup.ts',
+ *     disposition: 'by-design',
+ *     reason:
+ *       'nightly rollup summing `totalCostUsd` over every execution into a per-org ' +
+ *       'ledger row — a platform job with no caller to scope to; the rows it writes ' +
+ *       'are what the org-scoped billing page then reads.',
+ *   },
+ * ];
+ * ```
+ */
+export const appOwnerlessSurfaceExceptions: AppOwnerlessSurfaceException[] = [];

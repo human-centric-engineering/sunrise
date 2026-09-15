@@ -105,6 +105,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/lib/orchestration/access/ownerless-surfaces.test.ts',
+    reason:
+      'lists every source file under app/, lib/ and components/ that reads ' +
+      '`AiWorkflowExecution`, `AiConversation` or `AiMessage` and fails unless it ' +
+      'imports the access helper or is declared in OWNERLESS_SURFACE_EXCEPTIONS. A ' +
+      'new route querying the table directly is exactly the change no import chain ' +
+      'connects to this test.',
+  },
+  {
     path: 'tests/unit/prisma/auth-schema-parity.test.ts',
     reason:
       'reads `prisma/schema/auth.prisma` off disk and compares it against ' +

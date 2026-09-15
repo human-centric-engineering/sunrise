@@ -49,7 +49,11 @@ import { APP_API_KEY_SCOPES } from '@/lib/app/api-key-scopes';
 import { listValidApiKeyScopes, CORE_API_KEY_SCOPES } from '@/lib/auth/api-key-scopes';
 import appEslintConfig from '@/lib/app/eslint.config.mjs';
 import { appFrameSrc } from '@/lib/app/csp';
-import { appCoverageExclusions, appAlwaysRunTests } from '@/lib/app/ci';
+import {
+  appCoverageExclusions,
+  appAlwaysRunTests,
+  appOwnerlessSurfaceExceptions,
+} from '@/lib/app/ci';
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 import { collectAppSubjectData } from '@/lib/app/data-export';
@@ -366,10 +370,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/ci.ts',
-    risk: 'a stray coverage exclusion would switch the per-file 80% floor OFF for that path on every install, and a stray always-run entry would make every scoped run load a test whose file the install may not even have — one silences a gate, the other breaks the gate that replaced it',
+    risk: 'a stray coverage exclusion would switch the per-file 80% floor OFF for that path on every install, a stray always-run entry would make every scoped run load a test whose file the install may not even have, and a stray ownerless-surface exception would let a route read rows nobody owns without the policy being asked — the first silences a gate, the second breaks the gate that replaced it, the third exempts a file from the authorization seam',
     assert: () => {
       expect(appCoverageExclusions).toEqual([]);
       expect(appAlwaysRunTests).toEqual([]);
+      expect(appOwnerlessSurfaceExceptions).toEqual([]);
     },
   },
 ];
