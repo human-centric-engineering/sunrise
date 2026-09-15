@@ -38,7 +38,7 @@ An admin can access a conversation iff:
 Every per-id admin conversation route gates through
 `adminCanViewConversation(conversationId, session)` at
 [`lib/orchestration/access/conversation-access.ts`](../../lib/orchestration/access/conversation-access.ts).
-Returns `{ ok, basis: 'owner' | 'shared' | 'system' | null, ownerId }`.
+Returns a discriminated union on `ok`: `{ ok: true, basis: 'owner' | 'shared' | 'system', ownerId }` or `{ ok: false, basis: null, ownerId: null }`. **After `if (!access.ok) throw`, `basis` is not nullable** — do not write `access.basis ?? 'owner'`; that default made `logConversationAccess` skip the row, and the type now has no null for it to paper over (t-693).
 
 **It takes the session, not a user id** — the `'system'` arm reads the policy's
 answer from `session.unattributedReads.conversation`, which the guard resolved
