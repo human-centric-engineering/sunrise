@@ -163,6 +163,23 @@ describe('POST /datasets/:id/claim — what cannot be claimed', () => {
     expect(vi.mocked(prisma.aiDataset.updateMany)).not.toHaveBeenCalled();
   });
 
+  it('404s a foreign row the clause let through, rather than confirming it has an owner', async () => {
+    // `mockResolvedValue`, not the owner-aware fake: this simulates the clause
+    // having stopped filtering — the state a widening regression produces —
+    // which a filtering fake cannot. Before t-693 this answered 409 "Dataset
+    // already has an owner", confirming to the caller that a row they should
+    // never have reached exists. The 409 test below is the control: the same
+    // shape with the caller as owner still reaches it.
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue(
+      makeDataset({ userId: 'another-admin' }) as never
+    );
+
+    const res = await POST(makeRequest(), ctx());
+
+    expect(res.status).toBe(404);
+    expect(vi.mocked(prisma.aiDataset.updateMany)).not.toHaveBeenCalled();
+  });
+
   it('returns 409 when the caller already owns it', async () => {
     vi.mocked(prisma.aiDataset.findFirst).mockImplementation(
       ownerScopedFindFirst([makeDataset({ userId: ADMIN_ID })]) as never

@@ -413,7 +413,10 @@ release process.
   basis), so the two-state type was the defect. Narrowing on `ok` now gives
   `basis: AccessBasis`; the six evaluation-dataset handlers that wrote
   `datasetAccessBasis(...) ?? 'orphan'` narrow a null to a 404 instead, as the
-  detail route's `loadDataset` always has. **No behaviour moves on a default
+  detail route's `loadDataset` always has — and so does `POST
+  /evaluations/datasets/:id/claim`, which answered a null with `409 Dataset
+  already has an owner`, confirming to the caller that a row they should never
+  have reached exists. **No behaviour moves on a default
   install** — the null arm is unreachable through today's routes — so this
   changes what _would_ be recorded once the ownership axis widens, not what is
   recorded now. A fork reading the result: property access is unchanged and a

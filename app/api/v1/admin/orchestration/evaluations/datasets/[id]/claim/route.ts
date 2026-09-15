@@ -52,9 +52,17 @@ export const POST = withAdminAuth<{ id: string }>(
     });
     if (!existing) throw new NotFoundError(`Dataset ${id} not found`);
 
-    if (datasetAccessBasis(existing, session.user.id) !== 'orphan') {
+    // Narrowing for the type, not re-checking the boundary: the `where` above
+    // admits only 'owner' and 'orphan' rows, so this cannot be null. A null
+    // means the clause has stopped filtering, and answering it with the 409
+    // below would tell the caller a row they should not have reached exists
+    // and has an owner. Every other dataset handler 404s it; so does this one.
+    const basis = datasetAccessBasis(existing, session.user.id);
+    if (!basis) throw new NotFoundError(`Dataset ${id} not found`);
+
+    if (basis !== 'orphan') {
       // Reachable only when the row is the caller's own — a third party's was
-      // already a 404 above — so saying so leaks nothing.
+      // a 404 above, twice — so saying so leaks nothing.
       throw new ConflictError('Dataset already has an owner');
     }
 
