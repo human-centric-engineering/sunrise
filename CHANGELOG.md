@@ -20,12 +20,13 @@ release process.
 
 - **A test now fails when a source file reads `AiWorkflowExecution`,
   `AiConversation` or `AiMessage` outside the access helpers — and forks
-  inherit it.** `lib/orchestration/access/ownerless-surfaces.ts` derives the
-  roster from the tree (every file under `app/`, `lib/` and `components/` that
-  touches one of the three models, by Prisma accessor on any receiver or by
-  table name in raw SQL) and its always-run test names any file that neither
-  imports the helper for that model nor appears in `OWNERLESS_SURFACE_EXCEPTIONS`
-  with a reason. A bare import nothing uses does not satisfy it, nor does a
+  inherit it.** `scripts/ci/ownerless-surfaces.ts` parses every file under
+  `app/`, `lib/` and `components/` with the TypeScript compiler and finds each
+  read of the three models — a property or element access on any receiver, a
+  destructured client, a table name in SQL text — and the always-run test names
+  any file that neither value-imports the helper for that model nor appears in
+  `OWNERLESS_SURFACE_EXCEPTIONS` (`lib/orchestration/access/ownerless-surfaces.ts`,
+  beside the helpers) with a reason. A bare import nothing uses does not satisfy it, nor does a
   type-only one, nor a commented-out one. Exceptions are
   `'by-design'` (no caller to scope to) or `'known-gap'` (must name the issue or
   task that closes it, and is reported as stale once the file goes through the

@@ -200,7 +200,7 @@ export interface AppOwnerlessSurfaceException {
  * in raw SQL) and legitimately does not go through `adminCanViewConversation`,
  * `conversationVisibilityWhere`, `adminCanViewExecution` or
  * `executionVisibilityWhere`. The roster test
- * (`tests/unit/lib/orchestration/access/ownerless-surfaces.test.ts`) is
+ * (`tests/unit/scripts/ci/ownerless-surfaces.test.ts`) is
  * derived from the source, so **your file fails it the first time it lands** —
  * that is the check working. Import the helper if the read is an admin
  * surface; declare it here if it is not, and say why.

@@ -105,7 +105,7 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
-    path: 'tests/unit/lib/orchestration/access/ownerless-surfaces.test.ts',
+    path: 'tests/unit/scripts/ci/ownerless-surfaces.test.ts',
     reason:
       'lists every source file under app/, lib/ and components/ that reads ' +
       '`AiWorkflowExecution`, `AiConversation` or `AiMessage` and fails unless it ' +

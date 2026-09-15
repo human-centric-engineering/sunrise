@@ -287,12 +287,16 @@ needs a control at the query, which is the tenancy chokepoint in
 `lib/db/client.ts` — see [the leak](#the-leak-stated-plainly).
 
 **Which files read rows nobody owns outside the helpers is derived, not
-recalled.** `lib/orchestration/access/ownerless-surfaces.ts` scans every source
-file under `app/`, `lib/` and `components/` for a read of `AiWorkflowExecution`,
-`AiConversation` or `AiMessage` — a Prisma accessor on any receiver, or the
-table in raw SQL — and its test fails unless the file imports the access helper
-for that model or is declared in `OWNERLESS_SURFACE_EXCEPTIONS` with a reason
-the checker enforces as non-trivial. Two dispositions: `'by-design'` for a file
+recalled.** `scripts/ci/ownerless-surfaces.ts` parses every source file under
+`app/`, `lib/` and `components/` with the TypeScript compiler and finds each
+read of `AiWorkflowExecution`, `AiConversation` or `AiMessage` — a property or
+element access on any receiver, a destructured client, a table name in SQL text
+— and the always-run test fails unless the file value-imports the access helper
+for that model or is declared in `OWNERLESS_SURFACE_EXCEPTIONS`
+(`lib/orchestration/access/ownerless-surfaces.ts`, beside the helpers) with a
+reason the checker enforces as non-trivial. The parser rather than a regex,
+deliberately: a first draft tokenized source by hand and three review rounds
+each found ordinary shapes it could not see. Two dispositions: `'by-design'` for a file
 with no caller to scope to (the engine, the reaper, a webhook receiver, a
 consumer route keyed on `session.user.id`), and `'known-gap'` for one that
 should go through the helper and does not yet, which must name the issue or
