@@ -433,22 +433,46 @@ function isHelperModule(value: string): value is HelperModule {
  *
  * **Not a tokenizer, and the failure direction is stated.** A regex literal
  * containing a lone quote (`/['"]/`) desyncs the quote tracking, after which
- * comment text may be kept — a false positive, which is loud. The one shape
- * that could drop code is a `//` inside a string on a line that also reads a
- * model, *after* such a desync; none exists in this tree, and the module's own
- * source (which is full of such regexes) is skipped by path.
+ * comment text may be kept — a false positive, which is loud. A JSX-text
+ * apostrophe (`Don't`) did the same in thirteen files. Two rules answer both:
+ * a quote inside a word does not open a string, and a `/` in expression
+ * position is read as a regex literal to its closing `/`. The test holds this
+ * against the TypeScript parser's own comment ranges for every file in the
+ * tree that mentions a model name anywhere — the only files where a stripping
+ * error can change `modelsRead`'s answer — so a regression here is a red test
+ * rather than a quiet one. The one shape that could drop code is a `//` inside
+ * a string on a line that also reads a model, *after* a desync; the module's
+ * own source (full of such regexes) is skipped by path.
  */
 export function stripComments(source: string): string {
-  let out = '';
+  // Copied through in runs: `keepFrom` marks the start of the current run of
+  // characters to keep, flushed into `parts` when something is dropped. A
+  // per-character `out += ch` was the whole cost of this function over the
+  // tree (~750ms); runs make it a handful of slices per file.
+  const parts: string[] = [];
+  let keepFrom = 0;
   let i = 0;
   let quote: string | null = null;
+  const isWordChar = (c: string | undefined): boolean => c !== undefined && /[\w$]/.test(c);
+  /** The last non-whitespace character kept so far, and whether it ends `return`/`typeof`. */
+  const tailStartsRegex = (): boolean => {
+    let k = i - 1;
+    while (
+      k >= 0 &&
+      (source[k] === ' ' || source[k] === '\t' || source[k] === '\n' || source[k] === '\r')
+    )
+      k--;
+    if (k < 0) return true;
+    const c = source[k];
+    if ('=(,:[!&|?{;}'.includes(c)) return true;
+    const word = source.slice(Math.max(0, k - 5), k + 1);
+    return /\b(?:return|typeof)$/.test(word);
+  };
   while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1];
     if (quote) {
-      out += ch;
       if (ch === '\\') {
-        out += next ?? '';
         i += 2;
         continue;
       }
@@ -458,22 +482,52 @@ export function stripComments(source: string): string {
     }
     if (ch === '/' && next === '*') {
       const end = source.indexOf('*/', i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      parts.push(source.slice(keepFrom, i));
       // Keep the newlines so line-oriented callers see the same line count.
-      const skipped = end === -1 ? source.slice(i) : source.slice(i, end + 2);
-      out += skipped.replace(/[^\n]/g, '');
-      i += skipped.length;
+      parts.push(source.slice(i, stop).replace(/[^\n]/g, ''));
+      i = keepFrom = stop;
       continue;
     }
     if (ch === '/' && next === '/') {
       const end = source.indexOf('\n', i);
-      i = end === -1 ? source.length : end;
+      parts.push(source.slice(keepFrom, i));
+      i = keepFrom = end === -1 ? source.length : end;
       continue;
     }
-    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
-    out += ch;
+    // A regex literal in expression position — after `=`, `(`, `,`, `:`, `[`,
+    // `!`, `&`, `|`, `?`, `{`, `;`, `}`, `return` or `typeof` — is skipped over
+    // whole, so a lone quote inside it (`/['"]/`) cannot open a string. `/`
+    // after a value is division and falls through.
+    if (ch === '/' && next !== undefined && next !== '\n' && tailStartsRegex()) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < source.length && source[j] !== '\n') {
+        const c = source[j];
+        if (c === '\\') {
+          j += 2;
+          continue;
+        }
+        if (c === '[') inClass = true;
+        else if (c === ']') inClass = false;
+        else if (c === '/' && !inClass) break;
+        j += 1;
+      }
+      if (j < source.length && source[j] === '/') {
+        i = j + 1;
+        continue;
+      }
+    }
+    // A quote opens a string unless it sits inside a word — `Don't`, `it's` in
+    // JSX text — where the previous character is a letter or digit. Code never
+    // opens a string straight after a word character (prettier puts a space
+    // after `return`, `case`, `typeof`), and a tagged template (`sql\`…\``)
+    // is a backtick, which is always tracked.
+    if (ch === '`' || ((ch === "'" || ch === '"') && !isWordChar(source[i - 1]))) quote = ch;
     i += 1;
   }
-  return out;
+  parts.push(source.slice(keepFrom));
+  return parts.join('');
 }
 
 /** The models a file reads, found in its code — a comment naming one is not a read. */

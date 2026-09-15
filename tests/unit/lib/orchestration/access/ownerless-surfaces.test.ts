@@ -32,10 +32,12 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import {
   findUndeclaredOwnerlessReads,
   validateExceptions,
   modelsRead,
+  stripComments,
   OWNERLESS_SURFACE_EXCEPTIONS,
   MIN_REASON_LENGTH,
   type OwnerlessSurfaceException,
@@ -360,17 +362,58 @@ describe('exceptions are validated, not trusted', () => {
 
 // ─── The real tree ────────────────────────────────────────────────────────────
 
+/**
+ * The source with every comment the TypeScript parser sees blanked out. The
+ * reference `stripComments` is held against; parser-accurate for JSX text,
+ * regex literals and template literals, which are exactly the shapes a
+ * hand-rolled tracker gets wrong.
+ */
+function parserStripped(path: string, source: string): string {
+  const sf = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    path.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  );
+  const ranges = new Map<number, number>();
+  const collect = (pos: number, trailing: boolean): void => {
+    const found = trailing
+      ? ts.getTrailingCommentRanges(source, pos)
+      : ts.getLeadingCommentRanges(source, pos);
+    for (const r of found ?? []) ranges.set(r.pos, r.end);
+  };
+  const visit = (node: ts.Node): void => {
+    collect(node.getFullStart(), false);
+    collect(node.getEnd(), true);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  collect(sf.endOfFileToken.getFullStart(), false);
+  let out = source;
+  for (const [pos, end] of [...ranges.entries()].sort((a, b) => b[0] - a[0])) {
+    out = out.slice(0, pos) + out.slice(pos, end).replace(/[^\n]/g, ' ') + out.slice(end);
+  }
+  return out;
+}
+
 describe('the tree', () => {
   // `--others --exclude-standard` alongside `--cached`: a route that has just
   // been written and not yet staged is exactly the file a developer runs this
   // for, and plain `git ls-files` would not see it until `git add`.
-  const files = execSync(
-    "git ls-files --cached --others --exclude-standard 'app/**/*.ts' 'app/**/*.tsx' 'lib/**/*.ts' 'lib/**/*.tsx' 'components/**/*.ts' 'components/**/*.tsx'",
-    { encoding: 'utf8', cwd: process.cwd() }
-  )
+  //
+  // Bare directories, filtered by extension here — NOT `'lib/**/*.ts'`. Without
+  // `:(glob)` magic git's `**` is a plain `*`, so that pathspec requires a
+  // directory between `lib/` and the file and silently omits every depth-1
+  // file (`lib/env.ts`, `app/layout.tsx`, 18 of them on this tree). A fork's
+  // `lib/rollup.ts` reading a model would never have been checked.
+  const files = execSync('git ls-files --cached --others --exclude-standard app lib components', {
+    encoding: 'utf8',
+    cwd: process.cwd(),
+  })
     .split('\n')
     .filter(Boolean)
-    .filter((f) => !/\.(test|spec)\.tsx?$/.test(f) && !f.endsWith('.d.ts'));
+    .filter((f) => /\.tsx?$/.test(f) && !/\.(test|spec)\.tsx?$/.test(f) && !f.endsWith('.d.ts'));
 
   const read = (p: string): string | null => {
     try {
@@ -380,12 +423,52 @@ describe('the tree', () => {
     }
   };
 
-  it('scanned a roster large enough to mean something', () => {
+  it('scanned a roster large enough to mean something, at every depth', () => {
     // The population check the export-sources precedent insists on: an
-    // assertion of absence passes for free on an empty set.
+    // assertion of absence passes for free on an empty set. And a depth-1 file
+    // by name, because a glob that skips the top of each tree still clears a
+    // count threshold — that is how 18 files went unscanned on the first draft.
     expect(files.length).toBeGreaterThan(500);
+    expect(files).toContain('lib/env.ts');
+    expect(files).toContain('app/layout.tsx');
     const touching = files.filter((f) => modelsRead(read(f) ?? '').size > 0);
     expect(touching.length).toBeGreaterThan(40);
+  });
+
+  it('strips comments the way the TypeScript parser does, wherever it could change the answer', () => {
+    // `stripComments` is a quote-and-slash tracker, not a tokenizer, and its
+    // docblock states the shapes that desync it. This holds it to the real
+    // parser: for every file that mentions a model name ANYWHERE — the only
+    // files where a stripping error can change what `modelsRead` returns — the
+    // models found in the heuristically-stripped source must equal the models
+    // found in the parser-stripped source. Scoped that way it is ~5% of the
+    // tree, so it stays cheap on every scoped run.
+    const mentions =
+      /aiWorkflowExecution|aiConversation|aiMessage|ai_workflow_execution|ai_conversation|ai_message/;
+    const candidates = files.filter((f) => {
+      const src = read(f);
+      return src !== null && mentions.test(src);
+    });
+    expect(candidates.length).toBeGreaterThan(40);
+
+    const disagreements: string[] = [];
+    for (const f of candidates) {
+      const source = read(f) ?? '';
+      const heuristic = [...modelsRead(source)].sort();
+      const reference = [...modelsRead(parserStripped(f, source))].sort();
+      if (heuristic.join() !== reference.join()) {
+        disagreements.push(
+          `${f}: heuristic=[${heuristic.join(',')}] parser=[${reference.join(',')}]`
+        );
+      }
+    }
+    expect(disagreements).toEqual([]);
+    // And the heuristic actually removed something on this population — a
+    // stripper that returned its input unchanged would agree with anything
+    // whose comments happen not to name a model.
+    expect(
+      candidates.some((f) => stripComments(read(f) ?? '').length < (read(f) ?? '').length)
+    ).toBe(true);
   });
 
   it('every read of an ownerless-capable model goes through its helper, or says why not', () => {
