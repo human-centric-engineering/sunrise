@@ -144,6 +144,15 @@ describe('findUndeclaredOwnerlessReads — the direction that fails', () => {
     expect(findUndeclaredOwnerlessReads(files, read, [exception({})])).toEqual([]);
   });
 
+  it('does not count a comment mentioning the imported name as a use', () => {
+    const src = IMPORT_ONLY_ROUTE + '\n// executionVisibilityWhere would go here, one day\n';
+    const { files, read } = tree({ 'app/api/x/route.ts': src });
+
+    const violations = findUndeclaredOwnerlessReads(files, read, []);
+
+    expect(violations.map((v) => v.message)).toEqual([expect.stringContaining('never uses it')]);
+  });
+
   it('is not silenced by a bare import nothing in the file uses', () => {
     // The dodge the "imports the helper" rule invites: add the import, change
     // nothing else. The name is imported and never referenced again.
@@ -204,6 +213,41 @@ describe('modelsRead — what counts as touching a model', () => {
 
   it('finds an accessor on any receiver, not only `prisma`', () => {
     expect([...modelsRead('await tx.aiMessage.create({ data })')]).toEqual(['aiMessage']);
+  });
+
+  // The shapes a reviewer listed as evasions on the first draft, each now
+  // caught. A checker that enumerates shapes fails one review round at a
+  // time; these pin the ones that ordinary code actually produces.
+  it.each([
+    ['optional chaining', 'prisma?.aiConversation.findMany()', 'aiConversation'],
+    ['bracket access', "prisma['aiConversation'].findMany()", 'aiConversation'],
+    ['destructured client', 'const { aiMessage } = prisma; await aiMessage.count();', 'aiMessage'],
+    ['schema-qualified SQL', '`SELECT 1 FROM public.ai_conversation c`', 'aiConversation'],
+    ['quoted schema-qualified SQL', '`SELECT 1 FROM "public"."ai_message" m`', 'aiMessage'],
+    [
+      'keyword and table on different lines',
+      '`SELECT 1\n  FROM\n    ai_conversation c`',
+      'aiConversation',
+    ],
+    ['a SQL line beginning with *', '`SELECT\n  * FROM ai_conversation`', 'aiConversation'],
+    [
+      'Prisma.raw table name',
+      "sql`SELECT 1 FROM ${Prisma.raw('ai_workflow_execution')}`",
+      'aiWorkflowExecution',
+    ],
+  ])('sees %s', (_label, source, model) => {
+    expect([...modelsRead(source)]).toEqual([model]);
+  });
+
+  it('strips a block comment by state, so a `*`-led SQL line inside a template is code', () => {
+    const src =
+      '/* prisma.aiMessage in a comment */\nconst q = `SELECT\n  * FROM ai_conversation`;';
+    expect([...modelsRead(src)]).toEqual(['aiConversation']);
+  });
+
+  it('leaves a `//` inside a string alone', () => {
+    const src = "const url = 'https://x.test'; await prisma.aiMessage.count();";
+    expect([...modelsRead(src)]).toEqual(['aiMessage']);
   });
 });
 

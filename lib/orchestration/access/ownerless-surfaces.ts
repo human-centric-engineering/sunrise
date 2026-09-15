@@ -362,9 +362,23 @@ export interface OwnerlessSurfaceViolation {
   message: string;
 }
 
-const MODEL_ACCESSOR = /\b[A-Za-z_$][\w$]*\.(aiWorkflowExecution|aiConversation|aiMessage)\b/g;
+/**
+ * A model reached through a Prisma client, by any of the shapes TypeScript
+ * offers: `prisma.aiConversation`, `tx?.aiConversation`, `prisma['aiConversation']`.
+ */
+const MODEL_ACCESSOR =
+  /\b[\w$]+\s*(?:\?\.|\.|\[\s*['"])(aiWorkflowExecution|aiConversation|aiMessage)\b/g;
+/** A model pulled off a client by destructuring: `const { aiMessage } = prisma`. */
+const MODEL_DESTRUCTURE =
+  /\{[^{}]*\b(aiWorkflowExecution|aiConversation|aiMessage)\b[^{}]*\}\s*=\s*[\w$.?]+/g;
+/**
+ * A table named in raw SQL, after a keyword that reads or writes it. Tolerates a
+ * schema qualifier and a newline between the keyword and the name, and the
+ * `Prisma.raw('ai_message')` form, where the keyword is on the other side of a
+ * template boundary.
+ */
 const RAW_TABLE =
-  /\b(?:FROM|JOIN|INTO|UPDATE)\s+"?(ai_workflow_execution|ai_conversation|ai_message)"?(?![\w])/gi;
+  /(?:\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:"?\w+"?\.)?"?|\braw\(\s*['"`])(ai_workflow_execution|ai_conversation|ai_message)\b/gi;
 const TABLE_TO_MODEL: Record<string, OwnerlessModel> = {
   ai_workflow_execution: 'aiWorkflowExecution',
   ai_conversation: 'aiConversation',
@@ -383,26 +397,73 @@ function isHelperModule(value: string): value is HelperModule {
   return value === 'execution-access' || value === 'conversation-access';
 }
 
-/** A comment line: docblock body, line comment, or block opener. */
-function isCommentLine(line: string): boolean {
-  const t = line.trimStart();
-  return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*');
+/**
+ * The source with every comment removed — block comments by state, not by a
+ * leading `*`, so a SQL line that happens to begin with `*` (`SELECT\n  * FROM
+ * ai_conversation`) is still code. Line comments go from `//` to end of line;
+ * a `//` inside a string literal is left alone by tracking the quote state,
+ * which is enough for the shapes this tree contains (URLs in strings) without
+ * a full tokenizer.
+ *
+ * **Not a tokenizer, and the failure direction is stated.** A regex literal
+ * containing a lone quote (`/['"]/`) desyncs the quote tracking, after which
+ * comment text may be kept — a false positive, which is loud. The one shape
+ * that could drop code is a `//` inside a string on a line that also reads a
+ * model, *after* such a desync; none exists in this tree, and the module's own
+ * source (which is full of such regexes) is skipped by path.
+ */
+export function stripComments(source: string): string {
+  let out = '';
+  let i = 0;
+  let quote: string | null = null;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (quote) {
+      out += ch;
+      if (ch === '\\') {
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2);
+      // Keep the newlines so line-oriented callers see the same line count.
+      const skipped = end === -1 ? source.slice(i) : source.slice(i, end + 2);
+      out += skipped.replace(/[^\n]/g, '');
+      i += skipped.length;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      const end = source.indexOf('\n', i);
+      i = end === -1 ? source.length : end;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    out += ch;
+    i += 1;
+  }
+  return out;
 }
 
-/** The models a file reads, found on its code lines only — a docblock naming one is not a read. */
+/** The models a file reads, found in its code — a comment naming one is not a read. */
 export function modelsRead(source: string): Set<OwnerlessModel> {
+  const code = stripComments(source);
   const found = new Set<OwnerlessModel>();
-  for (const line of source.split('\n')) {
-    if (isCommentLine(line)) continue;
-    // The regexes' alternations are the three names, so these guards cannot
-    // fail; they are how the capture group becomes the union without a cast.
-    for (const m of line.matchAll(MODEL_ACCESSOR)) {
+  // The regexes' alternations are the three names, so these guards cannot
+  // fail; they are how the capture group becomes the union without a cast.
+  for (const rx of [MODEL_ACCESSOR, MODEL_DESTRUCTURE]) {
+    for (const m of code.matchAll(rx)) {
       if (isOwnerlessModel(m[1])) found.add(m[1]);
     }
-    for (const m of line.matchAll(RAW_TABLE)) {
-      const model = TABLE_TO_MODEL[m[1].toLowerCase()];
-      if (model) found.add(model);
-    }
+  }
+  for (const m of code.matchAll(RAW_TABLE)) {
+    const model = TABLE_TO_MODEL[m[1].toLowerCase()];
+    if (model) found.add(model);
   }
   return found;
 }
@@ -430,9 +491,12 @@ function helperImports(source: string): HelperImports {
   return { modules, names };
 }
 
-/** Occurrences of a bound name outside `import` statements. */
+/** Occurrences of a bound name in code outside `import` statements — a comment mentioning it is not a use. */
 function usesOutsideImports(source: string, name: string): boolean {
-  const withoutImports = source.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];?/gm, '');
+  const withoutImports = stripComments(source).replace(
+    /^import[\s\S]*?from\s+['"][^'"]+['"];?/gm,
+    ''
+  );
   return new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\b`).test(withoutImports);
 }
 
