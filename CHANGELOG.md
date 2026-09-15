@@ -39,7 +39,8 @@ release process.
   helper); reasons under 20 characters, duplicate paths and a by-design entry
   claiming to be tracked all fail. The first pass measured 54 files: 23 through
   the helpers, 29 by design, and two known gaps — `approvals/history` (#773) and
-  the analytics service (t-694, new). **A fork's own routes and jobs are in the
+  the analytics service, which t-694 closed in this same release (see Changed),
+  so the roster ships with **one**. **A fork's own routes and jobs are in the
   roster the moment they exist, so the merge that brings this in goes red on any
   fork file that reads these models directly** — that is the check working.
   Import the helper if it is an admin surface; otherwise declare it in
