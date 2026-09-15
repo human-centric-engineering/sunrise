@@ -41,6 +41,7 @@ import {
   findUndeclaredOwnerlessReads,
   mentionsModel,
   unexplainedMentions,
+  valueExportsOf,
 } from '@/scripts/ci/ownerless-surfaces';
 import {
   validateExceptions,
@@ -229,6 +230,44 @@ describe('analyzeSource — which imports count', () => {
     expect(a.unusedImports).toEqual([]);
   });
 
+  it('an interface imported WITHOUT the type keyword covers nothing either', () => {
+    // Legal under `isolatedModules`, used only in an annotation, reaches
+    // nothing at runtime. The first parser draft counted it, because the
+    // annotation was an identifier "use" — the exact bug this check exists
+    // for, passing on the strength of an interface.
+    const a = analyzeSource(
+      'app/api/x/route.ts',
+      `import { ExecutionOwner } from ${HELPER};\nexport function f(o: ExecutionOwner) { return prisma.aiWorkflowExecution.findMany({ where: { userId: o.userId } }); }`
+    );
+    expect([...a.helperModules]).toEqual([]);
+    // And it is not reported as unused either — it was never a value binding.
+    expect(a.unusedImports).toEqual([]);
+  });
+
+  it('a namespace import reached only for a type covers nothing', () => {
+    const a = analyzeSource(
+      'app/api/x/route.ts',
+      `import * as access from ${HELPER};\nexport function f(o: access.ExecutionOwner) { return prisma.aiWorkflowExecution.findMany({ where: o }); }`
+    );
+    expect([...a.helperModules]).toEqual([]);
+    expect(a.unusedImports).toEqual(['access']);
+  });
+
+  it("reads the helpers' value exports off their source, never their types", () => {
+    const exec = valueExportsOf(
+      readFileSync('lib/orchestration/access/execution-access.ts', 'utf8')
+    );
+    expect(exec.has('executionVisibilityWhere')).toBe(true);
+    expect(exec.has('adminCanViewExecution')).toBe(true);
+    expect(exec.has('ExecutionOwner')).toBe(false);
+    expect(exec.has('ExecutionAccessBasis')).toBe(false);
+    const conv = valueExportsOf(
+      readFileSync('lib/orchestration/access/conversation-access.ts', 'utf8')
+    );
+    expect(conv.has('conversationVisibilityWhere')).toBe(true);
+    expect(conv.has('AdminCanViewResult')).toBe(false);
+  });
+
   it('a whole `import type` covers nothing', () => {
     const a = analyzeSource(
       'app/api/x/route.ts',
@@ -358,7 +397,7 @@ describe('findUndeclaredOwnerlessReads', () => {
     expect(findUndeclaredOwnerlessReads(files, read, [])).toHaveLength(1);
   });
 
-  it('does exempt the two helpers and the roster module, by name', () => {
+  it('does exempt the two helpers, by name — and nothing else', () => {
     const { files, read } = tree({
       'lib/orchestration/access/conversation-access.ts': HELPERLESS_ROUTE,
       'lib/orchestration/access/execution-access.ts': HELPERLESS_ROUTE,
@@ -429,6 +468,24 @@ describe('unexplainedMentions', () => {
     const src = 'const { aiMessage } = prisma; export const n = aiMessage.count();';
 
     expect(unexplainedMentions('app/api/x/route.ts', src)).toEqual([]);
+  });
+
+  it('reports a table name in a string the SQL rule did not recognise as a read', () => {
+    // `Prisma.raw('"ai_message"')` — quoted — is not a shape the detector
+    // knows, and the oracle must not let that pass quietly.
+    const found = unexplainedMentions(
+      'app/api/x/route.ts',
+      `const q = sql\`SELECT 1 FROM \${Prisma.raw('"ai_message"')}\`;`
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain('`ai_message`');
+    // The control: the same table read by a known shape in the same file.
+    expect(
+      unexplainedMentions(
+        'app/api/x/route.ts',
+        `const q = sql\`SELECT 1 FROM ai_message\`; const t = '"ai_message"';`
+      )
+    ).toEqual([]);
   });
 
   it('ignores name positions: object keys, type members, import specifiers, JSX attributes', () => {

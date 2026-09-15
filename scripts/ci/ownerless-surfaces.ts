@@ -35,13 +35,15 @@
  *
  * ## What satisfies it
  *
- * A **value** import from the matching helper module — named, aliased or
- * namespaced — that the file actually uses. `import type` and inline `type`
- * specifiers cover nothing: a type reaches nothing at runtime, so it cannot be
- * the road a query took, and the helpers export `AccessBasis`,
- * `AdminCanViewResult` and `ExecutionOwner`, so the type-only shape is an easy
- * accident as well as an easy dodge. An import nothing uses is reported by
- * name, so the check cannot be silenced with one line.
+ * An import of one of the helper's **value exports** — named, aliased or
+ * through a namespace — that the file uses in a value position. Which names
+ * are value exports is read off the helper's own source
+ * ({@link valueExportsOf}), so an interface imported without the `type`
+ * keyword — legal under `isolatedModules`, and the helpers export
+ * `AccessBasis`, `AdminCanViewResult` and `ExecutionOwner` — covers nothing:
+ * a type reaches nothing at runtime, so it cannot be the road a query took. An
+ * import nothing uses is reported by name, so the check cannot be silenced with
+ * one line.
  *
  * ## What it still cannot see, said plainly
  *
@@ -53,12 +55,14 @@
  * is not a proof.
  *
  * {@link unexplainedMentions} is the oracle the detector does not control:
- * every identifier spelled like a model that sits in expression position must
- * correspond to a detected read, or it is reported. It keys on identifiers,
- * not on the shapes above, so a shape the detector has never heard of shows
- * up here rather than passing quietly.
+ * every identifier spelled like a model that sits in expression position, and
+ * every table name inside any string or template piece, must correspond to a
+ * detected read of that model, or it is reported. It keys on the names, not
+ * on the shapes above, so a shape the detector has never heard of — in code or
+ * in SQL — shows up here rather than passing quietly.
  */
 
+import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import {
   OWNERLESS_MODELS,
@@ -124,6 +128,54 @@ export function mentionsModel(source: string): boolean {
   return ANY_MENTION.test(source);
 }
 
+/**
+ * The names a helper module exports **as values** — functions and constants,
+ * not types — read off the helper's own source rather than listed here.
+ *
+ * This is what decides whether an import counts as coverage. `import {
+ * ExecutionOwner } from '…/execution-access'` is legal without the `type`
+ * keyword under `isolatedModules`, is used only in annotations, and reaches
+ * nothing at runtime; counting it would let the exact bug this check exists
+ * for pass on the strength of an interface. Deriving the set from the helper
+ * means a new helper function is covered the day it is exported, and a new
+ * exported type never is.
+ */
+export function valueExportsOf(source: string): Set<string> {
+  const sf = ts.createSourceFile('helper.ts', source, ts.ScriptTarget.Latest, true);
+  const names = new Set<string>();
+  const isExported = (node: ts.Node): boolean =>
+    (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
+  for (const stmt of sf.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && isExported(stmt)) {
+      names.add(stmt.name.text);
+    } else if (ts.isVariableStatement(stmt) && isExported(stmt)) {
+      for (const d of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(d.name)) names.add(d.name.text);
+      }
+    } else if (ts.isClassDeclaration(stmt) && stmt.name && isExported(stmt)) {
+      names.add(stmt.name.text);
+    }
+  }
+  return names;
+}
+
+/** The helper modules' value exports, keyed by module, read from disk once. */
+export type HelperValueExports = Readonly<Record<HelperModule, ReadonlySet<string>>>;
+
+let helperExportsFromDisk: HelperValueExports | null = null;
+
+function defaultHelperExports(): HelperValueExports {
+  if (helperExportsFromDisk === null) {
+    const read = (m: HelperModule): ReadonlySet<string> =>
+      valueExportsOf(readFileSync(`lib/orchestration/access/${m}.ts`, 'utf8'));
+    helperExportsFromDisk = {
+      'execution-access': read('execution-access'),
+      'conversation-access': read('conversation-access'),
+    };
+  }
+  return helperExportsFromDisk;
+}
+
 /** What one source file reads, and how it is covered. */
 export interface SourceAnalysis {
   /** The models the file reads, by any shape the parser can see. */
@@ -145,12 +197,22 @@ function isStringish(node: ts.Node): node is ts.StringLiteral | ts.NoSubstitutio
   return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
 }
 
-/** Read a file's shape off the AST. Pure; parses once. */
-export function analyzeSource(path: string, source: string): SourceAnalysis {
+/**
+ * Read a file's shape off the AST. Parses once. `helperExports` defaults to
+ * the real helpers' value exports read from disk; a test passes its own.
+ */
+export function analyzeSource(
+  path: string,
+  source: string,
+  helperExports: HelperValueExports = defaultHelperExports()
+): SourceAnalysis {
   const models = new Set<OwnerlessModel>();
   const helperModules = new Set<HelperModule>();
   const bindings: string[] = [];
+  /** Namespace bindings, so `access.executionVisibilityWhere` can be checked against the export list. */
+  const namespaces = new Map<string, HelperModule>();
   const uses = new Map<string, number>();
+  const namespaceValueUses = new Set<string>();
 
   const visit = (node: ts.Node): void => {
     if (isJsDoc(node)) return;
@@ -163,13 +225,22 @@ export function analyzeSource(path: string, source: string): SourceAnalysis {
       if (!helper || !isHelperModule(helper)) return;
       const clause = node.importClause;
       if (!clause || clause.isTypeOnly || !clause.namedBindings) return;
-      const valueBindings: string[] = [];
+      const exported = helperExports[helper];
       if (ts.isNamespaceImport(clause.namedBindings)) {
-        valueBindings.push(clause.namedBindings.name.text);
-      } else {
-        for (const el of clause.namedBindings.elements) {
-          if (!el.isTypeOnly) valueBindings.push(el.name.text);
-        }
+        // Counts once a value export is reached through it — see the
+        // PropertyAccess branch below.
+        namespaces.set(clause.namedBindings.name.text, helper);
+        bindings.push(clause.namedBindings.name.text);
+        return;
+      }
+      const valueBindings: string[] = [];
+      for (const el of clause.namedBindings.elements) {
+        // `el.propertyName` is the exported name when aliased (`a as b`);
+        // `el.name` otherwise. Only a VALUE export can be the road a query
+        // took — an interface imported without the `type` keyword is legal
+        // and reaches nothing.
+        const exportedName = (el.propertyName ?? el.name).text;
+        if (!el.isTypeOnly && exported.has(exportedName)) valueBindings.push(el.name.text);
       }
       if (valueBindings.length > 0) {
         helperModules.add(helper);
@@ -180,6 +251,13 @@ export function analyzeSource(path: string, source: string): SourceAnalysis {
 
     if (ts.isPropertyAccessExpression(node)) {
       if (isOwnerlessModel(node.name.text)) models.add(node.name.text);
+      if (ts.isIdentifier(node.expression)) {
+        const ns = namespaces.get(node.expression.text);
+        if (ns !== undefined && helperExports[ns].has(node.name.text)) {
+          helperModules.add(ns);
+          namespaceValueUses.add(node.expression.text);
+        }
+      }
     } else if (ts.isElementAccessExpression(node)) {
       const arg = node.argumentExpression;
       if (isStringish(arg) && isOwnerlessModel(arg.text)) models.add(arg.text);
@@ -211,10 +289,14 @@ export function analyzeSource(path: string, source: string): SourceAnalysis {
       }
     } else if (ts.isIdentifier(node)) {
       // A property NAME is not a use of a same-named binding (`foo.scope` is
-      // not a use of an imported `scope`); the receiver identifier is.
-      const isPropertyName =
-        ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
-      if (!isPropertyName) uses.set(node.text, (uses.get(node.text) ?? 0) + 1);
+      // not a use of an imported `scope`); the receiver identifier is. Nor is
+      // an identifier in a type position — a value binding read only as a type
+      // (`typeof scope`) reached nothing at runtime.
+      const p = node.parent;
+      const isPropertyName = ts.isPropertyAccessExpression(p) && p.name === node;
+      const isTypePosition =
+        ts.isTypeReferenceNode(p) || ts.isTypeQueryNode(p) || ts.isQualifiedName(p);
+      if (!isPropertyName && !isTypePosition) uses.set(node.text, (uses.get(node.text) ?? 0) + 1);
     }
 
     ts.forEachChild(node, visit);
@@ -224,7 +306,9 @@ export function analyzeSource(path: string, source: string): SourceAnalysis {
   return {
     models,
     helperModules,
-    unusedImports: bindings.filter((b) => (uses.get(b) ?? 0) === 0),
+    unusedImports: bindings.filter((b) =>
+      namespaces.has(b) ? !namespaceValueUses.has(b) : (uses.get(b) ?? 0) === 0
+    ),
   };
 }
 
@@ -246,6 +330,13 @@ export function unexplainedMentions(path: string, source: string): string[] {
   const { models } = analyzeSource(path, source);
   const sf = parse(path, source);
   const found: string[] = [];
+  const report = (node: ts.Node, text: string, model: OwnerlessModel): void => {
+    const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+    found.push(
+      `${path}:${line + 1} — \`${text}\` appears in code but no read of ${model} was detected in this file. Either the detector is missing a shape, or a local is named like a model.`
+    );
+  };
+  const TABLE_TOKEN = /\b(ai_workflow_execution|ai_conversation|ai_message)\b/g;
 
   const isNamePosition = (id: ts.Identifier): boolean => {
     const p = id.parent;
@@ -271,11 +362,23 @@ export function unexplainedMentions(path: string, source: string): string[] {
     if (isJsDoc(node)) return;
     if (ts.isImportDeclaration(node)) return;
     if (ts.isIdentifier(node) && isOwnerlessModel(node.text) && !models.has(node.text)) {
-      if (!isNamePosition(node)) {
-        const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-        found.push(
-          `${path}:${line + 1} — \`${node.text}\` appears in code but no read of ${node.text} was detected in this file. Either the detector is missing a shape, or a local is named like a model.`
-        );
+      if (!isNamePosition(node)) report(node, node.text, node.text);
+    }
+    // A table name in any string or template piece, when no read of that
+    // model was detected: `Prisma.raw('"ai_message"')`, a table held in a
+    // constant and interpolated later, a quoting the SQL regex did not expect.
+    // An audit `entityType: 'ai_conversation'` in a file that also reads the
+    // model is filtered by `models.has`; one in a file that does not is worth
+    // the glance.
+    if (
+      isStringish(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node)
+    ) {
+      for (const m of node.text.matchAll(TABLE_TOKEN)) {
+        const model = TABLE_TO_MODEL[m[1].toLowerCase()];
+        if (model && !models.has(model)) report(node, m[1], model);
       }
     }
     ts.forEachChild(node, visit);

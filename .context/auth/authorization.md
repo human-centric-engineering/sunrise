@@ -307,8 +307,10 @@ three models — 23 through the helpers, 29 by design, and **two known gaps**:
 coverage claims on this page were each written from the files their author had
 read and each was wrong; this is what replaces them. **It raises the floor; it
 is not a proof** — a file that imports the helper and runs an unscoped query
-beside it passes (a bare, type-only or commented-out import does not), and a
-read through a relation `include` is not seen at all. A fork's own files land
+beside it passes (an import of a helper _type_ — with or without the `type`
+keyword — does not, because coverage is decided against the helper's value
+exports read off its source; nor does a bare import nothing uses), and a read
+through a relation `include` is not seen at all. A fork's own files land
 in the roster the moment they exist, and a fork declares its exceptions in
 `appOwnerlessSurfaceExceptions` (`lib/app/ci.ts`) rather than editing the core
 list.

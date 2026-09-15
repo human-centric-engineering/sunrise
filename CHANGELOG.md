@@ -26,8 +26,10 @@ release process.
   destructured client, a table name in SQL text — and the always-run test names
   any file that neither value-imports the helper for that model nor appears in
   `OWNERLESS_SURFACE_EXCEPTIONS` (`lib/orchestration/access/ownerless-surfaces.ts`,
-  beside the helpers) with a reason. A bare import nothing uses does not satisfy it, nor does a
-  type-only one, nor a commented-out one. Exceptions are
+  beside the helpers) with a reason. Coverage is an import of one of the helper's **value**
+  exports, read off the helper's own source — so an interface imported with
+  or without the `type` keyword covers nothing, a namespace reached only for a
+  type covers nothing, and an import nothing uses is reported by name. Exceptions are
   `'by-design'` (no caller to scope to) or `'known-gap'` (must name the issue or
   task that closes it, and is reported as stale once the file goes through the
   helper); reasons under 20 characters, duplicate paths and a by-design entry
