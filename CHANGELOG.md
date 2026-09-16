@@ -100,6 +100,18 @@ release process.
 > vite 8, plugin-react 6; `zod` declared (it had 145 importers and no
 > `package.json` line); 30 minor/patch bumps in one pass. Zero open dependabot
 > PRs at the cut.
+>
+> **Three Dependabot alerts are open at the cut, and your fork will see the same
+> three.** `mysql2` (GHSA-3f6p-5ww8-9rcr high, GHSA-rgwj-5xj2-c3m3 moderate) and
+> `deepmerge-ts` (GHSA-ggr8-5vv4-36mx high) — both pinned exactly by the Prisma
+> 7 CLI (`prisma@7.10.0` → `mysql2@3.15.3`; `@prisma/config@7.10.0` →
+> `deepmerge-ts@7.1.5`). Neither is reachable on a Postgres-only install:
+> `mysql2` only runs when the CLI connects to a MySQL server, and `deepmerge-ts`
+> merges `prisma.config.ts`, which is your own file. 7.10.0 is the newest stable
+> Prisma 7; the only upstream fix is Prisma 8, which drops both dependencies and
+> is at release-candidate as of this cut. The `dependency-audit` workflow reports
+> them as "needing a major bump" and does not fail — that is its documented
+> behaviour, not an oversight. The Prisma 8 move is on the Sunrise board.
 
 
 ### Added
