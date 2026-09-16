@@ -7,6 +7,17 @@ import { nextFontStub } from './tests/mocks/next-font-plugin';
 // runtime; vite's own config loading does not apply it to the config itself.
 import { appCoverageExclusions } from './lib/app/ci';
 
+// Vite 8 prints, on every vitest invocation, that this file (and the two `.ts`
+// modules it imports: `tests/mocks/next-font-plugin.ts`, `lib/app/ci.ts`) is
+// "ESM syntax in a file loaded as CommonJS", ahead of its native config loader
+// becoming the default in a future Vite major. Nothing fails today: vitest 5
+// still loads the config through Vite's bundling loader. The real fixes are a
+// `.mts` rename — which renames the `lib/app/ci.ts` fork seam, a conflict for
+// every fork carrying an edit there — or `"type": "module"` on the package,
+// which is a repo-wide decision. Both are deliberately NOT taken in the vitest
+// 5 bump; do not silence the warning with `VITE_CONFIG_NATIVE_IGNORE_WARNING`
+// either, because the warning is the reminder that one of them is due before
+// the Vite major that flips the default.
 export default defineConfig({
   // `nextFontStub` stands in for `next/font/*`, which the Next compiler strips
   // at build time and Vitest therefore cannot execute. See the plugin's header.
@@ -45,9 +56,9 @@ export default defineConfig({
     // without one can. See `.context/testing/environments.md`.
     //
     // WHY A DOCBLOCK AND NOT A GLOB. `environmentMatchGlobs` was removed in
-    // vitest 3 and is absent from 4. Its replacement, `test.projects`, would
-    // work — but a projects config makes `vitest list --filesOnly` prefix every
-    // line with `[name] `, and `scripts/ci/run-scoped-tests.ts` (the
+    // vitest 3 and is absent from 4 and 5. Its replacement, `test.projects`,
+    // would work — but a projects config makes `vitest list --filesOnly` prefix
+    // every line with `[name] ` (re-checked on 5.0.1), and `scripts/ci/run-scoped-tests.ts` (the
     // `npm run test:changed` gate) resolves its selection from exactly that
     // output and refuses a line it cannot resolve to a file. Choosing projects
     // here would have broken the gate that shipped one PR earlier.

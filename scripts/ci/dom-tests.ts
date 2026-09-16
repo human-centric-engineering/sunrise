@@ -109,7 +109,8 @@ export function domGlobalsMissingHere(
 /**
  * Names a failure message reports as undefined.
  *
- * Two shapes, both measured against vitest 4.1.10's JSON reporter:
+ * Two shapes, both measured against vitest 4.1.10's JSON reporter and again
+ * against 5.0.1's (unchanged):
  *
  *   - a failure inside a test — `ReferenceError: document is not defined`
  *   - a failure while importing the file — bare `document is not defined`,

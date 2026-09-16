@@ -36,7 +36,13 @@ process.env.EMAIL_FROM = 'test@example.com';
 // must clear this in their own `beforeEach` and reset bucket state per test.
 process.env.RATE_LIMIT_BYPASS = 'true';
 
-import '@testing-library/jest-dom';
+// The `/vitest` entry, not the bare package. The bare one registers the
+// matchers on the global `expect` and types them by augmenting the `jest`
+// namespace — which vitest ≤ 4 merged into its own `Assertion` for
+// compatibility and vitest 5 does not, so on 5 every `toBeInTheDocument`
+// fails type-check (7,419 errors when this was bumped). `/vitest` extends
+// vitest's `expect` directly and augments `vitest`'s `Assertion`.
+import '@testing-library/jest-dom/vitest';
 import { expect, vi, afterEach } from 'vitest';
 
 /**

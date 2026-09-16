@@ -38,6 +38,7 @@ CHANGELOG.md
 
 # Coverage
 coverage
+.vitest
 .nyc_output
 
 # Agent tooling artefacts — specific format preserved for AI agents

@@ -373,7 +373,7 @@ function hasControlCharacter(value: string): boolean {
  * declarations. Everything else — layouts, `lib/env.ts`, `types/**`,
  * `emails/**` — is left to `vitest.config.ts`'s own `coverage.exclude`, which
  * still applies over a CLI `--coverage.include` (verified against vitest
- * 4.1.10). One source of truth for what coverage ignores, so this cannot drift
+ * 4.1.10 and again against 5.0.1 on vite 8). One source of truth for what coverage ignores, so this cannot drift
  * away from the config the way a second copied exclusion list would.
  *
  * **`.mjs` counts, and used not to.** This filter read `.ts`/`.tsx` only, so

@@ -28,6 +28,8 @@ export default tseslint.config(
       // fills the `--cache` with paths that no longer exist, so the next
       // `npm run lint` dies with ENOENT before it reaches any source file.
       'coverage/**',
+      // vitest 5's artifact root — same regenerated-then-stale shape as coverage.
+      '.vitest/**',
       'public/**',
       'next-env.d.ts',
       // Agent scratch checkouts — each worktree carries its own tsconfig.json,
