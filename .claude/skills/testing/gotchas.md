@@ -118,7 +118,9 @@ Object.defineProperty(process.env, 'DATABASE_URL', {
 });
 
 // 2. NOW it's safe to import modules
-import '@testing-library/jest-dom';
+// The `/vitest` entry: the bare package types its matchers via the `jest`
+// namespace, which vitest 5 no longer merges into its own `Assertion`.
+import '@testing-library/jest-dom/vitest';
 import { expect, vi } from 'vitest';
 ```
 
