@@ -104,7 +104,8 @@ per-file, that file fails. A changed file with no test at all is reported **as
 report used to have.
 
 `vitest.config.ts`'s own `coverage.exclude` still wins over a CLI
-`--coverage.include` (verified against vitest 4.1.10), so layouts, `lib/env.ts`,
+`--coverage.include` (verified against vitest 4.1.10 and again against 5.0.1 on
+vite 8), so layouts, `lib/env.ts`,
 `types/**` and the rest stay exempt without a second exclusion list here to
 drift from the config.
 

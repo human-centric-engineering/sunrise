@@ -103,9 +103,10 @@ constraint instead.
 
 ## Why a docblock and not a glob
 
-`environmentMatchGlobs` was removed in vitest 3 and is absent from 4. Its
+`environmentMatchGlobs` was removed in vitest 3 and is absent from 4 and 5. Its
 replacement is `test.projects`, which would work — except that a projects config
-makes `vitest list --filesOnly` prefix every line with `[name] `, and
+makes `vitest list --filesOnly` prefix every line with `[name] ` (re-checked on
+5.0.1), and
 `scripts/ci/run-scoped-tests.ts` (the `npm run test:changed` gate) resolves its
 selection from exactly that output and refuses a line it cannot resolve to a
 file. Adopting projects here would have broken the gate.
