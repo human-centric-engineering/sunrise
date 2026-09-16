@@ -57,8 +57,8 @@ release process.
 > 4. **`POST /api/v1/admin/orchestration/agents` requires `provider`.** An API
 >    client or seed that relied on the `'anthropic'` default gets a 400.
 > 5. **The five analytics query functions take the guard's session** as their
->    first argument. A direct caller of `getPopularTopics` and friends fails to
->    compile until it passes one.
+>    second argument, after the query — `getPopularTopics(query, session)`. A
+>    direct caller of any of the five fails to compile until it passes one.
 >
 > **Three new seam rows** in `tests/unit/lib/app/defaults.test.ts` —
 > `lib/app/authorization.ts`, `lib/app/llm-providers.ts`, `lib/app/ci.ts`. A fork
