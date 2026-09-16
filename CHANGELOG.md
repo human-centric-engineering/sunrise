@@ -16,6 +16,92 @@ release process.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-09-16
+
+> **Alpha release.** Seventeenth tagged Sunrise release. **MINOR bump** — the
+> first two features of the multi-tenancy programme (tenancy groundwork and the
+> authorization policy seam), Document Clean Up for knowledge documents, and the
+> dependency sweep that cleared every open dependabot PR: better-auth 1.7.4 and
+> vitest 5. Measured against `v0.11.2`: 45 PRs merged (12 of them dependabot) and
+> 54 direct commits; 14 issues closed; the suite is 1,186 files and 24,089 tests.
+>
+> ## What a fork has to do
+>
+> **Nine migrations across five schema files.** Four of them —
+> `20260531113833_add_document_cleanup_fields`, `20260601122127_add_document_edit_lock`,
+> `20260601123924_add_document_revisions`, `20260601131930_add_document_pending_changes`
+> — carry May/June names and sort *between* migrations your database applied
+> months ago. `prisma migrate deploy` applies pending migrations whatever their
+> names, and that is measured, not assumed: a database in exactly this state (five
+> pending, four out of order) took all five cleanly and passed the drift probes.
+> `20260915180000_drop_account_issuer` removes the column 0.11.1 added; if you
+> already ran better-auth's own cleanup by hand it is a no-op (both statements are
+> `IF EXISTS`). `20260905093659_drop_ai_agent_provider_default` is a single
+> `DROP DEFAULT` with no data movement.
+>
+> **Five things can break your build or your callers, and each announces itself:**
+>
+> 1. **`Account.issuer` is gone** (better-auth 1.7.3 reverted the identity model
+>    it existed for). A seed, smoke or importer of yours that writes `issuer` on
+>    an `Account` row fails type-check at that line — delete the field. Do not
+>    re-add the column; the parity test now fails on a required column better-auth
+>    never writes.
+> 2. **A new always-run test names every file that reads `AiWorkflowExecution`,
+>    `AiConversation` or `AiMessage` outside the access helpers** — including
+>    yours, the moment they exist. The merge goes red on each such file. Import
+>    the helper if it is an admin surface; otherwise declare it in
+>    `appOwnerlessSurfaceExceptions` in `lib/app/ci.ts`, with a reason.
+> 3. **`hasRole()` / `requireRole()` take `UserRole`, not `string`.** A call
+>    with a literal that was never a role used to compile and misbehave forever;
+>    it is now a type error, and the error is the fix.
+> 4. **`POST /api/v1/admin/orchestration/agents` requires `provider`.** An API
+>    client or seed that relied on the `'anthropic'` default gets a 400.
+> 5. **The five analytics query functions take the guard's session** as their
+>    first argument. A direct caller of `getPopularTopics` and friends fails to
+>    compile until it passes one.
+>
+> **Three new seam rows** in `tests/unit/lib/app/defaults.test.ts` —
+> `lib/app/authorization.ts`, `lib/app/llm-providers.ts`, `lib/app/ci.ts`. A fork
+> that fills one fails that row; pin the new value rather than deleting the row,
+> as the file's header says. **A rebrand-only fork that fills no seam and reads
+> none of the three models directly has nothing to do beyond the migrations.**
+>
+> **Toolchain, if you run the suite:** vitest 5 on vite 8. A setup file of your
+> own imports `@testing-library/jest-dom/vitest`, not the bare package (the bare
+> entry no longer type-checks on 5 — 7,419 errors here). `clearMocks` now
+> defaults to `true`; a test relying on call history from a previous test starts
+> failing, which is the setting working. Vite 8 prints a loader-deprecation
+> warning naming `lib/app/ci.ts` on every run — a notice, not a failure.
+> `next dev` 16.3.5 writes an agent-rules block into `CLAUDE.md`; commit it.
+>
+> ## What the release is
+>
+> **The authorization decision is a seam.** `lib/auth/authorization.ts` ships a
+> policy with three faces, `lib/app/authorization.ts` is where a fork replaces it,
+> and the guards hand handlers the principal and a declared `ownership`. One
+> vocabulary for rows nobody owns — inbound threads, scheduled runs, datasets and
+> experiments an erasure de-attributed — asked once per request by the guard, and
+> a fork can finally narrow who reads a stranger's inbound messages or a run
+> nobody started. `checkOwnerlessReachability()` is the test a fork runs to prove
+> its narrowing left someone a key. The default policy reproduces the previous
+> role checks with the exceptions listed under Changed — the visible ones on a
+> default install are that an admin no longer sees, edits or deletes another
+> admin's experiments, and that an admin reaching an experiment that is not
+> their own now leaves a trace. The design it implements is
+> [`.context/architecture/multi-tenancy-design.md`](./.context/architecture/multi-tenancy-design.md).
+>
+> **Document Clean Up.** A knowledge document can be cleaned before chunking by
+> an agent that can now see the document it edits, with an edit lock, a revision
+> history any two points of which can be diffed, and a review card showing what
+> actually changed — plus the fixes that made the LLM half work on a default
+> install at all.
+>
+> **Dependencies.** better-auth 1.7.4 with the `issuer` column retired; vitest 5,
+> vite 8, plugin-react 6; `zod` declared (it had 145 importers and no
+> `package.json` line); 30 minor/patch bumps in one pass. Zero open dependabot
+> PRs at the cut.
+
+
 ### Added
 
 - **A test now fails when a source file reads `AiWorkflowExecution`,
@@ -5985,7 +6071,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.10.0...v0.11.0
