@@ -72,6 +72,11 @@ export const POST = withAuth(
 
     // Re-read the row through better-auth so the cookie cache is re-issued
     // with the new org; the cookies come back on the response, not the store.
+    // Deliberately NOT caught: if this throws after the row write (a session
+    // revoked concurrently, say) the caller sees an error for a switch that
+    // did take effect — but the write is idempotent and a retry converges,
+    // whereas answering 200 without a re-issued cookie would leave the old
+    // org live on every request until the cache expired.
     const refreshed = await auth.api.getSession({
       headers: request.headers,
       query: { disableCookieCache: true },

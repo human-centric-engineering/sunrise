@@ -255,6 +255,8 @@ POST /api/v1/users/invite
       "email": "jane@example.com",
       "name": "Jane Doe",
       "role": "USER",
+      "orgId": null,
+      "orgRole": null,
       "invitedAt": "2026-01-07T14:30:00.000Z",
       "expiresAt": "2026-01-14T14:30:00.000Z",
       "link": "http://localhost:3000/accept-invite?token=...&email=jane@example.com"

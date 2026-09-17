@@ -132,6 +132,13 @@ export async function membershipForNewUser(
  * Returns the org id and whether it wrote a membership, so the hook can log
  * the self-heal — it is an `error`-level event upstream, and silence here
  * would hide that the signup path is failing.
+ *
+ * `Org.status` is deliberately not read here. A session records the org the
+ * user acts in; whether they may ENTER it is decided at entry — the guard
+ * (t-671) refuses a suspended org, and so does the switch as an explicit
+ * action. Skipping a suspended org at sign-in would quietly start its
+ * members in another of their orgs — or, via the self-heal, re-admit them to
+ * the install org — which is the opposite of what suspension is for.
  */
 export async function activeOrgForSession(
   userId: string,

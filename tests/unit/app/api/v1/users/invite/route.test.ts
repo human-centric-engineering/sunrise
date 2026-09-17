@@ -67,7 +67,7 @@ vi.mock('@/lib/api/context', () => ({ getRouteLogger: vi.fn(async () => mockLog)
 import { POST } from '@/app/api/v1/users/invite/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { generateInvitationToken } from '@/lib/utils/invitation-token';
+import { generateInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
 import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
@@ -168,6 +168,65 @@ describe('POST /api/v1/users/invite — org axis', () => {
       expect.anything()
     );
     expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('echoes the org keys in the created response, null when none was named', async () => {
+    const plain = await POST(request({ ...invitee }));
+    expect(JSON.parse(await plain.text()).data.invitation).toMatchObject({
+      orgId: null,
+      orgRole: null,
+    });
+
+    const scoped = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'MEMBER' }));
+    expect(JSON.parse(await scoped.text()).data.invitation).toMatchObject({
+      orgId: OTHER_ORG,
+      orgRole: 'MEMBER',
+    });
+  });
+
+  it('the "already pending" response says where the pending invitation points', async () => {
+    // A resend rewrites the metadata from the body, so an admin has to be
+    // able to see the pending org before choosing to overwrite it.
+    vi.mocked(getValidInvitation).mockResolvedValueOnce({
+      email: invitee.email,
+      metadata: {
+        name: 'Jane Doe',
+        role: 'USER',
+        invitedBy: 'admin-1',
+        invitedAt: '2026-09-17T00:00:00.000Z',
+        orgId: OTHER_ORG,
+        orgRole: 'ADMIN',
+      },
+      expiresAt: new Date(Date.now() + 86400000),
+      createdAt: new Date(),
+    });
+
+    const res = await POST(request({ ...invitee }));
+    const body = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(body.data.emailStatus).toBe('pending');
+    expect(body.data.invitation).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('a legacy pending invitation (no org keys) reports null, not undefined', async () => {
+    vi.mocked(getValidInvitation).mockResolvedValueOnce({
+      email: invitee.email,
+      metadata: {
+        name: 'Jane Doe',
+        role: 'USER',
+        invitedBy: 'admin-1',
+        invitedAt: '2026-09-17T00:00:00.000Z',
+      },
+      expiresAt: new Date(Date.now() + 86400000),
+      createdAt: new Date(),
+    });
+
+    const res = await POST(request({ ...invitee }));
+    const body = JSON.parse(await res.text());
+
+    expect(body.data.invitation).toMatchObject({ orgId: null, orgRole: null });
   });
 
   it('rejects an org role outside the vocabulary at the boundary', async () => {

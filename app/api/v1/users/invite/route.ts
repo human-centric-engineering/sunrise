@@ -179,6 +179,10 @@ export const POST = withAdminAuth(async (request, session) => {
           email: body.email,
           name: existingInvitation.metadata.name,
           role: existingInvitation.metadata.role,
+          // Where the pending invitation points (§106) — so an admin can see
+          // it before a resend, which rewrites the metadata from the body.
+          orgId: existingInvitation.metadata.orgId ?? null,
+          orgRole: existingInvitation.metadata.orgRole ?? null,
           invitedAt: existingInvitation.metadata.invitedAt,
           expiresAt: existingInvitation.expiresAt.toISOString(),
           // NO link - can't generate a valid one without resending
@@ -190,7 +194,11 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // 7. Generate or regenerate invitation token
+  // 7. Generate or regenerate invitation token. A resend is a NEW invitation
+  // built from this body — the platform role and (§106) the org keys are
+  // whatever the caller sent now, not what the pending row said. That has
+  // always been the contract for `role`; the pending response above echoes
+  // the org keys so a resend that changes them is a choice, not a surprise.
   const invitationMetadata = {
     name: body.name,
     role: body.role || DEFAULT_USER_ROLE,
@@ -269,6 +277,8 @@ export const POST = withAdminAuth(async (request, session) => {
         email: body.email,
         name: body.name,
         role: body.role || DEFAULT_USER_ROLE,
+        orgId: body.orgId ?? null,
+        orgRole: body.orgRole ?? null,
         invitedAt: new Date().toISOString(),
         expiresAt: expiresAt.toISOString(),
         link: invitationUrl,

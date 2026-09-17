@@ -206,9 +206,16 @@ parsed (the org is in the body, so it cannot be a guard-level `resource`
 resolver). Under Sunrise's default policy that answers exactly what
 `withAdminAuth` already answered — platform admins only — so nothing widens
 today; t-671 is what teaches the policy to say yes to an org's own
-OWNER/ADMIN. The named org must exist and be `ACTIVE`; a missing and a
-suspended org get the same 400, so the endpoint leaks nothing about orgs the
-caller may not administer.
+OWNER/ADMIN. The named org must exist and be `ACTIVE` _when the invitation
+is written_; a missing and a suspended org get the same 400, so the endpoint
+leaks nothing about orgs the caller may not administer. Acceptance does not
+re-check: an invitation into an org suspended during its 7-day window still
+creates the membership, and the member is then refused at entry like every
+other member of that org — suspension is enforced where a request enters an
+org (the guard, t-671; the switch), never by withholding memberships. A
+resend (`?resend=true`) writes a new invitation from the body, org keys
+included; the "already pending" response echoes the pending `orgId` /
+`orgRole` so a resend that changes them is a choice.
 
 ## The active org: which org a session acts in
 
