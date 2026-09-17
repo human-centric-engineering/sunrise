@@ -27,7 +27,7 @@ release process.
   the same way through `POST /api/auth/update-user`. The sign-up path was
   verified live before the fix; the update path is the same parser
   (`update-user.mjs:54`). The field is now `input: false`: on sign-up a body
-  value is replaced by the default, on update it is a `400 FIELD_NOT_ALLOWED`
+  value is replaced by the default, on update a non-empty value is a `400 FIELD_NOT_ALLOWED`
   (Sunrise's only `updateUser` caller sends `{ image }` alone). The first-human
   bootstrap and invitation promotions are unaffected — they happen in the
   database hooks, which run after the input parse and whose return wins — as are
