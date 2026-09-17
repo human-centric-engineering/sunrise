@@ -36,8 +36,8 @@ release process.
   there fails the signup rather than leaving a memberless user.
   `OrgMembership` is an `export` source and `Org` an `attribution` source in
   `SUBJECT_DATA_SOURCES`; `npm run smoke:tenancy` proves the invariant against
-  a real database. Behaviour at `TENANCY_MODE=single` is unchanged: nothing
-  reads the new rows yet. Fork note: the role-literal guard
+  a real database. Behaviour at `TENANCY_MODE=single` is unchanged: no
+  request path reads the new rows yet (only the Art. 15 export does). Fork note: the role-literal guard
   (`tests/unit/auth-role-literals.test.ts`) now also polices `'OWNER'` /
   `'MEMBER'` outside `lib/tenancy/roles.ts`; the org-role enum is closed —
   product tiers belong beneath the org, on your side of the FK. Guide:

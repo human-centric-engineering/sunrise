@@ -191,7 +191,8 @@ databaseHooks: {
       },
 
       /**
-       * after hook - Sets preferences, detects password invitations, sends welcome email
+       * after hook - Makes the user a member of the install org (blocking), sets
+       * preferences, detects password invitations, sends welcome email
        *
        * Triggered after a new user is created via:
        * - Email/password signup
@@ -247,7 +248,7 @@ databaseHooks: {
 **Key behaviors:**
 
 - `before` hook: Validates data, applies invitation role, deletes invitation token — can reject user creation by throwing an error
-- `after` hook: Non-blocking operations (errors logged, not thrown); does NOT handle OAuth invitation tokens
+- `after` hook: One blocking step — the install-org membership (§106; a failure fails the signup, see [`.context/tenancy/identity.md`](../tenancy/identity.md)) — then non-blocking operations (errors logged, not thrown); does NOT handle OAuth invitation tokens
 - OAuth state: Passed via `additionalData` parameter in OAuth flow
 - Invitation token deletion: Happens in the `before` hook (before user creation) to prevent race conditions from concurrent OAuth signups
 
