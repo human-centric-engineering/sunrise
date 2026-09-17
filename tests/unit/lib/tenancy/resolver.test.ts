@@ -53,7 +53,7 @@ describe('tenant resolver registry', () => {
     expect(resolveTenantFromRequest(request('x'))).toBeNull();
   });
 
-  it('refuses an answer that is not org-id shaped, so the proxy never throws at Headers.set', () => {
+  it('refuses an answer that is not org-id shaped, so the proxy never throws at Headers.set — and reports it', () => {
     for (const bad of [
       'evil\r\nx-injected: 1',
       'has space',
@@ -62,7 +62,14 @@ describe('tenant resolver registry', () => {
       'slash/id',
     ]) {
       registerTenantResolver(() => bad);
-      expect(resolveTenantFromRequest(request('x')), bad).toBeNull();
+      const onError = vi.fn();
+      expect(resolveTenantFromRequest(request('x'), onError), bad).toBeNull();
+      // Reported like a throw (a silent strip is the same failure), with the
+      // shape named and the value itself withheld.
+      expect(onError).toHaveBeenCalledTimes(1);
+      const [reported] = onError.mock.calls[0] as [Error];
+      expect(reported.message).toMatch(/not org-id shaped/);
+      expect(reported.message).not.toContain(bad);
     }
     for (const good of ['install', 'cmorg000000000000000other', 'acme-corp_2']) {
       registerTenantResolver(() => good);

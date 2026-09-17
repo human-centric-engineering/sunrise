@@ -33,11 +33,13 @@ export const TENANT_HEADER_NAME = 'x-sunrise-org';
 export type TenantResolver = (request: Request) => string | null;
 
 /**
- * What an org id may look like on the wire: a cuid, a slug, the literal
- * `install`. Bounded and free of anything `Headers.set` would refuse (CR,
- * LF, non-ASCII) — a resolver that derives its answer from an inbound
- * header or cookie could otherwise hand the proxy a value that throws at
- * `set`, which is the 500 the resolver's own try/catch exists to prevent.
+ * What an org ID may look like on the wire: a cuid, or the literal
+ * `install`. (An org's SLUG is not an answer — the guard verifies membership
+ * by id — even though a slug-shaped string passes this test.) Bounded and
+ * free of anything `Headers.set` would refuse (CR, LF, non-ASCII) — a
+ * resolver that derives its answer from an inbound header or cookie could
+ * otherwise hand the proxy a value that throws at `set`, which is the 500
+ * the resolver's own try/catch exists to prevent.
  */
 const ORG_ID_SHAPE = /^[A-Za-z0-9_-]{1,200}$/;
 
@@ -74,7 +76,19 @@ export function resolveTenantFromRequest(
   if (!resolver) return null;
   try {
     const answer = resolver(request);
-    return typeof answer === 'string' && ORG_ID_SHAPE.test(answer) ? answer : null;
+    if (answer === null || answer === undefined) return null;
+    if (typeof answer === 'string' && ORG_ID_SHAPE.test(answer)) return answer;
+    // A malformed answer is the same silent fallback a throw would be —
+    // every request for that tenant lands in the session's org — so it is
+    // reported the same way, with the shape named and the value withheld.
+    onError?.(
+      new Error(
+        `Tenant resolver answered a value that is not org-id shaped (${typeof answer}, ${
+          typeof answer === 'string' ? answer.length : 0
+        } chars; expected [A-Za-z0-9_-]{1,200}); treated as no answer`
+      )
+    );
+    return null;
   } catch (error) {
     onError?.(error);
     return null;

@@ -110,7 +110,9 @@ export const POST = withAuth(
     // The one route that must not enter the session's current org: a member
     // whose active org was suspended, or who was removed from it, is refused
     // everywhere else — and this is how they leave it. The membership check
-    // above is for the org they are switching TO.
+    // above is for the org they are switching TO. The reads and the session
+    // write above are cross-org by design; §107 owes them an audited entry
+    // (see the marker's docblock in lib/auth/guards.ts).
     tenancy: {
       entersOrg: false,
       because:

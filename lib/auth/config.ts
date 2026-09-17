@@ -802,8 +802,10 @@ export async function signupModeBeforeHook(ctx: { path?: string }): Promise<void
  *    the session is being created inside the sign-up transaction, before the
  *    after hook has written the membership. Start in the org that write is
  *    about to grant, and write nothing here.
- * 2. Otherwise `activeOrgForSession`: the user's only org; else the install
- *    org if they belong to it; else the org they joined most recently; else
+ * 2. Otherwise `activeOrgForSession`, over the user's memberships in ACTIVE
+ *    orgs (a user whose every org is suspended starts in the most recent of
+ *    them and is refused at entry): their only org; else the install org if
+ *    they belong to it; else the org they joined most recently; else
  *    — a user with no membership at all — the install-org default is written
  *    right here (the self-heal t-669's review ruled on), and logged at
  *    `error` because it means the signup path failed upstream.

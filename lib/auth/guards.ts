@@ -334,6 +334,13 @@ export interface WithAuthOptions<TParams = Record<string, string>> {
    * check for the org it is switching TO. The `because` is required for the
    * same reason `RouteOwnership`'s is: the value of the marker is the
    * sentence. Do not reach for this to make a 403 go away.
+   *
+   * "Outside any scope" is today's state, not the end state: the switch reads
+   * memberships and writes a session row across orgs by design, so when §107
+   * makes the data layer read `requireTenantContext()`, this route owes an
+   * audited entry — a `runAsSystem`-style scope around exactly those two
+   * calls, or a data-layer exemption for the membership and session tables —
+   * or the lockout this marker fixes returns at `multi`. §107's plan names it.
    */
   tenancy?: { entersOrg: false; because: string };
 }

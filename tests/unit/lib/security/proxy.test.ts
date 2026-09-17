@@ -886,6 +886,24 @@ describe('proxy — tenant resolver header (§106)', () => {
       boom,
       expect.objectContaining({ hint: expect.stringContaining('lib/app/tenant-resolver.ts') })
     );
+    errorSpy.mockRestore();
+  });
+
+  it('logs a malformed resolver answer the same way — a silent strip is the failure being prevented', async () => {
+    registerTenantResolver(() => 'tenant/acme');
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const request = createMockRequest('/', {});
+
+    const response = await proxy(request);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Tenant resolver threw'),
+      expect.objectContaining({ message: expect.stringContaining('not org-id shaped') }),
+      expect.anything()
+    );
+    errorSpy.mockRestore();
   });
 
   it('overwrites an inbound copy with the resolver’s answer', async () => {
