@@ -145,6 +145,9 @@ covered by the version contract.
     [`.context/api/orchestration-endpoints.md`](./.context/api/orchestration-endpoints.md)
 - **Published Prisma model interfaces** —
   - `User`
+  - `Org` and `OrgMembership` (`prisma/schema/tenancy.prisma`) — the identity a
+    fork's own tenant-owned models bind to; see
+    [`.context/tenancy/identity.md`](./.context/tenancy/identity.md)
   - The `Ai*` orchestration models the admin API exposes (see
     [`.context/orchestration/admin-api.md`](./.context/orchestration/admin-api.md))
 

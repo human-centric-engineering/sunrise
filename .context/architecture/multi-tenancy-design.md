@@ -98,14 +98,17 @@ sync conflict is a "keep both", not a re-read.
 
 ## Target architecture
 
-> **Target state, not current state.** The tenancy pieces named in this
-> section — `lib/tenancy/context.ts`, `prisma/schema/tenancy.prisma`,
-> `lib/auth/authorization.ts`, `lib/auth/roles.ts`, `lib/app/authorization.ts`,
-> `lib/app/tenant-resolver.ts`, `db:tenancy:enable` — do not exist yet
-> (verified at v0.11.2); they are the agreed shape the Hub features build
-> toward. The chokepoints they attach to (`proxy.ts`, `lib/auth/guards.ts`,
-> `lib/db/client.ts`, the maintenance tick) all exist today. A tenancy path
-> here becomes a real reference only when its feature ships.
+> **Partly target state.** Of the tenancy pieces named in this section,
+> `lib/auth/authorization.ts`, `lib/auth/roles.ts` and `lib/app/authorization.ts`
+> shipped with §105 (0.12.0), and `prisma/schema/tenancy.prisma` with its
+> identity migration, `lib/tenancy/{roles,constants,membership}.ts` shipped
+> with §106 t-669 ([`.context/tenancy/identity.md`](../tenancy/identity.md)).
+> `lib/tenancy/context.ts`, `lib/app/tenant-resolver.ts` and
+> `db:tenancy:enable` do not exist yet; they are the agreed shape the
+> remaining Hub features build toward. The chokepoints they attach to
+> (`proxy.ts`, `lib/auth/guards.ts`, `lib/db/client.ts`, the maintenance
+> tick) all exist today. A tenancy path here becomes a real reference only
+> when its feature ships.
 
 Request path at `multi` — at `single` the same components run with the install
 org as the only answer:

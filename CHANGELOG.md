@@ -16,6 +16,33 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Every install has an org, and every user belongs to one** (multi-tenancy
+  §106, first task). Two published model interfaces in a new
+  `prisma/schema/tenancy.prisma`: `Org` (`slug`, `name`, `status`
+  `ACTIVE|SUSPENDED`, `settings`) and `OrgMembership` (`role`
+  `OWNER|ADMIN|MEMBER`, unique on `(orgId, userId)`, both FKs cascade), with
+  the client-safe vocabulary in `lib/tenancy/roles.ts` (`ORG_ROLES`,
+  `orgAdministers()`) and the install org's fixed identity in
+  `lib/tenancy/constants.ts` (`INSTALL_ORG_ID`). One migration,
+  `20260917120000_org_identity`, creates the tables, inserts the install org,
+  makes every existing user a member — a real platform admin as `OWNER`,
+  everyone else (the SERVICE config-owner included) as `MEMBER` — and adds a
+  nullable, backfilled `orgId` to `AiApiKey`, `AiAgentEmbedToken`,
+  `AiAgentInviteToken` and `McpApiKey` (an `admin`-scoped API key stays
+  `NULL`: it is a platform credential) plus an unread `Session.activeOrgId`.
+  `userCreateAfterHook` gives every later user a membership, and a failure
+  there fails the signup rather than leaving a memberless user.
+  `OrgMembership` is an `export` source and `Org` an `attribution` source in
+  `SUBJECT_DATA_SOURCES`; `npm run smoke:tenancy` proves the invariant against
+  a real database. Behaviour at `TENANCY_MODE=single` is unchanged: nothing
+  reads the new rows yet. Fork note: the role-literal guard
+  (`tests/unit/auth-role-literals.test.ts`) now also polices `'OWNER'` /
+  `'MEMBER'` outside `lib/tenancy/roles.ts`; the org-role enum is closed —
+  product tiers belong beneath the org, on your side of the FK. Guide:
+  [`.context/tenancy/identity.md`](./.context/tenancy/identity.md).
+
 ## [0.12.0] — 2026-09-16
 
 > **Alpha release.** Seventeenth tagged Sunrise release. **MINOR bump** — the
