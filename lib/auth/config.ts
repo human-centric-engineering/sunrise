@@ -12,6 +12,7 @@ import { validateEmailConfig } from '@/lib/email/client';
 import { resolveEmailTemplate } from '@/lib/email/registry';
 import { logger } from '@/lib/logging';
 import { dispatchUserCreated } from '@/lib/auth/user-created-hooks';
+import { ensureMembership, initialMembershipFor } from '@/lib/tenancy/membership';
 import {
   validateInvitationToken,
   deleteInvitationToken,
@@ -297,6 +298,29 @@ export async function userCreateAfterHook(
   // Detect signup method for logging purposes
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
   const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
+
+  // Every user belongs to an org (tenancy design, principle 1). First, and
+  // the one step in this hook that is NOT non-blocking: the membership is the
+  // invariant the org layer stands on, and a signup that reports success while
+  // leaving the user memberless is a state nothing downstream can detect —
+  // at `multi` the guard would refuse them with no record of why. So a
+  // failure here is logged AND fails the signup. The user row already exists
+  // at this point; the person retries and is told the address is taken, signs
+  // in, and at `single` the guard resolves a null membership to the install
+  // org anyway (§106 t-671) — the honest outcome, not a silent one.
+  //
+  // Inline rather than a `registerUserCreatedHook` contributor on purpose:
+  // that registry swallows every throw (`dispatchUserCreated`), which is the
+  // opposite of what this write needs. Do not tidy it into the seam.
+  try {
+    await ensureMembership(user.id, initialMembershipFor(user));
+  } catch (membershipError) {
+    logger.error('Failed to create org membership for new user', membershipError, {
+      userId: user.id,
+      signupMethod,
+    });
+    throw membershipError;
+  }
 
   // Record that the first-user-is-admin bootstrap has completed, the first time
   // a real (non-system) admin exists. Once this singleton row is written, the

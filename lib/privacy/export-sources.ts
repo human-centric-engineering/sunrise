@@ -40,6 +40,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /** How a `User`-linked model is represented in a subject export. */
 export type SourceDisposition = 'export' | 'attribution';
@@ -128,6 +129,22 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       prisma.account.findMany({
         where: { userId },
         omit: { password: true, accessToken: true, refreshToken: true, idToken: true },
+        orderBy: byCreatedAt,
+      }),
+  },
+  {
+    model: 'OrgMembership',
+    section: 'orgMemberships',
+    disposition: 'export',
+    description:
+      'The organisations the subject belongs to, and their role in each. The org itself is not personal data; the membership is.',
+    // The org's name rides along so the row reads as "member of X" rather than
+    // an opaque id — one column of a row the subject is entitled to anyway,
+    // not the org's settings.
+    fetch: ({ userId }) =>
+      prisma.orgMembership.findMany({
+        where: { userId },
+        include: { org: { select: { id: true, slug: true, name: true } } },
         orderBy: byCreatedAt,
       }),
   },
@@ -285,6 +302,24 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
   // never its contents: the config belongs to the organisation, the fact of
   // authorship belongs to the subject.
   // ---------------------------------------------------------------------
+  {
+    // No `User` FK — ownership is a membership role, not a creator column —
+    // so the coverage guard does not demand this entry; the tenancy spec does
+    // (`multi-tenancy-design.md`, Identity: "export-manifest ... dispositions").
+    // What the subject receives is the fact of owning an org, not the org.
+    model: 'Org',
+    section: 'orgsOwned',
+    disposition: 'attribution',
+    description: 'Organisations the subject is an OWNER of.',
+    fetch: async ({ userId }) =>
+      toAttribution(
+        await prisma.org.findMany({
+          where: { memberships: { some: { userId, role: ORG_OWNER_ROLE } } },
+          select: namedSelect,
+          orderBy: byCreatedAt,
+        })
+      ),
+  },
   {
     model: 'AiAgent',
     section: 'agents',
