@@ -23,10 +23,12 @@ release process.
 > exactly that change. **Every fork should take it**: on any install with
 > `SIGNUP_MODE=open` (the default), a sign-up request could choose its own
 > platform role, and a signed-in user could promote themselves through
-> `update-user`. Verified live before the fix. Until you have merged it, look
-> for `user` rows with `role = 'ADMIN'` you did not create. The merge is one
-> line in `lib/auth/config.ts` plus a test — no migration, no dependency
-> change, no public-surface addition.
+> `update-user`. The sign-up path was verified live before the fix. Until you
+> have merged it, look for `user` rows with `role = 'ADMIN'` you did not
+> create. The merge is one `input: false` line plus its comment block in
+> `lib/auth/config.ts`, a test, and a matching note in
+> `.context/auth/overview.md` — no migration, no dependency change, no
+> public-surface addition.
 
 ### Security
 
