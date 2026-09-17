@@ -44,6 +44,20 @@ release process.
   product tiers belong beneath the org, on your side of the FK. Guide:
   [`.context/tenancy/identity.md`](./.context/tenancy/identity.md).
 
+## [0.12.1] — 2026-09-17
+
+> **Alpha release.** Eighteenth tagged Sunrise release. **PATCH bump** — one
+> security fix and nothing else, cut from `main` at #804 so that it carries
+> exactly that change. **Every fork should take it**: on any install with
+> `SIGNUP_MODE=open` (the default), a sign-up request could choose its own
+> platform role, and a signed-in user could promote themselves through
+> `update-user`. The sign-up path was verified live before the fix. Until you
+> have merged it, look for `user` rows with `role = 'ADMIN'` you did not
+> create. The merge is one `input: false` line plus its comment block in
+> `lib/auth/config.ts`, a test, and a matching note in
+> `.context/auth/overview.md` — no migration, no dependency change, no
+> public-surface addition.
+
 ### Security
 
 - **A sign-up request can no longer choose its own role.** The `role` field on
@@ -6135,7 +6149,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.0...v0.11.1
