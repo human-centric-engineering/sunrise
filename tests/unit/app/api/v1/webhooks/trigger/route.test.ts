@@ -30,12 +30,16 @@ vi.mock('@/lib/db/client', () => ({
     // null = no org-wide cap; existing assertions about uncapped
     // executions still hold.
     aiOrchestrationSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    // The org entry (§106) reads a membership only for a key bound to a
+    // non-install org; the default key below carries none.
+    orgMembership: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }));
 
 vi.mock('@/lib/logging', () => ({
   logger: {
     info: vi.fn(),
+    warn: vi.fn(),
     error: vi.fn(),
   },
 }));
@@ -61,6 +65,8 @@ vi.mock('@/lib/auth/api-keys', () => ({
 import { POST } from '@/app/api/v1/webhooks/trigger/[slug]/route';
 import { prisma } from '@/lib/db/client';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
+import { getTenantContext } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -134,6 +140,37 @@ describe('POST /api/v1/webhooks/trigger/:slug', () => {
         userId: 'u1',
       }),
     });
+  });
+
+  it('creates the execution inside the key’s org scope (§106) — the install org for an unbound key', async () => {
+    (prisma.aiWorkflow.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(mockWorkflow);
+    let scopeAtCreate: string | null | undefined;
+    vi.mocked(prisma.aiWorkflowExecution.create).mockImplementation((() => {
+      scopeAtCreate = getTenantContext()?.orgId;
+      return Promise.resolve({ id: 'exec_1' });
+    }) as never);
+
+    const res = await POST(makeRequest({}), { params: Promise.resolve({ slug: 'my-workflow' }) });
+
+    expect(res.status).toBe(201);
+    expect(scopeAtCreate).toBe(INSTALL_ORG_ID);
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('refuses a key bound to an org its owner no longer belongs to, before touching the workflow', async () => {
+    vi.mocked(resolveApiKey).mockResolvedValue({
+      session: { user: { id: 'u1', role: 'USER' } } as never,
+      scopes: ['webhook'],
+      rateLimitRpm: null,
+      orgId: 'cmorg000000000000000other',
+      ownerAccountType: 'HUMAN',
+    });
+
+    const res = await POST(makeRequest({}), { params: Promise.resolve({ slug: 'my-workflow' }) });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: { message: 'Access denied' } });
+    expect(prisma.aiWorkflow.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns 404 for unknown workflow slug', async () => {

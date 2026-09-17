@@ -23,6 +23,7 @@ import {
   getClientIp,
 } from '@/lib/logging/context';
 import { createMockHeaders } from '@/tests/types/mocks';
+import { runAsOrg } from '@/lib/tenancy/context';
 
 // Mock dependencies
 vi.mock('next/headers', () => ({
@@ -330,6 +331,33 @@ describe('Logging Context Utilities', () => {
       expect(context.userId).toBeUndefined();
       expect(context.sessionId).toBeUndefined();
       expect(context.email).toBeUndefined();
+    });
+  });
+
+  describe('the org (§106)', () => {
+    // Inside the tenant scope the guard enters, both helpers carry `orgId`;
+    // outside it — an unguarded path, a platform credential — neither does.
+    // What makes scoping a breach to an org a lookup on the logs rather than
+    // a reconstruction.
+    it('getRequestContext and getFullContext carry orgId inside a tenant scope', async () => {
+      vi.mocked(headers).mockResolvedValue(createMockHeaders({}) as any);
+      vi.mocked(auth.api.getSession).mockResolvedValue(null);
+
+      const seen = await runAsOrg('cmorg000000000000000other', async () => ({
+        request: await getRequestContext(),
+        full: await getFullContext(),
+      }));
+
+      expect(seen.request.orgId).toBe('cmorg000000000000000other');
+      expect(seen.full.orgId).toBe('cmorg000000000000000other');
+    });
+
+    it('neither carries orgId outside a scope', async () => {
+      vi.mocked(headers).mockResolvedValue(createMockHeaders({}) as any);
+      vi.mocked(auth.api.getSession).mockResolvedValue(null);
+
+      expect((await getRequestContext()).orgId).toBeUndefined();
+      expect((await getFullContext()).orgId).toBeUndefined();
     });
   });
 

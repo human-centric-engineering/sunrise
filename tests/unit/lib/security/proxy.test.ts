@@ -63,6 +63,11 @@ import { isInviteOnly } from '@/lib/auth/signup-mode';
 import { logger } from '@/lib/logging';
 import { signVisitorId, verifyVisitorId, VISITOR_COOKIE_NAME } from '@/lib/logging/visitor-id';
 import * as visitorIdModule from '@/lib/logging/visitor-id';
+import {
+  __resetTenantResolverForTests,
+  hasTenantResolver,
+  registerTenantResolver,
+} from '@/lib/tenancy/resolver';
 
 function createMockRequest(
   pathname: string,
@@ -822,5 +827,54 @@ describe('proxy — anonymous visitor id', () => {
     );
     issueSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+describe('proxy — tenant resolver header (§106)', () => {
+  // The proxy is the sole writer of x-sunrise-org, the visitor-id shape: set
+  // from a registered resolver, else STRIPPED — a client must never pick its
+  // org by header. Sunrise ships no resolver, so the default is the strip.
+  const TENANT = 'x-sunrise-org';
+
+  afterEach(() => {
+    __resetTenantResolverForTests();
+  });
+
+  it('strips an inbound x-sunrise-org when no resolver is registered (the shipped default)', async () => {
+    expect(hasTenantResolver()).toBe(false);
+    const request = createMockRequest('/', { headers: { [TENANT]: 'attacker-picked-org' } });
+
+    const response = await proxy(request);
+
+    expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBeNull();
+  });
+
+  it('sets x-sunrise-org from a registered resolver', async () => {
+    registerTenantResolver((req) =>
+      req.headers.get('host')?.startsWith('acme.') ? 'org_acme' : null
+    );
+    const request = createMockRequest('/', { headers: { host: 'acme.example.test' } });
+
+    const response = await proxy(request);
+
+    expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBe('org_acme');
+  });
+
+  it('strips an inbound copy when the resolver answers null — the resolver, not the client, decides', async () => {
+    registerTenantResolver(() => null);
+    const request = createMockRequest('/', { headers: { [TENANT]: 'attacker-picked-org' } });
+
+    const response = await proxy(request);
+
+    expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBeNull();
+  });
+
+  it('overwrites an inbound copy with the resolver’s answer', async () => {
+    registerTenantResolver(() => 'org_real');
+    const request = createMockRequest('/', { headers: { [TENANT]: 'attacker-picked-org' } });
+
+    const response = await proxy(request);
+
+    expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBe('org_real');
   });
 });
