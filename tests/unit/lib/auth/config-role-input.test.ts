@@ -60,6 +60,21 @@ describe('role at sign-up', () => {
     expect(parsed.role).toBe(DEFAULT_USER_ROLE);
   });
 
+  it('refuses role on update — the signed-in self-promotion path via /update-user', () => {
+    // `update-user.mjs` runs the same parser with action 'update'; there the
+    // guard is a 400 rather than a silent default, because there is no
+    // defaultValue arm on update.
+    expect(() => parseUserInput(auth.options, hostileBody, 'update')).toThrow(
+      /role is not allowed to be set/
+    );
+  });
+
+  it('still accepts the one update body Sunrise sends — { image } alone', () => {
+    expect(() =>
+      parseUserInput(auth.options, { image: 'https://x/y.png' }, 'update')
+    ).not.toThrow();
+  });
+
   it('control: with input: false removed, the same parser hands the body its ADMIN', () => {
     // The assertion above is only evidence if this one is red. Same parser,
     // same body; the one difference is the line the fix added.
@@ -70,5 +85,6 @@ describe('role at sign-up', () => {
     };
     const parsed = parseUserInput(weakened, hostileBody, 'create');
     expect(parsed.role).toBe(PLATFORM_ADMIN_ROLE);
+    expect(parseUserInput(weakened, hostileBody, 'update').role).toBe(PLATFORM_ADMIN_ROLE);
   });
 });

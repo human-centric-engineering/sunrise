@@ -791,8 +791,18 @@ export const auth = betterAuth({
         // field says `input: false` — so without this line, an unauthenticated
         // `POST /api/auth/sign-up/email` carrying `"role": "ADMIN"` created a
         // platform admin on any open-signup install (verified live, 2026-09-17).
+        // The same parser runs on `POST /api/auth/update-user`, so any signed-in
+        // user could also promote themselves — the second path this closes.
         // With `input: false` + a `defaultValue`, a body value is silently
-        // replaced by the default on create rather than rejected.
+        // replaced by the default on create; on update a truthy value is a
+        // 400 FIELD_NOT_ALLOWED (the only client caller, avatar-upload, sends
+        // `{ image }` alone).
+        //
+        // Fork note: better-auth merges a plugin's `schema.user.fields` OVER
+        // these `additionalFields` (dist/db/schema.mjs `getFields`). A fork
+        // enabling a plugin that declares its own `role` (the `admin` plugin
+        // does) replaces this declaration, `input: false` included — re-add it
+        // on the plugin's field or the hole reopens. Sunrise ships no plugins.
         //
         // The three legitimate writers are unaffected, because none of them go
         // through the input parser: `userCreateBeforeHook` returns the role as
