@@ -786,6 +786,20 @@ export const auth = betterAuth({
         type: 'string',
         defaultValue: DEFAULT_USER_ROLE,
         required: false,
+        // NEVER client-settable. better-auth's sign-up handler passes every
+        // declared additional field through from the request body unless the
+        // field says `input: false` — so without this line, an unauthenticated
+        // `POST /api/auth/sign-up/email` carrying `"role": "ADMIN"` created a
+        // platform admin on any open-signup install (verified live, 2026-09-17).
+        // With `input: false` + a `defaultValue`, a body value is silently
+        // replaced by the default on create rather than rejected.
+        //
+        // The three legitimate writers are unaffected, because none of them go
+        // through the input parser: `userCreateBeforeHook` returns the role as
+        // hook DATA (first-human bootstrap, OAuth invitation) — database hooks
+        // run after the parse and their return wins; `accept-invite` and the
+        // admin `users/[id]` PATCH write with `prisma.user.update` directly.
+        input: false,
       },
     },
 

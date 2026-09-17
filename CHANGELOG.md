@@ -16,6 +16,23 @@ release process.
 
 ## [Unreleased]
 
+### Security
+
+- **A sign-up request can no longer choose its own role.** The `role` field on
+  better-auth's user model was declared without `input: false`, and better-auth
+  passes every declared additional field through from the request body unless a
+  field says so — so on any install with `SIGNUP_MODE=open` (the default), an
+  unauthenticated `POST /api/auth/sign-up/email` carrying `"role": "ADMIN"`
+  created a platform admin. Verified live before the fix. The field is now
+  `input: false`: a body value is replaced by the default. The first-human
+  bootstrap and invitation promotions are unaffected — they happen in the
+  database hooks, which run after the input parse and whose return wins — as are
+  `accept-invite` and the admin user PATCH, which write with Prisma directly.
+  `tests/unit/lib/auth/config-role-input.test.ts` runs better-auth's own parser
+  over the real options, with a control that removes the guard. **Every fork
+  should take this release**; until then, check `user` rows with `role = 'ADMIN'`
+  you did not create.
+
 ## [0.12.0] — 2026-09-16
 
 > **Alpha release.** Seventeenth tagged Sunrise release. **MINOR bump** — the

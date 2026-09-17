@@ -107,6 +107,10 @@ export const auth = betterAuth({
         type: 'string',
         defaultValue: 'USER',
         required: false,
+        // Never client-settable: without this, a sign-up body could carry
+        // `role: 'ADMIN'`. The bootstrap and invitation promotions happen in
+        // the database hooks, which run after the input parse and are unaffected.
+        input: false,
       },
     },
   },
