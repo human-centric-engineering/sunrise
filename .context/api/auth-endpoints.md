@@ -238,6 +238,11 @@ POST /api/v1/users/invite
 - `name`: Required, 1-100 characters
 - `email`: Required, valid email format
 - `role`: Optional, one of `USER`, `ADMIN` (default: `USER`)
+- `orgId`: Optional — the org the invitee joins on acceptance (default: the
+  install org). Must exist and be `ACTIVE`; the authorization policy is asked
+  whether the caller may administer it (§106)
+- `orgRole`: Optional, one of `OWNER`, `ADMIN`, `MEMBER` (default: `MEMBER`,
+  or `OWNER` for the first member of a new org)
 
 **Response** (201 Created):
 
@@ -368,6 +373,55 @@ POST /api/auth/accept-invite
 **Security**: Token hashed (SHA-256), single-use, expires in 7 days.
 
 **Implementation**: Page route at `app/(auth)/accept-invite/page.tsx`
+
+## Org Endpoints
+
+### Switch Active Org
+
+✅ **Implemented in:** `app/api/v1/orgs/switch/route.ts`
+
+**Purpose**: Change the org the current session acts in (§106). The
+session's `activeOrgId` is chosen at sign-in; this is the one way to change
+it afterwards.
+
+```
+POST /api/v1/orgs/switch
+```
+
+**Authentication**: Required (browser session — an API-key caller is refused,
+because a credential's org is fixed at mint)
+
+**Request Body**:
+
+```json
+{
+  "orgId": "install"
+}
+```
+
+**Validation**: Uses `switchOrgSchema` from `lib/validations/tenancy.ts`
+
+- `orgId`: Required, non-empty — the caller must be a member
+
+**Response** (200 OK) — also re-issues the session cookie cache so the next
+request reads the new org:
+
+```json
+{
+  "success": true,
+  "data": {
+    "activeOrgId": "install",
+    "org": { "id": "install", "slug": "install", "name": "Default organisation" }
+  }
+}
+```
+
+**Error Responses**:
+
+- **400 Validation Error**: Missing or empty `orgId`
+- **401 Unauthorized**: Not authenticated
+- **403 Forbidden**: Not a member of that org (the same answer whether the org
+  exists or not), the org is suspended, or the caller is an API key
 
 ## Related Documentation
 

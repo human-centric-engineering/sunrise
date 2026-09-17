@@ -43,6 +43,33 @@ release process.
   `'MEMBER'` outside `lib/tenancy/roles.ts`; the org-role enum is closed —
   product tiers belong beneath the org, on your side of the FK. Guide:
   [`.context/tenancy/identity.md`](./.context/tenancy/identity.md).
+- **A session knows which org it acts in, a user can switch between theirs,
+  and an invitation can name one** (multi-tenancy §106, second task).
+  `Session.activeOrgId` is now a better-auth session `additionalField`
+  (`input: false` — server-written only; the public `/update-session`
+  refuses it) chosen by a new `sessionCreateBeforeHook` at every sign-in: the
+  user's only org, else the install org if they belong to it, else the most
+  recently joined — and a user with **no membership at all** is given the
+  install-org default right there (the self-heal t-669 promised). It reaches
+  `AuthSession.session` (`lib/auth/guards.ts`, optional so hand-built
+  sessions still compile), the inferred server type, and `useSession()` on the
+  client. New endpoint `POST /api/v1/orgs/switch` `{ orgId }` (`API.ORGS.SWITCH`)
+  verifies membership, writes the row and re-issues the cookie cache; API-key
+  callers are refused. `invitationMetadataSchema` gains optional `orgId` /
+  `orgRole` and `POST /api/v1/users/invite` accepts both (the org must exist
+  and be active; the authorization policy is asked `canAdminister` about it —
+  platform admins only under the default policy). The membership a new user
+  gets is one function, `membershipForNewUser(user, invitation)` in
+  `lib/tenancy/membership.ts`: the install org by the role rule on the role
+  the invitation **grants** (so an invited platform ADMIN now owns the install
+  org — the gap t-669 documented), or the named org with its `orgRole`, where
+  **the first member of a new org is its `OWNER`**. `runInvitedSignup` takes
+  the invitation as a second argument. `@better-auth/core` moves from
+  devDependencies to dependencies (same exact pin): the hooks share the
+  membership through its request state (`lib/auth/pending-signup.ts`).
+  Behaviour at `TENANCY_MODE=single` is unchanged: with one org and no
+  invitation metadata every session flow writes the same rows plus one
+  populated column, and every pending invitation round-trips as before.
 
 ## [0.12.1] — 2026-09-17
 

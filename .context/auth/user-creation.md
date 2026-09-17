@@ -291,7 +291,8 @@ async function signInWithGoogle() {
 ### Flow
 
 1. **Admin invites user** via `POST /api/v1/users/invite`
-   - Provides: name, email, role
+   - Provides: name, email, role — and optionally the org the invitee joins
+     (`orgId`, `orgRole`; §106). Absent ⇒ the install org
    - System generates secure token
    - Invitation stored in `Verification` table with metadata
    - Invitation email sent with accept link
@@ -308,6 +309,9 @@ async function signInWithGoogle() {
    - Google verifies user identity
    - System creates user account via better-auth (stable User ID)
    - Role from invitation metadata applied automatically
+   - Org membership from invitation metadata written by the after hook
+     (install org by default; see
+     [`.context/tenancy/identity.md`](../tenancy/identity.md#invitations-which-org-a-new-user-joins))
    - Email auto-verified by OAuth provider
    - Welcome email sent
    - Invitation token deleted
@@ -316,7 +320,10 @@ async function signInWithGoogle() {
    **Option B: Accept with Password**
    - User sets password on invitation page
    - Submits via `POST /api/auth/accept-invite`
-   - System creates user account via better-auth (stable User ID)
+   - System creates user account via better-auth (stable User ID), inside
+     `runInvitedSignup(…, metadata)` so the hooks see the invitation — its
+     platform role decides the install-org role (an invited ADMIN owns the
+     install org), and its `orgId`/`orgRole` the membership
    - Email auto-verified on acceptance
    - Welcome email sent
    - Invitation token deleted
@@ -427,8 +434,9 @@ databaseHooks: {
         return { data: user };
       },
 
-      // after hook: install-org membership, then sets preferences,
-      // detects password invitations, sends welcome email
+      // after hook: writes the org membership the before hook decided
+      // (carried on better-auth's request state — lib/auth/pending-signup.ts),
+      // then sets preferences, detects password invitations, sends welcome email
       // Does NOT handle OAuth invitation tokens — those are fully processed in the before hook.
       after: async (user, ctx) => {
         const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;

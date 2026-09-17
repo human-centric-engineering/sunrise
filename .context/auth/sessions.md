@@ -296,9 +296,33 @@ export const auth = betterAuth({
       enabled: true,
       maxAge: 60 * 5, // 5 minutes
     },
+    additionalFields: {
+      // The org this session acts in (§106). Server-written only.
+      activeOrgId: { type: 'string', required: false, input: false },
+    },
   },
 });
 ```
+
+## The Active Org (`session.session.activeOrgId`)
+
+A session records which org it is acting in. It is chosen when the session is
+minted (`sessionCreateBeforeHook` — the user's only org, else the install org
+if they belong to it, else the most recently joined) and changed only by
+`POST /api/v1/orgs/switch`, which verifies membership and re-issues the cookie
+cache so the guards see the new org on the next request.
+
+`input: false` is what keeps the public `POST /api/auth/update-session` from
+writing it — that endpoint runs every declared session field through the input
+parser and writes what survives with no membership check. `null` or absent
+means "none chosen", which the guard treats as the install org at
+`TENANCY_MODE=single`.
+
+Read it as `session.session.activeOrgId` on the server, and from
+`useSession()` on the client (validated at runtime, the way `role` is). The
+full story — the self-heal for a memberless user, why the switch writes with
+Prisma, the cookie-cache trap — is in
+[`.context/tenancy/identity.md`](../tenancy/identity.md#the-active-org-which-org-a-session-acts-in).
 
 ## Related Documentation
 

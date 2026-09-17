@@ -8,9 +8,11 @@ context primitive, the org lifecycle API and credential binding are later
 tasks of the same feature and are named here only where this page has to
 promise them something.
 
-**At `TENANCY_MODE=single` nothing reads these rows yet** except the
-Art. 15 export manifest. They exist so the org layer has one code path
-rather than a dormant multi-tenant branch — see the anti-pattern below.
+**At `TENANCY_MODE=single` nothing reads these rows for an authorization
+decision yet.** The session reads them to choose its active org, the Art. 15
+export manifest reads them, and that is all. They exist so the org layer has
+one code path rather than a dormant multi-tenant branch — see the
+anti-pattern below.
 
 ## Quick Reference
 
@@ -20,7 +22,10 @@ rather than a dormant multi-tenant branch — see the anti-pattern below.
 | The install org's fixed id / slug | `INSTALL_ORG_ID`, `INSTALL_ORG_SLUG` — `lib/tenancy/constants.ts` |
 | The role vocabulary (client-safe) | `ORG_ROLES`, `orgAdministers()` — `lib/tenancy/roles.ts`          |
 | Make a user a member              | `ensureMembership()` — `lib/tenancy/membership.ts`                |
-| The role a new user gets          | `initialMembershipFor()` — same module                            |
+| The role a new user gets          | `initialMembershipFor()` / `membershipForNewUser()` — same module |
+| The org a new session starts in   | `activeOrgForSession()` — same module                             |
+| Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`    |
+| Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`)            |
 | Prove it against a real database  | `npm run smoke:tenancy`                                           |
 | The migration                     | `prisma/migrations/20260917120000_org_identity/`                  |
 
@@ -85,8 +90,8 @@ Three things about the shape are decisions, not defaults:
   `ORG_ROLES` agree.
 
 Multi-membership is allowed: a user may belong to several orgs. Which one a
-session is _acting in_ is `Session.activeOrgId`, landed by this migration and
-wired by t-670.
+session is _acting in_ is `Session.activeOrgId` — see
+[the active org](#the-active-org-which-org-a-session-acts-in) below.
 
 ## The invariant: one install org, every user a member
 
@@ -101,21 +106,35 @@ only thing guaranteed to reach every environment. Every statement is
 idempotent, so a re-run or an operator who created the row by hand is a
 no-op rather than a failed deploy.
 
-**Later rows — the hook.** `userCreateAfterHook` (`lib/auth/config.ts`)
-calls `ensureMembership(user.id, initialMembershipFor(user))` first. Like
-every other step in that hook it is **non-blocking** — a failure is logged at
-`error` and the signup completes. The reason, verified against better-auth
-1.7.4 after two review rounds disagreed about it: `create.after` hooks are
-queued and run only after the sign-up's transaction has resolved, so the
-user, the account and (for email sign-up) the session are already committed
-when this runs. A throw would not prevent a memberless user; it would only
-turn a usable signup into a 500 the person cannot act on. The invariant is
-restored on the session path instead: t-670's `session.create.before` hook
-re-runs `ensureMembership` for a user with no membership, and t-671's guard
-resolves a null membership to the install org at `single` (and refuses at
-`multi`). It is deliberately **not** a `registerUserCreatedHook` contributor:
-that registry is the fork's seam and runs last; this is a core invariant and
-runs first.
+**Later rows — the hooks.** `userCreateBeforeHook` (`lib/auth/config.ts`)
+decides the membership — `membershipForNewUser(user, invitation)` — and
+records it on better-auth's request state (`lib/auth/pending-signup.ts`);
+`userCreateAfterHook` writes it with `ensureMembership`, first thing. Like
+every other step in that hook the write is **non-blocking** — a failure is
+logged at `error` and the signup completes. The reason, verified against
+better-auth 1.7.4 after two review rounds disagreed about it: `create.after`
+hooks are queued and run only after the sign-up's transaction has resolved,
+so the user, the account and (for email sign-up) the session are already
+committed when this runs. A throw would not prevent a memberless user; it
+would only turn a usable signup into a 500 the person cannot act on. The
+invariant is restored on the session path instead: `sessionCreateBeforeHook`
+writes the install-org default for a user with no membership (below), and
+t-671's guard resolves a null membership to the install org at `single` (and
+refuses at `multi`). It is deliberately **not** a `registerUserCreatedHook`
+contributor: that registry is the fork's seam and runs last; this is a core
+invariant and runs first.
+
+Why the decision and the write are two hooks with a carrier between them:
+when a sign-up auto-signs the user in (email sign-up without verification,
+every OAuth sign-up) the session is created _inside_ the sign-up
+transaction, so the session hook runs between the two — for a user with no
+membership row yet. Without the carrier it would self-heal the install-org
+default first, and the membership the invitation actually granted would then
+be a no-op upsert. The carrier is `defineRequestState` from
+`@better-auth/core/context` (what `getOAuthState` is built on): one store per
+auth request, shared by every hook that request runs. It is also how an
+OAuth-accepted invitation's org reaches the after hook, since the before hook
+consumes the invitation row.
 
 **The seeded config-owner — the seed.** `prisma/seeds/001-system-owner.ts`
 upserts the SERVICE owner with Prisma directly, bypassing the hook, and on a
@@ -132,12 +151,14 @@ install's existing row is left alone). `smoke:tenancy` runs in CI after
 | A real platform admin (`role = ADMIN`, `accountType = HUMAN`) | `OWNER`          |
 | Anyone else — including the seeded SERVICE config-owner       | `MEMBER`         |
 
-**Known gap until §106 t-670:** the password accept-invite route
-(`app/api/auth/accept-invite/route.ts`) applies the invitation's platform role
-_after_ `signUpEmail` returns, so the hook sees `role: USER` and an invited
-platform ADMIN lands as `MEMBER`. An under-grant with no effect at `single`
-(nothing reads the org role yet); t-670 rewrites that route and fixes it.
-`smoke:tenancy` does not assert on it (see the next gap for why).
+**An invitation can change both halves of the answer.** The rule above is
+what a user gets when nothing else chooses; an accepted invitation does
+choose — see [invitations](#invitations-which-org-a-new-user-joins). It is
+also why the role is judged on the platform role the invitation _grants_
+rather than the one the row carries at creation: the password accept-invite
+route applies `metadata.role` only after `signUpEmail` returns, and judged on
+the row an invited platform ADMIN would have landed as `MEMBER` (the gap
+t-669 found and t-670 closed).
 
 **Known gap until §106 t-672:** the mapping is applied once, at creation.
 A platform-role change afterwards — the admin `users/[id]` PATCH promoting a
@@ -156,6 +177,93 @@ not already hold as platform admin, so when the authorization policy learns to
 read org roles (t-671) a single-tenant install answers every question exactly
 as it did before. The SERVICE account holds platform `ADMIN` but never logs
 in; making it an org OWNER would be a grant nothing today confers.
+
+## Invitations: which org a new user joins
+
+`POST /api/v1/users/invite` takes two optional keys, `orgId` and `orgRole`,
+stored on the invitation's metadata (`invitationMetadataSchema`,
+`lib/validations/admin.ts` — optional so every invitation pending before they
+existed still parses). Accepting the invitation — by password or by OAuth —
+creates the membership `membershipForNewUser` derives from it:
+
+| The invitation says…                        | The member lands as                                           |
+| ------------------------------------------- | ------------------------------------------------------------- |
+| no org                                      | install org, by the role rule above on the role it **grants** |
+| `orgId: 'install'` + `orgRole`              | install org, that role, as written                            |
+| another `orgId`, org already has members    | that org, `orgRole` (default `MEMBER`)                        |
+| another `orgId`, org has **no members yet** | that org, `OWNER` — whatever `orgRole` said                   |
+
+The last row is the **per-org bootstrap**: an org nobody owns is one nobody
+can administer, so its first member owns it. It sits beside the install-scoped
+`AuthBootstrap` (first human on a fresh database → platform `ADMIN`) and never
+replaces it: the install org's owner is decided by the platform role, and on a
+fresh database its first member is the seeded SERVICE account, which must
+stay `MEMBER`.
+
+**Who may name an org** is the authorization policy's call, asked in the route
+as `canAdminister(principal, { kind: 'org', id, orgId })` after the body is
+parsed (the org is in the body, so it cannot be a guard-level `resource`
+resolver). Under Sunrise's default policy that answers exactly what
+`withAdminAuth` already answered — platform admins only — so nothing widens
+today; t-671 is what teaches the policy to say yes to an org's own
+OWNER/ADMIN. The named org must exist and be `ACTIVE`; a missing and a
+suspended org get the same 400, so the endpoint leaks nothing about orgs the
+caller may not administer.
+
+## The active org: which org a session acts in
+
+`Session.activeOrgId` is a better-auth session `additionalField`
+(`lib/auth/config.ts`), chosen when the session is minted and changed by one
+endpoint.
+
+**At sign-in — `sessionCreateBeforeHook`**, for every session better-auth
+creates (sign-in, OAuth callback, the auto-sign-in after sign-up or
+verification, password reset). In order:
+
+1. A signup in flight on this request → the org that signup is about to
+   grant (see the carrier above). Nothing is read.
+2. Otherwise `activeOrgForSession`: the user's only membership; else the
+   install org if they belong to it; else the org they joined most recently;
+   else — **no membership at all** — the install-org default is written right
+   here (the self-heal ruled in t-669's review) and logged at `error`, because
+   it means the signup path failed upstream.
+
+Non-blocking: a fault choosing the org mints the session with `null`, which
+the guard treats as the install org at `single` and refuses at `multi`
+(t-671).
+
+**Switching — `POST /api/v1/orgs/switch` `{ orgId }`.** Verifies an active
+membership (a non-member gets the same 403 whether the org exists or not; a
+suspended org is refused to its own member), writes the caller's own session
+row, and re-issues the cookie. Two things about that write are deliberate:
+
+- **It is `input: false`, so the public `POST /api/auth/update-session`
+  refuses it.** better-auth runs every declared session field through the
+  same input parser on that endpoint and writes what survives to the caller's
+  row with no idea what the field means — without `input: false`, any
+  signed-in user could act in any org by naming it. `config-session-field.test.ts`
+  proves it with better-auth's own parser over the real options, control
+  included. The same parser refuses the field on `auth.api.updateSession`, so
+  the switch writes with Prisma.
+- **The cookie is re-issued, not just the row.** The guards read the session
+  cookie cache (`cookieCache`, 5 minutes); a row update alone leaves the old
+  org live until it expires. The route calls `auth.api.getSession` with
+  `disableCookieCache`, which reads the row and re-sets the cache cookie, and
+  forwards its `Set-Cookie` headers — the accept-invite precedent.
+
+**API-key sessions cannot switch.** A credential's org is fixed at mint
+(t-673); the route refuses a key caller the way key minting does.
+
+**Reading it:** `session.session.activeOrgId` on the server (`AuthSession` in
+`lib/auth/guards.ts`; the inferred type in `lib/auth/utils.ts` carries it
+for free) and on the client via `useSession()` (`lib/auth/client.ts`, which
+validates it at runtime the way it validates `role`). `null` or absent means
+"none chosen" — the install org at `single`. An API-key session leaves it
+unset until t-673 binds the key's own org.
+
+**Not here:** revoking sessions when a membership is removed is the
+lifecycle task's (t-672); `revokeUserSessions` in `lib/auth/sessions.ts` is
+the primitive it will use.
 
 ## Credentials
 
@@ -176,11 +284,10 @@ binding the existing ones would have created it. `smoke:tenancy` proves the
 rule by creating a `chat` key and an `admin` key unbound and re-running the
 migration's own `UPDATE` against them.
 
-`Session.activeOrgId` also lands here (nullable, no FK — better-auth owns the
-`session` table's shape). It is unread until t-670 teaches better-auth to
-write it. Folding both into this migration is what lets the identity release
-carry **one** migration, as the design record's merge-impact section promises
-forks.
+`Session.activeOrgId` also landed in this migration (nullable, no FK —
+better-auth owns the `session` table's shape). Folding both into it is what
+lets the identity release carry **one** migration, as the design record's
+merge-impact section promises forks.
 
 ## What a fork may add — and what it may not
 
@@ -207,9 +314,22 @@ forks.
   subject and the org survives.
 - `tests/unit/lib/tenancy/migration.test.ts` — the migration's statements,
   their idempotency, and that its `CASE` and `initialMembershipFor()` agree.
-- `tests/unit/lib/auth/config-database-hook.test.ts` — the hook writes the
-  membership first, and a failure there is logged at error while the signup
-  still completes.
+- `tests/unit/lib/auth/config-database-hook.test.ts` — the before hook
+  records the membership on every arm (an ADMIN invitation → OWNER even though
+  the row is USER), the after hook writes it first, and a failure there is
+  logged at error while the signup still completes.
+- `tests/unit/lib/tenancy/membership.test.ts` — `membershipForNewUser`'s
+  table above and `activeOrgForSession`'s four arms, including that the
+  self-heal writes for a memberless user and for nobody else.
+- `tests/unit/lib/auth/config-session-hook.test.ts` — the session hook's
+  order (a signup in flight wins and reads nothing) and its failure shape.
+- `tests/unit/lib/auth/config-session-field.test.ts` — `activeOrgId` is not
+  client-settable, with the control that shows the assertion doing work.
+- `tests/unit/app/api/v1/orgs/switch/route.test.ts` — the switch through the
+  real guard: row + cookie, non-enumerating refusals, API keys refused.
+- `tests/unit/app/api/v1/users/invite/route.test.ts` — an invitation without
+  an org writes metadata byte-identical to before; one with an org asks the
+  policy.
 - `tests/unit/auth-role-literals.test.ts` — no bare `'OWNER'` / `'MEMBER'`
   outside `lib/tenancy/roles.ts`, the way it already polices `'ADMIN'`.
 
