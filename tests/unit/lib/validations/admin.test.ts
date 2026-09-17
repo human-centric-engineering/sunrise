@@ -983,6 +983,34 @@ describe('parseInvitationMetadata', () => {
       expect(result?.role).toBe('ADMIN');
     });
 
+    it('parses the org keys §106 added, and leaves them absent when not written', () => {
+      const legacy = {
+        name: 'Legacy',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+      };
+      // Every invitation pending at merge looks like this; it must still parse
+      // (a required key would have invalidated all of them at once).
+      expect(parseInvitationMetadata(legacy)).toEqual(legacy);
+      expect(parseInvitationMetadata(legacy)).not.toHaveProperty('orgId');
+
+      const withOrg = { ...legacy, orgId: 'cmorg000000000000000other', orgRole: 'ADMIN' };
+      expect(parseInvitationMetadata(withOrg)).toEqual(withOrg);
+    });
+
+    it('refuses an orgRole outside the closed vocabulary', () => {
+      const bad = {
+        name: 'X',
+        role: 'USER',
+        invitedBy: 'admin@example.com',
+        invitedAt: '2024-01-01T00:00:00.000Z',
+        orgId: 'cmorg000000000000000other',
+        orgRole: 'BILLING',
+      };
+      expect(parseInvitationMetadata(bad)).toBeNull();
+    });
+
     it('should parse invitation metadata with special characters in name', () => {
       const validData = {
         name: "O'Brien-Smith Jr.",

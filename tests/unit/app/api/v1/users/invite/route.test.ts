@@ -1,0 +1,188 @@
+/**
+ * Unit Tests: POST /api/v1/users/invite — the org an invitation names (§106)
+ *
+ * The route existed long before this file; what it pins is the org axis
+ * t-670 added, through the REAL `withAdminAuth` and the REAL default
+ * authorization policy:
+ *
+ * - an invitation without an org writes metadata byte-identical to one
+ *   written before the org keys existed (no `orgId`/`orgRole` key at all)
+ * - an invitation naming an org writes both keys
+ * - the org must exist and be ACTIVE, with one answer for both failures
+ * - the policy is asked about the org (`canAdminister` on an org resource):
+ *   a platform admin passes today; a policy that says no is a 403
+ */
+
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import type { NextRequest } from 'next/server';
+
+vi.mock('@/lib/auth/config', () => ({
+  auth: { api: { getSession: vi.fn() } },
+}));
+
+vi.mock('next/headers', () => ({
+  headers: vi.fn(() => Promise.resolve(new Headers())),
+}));
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    user: { findUnique: vi.fn() },
+    org: { findUnique: vi.fn() },
+    aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
+  },
+}));
+
+vi.mock('@/lib/utils/invitation-token', () => ({
+  generateInvitationToken: vi.fn(async () => 'raw-token'),
+  updateInvitationToken: vi.fn(async () => 'raw-token'),
+  getValidInvitation: vi.fn(async () => null),
+}));
+
+vi.mock('@/lib/email/send', () => ({
+  sendEmail: vi.fn(async () => ({ success: true, status: 'sent', id: 'email-1' })),
+}));
+
+vi.mock('@/lib/email/registry', () => ({
+  resolveEmailTemplate: vi.fn(() => null),
+}));
+
+vi.mock('@/lib/security/rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/security/rate-limit')>();
+  return {
+    ...actual,
+    inviteLimiter: { check: vi.fn(() => ({ success: true, remaining: 9, reset: 0 })) },
+  };
+});
+
+vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
+
+const mockLog = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
+vi.mock('@/lib/api/context', () => ({ getRouteLogger: vi.fn(async () => mockLog) }));
+
+import { POST } from '@/app/api/v1/users/invite/route';
+import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { generateInvitationToken } from '@/lib/utils/invitation-token';
+import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
+import {
+  DEFAULT_AUTHORIZATION_POLICY,
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+} from '@/lib/auth/authorization';
+
+const OTHER_ORG = 'cmorg000000000000000other';
+
+function request(body: unknown): NextRequest {
+  return new Request('http://localhost/api/v1/users/invite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }) as unknown as NextRequest;
+}
+
+const invitee = { name: 'Jane Doe', email: 'jane@example.com' };
+
+describe('POST /api/v1/users/invite — org axis', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      id: OTHER_ORG,
+      status: 'ACTIVE',
+    } as never);
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  function writtenMetadata() {
+    const [, metadata] = vi.mocked(generateInvitationToken).mock.calls[0] ?? [];
+    return metadata;
+  }
+
+  it('writes no org keys at all when none is named (byte-identical to before)', async () => {
+    const res = await POST(request({ ...invitee, role: 'USER' }));
+
+    expect(res.status).toBe(201);
+    expect(writtenMetadata()).toEqual({
+      name: 'Jane Doe',
+      role: 'USER',
+      invitedBy: expect.any(String),
+      invitedAt: expect.any(String),
+    });
+    expect(writtenMetadata()).not.toHaveProperty('orgId');
+    expect(writtenMetadata()).not.toHaveProperty('orgRole');
+    // And the org table was never consulted.
+    expect(prisma.org.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('writes the org and org role it was given', async () => {
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'ADMIN' }));
+
+    expect(res.status).toBe(201);
+    expect(writtenMetadata()).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+    expect(prisma.org.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: OTHER_ORG } })
+    );
+  });
+
+  it('refuses an org that does not exist, and a suspended one, with the same answer', async () => {
+    vi.mocked(prisma.org.findUnique).mockResolvedValueOnce(null);
+    const missing = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+      id: OTHER_ORG,
+      status: 'SUSPENDED',
+    } as never);
+    const suspended = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(missing.status).toBe(400);
+    expect(suspended.status).toBe(400);
+    expect(JSON.parse(await missing.text()).error.message).toBe(
+      JSON.parse(await suspended.text()).error.message
+    );
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('asks the authorization policy about the org, and a refusal is a 403', async () => {
+    const canAdminister = vi.fn(async () => false);
+    registerAuthorizationPolicy({ ...DEFAULT_AUTHORIZATION_POLICY, canAdminister });
+    // The admin guard itself asks canAdminister(principal, null) first; let
+    // that pass so the refusal under test is the route's own org question.
+    canAdminister.mockImplementationOnce(async () => true);
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(403);
+    expect(canAdminister).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: expect.any(String), credential: 'session' }),
+      { kind: 'org', id: OTHER_ORG, orgId: OTHER_ORG },
+      expect.anything()
+    );
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects an org role outside the vocabulary at the boundary', async () => {
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'BILLING' }));
+
+    expect(res.status).toBe(400);
+    expect(prisma.org.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is still admin-only: a plain member is refused by the guard', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(403);
+    expect(prisma.org.findUnique).not.toHaveBeenCalled();
+  });
+});

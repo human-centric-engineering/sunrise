@@ -59,6 +59,12 @@ vi.mock('@/lib/auth/config', () => ({
   },
 }));
 
+// Passthrough spy: the route must hand the invitation to `runInvitedSignup` so
+// the user-creation hooks can read the org and platform role it grants (§106).
+vi.mock('@/lib/auth/signup-mode', () => ({
+  runInvitedSignup: vi.fn(<T>(fn: () => Promise<T>) => fn()),
+}));
+
 vi.mock('@/lib/security/rate-limit', () => ({
   acceptInviteLimiter: {
     check: vi.fn(() => ({
@@ -94,6 +100,7 @@ import { POST } from '@/app/api/auth/accept-invite/route';
 import { prisma } from '@/lib/db/client';
 import { validateInvitationToken, deleteInvitationToken } from '@/lib/utils/invitation-token';
 import { auth } from '@/lib/auth/config';
+import { runInvitedSignup } from '@/lib/auth/signup-mode';
 
 describe('POST /api/auth/accept-invite', () => {
   // Test data
@@ -231,6 +238,36 @@ describe('POST /api/auth/accept-invite', () => {
       expect(setCookieHeaders).toHaveLength(2);
       expect(setCookieHeaders[0]).toContain('better-auth.session_token');
       expect(setCookieHeaders[1]).toContain('better-auth.csrf_token');
+    });
+
+    it('carries the invitation into runInvitedSignup, so the hooks can act on what it grants', async () => {
+      // §106 t-670: the platform role is applied to the row only AFTER
+      // signUpEmail returns (step 5), so the membership the signup writes has
+      // to be decided from the invitation, which rides in on this call.
+      vi.mocked(prisma.verification.findFirst).mockResolvedValue({
+        id: 'verification-id',
+        identifier: 'invitation:user@example.com',
+        value: 'hashed',
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        metadata: { ...mockInvitationMetadata, role: 'ADMIN', orgId: 'cmorg000000000000000other' },
+      });
+      vi.mocked(auth.api.signUpEmail).mockResolvedValue({ user: { id: mockUserId } } as any);
+      vi.mocked(auth.api.signInEmail).mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { getSetCookie: () => [] },
+      } as any);
+
+      await POST(createMockRequest(validInvitationData));
+
+      expect(runInvitedSignup).toHaveBeenCalledTimes(1);
+      expect(runInvitedSignup).toHaveBeenCalledWith(expect.any(Function), {
+        ...mockInvitationMetadata,
+        role: 'ADMIN',
+        orgId: 'cmorg000000000000000other',
+      });
     });
 
     it('should set ADMIN role when invitation has ADMIN role', async () => {

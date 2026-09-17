@@ -476,6 +476,55 @@ describe('lib/auth/client', () => {
     });
   });
 
+  describe('useSession hook - activeOrgId validation (§106)', () => {
+    // The session-side twin of the role extractor: better-auth returns the
+    // `activeOrgId` additionalField at runtime, the client types cannot see
+    // it, and anything but a non-empty string must read as "none chosen".
+    function armSessionWith(raw: unknown) {
+      const mockData = createMockSessionData('USER');
+      const session = mockData.session as Record<string, unknown>;
+      if (raw === undefined) delete session.activeOrgId;
+      else session.activeOrgId = raw;
+      mockUseSession.mockReturnValue({ data: mockData, error: null, isPending: false });
+    }
+
+    it('preserves a non-empty string', async () => {
+      armSessionWith('cmorg000000000000000other');
+      const { useSession } = await import('@/lib/auth/client');
+      expect(useSession().data?.session.activeOrgId).toBe('cmorg000000000000000other');
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['null', null],
+      ['empty string', ''],
+      ['a number', 42],
+      ['an object', { id: 'install' }],
+      ['an array', ['install']],
+      ['boolean', true],
+    ])('reads %s as null', async (_label, raw) => {
+      armSessionWith(raw);
+      const { useSession } = await import('@/lib/auth/client');
+      expect(useSession().data?.session.activeOrgId).toBeNull();
+    });
+
+    it('does not disturb the other session fields', async () => {
+      const mockData = createMockSessionData('USER');
+      (mockData.session as Record<string, unknown>).activeOrgId = 'install';
+      mockUseSession.mockReturnValue({ data: mockData, error: null, isPending: false });
+
+      const { useSession } = await import('@/lib/auth/client');
+      const result = useSession();
+
+      expect(result.data?.session).toMatchObject({
+        id: 'session-123',
+        userId: 'user-123',
+        token: 'token-abc',
+        activeOrgId: 'install',
+      });
+    });
+  });
+
   describe('useSession hook - full session data', () => {
     it('should return complete session data structure with valid role', async () => {
       // Arrange

@@ -43,6 +43,7 @@ vi.mock('@/lib/env', () => ({ env: mockEnv }));
 vi.mock('@/lib/auth/signup-mode', () => ({
   isInviteOnly: vi.fn(() => false),
   isInvitedSignup: vi.fn(() => false),
+  invitedSignupInvitation: vi.fn(() => null),
   isFirstHumanBootstrap: vi.fn(async () => false),
   runInvitedSignup: vi.fn(<T>(fn: () => Promise<T>) => fn()),
 }));

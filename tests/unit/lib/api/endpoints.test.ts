@@ -296,6 +296,12 @@ describe('API Endpoints', () => {
     });
   });
 
+  describe('ORGS endpoints', () => {
+    it('should have the switch endpoint', () => {
+      expect(API.ORGS.SWITCH).toBe('/api/v1/orgs/switch');
+    });
+  });
+
   describe('INVITATIONS endpoints', () => {
     it('should have correct METADATA path', () => {
       expect(API.INVITATIONS.METADATA).toBe('/api/v1/invitations/metadata');

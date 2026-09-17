@@ -505,6 +505,20 @@ describe('inviteUserSchema', () => {
       expect(result.success).toBe(true);
     });
 
+    it('accepts an optional org and org role (§106), and writes neither by default', () => {
+      const base = { name: 'Jane', email: 'jane@example.com' };
+      const plain = inviteUserSchema.parse(base);
+      expect(plain).not.toHaveProperty('orgId');
+      expect(plain).not.toHaveProperty('orgRole');
+
+      const scoped = inviteUserSchema.parse({ ...base, orgId: 'install', orgRole: 'MEMBER' });
+      expect(scoped.orgId).toBe('install');
+      expect(scoped.orgRole).toBe('MEMBER');
+
+      expect(inviteUserSchema.safeParse({ ...base, orgRole: 'BILLING' }).success).toBe(false);
+      expect(inviteUserSchema.safeParse({ ...base, orgId: '' }).success).toBe(false);
+    });
+
     it('should use default role of USER when not provided', () => {
       const { role: _role, ...dataWithoutRole } = validInviteData;
       const result = inviteUserSchema.safeParse(dataWithoutRole);

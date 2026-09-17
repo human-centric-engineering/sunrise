@@ -42,6 +42,7 @@ import {
   isInviteOnly,
   runInvitedSignup,
   isInvitedSignup,
+  invitedSignupInvitation,
   isFirstHumanBootstrap,
 } from '@/lib/auth/signup-mode';
 import { prisma } from '@/lib/db/client';
@@ -127,6 +128,29 @@ describe('runInvitedSignup / isInvitedSignup', () => {
     const result = await runInvitedSignup(async () => ({ user: { id: 'user_123' } }));
 
     expect(result).toEqual({ user: { id: 'user_123' } });
+  });
+
+  it('carries the invitation it was given to the hooks inside (§106)', async () => {
+    const metadata = {
+      name: 'Invitee',
+      role: 'ADMIN',
+      invitedBy: 'admin-id',
+      invitedAt: '2026-09-17T00:00:00.000Z',
+      orgId: 'cmorg000000000000000other',
+    };
+
+    const seen = await runInvitedSignup(async () => invitedSignupInvitation(), metadata);
+
+    expect(seen).toEqual(metadata);
+    // The exemption itself is unchanged by the payload.
+    expect(await runInvitedSignup(async () => isInvitedSignup(), metadata)).toBe(true);
+  });
+
+  it('answers null for the invitation outside a wrapped signup, and when none was passed', async () => {
+    expect(invitedSignupInvitation()).toBeNull();
+    // Wrapped without a payload — the exemption holds, the invitation is null.
+    expect(await runInvitedSignup(async () => invitedSignupInvitation())).toBeNull();
+    expect(await runInvitedSignup(async () => isInvitedSignup())).toBe(true);
   });
 });
 
