@@ -69,9 +69,21 @@ export function keyPrefix(key: string): string {
  * Returns the user session-like object if the key is valid,
  * or null if the key is missing/invalid/revoked/expired.
  */
-export async function resolveApiKey(
-  request: NextRequest
-): Promise<{ session: AuthSession; scopes: string[]; rateLimitRpm: number | null } | null> {
+export async function resolveApiKey(request: NextRequest): Promise<{
+  session: AuthSession;
+  scopes: string[];
+  rateLimitRpm: number | null;
+  /**
+   * The org the key was minted in (§106) — `null` for a platform (`admin`)
+   * credential, and for every key minted before t-673 writes the column.
+   * The guards enter it; see `lib/tenancy/entry.ts` for the read rule.
+   * Optional in the type so a test double built before the org axis still
+   * compiles; the guard reads a missing value as `null`.
+   */
+  orgId?: string | null;
+  /** The owner's account type, for the install-org role rule at `single`. */
+  ownerAccountType?: string | null;
+} | null> {
   // Defensive: tolerate requests without a populated headers map. Test
   // harnesses sometimes pass a stub `{} as NextRequest`; without the
   // optional chain we'd throw before the cookie-session path could run,
@@ -124,5 +136,11 @@ export async function resolveApiKey(
     },
   };
 
-  return { session, scopes: apiKey.scopes, rateLimitRpm: apiKey.rateLimitRpm };
+  return {
+    session,
+    scopes: apiKey.scopes,
+    rateLimitRpm: apiKey.rateLimitRpm,
+    orgId: apiKey.orgId,
+    ownerAccountType: apiKey.user.accountType,
+  };
 }

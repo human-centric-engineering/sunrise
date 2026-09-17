@@ -30,6 +30,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
+import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
+import { hasTenantResolver } from '@/lib/tenancy/resolver';
 import { initAppCapabilities } from '@/lib/app/capabilities';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
 import { initAppNav } from '@/lib/app/admin-nav';
@@ -165,6 +167,15 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       registerAppRateLimits();
       // No app rules → the effective policy is the base policy BY IDENTITY.
       expect(getEffectiveRateLimitPolicy()).toBe(RATE_LIMIT_POLICY);
+    },
+  },
+  {
+    seam: 'lib/app/tenant-resolver.ts',
+    risk: 'a stray resolver would pick an org for every request on every install',
+    assert: () => {
+      registerAppTenantResolver();
+      // No resolver → the proxy strips the org header on every request.
+      expect(hasTenantResolver()).toBe(false);
     },
   },
   {

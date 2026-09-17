@@ -25,6 +25,7 @@ import { prisma } from '@/lib/db/client';
 import { MaintenancePage } from '@/components/maintenance-page';
 import { logger } from '@/lib/logging';
 import { canAdminister } from '@/lib/auth/authorization';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 interface MaintenanceWrapperProps {
   children: React.ReactNode;
@@ -81,12 +82,20 @@ export async function MaintenanceWrapper({ children }: MaintenanceWrapperProps) 
     // the same seam as the guards — otherwise a fork that narrows
     // `canAdminister` still lets every stored `role: 'ADMIN'` past here, and
     // safe mode would close the admin console while leaving this open.
+    // The org (§106) as the session recorded it, and no org role: this asks
+    // with `resource: null`, where the org arm grants nothing by design, so a
+    // membership read could not change the answer.
     isAdmin = session
-      ? await canAdminister({
-          userId: session.user.id,
-          role: session.user.role,
-          credential: 'session',
-        })
+      ? await canAdminister(
+          {
+            userId: session.user.id,
+            role: session.user.role,
+            credential: 'session',
+            orgId: session.session.activeOrgId ?? INSTALL_ORG_ID,
+          },
+          null,
+          { org: session.session.activeOrgId ?? INSTALL_ORG_ID }
+        )
       : false;
   } catch {
     // If session check fails, show maintenance page for safety
@@ -132,12 +141,20 @@ export async function MaintenanceWrapperWithAdminNotice({ children }: Maintenanc
     // the same seam as the guards — otherwise a fork that narrows
     // `canAdminister` still lets every stored `role: 'ADMIN'` past here, and
     // safe mode would close the admin console while leaving this open.
+    // The org (§106) as the session recorded it, and no org role: this asks
+    // with `resource: null`, where the org arm grants nothing by design, so a
+    // membership read could not change the answer.
     isAdmin = session
-      ? await canAdminister({
-          userId: session.user.id,
-          role: session.user.role,
-          credential: 'session',
-        })
+      ? await canAdminister(
+          {
+            userId: session.user.id,
+            role: session.user.role,
+            credential: 'session',
+            orgId: session.session.activeOrgId ?? INSTALL_ORG_ID,
+          },
+          null,
+          { org: session.session.activeOrgId ?? INSTALL_ORG_ID }
+        )
       : false;
   } catch {
     // If session check fails, show maintenance page for safety

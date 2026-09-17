@@ -73,11 +73,12 @@ every fork's registrations in it silently never run. `fork-init-seams.test.ts`
 guards them by import detection and pins the count at **three**, so adding a
 fourth is a deliberate edit rather than a silent one.
 
-| Edit this file     | Export                           | Called by                                                                               |
-| ------------------ | -------------------------------- | --------------------------------------------------------------------------------------- |
-| `db-drift.ts`      | `registerAppDriftProbes`         | `scripts/db/check-drift.ts` (a CLI, not a runtime module)                               |
-| `rate-limit.ts`    | `registerAppRateLimits`          | the rate-limit middleware, at module scope                                              |
-| `llm-providers.ts` | `registerAppProviderEligibility` | `ensureWired()` in `lib/orchestration/llm/provider-eligibility.ts`, lazily on first use |
+| Edit this file       | Export                           | Called by                                                                                  |
+| -------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `db-drift.ts`        | `registerAppDriftProbes`         | `scripts/db/check-drift.ts` (a CLI, not a runtime module)                                  |
+| `rate-limit.ts`      | `registerAppRateLimits`          | the rate-limit middleware, at module scope                                                 |
+| `llm-providers.ts`   | `registerAppProviderEligibility` | `ensureWired()` in `lib/orchestration/llm/provider-eligibility.ts`, lazily on first use    |
+| `tenant-resolver.ts` | `registerAppTenantResolver`      | `proxy.ts`, at module scope (§106 — the resolver runs on every request; Web-standard only) |
 
 The third is the one to read if you are adding a fourth. It was originally wired
 as a module-load side effect of its consumer, which made registration depend on

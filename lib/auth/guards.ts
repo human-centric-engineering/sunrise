@@ -45,6 +45,15 @@ import {
 } from '@/lib/auth/authorization';
 import { resolveUnattributedReads, type UnattributedReads } from '@/lib/auth/orphan-reads';
 import { env } from '@/lib/env';
+import { runAsOrg } from '@/lib/tenancy/context';
+import {
+  enterApiKeyOrg,
+  enterSessionOrg,
+  isOrgRefusal,
+  type OrgEntry,
+  type OrgRefusal,
+} from '@/lib/tenancy/entry';
+import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -348,9 +357,51 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
 function principalOf(
   session: AuthSession,
   credential: AuthorizationPrincipal['credential'],
-  scopes?: readonly string[]
+  scopes?: readonly string[],
+  entry?: OrgEntry | null
 ): AuthorizationPrincipal {
-  return { userId: session.user.id, role: session.user.role, credential, scopes };
+  return {
+    userId: session.user.id,
+    role: session.user.role,
+    credential,
+    scopes,
+    // The org facts ride on the principal (§106): the guard is the one writer,
+    // and the policy is told rather than made to read the tenant context.
+    ...(entry ? { orgId: entry.orgId, orgRole: entry.role } : {}),
+  };
+}
+
+/**
+ * Turn a refused org entry into the guard's 403, logging what the response
+ * deliberately does not say. "Not a member" and "no such org" share one
+ * message so the guard is not an org-enumeration oracle; a suspended org is
+ * refused with the same words for the same reason.
+ */
+function refuseOrgEntry(
+  guard: 'withAuth' | 'withAdminAuth',
+  request: NextRequest,
+  principal: AuthorizationPrincipal,
+  refusal: OrgRefusal
+): never {
+  logger.warn('tenancy: refused to enter an org for a request', {
+    guard,
+    path: request.nextUrl?.pathname,
+    userId: principal.userId,
+    credential: principal.credential,
+    refused: refusal.refused,
+  });
+  throw new ForbiddenError('Access denied');
+}
+
+/**
+ * The org the proxy resolved for this request, if a fork registered a
+ * resolver. The proxy is the header's sole writer — it strips any inbound
+ * copy — which is the only reason a header is trusted for WHICH org; whether
+ * the caller may enter it is still verified against their membership.
+ */
+async function resolvedTenantHeader(): Promise<string | null> {
+  const requestHeaders = await headers();
+  return requestHeaders.get(TENANT_HEADER_NAME) || null;
 }
 
 /**
@@ -742,6 +793,12 @@ export function withAuth(
       let session: AuthSession;
       let principal: AuthorizationPrincipal;
 
+      // Which org this request acts for (§106), decided once here and carried
+      // two ways: on the principal for the policy, and as the tenant context
+      // the handler runs inside. `null` is the platform-credential answer (an
+      // `admin` key) — no org scope; a refusal is a 403.
+      let entry: OrgEntry | null;
+
       if (apiKey) {
         if (options?.scope && !hasScope(apiKey.scopes, options.scope)) {
           // Names the scope the route wants, never the ones the key holds —
@@ -749,7 +806,22 @@ export function withAuth(
           throw new ForbiddenError(`API key scope '${options.scope}' required`);
         }
         session = apiKey.session;
-        principal = principalOf(session, 'api-key', apiKey.scopes);
+        const keyEntry = await enterApiKeyOrg({
+          userId: session.user.id,
+          scopes: apiKey.scopes,
+          orgId: apiKey.orgId ?? null,
+          owner: { role: session.user.role, accountType: apiKey.ownerAccountType ?? null },
+        });
+        if (keyEntry && isOrgRefusal(keyEntry)) {
+          refuseOrgEntry(
+            'withAuth',
+            request as NextRequest,
+            principalOf(session, 'api-key', apiKey.scopes),
+            keyEntry
+          );
+        }
+        entry = keyEntry;
+        principal = principalOf(session, 'api-key', apiKey.scopes, entry);
       } else {
         const requestHeaders = await headers();
         const cookieSession = await auth.api.getSession({ headers: requestHeaders });
@@ -758,7 +830,21 @@ export function withAuth(
           throw new UnauthorizedError();
         }
         session = cookieSession;
-        principal = principalOf(session, 'session');
+        const sessionEntry = await enterSessionOrg(
+          { id: session.user.id, role: session.user.role },
+          session.session?.activeOrgId ?? null,
+          await resolvedTenantHeader()
+        );
+        if (isOrgRefusal(sessionEntry)) {
+          refuseOrgEntry(
+            'withAuth',
+            request as NextRequest,
+            principalOf(session, 'session'),
+            sessionEntry
+          );
+        }
+        entry = sessionEntry;
+        principal = principalOf(session, 'session', undefined, entry);
       }
 
       // The read half of the authorization seam. The subject is whoever owns
@@ -780,7 +866,7 @@ export function withAuth(
       // the three states it can be in are named rather than flattened. This used
       // to be `resource?.ownerId ?? null`, which collapsed "named nothing" and
       // "named a row with no owner" onto the value the default policy permits.
-      if (!(await canRead(principal, readTargetFor(resource)))) {
+      if (!(await canRead(principal, readTargetFor(resource), orgScope(entry)))) {
         // Named, because the decision moved in here from the handlers. A route
         // that used to log its target before checking would otherwise lose that
         // record on exactly the requests worth recording: `handleAPIError` logs
@@ -796,21 +882,38 @@ export function withAuth(
         throw new ForbiddenError('Access denied');
       }
 
-      return await runHandler({
-        guard: 'withAuth',
-        handler,
-        request: request as NextRequest,
-        context: context as RouteContext | undefined,
-        session,
-        principal,
-        ownership: options?.ownership,
-        declaredResource: options?.resource !== undefined,
-        state: ownershipReportState,
-      });
+      return await inTenantScope(entry, () =>
+        runHandler({
+          guard: 'withAuth',
+          handler,
+          request: request as NextRequest,
+          context: context as RouteContext | undefined,
+          session,
+          principal,
+          ownership: options?.ownership,
+          declaredResource: options?.resource !== undefined,
+          state: ownershipReportState,
+        })
+      );
     } catch (error) {
       return handleAPIError(error);
     }
   };
+}
+
+/** The `scope` the policy is asked with: the entered org, when there is one. */
+function orgScope(entry: OrgEntry | null): { org?: string } {
+  return entry ? { org: entry.orgId } : {};
+}
+
+/**
+ * Run the handler inside the org it was admitted for, so everything it calls
+ * — the log context now, the data layer from §107 — reads the same answer the
+ * policy was given. A platform credential (no entry) runs outside any scope,
+ * which at `single` still resolves to the install org for whatever asks.
+ */
+function inTenantScope<T>(entry: OrgEntry | null, fn: () => Promise<T>): Promise<T> {
+  return entry ? runAsOrg(entry.orgId, fn, { source: entry.source, role: entry.role }) : fn();
 }
 
 /**
@@ -1044,6 +1147,7 @@ export function withAdminAuth(
       const apiKey = await resolveApiKey(request as NextRequest);
       let session: AuthSession;
       let principal: AuthorizationPrincipal;
+      let entry: OrgEntry | null;
 
       if (apiKey) {
         // Kept in the guard as a FLOOR, not moved into the policy: it means a
@@ -1057,6 +1161,9 @@ export function withAdminAuth(
           throw new ForbiddenError('Admin scope required');
         }
         session = apiKey.session;
+        // An admin key is a platform credential: no org is entered (§106,
+        // finding 13). `enterApiKeyOrg` answers null for it by the same rule.
+        entry = null;
         principal = principalOf(session, 'api-key', apiKey.scopes);
       } else {
         const requestHeaders = await headers();
@@ -1066,7 +1173,21 @@ export function withAdminAuth(
           throw new UnauthorizedError();
         }
         session = cookieSession;
-        principal = principalOf(session, 'session');
+        const sessionEntry = await enterSessionOrg(
+          { id: session.user.id, role: session.user.role },
+          session.session?.activeOrgId ?? null,
+          await resolvedTenantHeader()
+        );
+        if (isOrgRefusal(sessionEntry)) {
+          refuseOrgEntry(
+            'withAdminAuth',
+            request as NextRequest,
+            principalOf(session, 'session'),
+            sessionEntry
+          );
+        }
+        entry = sessionEntry;
+        principal = principalOf(session, 'session', undefined, entry);
       }
 
       const resource = await resolveResource(
@@ -1082,7 +1203,7 @@ export function withAdminAuth(
       // resolver that named nothing, or a policy that refused — neither of which
       // is a missing scope, and telling an operator debugging safe mode to go
       // and look at their key would send them to the one place that is fine.
-      if (resource === UNRESOLVED || !(await canAdminister(principal, resource))) {
+      if (resource === UNRESOLVED || !(await canAdminister(principal, resource, orgScope(entry)))) {
         // Same reason as the `canRead` refusal above: the guard owns the
         // decision, so it owns the record of refusing.
         logger.warn('authorization: canAdminister refused a request', {
@@ -1095,17 +1216,19 @@ export function withAdminAuth(
         throw new ForbiddenError('Admin access required');
       }
 
-      return await runHandler({
-        guard: 'withAdminAuth',
-        handler,
-        request: request as NextRequest,
-        context: context as RouteContext | undefined,
-        session,
-        principal,
-        ownership: options?.ownership,
-        declaredResource: options?.resource !== undefined,
-        state: ownershipReportState,
-      });
+      return await inTenantScope(entry, () =>
+        runHandler({
+          guard: 'withAdminAuth',
+          handler,
+          request: request as NextRequest,
+          context: context as RouteContext | undefined,
+          session,
+          principal,
+          ownership: options?.ownership,
+          declaredResource: options?.resource !== undefined,
+          state: ownershipReportState,
+        })
+      );
     } catch (error) {
       return handleAPIError(error);
     }

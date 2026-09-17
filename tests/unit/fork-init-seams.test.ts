@@ -81,10 +81,11 @@ function declaredSeams(): string[] {
  * run through `createAppInitGate`; these are called directly by the one core
  * module that needs them — `registerAppDriftProbes` by
  * `scripts/db/check-drift.ts`, `registerAppRateLimits` by the rate-limit
- * middleware, and `registerAppProviderEligibility` by `ensureWired()` in
+ * middleware, `registerAppProviderEligibility` by `ensureWired()` in
  * `lib/orchestration/llm/provider-eligibility.ts` (NOT the agent resolver —
  * the wiring moved there so registration stops depending on who imported
- * what). Different mechanism, identical failure: a scaffold nothing imports is
+ * what), and `registerAppTenantResolver` by `proxy.ts` at module scope (§106).
+ * Different mechanism, identical failure: a scaffold nothing imports is
  * dead wiring, and every fork's registrations silently never run.
  *
  * Only the dead-wiring half is asserted for these — there is no shared gate to
@@ -112,6 +113,9 @@ const FILES = [
   // Root-level, and the only consumer of the boot seam. Omitting it made
   // `initApp` look like dead wiring rather than an exempt one.
   join(process.cwd(), 'instrumentation.ts'),
+  // Root-level, and the only consumer of the tenant-resolver registrar (§106).
+  // The proxy is invisible to a lib/components/app scan the same way.
+  join(process.cwd(), 'proxy.ts'),
 ].filter((f) => !f.startsWith(APP_DIR));
 
 /** Everything `FILES` covers, plus `scripts/` — see the registrar check below. */
@@ -130,7 +134,7 @@ describe('fork init seams', () => {
     // Same exact-count discipline for the registrar family, and for the same
     // reason: a floor one below the real number lets exactly one scaffold drop
     // out of the scan undetected.
-    expect(REGISTRARS.length).toBe(3);
+    expect(REGISTRARS.length).toBe(4);
     expect(FILES.length).toBeGreaterThan(500);
   });
 

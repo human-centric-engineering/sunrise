@@ -122,6 +122,7 @@ covered by the version contract.
   - `lib/app/protected-routes.ts` → `appProtectedRoutes` — extra route prefixes the proxy protects
   - `lib/app/public-nav.ts` → `publicNavItems` / `footerNavItems` / `footerLegalItems` — public nav and footer
   - `lib/app/rate-limit.ts` → `registerAppRateLimits()` — rate-limit registry (`registerRateLimitTier()` / `registerRateLimitRule()` / `registerRateLimitKeyResolver()`)
+  - `lib/app/tenant-resolver.ts` → `registerAppTenantResolver()` — the proxy's tenant resolver (primitive: `registerTenantResolver()` in `lib/tenancy/resolver.ts`; Web-standard only)
   - `lib/app/reserved-tiers.ts` → `occupiedTiers` — which reserved namespace tiers this fork occupies
   - `lib/app/surface.ts` → `classifySurface()` / `DEFAULT_SURFACE` — per-surface theming classifier
   - `lib/app/user-created.ts` → `initAppUserCreatedHooks()` — post-signup hook registry
@@ -130,7 +131,10 @@ covered by the version contract.
   than trusting it.** The guard cannot derive this half, and a short list here
   is the same broken promise #732 was about:
   - erasure-hook registry (`lib/privacy/erasure-hooks.ts`)
-  - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`)
+  - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`, and the tenant context
+    `lib/tenancy/context.ts` — `getTenantContext` / `requireTenantContext` /
+    `runAsOrg` / `runAsSystem` / `forEachOrg` — plus the `x-sunrise-org`
+    request-header contract between `proxy.ts` and the guards)
   - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
   - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold; the default returns `BRAND.name` as a bare string, so a fork replaces markup rather than filling a blank)
   - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)

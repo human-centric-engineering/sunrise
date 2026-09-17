@@ -25,6 +25,7 @@ import { nanoid } from 'nanoid';
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { VISITOR_HEADER_NAME } from '@/lib/logging/visitor-id';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 /**
  * Generate a unique request ID
@@ -97,6 +98,7 @@ export async function getVisitorId(): Promise<string | undefined> {
 export async function getRequestContext(request?: Request): Promise<{
   requestId: string;
   visitorId?: string;
+  orgId?: string;
   method?: string;
   url?: string;
   userAgent?: string;
@@ -110,6 +112,11 @@ export async function getRequestContext(request?: Request): Promise<{
     // signed cookie (see lib/logging/visitor-id.ts). Present for anonymous
     // and authenticated callers alike; absent when tracking is disabled.
     visitorId: headersList.get(VISITOR_HEADER_NAME) || undefined,
+    // The org this request acts for (§106), read from the tenant context the
+    // guard entered — so scoping a breach to an org is a lookup on the logs,
+    // not a reconstruction. Absent outside a guarded request and for a
+    // platform credential.
+    orgId: getTenantContext()?.orgId ?? undefined,
     method: request?.method,
     url: request?.url,
     userAgent: headersList.get('user-agent') || undefined,
@@ -174,6 +181,7 @@ export async function getUserContext(): Promise<{
 export async function getFullContext(request?: Request): Promise<{
   requestId: string;
   visitorId?: string;
+  orgId?: string;
   method?: string;
   url?: string;
   userAgent?: string;

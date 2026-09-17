@@ -15,8 +15,15 @@ import { setSecurityHeaders } from '@/lib/security/headers';
 import { applyRateLimit } from '@/lib/security/rate-limit-middleware';
 import { classifySurface } from '@/lib/app/surface';
 import { appProtectedRoutes } from '@/lib/app/protected-routes';
+import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
+import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
+
+// The fork's tenant resolver, registered once at module load — the
+// `registerAppRateLimits` shape. Ships empty; a throw here aborts the proxy
+// bundle, which is the right outcome for a scaffold that cannot register.
+registerAppTenantResolver();
 
 /**
  * Next.js Proxy
@@ -288,6 +295,20 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
     requestHeaders.set(VISITOR_HEADER_NAME, visitorId);
   } else {
     requestHeaders.delete(VISITOR_HEADER_NAME);
+  }
+
+  // The org a fork's tenant resolver names for this request (§106) — the
+  // same sole-writer shape as the visitor id, and the `else` is the security
+  // property: with no resolver, or a resolver that answers nothing, any
+  // inbound copy is stripped so a client cannot pick its org by header. The
+  // guard trusts this header for WHICH org only because of that, and still
+  // verifies membership. Sunrise ships no resolver; the header is absent on
+  // every request until a fork registers one in lib/app/tenant-resolver.ts.
+  const tenantOrgId = resolveTenantFromRequest(request);
+  if (tenantOrgId) {
+    requestHeaders.set(TENANT_HEADER_NAME, tenantOrgId);
+  } else {
+    requestHeaders.delete(TENANT_HEADER_NAME);
   }
 
   const response = NextResponse.next({

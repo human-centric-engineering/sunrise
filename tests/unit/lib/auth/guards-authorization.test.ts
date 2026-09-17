@@ -54,6 +54,14 @@ import {
   type ReadTarget,
 } from '@/lib/auth/authorization';
 import { UNATTRIBUTED_READ_KINDS, type UnattributedReads } from '@/lib/auth/orphan-reads';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+
+// The org facts the guard adds to every principal at `single` (§106): the
+// install org, with the platform role projected onto it — no membership read.
+// Asserted here because "what the policy is told" is the point of these tests.
+const INSTALL_MEMBER = { orgId: INSTALL_ORG_ID, orgRole: DEFAULT_ORG_ROLE } as const;
+const INSTALL_OWNER = { orgId: INSTALL_ORG_ID, orgRole: ORG_OWNER_ROLE } as const;
 
 /**
  * Most fixtures in this file wrap a stub handler to test *authentication*, and a
@@ -168,7 +176,13 @@ describe('withAuth asks the policy about the subject', () => {
     expect(response.status).toBe(200);
     expect(routeReads(read)).toEqual([
       {
-        viewer: { userId: 'user_1', role: 'USER', credential: 'session', scopes: undefined },
+        viewer: {
+          userId: 'user_1',
+          role: 'USER',
+          credential: 'session',
+          scopes: undefined,
+          ...INSTALL_MEMBER,
+        },
         target: { kind: 'nothing' },
       },
     ]);
@@ -341,6 +355,9 @@ describe('withAuth asks the policy about the subject', () => {
       role: 'USER',
       credential: 'api-key',
       scopes: ['chat'],
+      // A non-admin key with no org bound (the pre-t-673 state) enters the
+      // install org at `single`, as its owner would.
+      ...INSTALL_MEMBER,
     });
   });
 });
@@ -356,9 +373,17 @@ describe('withAdminAuth asks the policy whether to admit', () => {
     expect(response.status).toBe(200);
     expect(administered).toEqual([
       {
-        viewer: { userId: 'admin_1', role: 'ADMIN', credential: 'session', scopes: undefined },
+        viewer: {
+          userId: 'admin_1',
+          role: 'ADMIN',
+          credential: 'session',
+          scopes: undefined,
+          ...INSTALL_OWNER,
+        },
         resource: null,
-        scope: {},
+        // The entered org rides on the scope too (§106), for a policy that
+        // prefers to read it there; the principal carries the same id.
+        scope: { org: INSTALL_ORG_ID },
       },
     ]);
   });
@@ -492,6 +517,7 @@ describe('the handler receives the principal the guard actually decided with', (
       role: 'ADMIN',
       credential: 'session',
       scopes: undefined,
+      ...INSTALL_OWNER,
     });
     // Identity, not just equality: one object, so there is nothing to drift.
     expect(seen).toBe(read[0]?.viewer);

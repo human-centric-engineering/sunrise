@@ -129,11 +129,20 @@
  *    who has no account here, has. Likewise a scheduled run paused at a
  *    `human_approval` gate is found in the queue only by a principal admitted
  *    to ownerless executions; refuse everyone and the gate waits for the 7-day
- *    reap. Keep a principal your policy admits to each kind — a vendor-level
- *    operator, until the identity work defines the role — and prove it with
+ *    reap. Keep a principal your policy admits to each kind — platform staff,
+ *    under Sunrise's default — and prove it with
  *    `checkOwnerlessReachability(yourPolicy, principals)` from
  *    `lib/auth/orphan-reads.ts`, run beside the parity check over the same
  *    roster. It fails naming the kind nobody reaches and what that closes.
+ *    **The org facts are on the principal** (§106): `viewer.orgId` and
+ *    `viewer.orgRole` (`OWNER` / `ADMIN` / `MEMBER`, `lib/tenancy/roles.ts`)
+ *    are filled by the guard for the org the request entered — never read
+ *    them from the tenant context. Sunrise's default already lets an org
+ *    OWNER/ADMIN administer, and read the ownerless `this-row` of, a resource
+ *    carrying their org (`resource.orgId === viewer.orgId`); the capability
+ *    question stays platform-only until the data layer scopes those reads by
+ *    org. The `scope.org` argument carries the same org id for a policy that
+ *    prefers to read it there.
  *  - **A resolver that returns `null`, or throws, denies the request** before
  *    your policy is consulted — it is not a state you can widen, and it never
  *    reaches `canRead`. `'nothing'` means the route declared no resolver at

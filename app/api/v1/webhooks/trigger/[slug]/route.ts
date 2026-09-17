@@ -23,6 +23,8 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { apiKeyChatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { resolveApiKey, hasScope } from '@/lib/auth/api-keys';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { enterApiKeyOrg, isOrgRefusal } from '@/lib/tenancy/entry';
 import { slugSchema } from '@/lib/validations/common';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
@@ -58,6 +60,36 @@ export async function POST(
   );
   if (!keyLimit.success) return createRateLimitResponse(keyLimit);
 
+  // This route authenticates itself rather than through `withAuth`, so it
+  // enters the key's org itself (§106) — the same rule the guards apply, from
+  // the same module. An admin key enters none; a refusal names nothing.
+  const entry = await enterApiKeyOrg({
+    userId: resolved.session.user.id,
+    scopes: resolved.scopes,
+    orgId: resolved.orgId ?? null,
+    owner: { role: resolved.session.user.role, accountType: resolved.ownerAccountType ?? null },
+  });
+  if (entry && isOrgRefusal(entry)) {
+    logger.warn('tenancy: refused to enter an org for a webhook trigger', {
+      userId: resolved.session.user.id,
+      refused: entry.refused,
+    });
+    return errorResponse('Access denied', { code: 'FORBIDDEN', status: 403 });
+  }
+
+  const trigger = () => triggerWorkflow(request, params, resolved.session.user.id, clientIP);
+  return entry
+    ? runAsOrg(entry.orgId, trigger, { source: entry.source, role: entry.role })
+    : trigger();
+}
+
+/** The trigger itself, run inside the key's org scope. */
+async function triggerWorkflow(
+  request: NextRequest,
+  params: Promise<{ slug: string }>,
+  userId: string,
+  clientIP: string
+): Promise<Response> {
   const { slug } = await params;
 
   if (!triggerSlugSchema.safeParse(slug).success) {
@@ -116,7 +148,7 @@ export async function POST(
         status: 'pending',
         inputData,
         executionTrace: [],
-        userId: resolved.session.user.id,
+        userId,
         ...(effectiveBudgetLimitUsd !== undefined
           ? { budgetLimitUsd: effectiveBudgetLimitUsd }
           : {}),

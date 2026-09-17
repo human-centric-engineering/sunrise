@@ -70,6 +70,8 @@ export interface LogContext {
   requestId?: string;
   /** Durable anonymous visitor ID (correlates a visitor's journey across requests) */
   visitorId?: string;
+  /** The org the request acts for (§106) — from the tenant context the guard entered */
+  orgId?: string;
   /** User ID who triggered this log */
   userId?: string;
   /** Session ID for request correlation */
