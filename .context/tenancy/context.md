@@ -150,7 +150,11 @@ else requestHeaders.delete('x-sunrise-org'); // strip any inbound copy
 
 The proxy is the header's **sole writer**, so a client cannot pick its org by
 header; the guard trusts it for _which_ org only because of that, and still
-verifies membership. A resolver that throws answers `null` (the proxy strips
+verifies membership. The second half is load-bearing on its own: the proxy's
+matcher skips paths ending in an image extension (`/api/v1/users/x.png`
+reaches a guard unproxied), and there the header arrives unstripped — which
+lets a caller enter only an org they are already a member of, exactly what
+the switch lets them do. A resolver picks; membership admits. A resolver that throws answers `null` (the proxy strips
 the header rather than 500-ing the site). **Web-standard only**: the resolver
 runs in the proxy, so `Request`, `URL`, `Headers` and nothing that needs Node
 or Prisma — answer from what you can verify without I/O (the hostname, a
