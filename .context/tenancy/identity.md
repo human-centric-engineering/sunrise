@@ -119,6 +119,15 @@ needs. Do not tidy it into the seam.
 | A real platform admin (`role = ADMIN`, `accountType = HUMAN`) | `OWNER`          |
 | Anyone else — including the seeded SERVICE config-owner       | `MEMBER`         |
 
+**Known gap until §106 t-670:** the password accept-invite route
+(`app/api/auth/accept-invite/route.ts`) applies the invitation's platform role
+_after_ `signUpEmail` returns, so the hook sees `role: USER` and an invited
+platform ADMIN lands as `MEMBER`. An under-grant with no effect at `single`
+(nothing reads the org role yet); t-670 rewrites that route and fixes it.
+`smoke:tenancy`'s "every real platform admin is an OWNER" check will say so on
+a database where an admin was invited after this migration — that is the smoke
+telling the truth, not a broken smoke.
+
 Why this rule and not "everyone is MEMBER" or "every ADMIN is OWNER": the
 byte-identical promise (principle 2). Nobody gains an org-level grant they did
 not already hold as platform admin, so when the authorization policy learns to
