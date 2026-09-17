@@ -63,16 +63,11 @@ export function initialMembershipFor(user: {
  * for why a throw would be worse), the seed lets it fail the seed.
  *
  * `db` defaults to the shared client; a seed passes the runner's own so the
- * write lands on the same connection as the user it just upserted.
- *
- * **Fork note — better-auth's `transaction` option.** Sunrise passes no
- * `transaction` to `prismaAdapter`, so its hooks run "as-is" and the user row
- * this writes against is visible on the shared client. A fork that enables
- * `prismaAdapter(prisma, { transaction: true })` gets a real interactive
- * transaction: the user row is not yet visible on the singleton's connection,
- * this upsert fails `org_membership_userId_fkey` on every signup, and every
- * signup logs the error above. Such a fork should pass the transaction's
- * client through the hook (better-auth's `getCurrentAdapter()`) as `db`.
+ * write lands on the same connection as the user it just upserted. The signup
+ * hook needs no such care: better-auth runs `create.after` hooks after its
+ * transaction has committed, in both its default "as-is" mode and with
+ * `prismaAdapter(prisma, { transaction: true })`, so the user row is visible
+ * on the shared client either way.
  */
 export async function ensureMembership(
   userId: string,

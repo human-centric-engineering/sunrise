@@ -104,24 +104,18 @@ no-op rather than a failed deploy.
 **Later rows — the hook.** `userCreateAfterHook` (`lib/auth/config.ts`)
 calls `ensureMembership(user.id, initialMembershipFor(user))` first. Like
 every other step in that hook it is **non-blocking** — a failure is logged at
-`error` and the signup completes. That was reversed from "blocking" in
-review, and the reason is worth keeping: the hook runs inside better-auth's
-`createUser`, _before_ the credential account is linked, so a throw would
-leave a user row nobody can sign in as, with no path that ever re-runs the
-hook — and forgot-password would later mint the credential and sign them in
-memberless regardless. The invariant is restored on the session path instead:
-t-670's `session.create.before` hook re-runs `ensureMembership` for a user
-with no membership, and t-671's guard resolves a null membership to the
-install org at `single` (and refuses at `multi`). It is deliberately **not** a
-`registerUserCreatedHook` contributor: that registry is the fork's seam and
-runs last; this is a core invariant and runs first.
-
-**Fork note.** Sunrise passes no `transaction` option to `prismaAdapter`, so
-the hook's write sees the user row. A fork enabling `transaction: true` gets
-an interactive transaction the shared client cannot see into, and this upsert
-fails its FK on every signup — pass the transaction's client through as
-`ensureMembership`'s `db` argument (see the docblock in
-`lib/tenancy/membership.ts`).
+`error` and the signup completes. The reason, verified against better-auth
+1.7.4 after two review rounds disagreed about it: `create.after` hooks are
+queued and run only after the sign-up's transaction has resolved, so the
+user, the account and (for email sign-up) the session are already committed
+when this runs. A throw would not prevent a memberless user; it would only
+turn a usable signup into a 500 the person cannot act on. The invariant is
+restored on the session path instead: t-670's `session.create.before` hook
+re-runs `ensureMembership` for a user with no membership, and t-671's guard
+resolves a null membership to the install org at `single` (and refuses at
+`multi`). It is deliberately **not** a `registerUserCreatedHook` contributor:
+that registry is the fork's seam and runs last; this is a core invariant and
+runs first.
 
 **The seeded config-owner — the seed.** `prisma/seeds/001-system-owner.ts`
 upserts the SERVICE owner with Prisma directly, bypassing the hook, and on a
@@ -168,8 +162,14 @@ in; making it an org OWNER would be a grant nothing today confers.
 The four long-lived credential models — `AiApiKey`, `AiAgentEmbedToken`,
 `AiAgentInviteToken`, `McpApiKey` — gained a nullable `orgId` (one column,
 one index, `onDelete: Cascade` on the org) in the same migration, backfilled
-to the install org. Nothing writes it at mint yet; t-673 does. **One
-exception in the backfill:** an `admin`-scoped API key keeps `orgId = NULL`.
+to the install org. Nothing writes it at mint yet; t-673 does — so **every
+credential minted between this release and t-673 carries `orgId = NULL`**,
+which the rule below would otherwise read as "platform credential". That is
+why the read rule (feature finding 13) keys on the `admin` scope, not on
+`NULL` alone: a non-admin key with a null org is the install org at `single`
+and refused at `multi`. t-673 re-runs the backfill's `UPDATE`s (idempotent by
+their `WHERE`) when it starts writing the column, so `multi` never meets an
+interim key. **One exception in the backfill:** an `admin`-scoped API key keeps `orgId = NULL`.
 The feature's rule is that `admin` means a _platform_ credential with no org
 context, and an org-bound admin key is a state t-673 forbids at mint —
 binding the existing ones would have created it. `smoke:tenancy` proves the

@@ -300,15 +300,16 @@ export async function userCreateAfterHook(
   const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
 
   // Every user belongs to an org (tenancy design, principle 1). First, and
-  // non-blocking like everything else here — deliberately, after a round of
-  // review reversed the opposite ruling. This hook runs inside better-auth's
-  // `createUser`, BEFORE `linkAccount` mints the credential account
-  // (sign-up.mjs) and before the OAuth account is written; a throw here would
-  // leave a user row with no way to sign in and no path that ever re-runs
-  // this hook, while forgot-password would later hand them a credential and
-  // sign them in memberless anyway. So a failure is logged at `error` — the
+  // non-blocking like everything else here — deliberately. better-auth queues
+  // `create.after` hooks and runs them only after the sign-up's transaction
+  // has resolved (`@better-auth/core` `runWithTransaction`), so by the time
+  // this runs the user, the credential/OAuth account and — for email sign-up
+  // — the session are all committed. A throw here would therefore not
+  // protect anything: it would turn a fully usable signup into a 500 the
+  // person cannot act on (retrying says the address is taken), and the user
+  // would still be memberless. So a failure is logged at `error` — the
   // operator's signal — and the signup completes. The invariant is restored
-  // by the session path: §106 t-670's `session.create.before` hook re-runs
+  // on the session path: §106 t-670's `session.create.before` hook re-runs
   // `ensureMembership` for a user with no membership, and at `single` the
   // guard resolves a null membership to the install org (t-671); at `multi`
   // the guard refuses until a membership exists.

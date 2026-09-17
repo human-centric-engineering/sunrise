@@ -994,10 +994,11 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       });
 
       it('logs at error and lets the signup complete when the membership write fails', async () => {
-        // Deliberately non-blocking: this hook runs before better-auth links the
-        // credential account, so a throw would strand a user who can never sign
-        // in — see the comment in config.ts. The failure is the operator's
-        // signal (error log), and the session path self-heals the membership.
+        // Deliberately non-blocking: better-auth runs this hook after the
+        // sign-up transaction has committed, so a throw could not prevent the
+        // memberless state — it would only 500 a usable signup. See the comment
+        // in config.ts. The failure is the operator's signal (error log), and
+        // the session path self-heals the membership.
         const mockUser = makeUserCreateData({ id: 'memberless', email: 'ml@example.com' });
         const dbDown = new Error('connection refused');
         mocks.prisma.orgMembership.upsert.mockRejectedValue(dbDown);
