@@ -31,14 +31,16 @@ release process.
   everyone else (the SERVICE config-owner included) as `MEMBER` — and adds a
   nullable, backfilled `orgId` to `AiApiKey`, `AiAgentEmbedToken`,
   `AiAgentInviteToken` and `McpApiKey` (an `admin`-scoped API key stays
-  `NULL`: it is a platform credential) plus an unread `Session.activeOrgId`.
+  `NULL`: it is a platform credential) plus `Session.activeOrgId`, wired by
+  the next bullet.
   `userCreateAfterHook` gives every later user a membership (non-blocking,
   logged at error on failure; the session path self-heals it in t-670), and
   the `001-system-owner` seed gives the config-owner one on a fresh install.
   `OrgMembership` is an `export` source and `Org` an `attribution` source in
   `SUBJECT_DATA_SOURCES`; `npm run smoke:tenancy` proves the invariant against
   a real database. Behaviour at `TENANCY_MODE=single` is unchanged: no
-  request path reads the new rows yet (only the Art. 15 export does). Fork note: the role-literal guard
+  request path reads the new rows for an authorization decision (the session
+  reads them to choose its org; the Art. 15 export reads them). Fork note: the role-literal guard
   (`tests/unit/auth-role-literals.test.ts`) now also polices `'OWNER'` /
   `'MEMBER'` outside `lib/tenancy/roles.ts`; the org-role enum is closed —
   product tiers belong beneath the org, on your side of the FK. Guide:

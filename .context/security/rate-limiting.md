@@ -319,13 +319,14 @@ export function registerAppRateLimits(): void {
   //    a real cap; a mintable bucket is no cap at all.
   //
   //    This mirrors the built-in 'session-user' strategy, which resolves the
-  //    session rather than trusting a header. It assumes your fork has put
-  //    the org on the session (one of the sanctioned core edits in the
-  //    tenancy retrofit); resolvers run on the hot path, so prefer a signed
-  //    cookie or token you can verify without I/O where you have one.
+  //    session rather than trusting a header. The org is on the session
+  //    already (`session.session.activeOrgId`, §106 — chosen at sign-in,
+  //    changed by POST /api/v1/orgs/switch); resolvers run on the hot path,
+  //    so prefer a signed cookie or token you can verify without I/O where
+  //    you have one.
   registerRateLimitKeyResolver('org', async (request) => {
     const session = await auth.api.getSession({ headers: request.headers });
-    const orgId = session?.user?.activeOrgId;
+    const orgId = session?.session?.activeOrgId;
     return orgId ? `org:${orgId}` : null;
   });
 
