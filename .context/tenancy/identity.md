@@ -42,7 +42,7 @@ const orgId = env.TENANCY_MODE === 'multi' ? session.activeOrgId : null;
 
 ```typescript
 // ✅ One org always exists. At `single` it is the install org, and the
-//    guard (§106 t-671) resolves "none chosen" to it.
+//    guard resolves "none chosen" to it (see context.md).
 const orgId = session.activeOrgId ?? INSTALL_ORG_ID;
 ```
 
@@ -119,8 +119,8 @@ committed when this runs. A throw would not prevent a memberless user; it
 would only turn a usable signup into a 500 the person cannot act on. The
 invariant is restored on the session path instead: `sessionCreateBeforeHook`
 writes the install-org default for a user with no membership (below), and
-t-671's guard resolves a null membership to the install org at `single` (and
-refuses at `multi`). It is deliberately **not** a `registerUserCreatedHook`
+the guard resolves a null membership to the install org at `single` and
+refuses at `multi` ([context.md](./context.md)). It is deliberately **not** a `registerUserCreatedHook`
 contributor: that registry is the fork's seam and runs last; this is a core
 invariant and runs first.
 
@@ -164,8 +164,11 @@ t-669 found and t-670 closed).
 A platform-role change afterwards — the admin `users/[id]` PATCH promoting a
 USER to ADMIN, or demoting an ADMIN — does not touch the install-org
 membership, so a demoted admin keeps `OWNER` and a promoted user stays
-`MEMBER`. Harmless at `single` today (nothing reads the org role), but the
-demote case becomes an over-grant the moment t-671's policy reads it, and
+`MEMBER`. Harmless at `single` today — the guard projects the install-org
+role from the platform role rather than reading the row, so a drifted row is
+not what the policy sees there ([context.md](./context.md)) — but the demote
+case becomes an over-grant the moment a row IS read (any non-install org,
+`multi`), and
 whether the install-org role should _follow_ the platform role or be managed
 independently through the members API is a ruling t-672 has to make before it
 ships. `smoke:tenancy` deliberately does not assert "every ADMIN is an OWNER"
@@ -173,9 +176,9 @@ for this reason.
 
 Why this rule and not "everyone is MEMBER" or "every ADMIN is OWNER": the
 byte-identical promise (principle 2). Nobody gains an org-level grant they did
-not already hold as platform admin, so when the authorization policy learns to
-read org roles (t-671) a single-tenant install answers every question exactly
-as it did before. The SERVICE account holds platform `ADMIN` but never logs
+not already hold as platform admin, so now that the authorization policy reads
+org roles a single-tenant install answers every question exactly as it did
+before (swept, not asserted: `authorization-org.test.ts`). The SERVICE account holds platform `ADMIN` but never logs
 in; making it an org OWNER would be a grant nothing today confers.
 
 ## Invitations: which org a new user joins
@@ -205,14 +208,18 @@ as `canAdminister(principal, { kind: 'org', id, orgId })` after the body is
 parsed (the org is in the body, so it cannot be a guard-level `resource`
 resolver). Under Sunrise's default policy that answers exactly what
 `withAdminAuth` already answered — platform admins only — so nothing widens
-today; t-671 is what teaches the policy to say yes to an org's own
-OWNER/ADMIN. The named org must exist and be `ACTIVE` _when the invitation
+today. The policy's org arm says yes to an org's own OWNER/ADMIN only for a
+resource that carries that org ([authorization.md](../auth/authorization.md#the-org-input));
+this route asks about the org itself, so the arm applies once `withAdminAuth`
+admits an org admin — the control-plane split t-672 decides route by route.
+The named org must exist and be `ACTIVE` _when the invitation
 is written_; a missing and a suspended org get the same 400, so the endpoint
 leaks nothing about orgs the caller may not administer. Acceptance does not
 re-check: an invitation into an org suspended during its 7-day window still
 creates the membership, and the member is then refused at entry like every
 other member of that org — suspension is enforced where a request enters an
-org (the guard, t-671; the switch), never by withholding memberships. A
+org (the guard — [context.md](./context.md) — and the switch), never by
+withholding memberships. A
 resend (`?resend=true`) re-sends _this_ invitation: the pending `orgId` /
 `orgRole` carry over unless the body sends either key (then the body's pair
 replaces both) — the admin table's Resend button posts only name, email and
@@ -239,7 +246,7 @@ verification, password reset). In order:
 
 Non-blocking: a fault choosing the org mints the session with `null`, which
 the guard treats as the install org at `single` and refuses at `multi`
-(t-671).
+([context.md](./context.md)).
 
 **Switching — `POST /api/v1/orgs/switch` `{ orgId }`.** Verifies an active
 membership (a non-member gets the same 403 whether the org exists or not; a
@@ -344,11 +351,13 @@ merge-impact section promises forks.
 
 ## Related
 
+- [Tenant context](./context.md) — how a request enters the org it acts
+  for, and what reads it
 - [Multi-tenancy design record](../architecture/multi-tenancy-design.md) —
   the decisions and principles this page applies
 - [Multi-tenancy playbook](../architecture/multi-tenancy.md) — the RLS
   retrofit the later features perform
-- [Authorization](../auth/authorization.md) — the policy that will read the
-  org role (t-671)
+- [Authorization](../auth/authorization.md) — the policy that reads the org
+  role
 - [Data erasure](../privacy/data-erasure.md) · [Subject access](../privacy/data-export.md)
   — the dispositions `OrgMembership` and `Org` carry

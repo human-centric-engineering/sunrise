@@ -72,6 +72,52 @@ release process.
   Behaviour at `TENANCY_MODE=single` is unchanged: with one org and no
   invitation metadata every session flow writes the same rows plus one
   populated column, and every pending invitation round-trips as before.
+- **A request knows which org it is acting for, and the admin decision can
+  read it** (multi-tenancy §106, third task — the gating PR for the phase).
+  Three additions to the public surface:
+  - **The tenant context** — `lib/tenancy/context.ts`: `getTenantContext()`,
+    `requireTenantContext()` (throws at `multi` when nothing entered a
+    context; answers the install org, marked `implicit`, at `single`),
+    `runAsOrg(orgId, fn)`, `runAsSystem(reason, fn)` (logged) and
+    `forEachOrg(fn)` (one scope per active org, sequential; uncalled in core
+    until §108). Both guards enter it for every request they admit — from
+    `session.activeOrgId`, the API key's org, or the resolver header below —
+    verifying membership and org status wherever a non-install org is named
+    (a refusal is a 403 that names nothing), and run the handler inside it.
+    The guard-less webhook trigger enters its key's org the same way. An
+    `admin`-scoped key is a platform credential and enters none.
+    `getRequestContext()` / `getFullContext()` now carry `orgId` (a new
+    `LogContext` field) inside a scope.
+  - **A new fork seam**, `lib/app/tenant-resolver.ts` →
+    `registerAppTenantResolver()`, wired by `proxy.ts` at module scope, and a
+    new request-header contract: the proxy writes `x-sunrise-org` from the
+    fork's resolver (`registerTenantResolver()` in `lib/tenancy/resolver.ts`,
+    Web-standard only) and **strips any inbound copy** when there is no
+    answer — the proxy is the header's sole writer, the visitor-id shape.
+    Ships empty; `defaults.test.ts` and `fork-init-seams.test.ts` (registrar
+    count 3→4, `proxy.ts` a consumer) enforce it.
+  - **The policy reads the org.** `AuthorizationPrincipal` gains `orgId?` /
+    `orgRole?` (filled by the guard — told, not sniffed) and the guards pass
+    `{ org }` as `scope`. `DEFAULT_AUTHORIZATION_POLICY.canAdminister` grants
+    an org `OWNER`/`ADMIN` a resource that carries **their** org, and
+    `canRead`'s `'unattributed'` arm admits them to the `this-row` of one —
+    answered before the once-per-kind diagnostic. A `null` resource, or one
+    without an `orgId`, still grants nothing (platform-ops surfaces stay
+    platform-only); the capability question stays platform-only until §107
+    scopes ownerless reads by org. `resolveApiKey()` returns the key's
+    `orgId` and `ownerAccountType` (optional in the type — a test double
+    built before the org axis still compiles).
+
+  Behaviour at `TENANCY_MODE=single` is unchanged, by construction and by
+  sweep: the install org is entered with **no membership read** (its role is
+  the platform role projected by the same rule the migration and the signup
+  hook apply), no core resolver names an org-carrying resource so the org arm
+  cannot fire on any existing route, and `authorization-org.test.ts` asserts
+  every principal × every question a core route can ask answers identically
+  with and without org facts, on both policies. Fork note: a policy that
+  compares `resource.orgId === viewer.orgId` must guard the resource side —
+  both `undefined` compares equal. Guide:
+  [`.context/tenancy/context.md`](./.context/tenancy/context.md).
 
 ## [0.12.1] — 2026-09-17
 

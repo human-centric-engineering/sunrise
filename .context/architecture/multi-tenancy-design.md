@@ -100,15 +100,20 @@ sync conflict is a "keep both", not a re-read.
 
 > **Partly target state.** Of the tenancy pieces named in this section,
 > `lib/auth/authorization.ts`, `lib/auth/roles.ts` and `lib/app/authorization.ts`
-> shipped with §105 (0.12.0), and `prisma/schema/tenancy.prisma` with its
-> identity migration, `lib/tenancy/{roles,constants,membership}.ts` shipped
-> with §106 t-669 ([`.context/tenancy/identity.md`](../tenancy/identity.md)).
-> `lib/tenancy/context.ts`, `lib/app/tenant-resolver.ts` and
-> `db:tenancy:enable` do not exist yet; they are the agreed shape the
-> remaining Hub features build toward. The chokepoints they attach to
-> (`proxy.ts`, `lib/auth/guards.ts`, `lib/db/client.ts`, the maintenance
-> tick) all exist today. A tenancy path here becomes a real reference only
-> when its feature ships.
+> shipped with §105 (0.12.0); `prisma/schema/tenancy.prisma` with its
+> identity migration and `lib/tenancy/{roles,constants,membership}.ts` shipped
+> with §106 t-669 ([`.context/tenancy/identity.md`](../tenancy/identity.md));
+> `Session.activeOrgId`, the switch and org-aware invitations with t-670;
+> `lib/tenancy/context.ts`, `lib/tenancy/entry.ts`, `lib/app/tenant-resolver.ts`
+> (+ `lib/tenancy/resolver.ts`), the `x-sunrise-org` header, the guards
+> entering the org and the default policy's org arm with t-671
+> ([`.context/tenancy/context.md`](../tenancy/context.md)). Of this
+> section's request path, everything down to and including the policy
+> exists; the `lib/db/client.ts` `$extends`, the RLS policies and
+> `db:tenancy:enable` (§107) and the tick's `forEachOrg` wiring (§108) do not
+> yet — `forEachOrg` itself ships, uncalled. At `TENANCY_MODE=single` the
+> same components run with the install org as the only answer, as the
+> diagram says.
 
 Request path at `multi` — at `single` the same components run with the install
 org as the only answer:
