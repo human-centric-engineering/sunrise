@@ -12,14 +12,26 @@ import { validateEmailConfig } from '@/lib/email/client';
 import { resolveEmailTemplate } from '@/lib/email/registry';
 import { logger } from '@/lib/logging';
 import { dispatchUserCreated } from '@/lib/auth/user-created-hooks';
-import { ensureMembership, initialMembershipFor } from '@/lib/tenancy/membership';
+import {
+  activeOrgForSession,
+  ensureMembership,
+  initialMembershipFor,
+  membershipForNewUser,
+  type AcceptedInvitation,
+} from '@/lib/tenancy/membership';
+import { getPendingSignup, setPendingSignup } from '@/lib/auth/pending-signup';
 import {
   validateInvitationToken,
   deleteInvitationToken,
   getValidInvitation,
 } from '@/lib/utils/invitation-token';
 import { DEFAULT_USER_PREFERENCES } from '@/lib/validations/user';
-import { isInviteOnly, isInvitedSignup, isFirstHumanBootstrap } from '@/lib/auth/signup-mode';
+import {
+  isInviteOnly,
+  isInvitedSignup,
+  invitedSignupInvitation,
+  isFirstHumanBootstrap,
+} from '@/lib/auth/signup-mode';
 import { parseEmailChangeToken, getVerificationTokenFromRequest } from '@/lib/auth/change-email';
 import { revokeUserSessions, findMostRecentSessionToken } from '@/lib/auth/sessions';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
@@ -70,6 +82,44 @@ export type UserCreateData = {
  * outside a request context; optional `path` identifies OAuth callbacks.
  */
 export type DatabaseHookContext = { path?: string } | null;
+
+/**
+ * Session shape passed to `databaseHooks.session.create.before` by better-auth
+ * — the row it is about to insert, additional fields included.
+ */
+export type SessionCreateData = {
+  id?: string;
+  userId: string;
+  token: string;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  activeOrgId?: string | null;
+} & Record<string, unknown>;
+
+/**
+ * Record the membership this signup will write, so the session hook (which
+ * may run first — see `lib/auth/pending-signup.ts`) and the after hook agree
+ * on it. `user` is the row as it will be created, `invitation` what admitted
+ * it. Non-blocking: a failure here is logged and the after hook falls back to
+ * the install-org default, which is the pre-§106-t-670 behaviour.
+ */
+async function recordPendingMembership(
+  user: UserCreateData,
+  invitation: AcceptedInvitation | null
+): Promise<void> {
+  try {
+    const membership = await membershipForNewUser(user, invitation);
+    await setPendingSignup({ membership });
+  } catch (error) {
+    logger.error('Failed to decide the org membership for a new user', error, {
+      email: user.email,
+      invitedOrgId: invitation?.orgId ?? null,
+    });
+  }
+}
 
 /**
  * Validate OAuth invitation email match BEFORE user creation.
@@ -153,7 +203,11 @@ export async function userCreateBeforeHook(
               role: invitedRole,
             });
 
-            return { data: { ...user, role: invitedRole } };
+            // The row this hook consumed is the only copy of the org the
+            // invitation named; hand it to the hooks that follow now.
+            const invited = { ...user, role: invitedRole };
+            await recordPendingMembership(invited, invitation.metadata);
+            return { data: invited };
           }
         }
       }
@@ -242,7 +296,9 @@ export async function userCreateBeforeHook(
         logger.info('First user on a fresh database — assigning ADMIN role', {
           email: user.email,
         });
-        return { data: { ...user, role: PLATFORM_ADMIN_ROLE } };
+        const promoted = { ...user, role: PLATFORM_ADMIN_ROLE };
+        await recordPendingMembership(promoted, null);
+        return { data: promoted };
       }
 
       // Humans already exist but the marker is missing — an upgraded database,
@@ -262,6 +318,12 @@ export async function userCreateBeforeHook(
     });
   }
 
+  // Every other path lands here: a public signup (no invitation), or the
+  // password accept-invite route, whose invitation arrives through
+  // `runInvitedSignup`. That route applies the invitation's platform role to
+  // the row only after `signUpEmail` returns, which is why the membership is
+  // decided from the invitation rather than from `user.role` here.
+  await recordPendingMembership(user, invitedSignupInvitation());
   return { data: user };
 }
 
@@ -309,15 +371,22 @@ export async function userCreateAfterHook(
   // person cannot act on (retrying says the address is taken), and the user
   // would still be memberless. So a failure is logged at `error` — the
   // operator's signal — and the signup completes. The invariant is restored
-  // on the session path: §106 t-670's `session.create.before` hook re-runs
-  // `ensureMembership` for a user with no membership, and at `single` the
+  // on the session path: `sessionCreateBeforeHook` below writes the
+  // install-org default for a user with no membership, and at `single` the
   // guard resolves a null membership to the install org (t-671); at `multi`
   // the guard refuses until a membership exists.
+  //
+  // WHICH membership was decided by the before hook (`recordPendingMembership`)
+  // — it is the one place that knows the role and the org an invitation
+  // grants for both the OAuth and the password path — and carried here on the
+  // request state. The fallback is the install-org rule on the row as created,
+  // which is what every path wrote before invitations could name an org.
   //
   // Inline rather than a `registerUserCreatedHook` contributor: that registry
   // is the fork's seam and runs last; this is a core invariant that goes first.
   try {
-    await ensureMembership(user.id, initialMembershipFor(user));
+    const pending = await getPendingSignup();
+    await ensureMembership(user.id, pending?.membership ?? initialMembershipFor(user));
   } catch (membershipError) {
     logger.error('Failed to create org membership for new user', membershipError, {
       userId: user.id,
@@ -724,6 +793,55 @@ export async function signupModeBeforeHook(ctx: { path?: string }): Promise<void
 }
 
 /**
+ * Choose the org a new session acts in — `Session.activeOrgId` (§106).
+ *
+ * Runs for every session better-auth mints: sign-in, OAuth callback, the
+ * auto-sign-in after sign-up or email verification, password reset. In order:
+ *
+ * 1. A signup in flight on this request (`lib/auth/pending-signup.ts`) —
+ *    the session is being created inside the sign-up transaction, before the
+ *    after hook has written the membership. Start in the org that write is
+ *    about to grant, and write nothing here.
+ * 2. Otherwise `activeOrgForSession`: the user's only org; else the install
+ *    org if they belong to it; else the org they joined most recently; else
+ *    — a user with no membership at all — the install-org default is written
+ *    right here (the self-heal t-669's review ruled on), and logged at
+ *    `error` because it means the signup path failed upstream.
+ *
+ * Non-blocking, for the same reason the after hook is: a fault reading
+ * memberships must not refuse a sign-in. The session is minted with
+ * `activeOrgId` null, which the guard resolves to the install org at `single`
+ * and refuses at `multi` (t-671) — the same answer a memberless user gets.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function sessionCreateBeforeHook(
+  session: SessionCreateData,
+  _ctx: DatabaseHookContext
+): Promise<{ data: { activeOrgId: string | null } }> {
+  try {
+    const pending = await getPendingSignup();
+    if (pending) {
+      return { data: { activeOrgId: pending.membership.orgId } };
+    }
+
+    const { orgId, healed } = await activeOrgForSession(session.userId);
+    if (healed) {
+      logger.error('User had no org membership at sign-in; wrote the install-org default', {
+        userId: session.userId,
+        orgId,
+      });
+    }
+    return { data: { activeOrgId: orgId } };
+  } catch (error) {
+    logger.error('Failed to choose an active org for a new session', error, {
+      userId: session.userId,
+    });
+    return { data: { activeOrgId: null } };
+  }
+}
+
+/**
  * Better Auth Configuration
  *
  * Provides authentication using email/password and social providers (Google).
@@ -803,6 +921,27 @@ export const auth = betterAuth({
     cookieCache: {
       enabled: true,
       maxAge: 60 * 5, // 5 minutes
+    },
+    additionalFields: {
+      // The org this session acts in (§106). Chosen by `sessionCreateBeforeHook`
+      // when the session is minted and changed only by `POST /api/v1/orgs/switch`,
+      // which verifies membership first.
+      //
+      // `input: false` is load-bearing, the same way it is on `user.role`
+      // above: better-auth's public `POST /api/auth/update-session` runs every
+      // declared session field through the same input parser, so without this
+      // line any signed-in user could set `activeOrgId` to any org — and no
+      // membership check would run. With it, that endpoint answers 400 for the
+      // field, and the switch route is the only writer. The switch therefore
+      // does NOT go through `auth.api.updateSession` (the parser refuses the
+      // field there too); it updates the row and re-issues the cookie itself.
+      // `tests/unit/lib/auth/config-session-field.test.ts` proves both with
+      // better-auth's own parser over these options.
+      activeOrgId: {
+        type: 'string',
+        required: false,
+        input: false,
+      },
     },
   },
 
@@ -893,6 +1032,11 @@ export const auth = betterAuth({
       create: {
         before: userCreateBeforeHook,
         after: userCreateAfterHook,
+      },
+    },
+    session: {
+      create: {
+        before: sessionCreateBeforeHook,
       },
     },
   },

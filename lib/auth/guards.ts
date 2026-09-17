@@ -59,6 +59,16 @@ export interface AuthSession {
     userAgent?: string | null;
     createdAt: Date;
     updatedAt: Date;
+    /**
+     * The org this session acts in (§106) — chosen at sign-in by
+     * `sessionCreateBeforeHook`, changed by `POST /api/v1/orgs/switch`.
+     * Optional rather than `string | null` so a session built by hand (the
+     * API-key synthetic session, test fixtures) is still an `AuthSession`;
+     * `null`/absent is "none chosen", which the guard resolves to the install
+     * org at `single` (t-671). An API-key session leaves it unset until the
+     * key's own org is bound at mint (t-673).
+     */
+    activeOrgId?: string | null;
   };
   user: {
     id: string;

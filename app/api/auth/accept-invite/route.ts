@@ -10,7 +10,10 @@
  * 1. Validate request body (token, email, password, confirmPassword)
  * 2. Validate invitation token (checks expiration and email match)
  * 3. Fetch invitation metadata (name, role, invitedBy, invitedAt)
- * 4. Create user via better-auth signup endpoint (FIRST TIME - stable User ID)
+ * 4. Create user via better-auth signup endpoint (FIRST TIME - stable User ID),
+ *    inside `runInvitedSignup(…, metadata)` so the user-creation hooks see the
+ *    invitation: the org and org role it names decide the membership the
+ *    signup writes, and its platform role decides the install-org role (§106)
  * 5. IMMEDIATELY set emailVerified=true AND role (BEFORE session check)
  * 6. Delete invitation token
  * 7. Create explicit session via sign-in endpoint (better-auth sees emailVerified=true)
@@ -142,14 +145,21 @@ export async function POST(request: NextRequest): Promise<Response> {
       // The token was validated in step 2, and better-auth runs `hooks.before`
       // for server-side `auth.api.*` calls too — without the exemption the
       // invite_only gate would refuse the invitation flow it exists to serve.
-      const signupResult = await runInvitedSignup(() =>
-        auth.api.signUpEmail({
-          body: {
-            name: metadata.name,
-            email,
-            password,
-          },
-        })
+      //
+      // The metadata rides along so `userCreateBeforeHook` can decide the org
+      // membership from what the invitation GRANTS — the platform role is only
+      // applied to the row in step 5, after this returns, so judged on the row
+      // alone an invited ADMIN would own nothing.
+      const signupResult = await runInvitedSignup(
+        () =>
+          auth.api.signUpEmail({
+            body: {
+              name: metadata.name,
+              email,
+              password,
+            },
+          }),
+        metadata
       );
       newUserId = signupResult.user.id;
     } catch (signupError) {

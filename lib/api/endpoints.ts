@@ -42,6 +42,12 @@ export const API = {
     METADATA: '/api/v1/invitations/metadata',
   },
 
+  /** Org endpoints (§106) */
+  ORGS: {
+    /** Change the org the current session acts in */
+    SWITCH: '/api/v1/orgs/switch',
+  },
+
   /** Admin endpoints */
   ADMIN: {
     STATS: '/api/v1/admin/stats',

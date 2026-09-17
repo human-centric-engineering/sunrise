@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { paginationQuerySchema, cuidSchema } from '@/lib/validations/common';
 import { USER_ROLES } from '@/lib/auth/roles';
+import { ORG_ROLES } from '@/lib/tenancy/roles';
 
 /**
  * Feature flag metadata value schema
@@ -188,12 +189,22 @@ export type ListInvitationsQuery = z.infer<typeof listInvitationsQuerySchema>;
  *
  * Used to safely parse `Verification.metadata` from the database
  * instead of using bare `as InvitationMetadata` type assertions.
+ *
+ * `orgId` and `orgRole` (§106) are **optional on purpose**: `parseInvitationMetadata`
+ * answers `null` for anything that fails this schema, and every invitation
+ * pending at the moment this shipped was written without them. A required key
+ * would have invalidated all of them at merge. Absent ⇒ the install org, with
+ * the role rule in `lib/tenancy/membership.ts`.
  */
 export const invitationMetadataSchema = z.object({
   name: z.string(),
   role: z.string(),
   invitedBy: z.string(),
   invitedAt: z.string(),
+  /** The org the invitee joins on acceptance. Absent ⇒ the install org. */
+  orgId: z.string().optional(),
+  /** Their role in that org. Absent ⇒ `MEMBER` (or `OWNER`, see the membership rule). */
+  orgRole: z.enum(ORG_ROLES).optional(),
 });
 
 export type InvitationMetadata = z.infer<typeof invitationMetadataSchema>;

@@ -43,12 +43,25 @@ import { prisma } from '@/lib/db/client';
 import { humanWhere } from '@/lib/auth/account';
 import { AUTH_BOOTSTRAP_ID } from '@/lib/auth/constants';
 import { logger } from '@/lib/logging';
+import type { InvitationMetadata } from '@/lib/validations/admin';
+
+/**
+ * What the store holds for a signup authorised by a validated invitation token.
+ *
+ * `invitation` is the record the token unlocked — `null` when the caller only
+ * validated the token (the OAuth before hook reads its own invitation from the
+ * OAuth state instead). `userCreateBeforeHook` reads it to apply the role the
+ * invitation grants and to decide the org membership the signup will write.
+ */
+interface InvitedSignup {
+  invitation: InvitationMetadata | null;
+}
 
 /**
  * Marks the async context of a signup that has already been authorised by a
- * validated invitation token. Only ever holds `true`.
+ * validated invitation token.
  */
-const invitedSignupContext = new AsyncLocalStorage<true>();
+const invitedSignupContext = new AsyncLocalStorage<InvitedSignup>();
 
 /** True when this deployment only creates accounts by invitation. */
 export function isInviteOnly(): boolean {
@@ -63,16 +76,33 @@ export function isInviteOnly(): boolean {
  * whole async subtree, so keep the callback tight around the account-creation
  * call rather than wrapping a broad request handler.
  *
+ * Pass the invitation the token unlocked so the user-creation hooks can apply
+ * what it grants — its platform role, and (§106) the org and org role it
+ * names. better-auth's database hooks run inside this same async subtree
+ * (`create.after` hooks are queued and drained before the `auth.api.*` call
+ * resolves), which is what makes the store readable from them.
+ *
  * @example
- * const result = await runInvitedSignup(() => auth.api.signUpEmail({ body }));
+ * const result = await runInvitedSignup(() => auth.api.signUpEmail({ body }), metadata);
  */
-export function runInvitedSignup<T>(fn: () => Promise<T>): Promise<T> {
-  return invitedSignupContext.run(true, fn);
+export function runInvitedSignup<T>(
+  fn: () => Promise<T>,
+  invitation: InvitationMetadata | null = null
+): Promise<T> {
+  return invitedSignupContext.run({ invitation }, fn);
 }
 
 /** True when running inside {@link runInvitedSignup}. */
 export function isInvitedSignup(): boolean {
-  return invitedSignupContext.getStore() === true;
+  return invitedSignupContext.getStore() !== undefined;
+}
+
+/**
+ * The invitation the enclosing {@link runInvitedSignup} was given, or `null`
+ * outside one (or when the caller passed none).
+ */
+export function invitedSignupInvitation(): InvitationMetadata | null {
+  return invitedSignupContext.getStore()?.invitation ?? null;
 }
 
 /**

@@ -78,6 +78,12 @@ export interface TypedSessionData {
     userAgent?: string | null;
     createdAt: Date;
     updatedAt: Date;
+    /**
+     * The org this session acts in (§106), validated at runtime by
+     * `extractActiveOrgId` the way `role` is. `null` when the server chose
+     * none — which the guard treats as the install org at `single`.
+     */
+    activeOrgId: string | null;
   };
 }
 
@@ -100,10 +106,22 @@ function extractUserRole(rawUser: Record<string, unknown>): UserRole {
 }
 
 /**
+ * Extract the active org id from a raw session object — the session-side
+ * twin of `extractUserRole`. `activeOrgId` is a session `additionalField`
+ * the client types cannot see; anything but a non-empty string reads as
+ * "none chosen" (`null`), never as a cast.
+ */
+function extractActiveOrgId(rawSession: Record<string, unknown>): string | null {
+  const value = rawSession.activeOrgId;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
  * useSession Hook
  *
  * Thin wrapper around `authClient.useSession` that adds runtime validation
- * for custom user fields (`role`) from the server-side better-auth config.
+ * for the custom fields (`user.role`, `session.activeOrgId`) from the
+ * server-side better-auth config.
  *
  * Why a wrapper instead of a type cast:
  * - better-auth's client types don't include `additionalFields` automatically
@@ -138,15 +156,19 @@ export function useSession(): UseSessionReturn {
     };
   }
 
-  // Validate the role field at runtime
+  // Validate the custom fields at runtime
   const rawUser = raw.data.user as Record<string, unknown>;
   const role = extractUserRole(rawUser);
+  const rawSession = raw.data.session as Record<string, unknown>;
+  const activeOrgId = extractActiveOrgId(rawSession);
 
-  // Build user with validated role. The spread provides all base fields from
-  // better-auth; we override `role` with the runtime-validated value.
+  // Build user and session with validated fields. The spreads provide all base
+  // fields from better-auth; we override the custom ones with the
+  // runtime-validated values.
   const rawData = raw.data;
   const user: SessionUser = Object.assign({}, rawData.user, { role });
-  const data: TypedSessionData = Object.assign({}, rawData, { user });
+  const session = Object.assign({}, rawData.session, { activeOrgId });
+  const data: TypedSessionData = Object.assign({}, rawData, { user, session });
 
   return {
     data,

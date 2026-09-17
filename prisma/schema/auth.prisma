@@ -103,8 +103,9 @@ model Session {
   userId    String
 
   // The org this session is acting in (§106). Landed with the identity
-  // migration so the feature ships ONE migration; better-auth learns to write
-  // it (session `additionalFields`) in t-670, and nothing reads it until then.
+  // migration so the feature ships ONE migration; better-auth writes it as a
+  // session `additionalField` (`sessionCreateBeforeHook` at sign-in,
+  // `POST /api/v1/orgs/switch` afterwards — `lib/auth/config.ts`).
   // Nullable on purpose: null means "not chosen", which at `single` resolves
   // to the install org in the guard. Deliberately NOT an FK — better-auth owns
   // this table's shape and its schema check (auth-schema-parity.test.ts)

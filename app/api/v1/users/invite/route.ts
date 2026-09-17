@@ -13,6 +13,10 @@
  *   - name: User's full name (required)
  *   - email: User's email address (required, must be unique)
  *   - role: User's role (optional, defaults to USER)
+ *   - orgId: The org the invitee joins on acceptance (optional; defaults to
+ *     the install org) — must exist and be ACTIVE (§106)
+ *   - orgRole: Their role in that org (optional; MEMBER, or OWNER for the
+ *     first member of a new org)
  *
  * Response emailStatus values:
  *   - 'sent': Email was sent successfully
@@ -24,6 +28,10 @@
  * 1. Authenticate user (require session)
  * 2. Authorize user (require ADMIN role)
  * 3. Validate request body
+ * 3b. If an org is named: it must exist and be active, and the policy must
+ *     let this caller administer it (`canAdminister` on an org resource —
+ *     the seam §106 t-671 makes org-aware; today it answers as the admin
+ *     guard already did)
  * 4. Parse resend query parameter
  * 5. Check if user account already exists (409 error if exists)
  * 6. Check if invitation already exists:
@@ -38,10 +46,11 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { canAdminister } from '@/lib/auth/authorization';
 import { prisma } from '@/lib/db/client';
 import { BRAND } from '@/lib/brand';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { ErrorCodes } from '@/lib/api/errors';
+import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { inviteUserSchema } from '@/lib/validations/user';
 import {
@@ -98,6 +107,43 @@ export const POST = withAdminAuth(async (request, session) => {
   // 3. Validate request body
   const body = await validateRequestBody(request, inviteUserSchema);
 
+  // 3b. An invitation may name the org the invitee joins (§106). The org is in
+  // the body, so this cannot be a `resource` resolver on the guard (a resolver
+  // runs before the body is read); the same question is asked here instead,
+  // of the same policy. Under Sunrise's default policy `canAdminister` answers
+  // for an org resource exactly as it did for the guard's `null` — platform
+  // admins (and admin-scoped keys) only — so nothing widens today; t-671 is
+  // what teaches it to say yes to an org's own OWNER/ADMIN.
+  if (body.orgId) {
+    const org = await prisma.org.findUnique({
+      where: { id: body.orgId },
+      select: { id: true, status: true },
+    });
+
+    if (!org || org.status !== 'ACTIVE') {
+      // One answer for "no such org" and "suspended": an inviter who may
+      // administer the org can see its status elsewhere; nobody else should
+      // learn it from this endpoint.
+      return errorResponse('Cannot invite into that organisation', {
+        code: ErrorCodes.VALIDATION_ERROR,
+        status: 400,
+      });
+    }
+
+    const mayInvite = await canAdminister(session.principal, {
+      kind: 'org',
+      id: org.id,
+      orgId: org.id,
+    });
+    if (!mayInvite) {
+      log.warn('Invitation into org refused by the authorization policy', {
+        adminId: session.user.id,
+        orgId: org.id,
+      });
+      throw new ForbiddenError('You cannot invite users into that organisation');
+    }
+  }
+
   // 4. Parse resend query parameter
   const url = new URL(request.url);
   const resend = url.searchParams.get('resend') === 'true';
@@ -150,6 +196,10 @@ export const POST = withAdminAuth(async (request, session) => {
     role: body.role || DEFAULT_USER_ROLE,
     invitedBy: session.user.id,
     invitedAt: new Date().toISOString(),
+    // Only written when named, so an invitation into the install org is
+    // byte-identical to one written before these keys existed.
+    ...(body.orgId ? { orgId: body.orgId } : {}),
+    ...(body.orgRole ? { orgRole: body.orgRole } : {}),
   };
 
   // Use updateInvitationToken for resend (deletes old, creates new)
@@ -161,6 +211,8 @@ export const POST = withAdminAuth(async (request, session) => {
   log.info(existingInvitation ? 'Invitation resent' : 'Invitation created', {
     email: body.email,
     role: body.role,
+    orgId: body.orgId ?? null,
+    orgRole: body.orgRole ?? null,
     invitedBy: session.user.id,
     isResend: !!existingInvitation,
   });
