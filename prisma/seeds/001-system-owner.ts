@@ -1,6 +1,7 @@
 import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import type { SeedUnit } from '@/prisma/runner';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { ensureMembership, initialMembershipFor } from '@/lib/tenancy/membership';
 
 /**
  * Seeds a single non-login SYSTEM config-owner user.
@@ -37,6 +38,16 @@ const unit: SeedUnit = {
     });
 
     logger.info('✅ Upserted system config-owner', { email: systemUser.email });
+
+    // Every user belongs to an org (tenancy design, principle 1). This upsert
+    // bypasses the auth hook that writes the membership for every signup, and
+    // on a fresh database the identity migration's backfill ran BEFORE this
+    // row existed — so without this line the config-owner is the one
+    // memberless user on every new install, and `smoke:tenancy` says so.
+    // Idempotent: an existing membership (a migrated install) is left as it
+    // is. The role rule is the shared one: SERVICE ⇒ MEMBER, never OWNER.
+    await ensureMembership(systemUser.id, initialMembershipFor(systemUser), prisma);
+    logger.info('✅ Config-owner is a member of the install org');
   },
 };
 

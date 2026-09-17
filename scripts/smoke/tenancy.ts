@@ -4,14 +4,24 @@
  * Proves, against a real Postgres, the invariant the identity migration and
  * `userCreateAfterHook` establish between them and that no mocked test can
  * reach: the install org exists with the fixed id, EVERY user is a member of
- * it (the backfill), the backfill's role rule held (a real platform admin is
- * OWNER, everyone else MEMBER), a credential row is bound to the install org,
- * a user created now gets a membership too, and deleting a user takes their
- * membership with them (Cascade) while the org stands.
+ * it (the backfill, and — on a fresh database — the 001 seed for the
+ * config-owner), the seeded SERVICE owner is a MEMBER not an OWNER, a user
+ * created now gets a membership too, the migration's credential backfill
+ * binds a chat key and leaves an admin key alone, and deleting a user takes
+ * their membership with them (Cascade) while the org stands.
+ *
+ * What it deliberately does NOT assert: that every platform ADMIN on the
+ * database is an install-org OWNER. The role mapping is applied at creation
+ * (migration or hook) and is not re-synced when an admin later promotes or
+ * demotes a user — see the known gaps in `.context/tenancy/identity.md` — so
+ * on a dev database with promote/demote history that check would be red for
+ * reasons that are not defects in this code. The rule itself is asserted by
+ * `tests/unit/lib/tenancy/migration.test.ts`.
  *
  * Skips cleanly (exit 0) when no database is reachable. Self-cleaning: creates
  * only `smoke-test-tenancy-*` rows and removes them on every path. Never uses
- * unscoped deletes or touches seed data.
+ * unscoped writes or touches seed data: the one raw statement it runs is the
+ * migration's own backfill UPDATE, scoped to the two keys this run created.
  *
  * Run with:
  *   npm run smoke:tenancy
@@ -20,7 +30,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { prisma } from '@/lib/db/client';
-import { humanAdminWhere, serviceAccountWhere } from '@/lib/auth/account';
+import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { ensureMembership, initialMembershipFor } from '@/lib/tenancy/membership';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -75,26 +85,28 @@ async function main(): Promise<void> {
       ) d`;
     check(Number(duplicates[0]?.n ?? 0) === 0, 'no user holds two install-org memberships');
 
-    // ── The backfill's role rule ───────────────────────────────────────────
-    const adminsNotOwner = await prisma.user.count({
-      where: {
-        ...humanAdminWhere,
-        orgMemberships: { some: { orgId: INSTALL_ORG_ID, role: { not: ORG_OWNER_ROLE } } },
-      },
+    // ── The seeded config-owner: a member, and never an OWNER ──────────────
+    // Addressed by its fixed email rather than by "every SERVICE account", so
+    // the check is about the row the 001 seed writes and cannot go red on an
+    // operator's unrelated rows.
+    const configOwner = await prisma.user.findUnique({
+      where: { email: SYSTEM_USER_EMAIL },
+      select: { orgMemberships: { where: { orgId: INSTALL_ORG_ID }, select: { role: true } } },
     });
-    check(adminsNotOwner === 0, 'every real platform admin is an OWNER of the install org');
-    const nonAdminOwners = await prisma.orgMembership.count({
-      where: {
-        orgId: INSTALL_ORG_ID,
-        role: ORG_OWNER_ROLE,
-        user: { NOT: humanAdminWhere },
-      },
-    });
-    check(nonAdminOwners === 0, 'nobody who is not a real platform admin is an OWNER');
-    const serviceOwners = await prisma.orgMembership.count({
-      where: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE, user: serviceAccountWhere },
-    });
-    check(serviceOwners === 0, 'the SERVICE config-owner is not an OWNER (MEMBER at most)');
+    if (configOwner) {
+      check(
+        configOwner.orgMemberships.length === 1,
+        'the seeded config-owner is a member of the install org'
+      );
+      check(
+        configOwner.orgMemberships[0]?.role === DEFAULT_ORG_ROLE,
+        'the seeded config-owner is a MEMBER, not an OWNER'
+      );
+    } else {
+      console.log(
+        '  – no seeded config-owner on this database (db:seed not run); skipping its checks'
+      );
+    }
 
     // ── A user created now gets a membership (the hook's write path) ───────
     const member = await prisma.user.create({
@@ -138,7 +150,11 @@ async function main(): Promise<void> {
     // asserted absent on whatever the table holds (which may be nothing): two
     // unbound keys, one `chat` and one `admin`, then the migration's OWN
     // UPDATE statement — read from the file, so the smoke cannot drift from
-    // the SQL it vouches for. The chat key binds; the admin key stays NULL.
+    // the SQL it vouches for — SCOPED to those two ids. Unscoped, it would
+    // also bind every key an operator has minted since the migration (nothing
+    // writes orgId at mint until t-673), rewriting rows this smoke does not
+    // own and failing its own count. The chat key binds; the admin key stays
+    // NULL.
     const chatKey = await prisma.aiApiKey.create({
       data: {
         userId: member.id,
@@ -172,10 +188,13 @@ async function main(): Promise<void> {
       .find((line) => line.startsWith('UPDATE "ai_api_key"'));
     if (!backfillUpdate)
       throw new Error('could not find the ai_api_key backfill UPDATE in the migration');
-    const bound = await prisma.$executeRawUnsafe(backfillUpdate);
+    if (!backfillUpdate.endsWith(';'))
+      throw new Error('backfill UPDATE does not end with ";" — cannot scope it');
+    const scopedUpdate = `${backfillUpdate.slice(0, -1)} AND "id" IN ($1, $2);`;
+    const bound = await prisma.$executeRawUnsafe(scopedUpdate, chatKey.id, adminKey.id);
     check(
       bound === 1,
-      `re-running the migration's ai_api_key backfill bound exactly one row (${bound})`
+      `re-running the migration's ai_api_key backfill over the two fixture keys bound exactly one (${bound})`
     );
     const [chatAfter, adminAfter] = await Promise.all([
       prisma.aiApiKey.findUnique({ where: { id: chatKey.id } }),

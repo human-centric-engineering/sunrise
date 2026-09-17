@@ -532,7 +532,7 @@ jobs:
   # DATABASE_URL. The drift check is the backstop for a `migrate dev` that
   # silently committed a DROP for one of those objects; /pre-pr catches it first.
   smoke:
-    name: Smoke — real-DB invariants (erasure + migration drift)
+    name: Smoke — real-DB invariants (erasure + export + tenancy + migration drift)
     runs-on: ubuntu-latest
     needs: config
     if: needs.config.outputs.code == 'true'
@@ -573,6 +573,11 @@ jobs:
       # the unit suite mocks Prisma, so it never runs them
       # (see .context/privacy/data-export.md).
       - run: npx tsx scripts/smoke/export.ts
+      # Proves the org-identity invariant on a FRESH database — migrate then
+      # seed, the order a new install runs — which is the case the unit tests
+      # cannot reach and the one the 001 seed exists to keep true
+      # (see .context/tenancy/identity.md).
+      - run: npx tsx scripts/smoke/tenancy.ts
 
   docker:
     name: Docker Build + Stack Smoke

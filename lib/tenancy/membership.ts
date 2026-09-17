@@ -5,7 +5,11 @@
  * (`.context/architecture/multi-tenancy-design.md`) hold: the identity
  * migration backfills a membership for every user that already existed, and
  * `userCreateAfterHook` (`lib/auth/config.ts`) calls {@link ensureMembership}
- * for every user created afterwards. This module is the second half, and
+ * for every user created afterwards. One writer bypasses both: the seeded
+ * SERVICE config-owner (`prisma/seeds/001-system-owner.ts`) is upserted with
+ * Prisma directly, and on a FRESH database it is created after the migration
+ * ran — so that seed calls {@link ensureMembership} itself. This module is
+ * the shared half, and
  * {@link initialMembershipFor} is the ONE statement of the role rule both
  * halves apply — the migration's SQL `CASE` and this function are asserted to
  * agree by `tests/unit/lib/tenancy/migration.test.ts`.
@@ -13,6 +17,7 @@
  * Server-side: reaches Prisma. The vocabulary it writes is
  * `lib/tenancy/roles.ts`, which is what a client component imports instead.
  */
+import type { PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -58,12 +63,16 @@ export function initialMembershipFor(user: {
  * `dispatchUserCreated` swallows every throw by design, and a user left
  * silently memberless is exactly the state this write exists to make
  * impossible. The caller decides what surfacing means for it.
+ *
+ * `db` defaults to the shared client; a seed passes the runner's own so the
+ * write lands on the same connection as the user it just upserted.
  */
 export async function ensureMembership(
   userId: string,
-  membership: InitialMembership
+  membership: InitialMembership,
+  db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<void> {
-  await prisma.orgMembership.upsert({
+  await db.orgMembership.upsert({
     where: { orgId_userId: { orgId: membership.orgId, userId } },
     update: {},
     create: { orgId: membership.orgId, userId, role: membership.role },

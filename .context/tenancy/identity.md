@@ -90,7 +90,7 @@ wired by t-670.
 
 ## The invariant: one install org, every user a member
 
-Two writes, one rule.
+Two writes, one rule — and one writer that has to repeat it.
 
 **Existing rows — the migration.** `20260917120000_org_identity` inserts the
 install org (`id = slug = 'install'`, `ON CONFLICT DO NOTHING`) and a
@@ -111,6 +111,13 @@ signs in. It is deliberately **not** a `registerUserCreatedHook` contributor:
 that registry swallows every throw, which is the opposite of what this write
 needs. Do not tidy it into the seam.
 
+**The seeded config-owner — the seed.** `prisma/seeds/001-system-owner.ts`
+upserts the SERVICE owner with Prisma directly, bypassing the hook, and on a
+_fresh_ database it runs _after_ the migration — so the backfill never saw it.
+The seed therefore calls `ensureMembership()` itself (idempotent; a migrated
+install's existing row is left alone). `smoke:tenancy` runs in CI after
+`migrate deploy` + `db:seed`, which is exactly the sequence that exposes it.
+
 **The role rule**, applied identically by both (and asserted to agree by
 `tests/unit/lib/tenancy/migration.test.ts`):
 
@@ -127,6 +134,17 @@ platform ADMIN lands as `MEMBER`. An under-grant with no effect at `single`
 `smoke:tenancy`'s "every real platform admin is an OWNER" check will say so on
 a database where an admin was invited after this migration — that is the smoke
 telling the truth, not a broken smoke.
+
+**Known gap until §106 t-672:** the mapping is applied once, at creation.
+A platform-role change afterwards — the admin `users/[id]` PATCH promoting a
+USER to ADMIN, or demoting an ADMIN — does not touch the install-org
+membership, so a demoted admin keeps `OWNER` and a promoted user stays
+`MEMBER`. Harmless at `single` today (nothing reads the org role), but the
+demote case becomes an over-grant the moment t-671's policy reads it, and
+whether the install-org role should _follow_ the platform role or be managed
+independently through the members API is a ruling t-672 has to make before it
+ships. `smoke:tenancy` deliberately does not assert "every ADMIN is an OWNER"
+for this reason.
 
 Why this rule and not "everyone is MEMBER" or "every ADMIN is OWNER": the
 byte-identical promise (principle 2). Nobody gains an org-level grant they did
@@ -170,9 +188,11 @@ forks.
 
 ## Proving it
 
-- `npm run smoke:tenancy` — against a real database: the install org exists,
-  every user is a member exactly once, the role rule held, a new user gets a
-  membership, the backfill rule on two keys it creates, cascade on delete.
+- `npm run smoke:tenancy` — against a real database (and in CI, on a fresh
+  one after `migrate deploy` + `db:seed`): the install org exists, every user
+  is a member exactly once, the seeded config-owner is a MEMBER, a new user
+  gets a membership, the backfill rule on two keys it creates (the migration's
+  own UPDATE, scoped to those two ids), cascade on delete.
 - `npm run smoke:erasure` — now also proves a membership cascades with the
   subject and the org survives.
 - `tests/unit/lib/tenancy/migration.test.ts` — the migration's statements,
