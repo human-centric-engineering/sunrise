@@ -82,7 +82,11 @@ A platform credential — an `admin`-scoped API key — enters **no** org: no
   roster.
 
 `subjectScope` and the `'subject'` arm are unchanged: an org admin is narrowed
-to their own rows like any member. **So an org admin is a _narrowed_ admin**,
+to their own rows like any member — so on an org row **another member owns**,
+`canAdminister` says yes and `canRead` says no. That is deliberate: widening
+the subject arm would break parity with `subjectScope`, which can name one
+user or everyone and cannot yet say "rows in my org" (§107). The narrower
+face wins on the read path. **So an org admin is a _narrowed_ admin**,
 and the first admin route whose resolver names an org-carrying resource owes an
 `ownership` declaration and must read `session.subjectFilter` — the scenario
 `guards-ownership-development.test.ts` names. None exists in core until §107.

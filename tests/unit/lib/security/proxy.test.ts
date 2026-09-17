@@ -869,6 +869,25 @@ describe('proxy — tenant resolver header (§106)', () => {
     expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBeNull();
   });
 
+  it('logs a throwing resolver at error and strips the header — never a 500, never silent', async () => {
+    const boom = new Error('subdomain map missing');
+    registerTenantResolver(() => {
+      throw boom;
+    });
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    const request = createMockRequest('/', { headers: { [TENANT]: 'attacker-picked-org' } });
+
+    const response = await proxy(request);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get(`x-middleware-request-${TENANT}`)).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Tenant resolver threw'),
+      boom,
+      expect.objectContaining({ hint: expect.stringContaining('lib/app/tenant-resolver.ts') })
+    );
+  });
+
   it('overwrites an inbound copy with the resolver’s answer', async () => {
     registerTenantResolver(() => 'org_real');
     const request = createMockRequest('/', { headers: { [TENANT]: 'attacker-picked-org' } });

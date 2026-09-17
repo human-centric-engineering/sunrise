@@ -5,7 +5,7 @@
  * resolver that throws answers `null`, because the proxy runs it on every
  * request and a fork's bug must strip the header, never 500 the site.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   __resetTenantResolverForTests,
   hasTenantResolver,
@@ -41,11 +41,33 @@ describe('tenant resolver registry', () => {
     expect(resolveTenantFromRequest(request('x'))).toBeNull();
   });
 
-  it('a throwing resolver is no answer, never a throw', () => {
+  it('a throwing resolver is no answer, never a throw — and the caller is told', () => {
+    const boom = new Error('fork bug');
     registerTenantResolver(() => {
-      throw new Error('fork bug');
+      throw boom;
     });
+    const onError = vi.fn();
+    expect(resolveTenantFromRequest(request('x'), onError)).toBeNull();
+    expect(onError).toHaveBeenCalledWith(boom);
+    // Without a callback it still does not throw.
     expect(resolveTenantFromRequest(request('x'))).toBeNull();
+  });
+
+  it('refuses an answer that is not org-id shaped, so the proxy never throws at Headers.set', () => {
+    for (const bad of [
+      'evil\r\nx-injected: 1',
+      'has space',
+      'ünïcode',
+      'a'.repeat(201),
+      'slash/id',
+    ]) {
+      registerTenantResolver(() => bad);
+      expect(resolveTenantFromRequest(request('x')), bad).toBeNull();
+    }
+    for (const good of ['install', 'cmorg000000000000000other', 'acme-corp_2']) {
+      registerTenantResolver(() => good);
+      expect(resolveTenantFromRequest(request('x'))).toBe(good);
+    }
   });
 
   it('registering again replaces the first', () => {

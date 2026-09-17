@@ -269,7 +269,89 @@ describe('the API-key source', () => {
   });
 });
 
+describe('a route that declares it does not enter an org', () => {
+  const LEAVES_ORG = {
+    ...NOT_ABOUT_OWNERSHIP,
+    tenancy: { entersOrg: false, because: 'Fixture: the way out of a refused org.' },
+  } as const;
+
+  it('is reachable from a suspended active org — the switch must not be behind the refusal', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    memberOf(ORG_OWNER_ROLE, 'SUSPENDED');
+    let context: TenantContext | null | undefined;
+    let principal: AuthorizationPrincipal | undefined;
+
+    const res = await withAuth((_req, s) => {
+      context = getTenantContext();
+      principal = s.principal;
+      return ok();
+    }, LEAVES_ORG)(request());
+
+    expect(res.status).toBe(200);
+    // No membership read either: the route did not ask which org.
+    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(context).toBeNull();
+    expect(principal).not.toHaveProperty('orgId');
+  });
+
+  it('is reachable from an org the caller was removed from', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    mockFindUnique.mockResolvedValue(null);
+
+    const res = await withAuth(() => ok(), LEAVES_ORG)(request());
+
+    expect(res.status).toBe(200);
+  });
+
+  it('control: the same session on an ordinary route is refused', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    memberOf(ORG_OWNER_ROLE, 'SUSPENDED');
+
+    const res = await withAuth(() => ok(), NOT_ABOUT_OWNERSHIP)(request());
+
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('the scope', () => {
+  it('covers the resource resolver and the policy, not only the handler', async () => {
+    // §107's data layer will read the context inside the resolver's own query;
+    // a resolver outside the scope would throw "No tenant context" at multi.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    memberOf(ORG_ADMIN_ROLE);
+    const seen: string[] = [];
+    __resetAuthorizationPolicyForTests();
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) => {
+        seen.push(`policy:${getTenantContext()?.orgId}`);
+        return DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope);
+      },
+    });
+
+    await withAuth(
+      () => {
+        seen.push(`handler:${getTenantContext()?.orgId}`);
+        return ok();
+      },
+      {
+        ownership: { decidedBy: 'resource', because: 'Fixture.' },
+        resource: () => {
+          seen.push(`resolver:${getTenantContext()?.orgId}`);
+          return { kind: 'thing', id: 't1', ownerId: 'user_1' };
+        },
+      }
+    )(request());
+
+    // The guard asks the policy more than once per request (the ownerless-read
+    // capability question, per kind); every ask, the resolver and the handler
+    // must all be inside the same scope.
+    expect(seen[0]).toBe(`resolver:${OTHER}`);
+    expect(seen.at(-1)).toBe(`handler:${OTHER}`);
+    expect(seen.filter((entry) => entry.startsWith('policy:'))).not.toHaveLength(0);
+    expect(new Set(seen.map((entry) => entry.split(':')[1]))).toEqual(new Set([OTHER]));
+  });
+
   it('does not leak past the response', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', null));
     const { handler } = probe();

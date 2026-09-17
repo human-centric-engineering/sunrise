@@ -139,7 +139,15 @@ describe('membershipForNewUser', () => {
 });
 
 describe('activeOrgForSession', () => {
-  const membership = (orgId: string, joined: string) => ({ orgId, createdAt: new Date(joined) });
+  const membership = (
+    orgId: string,
+    joined: string,
+    status: 'ACTIVE' | 'SUSPENDED' = 'ACTIVE'
+  ) => ({
+    orgId,
+    createdAt: new Date(joined),
+    org: { status },
+  });
 
   it('a single membership is the answer, whichever org it is', async () => {
     mocks.orgMembership.findMany.mockResolvedValue([membership(OTHER_ORG, '2026-01-01')]);
@@ -173,6 +181,28 @@ describe('activeOrgForSession', () => {
     expect(mocks.orgMembership.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: { createdAt: 'desc' } })
     );
+  });
+
+  it('prefers an ACTIVE org over a suspended one, so a suspension is not a lockout', async () => {
+    // Most recent first: the suspended org would win on recency alone.
+    mocks.orgMembership.findMany.mockResolvedValue([
+      membership(OTHER_ORG, '2026-03-01', 'SUSPENDED'),
+      membership('cmorg000000000000000older', '2026-01-01'),
+    ]);
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({
+      orgId: 'cmorg000000000000000older',
+      healed: false,
+    });
+  });
+
+  it('a user whose only org is suspended still starts there (refused at entry), and is not healed', async () => {
+    mocks.orgMembership.findMany.mockResolvedValue([
+      membership(OTHER_ORG, '2026-03-01', 'SUSPENDED'),
+    ]);
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: OTHER_ORG, healed: false });
+    expect(mocks.orgMembership.upsert).not.toHaveBeenCalled();
   });
 
   it('a user with no membership is given the install-org default — and it is written', async () => {

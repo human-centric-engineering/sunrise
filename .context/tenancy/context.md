@@ -116,11 +116,25 @@ are one answer; a suspended org is refused with the same words. The guard's
 log line (`tenancy: refused to enter an org for a request`) carries the
 reason.
 
+**One route does not enter the session's org:** `POST /api/v1/orgs/switch`
+declares `tenancy: { entersOrg: false, because }` (`WithAuthOptions`), so a
+member whose active org was suspended, or who was removed from it, can still
+reach the way out — a switch behind the refusal would lock them out of every
+other org they belong to. The handler runs outside any scope, with no org
+facts on the principal, and checks membership of the org it switches _to_.
+The marker carries a required `because`, like `ownership`; it is not a lever
+for making a 403 go away. Sign-in helps too: `activeOrgForSession` chooses
+among the user's **active** orgs, so a member of one suspended and one active
+org starts in the active one; a user whose every org is suspended starts in
+the most recent of them and is refused at entry, which is what suspension
+means.
+
 **Then the guard carries the org two ways:** on the principal (`viewer.orgId`,
-`viewer.orgRole`) for the policy, and as the tenant context the handler runs
-inside — `runAsOrg` around `runHandler`, so the log context and, from §107,
-the data layer read the same answer the policy was given. A platform
-credential runs outside any scope.
+`viewer.orgRole`) for the policy, and as the tenant context that the
+route's `resource` resolver, the policy call and the handler all run inside
+— one `runAsOrg` around all three, so the resolver's own query is scoped the
+same way the handler's are once §107 makes the data layer read the context.
+A platform credential runs outside any scope.
 
 **Also entered:** the guard-less webhook trigger
 (`app/api/v1/webhooks/trigger/[slug]`) enters its key's org by the same rule.
@@ -150,7 +164,12 @@ else requestHeaders.delete('x-sunrise-org'); // strip any inbound copy
 
 The proxy is the header's **sole writer**, so a client cannot pick its org by
 header; the guard trusts it for _which_ org only because of that, and still
-verifies membership. The second half is load-bearing on its own: the proxy's
+verifies membership. A resolver that throws answers `null` and the proxy logs
+it at `error` — every request it throws on falls back to the session's org
+while the hostname says otherwise, which must never be silent — and an answer
+that is not org-id shaped (`[A-Za-z0-9_-]{1,200}`) is `null` too, so a value
+derived from an inbound header can never make `Headers.set` throw. The
+second half is load-bearing on its own: the proxy's
 matcher skips paths ending in an image extension (`/api/v1/users/x.png`
 reaches a guard unproxied), and there the header arrives unstripped — which
 lets a caller enter only an org they are already a member of, exactly what
@@ -158,7 +177,10 @@ the switch lets them do. A resolver picks; membership admits. A resolver that th
 the header rather than 500-ing the site). **Web-standard only**: the resolver
 runs in the proxy, so `Request`, `URL`, `Headers` and nothing that needs Node
 or Prisma — answer from what you can verify without I/O (the hostname, a
-signed cookie) and leave the membership check to the guard.
+signed cookie) and leave the membership check to the guard. (The proxy's
+bundle already carries `lib/auth/config` through the logging context and
+`AsyncLocalStorage` through `signup-mode.ts`; the constraint is on the
+resolver and its module, which stay import-free.)
 
 Standing steps the scaffold carries, all enforced: a row in
 `defaults.test.ts`, the `### Covered` bullet in `VERSIONING.md`, the

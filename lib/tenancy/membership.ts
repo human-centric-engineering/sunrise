@@ -119,10 +119,14 @@ export async function membershipForNewUser(
  * Which org a new session for `userId` starts in — and the self-heal for a
  * user who belongs to none.
  *
- * The choice, in order: the user's only membership; else the install org if
- * they are a member of it (the org every single-tenant user is in, and the
- * one a multi-membership user least often means to leave); else the org they
- * joined most recently. A user with **no membership at all** — the signup
+ * The choice, in order, over the user's memberships in ACTIVE orgs: their
+ * only one; else the install org if they are a member of it (the org every
+ * single-tenant user is in, and the one a multi-membership user least often
+ * means to leave); else the org they joined most recently. A user whose
+ * every org is suspended starts in the most recent of those and is refused
+ * at entry — suspension means they cannot act there, and starting them
+ * nowhere would be the same refusal with a worse cookie. A user with **no
+ * membership at all** — the signup
  * hook's write failed, or a fork created the row some other way — is given
  * the install-org default by {@link initialMembershipFor} right here, because
  * a session is the one thing every sign-in mints, so this is where a missing
@@ -133,22 +137,28 @@ export async function membershipForNewUser(
  * the self-heal — it is an `error`-level event upstream, and silence here
  * would hide that the signup path is failing.
  *
- * `Org.status` is deliberately not read here. A session records the org the
- * user acts in; whether they may ENTER it is decided at entry — the guard
- * (t-671) refuses a suspended org, and so does the switch as an explicit
- * action. Skipping a suspended org at sign-in would quietly start its
- * members in another of their orgs — or, via the self-heal, re-admit them to
- * the install org — which is the opposite of what suspension is for.
+ * `Org.status` is read only to choose AMONG several memberships: a member of
+ * one suspended and one active org starts in the active one, because the
+ * alternative — starting them in the suspended one and refusing every request
+ * — is a lockout, not a suspension. It is never used to invent a membership:
+ * a user whose only org is suspended starts there and is refused at entry
+ * (the guard, and the switch as an explicit action), and the self-heal below
+ * runs only for a user with no membership at all. Suspension is enforced
+ * where a request enters an org, not by hiding the org from the session.
  */
 export async function activeOrgForSession(
   userId: string,
   db: Pick<PrismaClient, 'orgMembership' | 'user'> = prisma
 ): Promise<{ orgId: string; healed: boolean }> {
-  const memberships = await db.orgMembership.findMany({
+  const all = await db.orgMembership.findMany({
     where: { userId },
-    select: { orgId: true, createdAt: true },
+    select: { orgId: true, createdAt: true, org: { select: { status: true } } },
     orderBy: { createdAt: 'desc' },
   });
+  // Choose among active orgs; fall back to the suspended ones only when
+  // there is nothing else — never to no membership at all.
+  const active = all.filter((m) => m.org.status === 'ACTIVE');
+  const memberships = active.length > 0 ? active : all;
 
   if (memberships.length === 1) return { orgId: memberships[0].orgId, healed: false };
   if (memberships.some((m) => m.orgId === INSTALL_ORG_ID)) {

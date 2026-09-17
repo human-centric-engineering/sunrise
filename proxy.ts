@@ -304,7 +304,15 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // guard trusts this header for WHICH org only because of that, and still
   // verifies membership. Sunrise ships no resolver; the header is absent on
   // every request until a fork registers one in lib/app/tenant-resolver.ts.
-  const tenantOrgId = resolveTenantFromRequest(request);
+  const tenantOrgId = resolveTenantFromRequest(request, (error) => {
+    logger.error(
+      'Tenant resolver threw; treating as no answer and stripping the org header',
+      error,
+      {
+        hint: 'lib/app/tenant-resolver.ts registered a resolver that throws on this request. Every request it throws on falls back to the session’s org.',
+      }
+    );
+  });
   if (tenantOrgId) {
     requestHeaders.set(TENANT_HEADER_NAME, tenantOrgId);
   } else {

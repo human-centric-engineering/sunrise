@@ -497,9 +497,17 @@ function administersOrgOf(
  * the org arm (§106).
  *
  * Platform admin administers everything and reads everyone; an org
- * OWNER/ADMIN administers and reads what carries their org; everyone else
- * reads themselves. Exported so a fork can spread it and replace one face —
- * see {@link AuthorizationPolicy}.
+ * OWNER/ADMIN administers what carries their org and reads the OWNERLESS rows
+ * that carry it; everyone else reads themselves. The `'subject'` arm is
+ * deliberately unchanged for an org admin — a row another member owns is not
+ * theirs to read through `canRead` until `subjectScope` can express "rows in
+ * my org" (§107), because the two faces must agree
+ * ({@link checkAuthorizationParity}) and a `SubjectFilter` today names one
+ * user or everyone. So an org admin may `canAdminister` an org row another
+ * member owns while `canRead` refuses it: the two faces answer different
+ * questions on that row, and the narrower one wins on the read path.
+ * Exported so a fork can spread it and replace one face — see
+ * {@link AuthorizationPolicy}.
  */
 export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
   canAdminister: (viewer, resource) =>

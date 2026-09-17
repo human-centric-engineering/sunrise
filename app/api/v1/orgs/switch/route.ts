@@ -24,6 +24,12 @@
  *
  * Refusals do not enumerate: a non-member gets the same 403 whether the org
  * exists or not. A suspended org is named as such only to its own members.
+ *
+ * And it is the one guarded route that does NOT enter the session's current
+ * org (`tenancy: { entersOrg: false }`): the guard refuses a session whose
+ * active org is suspended or no longer theirs, which is what suspension
+ * means — but a switch behind that refusal would leave such a member with no
+ * way to reach the other orgs they belong to.
  */
 
 import { withAuth } from '@/lib/auth/guards';
@@ -100,6 +106,15 @@ export const POST = withAuth(
       decidedBy: 'self',
       because:
         'Reads the membership by `(orgId, session.user.id)` and writes the caller’s own session row; no other subject can be named.',
+    },
+    // The one route that must not enter the session's current org: a member
+    // whose active org was suspended, or who was removed from it, is refused
+    // everywhere else — and this is how they leave it. The membership check
+    // above is for the org they are switching TO.
+    tenancy: {
+      entersOrg: false,
+      because:
+        'This is the way out of a refused org; entering it first would lock a member of a suspended org out of every other org they belong to.',
     },
   }
 );

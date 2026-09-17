@@ -322,6 +322,20 @@ export interface WithAuthOptions<TParams = Record<string, string>> {
    * the first value that compiles is not a declaration.
    */
   ownership?: RouteOwnership;
+  /**
+   * Whether this route enters the session's org (§106). Every guarded route
+   * does, and a session whose active org is suspended or no longer theirs is
+   * refused — which is what suspension means, except on the one route that
+   * exists to LEAVE that org: `POST /api/v1/orgs/switch`. A switch behind the
+   * refusal would lock a member of a suspended org out of every other org
+   * they belong to. So that route, and only that route, declares
+   * `{ entersOrg: false, because }`; the handler then runs outside any tenant
+   * scope with no org facts on the principal, and does its own membership
+   * check for the org it is switching TO. The `because` is required for the
+   * same reason `RouteOwnership`'s is: the value of the marker is the
+   * sentence. Do not reach for this to make a 403 go away.
+   */
+  tenancy?: { entersOrg: false; because: string };
 }
 
 /** Options for `withAdminAuth`. */
@@ -402,6 +416,36 @@ function refuseOrgEntry(
 async function resolvedTenantHeader(): Promise<string | null> {
   const requestHeaders = await headers();
   return requestHeaders.get(TENANT_HEADER_NAME) || null;
+}
+
+/**
+ * Decide the org a cookie session acts for, for both guards. Throws the 403
+ * on a refusal; answers `null` only for a route that declared it does not
+ * enter an org (see `WithAuthOptions.tenancy`).
+ *
+ * No `accountType` is passed: better-auth's session user does not carry it,
+ * so the install-org projection treats every session as HUMAN. A SERVICE
+ * account has no credential to sign in with, so no session reaches here
+ * today; a fork that mints one for a SERVICE principal should know it
+ * projects to OWNER here, where the key path — which has the owner row —
+ * projects it to MEMBER.
+ */
+async function sessionEntryFor(
+  guard: 'withAuth' | 'withAdminAuth',
+  request: NextRequest,
+  session: AuthSession,
+  tenancy: { entersOrg: false } | undefined
+): Promise<OrgEntry | null> {
+  if (tenancy?.entersOrg === false) return null;
+  const entry = await enterSessionOrg(
+    { id: session.user.id, role: session.user.role },
+    session.session?.activeOrgId ?? null,
+    await resolvedTenantHeader()
+  );
+  if (isOrgRefusal(entry)) {
+    refuseOrgEntry(guard, request, principalOf(session, 'session'), entry);
+  }
+  return entry;
 }
 
 /**
@@ -830,60 +874,56 @@ export function withAuth(
           throw new UnauthorizedError();
         }
         session = cookieSession;
-        const sessionEntry = await enterSessionOrg(
-          { id: session.user.id, role: session.user.role },
-          session.session?.activeOrgId ?? null,
-          await resolvedTenantHeader()
+        entry = await sessionEntryFor(
+          'withAuth',
+          request as NextRequest,
+          session,
+          options?.tenancy
         );
-        if (isOrgRefusal(sessionEntry)) {
-          refuseOrgEntry(
-            'withAuth',
-            request as NextRequest,
-            principalOf(session, 'session'),
-            sessionEntry
-          );
-        }
-        entry = sessionEntry;
         principal = principalOf(session, 'session', undefined, entry);
       }
 
-      // The read half of the authorization seam. The subject is whoever owns
-      // the resource the route named; with no `resource` resolver there is no
-      // subject, the policy is asked about `{ kind: 'nothing' }`, and Sunrise's
-      // default policy allows it — so those routes take the same branch they
-      // took before this call existed, which has its own test rather than being
-      // assumed. `app/api/v1/users/[id]` (GET) is the one core route that does
-      // name a resource.
-      const resource = await resolveResource(
-        options?.resource,
-        request as NextRequest,
-        context as RouteContext | undefined
-      );
-      if (resource === UNRESOLVED) {
-        throw new ForbiddenError('Access denied');
-      }
-      // `readTargetFor` is the one place a resource becomes a read question, so
-      // the three states it can be in are named rather than flattened. This used
-      // to be `resource?.ownerId ?? null`, which collapsed "named nothing" and
-      // "named a row with no owner" onto the value the default policy permits.
-      if (!(await canRead(principal, readTargetFor(resource), orgScope(entry)))) {
-        // Named, because the decision moved in here from the handlers. A route
-        // that used to log its target before checking would otherwise lose that
-        // record on exactly the requests worth recording: `handleAPIError` logs
-        // neither the path nor the resource, so a refused cross-user read would
-        // be an unattributable 'API Error'. Ids, not contents.
-        logger.warn('authorization: canRead refused a request', {
-          path: (request as NextRequest).nextUrl?.pathname,
-          resourceKind: resource?.kind,
-          resourceId: resource?.id,
-          userId: principal.userId,
-          credential: principal.credential,
-        });
-        throw new ForbiddenError('Access denied');
-      }
+      // Everything from here runs inside the org the request entered — the
+      // resolver's read, the policy's decision and the handler — so all three
+      // see the same answer, and the data layer (§107) scopes the resolver's
+      // own query rather than throwing on it at `multi`.
+      return await inTenantScope(entry, async () => {
+        // The read half of the authorization seam. The subject is whoever owns
+        // the resource the route named; with no `resource` resolver there is no
+        // subject, the policy is asked about `{ kind: 'nothing' }`, and Sunrise's
+        // default policy allows it — so those routes take the same branch they
+        // took before this call existed, which has its own test rather than being
+        // assumed. `app/api/v1/users/[id]` (GET) is the one core route that does
+        // name a resource.
+        const resource = await resolveResource(
+          options?.resource,
+          request as NextRequest,
+          context as RouteContext | undefined
+        );
+        if (resource === UNRESOLVED) {
+          throw new ForbiddenError('Access denied');
+        }
+        // `readTargetFor` is the one place a resource becomes a read question, so
+        // the three states it can be in are named rather than flattened. This used
+        // to be `resource?.ownerId ?? null`, which collapsed "named nothing" and
+        // "named a row with no owner" onto the value the default policy permits.
+        if (!(await canRead(principal, readTargetFor(resource), orgScope(entry)))) {
+          // Named, because the decision moved in here from the handlers. A route
+          // that used to log its target before checking would otherwise lose that
+          // record on exactly the requests worth recording: `handleAPIError` logs
+          // neither the path nor the resource, so a refused cross-user read would
+          // be an unattributable 'API Error'. Ids, not contents.
+          logger.warn('authorization: canRead refused a request', {
+            path: (request as NextRequest).nextUrl?.pathname,
+            resourceKind: resource?.kind,
+            resourceId: resource?.id,
+            userId: principal.userId,
+            credential: principal.credential,
+          });
+          throw new ForbiddenError('Access denied');
+        }
 
-      return await inTenantScope(entry, () =>
-        runHandler({
+        return runHandler({
           guard: 'withAuth',
           handler,
           request: request as NextRequest,
@@ -893,8 +933,8 @@ export function withAuth(
           ownership: options?.ownership,
           declaredResource: options?.resource !== undefined,
           state: ownershipReportState,
-        })
-      );
+        });
+      });
     } catch (error) {
       return handleAPIError(error);
     }
@@ -1173,51 +1213,43 @@ export function withAdminAuth(
           throw new UnauthorizedError();
         }
         session = cookieSession;
-        const sessionEntry = await enterSessionOrg(
-          { id: session.user.id, role: session.user.role },
-          session.session?.activeOrgId ?? null,
-          await resolvedTenantHeader()
-        );
-        if (isOrgRefusal(sessionEntry)) {
-          refuseOrgEntry(
-            'withAdminAuth',
-            request as NextRequest,
-            principalOf(session, 'session'),
-            sessionEntry
-          );
-        }
-        entry = sessionEntry;
+        entry = await sessionEntryFor('withAdminAuth', request as NextRequest, session, undefined);
         principal = principalOf(session, 'session', undefined, entry);
       }
 
-      const resource = await resolveResource(
-        options?.resource,
-        request as NextRequest,
-        context as RouteContext | undefined
-      );
+      // Inside the entered org from here — resolver, decision and handler
+      // alike; see the same comment in `withAuth`.
+      return await inTenantScope(entry, async () => {
+        const resource = await resolveResource(
+          options?.resource,
+          request as NextRequest,
+          context as RouteContext | undefined
+        );
 
-      // 'Admin access required' for BOTH credentials here, and that is not a
-      // regression on the key path: the only thing that used to answer for a key
-      // caller is the scope floor above, which still throws its own
-      // 'Admin scope required' and is unreachable past. What lands here is a
-      // resolver that named nothing, or a policy that refused — neither of which
-      // is a missing scope, and telling an operator debugging safe mode to go
-      // and look at their key would send them to the one place that is fine.
-      if (resource === UNRESOLVED || !(await canAdminister(principal, resource, orgScope(entry)))) {
-        // Same reason as the `canRead` refusal above: the guard owns the
-        // decision, so it owns the record of refusing.
-        logger.warn('authorization: canAdminister refused a request', {
-          path: (request as NextRequest).nextUrl?.pathname,
-          resourceKind: resource === UNRESOLVED ? '(unresolved)' : resource?.kind,
-          resourceId: resource === UNRESOLVED ? undefined : resource?.id,
-          userId: principal.userId,
-          credential: principal.credential,
-        });
-        throw new ForbiddenError('Admin access required');
-      }
+        // 'Admin access required' for BOTH credentials here, and that is not a
+        // regression on the key path: the only thing that used to answer for a key
+        // caller is the scope floor above, which still throws its own
+        // 'Admin scope required' and is unreachable past. What lands here is a
+        // resolver that named nothing, or a policy that refused — neither of which
+        // is a missing scope, and telling an operator debugging safe mode to go
+        // and look at their key would send them to the one place that is fine.
+        if (
+          resource === UNRESOLVED ||
+          !(await canAdminister(principal, resource, orgScope(entry)))
+        ) {
+          // Same reason as the `canRead` refusal above: the guard owns the
+          // decision, so it owns the record of refusing.
+          logger.warn('authorization: canAdminister refused a request', {
+            path: (request as NextRequest).nextUrl?.pathname,
+            resourceKind: resource === UNRESOLVED ? '(unresolved)' : resource?.kind,
+            resourceId: resource === UNRESOLVED ? undefined : resource?.id,
+            userId: principal.userId,
+            credential: principal.credential,
+          });
+          throw new ForbiddenError('Admin access required');
+        }
 
-      return await inTenantScope(entry, () =>
-        runHandler({
+        return runHandler({
           guard: 'withAdminAuth',
           handler,
           request: request as NextRequest,
@@ -1227,8 +1259,8 @@ export function withAdminAuth(
           ownership: options?.ownership,
           declaredResource: options?.resource !== undefined,
           state: ownershipReportState,
-        })
-      );
+        });
+      });
     } catch (error) {
       return handleAPIError(error);
     }

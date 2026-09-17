@@ -238,11 +238,14 @@ verification, password reset). In order:
 
 1. A signup in flight on this request → the org that signup is about to
    grant (see the carrier above). Nothing is read.
-2. Otherwise `activeOrgForSession`: the user's only membership; else the
-   install org if they belong to it; else the org they joined most recently;
-   else — **no membership at all** — the install-org default is written right
-   here (the self-heal ruled in t-669's review) and logged at `error`, because
-   it means the signup path failed upstream.
+2. Otherwise `activeOrgForSession`, over the user's memberships in **active**
+   orgs (a member of one suspended and one active org starts in the active
+   one; a user whose every org is suspended starts in the most recent of them
+   and is refused at entry): their only one; else the install org if they
+   belong to it; else the org they joined most recently; else — **no
+   membership at all** — the install-org default is written right here (the
+   self-heal ruled in t-669's review) and logged at `error`, because it means
+   the signup path failed upstream.
 
 Non-blocking: a fault choosing the org mints the session with `null`, which
 the guard treats as the install org at `single` and refuses at `multi`

@@ -27,10 +27,19 @@ export const TENANT_HEADER_NAME = 'x-sunrise-org';
 
 /**
  * Names the org a request is for, or `null` when it cannot say. Must not
- * throw on an ordinary request — a throw here is logged by the proxy and
- * treated as "no answer", which strips the header.
+ * throw on an ordinary request — a throw is reported to the proxy's
+ * `onError` and treated as "no answer", which strips the header.
  */
 export type TenantResolver = (request: Request) => string | null;
+
+/**
+ * What an org id may look like on the wire: a cuid, a slug, the literal
+ * `install`. Bounded and free of anything `Headers.set` would refuse (CR,
+ * LF, non-ASCII) — a resolver that derives its answer from an inbound
+ * header or cookie could otherwise hand the proxy a value that throws at
+ * `set`, which is the 500 the resolver's own try/catch exists to prevent.
+ */
+const ORG_ID_SHAPE = /^[A-Za-z0-9_-]{1,200}$/;
 
 let resolver: TenantResolver | null = null;
 
@@ -49,17 +58,25 @@ export function hasTenantResolver(): boolean {
 }
 
 /**
- * Ask the registered resolver, or answer `null` when none is registered or
- * the resolver names nothing. A throwing resolver is `null` too — the caller
- * (the proxy) logs it; a request must never 500 because a fork's resolver
- * did.
+ * Ask the registered resolver, or answer `null` when none is registered, the
+ * resolver names nothing, or its answer is not org-id shaped. A throwing
+ * resolver is `null` too, reported through `onError` so the proxy can log
+ * it — a request must never 500 because a fork's resolver did, and a
+ * resolver that has started throwing must never fail silently either: every
+ * request would quietly fall back to the session's org while the hostname
+ * says otherwise. This module stays logger-free (it runs in the proxy), so
+ * the logging is the caller's.
  */
-export function resolveTenantFromRequest(request: Request): string | null {
+export function resolveTenantFromRequest(
+  request: Request,
+  onError?: (error: unknown) => void
+): string | null {
   if (!resolver) return null;
   try {
     const answer = resolver(request);
-    return typeof answer === 'string' && answer.length > 0 ? answer : null;
-  } catch {
+    return typeof answer === 'string' && ORG_ID_SHAPE.test(answer) ? answer : null;
+  } catch (error) {
+    onError?.(error);
     return null;
   }
 }
