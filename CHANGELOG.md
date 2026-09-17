@@ -32,8 +32,9 @@ release process.
   nullable, backfilled `orgId` to `AiApiKey`, `AiAgentEmbedToken`,
   `AiAgentInviteToken` and `McpApiKey` (an `admin`-scoped API key stays
   `NULL`: it is a platform credential) plus an unread `Session.activeOrgId`.
-  `userCreateAfterHook` gives every later user a membership, and a failure
-  there fails the signup rather than leaving a memberless user.
+  `userCreateAfterHook` gives every later user a membership (non-blocking,
+  logged at error on failure; the session path self-heals it in t-670), and
+  the `001-system-owner` seed gives the config-owner one on a fresh install.
   `OrgMembership` is an `export` source and `Org` an `attribution` source in
   `SUBJECT_DATA_SOURCES`; `npm run smoke:tenancy` proves the invariant against
   a real database. Behaviour at `TENANCY_MODE=single` is unchanged: no

@@ -427,7 +427,7 @@ databaseHooks: {
         return { data: user };
       },
 
-      // after hook: install-org membership (blocking), then sets preferences,
+      // after hook: install-org membership, then sets preferences,
       // detects password invitations, sends welcome email
       // Does NOT handle OAuth invitation tokens — those are fully processed in the before hook.
       after: async (user, ctx) => {

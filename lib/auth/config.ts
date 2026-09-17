@@ -300,18 +300,21 @@ export async function userCreateAfterHook(
   const signupMethod = isOAuthSignup ? 'OAuth' : 'email/password';
 
   // Every user belongs to an org (tenancy design, principle 1). First, and
-  // the one step in this hook that is NOT non-blocking: the membership is the
-  // invariant the org layer stands on, and a signup that reports success while
-  // leaving the user memberless is a state nothing downstream can detect —
-  // at `multi` the guard would refuse them with no record of why. So a
-  // failure here is logged AND fails the signup. The user row already exists
-  // at this point; the person retries and is told the address is taken, signs
-  // in, and at `single` the guard resolves a null membership to the install
-  // org anyway (§106 t-671) — the honest outcome, not a silent one.
+  // non-blocking like everything else here — deliberately, after a round of
+  // review reversed the opposite ruling. This hook runs inside better-auth's
+  // `createUser`, BEFORE `linkAccount` mints the credential account
+  // (sign-up.mjs) and before the OAuth account is written; a throw here would
+  // leave a user row with no way to sign in and no path that ever re-runs
+  // this hook, while forgot-password would later hand them a credential and
+  // sign them in memberless anyway. So a failure is logged at `error` — the
+  // operator's signal — and the signup completes. The invariant is restored
+  // by the session path: §106 t-670's `session.create.before` hook re-runs
+  // `ensureMembership` for a user with no membership, and at `single` the
+  // guard resolves a null membership to the install org (t-671); at `multi`
+  // the guard refuses until a membership exists.
   //
-  // Inline rather than a `registerUserCreatedHook` contributor on purpose:
-  // that registry swallows every throw (`dispatchUserCreated`), which is the
-  // opposite of what this write needs. Do not tidy it into the seam.
+  // Inline rather than a `registerUserCreatedHook` contributor: that registry
+  // is the fork's seam and runs last; this is a core invariant that goes first.
   try {
     await ensureMembership(user.id, initialMembershipFor(user));
   } catch (membershipError) {
@@ -319,7 +322,6 @@ export async function userCreateAfterHook(
       userId: user.id,
       signupMethod,
     });
-    throw membershipError;
   }
 
   // Record that the first-user-is-admin bootstrap has completed, the first time

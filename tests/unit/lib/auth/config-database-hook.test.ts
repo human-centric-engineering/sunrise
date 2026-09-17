@@ -22,7 +22,8 @@
  *
  * After hook:
  * - Every new user becomes a member of the install org (§106): MEMBER, or
- *   OWNER for a real platform admin; a failure there FAILS the signup
+ *   OWNER for a real platform admin; a failure there is logged at error and
+ *   the signup still completes (a throw would strand a credential-less user)
  * - Default preferences set for OAuth signup
  * - Default preferences set for email/password signup
  * - Non-blocking error handling (preferences failures don't break signup)
@@ -292,9 +293,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
     mocks.prisma.authBootstrap.findUnique.mockResolvedValue(null);
     mocks.prisma.authBootstrap.upsert.mockResolvedValue({ id: 'singleton' });
 
-    // Default mock behavior: the install-org membership write succeeds. The
-    // one blocking step in the after hook — tests of the failure arm override
-    // this to reject.
+    // Default mock behavior: the install-org membership write succeeds. Tests
+    // of the failure arm override this to reject.
     mocks.prisma.orgMembership.upsert.mockResolvedValue({ id: 'membership-1' });
   });
 
@@ -993,26 +993,27 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(membership).toBeLessThan(email);
       });
 
-      it('FAILS the signup when the membership write fails — the one blocking step', async () => {
-        // Unlike preferences, the marker and the welcome email, this failure
-        // surfaces: a user silently left memberless is the state the write
-        // exists to make impossible, and nothing downstream could detect it.
+      it('logs at error and lets the signup complete when the membership write fails', async () => {
+        // Deliberately non-blocking: this hook runs before better-auth links the
+        // credential account, so a throw would strand a user who can never sign
+        // in — see the comment in config.ts. The failure is the operator's
+        // signal (error log), and the session path self-heals the membership.
         const mockUser = makeUserCreateData({ id: 'memberless', email: 'ml@example.com' });
         const dbDown = new Error('connection refused');
         mocks.prisma.orgMembership.upsert.mockRejectedValue(dbDown);
 
-        await expect(userCreateAfterHook(mockUser, { path: '/api/auth/signup' })).rejects.toThrow(
-          'connection refused'
-        );
+        await expect(
+          userCreateAfterHook(mockUser, { path: '/api/auth/signup' })
+        ).resolves.toBeUndefined();
 
         expect(mocks.logger.error).toHaveBeenCalledWith(
           'Failed to create org membership for new user',
           dbDown,
           expect.objectContaining({ userId: 'memberless' })
         );
-        // And nothing after it ran: no preferences, no welcome email.
-        expect(mocks.prisma.user.update).not.toHaveBeenCalled();
-        expect(mocks.sendEmail).not.toHaveBeenCalled();
+        // And the rest of the hook still ran: preferences and the welcome email.
+        expect(mocks.prisma.user.update).toHaveBeenCalled();
+        expect(mocks.sendEmail).toHaveBeenCalled();
       });
     });
 

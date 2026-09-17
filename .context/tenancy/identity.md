@@ -102,14 +102,26 @@ idempotent, so a re-run or an operator who created the row by hand is a
 no-op rather than a failed deploy.
 
 **Later rows — the hook.** `userCreateAfterHook` (`lib/auth/config.ts`)
-calls `ensureMembership(user.id, initialMembershipFor(user))` **first, and
-blocking**. Every other step in that hook is non-blocking by design; this one
-is not, because a signup that reports success while leaving the user
-memberless is a state nothing downstream can detect. The failure is logged
-and the signup fails; the person retries, is told the address is taken, and
-signs in. It is deliberately **not** a `registerUserCreatedHook` contributor:
-that registry swallows every throw, which is the opposite of what this write
-needs. Do not tidy it into the seam.
+calls `ensureMembership(user.id, initialMembershipFor(user))` first. Like
+every other step in that hook it is **non-blocking** — a failure is logged at
+`error` and the signup completes. That was reversed from "blocking" in
+review, and the reason is worth keeping: the hook runs inside better-auth's
+`createUser`, _before_ the credential account is linked, so a throw would
+leave a user row nobody can sign in as, with no path that ever re-runs the
+hook — and forgot-password would later mint the credential and sign them in
+memberless regardless. The invariant is restored on the session path instead:
+t-670's `session.create.before` hook re-runs `ensureMembership` for a user
+with no membership, and t-671's guard resolves a null membership to the
+install org at `single` (and refuses at `multi`). It is deliberately **not** a
+`registerUserCreatedHook` contributor: that registry is the fork's seam and
+runs last; this is a core invariant and runs first.
+
+**Fork note.** Sunrise passes no `transaction` option to `prismaAdapter`, so
+the hook's write sees the user row. A fork enabling `transaction: true` gets
+an interactive transaction the shared client cannot see into, and this upsert
+fails its FK on every signup — pass the transaction's client through as
+`ensureMembership`'s `db` argument (see the docblock in
+`lib/tenancy/membership.ts`).
 
 **The seeded config-owner — the seed.** `prisma/seeds/001-system-owner.ts`
 upserts the SERVICE owner with Prisma directly, bypassing the hook, and on a
@@ -131,9 +143,7 @@ install's existing row is left alone). `smoke:tenancy` runs in CI after
 _after_ `signUpEmail` returns, so the hook sees `role: USER` and an invited
 platform ADMIN lands as `MEMBER`. An under-grant with no effect at `single`
 (nothing reads the org role yet); t-670 rewrites that route and fixes it.
-`smoke:tenancy`'s "every real platform admin is an OWNER" check will say so on
-a database where an admin was invited after this migration — that is the smoke
-telling the truth, not a broken smoke.
+`smoke:tenancy` does not assert on it (see the next gap for why).
 
 **Known gap until §106 t-672:** the mapping is applied once, at creation.
 A platform-role change afterwards — the admin `users/[id]` PATCH promoting a
@@ -198,7 +208,8 @@ forks.
 - `tests/unit/lib/tenancy/migration.test.ts` — the migration's statements,
   their idempotency, and that its `CASE` and `initialMembershipFor()` agree.
 - `tests/unit/lib/auth/config-database-hook.test.ts` — the hook writes the
-  membership first, and a failure there fails the signup.
+  membership first, and a failure there is logged at error while the signup
+  still completes.
 - `tests/unit/auth-role-literals.test.ts` — no bare `'OWNER'` / `'MEMBER'`
   outside `lib/tenancy/roles.ts`, the way it already polices `'ADMIN'`.
 

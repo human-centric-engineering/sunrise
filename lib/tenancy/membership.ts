@@ -58,14 +58,21 @@ export function initialMembershipFor(user: {
  * An upsert on the `(orgId, userId)` unique with an empty update: a second
  * call is a no-op rather than a P2002, and — unlike a bare `create` — a
  * membership the migration or an operator already wrote is left as it is,
- * role included. Throws on any database failure. **That is deliberate**, and
- * the reason this is not a `registerUserCreatedHook` contributor:
- * `dispatchUserCreated` swallows every throw by design, and a user left
- * silently memberless is exactly the state this write exists to make
- * impossible. The caller decides what surfacing means for it.
+ * role included. Throws on any database failure; each caller decides what to
+ * do with that — the signup hook logs and continues (see the comment there
+ * for why a throw would be worse), the seed lets it fail the seed.
  *
  * `db` defaults to the shared client; a seed passes the runner's own so the
  * write lands on the same connection as the user it just upserted.
+ *
+ * **Fork note — better-auth's `transaction` option.** Sunrise passes no
+ * `transaction` to `prismaAdapter`, so its hooks run "as-is" and the user row
+ * this writes against is visible on the shared client. A fork that enables
+ * `prismaAdapter(prisma, { transaction: true })` gets a real interactive
+ * transaction: the user row is not yet visible on the singleton's connection,
+ * this upsert fails `org_membership_userId_fkey` on every signup, and every
+ * signup logs the error above. Such a fork should pass the transaction's
+ * client through the hook (better-auth's `getCurrentAdapter()`) as `db`.
  */
 export async function ensureMembership(
   userId: string,

@@ -190,11 +190,14 @@ async function main(): Promise<void> {
       throw new Error('could not find the ai_api_key backfill UPDATE in the migration');
     if (!backfillUpdate.endsWith(';'))
       throw new Error('backfill UPDATE does not end with ";" — cannot scope it');
-    const scopedUpdate = `${backfillUpdate.slice(0, -1)} AND "id" IN ($1, $2);`;
-    const bound = await prisma.$executeRawUnsafe(scopedUpdate, chatKey.id, adminKey.id);
+    // All three fixture keys are in the statement's reach — including the one
+    // already bound — so "not rewritten" below is a claim the UPDATE could
+    // falsify, not one it never touched.
+    const scopedUpdate = `${backfillUpdate.slice(0, -1)} AND "id" IN ($1, $2, $3);`;
+    const bound = await prisma.$executeRawUnsafe(scopedUpdate, chatKey.id, adminKey.id, key.id);
     check(
       bound === 1,
-      `re-running the migration's ai_api_key backfill over the two fixture keys bound exactly one (${bound})`
+      `re-running the migration's ai_api_key backfill over the three fixture keys bound exactly one (${bound})`
     );
     const [chatAfter, adminAfter] = await Promise.all([
       prisma.aiApiKey.findUnique({ where: { id: chatKey.id } }),
