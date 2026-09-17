@@ -289,8 +289,8 @@ POST /api/v1/users/invite
 
 `orgId` / `orgRole` say where the pending invitation points. A resend
 (`?resend=true`) re-sends _this_ invitation: the pending org keys carry over
-unless the body names an `orgId` of its own; the platform `role` is always
-the body's.
+unless the body sends either `orgId` or `orgRole`, in which case the body's
+pair replaces both; the platform `role` is always the body's.
 
 **Error Responses**:
 

@@ -214,10 +214,10 @@ creates the membership, and the member is then refused at entry like every
 other member of that org — suspension is enforced where a request enters an
 org (the guard, t-671; the switch), never by withholding memberships. A
 resend (`?resend=true`) re-sends _this_ invitation: the pending `orgId` /
-`orgRole` carry over unless the body names an org — the admin table's Resend
-button posts only name, email and role — and the inherited org goes through
-the same existence, status and policy checks. The "already pending" response
-echoes the pending org keys.
+`orgRole` carry over unless the body sends either key (then the body's pair
+replaces both) — the admin table's Resend button posts only name, email and
+role — and the inherited org goes through the same existence, status and
+policy checks. The "already pending" response echoes the pending org keys.
 
 ## The active org: which org a session acts in
 

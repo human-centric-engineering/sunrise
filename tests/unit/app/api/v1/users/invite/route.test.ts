@@ -128,6 +128,21 @@ describe('POST /api/v1/users/invite — org axis', () => {
     expect(prisma.org.findUnique).not.toHaveBeenCalled();
   });
 
+  it('an orgRole alone is the install org with an explicit role, and is written', async () => {
+    // Documented and honoured by membershipForNewUser; round 2 of the review
+    // dropped it by keying the body's intent on orgId only.
+    const res = await POST(request({ ...invitee, orgRole: 'ADMIN' }));
+
+    expect(res.status).toBe(201);
+    expect(writtenMetadata()).toMatchObject({ orgRole: 'ADMIN' });
+    expect(writtenMetadata()).not.toHaveProperty('orgId');
+    expect(JSON.parse(await res.text()).data.invitation).toMatchObject({
+      orgId: null,
+      orgRole: 'ADMIN',
+    });
+    expect(prisma.org.findUnique).not.toHaveBeenCalled();
+  });
+
   it('writes the org and org role it was given', async () => {
     const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'ADMIN' }));
 
@@ -267,6 +282,15 @@ describe('POST /api/v1/users/invite — org axis', () => {
       expect(prisma.org.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: OTHER_ORG } })
       );
+    });
+
+    it('an orgRole alone in the body overrides the pending keys too', async () => {
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+
+      await POST(request({ ...invitee, orgRole: 'MEMBER' }, '?resend=true'));
+
+      expect(rewritten()).toMatchObject({ orgRole: 'MEMBER' });
+      expect(rewritten()).not.toHaveProperty('orgId');
     });
 
     it("takes the body's org when it names one — the override is explicit", async () => {

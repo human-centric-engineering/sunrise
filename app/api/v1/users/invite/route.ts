@@ -157,18 +157,21 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // 6b. Which org this invitation joins (§106). A resend re-sends THIS
-  // invitation, so the pending row's org keys carry over unless the body
-  // names an org of its own — the admin table's Resend button posts only
-  // `{ name, email, role }`, and without this a bounced invitation into an
-  // org would be silently re-targeted to the install org. The platform
-  // `role` has always come from the body on a resend; that is unchanged.
-  const target =
-    body.orgId !== undefined
-      ? { orgId: body.orgId, orgRole: body.orgRole }
-      : existingInvitation
-        ? { orgId: existingInvitation.metadata.orgId, orgRole: existingInvitation.metadata.orgRole }
-        : { orgId: undefined, orgRole: undefined };
+  // 6b. Which org this invitation joins, and as what (§106). The body's org
+  // keys when it sends either of them (`orgRole` alone means the install org
+  // with an explicit role — `membershipForNewUser` honours it); else, on a
+  // resend, the pending row's — a resend re-sends THIS invitation, and the
+  // admin table's Resend button posts only `{ name, email, role }`, so
+  // without the carry-over a bounced invitation into an org would be
+  // silently re-targeted to the install org. The platform `role` has always
+  // come from the body on a resend; that is unchanged.
+  const bodyNamesTarget = body.orgId !== undefined || body.orgRole !== undefined;
+  const target = bodyNamesTarget
+    ? { orgId: body.orgId, orgRole: body.orgRole }
+    : {
+        orgId: existingInvitation?.metadata.orgId,
+        orgRole: existingInvitation?.metadata.orgRole,
+      };
 
   // The org is in the body (or the pending row), so this cannot be a
   // `resource` resolver on the guard (a resolver runs before the body is
