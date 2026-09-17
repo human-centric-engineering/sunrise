@@ -1,0 +1,78 @@
+// Tenancy — organisation identity (§106, multi-tenancy programme).
+//
+// One org always exists (`.context/architecture/multi-tenancy-design.md`,
+// principle 1): the migration that creates these tables also inserts the
+// install org (`INSTALL_ORG_ID` in lib/tenancy/constants.ts) and makes every
+// existing user a member; `userCreateAfterHook` in lib/auth/config.ts makes
+// every later user a member. So at TENANCY_MODE=single the write path, the
+// authorization policy and the console split have ONE code path — the org is
+// there, it is just the only one — rather than a dormant multi-tenant branch
+// nobody runs. Nothing reads these rows at `single` yet beyond the Art. 15
+// export manifest; the context primitive (§106 t-671) is what starts to.
+//
+// Both FKs on OrgMembership cascade: a membership is the person's data
+// (erased with them — `SUBJECT_DATA_SOURCES` lists it as `export`) and it
+// cannot outlive its org. `Org` itself has no `User` FK on purpose — ownership
+// is a membership role, not a creator column — so erasing the last OWNER
+// leaves the org standing; §106 t-672's lifecycle decides what happens then.
+//
+// The role vocabulary lives in lib/tenancy/roles.ts (client-safe, the
+// lib/auth/roles.ts shape); the Prisma enum below is the same three values
+// and `tests/unit/lib/tenancy/roles.test.ts` asserts they agree. An enum
+// rather than a free-form string because the set is closed by design
+// (principle 8: "org roles stop at OWNER / ADMIN / MEMBER") — a fork's product
+// tiers sit BENEATH the org, not on this column.
+
+/// A tenant. At `single` exactly one row exists — the install org.
+model Org {
+  id        String    @id @default(cuid())
+  slug      String    @unique
+  name      String
+  status    OrgStatus @default(ACTIVE)
+  settings  Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  memberships OrgMembership[]
+
+  // Credentials minted inside this org (§106 t-673 writes them; the identity
+  // migration backfills every existing row to the install org).
+  apiKeys      AiApiKey[]
+  embedTokens  AiAgentEmbedToken[]
+  inviteTokens AiAgentInviteToken[]
+  mcpApiKeys   McpApiKey[]
+
+  @@map("org")
+}
+
+/// A user's place in an org. A user may belong to several orgs.
+model OrgMembership {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String
+  role      OrgRole  @default(MEMBER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org  Org  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User @relation("OrgMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@index([userId])
+  @@map("org_membership")
+}
+
+/// Lifecycle of an org. SUSPENDED members are denied entry by the guard
+/// (§106 t-671); the install org can never be suspended (t-672).
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+/// The three org roles, closed by design (principle 8). Vocabulary and
+/// predicates: lib/tenancy/roles.ts.
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}

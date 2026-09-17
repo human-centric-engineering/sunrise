@@ -184,11 +184,14 @@ model AiAgentInviteToken {
   revokedAt DateTime? // non-null = revoked
   createdBy String?
   createdAt DateTime  @default(now())
+  orgId     String? // org the token was minted in (§106)
 
   agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
   creator User?   @relation("InviteTokenCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  org     Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([agentId])
+  @@index([orgId])
   @@map("ai_agent_invite_token")
 }
 
@@ -220,11 +223,14 @@ model AiAgentEmbedToken {
   createdBy      String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  orgId          String? // org the token was minted in (§106)
 
   agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
   creator User?   @relation("EmbedTokenCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  org     Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([agentId])
+  @@index([orgId])
   @@map("ai_agent_embed_token")
 }
 

@@ -135,16 +135,19 @@ model McpApiKey {
   createdBy         String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  orgId             String? // org the key was minted in (§106)
 
   // Relations
   creator     User?         @relation("McpApiKeyCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   scopedAgent AiAgent?      @relation(fields: [scopedAgentId], references: [id], onDelete: SetNull)
+  org         Org?          @relation(fields: [orgId], references: [id], onDelete: Cascade)
   auditLogs   McpAuditLog[]
 
   @@index([keyHash])
   @@index([createdBy])
   @@index([isActive])
   @@index([scopedAgentId])
+  @@index([orgId])
   @@map("mcp_api_key")
 }
 

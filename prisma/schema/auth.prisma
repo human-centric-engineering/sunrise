@@ -41,6 +41,9 @@ model User {
   sessions Session[]
   accounts Account[]
 
+  // Tenancy (§106). Cascade: a membership is the person's data.
+  orgMemberships OrgMembership[] @relation("OrgMembershipUser")
+
   // Agent Orchestration relations
   aiAgents                          AiAgent[]                          @relation("AiAgentCreator")
   aiAgentProfiles                   AiAgentProfile[]                   @relation("AiAgentProfileCreator")
@@ -98,6 +101,15 @@ model Session {
   ipAddress String?
   userAgent String?
   userId    String
+
+  // The org this session is acting in (§106). Landed with the identity
+  // migration so the feature ships ONE migration; better-auth learns to write
+  // it (session `additionalFields`) in t-670, and nothing reads it until then.
+  // Nullable on purpose: null means "not chosen", which at `single` resolves
+  // to the install org in the guard. Deliberately NOT an FK — better-auth owns
+  // this table's shape and its schema check (auth-schema-parity.test.ts)
+  // tolerates an extra nullable scalar, not a relation it never declared.
+  activeOrgId String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

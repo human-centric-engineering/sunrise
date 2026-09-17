@@ -162,11 +162,14 @@ model AiApiKey {
   expiresAt    DateTime? // null = never expires
   revokedAt    DateTime? // non-null = revoked
   createdAt    DateTime  @default(now())
+  orgId        String? // org the key was minted in (§106); null = platform credential (`admin` scope)
 
   user User @relation("AiApiKeyUser", fields: [userId], references: [id], onDelete: Cascade)
+  org  Org? @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([keyHash])
+  @@index([orgId])
   @@map("ai_api_key")
 }
 
