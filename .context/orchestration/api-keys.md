@@ -110,7 +110,9 @@ The `resolveApiKey()` function in `lib/auth/api-keys.ts` handles:
 2. Hash and look up in DB
 3. Check not revoked and not expired
 4. Update `lastUsedAt` (fire-and-forget)
-5. Return a session-like object with the key owner's user data + scopes
+5. Return a session-like object with the key owner's user data + scopes, plus
+   the key's `orgId` (§106 — `NULL` until t-673 binds it at mint; the guards
+   enter it, see [`tenancy/context.md`](../tenancy/context.md))
 
 ## Schema: `AiApiKey`
 

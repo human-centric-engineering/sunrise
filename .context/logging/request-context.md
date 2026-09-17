@@ -42,15 +42,15 @@ export async function POST(request: NextRequest) {
 
 ## Available Context Utilities
 
-| Function                   | Description                                      | Async | Location                 |
-| -------------------------- | ------------------------------------------------ | ----- | ------------------------ |
-| `getRouteLogger(request)`  | **Standard** - Get scoped logger for API routes  | Yes   | `lib/api/context.ts`     |
-| `getRequestId()`           | Get or generate request ID from headers          | Yes   | `lib/logging/context.ts` |
-| `getUserContext()`         | Extract userId, sessionId, email from session    | Yes   | `lib/logging/context.ts` |
-| `getFullContext(request)`  | Combined request + user context                  | Yes   | `lib/logging/context.ts` |
-| `getEndpointPath(request)` | Extract clean endpoint path without query params | No    | `lib/logging/context.ts` |
-| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)  | No    | `lib/logging/context.ts` |
-| `getClientIp()`            | Get client IP from proxy headers                 | Yes   | `lib/logging/context.ts` |
+| Function                   | Description                                       | Async | Location                 |
+| -------------------------- | ------------------------------------------------- | ----- | ------------------------ |
+| `getRouteLogger(request)`  | **Standard** - Get scoped logger for API routes   | Yes   | `lib/api/context.ts`     |
+| `getRequestId()`           | Get or generate request ID from headers           | Yes   | `lib/logging/context.ts` |
+| `getUserContext()`         | Extract userId, sessionId, email from session     | Yes   | `lib/logging/context.ts` |
+| `getFullContext(request)`  | Combined request + user context (+ `orgId`, §106) | Yes   | `lib/logging/context.ts` |
+| `getEndpointPath(request)` | Extract clean endpoint path without query params  | No    | `lib/logging/context.ts` |
+| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)   | No    | `lib/logging/context.ts` |
+| `getClientIp()`            | Get client IP from proxy headers                  | Yes   | `lib/logging/context.ts` |
 
 **Note:** For rate limiting and security, use `getClientIP()` from `lib/security/ip.ts` instead — it validates IP format and provides a fallback value. The logging `getClientIp()` is for tracing purposes only.
 
