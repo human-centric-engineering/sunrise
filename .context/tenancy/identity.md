@@ -186,12 +186,12 @@ stored on the invitation's metadata (`invitationMetadataSchema`,
 existed still parses). Accepting the invitation — by password or by OAuth —
 creates the membership `membershipForNewUser` derives from it:
 
-| The invitation says…                        | The member lands as                                           |
-| ------------------------------------------- | ------------------------------------------------------------- |
-| no org                                      | install org, by the role rule above on the role it **grants** |
-| `orgId: 'install'` + `orgRole`              | install org, that role, as written                            |
-| another `orgId`, org already has members    | that org, `orgRole` (default `MEMBER`)                        |
-| another `orgId`, org has **no members yet** | that org, `OWNER` — whatever `orgRole` said                   |
+| The invitation says…                           | The member lands as                                           |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| neither key                                    | install org, by the role rule above on the role it **grants** |
+| `orgRole` (with or without `orgId: 'install'`) | install org, that role, as written                            |
+| another `orgId`, org already has members       | that org, `orgRole` (default `MEMBER`)                        |
+| another `orgId`, org has **no members yet**    | that org, `OWNER` — whatever `orgRole` said                   |
 
 The last row is the **per-org bootstrap**: an org nobody owns is one nobody
 can administer, so its first member owns it. It sits beside the install-scoped
