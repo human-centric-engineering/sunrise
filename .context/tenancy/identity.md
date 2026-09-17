@@ -213,9 +213,11 @@ re-check: an invitation into an org suspended during its 7-day window still
 creates the membership, and the member is then refused at entry like every
 other member of that org — suspension is enforced where a request enters an
 org (the guard, t-671; the switch), never by withholding memberships. A
-resend (`?resend=true`) writes a new invitation from the body, org keys
-included; the "already pending" response echoes the pending `orgId` /
-`orgRole` so a resend that changes them is a choice.
+resend (`?resend=true`) re-sends _this_ invitation: the pending `orgId` /
+`orgRole` carry over unless the body names an org — the admin table's Resend
+button posts only name, email and role — and the inherited org goes through
+the same existence, status and policy checks. The "already pending" response
+echoes the pending org keys.
 
 ## The active org: which org a session acts in
 

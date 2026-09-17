@@ -28,16 +28,16 @@
  * 1. Authenticate user (require session)
  * 2. Authorize user (require ADMIN role)
  * 3. Validate request body
- * 3b. If an org is named: it must exist and be active, and the policy must
- *     let this caller administer it (`canAdminister` on an org resource —
- *     the seam §106 t-671 makes org-aware; today it answers as the admin
- *     guard already did)
  * 4. Parse resend query parameter
  * 5. Check if user account already exists (409 error if exists)
  * 6. Check if invitation already exists:
  *    - If exists and resend=false: Return 200 with 'pending' status (NO link)
  *    - If exists and resend=true: Delete old, create new token, send email
  *    - If not exists: Create new invitation
+ * 6b. Resolve the org (§106): the body's, else on a resend the pending
+ *     invitation's; it must exist and be active, and the policy must let this
+ *     caller administer it (`canAdminister` on an org resource — the seam
+ *     §106 t-671 makes org-aware; today it answers as the admin guard did)
  * 7. Generate/regenerate invitation token
  * 8. Send invitation email
  * 9. Return invitation details (NOT user object)
@@ -107,43 +107,6 @@ export const POST = withAdminAuth(async (request, session) => {
   // 3. Validate request body
   const body = await validateRequestBody(request, inviteUserSchema);
 
-  // 3b. An invitation may name the org the invitee joins (§106). The org is in
-  // the body, so this cannot be a `resource` resolver on the guard (a resolver
-  // runs before the body is read); the same question is asked here instead,
-  // of the same policy. Under Sunrise's default policy `canAdminister` answers
-  // for an org resource exactly as it did for the guard's `null` — platform
-  // admins (and admin-scoped keys) only — so nothing widens today; t-671 is
-  // what teaches it to say yes to an org's own OWNER/ADMIN.
-  if (body.orgId) {
-    const org = await prisma.org.findUnique({
-      where: { id: body.orgId },
-      select: { id: true, status: true },
-    });
-
-    if (!org || org.status !== 'ACTIVE') {
-      // One answer for "no such org" and "suspended": an inviter who may
-      // administer the org can see its status elsewhere; nobody else should
-      // learn it from this endpoint.
-      return errorResponse('Cannot invite into that organisation', {
-        code: ErrorCodes.VALIDATION_ERROR,
-        status: 400,
-      });
-    }
-
-    const mayInvite = await canAdminister(session.principal, {
-      kind: 'org',
-      id: org.id,
-      orgId: org.id,
-    });
-    if (!mayInvite) {
-      log.warn('Invitation into org refused by the authorization policy', {
-        adminId: session.user.id,
-        orgId: org.id,
-      });
-      throw new ForbiddenError('You cannot invite users into that organisation');
-    }
-  }
-
   // 4. Parse resend query parameter
   const url = new URL(request.url);
   const resend = url.searchParams.get('resend') === 'true';
@@ -179,8 +142,8 @@ export const POST = withAdminAuth(async (request, session) => {
           email: body.email,
           name: existingInvitation.metadata.name,
           role: existingInvitation.metadata.role,
-          // Where the pending invitation points (§106) — so an admin can see
-          // it before a resend, which rewrites the metadata from the body.
+          // Where the pending invitation points (§106); a resend keeps it
+          // unless the body names an org.
           orgId: existingInvitation.metadata.orgId ?? null,
           orgRole: existingInvitation.metadata.orgRole ?? null,
           invitedAt: existingInvitation.metadata.invitedAt,
@@ -194,11 +157,59 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
-  // 7. Generate or regenerate invitation token. A resend is a NEW invitation
-  // built from this body — the platform role and (§106) the org keys are
-  // whatever the caller sent now, not what the pending row said. That has
-  // always been the contract for `role`; the pending response above echoes
-  // the org keys so a resend that changes them is a choice, not a surprise.
+  // 6b. Which org this invitation joins (§106). A resend re-sends THIS
+  // invitation, so the pending row's org keys carry over unless the body
+  // names an org of its own — the admin table's Resend button posts only
+  // `{ name, email, role }`, and without this a bounced invitation into an
+  // org would be silently re-targeted to the install org. The platform
+  // `role` has always come from the body on a resend; that is unchanged.
+  const target =
+    body.orgId !== undefined
+      ? { orgId: body.orgId, orgRole: body.orgRole }
+      : existingInvitation
+        ? { orgId: existingInvitation.metadata.orgId, orgRole: existingInvitation.metadata.orgRole }
+        : { orgId: undefined, orgRole: undefined };
+
+  // The org is in the body (or the pending row), so this cannot be a
+  // `resource` resolver on the guard (a resolver runs before the body is
+  // read); the same question is asked here instead, of the same policy.
+  // Under Sunrise's default policy `canAdminister` answers for an org
+  // resource exactly as it did for the guard's `null` — platform admins (and
+  // admin-scoped keys) only — so nothing widens today; t-671 is what teaches
+  // it to say yes to an org's own OWNER/ADMIN. Asked on a resend too: the
+  // pending org must still exist, be active, and be one this caller may
+  // invite into.
+  if (target.orgId) {
+    const org = await prisma.org.findUnique({
+      where: { id: target.orgId },
+      select: { id: true, status: true },
+    });
+
+    if (!org || org.status !== 'ACTIVE') {
+      // One answer for "no such org" and "suspended": an inviter who may
+      // administer the org can see its status elsewhere; nobody else should
+      // learn it from this endpoint.
+      return errorResponse('Cannot invite into that organisation', {
+        code: ErrorCodes.VALIDATION_ERROR,
+        status: 400,
+      });
+    }
+
+    const mayInvite = await canAdminister(session.principal, {
+      kind: 'org',
+      id: org.id,
+      orgId: org.id,
+    });
+    if (!mayInvite) {
+      log.warn('Invitation into org refused by the authorization policy', {
+        adminId: session.user.id,
+        orgId: org.id,
+      });
+      throw new ForbiddenError('You cannot invite users into that organisation');
+    }
+  }
+
+  // 7. Generate or regenerate invitation token
   const invitationMetadata = {
     name: body.name,
     role: body.role || DEFAULT_USER_ROLE,
@@ -206,8 +217,8 @@ export const POST = withAdminAuth(async (request, session) => {
     invitedAt: new Date().toISOString(),
     // Only written when named, so an invitation into the install org is
     // byte-identical to one written before these keys existed.
-    ...(body.orgId ? { orgId: body.orgId } : {}),
-    ...(body.orgRole ? { orgRole: body.orgRole } : {}),
+    ...(target.orgId ? { orgId: target.orgId } : {}),
+    ...(target.orgRole ? { orgRole: target.orgRole } : {}),
   };
 
   // Use updateInvitationToken for resend (deletes old, creates new)
@@ -219,8 +230,8 @@ export const POST = withAdminAuth(async (request, session) => {
   log.info(existingInvitation ? 'Invitation resent' : 'Invitation created', {
     email: body.email,
     role: body.role,
-    orgId: body.orgId ?? null,
-    orgRole: body.orgRole ?? null,
+    orgId: target.orgId ?? null,
+    orgRole: target.orgRole ?? null,
     invitedBy: session.user.id,
     isResend: !!existingInvitation,
   });
@@ -277,8 +288,8 @@ export const POST = withAdminAuth(async (request, session) => {
         email: body.email,
         name: body.name,
         role: body.role || DEFAULT_USER_ROLE,
-        orgId: body.orgId ?? null,
-        orgRole: body.orgRole ?? null,
+        orgId: target.orgId ?? null,
+        orgRole: target.orgRole ?? null,
         invitedAt: new Date().toISOString(),
         expiresAt: expiresAt.toISOString(),
         link: invitationUrl,

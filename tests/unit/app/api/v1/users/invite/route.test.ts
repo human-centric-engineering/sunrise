@@ -67,7 +67,11 @@ vi.mock('@/lib/api/context', () => ({ getRouteLogger: vi.fn(async () => mockLog)
 import { POST } from '@/app/api/v1/users/invite/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { generateInvitationToken, getValidInvitation } from '@/lib/utils/invitation-token';
+import {
+  generateInvitationToken,
+  getValidInvitation,
+  updateInvitationToken,
+} from '@/lib/utils/invitation-token';
 import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
@@ -77,8 +81,8 @@ import {
 
 const OTHER_ORG = 'cmorg000000000000000other';
 
-function request(body: unknown): NextRequest {
-  return new Request('http://localhost/api/v1/users/invite', {
+function request(body: unknown, query = ''): NextRequest {
+  return new Request(`http://localhost/api/v1/users/invite${query}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -227,6 +231,81 @@ describe('POST /api/v1/users/invite — org axis', () => {
     const body = JSON.parse(await res.text());
 
     expect(body.data.invitation).toMatchObject({ orgId: null, orgRole: null });
+  });
+
+  describe('resend (?resend=true) re-sends THIS invitation', () => {
+    // The admin table's Resend button posts `{ name, email, role }` only, so
+    // the pending row's org keys must survive a resend that does not name one.
+    function pending(metadata: Record<string, unknown>) {
+      vi.mocked(getValidInvitation).mockResolvedValueOnce({
+        email: invitee.email,
+        metadata: {
+          name: 'Jane Doe',
+          role: 'USER',
+          invitedBy: 'admin-1',
+          invitedAt: '2026-09-17T00:00:00.000Z',
+          ...metadata,
+        },
+        expiresAt: new Date(Date.now() + 86400000),
+        createdAt: new Date(),
+      });
+    }
+    const rewritten = () => vi.mocked(updateInvitationToken).mock.calls[0]?.[1];
+
+    it('keeps the pending org keys when the body names none', async () => {
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+
+      const res = await POST(request({ ...invitee, role: 'USER' }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      expect(rewritten()).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+      expect(JSON.parse(await res.text()).data.invitation).toMatchObject({
+        orgId: OTHER_ORG,
+        orgRole: 'ADMIN',
+      });
+      // And the inherited org still went through the existence/policy check.
+      expect(prisma.org.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: OTHER_ORG } })
+      );
+    });
+
+    it("takes the body's org when it names one — the override is explicit", async () => {
+      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+      const another = 'cmorg00000000000000another';
+      vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+        id: another,
+        status: 'ACTIVE',
+      } as never);
+
+      const res = await POST(request({ ...invitee, orgId: another }, '?resend=true'));
+
+      expect(res.status).toBe(201);
+      expect(rewritten()).toMatchObject({ orgId: another });
+      expect(rewritten()).not.toHaveProperty('orgRole');
+    });
+
+    it('a legacy pending invitation resent without org keys stays keyless', async () => {
+      pending({});
+
+      await POST(request({ ...invitee }, '?resend=true'));
+
+      expect(rewritten()).not.toHaveProperty('orgId');
+      expect(rewritten()).not.toHaveProperty('orgRole');
+      expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('refuses to resend into a pending org that has since been suspended', async () => {
+      pending({ orgId: OTHER_ORG });
+      vi.mocked(prisma.org.findUnique).mockResolvedValueOnce({
+        id: OTHER_ORG,
+        status: 'SUSPENDED',
+      } as never);
+
+      const res = await POST(request({ ...invitee }, '?resend=true'));
+
+      expect(res.status).toBe(400);
+      expect(updateInvitationToken).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects an org role outside the vocabulary at the boundary', async () => {
