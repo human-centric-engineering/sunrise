@@ -61,6 +61,7 @@
     "smoke:epub": "tsx --env-file=.env.local scripts/smoke/epub-ingestion.ts",
     "smoke:erasure": "tsx --env-file=.env.local scripts/smoke/erasure.ts",
     "smoke:export": "tsx --env-file=.env.local scripts/smoke/export.ts",
+    "smoke:tenancy": "tsx --env-file=.env.local scripts/smoke/tenancy.ts",
     "postinstall": "prisma generate",
     "prepare": "husky",
     "check:client-env": "tsx scripts/ci/check-client-env-delivery.ts"

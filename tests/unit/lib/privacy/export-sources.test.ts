@@ -112,6 +112,7 @@ const CORE_SCHEMA_FILES = new Set([
   'orchestration-ops.prisma',
   'orchestration-providers.prisma',
   'orchestration-workflows.prisma',
+  'tenancy.prisma',
   // Sunrise's own app-domain models (ContactSubmission, FeatureFlag,
   // AuthBootstrap) live here, NOT in the fork-reserved app.prisma.
   'platform.prisma',

@@ -33,13 +33,18 @@
  * so a role gate in Next 16's middleware, the likeliest place for one, would
  * have left it green.
  *
- * **`lib/auth/roles.ts` itself**, which is where the literals are supposed to
- * live.
+ * **The two owner modules**, `lib/auth/roles.ts` and `lib/tenancy/roles.ts`,
+ * which is where the literals are supposed to live. Two vocabularies since
+ * §106: `User.role` (the platform axis) and `OrgMembership.role` (the org
+ * axis). They share the spelling `ADMIN` and mean different grants by it,
+ * which is exactly why a bare literal is ambiguous and the constant is not.
+ * Each owner is exempt from the WHOLE scan, not just from its own set, because
+ * `lib/tenancy/roles.ts` must spell `'ADMIN'` to define the org role.
  *
  * A green run therefore means "no source file outside the module writes a role
  * literal", never "the vocabulary is used correctly everywhere".
  *
- * @see lib/auth/roles.ts · scripts/ci/scoped-tests.ts (ALWAYS_RUN_TESTS)
+ * @see lib/auth/roles.ts · lib/tenancy/roles.ts · scripts/ci/scoped-tests.ts (ALWAYS_RUN_TESTS)
  */
 
 import { execFileSync } from 'node:child_process';
@@ -47,9 +52,16 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { USER_ROLES } from '@/lib/auth/roles';
+import { ORG_ROLES } from '@/lib/tenancy/roles';
 
-/** The module that owns the vocabulary — the one place a literal belongs. */
-const OWNER = 'lib/auth/roles.ts';
+/**
+ * The modules that own a vocabulary — the only places a literal belongs.
+ * Both are exempt from the whole scan (see the header).
+ */
+const OWNERS = ['lib/auth/roles.ts', 'lib/tenancy/roles.ts'] as const;
+
+/** Every value either vocabulary names, deduplicated — `ADMIN` is in both. */
+const ALL_ROLES = [...new Set<string>([...USER_ROLES, ...ORG_ROLES])];
 
 /**
  * Paths this guard does not read.
@@ -65,7 +77,7 @@ const OWNER = 'lib/auth/roles.ts';
  */
 const NOT_SCANNED = [
   /^tests\//, //        fixtures describe data, not vocabulary — see the header
-  new RegExp(`^${OWNER}$`), // the module that owns the literals
+  ...OWNERS.map((owner) => new RegExp(`^${owner}$`)), // the modules that own the literals
 ];
 
 /**
@@ -90,13 +102,14 @@ function scannedFiles(): string[] {
 }
 
 /**
- * Every role value as a quoted literal, built from the constant itself.
+ * Every role value as a quoted literal, built from the constants themselves —
+ * both vocabularies, so `'OWNER'` in a route is caught the way `'ADMIN'` is.
  *
  * Single and double quotes both, because JSX attributes take double quotes and
  * a scan that only knew about single ones would have missed
  * `<SelectItem value="ADMIN">` — which was a real site in the sweep.
  */
-const ROLE_LITERAL = new RegExp(`['"](${USER_ROLES.join('|')})['"]`);
+const ROLE_LITERAL = new RegExp(`['"](${ALL_ROLES.join('|')})['"]`);
 
 /**
  * Strip comments, tracking string state so a `//` inside a literal is not
@@ -283,16 +296,17 @@ describe('comment stripping', () => {
   });
 });
 
-describe('role literals live in lib/auth/roles.ts', () => {
-  it('no source file outside the module writes one', () => {
+describe('role literals live in lib/auth/roles.ts and lib/tenancy/roles.ts', () => {
+  it('no source file outside the owner modules writes one', () => {
     expect(
       roleLiteralSites(),
       'These sites write a role value as a literal instead of reading it from ' +
-        '`lib/auth/roles.ts`. That is the drift #366 asked us to remove: with the ' +
-        'vocabulary spelled out in many places, adding a role means finding them ' +
-        'all by hand. Import `USER_ROLES` / `PLATFORM_ADMIN_ROLE` / ' +
-        '`isPlatformAdmin()`, or — if the constant genuinely cannot be used here ' +
-        '— add the site to ALLOWED above with the reason.'
+        '`lib/auth/roles.ts` (platform roles) or `lib/tenancy/roles.ts` (org roles). ' +
+        'That is the drift #366 asked us to remove: with the vocabulary spelled out ' +
+        'in many places, adding a role means finding them all by hand. Import ' +
+        '`USER_ROLES` / `PLATFORM_ADMIN_ROLE` / `isPlatformAdmin()`, or `ORG_ROLES` / ' +
+        '`ORG_OWNER_ROLE` / `orgAdministers()`, or — if the constant genuinely cannot ' +
+        'be used here — add the site to ALLOWED above with the reason.'
     ).toEqual([]);
   });
 
@@ -311,6 +325,8 @@ describe('role literals live in lib/auth/roles.ts', () => {
       'instrumentation.ts', //        boot, likewise at the root
       'components/maintenance-wrapper.tsx',
       'prisma/seeds/001-system-owner.ts',
+      'lib/tenancy/membership.ts', //  the org-role write path
+      'lib/privacy/export-sources.ts', // reads an org role in a where clause
     ]) {
       expect(scanned, `${file} must be scanned`).toContain(file);
     }
@@ -320,14 +336,15 @@ describe('role literals live in lib/auth/roles.ts', () => {
     // The other half of the property: the deny-list must actually deny, or the
     // guard reports every fixture in `tests/` and gets switched off.
     const scanned = new Set(scannedFiles());
-    expect(scanned).not.toContain(OWNER);
+    for (const owner of OWNERS) expect(scanned).not.toContain(owner);
     expect([...scanned].filter((f) => f.startsWith('tests/'))).toEqual([]);
   });
 
-  it('builds its pattern from the constant, so a new role is policed too', () => {
-    // The property, not the current values: if USER_ROLES gains 'MODERATOR',
-    // the scan must look for it without anyone editing this file.
-    for (const role of USER_ROLES) {
+  it('builds its pattern from the constants, so a new role is policed too', () => {
+    // The property, not the current values: if USER_ROLES gains 'MODERATOR'
+    // or ORG_ROLES gains a fourth value, the scan must look for it without
+    // anyone editing this file.
+    for (const role of ALL_ROLES) {
       expect(ROLE_LITERAL.test(`const x = '${role}';`), `single-quoted ${role}`).toBe(true);
       expect(ROLE_LITERAL.test(`<Item value="${role}" />`), `double-quoted ${role}`).toBe(true);
     }
