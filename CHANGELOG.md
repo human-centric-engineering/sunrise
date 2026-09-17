@@ -43,6 +43,30 @@ release process.
   product tiers belong beneath the org, on your side of the FK. Guide:
   [`.context/tenancy/identity.md`](./.context/tenancy/identity.md).
 
+### Security
+
+- **A sign-up request can no longer choose its own role.** The `role` field on
+  better-auth's user model was declared without `input: false`, and better-auth
+  passes every declared additional field through from the request body unless a
+  field says so — so on any install with `SIGNUP_MODE=open` (the default), an
+  unauthenticated `POST /api/auth/sign-up/email` carrying `"role": "ADMIN"`
+  created a platform admin, and any signed-in user could promote themselves
+  the same way through `POST /api/auth/update-user`. The sign-up path was
+  verified live before the fix; the update path is the same parser
+  (`update-user.mjs:54`). The field is now `input: false`: on sign-up a body
+  value is replaced by the default, on update a non-empty value is a `400 FIELD_NOT_ALLOWED`
+  (Sunrise's only `updateUser` caller sends `{ image }` alone). The first-human
+  bootstrap and invitation promotions are unaffected — they happen in the
+  database hooks, which run after the input parse and whose return wins — as are
+  `accept-invite` and the admin user PATCH, which write with Prisma directly.
+  `tests/unit/lib/auth/config-role-input.test.ts` runs better-auth's own parser
+  over the real options, with a control that removes the guard. **Every fork
+  should take this release**; until then, check `user` rows with `role = 'ADMIN'`
+  you did not create. Fork note: better-auth merges a plugin's `schema.user.fields`
+  over `additionalFields`, so a fork enabling a plugin that declares `role`
+  (better-auth's `admin` plugin does) must set `input: false` on the plugin's
+  field too.
+
 ## [0.12.0] — 2026-09-16
 
 > **Alpha release.** Seventeenth tagged Sunrise release. **MINOR bump** — the
