@@ -87,10 +87,32 @@ Returns (201):
     "name": "My CI Key",
     "keyPrefix": "sk_a1b2c",
     "scopes": ["chat", "analytics"],
+    "orgId": "install",
     "rawKey": "sk_a1b2c3d4e5f6..."
   }
 }
 ```
+
+### Org binding (§106)
+
+A key is bound at mint to the org the request was acting in — the session's
+active org, or the resolver header's — and never to one named in the body:
+you cannot mint into an org you are not in. `orgId` is returned at creation
+and in the list. On every later request the guards enter that org for the
+key (`enterApiKeyOrg`, [`tenancy/context.md`](../tenancy/context.md)), and a
+key cannot switch: `POST /api/v1/orgs/switch` refuses a key caller.
+
+An `admin`-scoped key is the exception, in both directions. It is a platform
+credential — it reaches every org's admin routes — so it is stored with
+`orgId: null`, and asking for `admin` while acting in any org other than the
+install org is a `400`: mint platform keys from the default organisation,
+where the screen and the credential agree. `withAdminAuth` refuses any key
+that carries both `admin` and an org, so the rule holds at the guard even
+for a row edited by hand.
+
+A key whose `orgId` is still `NULL` without being `admin` — minted between
+0.12.0 and the backfill that 0.13.0 re-ran — is read as the install org at
+`single` and refused at `multi`; the backfill leaves none behind.
 
 ### `DELETE /api/v1/user/api-keys/:keyId`
 
@@ -111,8 +133,8 @@ The `resolveApiKey()` function in `lib/auth/api-keys.ts` handles:
 3. Check not revoked and not expired
 4. Update `lastUsedAt` (fire-and-forget)
 5. Return a session-like object with the key owner's user data + scopes, plus
-   the key's `orgId` (§106 — `NULL` until t-673 binds it at mint; the guards
-   enter it, see [`tenancy/context.md`](../tenancy/context.md))
+   the key's `orgId` (§106 — the org it was minted in, `null` for an `admin`
+   key; the guards enter it, see [`tenancy/context.md`](../tenancy/context.md))
 
 ## Schema: `AiApiKey`
 
@@ -123,6 +145,7 @@ The `resolveApiKey()` function in `lib/auth/api-keys.ts` handles:
 | `keyHash`      | `String`    | SHA-256 hash (unique)                               |
 | `keyPrefix`    | `String`    | First 8 chars for display                           |
 | `scopes`       | `String[]`  | Granted scopes                                      |
+| `orgId`        | `String?`   | Org minted in (§106); `null` = platform (`admin`)   |
 | `lastUsedAt`   | `DateTime?` | Last usage timestamp                                |
 | `expiresAt`    | `DateTime?` | Expiry (null = never)                               |
 | `revokedAt`    | `DateTime?` | Revocation (null = active)                          |

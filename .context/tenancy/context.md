@@ -4,7 +4,7 @@ Which org a request — or a job, or a script — is acting for, how that is
 decided, and what reads it. The second piece of the multi-tenancy programme
 ([design record](../architecture/multi-tenancy-design.md), Hub §106); the
 identity it rests on is [`identity.md`](./identity.md). Row isolation (§107),
-the job posture (§108) and credential binding (t-673) build on the primitive
+the job posture (§108) builds on the primitive
 this page describes and are named here only where it has to promise them
 something.
 
@@ -98,7 +98,9 @@ sources, and it is decided **once** ([`lib/tenancy/entry.ts`](../../lib/tenancy/
 | ------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `resolver` (header) | `x-sunrise-org`, written by the proxy from the fork's resolver | **Always** — including the install org, including a platform admin. The header picks _which_ org; it never grants entry. Wins over the session for that request.                                         |
 | `session`           | `session.session.activeOrgId` (t-670)                          | When it names a non-install org, or at `multi`. **At `single`, null or the install org enters the install org with no read** — the role is the platform role projected by `initialMembershipFor`'s rule. |
-| `api-key`           | the key's `orgId` (t-673 writes it; `NULL` until then)         | `admin` scope ⇒ a platform credential, **no org entered** (finding 13). Otherwise: bound ⇒ that org, verified against the owner's membership; unbound ⇒ install org at `single`, refused at `multi`.     |
+| `api-key`           | the key's `orgId` — the org it was minted in (t-673)           | `admin` scope ⇒ a platform credential, **no org entered** (finding 13). Otherwise: bound ⇒ that org, verified against the owner's membership; unbound ⇒ install org at `single`, refused at `multi`.     |
+| `embed-token`       | the token's `orgId` (t-673)                                    | No user to verify: the org's own status is read with the token (`resolveCredentialOrg`) — a suspended org's tokens are refused. Unbound ⇒ install org at `single`, refused at `multi`.                   |
+| `mcp-key`           | the key's `orgId` (t-673)                                      | As `embed-token`. The transport wraps each method in `runAsOrg`; the key outlives its creator but not its org.                                                                                           |
 
 **Why the install org needs no read at `single`.** Every user is a member of
 the install org (the identity invariant) and their role in it is the platform
@@ -141,14 +143,19 @@ route's `resource` resolver, the policy call and the handler all run inside
 same way the handler's are once §107 makes the data layer read the context.
 A platform credential runs outside any scope.
 
-**Also entered:** the guard-less webhook trigger
-(`app/api/v1/webhooks/trigger/[slug]`) enters its key's org by the same rule.
-**Not yet entered** (each named with its owner): embed tokens, MCP keys and
-agent invite tokens carry no org until t-673 binds one at mint; the
-maintenance tick and other background work until §108; HMAC approval tokens
-and inbound adapters until executions and triggers carry an org (§107).
-Until then those paths run outside any context — the install org at `single`,
-a refusal at `multi`, never a wide read.
+**Also entered, by the guard-less routes themselves:** the webhook trigger
+(`app/api/v1/webhooks/trigger/[slug]`) from its API key; the three embed
+routes (`app/api/v1/embed/**`) from the embed token; the MCP transport
+(`app/api/v1/mcp`) from the MCP key — each resolver applies the read rule
+and the route wraps its handler in `runAsOrg` (t-673). **An agent invite
+token enters nothing**: it is a gate the session passes through, and
+`lib/orchestration/invite-tokens.ts` compares the token's org with the one
+the guard entered ([agent-visibility.md](../orchestration/agent-visibility.md#org-binding-106)).
+**Not yet entered** (each named with its owner): the maintenance tick and
+other background work until §108; HMAC approval tokens and inbound adapters
+until executions and triggers carry an org (§107). Until then those paths run
+outside any context — the install org at `single`, a refusal at `multi`,
+never a wide read.
 
 ## The fork's resolver — `lib/app/tenant-resolver.ts`
 

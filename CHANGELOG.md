@@ -178,6 +178,59 @@ release process.
   the org arm admits exactly the platform admins the platform check already
   admitted, because the install-org role is the platform role's projection and
   is now kept so.
+- **A credential remembers the org it was minted in, and acts only there**
+  (multi-tenancy §106, fifth and last task). The four long-lived credentials
+  — API keys, embed tokens, agent invite tokens, MCP keys — gained an `orgId`
+  column in 0.12.0 that nothing wrote at mint; under tenancy each was a
+  credential that worked everywhere. Now every mint writes the org the
+  request was acting in (`orgForMint()` in `lib/tenancy/entry.ts`, one read
+  of the tenant context, never a body field) and every resolution enters it:
+  `resolveEmbedToken` and `authenticateMcpRequest` apply the read rule
+  themselves (`resolveCredentialOrg()`, the org's status read with the row —
+  **a suspended org's embed tokens and MCP keys are refused**, no extra
+  query) and the six guard-less handlers under `app/api/v1/embed/**` and
+  `app/api/v1/mcp` run inside `runAsOrg(orgId, …)` with `source:
+  'embed-token' | 'mcp-key'`; an API key enters through the guards as
+  before. An agent invite token is a gate the session passes through, not a
+  credential that acts: new module `lib/orchestration/invite-tokens.ts`
+  (`resolveInviteToken()`, `consumeInviteToken()`, `InviteTokenOutcome`) is
+  the one implementation `POST /api/v1/chat/stream` and
+  `POST /api/v1/chat/agents/[slug]/validate-token` share, comparing the
+  token's org with the org the guard entered — a token from another org
+  reads as one that does not exist. `orgOfColumn()` names the null-column
+  rule once (install org at `single`, no org at `multi`). One data migration,
+  `20260918120000_credential_org_backfill`, re-runs the identity migration's
+  four backfill `UPDATE`s verbatim (a test holds them byte-equal) so the
+  credentials minted between 0.12.0 and this release — `orgId = NULL`, read
+  as the install org at `single`, refused at `multi` — are bound before any
+  install switches modes; from here no mint writes a null org. Guides:
+  [`.context/tenancy/identity.md`](./.context/tenancy/identity.md#credentials)
+  and the org-binding sections of
+  [`api-keys.md`](./.context/orchestration/api-keys.md#org-binding-106),
+  [`embed.md`](./.context/orchestration/embed.md#org-binding-106),
+  [`agent-visibility.md`](./.context/orchestration/agent-visibility.md#org-binding-106)
+  and [`mcp.md`](./.context/orchestration/mcp.md#api-key-lifecycle).
+
+### Changed
+
+- **Credential response shapes and resolver contexts carry `orgId`** (§106,
+  with the bullet above). `POST`/`GET /api/v1/user/api-keys` (`null` for an
+  `admin` key), `POST`/`GET …/agents/[id]/invite-tokens`, `POST`/`GET
+  /api/v1/admin/orchestration/mcp/keys` and `POST …/mcp/keys/[id]/rotate`
+  return the org each credential is bound to (the embed-token create already
+  returned the whole row; its `orgId` is now written). `EmbedContext`
+  (`lib/embed/auth.ts`) and `McpAuthContext` (`types/mcp.ts`) gain a
+  required, non-null `orgId` — a fork constructing either by hand adds the
+  field; both resolvers now return `null` for a credential whose org is
+  suspended or, at `multi`, unbound. Two rules on `admin`-scoped API keys
+  are now enforced rather than documented: `POST /api/v1/user/api-keys`
+  stores an `admin` key with no org and refuses `admin` asked for while
+  acting in any org but the install org (`400`, naming no org), and
+  `withAdminAuth` refuses any API key that carries an org, whatever its
+  scopes — the floor its docblock promised; `lib/app/authorization.ts` says
+  the rule now holds. Behaviour at `TENANCY_MODE=single` is unchanged for
+  every honest row: an unbound or install-org credential resolves to the
+  install org exactly as before.
 
 ## [0.12.1] — 2026-09-17
 

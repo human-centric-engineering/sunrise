@@ -163,7 +163,7 @@ break work that otherwise succeeds, and the spec makes progress a MAY.
 
 | Layer              | Mechanism                                                                               |
 | ------------------ | --------------------------------------------------------------------------------------- |
-| Auth               | Bearer token (`smcp_` prefix, SHA-256 hashed), scope-based                              |
+| Auth               | Bearer token (`smcp_` prefix, SHA-256 hashed), scope-based, bound to one org (§106)     |
 | Master switch      | `McpServerConfig.isEnabled` — 503 when off                                              |
 | Default-deny       | Everything disabled by default; each tool/resource must be explicitly enabled           |
 | Rate limiting      | IP-level (100/min) -> per-key (configurable) -> per-tool (via dispatcher)               |
@@ -185,7 +185,8 @@ break work that otherwise succeeds, and the spec makes progress a MAY.
 4. Scopes control access: `tools:list`, `tools:execute`, `resources:read`, `prompts:read`
 5. Keys can be revoked immediately; `expiresAt` for automatic expiry
 6. **Application scope carrier** — a key may carry an optional `scope` (`McpApiKey.scope`, a flat string→string map, distinct from the protocol `scopes` above). It is validated on read (`mcpKeyScopeSchema`) and folded into `CapabilityContext.scope` for every `tools/call`. That carrier is marked **authoritative**, so it may drive a capability's declared scope binding: a capability registered with `{ scopedBy: 'projectId' }` has that argument filled when the caller omits it, and a call naming a different value is refused with `scope_conflict` (step 7a re-asserts on the args `execute` actually receives, so a schema transform cannot undo it). A capability that declares no binding is untouched. See [the scope binding](./capabilities.md#the-scope-binding-scopedby-dispatch-steps-4b--7a). Core names no keys; a fork maps it to its own domain (e.g. `{ projectId }`). NULL = unscoped (unchanged behaviour). Set it as opaque JSON on create/PATCH; clearing it via PATCH uses the `Prisma.DbNull` sentinel. A malformed stored value is dropped at auth (key treated as unscoped) rather than failing authentication.
-7. **Key rotation:** `POST /api/v1/admin/orchestration/mcp/keys/:id/rotate` — generates new key material, returns new plaintext once, immediately invalidates the old key. Optionally set `{ expiresAt }` in the body.
+7. **Key rotation:** `POST /api/v1/admin/orchestration/mcp/keys/:id/rotate` — generates new key material, returns new plaintext once, immediately invalidates the old key. Optionally set `{ expiresAt }` in the body. The key's org is never touched.
+8. **Org binding (§106)** — a key is bound at mint to the org the admin's request was acting in (`orgId`, returned on create, in the list and after a rotation), and the transport runs every request inside it: `authenticateMcpRequest` answers the key's org and `app/api/v1/mcp/route.ts` wraps each method in `runAsOrg(orgId, …, { source: 'mcp-key' })`, so tool calls, resource reads and the audit row all carry it. A key outlives its creator (`createdBy` is `SetNull`) but not its org (`Cascade`). There is no user behind a key at request time, so the org's own status is checked on the same read as the key: **a suspended org's keys are refused** (`401`) and work again once it is reinstated. A key whose `orgId` is `null` (minted before 0.13.0's backfill re-run) reads as the install org at `single` and is refused at `multi`. See [`tenancy/context.md`](../tenancy/context.md).
 
 ## Authentication & OAuth 2.1 Roadmap
 
@@ -195,7 +196,7 @@ The server currently authenticates clients with **bearer tokens** (the `smcp_` k
 
 401 responses include a `WWW-Authenticate: Bearer realm="sunrise-mcp", error="invalid_token"` header (RFC 6750 / RFC 9728). 2025-spec OAuth-capable clients use this to detect that the server is bearer-only and skip OAuth discovery rather than failing on the missing `/.well-known/oauth-authorization-server` endpoint. End users keep pasting an `smcp_` key into their client config exactly as before.
 
-This is sufficient for the common deployment shape (single org, dev or internal use, admins distributing keys to developers they trust). It is **not** sufficient for multi-tenant SaaS where end-users connect their own MCP clients with their own identity — that's what OAuth solves.
+This is sufficient for the common deployment shape (dev or internal use, admins distributing keys to developers they trust), and a key is bound to an org (below), so at `multi` a key acts only in the org it was minted in. What bearer auth does **not** give a multi-tenant SaaS is per-end-user identity — every caller on a key is the key — and per-org scoping of the tools and prompts a key can see (§107/§111); the first is what OAuth solves.
 
 ### When OAuth becomes necessary
 

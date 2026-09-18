@@ -26,6 +26,7 @@ For `invite_only` agents, access is granted via opaque tokens managed by admins.
 | `useCount`  | `Int`       | Current usage count                        |
 | `expiresAt` | `DateTime?` | Expiry timestamp (null = never)            |
 | `revokedAt` | `DateTime?` | Revocation timestamp (null = active)       |
+| `orgId`     | `String?`   | Org minted in (§106); returned on create   |
 
 ### Admin Endpoints
 
@@ -65,21 +66,41 @@ Pass `inviteToken` in the consumer chat request body:
 }
 ```
 
-Token validation checks:
+Token validation checks (`resolveInviteToken` in
+`lib/orchestration/invite-tokens.ts` — the one implementation the stream
+route and `POST /api/v1/chat/agents/:slug/validate-token` share):
 
 1. Token exists and belongs to the agent
-2. Token is not revoked (`revokedAt` is null)
-3. Token is not expired (if `expiresAt` is set)
-4. Token has not exceeded `maxUses` (if set)
+2. Token was minted in the org the request is acting in (below)
+3. Token is not revoked (`revokedAt` is null)
+4. Token is not expired (if `expiresAt` is set)
+5. Token has not exceeded `maxUses` (if set)
 
-On success, the token's `useCount` is incremented.
+On success the stream route spends a use (`consumeInviteToken`, one atomic
+`UPDATE … WHERE use_count < max_uses`, so concurrent callers cannot push a
+token past its cap); the validate route asks without spending one.
+
+### Org binding (§106)
+
+An invite token is bound at mint to the org the admin's request was acting
+in — and it is **a gate the session passes through, not a credential that
+acts**. The caller is a signed-in user whose org the guard has already
+entered; the token admits callers acting in the org it was minted in, so the
+check is a comparison of the two orgs, and the token never enters a tenant
+context of its own (unlike an embed token or an MCP key, whose resolvers
+answer an org for `runAsOrg`). A token from another org is refused with the
+same words as one that does not exist — `403 Invalid or revoked invite
+token` on the stream, `{ valid: false, reason: "Token not found" }` from
+the validator — so nothing enumerates. A token whose `orgId` is `null`
+(minted before 0.13.0's backfill re-run) reads as the install org at
+`single` and matches no request at `multi`.
 
 ### Error Responses
 
-| Status | When                                                                     |
-| ------ | ------------------------------------------------------------------------ |
-| `403`  | Missing token, invalid/revoked token, expired token, usage limit reached |
-| `404`  | Agent not found or has `internal` visibility                             |
+| Status | When                                                                                                               |
+| ------ | ------------------------------------------------------------------------------------------------------------------ |
+| `403`  | Missing token, invalid/revoked token (a token from another org reads the same), expired token, usage limit reached |
+| `404`  | Agent not found or has `internal` visibility                                                                       |
 
 ## How It Works in Consumer Chat
 

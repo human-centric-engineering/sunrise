@@ -6,8 +6,9 @@ the first piece of the multi-tenancy programme
 ([design record](../architecture/multi-tenancy-design.md), Hub §106). The
 context primitive is [context.md](./context.md); the org lifecycle — create,
 suspend, members, export, erase — is the [lifecycle section](#the-lifecycle-creating-suspending-and-retiring-an-org)
-below and [org-endpoints.md](../api/org-endpoints.md); credential binding at
-mint (t-673) is the one later task this page still has to promise something to.
+below and [org-endpoints.md](../api/org-endpoints.md); credential binding —
+every key and token minted in an org, acting only there — is the
+[credentials section](#credentials).
 
 **At `TENANCY_MODE=single` nothing reads these rows for an authorization
 decision yet.** The session reads them to choose its active org, the Art. 15
@@ -283,15 +284,15 @@ row, and re-issues the cookie. Two things about that write are deliberate:
   `disableCookieCache`, which reads the row and re-sets the cache cookie, and
   forwards its `Set-Cookie` headers — the accept-invite precedent.
 
-**API-key sessions cannot switch.** A credential's org is fixed at mint
-(t-673); the route refuses a key caller the way key minting does.
+**API-key sessions cannot switch.** A credential's org is fixed at mint;
+the route refuses a key caller the way key minting does.
 
 **Reading it:** `session.session.activeOrgId` on the server (`AuthSession` in
 `lib/auth/guards.ts`; the inferred type in `lib/auth/utils.ts` carries it
 for free) and on the client via `useSession()` (`lib/auth/client.ts`, which
 validates it at runtime the way it validates `role`). `null` or absent means
 "none chosen" — the install org at `single`. An API-key session leaves it
-unset until t-673 binds the key's own org.
+unset: the key's org is read from the key row, never from the session.
 
 **When a membership is removed** (`removeMember` in `lib/tenancy/lifecycle.ts`)
 the user's sessions acting in that org are revoked — `revokeUserSessions`
@@ -370,21 +371,48 @@ through `administersEverything`, as before.
 ## Credentials
 
 The four long-lived credential models — `AiApiKey`, `AiAgentEmbedToken`,
-`AiAgentInviteToken`, `McpApiKey` — gained a nullable `orgId` (one column,
-one index, `onDelete: Cascade` on the org) in the same migration, backfilled
-to the install org. Nothing writes it at mint yet; t-673 does — so **every
-credential minted between this release and t-673 carries `orgId = NULL`**,
-which the rule below would otherwise read as "platform credential". That is
-why the read rule (feature finding 13) keys on the `admin` scope, not on
-`NULL` alone: a non-admin key with a null org is the install org at `single`
-and refused at `multi`. t-673 re-runs the backfill's `UPDATE`s (idempotent by
-their `WHERE`) when it starts writing the column, so `multi` never meets an
-interim key. **One exception in the backfill:** an `admin`-scoped API key keeps `orgId = NULL`.
-The feature's rule is that `admin` means a _platform_ credential with no org
-context, and an org-bound admin key is a state t-673 forbids at mint —
-binding the existing ones would have created it. `smoke:tenancy` proves the
-rule by creating a `chat` key and an `admin` key unbound and re-running the
-migration's own `UPDATE` against them.
+`AiAgentInviteToken`, `McpApiKey` — carry a nullable `orgId` (one column,
+one index, `onDelete: Cascade` on the org: an org's credentials go with it).
+**Every mint writes it** (t-673): the org the minting request was acting in,
+read once from the tenant context (`orgForMint` in `lib/tenancy/entry.ts`)
+and never from a body field — a caller cannot mint into an org they are not
+in. The mint routes are `POST /api/v1/user/api-keys` and the three admin
+routes for embed tokens, invite tokens and MCP keys; each returns `orgId`.
+Rotation of an MCP key never touches it.
+
+**Every resolution enters it.** An API key enters through `enterApiKeyOrg`
+(the guards); an embed token and an MCP key through their own resolvers,
+which apply `resolveCredentialOrg` — the org's status read on the same query
+as the credential, since there is no member to verify — and whose routes
+wrap the handler in `runAsOrg`. An agent invite token is the odd one out: a
+gate the session passes through rather than a credential that acts, so it
+enters nothing and `lib/orchestration/invite-tokens.ts` compares its org with
+the one the guard entered. The three resolver docs carry the detail
+([api-keys](../orchestration/api-keys.md#org-binding-106),
+[embed](../orchestration/embed.md#org-binding-106),
+[agent-visibility](../orchestration/agent-visibility.md#org-binding-106),
+[mcp](../orchestration/mcp.md#api-key-lifecycle)).
+
+**An `admin`-scoped API key is a platform credential and binds no org**
+(feature finding 13). Mint stores it with `orgId = NULL`, refuses `admin`
+asked for from any org but the install org (`400`), and `withAdminAuth`
+refuses any key that carries both `admin` and an org — so "an org-bound key
+can never hold `admin`" holds at mint and at the guard, and a fork's policy
+cannot widen it. That is also why the read rule keys on the scope, not on
+`NULL` alone.
+
+**The interim rows.** The column landed in 0.12.0 (`20260917120000_org_identity`),
+backfilled once, and nothing wrote it at mint until t-673 — so every
+credential minted in between carried `orgId = NULL`. At `single` the read
+rule resolves such a row to the install org, so nothing was wrong; at
+`multi` it is refused, so an install that switches modes must never meet one.
+`20260918120000_credential_org_backfill` re-runs the identity migration's
+four `UPDATE`s verbatim — idempotent by their `WHERE "orgId" IS NULL`, and
+still leaving an `admin` key unbound (`tests/unit/lib/tenancy/migration.test.ts`
+holds the two files' statements byte-equal). `smoke:tenancy` proves the rule
+against Postgres: a `chat` key binds and an `admin` key stays unbound under
+the identity migration's `UPDATE`, and a token written with no org is bound
+by the re-run's.
 
 `Session.activeOrgId` also landed in this migration (nullable, no FK —
 better-auth owns the `session` table's shape). Folding both into it is what

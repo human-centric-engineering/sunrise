@@ -44,10 +44,25 @@ Token shape:
   label?:         string | null;   // e.g. "Marketing site"
   allowedOrigins: string[];        // empty = wildcard (any origin)
   isActive:       boolean;
+  orgId:          string | null;   // org minted in (§106)
   createdAt:      string;
   creator:        { id: string; name: string };
 }
 ```
+
+### Org binding (§106)
+
+A token is bound at mint to the org the admin's request was acting in, and
+the widget it powers acts only there: `resolveEmbedToken` answers the
+token's org, and every embed route runs its handler inside it
+(`runAsOrg(orgId, …, { source: 'embed-token' })`) — the conversation rows,
+the cost rows and the log context all carry that org. There is no user
+behind an embed token, so instead of a membership the org's own status is
+checked, on the same read as the token: **a suspended org's widgets stop
+answering** (`401 INVALID_TOKEN`, preflights included) and resume when it is
+reinstated. A token whose `orgId` is `null` (minted before 0.13.0's backfill
+re-run) reads as the install org at `single` and is refused at `multi`. See
+[`tenancy/context.md`](../tenancy/context.md).
 
 ## Widget loader
 
@@ -186,19 +201,20 @@ Rate limit: embedChatLimiter
 ### Authentication flow
 
 1. `X-Embed-Token` header extracted
-2. `resolveEmbedToken(token, clientIp)` looks up `AiAgentEmbedToken` — checks `isActive` and `agent.isActive`
+2. `resolveEmbedToken(token, clientIp)` looks up `AiAgentEmbedToken` — checks `isActive`, `agent.isActive`, and that the token can enter its org (`resolveCredentialOrg`: the org is `ACTIVE`, or the install org at `single`)
 3. Deterministic anonymous user ID computed: `embed_` + first 16 hex chars of `sha256("embed:{tokenId}:{clientIp}")`
 4. `isOriginAllowed(requestOrigin, allowedOrigins)` — empty `allowedOrigins` = wildcard bypass
+5. The rest of the handler runs inside the token's org (`runAsOrg`)
 
 ### Error responses
 
-| Scenario                     | Status | Code                  |
-| ---------------------------- | ------ | --------------------- |
-| Missing `X-Embed-Token`      | 401    | `MISSING_TOKEN`       |
-| Invalid/inactive token       | 401    | `INVALID_TOKEN`       |
-| Rate limited                 | 429    | `RATE_LIMIT_EXCEEDED` |
-| Origin not in allowedOrigins | 403    | `ORIGIN_DENIED`       |
-| Invalid message body         | 400    | `VALIDATION_ERROR`    |
+| Scenario                                     | Status | Code                  |
+| -------------------------------------------- | ------ | --------------------- |
+| Missing `X-Embed-Token`                      | 401    | `MISSING_TOKEN`       |
+| Invalid/inactive token, or its org suspended | 401    | `INVALID_TOKEN`       |
+| Rate limited                                 | 429    | `RATE_LIMIT_EXCEEDED` |
+| Origin not in allowedOrigins                 | 403    | `ORIGIN_DENIED`       |
+| Invalid message body                         | 400    | `VALIDATION_ERROR`    |
 
 ### CORS headers
 
