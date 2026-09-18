@@ -20,8 +20,18 @@
  * A token whose `orgId` is still null (minted before the column was
  * written) reads as the install org at `single` and matches no org at
  * `multi` — `orgOfColumn`, the same rule every credential follows.
+ *
+ * **A request acting in no org passes no gate.** At `multi` an
+ * `admin`-scoped API key enters no org (it is the platform credential), so
+ * from it every token is `wrong-org` — including a live one. That is
+ * deliberate: an invite token admits members of the org it was minted in,
+ * and a platform key is not a member of anything; the consumer chat surface
+ * is reached with a session or an org-bound key. It is logged with its own
+ * reason so an operator whose automation key stopped passing a gate can see
+ * the cause is the key, not the token.
  */
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { getTenantContext } from '@/lib/tenancy/context';
 import { orgOfColumn } from '@/lib/tenancy/entry';
 
@@ -67,6 +77,14 @@ export async function resolveInviteToken(
   // caller's to learn anything about, revoked or otherwise.
   const tokenOrg = orgOfColumn(row.orgId);
   const requestOrg = orgOfColumn(getTenantContext()?.orgId ?? null);
+  if (requestOrg === null) {
+    logger.warn('invite token refused: the request acts in no org', {
+      agentId,
+      tokenId: row.id,
+      refused: 'no-request-org',
+    });
+    return { ok: false, reason: 'wrong-org' };
+  }
   if (tokenOrg === null || tokenOrg !== requestOrg) return { ok: false, reason: 'wrong-org' };
 
   if (row.revokedAt) return { ok: false, reason: 'revoked' };

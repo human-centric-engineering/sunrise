@@ -95,6 +95,12 @@ the validator — so nothing enumerates. A token whose `orgId` is `null`
 (minted before 0.13.0's backfill re-run) reads as the install org at
 `single` and matches no request at `multi`.
 
+A request acting in **no** org passes no gate: at `multi` an `admin`-scoped
+API key is the platform credential and enters no org, so from it every
+invite token is refused — the consumer chat surface is reached with a
+session or an org-bound key. The refusal is the same opaque message, but
+the server log names the cause (`refused: 'no-request-org'`).
+
 ### Error Responses
 
 | Status | When                                                                                                               |

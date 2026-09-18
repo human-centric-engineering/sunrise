@@ -21,6 +21,7 @@ vi.mock('@/lib/logging', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error:
 
 import { consumeInviteToken, resolveInviteToken } from '@/lib/orchestration/invite-tokens';
 import { runAsOrg } from '@/lib/tenancy/context';
+import { logger } from '@/lib/logging';
 
 const AGENT = 'cmagent0000000000000agent1';
 const OTHER = 'cmorg000000000000000other';
@@ -121,10 +122,22 @@ describe('resolveInviteToken', () => {
       });
     });
 
-    it('at multi a request with no org matches no token', async () => {
+    it('at multi a request with no org matches no token — a platform admin key passes no gate — and the log names that cause', async () => {
       mockEnv.TENANCY_MODE = 'multi';
       prismaMock.aiAgentInviteToken.findFirst.mockResolvedValue(row({ orgId: OTHER }));
       expect(await resolveInviteToken(AGENT, 'x')).toEqual({ ok: false, reason: 'wrong-org' });
+      expect(logger.warn).toHaveBeenCalledWith(
+        'invite token refused: the request acts in no org',
+        expect.objectContaining({ refused: 'no-request-org', tokenId: 'tok-1' })
+      );
+    });
+
+    it('a plain wrong-org refusal is not logged as the no-org case', async () => {
+      prismaMock.aiAgentInviteToken.findFirst.mockResolvedValue(row({ orgId: THIRD }));
+      await runAsOrg(OTHER, async () => {
+        expect(await resolveInviteToken(AGENT, 'x')).toEqual({ ok: false, reason: 'wrong-org' });
+      });
+      expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 });
