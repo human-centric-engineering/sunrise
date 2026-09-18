@@ -226,9 +226,11 @@ release process.
   are now enforced rather than documented: `POST /api/v1/user/api-keys`
   stores an `admin` key with no org and refuses `admin` asked for while
   acting in any org but the install org (`400`, naming no org), and
-  `withAdminAuth` refuses any API key that carries an org, whatever its
-  scopes — the floor its docblock promised; `lib/app/authorization.ts` says
-  the rule now holds. Behaviour at `TENANCY_MODE=single` is unchanged for
+  both guards refuse an API key that carries both `admin` and an org —
+  `withAdminAuth` at its scope floor (any org-bound key, whatever its
+  scopes), `withAuth` through `enterApiKeyOrg` (new refusal
+  `bound-admin-key`) — so such a row is admitted nowhere;
+  `lib/app/authorization.ts` says the rule now holds. Behaviour at `TENANCY_MODE=single` is unchanged for
   every honest row: an unbound or install-org credential resolves to the
   install org exactly as before.
 

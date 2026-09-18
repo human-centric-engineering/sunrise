@@ -191,9 +191,9 @@
  *    scope is the capability. The design record pins that scope as
  *    platform-only (Q6): minting one requires a platform admin with a browser
  *    session acting in the install org, an `admin` key is stored with no org,
- *    and `withAdminAuth` refuses any key that carries one — so "an org-bound
- *    key can never hold `admin`" holds at mint and at the guard, and your
- *    policy cannot widen it: the guard's floor runs before the policy is asked.
+ *    and both guards refuse a key that carries one — so "an org-bound key
+ *    can never hold `admin`" holds at mint and at both guards, and your
+ *    policy cannot widen it: the refusal runs before the policy is asked.
  *
  * Full guide: .context/auth/authorization.md · CUSTOMIZATION.md §4 ·
  * lib/auth/authorization.ts

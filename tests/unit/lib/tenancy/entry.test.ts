@@ -154,8 +154,22 @@ describe('enterApiKeyOrg', () => {
     for (const mode of ['single', 'multi'] as const) {
       mockEnv.TENANCY_MODE = mode;
       expect(
-        await enterApiKeyOrg({ userId: USER.id, scopes: ['admin'], orgId: OTHER, owner }, db)
+        await enterApiKeyOrg({ userId: USER.id, scopes: ['admin'], orgId: null, owner }, db)
       ).toBeNull();
+    }
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('an admin-scoped key BOUND to an org is refused, in either mode — the withAdminAuth floor, mirrored (t-673)', async () => {
+    // Nothing honest produces this row; a hand-edited one must not be refused
+    // on the admin routes and admitted, with no org scope, on every other.
+    for (const mode of ['single', 'multi'] as const) {
+      mockEnv.TENANCY_MODE = mode;
+      for (const orgId of [OTHER, INSTALL_ORG_ID]) {
+        expect(
+          await enterApiKeyOrg({ userId: USER.id, scopes: ['admin'], orgId, owner }, db)
+        ).toEqual({ refused: 'bound-admin-key' });
+      }
     }
     expect(findUnique).not.toHaveBeenCalled();
   });

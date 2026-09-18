@@ -106,9 +106,12 @@ An `admin`-scoped key is the exception, in both directions. It is a platform
 credential — it reaches every org's admin routes — so it is stored with
 `orgId: null`, and asking for `admin` while acting in any org other than the
 install org is a `400`: mint platform keys from the default organisation,
-where the screen and the credential agree. `withAdminAuth` refuses any key
-that carries both `admin` and an org, so the rule holds at the guard even
-for a row edited by hand.
+where the screen and the credential agree. Both guards refuse a key that
+carries both `admin` and an org — `withAdminAuth` at its scope floor,
+`withAuth` through `enterApiKeyOrg` (`bound-admin-key`) — so the rule holds
+at the guard even for a row edited by hand, and such a row is admitted
+nowhere rather than refused on the admin routes and admitted, unscoped, on
+the rest.
 
 A key whose `orgId` is still `NULL` without being `admin` — minted between
 0.12.0 and the backfill that 0.13.0 re-ran — is read as the install org at

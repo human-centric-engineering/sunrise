@@ -1215,6 +1215,8 @@ export function withAdminAuth(
         // `admin` keys unbound, so no honest row has both; a row that does —
         // edited by hand, or a fork that widened its mint — is refused here
         // rather than admitted to every org's admin surface from inside one.
+        // `enterApiKeyOrg` refuses the same row on the `withAuth` path
+        // (`bound-admin-key`), so neither guard admits it anywhere.
         if (!hasScope(apiKey.scopes, 'admin') || apiKey.orgId) {
           throw new ForbiddenError('Admin scope required');
         }

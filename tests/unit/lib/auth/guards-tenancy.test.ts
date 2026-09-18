@@ -213,7 +213,7 @@ describe('the resolver header', () => {
 
 describe('the API-key source', () => {
   it('an admin-scoped key enters no org: the handler runs outside any context', async () => {
-    vi.mocked(resolveApiKey).mockResolvedValue(apiKey(['admin'], OTHER));
+    vi.mocked(resolveApiKey).mockResolvedValue(apiKey(['admin'], null));
     const { handler, seen } = probe();
 
     await handler(request());
@@ -221,6 +221,22 @@ describe('the API-key source', () => {
     expect(seen[0].context).toBeNull();
     expect(seen[0].principal).not.toHaveProperty('orgId');
     expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('withAuth refuses an org-bound admin key too — the same row the withAdminAuth floor refuses (t-673)', async () => {
+    // Without this the row would be 403 on every admin route and admitted on
+    // every other, running with NO org scope at all.
+    vi.mocked(resolveApiKey).mockResolvedValue(apiKey(['admin'], OTHER));
+    const { handler, seen } = probe();
+
+    const res = await handler(request());
+
+    expect(res.status).toBe(403);
+    expect(seen).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'tenancy: refused to enter an org for a request',
+      expect.objectContaining({ guard: 'withAuth', refused: 'bound-admin-key' })
+    );
   });
 
   it('a key with no org enters the install org at single, as its owner would', async () => {

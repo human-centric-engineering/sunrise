@@ -59,7 +59,10 @@ export interface OrgEntry {
 
 /** Why a request may not act for the org it named. */
 export type OrgRefusal =
-  { refused: 'not-a-member' } | { refused: 'org-suspended' } | { refused: 'no-org' };
+  | { refused: 'not-a-member' }
+  | { refused: 'org-suspended' }
+  | { refused: 'no-org' }
+  | { refused: 'bound-admin-key' };
 
 export type OrgEntryResult = OrgEntry | OrgRefusal;
 
@@ -126,7 +129,8 @@ export async function enterSessionOrg(
 /**
  * The org an API key acts for — or, for an `admin`-scoped key, none.
  *
- * `null` (rather than a refusal) is the platform-credential answer: the
+ * `null` (rather than a refusal) is the platform-credential answer for an
+ * `admin` key with no org: the
  * guard runs the handler outside any org scope, which at `single` still
  * resolves to the install org for anything that asks and at `multi` is the
  * audited "sees everything" a platform key has always been (design decision
@@ -138,7 +142,16 @@ export async function enterApiKeyOrg(
   key: { userId: string; scopes: readonly string[]; orgId: string | null; owner: NewUserShape },
   db: MembershipReader = prisma
 ): Promise<OrgEntryResult | null> {
-  if (hasScope([...key.scopes], 'admin')) return null;
+  if (hasScope([...key.scopes], 'admin')) {
+    // An org-bound admin key is a state nothing honest produces (mint refuses
+    // it, both backfills leave admin keys unbound). `withAdminAuth` refuses
+    // such a row at its floor; refusing it here too is what keeps the two
+    // guards answering the same question — otherwise the row would be
+    // refused on every admin route and admitted, with NO org scope, on
+    // every other one.
+    if (key.orgId) return { refused: 'bound-admin-key' };
+    return null;
+  }
 
   const multi = isMultiTenant();
 

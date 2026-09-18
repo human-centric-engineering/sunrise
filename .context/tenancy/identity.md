@@ -395,10 +395,11 @@ the one the guard entered. The three resolver docs carry the detail
 
 **An `admin`-scoped API key is a platform credential and binds no org**
 (feature finding 13). Mint stores it with `orgId = NULL`, refuses `admin`
-asked for from any org but the install org (`400`), and `withAdminAuth`
-refuses any key that carries both `admin` and an org — so "an org-bound key
-can never hold `admin`" holds at mint and at the guard, and a fork's policy
-cannot widen it. That is also why the read rule keys on the scope, not on
+asked for from any org but the install org (`400`), and both guards refuse
+a key that carries both `admin` and an org — `withAdminAuth` at its scope
+floor, `withAuth` through `enterApiKeyOrg` (`bound-admin-key`) — so "an
+org-bound key can never hold `admin`" holds at mint and at both guards, and
+a fork's policy cannot widen it. That is also why the read rule keys on the scope, not on
 `NULL` alone.
 
 **The interim rows.** The column landed in 0.12.0 (`20260917120000_org_identity`),

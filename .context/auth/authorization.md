@@ -996,8 +996,9 @@ minting one already requires a platform admin with a browser session, and
 
 "An org-bound key can never carry `admin`" holds at mint and at the guard
 (§106): an `admin` key is stored with no org and refused when asked for from
-inside a customer org, and `withAdminAuth` refuses any key that carries an org
-before the policy is asked — so a fork's policy cannot widen it. See
+inside a customer org, and both guards refuse a key that carries an org
+before the policy is asked (`withAdminAuth` at its scope floor, `withAuth`
+through `enterApiKeyOrg`) — so a fork's policy cannot widen it. See
 [`tenancy/identity.md`](../tenancy/identity.md#credentials).
 
 ---
