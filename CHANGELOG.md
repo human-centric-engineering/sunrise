@@ -230,9 +230,12 @@ release process.
   `withAdminAuth` at its scope floor (any org-bound key, whatever its
   scopes), `withAuth` through `enterApiKeyOrg` (new refusal
   `bound-admin-key`) — so such a row is admitted nowhere;
-  `lib/app/authorization.ts` says the rule now holds. Behaviour at `TENANCY_MODE=single` is unchanged for
-  every honest row: an unbound or install-org credential resolves to the
-  install org exactly as before.
+  `lib/app/authorization.ts` says the rule now holds. And at `multi` a
+  request acting in no org — an `admin` key — passes no invite-only gate:
+  the token admits members of its org, and the refusal is logged with its
+  own reason (`no-request-org`). Behaviour at `TENANCY_MODE=single` is
+  unchanged for every honest row: an unbound or install-org credential
+  resolves to the install org exactly as before.
 
 ## [0.12.1] — 2026-09-17
 
