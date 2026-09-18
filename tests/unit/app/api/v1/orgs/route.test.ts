@@ -12,13 +12,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: mockGetSession } } }));
-vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Headers())) }));
+const mockHeaders = vi.hoisted(() => ({ current: new Headers() }));
+vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(mockHeaders.current)) }));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -55,7 +57,11 @@ const rows = [
   },
 ];
 
-const get = () => GET(new Request('http://localhost/api/v1/orgs') as unknown as NextRequest);
+/** `headers` is what the proxy wrote onto the request, read via `next/headers` like the guard. */
+const get = (headers: Record<string, string> = {}) => {
+  mockHeaders.current = new Headers(headers);
+  return GET(new Request('http://localhost/api/v1/orgs') as unknown as NextRequest);
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -94,6 +100,21 @@ describe('GET /api/v1/orgs', () => {
     expect(json.data.orgs[0]).toEqual(
       expect.objectContaining({ id: INSTALL_ORG_ID, active: true })
     );
+  });
+
+  it('lets the proxy’s resolver header name the active org over the cookie, as the entry rule does', async () => {
+    // A fork resolving by hostname: the cookie still says install, the host
+    // says the other org. Every other request on this host acts in the
+    // other org, so this list must say so too.
+    mockGetSession.mockResolvedValue(session(INSTALL_ORG_ID));
+    const json = JSON.parse(await (await get({ [TENANT_HEADER_NAME]: OTHER })).text());
+    expect(json.data.activeOrgId).toBe(OTHER);
+    expect(
+      json.data.orgs.map((org: { id: string; active: boolean }) => [org.id, org.active])
+    ).toEqual([
+      [INSTALL_ORG_ID, false],
+      [OTHER, true],
+    ]);
   });
 
   it('reports no active org when the session names none, at multi', async () => {

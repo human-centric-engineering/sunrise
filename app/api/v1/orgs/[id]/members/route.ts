@@ -24,9 +24,12 @@
  * is their standing (`actorOf`): platform admin, or their verified role in
  * this org off the principal the guard built.
  *
- * Mutations need a browser session: a credential is narrower than its owner
- * and none of the scopes mean "manage the org" (the same refusal as minting
- * a key over a key).
+ * Every route here needs a browser session — the roster is people, and the
+ * writes are the org's shape: a credential is narrower than its owner and
+ * none of the scopes mean "manage the org" (the same refusal as minting a
+ * key over a key). The policy's org arm already refuses a non-admin key; the
+ * check here is what also keeps an `admin` key — a platform credential the
+ * policy admits everywhere — to the platform view.
  */
 
 import { withAuth } from '@/lib/auth/guards';
@@ -60,7 +63,13 @@ function actorOf(session: {
   return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
 }
 
-export const GET = withAuth<{ id: string }>(async (_request, _session, { params }) => {
+export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
+  if (isApiKeySession(session)) {
+    const log = await getRouteLogger(request);
+    log.warn('Rejected API-key attempt to read an org roster', { userId: session.user.id });
+    throw new ForbiddenError('Reading members requires a browser session');
+  }
+
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
 
   const members = await prisma.orgMembership.findMany({

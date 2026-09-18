@@ -14,11 +14,13 @@
  * caller can see why a switch to one would be refused.
  */
 
+import { headers } from 'next/headers';
 import { withAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 export const GET = withAuth(
   async (_request, session) => {
@@ -32,9 +34,18 @@ export const GET = withAuth(
       orderBy: { createdAt: 'asc' },
     });
 
-    // The org the guard would enter for this session: a null pointer is the
-    // install org at `single` (the guard's own rule) and no org at `multi`.
-    const activeOrgId = session.session.activeOrgId ?? (isMultiTenant() ? null : INSTALL_ORG_ID);
+    // The org the guard would enter for this request, in the entry rule's
+    // own precedence: the proxy's resolver header (the proxy is its sole
+    // writer — a fork resolving by hostname means "this host IS this org",
+    // whatever the cookie last recorded), else the session's pointer, else
+    // the install org at `single` and no org at `multi`. Read from
+    // `headers()` as the guard does, so the two never disagree; read, not
+    // entered — this route stays outside any scope so a refused org still
+    // gets its list.
+    const activeOrgId =
+      (await headers()).get(TENANT_HEADER_NAME) ||
+      session.session.activeOrgId ||
+      (isMultiTenant() ? null : INSTALL_ORG_ID);
 
     return successResponse({
       activeOrgId,

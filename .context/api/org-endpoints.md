@@ -79,9 +79,9 @@ GET /api/v1/orgs
 }
 ```
 
-`activeOrgId` is the org the guard would enter for this session: the stored
-pointer, or the install org when none is stored at `single`, or `null` at
-`multi`. Suspended orgs are listed with their status rather than hidden — a
+`activeOrgId` is the org the guard would enter for this request, in the entry
+rule's precedence: the proxy's resolver header if a fork registered one, else
+the stored pointer, else the install org at `single` and `null` at `multi`. Suspended orgs are listed with their status rather than hidden — a
 member whose active org was suspended is refused everywhere else, and this
 list is how they find the org to switch to.
 

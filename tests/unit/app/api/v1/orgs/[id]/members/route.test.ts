@@ -188,38 +188,42 @@ describe('GET /api/v1/orgs/[id]/members — who the policy admits', () => {
     expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a chat-scoped API key minted by a platform admin — a key is narrower than its owner', async () => {
-    // Through the real resolveApiKey and the real entry rule: at `single`
-    // the key enters the install org with its OWNER's projected role, and
-    // the org arm must still not admit it (the roster is the user directory).
-    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
-      id: 'cmkey000000000000000key1',
-      userId: USER_ID,
-      scopes: ['chat'],
-      rateLimitRpm: null,
-      expiresAt: null,
-      createdAt: new Date(),
-      orgId: null,
-      user: {
-        id: USER_ID,
-        name: 'Key Owner',
-        email: 'owner@example.com',
-        emailVerified: true,
-        image: null,
-        role: PLATFORM_ADMIN_ROLE,
-        accountType: 'HUMAN',
+  it.each([['chat'], ['admin']])(
+    'refuses a %s-scoped API key minted by a platform admin — the roster is people, and a key is not one',
+    async (scope) => {
+      // Through the real resolveApiKey and the real entry rule. A chat key
+      // enters the install org with its OWNER's projected role and the org
+      // arm must not admit it; an admin key the policy DOES admit, and the
+      // route refuses it anyway — the platform view is its surface.
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+        id: 'cmkey000000000000000key1',
+        userId: USER_ID,
+        scopes: [scope],
+        rateLimitRpm: null,
+        expiresAt: null,
         createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    } as never);
+        orgId: null,
+        user: {
+          id: USER_ID,
+          name: 'Key Owner',
+          email: 'owner@example.com',
+          emailVerified: true,
+          image: null,
+          role: PLATFORM_ADMIN_ROLE,
+          accountType: 'HUMAN',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      } as never);
 
-    const res = await get(INSTALL_ORG_ID, {
-      authorization: 'Bearer sk_deadbeefdeadbeefdeadbeefdeadbeef',
-    });
+      const res = await get(INSTALL_ORG_ID, {
+        authorization: 'Bearer sk_deadbeefdeadbeefdeadbeefdeadbeef',
+      });
 
-    expect(res.status).toBe(403);
-    expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(403);
+      expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
+    }
+  );
 
   it('returns 401 without a session', async () => {
     mockGetSession.mockResolvedValue(null);
