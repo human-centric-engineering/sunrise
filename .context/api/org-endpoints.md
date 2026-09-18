@@ -23,23 +23,31 @@ the per-admin export sub-cap noted below.
 
 ## Who may call what
 
-| Route                                      | Guard           | Admitted                                                                                                                  |
-| ------------------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/v1/orgs`                         | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                         |
-| `POST /api/v1/orgs/switch`                 | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                 |
-| `GET /api/v1/orgs/[id]`                    | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                            |
-| `GET/POST /api/v1/orgs/[id]/members`       | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. `POST` needs a browser session. |
-| `PATCH/DELETE …/members/[userId]`          | `withAuth`      | As above; browser session only.                                                                                           |
-| `GET/POST /api/v1/admin/orgs`              | `withAdminAuth` | Platform admins.                                                                                                          |
-| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]` | `withAdminAuth` | Platform admins.                                                                                                          |
-| `GET /api/v1/admin/orgs/[id]/export`       | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                       |
+| Route                                      | Guard           | Admitted                                                                                                                                               |
+| ------------------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/v1/orgs`                         | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
+| `POST /api/v1/orgs/switch`                 | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
+| `GET /api/v1/orgs/[id]`                    | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
+| `GET/POST /api/v1/orgs/[id]/members`       | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
+| `PATCH/DELETE …/members/[userId]`          | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `GET/POST /api/v1/admin/orgs`              | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]` | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET /api/v1/admin/orgs/[id]/export`       | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
 resolver header — with the org the URL names. An org ADMIN of X acting in the
 install org gets `403 Access denied` on `/orgs/X/members`; they switch first.
 A MEMBER, a non-member and a caller naming an org that does not exist get the
-same 403 — nothing enumerates.
+same 403 — nothing enumerates. An API key of any scope is refused on every
+members route: a key is narrower than its owner, and no scope means "manage
+the org" — an `admin` key is a platform credential and uses the platform view.
+
+**OWNER standing.** An org ADMIN administers the roster — MEMBERs and other
+ADMINs — but may not grant `OWNER` (to anyone, themself included), change an
+OWNER's role, or remove an OWNER: `403 OWNER_STANDING`. Only an OWNER, or a
+platform admin, may. Without this the last-OWNER guard would protect the
+_count_ of owners while a delegate rewrote _who_ they are in two requests.
 
 ## Member view
 
@@ -189,13 +197,19 @@ POST /api/v1/orgs/[id]/members
   is refused as if missing.
 - `role`: optional, `OWNER` / `ADMIN` / `MEMBER`. Default `MEMBER` — except
   that the first member of an **empty** org becomes `OWNER` when no role is
-  asked for (the invitation path's bootstrap). On the install org a `role` is
-  refused: roles there follow the platform role.
+  asked for (the invitation path's bootstrap). `OWNER` needs OWNER standing.
+  On the install org a `role` is refused: roles there follow the platform role.
+
+Adding by id enrols the user without asking them — it mirrors the platform
+admin naming an owner at creation, and the org's administrators already see
+the roster. The consenting path is an invitation (`POST /api/v1/users/invite`
+with `orgId`), which the invitee accepts. The `404` for an unknown id confirms
+only that a cuid — unguessable — does not name a user.
 
 **Response** (201 Created): the membership row.
 
 **Error Responses**: `400` with code `INSTALL_ORG_MEMBERSHIP` (a role on the
-install org) · `404 USER_NOT_FOUND` · `409 ALREADY_MEMBER`.
+install org) · `403 OWNER_STANDING` · `404 USER_NOT_FOUND` · `409 ALREADY_MEMBER`.
 
 ### Change a member's role
 
@@ -205,7 +219,8 @@ PATCH /api/v1/orgs/[id]/members/[userId]
 
 **Request Body** (`updateOrgMemberSchema`): `{ "role": "ADMIN" }`.
 
-**Error Responses**: `400 LAST_OWNER` (demoting the org's only OWNER — make
+**Error Responses**: `403 OWNER_STANDING` (an ADMIN granting `OWNER` or
+touching an OWNER) · `400 LAST_OWNER` (demoting the org's only OWNER — make
 another member an owner first) · `400 INSTALL_ORG_MEMBERSHIP` (the install
 org: change the user's platform role instead) · `404 NOT_A_MEMBER`.
 
@@ -216,8 +231,8 @@ DELETE /api/v1/orgs/[id]/members/[userId]
 ```
 
 Removes the membership and revokes that user's sessions acting in this org;
-their sessions in other orgs are untouched. An OWNER may remove themselves
-only while another OWNER stands.
+their sessions in other orgs are untouched. Removing an OWNER needs OWNER
+standing, and an OWNER may remove themselves only while another OWNER stands.
 
 **Response** (200 OK):
 
@@ -228,8 +243,9 @@ only while another OWNER stands.
 }
 ```
 
-**Error Responses**: `400 LAST_OWNER` · `400 INSTALL_ORG_MEMBERSHIP` (a user
-leaves the install org by having their account deleted) · `404 NOT_A_MEMBER`.
+**Error Responses**: `403 OWNER_STANDING` · `400 LAST_OWNER` ·
+`400 INSTALL_ORG_MEMBERSHIP` (a user leaves the install org by having their
+account deleted) · `404 NOT_A_MEMBER`.
 
 ## Platform view
 

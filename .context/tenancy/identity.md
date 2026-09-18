@@ -331,6 +331,15 @@ while they are acting in that org — never by a role check in a route.
   — the same bootstrap as an invitation into an empty org
   (`membershipForNewUser`). Unlike the invitation path, an explicit role on
   `POST …/members` is honoured: it is an API call by someone who chose it.
+- **Only an OWNER confers or revokes OWNER** (`OWNER_STANDING`). The policy
+  admits an ADMIN to the roster; the lifecycle is where "without the OWNER's
+  standing" (`lib/tenancy/roles.ts`) is made true — an ADMIN manages MEMBERs
+  and ADMINs but may not grant `OWNER`, change an OWNER's role or remove an
+  OWNER. The routes hand the lifecycle the caller's standing off the
+  principal (`platformAdmin`, `orgRole`); a platform admin has it everywhere.
+  Found by t-672's security review: without it the last-OWNER guard protected
+  the count of owners while a delegate could crown themself and remove their
+  appointer in two requests.
 - **The install org's memberships follow the platform role**
   (`INSTALL_ORG_MEMBERSHIP`; the ruling above), so the members API refuses a
   role there, and refuses a removal there.
@@ -347,10 +356,16 @@ while they are acting in that org — never by a role check in a route.
   transaction, memberships and credentials cascade, and users are never
   deleted. [Export](../privacy/org-export.md) precedes it.
 
-**Mutations need a browser session.** An API key — even an `admin`-scoped
-one the policy would admit — is refused by `POST/PATCH/DELETE` on the
-members routes, the same refusal as minting a key over a key: none of the
-scopes mean "manage the org".
+**The members routes need a browser session, and the org arm is a session
+grant.** Every members route refuses an API key at the handler, and the
+default policy's org arm refuses an `api-key` principal outright — a key's
+standing is its scopes, and none of them mean "manage the org". The second
+half closes what the first alone would not: `enterApiKeyOrg` projects the
+key OWNER's platform role onto the key at `single`, so a `chat` key minted
+by a platform admin arrived at the install org as `OWNER` and would have
+read the whole roster — the user directory — through the `GET` (t-672's
+security review). An `admin` key is a platform credential and administers
+through `administersEverything`, as before.
 
 ## Credentials
 

@@ -77,6 +77,9 @@ A platform credential — an `admin`-scoped API key — enters **no** org: no
   other core route no resource carries an org, and
   `authorization-org.test.ts` sweeps every principal × every question those
   routes can ask, with and without org facts, and asserts identical answers.
+- **is a session grant.** An `api-key` principal never takes the arm, whatever
+  `orgRole` the entry projected onto it: a key is narrower than its owner
+  (#542) and only the `admin` scope administers, through the platform check.
 - **reads the ownerless `this-row` of a resource that carries their org** —
   answered _before_ the once-per-kind diagnostic, because an org resource with
   no `ownerId` is a fork's steady state, not a misconfigured resolver.

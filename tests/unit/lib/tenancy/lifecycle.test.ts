@@ -65,6 +65,11 @@ const orgRow = (over: Partial<{ id: string; slug: string; status: string }> = {}
   ...over,
 });
 
+/** The standing the routes hand the lifecycle. */
+const AS_PLATFORM = { platformAdmin: true, orgRole: null } as const;
+const AS_OWNER = { platformAdmin: false, orgRole: ORG_OWNER_ROLE } as const;
+const AS_ADMIN = { platformAdmin: false, orgRole: ORG_ADMIN_ROLE } as const;
+
 const human = (id: string, role: string = DEFAULT_USER_ROLE) => ({
   id,
   role,
@@ -225,7 +230,7 @@ describe('addMember', () => {
 
   it('adds with the role asked for', async () => {
     db.orgMembership.count.mockResolvedValue(3);
-    const membership = await addMember(ORG, OTHER, ORG_ADMIN_ROLE);
+    const membership = await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER);
     expect(membership.role).toBe(ORG_ADMIN_ROLE);
     // An explicit role is honoured even on an empty org — the caller chose it.
     expect(db.orgMembership.count).not.toHaveBeenCalled();
@@ -233,15 +238,15 @@ describe('addMember', () => {
 
   it('defaults to MEMBER in a populated org, and OWNER for the first member of an empty one', async () => {
     db.orgMembership.count.mockResolvedValueOnce(2);
-    expect((await addMember(ORG, OTHER, undefined)).role).toBe(DEFAULT_ORG_ROLE);
+    expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(DEFAULT_ORG_ROLE);
 
     db.orgMembership.count.mockResolvedValueOnce(0);
-    expect((await addMember(ORG, OTHER, undefined)).role).toBe(ORG_OWNER_ROLE);
+    expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(ORG_OWNER_ROLE);
   });
 
   it('is a 409 for an existing member', async () => {
     db.orgMembership.findUnique.mockResolvedValue({ id: 'm0' });
-    const error = await refusal(() => addMember(ORG, OTHER, undefined));
+    const error = await refusal(() => addMember(ORG, OTHER, undefined, AS_OWNER));
     expect(error.code).toBe('ALREADY_MEMBER');
     expect(error.status).toBe(409);
     expect(db.orgMembership.create).not.toHaveBeenCalled();
@@ -249,13 +254,19 @@ describe('addMember', () => {
 
   it('is a 404 for a missing org, and for a missing or SERVICE user', async () => {
     db.org.findUnique.mockResolvedValueOnce(null);
-    expect((await refusal(() => addMember(ORG, OTHER, undefined))).code).toBe('ORG_NOT_FOUND');
+    expect((await refusal(() => addMember(ORG, OTHER, undefined, AS_OWNER))).code).toBe(
+      'ORG_NOT_FOUND'
+    );
 
     db.user.findUnique.mockResolvedValueOnce(null);
-    expect((await refusal(() => addMember(ORG, OTHER, undefined))).code).toBe('USER_NOT_FOUND');
+    expect((await refusal(() => addMember(ORG, OTHER, undefined, AS_OWNER))).code).toBe(
+      'USER_NOT_FOUND'
+    );
 
     db.user.findUnique.mockResolvedValueOnce({ id: OTHER, role: 'ADMIN', accountType: 'SERVICE' });
-    expect((await refusal(() => addMember(ORG, OTHER, undefined))).code).toBe('USER_NOT_FOUND');
+    expect((await refusal(() => addMember(ORG, OTHER, undefined, AS_OWNER))).code).toBe(
+      'USER_NOT_FOUND'
+    );
     expect(db.orgMembership.create).not.toHaveBeenCalled();
   });
 
@@ -265,17 +276,21 @@ describe('addMember', () => {
     });
 
     it('refuses a role from the body — the role follows the platform role', async () => {
-      const error = await refusal(() => addMember(INSTALL_ORG_ID, OTHER, ORG_OWNER_ROLE));
+      const error = await refusal(() => addMember(INSTALL_ORG_ID, OTHER, ORG_OWNER_ROLE, AS_OWNER));
       expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
       expect(db.orgMembership.create).not.toHaveBeenCalled();
     });
 
     it('writes the rule’s answer: OWNER for a human platform admin, MEMBER otherwise', async () => {
       db.user.findUnique.mockResolvedValueOnce(human(OTHER, PLATFORM_ADMIN_ROLE));
-      expect((await addMember(INSTALL_ORG_ID, OTHER, undefined)).role).toBe(ORG_OWNER_ROLE);
+      expect((await addMember(INSTALL_ORG_ID, OTHER, undefined, AS_OWNER)).role).toBe(
+        ORG_OWNER_ROLE
+      );
 
       db.user.findUnique.mockResolvedValueOnce(human(OTHER));
-      expect((await addMember(INSTALL_ORG_ID, OTHER, undefined)).role).toBe(DEFAULT_ORG_ROLE);
+      expect((await addMember(INSTALL_ORG_ID, OTHER, undefined, AS_OWNER)).role).toBe(
+        DEFAULT_ORG_ROLE
+      );
       // The count arm is not consulted: the install org's rule is the platform role.
       expect(db.orgMembership.count).not.toHaveBeenCalled();
     });
@@ -309,7 +324,7 @@ describe('changeMemberRole — the last-OWNER guard', () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
     db.orgMembership.count.mockResolvedValue(1);
 
-    const error = await refusal(() => changeMemberRole(ORG, OWNER, DEFAULT_ORG_ROLE));
+    const error = await refusal(() => changeMemberRole(ORG, OWNER, DEFAULT_ORG_ROLE, AS_OWNER));
 
     expect(error.code).toBe('LAST_OWNER');
     expect(error.status).toBe(400);
@@ -325,7 +340,7 @@ describe('changeMemberRole — the last-OWNER guard', () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
     db.orgMembership.count.mockResolvedValue(2);
 
-    const updated = await changeMemberRole(ORG, OWNER, ORG_ADMIN_ROLE);
+    const updated = await changeMemberRole(ORG, OWNER, ORG_ADMIN_ROLE, AS_OWNER);
 
     expect(updated.role).toBe(ORG_ADMIN_ROLE);
     expect(db.orgMembership.update).toHaveBeenCalledWith(
@@ -338,26 +353,28 @@ describe('changeMemberRole — the last-OWNER guard', () => {
 
   it('promotes without counting — adding an OWNER never needs the guard', async () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: DEFAULT_ORG_ROLE });
-    await changeMemberRole(ORG, OTHER, ORG_OWNER_ROLE);
+    await changeMemberRole(ORG, OTHER, ORG_OWNER_ROLE, AS_OWNER);
     expect(db.orgMembership.count).not.toHaveBeenCalled();
   });
 
   it('re-affirming OWNER on the only OWNER is not a demotion', async () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
-    await changeMemberRole(ORG, OWNER, ORG_OWNER_ROLE);
+    await changeMemberRole(ORG, OWNER, ORG_OWNER_ROLE, AS_OWNER);
     expect(db.orgMembership.count).not.toHaveBeenCalled();
     expect(db.orgMembership.update).toHaveBeenCalled();
   });
 
   it('is a 404 for a non-member', async () => {
     db.orgMembership.findUnique.mockResolvedValue(null);
-    const error = await refusal(() => changeMemberRole(ORG, OTHER, ORG_ADMIN_ROLE));
+    const error = await refusal(() => changeMemberRole(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER));
     expect(error.code).toBe('NOT_A_MEMBER');
     expect(error.status).toBe(404);
   });
 
   it('refuses the install org before any read', async () => {
-    const error = await refusal(() => changeMemberRole(INSTALL_ORG_ID, OWNER, DEFAULT_ORG_ROLE));
+    const error = await refusal(() =>
+      changeMemberRole(INSTALL_ORG_ID, OWNER, DEFAULT_ORG_ROLE, AS_OWNER)
+    );
     expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
     expect(db.$transaction).not.toHaveBeenCalled();
     expect(db.orgMembership.findUnique).not.toHaveBeenCalled();
@@ -369,7 +386,7 @@ describe('removeMember', () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
     db.orgMembership.count.mockResolvedValue(1);
 
-    const error = await refusal(() => removeMember(ORG, OWNER));
+    const error = await refusal(() => removeMember(ORG, OWNER, AS_OWNER));
 
     expect(error.code).toBe('LAST_OWNER');
     expect(db.orgMembership.delete).not.toHaveBeenCalled();
@@ -381,7 +398,7 @@ describe('removeMember', () => {
     db.orgMembership.count.mockResolvedValue(2);
     mockRevoke.mockResolvedValue(2);
 
-    const result = await removeMember(ORG, OWNER);
+    const result = await removeMember(ORG, OWNER, AS_OWNER);
 
     expect(db.orgMembership.delete).toHaveBeenCalledWith({
       where: { orgId_userId: { orgId: ORG, userId: OWNER } },
@@ -396,19 +413,19 @@ describe('removeMember', () => {
 
   it('removes a MEMBER without counting owners', async () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: DEFAULT_ORG_ROLE });
-    await removeMember(ORG, OTHER);
+    await removeMember(ORG, OTHER, AS_OWNER);
     expect(db.orgMembership.count).not.toHaveBeenCalled();
     expect(db.orgMembership.delete).toHaveBeenCalled();
   });
 
   it('is a 404 for a non-member, and revokes nothing', async () => {
     db.orgMembership.findUnique.mockResolvedValue(null);
-    expect((await refusal(() => removeMember(ORG, OTHER))).code).toBe('NOT_A_MEMBER');
+    expect((await refusal(() => removeMember(ORG, OTHER, AS_OWNER))).code).toBe('NOT_A_MEMBER');
     expect(mockRevoke).not.toHaveBeenCalled();
   });
 
   it('refuses the install org before any read — an account leaves it by erasure', async () => {
-    const error = await refusal(() => removeMember(INSTALL_ORG_ID, OTHER));
+    const error = await refusal(() => removeMember(INSTALL_ORG_ID, OTHER, AS_OWNER));
     expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
     expect(db.$transaction).not.toHaveBeenCalled();
     expect(mockRevoke).not.toHaveBeenCalled();
@@ -462,6 +479,97 @@ describe('syncInstallMembershipRole (ruling a)', () => {
     await syncInstallMembershipRole(human(OWNER), tx as never);
     expect(tx.orgMembership.upsert).toHaveBeenCalled();
     expect(db.orgMembership.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('only an OWNER confers or revokes OWNER — the takeover an ADMIN cannot do', () => {
+  beforeEach(() => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.user.findUnique.mockResolvedValue(human(OTHER));
+    db.orgMembership.count.mockResolvedValue(2);
+    db.orgMembership.update.mockImplementation(({ data }: { data: { role: string } }) =>
+      Promise.resolve({
+        id: 'm1',
+        orgId: ORG,
+        userId: OWNER,
+        role: data.role,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    );
+    db.orgMembership.create.mockImplementation(({ data }: { data: object }) =>
+      Promise.resolve({ id: 'm2', createdAt: new Date(), updatedAt: new Date(), ...data })
+    );
+  });
+
+  it('an ADMIN cannot promote anyone — themself included — to OWNER', async () => {
+    db.orgMembership.findUnique.mockResolvedValue({ role: ORG_ADMIN_ROLE });
+    const error = await refusal(() => changeMemberRole(ORG, OTHER, ORG_OWNER_ROLE, AS_ADMIN));
+    expect(error.code).toBe('OWNER_STANDING');
+    expect(error.status).toBe(403);
+    expect(db.orgMembership.update).not.toHaveBeenCalled();
+    // Refused before the transaction opens: the answer needs no row.
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('an ADMIN cannot demote an OWNER, even when another OWNER stands', async () => {
+    db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
+    const error = await refusal(() => changeMemberRole(ORG, OWNER, ORG_ADMIN_ROLE, AS_ADMIN));
+    expect(error.code).toBe('OWNER_STANDING');
+    expect(db.orgMembership.update).not.toHaveBeenCalled();
+  });
+
+  it('an ADMIN cannot remove an OWNER, even when another OWNER stands — the appointer stays', async () => {
+    db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
+    const error = await refusal(() => removeMember(ORG, OWNER, AS_ADMIN));
+    expect(error.code).toBe('OWNER_STANDING');
+    expect(db.orgMembership.delete).not.toHaveBeenCalled();
+    expect(mockRevoke).not.toHaveBeenCalled();
+  });
+
+  it('an ADMIN cannot add a member as OWNER', async () => {
+    db.orgMembership.findUnique.mockResolvedValue(null);
+    const error = await refusal(() => addMember(ORG, OTHER, ORG_OWNER_ROLE, AS_ADMIN));
+    expect(error.code).toBe('OWNER_STANDING');
+    expect(db.orgMembership.create).not.toHaveBeenCalled();
+  });
+
+  it('an ADMIN still manages MEMBERs and other ADMINs', async () => {
+    db.orgMembership.findUnique.mockResolvedValue({ role: DEFAULT_ORG_ROLE });
+    await expect(changeMemberRole(ORG, OTHER, ORG_ADMIN_ROLE, AS_ADMIN)).resolves.toMatchObject({
+      role: ORG_ADMIN_ROLE,
+    });
+    db.orgMembership.findUnique.mockResolvedValue({ role: ORG_ADMIN_ROLE });
+    await expect(removeMember(ORG, OTHER, AS_ADMIN)).resolves.toEqual({ revokedSessions: 0 });
+    db.orgMembership.findUnique.mockResolvedValue(null);
+    await expect(addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_ADMIN)).resolves.toMatchObject({
+      role: ORG_ADMIN_ROLE,
+    });
+  });
+
+  it('an OWNER, and a platform admin from anywhere, may do all three', async () => {
+    for (const actor of [AS_OWNER, AS_PLATFORM]) {
+      db.orgMembership.findUnique.mockResolvedValue({ role: ORG_ADMIN_ROLE });
+      await expect(changeMemberRole(ORG, OTHER, ORG_OWNER_ROLE, actor)).resolves.toMatchObject({
+        role: ORG_OWNER_ROLE,
+      });
+      db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
+      await expect(removeMember(ORG, OWNER, actor)).resolves.toEqual({ revokedSessions: 0 });
+      db.orgMembership.findUnique.mockResolvedValue(null);
+      await expect(addMember(ORG, OTHER, ORG_OWNER_ROLE, actor)).resolves.toMatchObject({
+        role: ORG_OWNER_ROLE,
+      });
+    }
+  });
+
+  it('the owner-count transactions run SERIALIZABLE', async () => {
+    db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
+    await changeMemberRole(ORG, OWNER, ORG_ADMIN_ROLE, AS_OWNER);
+    await removeMember(ORG, OWNER, AS_OWNER);
+    for (const call of db.$transaction.mock.calls) {
+      expect(call[1]).toEqual({ isolationLevel: 'Serializable' });
+    }
+    expect(db.$transaction).toHaveBeenCalledTimes(2);
   });
 });
 

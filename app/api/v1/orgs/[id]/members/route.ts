@@ -18,8 +18,11 @@
  * The handlers read and write nothing outside the resolved org — that is
  * the `ownership: 'resource'` claim, and the roster is filtered by the
  * resolved id rather than by anything the caller sent. The rules — the
- * install org's roles follow the platform role, an org keeps an OWNER —
- * are `lib/tenancy/lifecycle.ts`'s, and its errors carry their own status.
+ * install org's roles follow the platform role, an org keeps an OWNER, only
+ * an OWNER confers OWNER — are `lib/tenancy/lifecycle.ts`'s, and its errors
+ * carry their own status. The one thing the routes hand it about the caller
+ * is their standing (`actorOf`): platform admin, or their verified role in
+ * this org off the principal the guard built.
  *
  * Mutations need a browser session: a credential is narrower than its owner
  * and none of the scopes mean "manage the org" (the same refusal as minting
@@ -33,7 +36,8 @@ import { successResponse } from '@/lib/api/responses';
 import { ForbiddenError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { orgIdParamSchema, addOrgMemberSchema } from '@/lib/validations/tenancy';
-import { addMember, resolveOrgResource } from '@/lib/tenancy/lifecycle';
+import { addMember, resolveOrgResource, type MembershipActor } from '@/lib/tenancy/lifecycle';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 import { getRouteLogger } from '@/lib/api/context';
 
 const RESOURCE = {
@@ -47,6 +51,14 @@ const RESOURCE = {
       'The policy admitted the caller to the org the URL names; the roster is filtered by that resolved id and the writes are keyed on it.',
   },
 } as const;
+
+/** The caller's standing for the ownership rule, from what the guard verified. */
+function actorOf(session: {
+  user: { role?: string | null };
+  principal: { orgRole?: string | null };
+}): MembershipActor {
+  return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
+}
 
 export const GET = withAuth<{ id: string }>(async (_request, _session, { params }) => {
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
@@ -82,7 +94,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, addOrgMemberSchema);
 
-  const membership = await addMember(id, body.userId, body.role);
+  const membership = await addMember(id, body.userId, body.role, actorOf(session));
 
   log.info('Org member added', {
     orgId: id,

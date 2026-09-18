@@ -42,7 +42,7 @@ import { prisma } from '@/lib/db/client';
 import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { ensureMembership, initialMembershipFor } from '@/lib/tenancy/membership';
-import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import {
   addMember,
   changeMemberRole,
@@ -297,7 +297,8 @@ async function main(): Promise<void> {
       'createOrg() names the founding OWNER in the same write'
     );
 
-    const otherRow = await addMember(org.id, other.id, undefined);
+    const PLATFORM = { platformAdmin: true } as const;
+    const otherRow = await addMember(org.id, other.id, undefined, PLATFORM);
     check(
       otherRow.role === DEFAULT_ORG_ROLE,
       'a member added to a non-empty org with no role asked for is a MEMBER'
@@ -305,13 +306,26 @@ async function main(): Promise<void> {
 
     await refuses(
       'LAST_OWNER',
-      () => changeMemberRole(org.id, owner.id, DEFAULT_ORG_ROLE),
+      () => changeMemberRole(org.id, owner.id, DEFAULT_ORG_ROLE, PLATFORM),
       'the last OWNER cannot be demoted'
     );
     await refuses(
       'LAST_OWNER',
-      () => removeMember(org.id, owner.id),
+      () => removeMember(org.id, owner.id, PLATFORM),
       'the last OWNER cannot be removed'
+    );
+    // Only an OWNER confers or revokes OWNER: an org ADMIN — the delegate —
+    // may neither crown themself nor remove the person who appointed them.
+    const asAdmin = { platformAdmin: false, orgRole: ORG_ADMIN_ROLE } as const;
+    await refuses(
+      'OWNER_STANDING',
+      () => changeMemberRole(org.id, other.id, ORG_OWNER_ROLE, asAdmin),
+      'an org ADMIN cannot grant OWNER'
+    );
+    await refuses(
+      'OWNER_STANDING',
+      () => removeMember(org.id, owner.id, asAdmin),
+      'an org ADMIN cannot remove an OWNER'
     );
     await refuses(
       'INSTALL_ORG_IMMUTABLE',
@@ -325,7 +339,7 @@ async function main(): Promise<void> {
     );
     await refuses(
       'INSTALL_ORG_MEMBERSHIP',
-      () => removeMember(INSTALL_ORG_ID, other.id),
+      () => removeMember(INSTALL_ORG_ID, other.id, PLATFORM),
       'a user cannot be removed from the install org'
     );
 
@@ -364,14 +378,14 @@ async function main(): Promise<void> {
         activeOrgId: INSTALL_ORG_ID,
       },
     });
-    const removal = await removeMember(org.id, other.id);
+    const removal = await removeMember(org.id, other.id, PLATFORM);
     check(removal.revokedSessions === 1, 'removing a member revoked exactly one session');
     check(
       (await prisma.session.findUnique({ where: { id: inOrg.id } })) === null &&
         (await prisma.session.findUnique({ where: { id: inInstall.id } })) !== null,
       'the session acting in the org is gone; the one in the install org stands'
     );
-    await addMember(org.id, other.id, DEFAULT_ORG_ROLE);
+    await addMember(org.id, other.id, DEFAULT_ORG_ROLE, PLATFORM);
 
     // The export names every manifest section, and the roster is the org's.
     const bundle = await exportOrgData({ orgId: org.id, actorUserId: owner.id });

@@ -135,11 +135,20 @@ release process.
     `API.ORGS` / `API.ADMIN`. The rules live once, in `lib/tenancy/lifecycle.ts`,
     and every refusal carries a `code`: the install org can be renamed but
     never suspended, re-slugged or deleted (`INSTALL_ORG_IMMUTABLE`); an org
-    keeps at least one `OWNER` (`LAST_OWNER`); the install org's memberships
-    follow the platform role and cannot be edited or removed through the
-    members API (`INSTALL_ORG_MEMBERSHIP`); removing a member revokes their
-    sessions acting in that org (`revokeUserSessions` gains an optional
-    `activeOrgId` filter) and keeps the rest.
+    keeps at least one `OWNER` (`LAST_OWNER`); only an OWNER — or a platform
+    admin — may grant `OWNER`, change an OWNER's role or remove an OWNER
+    (`OWNER_STANDING`, so an ADMIN cannot take the org from their appointer);
+    the install org's memberships follow the platform role and cannot be
+    edited or removed through the members API (`INSTALL_ORG_MEMBERSHIP`);
+    removing a member revokes their sessions acting in that org
+    (`revokeUserSessions` gains an optional `activeOrgId` filter) and keeps
+    the rest.
+  - **The org arm is a session grant.** `DEFAULT_AUTHORIZATION_POLICY`'s
+    org arm now refuses an `api-key` principal outright (t-671 admitted a
+    key by the org role the entry projected onto it — at `single` that is
+    the key OWNER's platform role, so a `chat` key minted by a platform admin
+    would have read the install org's roster). A key's standing is its
+    scopes; an `admin` key administers as before.
   - **The ruling on role drift (a):** the install org's `OWNER` set now
     _follows_ the platform-admin set — `PATCH /api/v1/users/[id]` with a
     `role` upserts the install-org membership to the rule's answer in the

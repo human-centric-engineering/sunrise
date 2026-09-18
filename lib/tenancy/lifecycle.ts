@@ -20,6 +20,16 @@
  *   conditional on org roles, so an org CAN be left owner-less by an
  *   erasure, and a platform admin — whom the policy admits everywhere —
  *   names a new OWNER through the same members route.
+ * - **Only an OWNER confers or revokes OWNER.** The policy admits an org
+ *   ADMIN to the roster, and this module is where ADMIN's "without the
+ *   OWNER's standing" (`lib/tenancy/roles.ts`) is made true: an ADMIN may
+ *   manage MEMBERs and other ADMINs, but may not grant `OWNER` (to anyone,
+ *   themself included), change an OWNER's role, or remove an OWNER. Without
+ *   this the last-OWNER guard protects the *count* of owners while letting a
+ *   delegate rewrite *who* they are in two requests — promote self, remove
+ *   the appointer — which is a takeover, not administration. The actor's
+ *   standing is passed in ({@link MembershipActor}); a platform admin has it
+ *   everywhere, which is how an owner-less org is repaired.
  * - **A removed member's sessions in that org are revoked**, the ones in
  *   their other orgs kept. The 5-minute session cookie cache is not a hole:
  *   the guard re-reads the membership on every request into a non-install
@@ -39,7 +49,7 @@
  * @see lib/privacy/erase-org.ts — deletion, which is a privacy act rather than a lifecycle one
  * @see .context/tenancy/identity.md — the guide's lifecycle section
  */
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { APIError } from '@/lib/api/errors';
@@ -66,7 +76,8 @@ export type OrgLifecycleErrorCode =
   | 'INSTALL_ORG_MEMBERSHIP'
   | 'LAST_OWNER'
   | 'ALREADY_MEMBER'
-  | 'NOT_A_MEMBER';
+  | 'NOT_A_MEMBER'
+  | 'OWNER_STANDING';
 
 const STATUS_FOR: Record<OrgLifecycleErrorCode, number> = {
   ORG_NOT_FOUND: 404,
@@ -77,6 +88,7 @@ const STATUS_FOR: Record<OrgLifecycleErrorCode, number> = {
   LAST_OWNER: 400,
   ALREADY_MEMBER: 409,
   NOT_A_MEMBER: 404,
+  OWNER_STANDING: 403,
 };
 
 /**
@@ -91,6 +103,30 @@ export class OrgLifecycleError extends APIError {
   constructor(code: OrgLifecycleErrorCode, message: string) {
     super(message, code, STATUS_FOR[code]);
     this.name = 'OrgLifecycleError';
+  }
+}
+
+/**
+ * Who is making a membership change, as far as the ownership rule reads it:
+ * a platform admin (the policy admits them to every org), or a member whose
+ * role in THIS org the guard verified — `session.principal.orgRole`, which
+ * the policy already required to be an administering role of the org the
+ * URL names before the handler ran. The routes build it from the principal;
+ * a script passes `{ platformAdmin: true }`.
+ */
+export interface MembershipActor {
+  platformAdmin: boolean;
+  orgRole?: string | null;
+}
+
+/** May this actor confer, alter or revoke the OWNER role in the org? */
+function hasOwnerStanding(actor: MembershipActor): boolean {
+  return actor.platformAdmin || actor.orgRole === ORG_OWNER_ROLE;
+}
+
+function requireOwnerStanding(actor: MembershipActor, what: string): void {
+  if (!hasOwnerStanding(actor)) {
+    throw new OrgLifecycleError('OWNER_STANDING', `Only an owner may ${what}`);
   }
 }
 
@@ -113,6 +149,9 @@ export interface MembershipRecord {
   createdAt: Date;
   updatedAt: Date;
 }
+
+/** Isolation for the owner-count-then-write transactions (see `changeMemberRole`). */
+const SERIALIZABLE = { isolationLevel: Prisma.TransactionIsolationLevel.Serializable } as const;
 
 const orgSelect = {
   id: true,
@@ -264,14 +303,16 @@ export async function updateOrg(
  *
  * On the install org the role is never the caller's to pick — it follows the
  * platform role — so a body `role` is refused and the rule's answer is
- * written instead.
+ * written instead. An explicit `OWNER` needs the actor's owner standing.
  */
 export async function addMember(
   orgId: string,
   userId: string,
   role: OrgRole | undefined,
+  actor: MembershipActor,
   db: LifecycleDb = prisma
 ): Promise<MembershipRecord> {
+  if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'add a member as an owner');
   await requireOrg(orgId, db);
   const user = await requireManageableUser(userId, db);
 
@@ -310,15 +351,22 @@ export async function addMember(
 
 /**
  * Change a member's role. Refused on the install org (the role follows the
- * platform role), and refused when it would demote the org's last OWNER.
+ * platform role); granting `OWNER`, or changing an OWNER's role, needs the
+ * actor's owner standing; and demoting the org's last OWNER is refused.
  *
- * The owner count and the write run in one transaction so two concurrent
- * demotions cannot each see the other OWNER still standing.
+ * The owner count and the write run in one SERIALIZABLE transaction: under
+ * the default READ COMMITTED a `count` followed by an `update` takes no lock,
+ * so two concurrent demotions could each see the other OWNER still standing
+ * and leave the org owner-less. At SERIALIZABLE one of them fails with a
+ * serialization error instead (a 500 the caller retries), which is the
+ * cheaper of the two failures — an owner-less org is repairable by a
+ * platform admin, but only once someone notices.
  */
 export async function changeMemberRole(
   orgId: string,
   userId: string,
   role: OrgRole,
+  actor: MembershipActor,
   db: LifecycleDb = prisma
 ): Promise<MembershipRecord> {
   if (orgId === INSTALL_ORG_ID) {
@@ -327,6 +375,7 @@ export async function changeMemberRole(
       'Roles in the install organisation follow the platform role; change the user’s platform role instead'
     );
   }
+  if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'make a member an owner');
 
   const updated = await db.$transaction(async (tx) => {
     const membership = await tx.orgMembership.findUnique({
@@ -334,6 +383,10 @@ export async function changeMemberRole(
       select: { role: true },
     });
     if (!membership) throw new OrgLifecycleError('NOT_A_MEMBER', 'Member not found');
+
+    if (membership.role === ORG_OWNER_ROLE) {
+      requireOwnerStanding(actor, 'change an owner’s role');
+    }
 
     if (membership.role === ORG_OWNER_ROLE && role !== ORG_OWNER_ROLE) {
       const owners = await tx.orgMembership.count({ where: { orgId, role: ORG_OWNER_ROLE } });
@@ -350,22 +403,25 @@ export async function changeMemberRole(
       data: { role },
       select: membershipSelect,
     });
-  });
+  }, SERIALIZABLE);
 
   logger.info('Org member role changed', { orgId, userId, role });
   return updated;
 }
 
 /**
- * Remove a member. Refused on the install org, and refused for the org's
- * last OWNER. The user's sessions acting in this org are revoked once the
- * row is gone; their sessions in other orgs are untouched.
+ * Remove a member. Refused on the install org; removing an OWNER needs the
+ * actor's owner standing; and the org's last OWNER is refused. The user's
+ * sessions acting in this org are revoked once the row is gone; their
+ * sessions in other orgs are untouched. Same SERIALIZABLE transaction as
+ * {@link changeMemberRole}, for the same reason.
  *
  * Returns the number of sessions revoked so the route can say so.
  */
 export async function removeMember(
   orgId: string,
   userId: string,
+  actor: MembershipActor,
   db: LifecycleDb = prisma
 ): Promise<{ revokedSessions: number }> {
   if (orgId === INSTALL_ORG_ID) {
@@ -383,6 +439,7 @@ export async function removeMember(
     if (!membership) throw new OrgLifecycleError('NOT_A_MEMBER', 'Member not found');
 
     if (membership.role === ORG_OWNER_ROLE) {
+      requireOwnerStanding(actor, 'remove an owner');
       const owners = await tx.orgMembership.count({ where: { orgId, role: ORG_OWNER_ROLE } });
       if (owners <= 1) {
         throw new OrgLifecycleError(
@@ -393,7 +450,7 @@ export async function removeMember(
     }
 
     await tx.orgMembership.delete({ where: { orgId_userId: { orgId, userId } } });
-  });
+  }, SERIALIZABLE);
 
   // Outside the transaction: `revokeUserSessions` is bound to the shared
   // client. A membership deleted and sessions still standing is safe — the

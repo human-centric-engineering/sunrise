@@ -18,6 +18,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -187,6 +188,39 @@ describe('GET /api/v1/orgs/[id]/members — who the policy admits', () => {
     expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
   });
 
+  it('refuses a chat-scoped API key minted by a platform admin — a key is narrower than its owner', async () => {
+    // Through the real resolveApiKey and the real entry rule: at `single`
+    // the key enters the install org with its OWNER's projected role, and
+    // the org arm must still not admit it (the roster is the user directory).
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+      id: 'cmkey000000000000000key1',
+      userId: USER_ID,
+      scopes: ['chat'],
+      rateLimitRpm: null,
+      expiresAt: null,
+      createdAt: new Date(),
+      orgId: null,
+      user: {
+        id: USER_ID,
+        name: 'Key Owner',
+        email: 'owner@example.com',
+        emailVerified: true,
+        image: null,
+        role: PLATFORM_ADMIN_ROLE,
+        accountType: 'HUMAN',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    } as never);
+
+    const res = await get(INSTALL_ORG_ID, {
+      authorization: 'Bearer sk_deadbeefdeadbeefdeadbeefdeadbeef',
+    });
+
+    expect(res.status).toBe(403);
+    expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
+  });
+
   it('returns 401 without a session', async () => {
     mockGetSession.mockResolvedValue(null);
     expect((await get()).status).toBe(401);
@@ -203,14 +237,31 @@ describe('POST /api/v1/orgs/[id]/members', () => {
 
     expect(res.status).toBe(201);
     expect(json.data).toEqual(expect.objectContaining({ userId: NEW_MEMBER }));
-    expect(mockAddMember).toHaveBeenCalledWith(ORG, NEW_MEMBER, ORG_ADMIN_ROLE);
+    expect(mockAddMember).toHaveBeenCalledWith(ORG, NEW_MEMBER, ORG_ADMIN_ROLE, {
+      platformAdmin: false,
+      orgRole: ORG_ADMIN_ROLE,
+    });
   });
 
-  it('passes an absent role through as undefined so the lifecycle defaults it', async () => {
+  it('passes an absent role through as undefined so the lifecycle defaults it, with the caller’s standing', async () => {
     mockGetSession.mockResolvedValue(session('USER', ORG));
     memberOf(ORG_OWNER_ROLE);
     await post({ userId: NEW_MEMBER });
-    expect(mockAddMember).toHaveBeenCalledWith(ORG, NEW_MEMBER, undefined);
+    expect(mockAddMember).toHaveBeenCalledWith(ORG, NEW_MEMBER, undefined, {
+      platformAdmin: false,
+      orgRole: ORG_OWNER_ROLE,
+    });
+  });
+
+  it('hands the lifecycle platform standing for a platform admin acting from another org', async () => {
+    mockGetSession.mockResolvedValue(session(PLATFORM_ADMIN_ROLE, null));
+    await post({ userId: NEW_MEMBER, role: ORG_OWNER_ROLE });
+    expect(mockAddMember).toHaveBeenCalledWith(
+      ORG,
+      NEW_MEMBER,
+      ORG_OWNER_ROLE,
+      expect.objectContaining({ platformAdmin: true })
+    );
   });
 
   it('answers a lifecycle refusal with its own status and code', async () => {

@@ -477,7 +477,10 @@ function administersEverything(viewer: AuthorizationPrincipal): boolean {
  * plane split in the tenancy playbook. And both sides must be present:
  * `resource.orgId === viewer.orgId` with both `undefined` is `true`, which is
  * the trap the fork seam's docblock warns about, so the comparison is guarded
- * on the resource side explicitly.
+ * on the resource side explicitly. And it is a **session** grant: an API-key
+ * principal never takes this arm, whatever org role the entry projected
+ * onto it — a key's standing is its scopes, and `administersEverything` is
+ * where those are read.
  *
  * The core routes that DO name an org are the org members routes
  * (`app/api/v1/orgs/[id]/members/**`, §106 t-672): `{ kind: 'org', id,
@@ -494,6 +497,14 @@ function administersOrgOf(
   viewer: AuthorizationPrincipal,
   resource: AuthorizationResource | null
 ): boolean {
+  // A credential is narrower than its owner (#542), and none of the API-key
+  // scopes mean "administer the org": `enterApiKeyOrg` projects the OWNER's
+  // platform role onto a key at `single`, so without this a `chat` key
+  // minted by a platform admin would read the install org's roster where the
+  // same key is refused every admin route. An `admin` key is already admitted
+  // by `administersEverything`; any other key gets no org-level grant until
+  // a scope for it exists.
+  if (viewer.credential === 'api-key') return false;
   if (!resource?.orgId || !viewer.orgId) return false;
   return resource.orgId === viewer.orgId && orgAdministers(viewer.orgRole);
 }

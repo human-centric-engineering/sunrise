@@ -106,7 +106,27 @@ describe('PATCH /api/v1/orgs/[id]/members/[userId]', () => {
 
     expect(res.status).toBe(200);
     expect(json.data.role).toBe(ORG_ADMIN_ROLE);
-    expect(lifecycle.changeMemberRole).toHaveBeenCalledWith(ORG, TARGET, ORG_ADMIN_ROLE);
+    expect(lifecycle.changeMemberRole).toHaveBeenCalledWith(ORG, TARGET, ORG_ADMIN_ROLE, {
+      platformAdmin: false,
+      orgRole: ORG_ADMIN_ROLE,
+    });
+  });
+
+  it('surfaces the owner-standing refusal as a 403 with its code — an ADMIN cannot crown themself', async () => {
+    lifecycle.changeMemberRole.mockRejectedValue(
+      new OrgLifecycleError('OWNER_STANDING', 'Only an owner may make a member an owner')
+    );
+    const res = await patch({ role: ORG_OWNER_ROLE }, {}, USER_ID);
+    const json = JSON.parse(await res.text());
+    expect(res.status).toBe(403);
+    expect(json.error.code).toBe('OWNER_STANDING');
+    // The lifecycle was told the caller is an ADMIN, which is what it refused on.
+    expect(lifecycle.changeMemberRole).toHaveBeenCalledWith(
+      ORG,
+      USER_ID,
+      ORG_OWNER_ROLE,
+      expect.objectContaining({ platformAdmin: false, orgRole: ORG_ADMIN_ROLE })
+    );
   });
 
   it('surfaces the last-OWNER refusal as a 400 with its code', async () => {
@@ -183,7 +203,10 @@ describe('DELETE /api/v1/orgs/[id]/members/[userId]', () => {
 
     expect(res.status).toBe(200);
     expect(json.data).toEqual({ orgId: ORG, userId: TARGET, removed: true, revokedSessions: 1 });
-    expect(lifecycle.removeMember).toHaveBeenCalledWith(ORG, TARGET);
+    expect(lifecycle.removeMember).toHaveBeenCalledWith(ORG, TARGET, {
+      platformAdmin: false,
+      orgRole: ORG_ADMIN_ROLE,
+    });
   });
 
   it('surfaces the last-OWNER refusal', async () => {
