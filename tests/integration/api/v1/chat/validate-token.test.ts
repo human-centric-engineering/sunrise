@@ -96,6 +96,31 @@ describe('POST /api/v1/chat/agents/:slug/validate-token', () => {
     expect(response.status).toBe(401);
   });
 
+  it('returns 400 for a body with no token', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    const response = await POST(makeRequest({}), routeContext);
+    expect(response.status).toBe(400);
+  });
+
+  it('answers "Agent not found" and "does not require" without reading a token', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValueOnce(null);
+    const missing = await parseJson<{ data: { valid: boolean; reason: string } }>(
+      await POST(makeRequest({ inviteToken: 'tok123' }), routeContext)
+    );
+    expect(missing.data).toEqual({ valid: false, reason: 'Agent not found' });
+
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValueOnce({
+      id: 'agent-1',
+      visibility: 'public',
+    } as never);
+    const open = await parseJson<{ data: { valid: boolean; reason: string } }>(
+      await POST(makeRequest({ inviteToken: 'tok123' }), routeContext)
+    );
+    expect(open.data).toEqual({ valid: false, reason: 'Agent does not require an invite token' });
+    expect(prisma.aiAgentInviteToken.findFirst).not.toHaveBeenCalled();
+  });
+
   it('returns valid for active token', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
     vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
