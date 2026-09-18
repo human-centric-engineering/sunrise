@@ -300,6 +300,19 @@ describe('API Endpoints', () => {
     it('should have the switch endpoint', () => {
       expect(API.ORGS.SWITCH).toBe('/api/v1/orgs/switch');
     });
+
+    it('names the member view', () => {
+      expect(API.ORGS.LIST).toBe('/api/v1/orgs');
+      expect(API.ORGS.byId('install')).toBe('/api/v1/orgs/install');
+      expect(API.ORGS.members('install')).toBe('/api/v1/orgs/install/members');
+      expect(API.ORGS.member('install', 'u1')).toBe('/api/v1/orgs/install/members/u1');
+    });
+
+    it('names the platform view under admin', () => {
+      expect(API.ADMIN.ORGS).toBe('/api/v1/admin/orgs');
+      expect(API.ADMIN.orgById('install')).toBe('/api/v1/admin/orgs/install');
+      expect(API.ADMIN.orgExport('install')).toBe('/api/v1/admin/orgs/install/export');
+    });
   });
 
   describe('INVITATIONS endpoints', () => {

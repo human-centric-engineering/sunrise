@@ -25,7 +25,9 @@ import { parseInvitationMetadata, type InvitationMetadata } from '@/lib/validati
  */
 const TOKEN_BYTE_LENGTH = 32; // 32 bytes = 64 hex characters
 const TOKEN_EXPIRY_DAYS = 7; // 7 days until invitation expires
-const IDENTIFIER_PREFIX = 'invitation:'; // Prefix for invitation identifiers
+/** Prefix of a `Verification.identifier` that holds an invitation — `invitation:<email>`. */
+export const INVITATION_IDENTIFIER_PREFIX = 'invitation:';
+const IDENTIFIER_PREFIX = INVITATION_IDENTIFIER_PREFIX; // Prefix for invitation identifiers
 
 /**
  * Hash a token using SHA-256

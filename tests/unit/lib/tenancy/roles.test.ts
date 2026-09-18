@@ -15,9 +15,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { OrgRole as PrismaOrgRole } from '@prisma/client';
+import { OrgRole as PrismaOrgRole, OrgStatus as PrismaOrgStatus } from '@prisma/client';
 import {
   ORG_ROLES,
+  ORG_STATUSES,
   DEFAULT_ORG_ROLE,
   ORG_OWNER_ROLE,
   ORG_ADMIN_ROLE,
@@ -34,6 +35,11 @@ describe('the vocabulary', () => {
     // The schema is the enforcement (a fourth value is refused at the
     // database); this list is what code reads. Same set, or one of them lies.
     expect([...ORG_ROLES].sort()).toEqual(Object.values(PrismaOrgRole).sort());
+  });
+
+  it('names the two lifecycle states, and agrees with the Prisma enum', () => {
+    expect(ORG_STATUSES).toEqual(['ACTIVE', 'SUSPENDED']);
+    expect([...ORG_STATUSES].sort()).toEqual(Object.values(PrismaOrgStatus).sort());
   });
 
   it('names the default and the two administering roles from the list', () => {

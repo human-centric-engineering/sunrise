@@ -52,6 +52,18 @@ export const ORG_OWNER_ROLE = 'OWNER' as const;
 export const ORG_ADMIN_ROLE = 'ADMIN' as const;
 
 /**
+ * Every `Org.status` value — the org's lifecycle (§106 t-672). `SUSPENDED`
+ * members are refused where a request enters the org (`lib/tenancy/entry.ts`);
+ * the install org is never suspended. A Prisma enum for the same reason
+ * `OrgRole` is, and `tests/unit/lib/tenancy/roles.test.ts` asserts the two
+ * agree.
+ */
+export const ORG_STATUSES = ['ACTIVE', 'SUSPENDED'] as const;
+
+/** A known `Org.status` value. */
+export type OrgStatus = (typeof ORG_STATUSES)[number];
+
+/**
  * Is `value` an org role this install knows about?
  *
  * The narrowing form for data crossing a boundary — invitation metadata, a

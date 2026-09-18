@@ -22,6 +22,7 @@ import { userIdSchema } from '@/lib/validations/user';
 import { adminUserUpdateSchema } from '@/lib/validations/admin';
 import { getRouteLogger } from '@/lib/api/context';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { syncInstallMembershipRole } from '@/lib/tenancy/lifecycle';
 
 /**
  * GET /api/v1/users/:id
@@ -166,24 +167,39 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     });
   }
 
-  // Update user
-  const updatedUser = await prisma.user.update({
-    where: { id },
-    data: {
-      ...(body.name && { name: body.name }),
-      ...(body.role && { role: body.role }),
-      ...(body.emailVerified !== undefined && { emailVerified: body.emailVerified }),
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      emailVerified: true,
-      image: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+  // Update user. A role change also re-applies the install-org role rule
+  // (§106 ruling a: the install org's OWNER set follows the platform-admin
+  // set), in the same transaction so the two columns cannot disagree — a
+  // demoted admin keeping org OWNER is an over-grant the moment the policy
+  // reads the row.
+  const updatedUser = await prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id },
+      data: {
+        ...(body.name && { name: body.name }),
+        ...(body.role && { role: body.role }),
+        ...(body.emailVerified !== undefined && { emailVerified: body.emailVerified }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerified: true,
+        image: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    // `accountType` is not editable here (SERVICE is refused above), so the
+    // row read before the update still says what kind of account this is.
+    if (body.role) {
+      await syncInstallMembershipRole(
+        { id, role: updated.role, accountType: existingUser.accountType },
+        tx
+      );
+    }
+    return updated;
   });
 
   log.info('User updated by admin', {

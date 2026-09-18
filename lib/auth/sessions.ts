@@ -27,21 +27,28 @@ import { logger } from '@/lib/logging';
  * current session cannot be identified: signing the user out costs them one
  * login, whereas guessing wrong would leave an attacker's session alive.
  *
+ * Pass `activeOrgId` to revoke only the sessions acting in that org (§106
+ * t-672: a member removed from an org loses the sessions that were inside
+ * it and keeps the ones in their other orgs). Omitted, every session goes.
+ *
  * Returns the number of sessions removed so callers can log it.
  */
 export async function revokeUserSessions({
   userId,
   exceptSessionToken,
+  activeOrgId,
   reason,
 }: {
   userId: string;
   exceptSessionToken?: string | null;
+  activeOrgId?: string;
   reason: string;
 }): Promise<number> {
   const { count } = await prisma.session.deleteMany({
     where: {
       userId,
       ...(exceptSessionToken ? { token: { not: exceptSessionToken } } : {}),
+      ...(activeOrgId ? { activeOrgId } : {}),
     },
   });
 
@@ -50,6 +57,7 @@ export async function revokeUserSessions({
     reason,
     revokedCount: count,
     keptCurrentSession: Boolean(exceptSessionToken),
+    ...(activeOrgId ? { activeOrgId } : {}),
   });
 
   return count;

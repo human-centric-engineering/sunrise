@@ -10,6 +10,15 @@
  * binds a chat key and leaves an admin key alone, and deleting a user takes
  * their membership with them (Cascade) while the org stands.
  *
+ * And the org lifecycle (t-672), against the same database: an org is
+ * created with its OWNER named, a second member added, the last-OWNER guard
+ * refuses to demote or remove that owner, the install org refuses suspension
+ * and erasure, a SUSPENDED org refuses entry to its own OWNER through the
+ * real entry function and admits them again once reinstated, removing a
+ * member revokes only the sessions acting in that org, the export bundle
+ * names every manifest section, and erasing the org leaves both users' rows
+ * standing — the one with an install membership still holding it.
+ *
  * What it deliberately does NOT assert: that every platform ADMIN on the
  * database is an install-org OWNER. The role mapping is applied at creation
  * (migration or hook) and is not re-synced when an admin later promotes or
@@ -34,6 +43,18 @@ import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { ensureMembership, initialMembershipFor } from '@/lib/tenancy/membership';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import {
+  addMember,
+  changeMemberRole,
+  createOrg,
+  OrgLifecycleError,
+  removeMember,
+  updateOrg,
+} from '@/lib/tenancy/lifecycle';
+import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
+import { exportOrgData } from '@/lib/privacy/export-org';
+import { eraseOrg } from '@/lib/privacy/erase-org';
+import { ORG_DATA_SOURCES } from '@/lib/privacy/org-sources';
 
 const PREFIX = 'smoke-test-tenancy';
 const stamp = Date.now();
@@ -52,6 +73,20 @@ function check(cond: boolean, msg: string): void {
   console.log(`  ✓ ${msg}`);
 }
 
+/** The call must throw an OrgLifecycleError with exactly this code. */
+async function refuses(code: string, fn: () => Promise<unknown>, msg: string): Promise<void> {
+  try {
+    await fn();
+  } catch (error) {
+    check(
+      error instanceof OrgLifecycleError && error.code === code,
+      `${msg} (refused with ${code})`
+    );
+    return;
+  }
+  throw new Error(`assertion failed: ${msg} — the call was not refused`);
+}
+
 async function main(): Promise<void> {
   if (!(await dbReachable())) {
     console.log('smoke:tenancy skipped — no database reachable (DATABASE_URL unset or DB down).');
@@ -59,6 +94,9 @@ async function main(): Promise<void> {
   }
 
   let memberUserId: string | null = null;
+  let ownerUserId: string | null = null;
+  let otherUserId: string | null = null;
+  let orgId: string | null = null;
   let apiKeyId: string | null = null;
   let chatKeyId: string | null = null;
   let adminKeyId: string | null = null;
@@ -232,13 +270,170 @@ async function main(): Promise<void> {
       'the install org survives its member’s deletion'
     );
 
+    // ── The org lifecycle (t-672) ──────────────────────────────────────────
+    const owner = await prisma.user.create({
+      data: { name: `${PREFIX} owner`, email: `${PREFIX}-owner-${stamp}@example.com` },
+    });
+    ownerUserId = owner.id;
+    const other = await prisma.user.create({
+      data: { name: `${PREFIX} other`, email: `${PREFIX}-other-${stamp}@example.com` },
+    });
+    otherUserId = other.id;
+    // `other` is also an install-org member — the user whose OTHER org must
+    // survive the erasure below. `owner` deliberately is not.
+    await ensureMembership(other.id, initialMembershipFor(other));
+
+    const org = await createOrg({
+      slug: `${PREFIX}-${stamp}`,
+      name: `${PREFIX} org`,
+      ownerUserId: owner.id,
+    });
+    orgId = org.id;
+    const ownerRow = await prisma.orgMembership.findUnique({
+      where: { orgId_userId: { orgId: org.id, userId: owner.id } },
+    });
+    check(
+      ownerRow?.role === ORG_OWNER_ROLE,
+      'createOrg() names the founding OWNER in the same write'
+    );
+
+    const otherRow = await addMember(org.id, other.id, undefined);
+    check(
+      otherRow.role === DEFAULT_ORG_ROLE,
+      'a member added to a non-empty org with no role asked for is a MEMBER'
+    );
+
+    await refuses(
+      'LAST_OWNER',
+      () => changeMemberRole(org.id, owner.id, DEFAULT_ORG_ROLE),
+      'the last OWNER cannot be demoted'
+    );
+    await refuses(
+      'LAST_OWNER',
+      () => removeMember(org.id, owner.id),
+      'the last OWNER cannot be removed'
+    );
+    await refuses(
+      'INSTALL_ORG_IMMUTABLE',
+      () => updateOrg(INSTALL_ORG_ID, { status: 'SUSPENDED' }),
+      'the install org cannot be suspended'
+    );
+    await refuses(
+      'INSTALL_ORG_IMMUTABLE',
+      () => eraseOrg({ orgId: INSTALL_ORG_ID, actorUserId: owner.id }),
+      'the install org cannot be erased'
+    );
+    await refuses(
+      'INSTALL_ORG_MEMBERSHIP',
+      () => removeMember(INSTALL_ORG_ID, other.id),
+      'a user cannot be removed from the install org'
+    );
+
+    // Suspension is enforced where a request enters the org: the real entry
+    // function, against the real rows, refuses the org's own OWNER while it
+    // is SUSPENDED and admits them again once reinstated.
+    await updateOrg(org.id, { status: 'SUSPENDED' });
+    const whileSuspended = await enterSessionOrg(owner, org.id, null);
+    check(
+      isOrgRefusal(whileSuspended) && whileSuspended.refused === 'org-suspended',
+      'a SUSPENDED org refuses entry to its own OWNER'
+    );
+    await updateOrg(org.id, { status: 'ACTIVE' });
+    const reinstated = await enterSessionOrg(owner, org.id, null);
+    check(
+      !isOrgRefusal(reinstated) &&
+        reinstated.orgId === org.id &&
+        reinstated.role === ORG_OWNER_ROLE,
+      'a reinstated org admits its OWNER again, with their role'
+    );
+
+    // Removing a member revokes the sessions acting in THAT org only.
+    const inOrg = await prisma.session.create({
+      data: {
+        userId: other.id,
+        token: `${PREFIX}-in-org-${stamp}`,
+        expiresAt: new Date(Date.now() + 60_000),
+        activeOrgId: org.id,
+      },
+    });
+    const inInstall = await prisma.session.create({
+      data: {
+        userId: other.id,
+        token: `${PREFIX}-in-install-${stamp}`,
+        expiresAt: new Date(Date.now() + 60_000),
+        activeOrgId: INSTALL_ORG_ID,
+      },
+    });
+    const removal = await removeMember(org.id, other.id);
+    check(removal.revokedSessions === 1, 'removing a member revoked exactly one session');
+    check(
+      (await prisma.session.findUnique({ where: { id: inOrg.id } })) === null &&
+        (await prisma.session.findUnique({ where: { id: inInstall.id } })) !== null,
+      'the session acting in the org is gone; the one in the install org stands'
+    );
+    await addMember(org.id, other.id, DEFAULT_ORG_ROLE);
+
+    // The export names every manifest section, and the roster is the org's.
+    const bundle = await exportOrgData({ orgId: org.id, actorUserId: owner.id });
+    const sections = new Set([...Object.keys(bundle.data), ...Object.keys(bundle.attributions)]);
+    const missingSections = ORG_DATA_SOURCES.map((s) => s.section).filter((s) => !sections.has(s));
+    check(
+      missingSections.length === 0,
+      `the org export carries every manifest section (${ORG_DATA_SOURCES.length})`
+    );
+    check(
+      (bundle.data.members as { userId: string }[])
+        .map((m) => m.userId)
+        .sort()
+        .join() === [owner.id, other.id].sort().join(),
+      'the export’s roster is exactly the org’s two members'
+    );
+
+    // Erasing the org: memberships and the pointer go, the people stay.
+    const pointing = await prisma.session.create({
+      data: {
+        userId: other.id,
+        token: `${PREFIX}-pointing-${stamp}`,
+        expiresAt: new Date(Date.now() + 60_000),
+        activeOrgId: org.id,
+      },
+    });
+    const erased = await eraseOrg({ orgId: org.id, actorUserId: owner.id });
+    orgId = null;
+    check(erased.members === 2, 'eraseOrg() reports the two memberships the cascade removed');
+    check(
+      erased.sessionsCleared === 1,
+      'eraseOrg() cleared the one session still acting in the org'
+    );
+    check((await prisma.org.findUnique({ where: { id: org.id } })) === null, 'the org row is gone');
+    check(
+      (await prisma.user.count({ where: { id: { in: [owner.id, other.id] } } })) === 2,
+      'both users still exist after their org was erased'
+    );
+    check(
+      (await prisma.orgMembership.count({ where: { userId: owner.id } })) === 0,
+      'the owner, who belonged only to the erased org, now belongs to none — and keeps the account'
+    );
+    check(
+      (await prisma.orgMembership.findUnique({
+        where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId: other.id } },
+      })) !== null,
+      'the member with an install-org membership still has it'
+    );
+    check(
+      (await prisma.session.findUnique({ where: { id: pointing.id } }))?.activeOrgId === null,
+      'the surviving session’s activeOrgId was cleared rather than left dangling'
+    );
+
     console.log('\n✓ smoke:tenancy passed');
   } finally {
     for (const id of [apiKeyId, chatKeyId, adminKeyId]) {
       if (id) await prisma.aiApiKey.deleteMany({ where: { id } }).catch(() => undefined);
     }
-    if (memberUserId)
-      await prisma.user.deleteMany({ where: { id: memberUserId } }).catch(() => undefined);
+    if (orgId) await prisma.org.deleteMany({ where: { id: orgId } }).catch(() => undefined);
+    for (const id of [memberUserId, ownerUserId, otherUserId]) {
+      if (id) await prisma.user.deleteMany({ where: { id } }).catch(() => undefined);
+    }
     await prisma.$disconnect().catch(() => undefined);
   }
 }
