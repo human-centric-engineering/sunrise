@@ -57,10 +57,14 @@ const rows = [
   },
 ];
 
-/** `headers` is what the proxy wrote onto the request, read via `next/headers` like the guard. */
+/**
+ * `headers` reach the handler both ways a request's do: on the `Request`
+ * (where `resolveApiKey` reads `authorization`) and via `next/headers`
+ * (where the guard and the route read the proxy-written org header).
+ */
 const get = (headers: Record<string, string> = {}) => {
   mockHeaders.current = new Headers(headers);
-  return GET(new Request('http://localhost/api/v1/orgs') as unknown as NextRequest);
+  return GET(new Request('http://localhost/api/v1/orgs', { headers }) as unknown as NextRequest);
 };
 
 beforeEach(() => {
@@ -142,6 +146,47 @@ describe('GET /api/v1/orgs', () => {
     expect(res.status).toBe(200);
     // No entry read was made at all.
     expect(prisma.orgMembership.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('answers an API key with the org the guard entered for it — the key’s own, not the cookie chain', async () => {
+    // A key minted in the other org: `entersOrg: false` skips only the
+    // cookie-session entry, so the principal carries the key's org.
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+      id: 'cmkey000000000000000key1',
+      userId: USER_ID,
+      scopes: ['chat'],
+      rateLimitRpm: null,
+      expiresAt: null,
+      createdAt: new Date(),
+      orgId: OTHER,
+      user: {
+        id: USER_ID,
+        name: 'Key Owner',
+        email: 'owner@example.com',
+        emailVerified: true,
+        image: null,
+        role: 'USER',
+        accountType: 'HUMAN',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    } as never);
+    // The guard verifies the owner's membership of the bound org.
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      role: DEFAULT_ORG_ROLE,
+      org: { status: 'ACTIVE' },
+    } as never);
+    vi.mocked(prisma.orgMembership.findMany).mockResolvedValue([
+      rows[0],
+      { ...rows[1], org: { ...rows[1].org, status: 'ACTIVE' } },
+    ] as never);
+
+    const res = await get({ authorization: 'Bearer sk_deadbeefdeadbeefdeadbeefdeadbeef' });
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(json.data.activeOrgId).toBe(OTHER);
+    expect(json.data.orgs.find((org: { id: string }) => org.id === OTHER).active).toBe(true);
   });
 
   it('returns 401 without a session', async () => {

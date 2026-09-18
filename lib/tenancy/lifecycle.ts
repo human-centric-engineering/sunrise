@@ -64,7 +64,14 @@ import {
   type OrgStatus,
 } from '@/lib/tenancy/roles';
 
-/** The delegates this module touches — a transaction client satisfies it too. */
+/**
+ * The delegates this module touches. Includes `$transaction`, so a
+ * `Prisma.TransactionClient` does NOT satisfy it — these functions open their
+ * own transactions and cannot be composed inside an outer one.
+ * {@link syncInstallMembershipRole} is the exception, typed on
+ * `orgMembership` alone precisely so `users/[id]` can call it from inside its
+ * own transaction.
+ */
 export type LifecycleDb = Pick<PrismaClient, 'org' | 'orgMembership' | 'user' | '$transaction'>;
 
 /** What a lifecycle rule refuses, and how a route should say so. */

@@ -34,18 +34,21 @@ export const GET = withAuth(
       orderBy: { createdAt: 'asc' },
     });
 
-    // The org the guard would enter for this request, in the entry rule's
-    // own precedence: the proxy's resolver header (the proxy is its sole
-    // writer — a fork resolving by hostname means "this host IS this org",
-    // whatever the cookie last recorded), else the session's pointer, else
-    // the install org at `single` and no org at `multi`. Read from
-    // `headers()` as the guard does, so the two never disagree; read, not
-    // entered — this route stays outside any scope so a refused org still
-    // gets its list.
+    // The org this request acts for. An API-key caller was entered by the
+    // guard (`entersOrg: false` only skips the cookie-session entry), so the
+    // principal already says which org — the key's own. A cookie session was
+    // not entered here, so the answer is derived in the entry rule's own
+    // precedence: the proxy's resolver header (the proxy is its sole writer —
+    // a fork resolving by hostname means "this host IS this org", whatever
+    // the cookie last recorded), else the session's pointer, else the install
+    // org at `single` and no org at `multi`. Read from `headers()` as the
+    // guard does, so the two never disagree; read, not entered — this route
+    // stays outside any scope so a refused org still gets its list.
     const activeOrgId =
-      (await headers()).get(TENANT_HEADER_NAME) ||
-      session.session.activeOrgId ||
-      (isMultiTenant() ? null : INSTALL_ORG_ID);
+      session.principal.orgId ??
+      ((await headers()).get(TENANT_HEADER_NAME) ||
+        session.session.activeOrgId ||
+        (isMultiTenant() ? null : INSTALL_ORG_ID));
 
     return successResponse({
       activeOrgId,
