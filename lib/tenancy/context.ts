@@ -10,11 +10,14 @@
  *
  * **Who enters it, and who does not.** `withAuth` / `withAdminAuth` enter it
  * from the session's `activeOrgId`, the org bound to an API key, or the
- * verified resolver header (`lib/tenancy/entry.ts`); the guard-less webhook
- * trigger enters it from its key. Embed tokens, MCP keys and agent invite
- * tokens carry no org until t-673 binds one at mint; background jobs enter it
- * through {@link forEachOrg} / {@link runAsSystem} once §108 wires the tick.
- * Until then those paths run outside any context — which at `single` still
+ * verified resolver header (`lib/tenancy/entry.ts`); the guard-less routes
+ * enter it from their own credential — the webhook trigger from its API key,
+ * the embed routes from the embed token, the MCP transport from the MCP key
+ * (each credential is bound to an org at mint, t-673). An agent invite token
+ * enters nothing: it is a gate the session passes through, checked against
+ * the org the guard entered. Background jobs enter it through
+ * {@link forEachOrg} / {@link runAsSystem} once §108 wires the tick. Until
+ * then those paths run outside any context — which at `single` still
  * answers the install org (see {@link requireTenantContext}) and at `multi`
  * refuses, so a path that was forgotten fails loud rather than reads wide.
  *

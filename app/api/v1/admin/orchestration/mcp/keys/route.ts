@@ -14,6 +14,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { generateApiKey } from '@/lib/orchestration/mcp';
 import { createApiKeySchema, listApiKeysQuerySchema } from '@/lib/validations/mcp';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { orgForMint } from '@/lib/tenancy/entry';
 
 export const GET = withAdminAuth(async (request) => {
   const log = await getRouteLogger(request);
@@ -43,6 +44,7 @@ export const GET = withAdminAuth(async (request) => {
         expiresAt: true,
         lastUsedAt: true,
         rateLimitOverride: true,
+        orgId: true,
         createdBy: true,
         createdAt: true,
         updatedAt: true,
@@ -74,6 +76,10 @@ export const POST = withAdminAuth(async (request, session) => {
       expiresAt: body.expiresAt ?? null,
       rateLimitOverride: body.rateLimitOverride ?? null,
       createdBy: session.user.id,
+      // The org the request acts in (§106, t-673). The key outlives its
+      // creator (`createdBy` is SetNull) but not its org (Cascade), and
+      // `authenticateMcpRequest` enters this org for every request it admits.
+      orgId: orgForMint(),
     },
   });
 
@@ -102,6 +108,7 @@ export const POST = withAdminAuth(async (request, session) => {
       keyPrefix: key.keyPrefix,
       scopes: key.scopes,
       scope: key.scope,
+      orgId: key.orgId,
       plaintext,
     },
     undefined,

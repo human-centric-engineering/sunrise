@@ -17,6 +17,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { createInviteTokenSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { orgForMint } from '@/lib/tenancy/entry';
 
 type Params = { id: string };
 
@@ -43,6 +44,7 @@ export const GET = withAdminAuth<Params>(async (_request, _session, { params }) 
       useCount: true,
       expiresAt: true,
       revokedAt: true,
+      orgId: true,
       createdBy: true,
       createdAt: true,
     },
@@ -86,6 +88,9 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
       maxUses: body.maxUses ?? null,
       expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
       createdBy: session.user.id,
+      // The org the request acts in (§106, t-673): the token admits callers
+      // acting in that org and no other (`lib/orchestration/invite-tokens.ts`).
+      orgId: orgForMint(),
     },
     select: {
       id: true,
@@ -94,6 +99,7 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
       maxUses: true,
       useCount: true,
       expiresAt: true,
+      orgId: true,
       createdAt: true,
     },
   });

@@ -6,7 +6,8 @@
  * Generates fresh key material for an existing MCP API key.
  * The new plaintext key is returned ONCE in the response body and
  * is never stored. The previous key is immediately invalidated
- * (keyHash is replaced atomically).
+ * (keyHash is replaced atomically). The key's org is not touched: rotation
+ * replaces the material, never where the key acts (§106).
  *
  * Body (optional): { expiresAt?: ISO date string | null }
  *
@@ -35,6 +36,7 @@ const SAFE_SELECT = {
   expiresAt: true,
   lastUsedAt: true,
   rateLimitOverride: true,
+  orgId: true,
   createdAt: true,
   updatedAt: true,
 } as const;

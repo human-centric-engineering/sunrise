@@ -17,6 +17,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { createEmbedTokenSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { orgForMint } from '@/lib/tenancy/entry';
 
 type Params = { id: string };
 
@@ -67,6 +68,9 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
       label: body.label ?? null,
       allowedOrigins: body.allowedOrigins,
       createdBy: session.user.id,
+      // The org the request acts in (§106, t-673): the widget answers only
+      // there, and `resolveEmbedToken` refuses it once that org is suspended.
+      orgId: orgForMint(),
     },
     include: { creator: { select: { id: true, name: true } } },
   });

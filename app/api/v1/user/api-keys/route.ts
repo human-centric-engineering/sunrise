@@ -8,13 +8,15 @@
  * `knowledge`, `webhook`, `admin`, plus whatever a fork declared in
  * `lib/app/api-key-scopes.ts` — and the raw key is returned only once at
  * creation. `GET` also reports the scopes this install can mint, so a caller
- * does not have to guess from a 400.
+ * does not have to guess from a 400. A key is bound to the org the request
+ * was made in (§106); an `admin` key is a platform credential and bound to
+ * none.
  */
 
 import { withAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ForbiddenError } from '@/lib/api/errors';
+import { ForbiddenError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { createApiKeySchema } from '@/lib/validations/orchestration';
 import {
@@ -26,6 +28,8 @@ import {
 } from '@/lib/auth/api-keys';
 import { getRouteLogger } from '@/lib/api/context';
 import { isPlatformAdmin } from '@/lib/auth/roles';
+import { orgForMint } from '@/lib/tenancy/entry';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export const GET = withAuth(
   async (_request, session) => {
@@ -37,6 +41,7 @@ export const GET = withAuth(
         name: true,
         keyPrefix: true,
         scopes: true,
+        orgId: true,
         lastUsedAt: true,
         expiresAt: true,
         revokedAt: true,
@@ -87,13 +92,29 @@ export const POST = withAuth(
     // mint a credential that reaches every org's admin routes — routing this
     // through the seam would do exactly that, quietly, the day the fork widened
     // its policy for an unrelated reason.
-    //
-    // What is NOT enforced here, because it cannot be yet: keys carry no org, so
-    // "an org-bound key can never hold `admin`" arrives with the org axis (§106),
-    // not with this line.
     if (body.scopes.includes('admin') && !isPlatformAdmin(session.user)) {
       throw new ForbiddenError('Admin scope requires admin role');
     }
+
+    // The org axis (§106, t-673). An `admin` key is a platform credential and
+    // binds no org — the guards enter none for it — so "an org-bound key can
+    // never hold `admin`" is enforced here at mint, and `withAdminAuth` refuses
+    // any row that has both. The intent behind the request is the org it was
+    // made from: minting an admin key while acting in a customer org would
+    // hand back a credential that reaches every org from a screen that says
+    // one, so that is a 400 — mint platform keys from the install org. Every
+    // other key binds the org the request entered.
+    const mintOrgId = orgForMint();
+    const platformKey = body.scopes.includes('admin');
+    if (platformKey && mintOrgId !== INSTALL_ORG_ID) {
+      throw new ValidationError(
+        'Admin keys are platform credentials; mint one from the default organisation',
+        {
+          scopes: ['admin scope cannot be bound to an organisation'],
+        }
+      );
+    }
+    const orgId = platformKey ? null : mintOrgId;
 
     const rawKey = generateApiKey();
     const hash = hashApiKey(rawKey);
@@ -107,12 +128,14 @@ export const POST = withAuth(
         keyPrefix: prefix,
         scopes: body.scopes,
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+        orgId,
       },
       select: {
         id: true,
         name: true,
         keyPrefix: true,
         scopes: true,
+        orgId: true,
         expiresAt: true,
         createdAt: true,
       },

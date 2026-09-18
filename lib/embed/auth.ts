@@ -9,6 +9,7 @@
 import { createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { resolveCredentialOrg } from '@/lib/tenancy/entry';
 
 /**
  * Prefix of the synthetic per-visitor id minted below. An embed visitor has no
@@ -47,11 +48,22 @@ export interface EmbedContext {
   agentSlug: string;
   userId: string;
   allowedOrigins: string[];
+  /**
+   * The org the token acts for (§106, t-673) — the one it was minted in,
+   * already passed through the read rule, so never null: the route runs its
+   * handler inside `runAsOrg(orgId, …, { source: 'embed-token' })`.
+   */
+  orgId: string;
 }
 
 /**
  * Validate an embed token and return the associated agent context.
- * Returns `null` if the token is invalid, inactive, or the agent is disabled.
+ * Returns `null` if the token is invalid, inactive, or the agent is disabled
+ * — or if the token cannot enter an org: its org is suspended, or it carries
+ * none at `multi` (`resolveCredentialOrg`). The org's status rides on the
+ * token's own read, so a suspended customer's widget stops with no extra
+ * query on the path. The `OPTIONS` preflights read only `allowedOrigins`
+ * and refuse the same tokens for the same reason, through this one answer.
  */
 export async function resolveEmbedToken(
   token: string,
@@ -64,10 +76,23 @@ export async function resolveEmbedToken(
         agent: {
           select: { id: true, slug: true, isActive: true },
         },
+        org: { select: { status: true } },
       },
     });
 
     if (!record || !record.isActive || !record.agent.isActive) {
+      return null;
+    }
+
+    const entry = resolveCredentialOrg(
+      { orgId: record.orgId, orgStatus: record.org?.status ?? null },
+      'embed-token'
+    );
+    if ('refused' in entry) {
+      logger.warn('resolveEmbedToken: token cannot enter its org', {
+        tokenId: record.id,
+        refused: entry.refused,
+      });
       return null;
     }
 
@@ -83,6 +108,7 @@ export async function resolveEmbedToken(
       agentSlug: record.agent.slug,
       userId,
       allowedOrigins: record.allowedOrigins,
+      orgId: entry.orgId,
     };
   } catch (err) {
     logger.error('resolveEmbedToken failed', {

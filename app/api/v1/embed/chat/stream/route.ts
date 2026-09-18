@@ -15,7 +15,8 @@ import { z } from 'zod';
 import { sseResponse } from '@/lib/api/sse';
 import { getClientIP } from '@/lib/security/ip';
 import { embedChatLimiter, createRateLimitResponse, imageLimiter } from '@/lib/security/rate-limit';
-import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
+import { resolveEmbedToken, isOriginAllowed, type EmbedContext } from '@/lib/embed/auth';
+import { runAsOrg } from '@/lib/tenancy/context';
 import { streamChat } from '@/lib/orchestration/chat';
 import { logger } from '@/lib/logging';
 import { getRequestContext } from '@/lib/logging/context';
@@ -83,7 +84,6 @@ export async function POST(request: NextRequest): Promise<Response> {
   // reads request/header metadata only) rather than `getRouteLogger`,
   // which would do a wasted auth-session lookup.
   const requestContext = await getRequestContext(request);
-  const { requestId } = requestContext;
   const log = logger.withContext(requestContext);
 
   // Rate limit per token + IP
@@ -109,6 +109,33 @@ export async function POST(request: NextRequest): Promise<Response> {
       { status: 403 }
     );
   }
+
+  // Everything from here runs inside the token's org (§106): the stream, its
+  // conversation writes, its cost rows. No guard wraps this route, so it
+  // enters the org itself — the webhook trigger's shape.
+  return runAsOrg(
+    ctx.orgId,
+    () => streamForToken(request, { ctx, origin, token, clientIp, log, requestContext }),
+    { source: 'embed-token' }
+  );
+}
+
+/** What the resolved request carries into the org scope. */
+interface EmbedStreamRequest {
+  ctx: EmbedContext;
+  origin: string | null;
+  token: string;
+  clientIp: string;
+  log: ReturnType<typeof logger.withContext>;
+  requestContext: Awaited<ReturnType<typeof getRequestContext>>;
+}
+
+/** The stream itself, run inside the token's org scope. */
+async function streamForToken(
+  request: NextRequest,
+  { ctx, origin, token, clientIp, log, requestContext }: EmbedStreamRequest
+): Promise<Response> {
+  const { requestId } = requestContext;
 
   // Parse body
   let body: z.infer<typeof embedChatSchema>;

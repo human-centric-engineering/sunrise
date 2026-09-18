@@ -46,7 +46,7 @@ export const POST = withAuth(
   async (request, session) => {
     const log = await getRouteLogger(request);
 
-    // A credential's org is fixed at mint (t-673); a key cannot re-home
+    // A credential's org is fixed at mint; a key cannot re-home
     // itself. Same refusal shape as minting a key over a key.
     if (isApiKeySession(session)) {
       log.warn('Rejected API-key attempt to switch org', { userId: session.user.id });

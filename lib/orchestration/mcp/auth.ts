@@ -11,6 +11,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { mcpKeyScopeSchema } from '@/lib/validations/mcp';
+import { resolveCredentialOrg } from '@/lib/tenancy/entry';
 import type { McpAuthContext } from '@/types/mcp';
 
 const KEY_PREFIX = 'smcp_';
@@ -62,7 +63,11 @@ export function generateApiKey(): { plaintext: string; hash: string; prefix: str
  * Verify a bearer token against the database.
  *
  * Returns the auth context if valid, or null if the key is missing,
- * inactive, or expired. Updates `lastUsedAt` fire-and-forget.
+ * inactive, or expired — or if it cannot enter an org (§106, t-673): its
+ * org is suspended, or it carries none at `multi`. The org's status is read
+ * with the key, and the context's `orgId` is the read rule's answer, so the
+ * transport runs each request inside `runAsOrg(auth.orgId, …)`. Updates
+ * `lastUsedAt` fire-and-forget.
  */
 export async function authenticateMcpRequest(
   bearerToken: string,
@@ -76,6 +81,7 @@ export async function authenticateMcpRequest(
   const keyHash = hashApiKey(bearerToken);
   const key = await prisma.mcpApiKey.findUnique({
     where: { keyHash },
+    include: { org: { select: { status: true } } },
   });
 
   if (!key) {
@@ -89,6 +95,18 @@ export async function authenticateMcpRequest(
 
   if (key.expiresAt && key.expiresAt < new Date()) {
     logger.warn('MCP auth: expired key used', { keyPrefix: key.keyPrefix });
+    return null;
+  }
+
+  const entry = resolveCredentialOrg(
+    { orgId: key.orgId, orgStatus: key.org?.status ?? null },
+    'mcp-key'
+  );
+  if ('refused' in entry) {
+    logger.warn('MCP auth: key cannot enter its org', {
+      keyPrefix: key.keyPrefix,
+      refused: entry.refused,
+    });
     return null;
   }
 
@@ -126,6 +144,7 @@ export async function authenticateMcpRequest(
     clientIp,
     userAgent,
     scopedAgentId: key.scopedAgentId,
+    orgId: entry.orgId,
     ...(scope ? { scope } : {}),
   };
 }

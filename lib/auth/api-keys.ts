@@ -75,8 +75,8 @@ export async function resolveApiKey(request: NextRequest): Promise<{
   rateLimitRpm: number | null;
   /**
    * The org the key was minted in (§106) — `null` for a platform (`admin`)
-   * credential, and for every key minted before t-673 writes the column.
-   * The guards enter it; see `lib/tenancy/entry.ts` for the read rule.
+   * credential. The guards enter it; see `lib/tenancy/entry.ts` for the
+   * read rule, including what a `null` on a non-admin key means.
    * Optional in the type so a test double built before the org axis still
    * compiles; the guard reads a missing value as `null`.
    */

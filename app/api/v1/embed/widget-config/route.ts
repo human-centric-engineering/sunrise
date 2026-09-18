@@ -15,7 +15,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getClientIP } from '@/lib/security/ip';
-import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
+import { resolveEmbedToken, isOriginAllowed, type EmbedContext } from '@/lib/embed/auth';
+import { runAsOrg } from '@/lib/tenancy/context';
 import { resolveWidgetConfig } from '@/lib/validations/orchestration';
 import { getAudioProvider, hasModelWithCapability } from '@/lib/orchestration/llm/provider-manager';
 
@@ -81,6 +82,12 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
   }
 
+  // Inside the token's org from here (§106) — no guard wraps this route.
+  return runAsOrg(ctx.orgId, () => configForToken(origin, ctx), { source: 'embed-token' });
+}
+
+/** The config read, run inside the token's org scope. */
+async function configForToken(origin: string | null, ctx: EmbedContext): Promise<Response> {
   const [agent, settings] = await Promise.all([
     prisma.aiAgent.findUnique({
       where: { id: ctx.agentId },

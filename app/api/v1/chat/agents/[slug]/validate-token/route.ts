@@ -16,10 +16,20 @@ import { successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
 import { chatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
+import { resolveInviteToken, type InviteTokenRefusal } from '@/lib/orchestration/invite-tokens';
 
 const bodySchema = z.object({
   inviteToken: z.string().min(1, 'Invite token is required'),
 });
+
+/** The widget's copy for each refusal. A token from another org is not found. */
+const INVITE_REASONS: Record<InviteTokenRefusal, string> = {
+  'not-found': 'Token not found',
+  'wrong-org': 'Token not found',
+  revoked: 'Token has been revoked',
+  expired: 'Token has expired',
+  exhausted: 'Token has reached its usage limit',
+};
 
 export const POST = withAuth<{ slug: string }>(
   async (request, _session, { params }) => {
@@ -48,27 +58,11 @@ export const POST = withAuth<{ slug: string }>(
       return successResponse({ valid: false, reason: 'Agent does not require an invite token' });
     }
 
-    const token = await prisma.aiAgentInviteToken.findFirst({
-      where: {
-        agentId: agent.id,
-        token: parsed.data.inviteToken,
-      },
-    });
-
-    if (!token) {
-      return successResponse({ valid: false, reason: 'Token not found' });
-    }
-
-    if (token.revokedAt) {
-      return successResponse({ valid: false, reason: 'Token has been revoked' });
-    }
-
-    if (token.expiresAt && token.expiresAt < new Date()) {
-      return successResponse({ valid: false, reason: 'Token has expired' });
-    }
-
-    if (token.maxUses !== null && token.useCount >= token.maxUses) {
-      return successResponse({ valid: false, reason: 'Token has reached its usage limit' });
+    // Read-only: the same resolver the stream route consumes a use through,
+    // asked without spending one. A token from another org is "not found".
+    const outcome = await resolveInviteToken(agent.id, parsed.data.inviteToken);
+    if (!outcome.ok) {
+      return successResponse({ valid: false, reason: INVITE_REASONS[outcome.reason] });
     }
 
     return successResponse({ valid: true });

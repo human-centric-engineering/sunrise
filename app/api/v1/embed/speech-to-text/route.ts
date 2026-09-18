@@ -23,7 +23,8 @@ import { errorResponse, successResponse } from '@/lib/api/responses';
 import { logger } from '@/lib/logging';
 import { getClientIP } from '@/lib/security/ip';
 import { audioLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
-import { isOriginAllowed, resolveEmbedToken } from '@/lib/embed/auth';
+import { isOriginAllowed, resolveEmbedToken, type EmbedContext } from '@/lib/embed/auth';
+import { runAsOrg } from '@/lib/tenancy/context';
 import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
@@ -88,6 +89,18 @@ export async function POST(request: NextRequest): Promise<Response> {
     return errorResponse('Origin not allowed', { code: 'ORIGIN_DENIED', status: 403 });
   }
 
+  // Inside the token's org from here (§106) — no guard wraps this route.
+  return runAsOrg(ctx.orgId, () => transcribeForToken(request, origin, ctx), {
+    source: 'embed-token',
+  });
+}
+
+/** The transcription itself, run inside the token's org scope. */
+async function transcribeForToken(
+  request: NextRequest,
+  origin: string | null,
+  ctx: EmbedContext
+): Promise<Response> {
   const headers = corsHeaders(origin, ctx.allowedOrigins);
 
   const oversize = enforceContentLengthCap(request);

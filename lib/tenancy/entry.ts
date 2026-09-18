@@ -26,22 +26,35 @@
  *
  * **API keys.** Feature finding 13: an `admin`-scoped key is a platform
  * credential and enters no org; any other key enters the org it was minted
- * in, or — while that column is still `NULL` (t-673 binds it) — the install
- * org at `single` and nothing at `multi`.
+ * in. A key whose column is still `NULL` — one minted between 0.12.0 and the
+ * backfill that t-673 re-ran — is the install org at `single` and nothing
+ * at `multi`.
+ *
+ * **Credentials with no user behind them** — an embed token, an MCP key
+ * whose creator may be gone — enter through {@link resolveCredentialOrg}:
+ * the same null rule, and the org's own status in place of a membership
+ * (there is no member to verify). An agent invite token is not a credential
+ * class here at all: it is a gate the SESSION passes through, so it never
+ * enters a context of its own — `lib/orchestration/invite-tokens.ts`
+ * compares its org with the one the guard already entered.
  */
 import type { PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { hasScope } from '@/lib/auth/api-key-scopes';
 import { initialMembershipFor, type NewUserShape } from '@/lib/tenancy/membership';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { isMultiTenant, type TenantContextSource } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant, type TenantContextSource } from '@/lib/tenancy/context';
+import { ForbiddenError } from '@/lib/api/errors';
 import type { OrgRole } from '@/lib/tenancy/roles';
 
 /** A request may act for this org, as this role. */
 export interface OrgEntry {
   orgId: string;
   role: OrgRole | null;
-  source: Extract<TenantContextSource, 'session' | 'api-key' | 'resolver'>;
+  source: Extract<
+    TenantContextSource,
+    'session' | 'api-key' | 'resolver' | 'embed-token' | 'mcp-key'
+  >;
 }
 
 /** Why a request may not act for the org it named. */
@@ -142,4 +155,57 @@ export async function enterApiKeyOrg(
   return 'refused' in membership
     ? membership
     : { orgId: key.orgId, role: membership.role, source: 'api-key' };
+}
+
+/**
+ * The org a user-less credential acts for, from the columns its resolver
+ * already read — no query of its own.
+ *
+ * `orgId` is the row's column; `orgStatus` is the joined org's status (or
+ * `null` when the column is null, so there was nothing to join). A null
+ * column is the interim-key case the docblock above describes: the install
+ * org at `single`, refused at `multi`. A suspended org refuses its tokens
+ * exactly as it refuses its members' sessions — the widget on a suspended
+ * customer's site stops answering. The install org cannot be suspended
+ * (`INSTALL_ORG_IMMUTABLE`), so at `single` the status is not consulted.
+ */
+export function resolveCredentialOrg(
+  credential: { orgId: string | null; orgStatus: string | null },
+  source: Extract<TenantContextSource, 'embed-token' | 'mcp-key'>
+): OrgEntryResult {
+  const orgId = orgOfColumn(credential.orgId);
+  if (!orgId) return { refused: 'no-org' };
+  if (orgId === INSTALL_ORG_ID && !isMultiTenant()) return { orgId, role: null, source };
+  if (credential.orgStatus !== 'ACTIVE') return { refused: 'org-suspended' };
+  return { orgId, role: null, source };
+}
+
+/**
+ * What a credential's nullable `orgId` column means, in one place: the org
+ * it names, else the install org at `single` and no org at `multi`. The
+ * null arm exists for rows minted before the column was written (0.12.0 to
+ * the t-673 backfill); nothing mints a null org any more.
+ */
+export function orgOfColumn(orgId: string | null | undefined): string | null {
+  if (orgId) return orgId;
+  return isMultiTenant() ? null : INSTALL_ORG_ID;
+}
+
+/**
+ * The org a credential minted on this call stack is bound to (t-673).
+ *
+ * The guard entered it for the request, so this is one read of the tenant
+ * context — never a body field: a caller cannot mint into an org they are
+ * not acting in. When nothing was entered — an `admin`-scoped API key
+ * calling an admin mint route — the answer is the install org at `single`
+ * (the implicit context, which is what those callers have always minted
+ * into) and a refusal at `multi`, where there is no org to bind and a
+ * browser session acting in one is the way to mint. `requireTenantContext`
+ * would throw a plain `Error` there; this is a 403 that names nothing.
+ */
+export function orgForMint(): string {
+  const current = getTenantContext();
+  if (current?.orgId) return current.orgId;
+  if (!isMultiTenant()) return INSTALL_ORG_ID;
+  throw new ForbiddenError('Minting a credential requires an org context');
 }

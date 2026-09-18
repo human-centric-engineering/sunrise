@@ -395,6 +395,12 @@ export interface McpAuthContext {
    */
   scopedAgentId: string | null;
   /**
+   * The org the key acts for (§106, t-673): the one it was minted in, passed
+   * through the read rule in `authenticateMcpRequest` — so never null. The
+   * transport runs every request inside `runAsOrg(orgId, …, { source: 'mcp-key' })`.
+   */
+  orgId: string;
+  /**
    * Optional application-level scope carrier bound to the key (`McpApiKey.scope`),
    * validated on read. Folded into `CapabilityContext.scope` for every `tools/call`
    * so a scoped capability can refuse to run outside the key's scope. Undefined

@@ -155,3 +155,34 @@ describe('hand-folding', () => {
     expect(sql).not.toMatch(/"searchVector" DROP DEFAULT/);
   });
 });
+
+describe('the credential backfill re-run (t-673)', () => {
+  // Every credential minted between 0.12.0 and t-673 carries orgId = NULL —
+  // the column existed, nothing wrote it. The re-run is the identity
+  // migration's four statements, again; holding them byte-equal is what
+  // makes "re-run" a fact rather than a paraphrase, and what keeps the
+  // `admin` exemption from being lost in the copy.
+  const RERUN = readFileSync(
+    path.join(
+      process.cwd(),
+      'prisma/migrations/20260918120000_credential_org_backfill/migration.sql'
+    ),
+    'utf8'
+  );
+  const statements = (text: string) =>
+    text
+      .split('\n')
+      .filter((line) => line.startsWith('UPDATE "'))
+      .sort();
+
+  it('is exactly the four UPDATE statements of the identity migration, and nothing else', () => {
+    const rerun = statements(RERUN);
+    expect(rerun).toHaveLength(4);
+    expect(rerun).toEqual(statements(MIGRATION));
+    // Data only: no DDL rides along with a backfill.
+    const sqlOnly = RERUN.split('\n').filter(
+      (line) => line.trim() !== '' && !line.trimStart().startsWith('--')
+    );
+    expect(sqlOnly).toHaveLength(4);
+  });
+});

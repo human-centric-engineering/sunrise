@@ -27,11 +27,29 @@ import {
   imageLimiter,
 } from '@/lib/security/rate-limit';
 import { streamChat } from '@/lib/orchestration/chat';
+import {
+  consumeInviteToken,
+  resolveInviteToken,
+  type InviteTokenRefusal,
+} from '@/lib/orchestration/invite-tokens';
 import { consumerChatRequestSchema } from '@/lib/validations/orchestration';
 import { getRequestId, getVisitorId } from '@/lib/logging/context';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError, ForbiddenError } from '@/lib/api/errors';
 import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
+
+/**
+ * What the caller is told for each refusal. `not-found` and `wrong-org` share
+ * a sentence on purpose: a token minted in another org must read exactly
+ * like one that was never minted.
+ */
+const INVITE_REFUSALS: Record<InviteTokenRefusal, string> = {
+  'not-found': 'Invalid or revoked invite token',
+  'wrong-org': 'Invalid or revoked invite token',
+  revoked: 'Invalid or revoked invite token',
+  expired: 'Invite token has expired',
+  exhausted: 'Invite token has reached its usage limit',
+};
 
 export const POST = withAuth(
   async (request, session) => {
@@ -118,37 +136,19 @@ export const POST = withAuth(
         throw new ForbiddenError('This agent requires an invite token');
       }
 
-      const token = await prisma.aiAgentInviteToken.findFirst({
-        where: {
-          agentId: agent.id,
-          token: body.inviteToken,
-          revokedAt: null,
-        },
-      });
-
-      if (!token) {
-        throw new ForbiddenError('Invalid or revoked invite token');
+      // One implementation for both routes (`lib/orchestration/invite-tokens.ts`);
+      // the refusal messages are this route's. A token from another org reads
+      // as invalid — the same words as a token that does not exist.
+      const outcome = await resolveInviteToken(agent.id, body.inviteToken);
+      if (!outcome.ok) {
+        throw new ForbiddenError(INVITE_REFUSALS[outcome.reason]);
       }
 
-      if (token.expiresAt && token.expiresAt < new Date()) {
-        throw new ForbiddenError('Invite token has expired');
-      }
-
-      if (token.maxUses !== null && token.useCount >= token.maxUses) {
-        throw new ForbiddenError('Invite token has reached its usage limit');
-      }
-
-      // Atomic increment: only succeeds if use_count < max_uses (or max_uses
-      // is NULL, i.e. unlimited). Prevents TOCTOU race where concurrent
-      // requests both pass the check above and double-increment past the cap.
-      const incrementResult: number = await prisma.$executeRaw`
-      UPDATE ai_agent_invite_token
-      SET use_count = use_count + 1
-      WHERE id = ${token.id}
-        AND (max_uses IS NULL OR use_count < max_uses)
-    `;
-      if (incrementResult === 0) {
-        throw new ForbiddenError('Invite token has reached its usage limit');
+      // Atomic: the increment succeeds only while use_count < max_uses, so
+      // concurrent requests that both passed the read cannot double-spend
+      // past the cap.
+      if (!(await consumeInviteToken(outcome.token.id))) {
+        throw new ForbiddenError(INVITE_REFUSALS.exhausted);
       }
     }
 

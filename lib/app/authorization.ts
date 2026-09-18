@@ -189,10 +189,11 @@
  *    itself refuse. Do your loading elsewhere and register synchronously.
  *  - **An `admin`-scoped API key bypasses the role check** and always has: the
  *    scope is the capability. The design record pins that scope as
- *    platform-only (Q6), and minting one already requires a platform admin with
- *    a browser session. Keys do not carry an org yet, so "an org-bound key can
- *    never hold `admin`" is not something this seam can enforce today — that
- *    arrives with the org axis.
+ *    platform-only (Q6): minting one requires a platform admin with a browser
+ *    session acting in the install org, an `admin` key is stored with no org,
+ *    and `withAdminAuth` refuses any key that carries one — so "an org-bound
+ *    key can never hold `admin`" holds at mint and at the guard, and your
+ *    policy cannot widen it: the guard's floor runs before the policy is asked.
  *
  * Full guide: .context/auth/authorization.md · CUSTOMIZATION.md §4 ·
  * lib/auth/authorization.ts

@@ -74,8 +74,8 @@ export interface AuthSession {
      * Optional rather than `string | null` so a session built by hand (the
      * API-key synthetic session, test fixtures) is still an `AuthSession`;
      * `null`/absent is "none chosen", which the guard resolves to the install
-     * org at `single` (t-671). An API-key session leaves it unset until the
-     * key's own org is bound at mint (t-673).
+     * org at `single` (t-671). An API-key session leaves it unset: the key's
+     * org is read from the key row (`enterApiKeyOrg`), never from here.
      */
     activeOrgId?: string | null;
   };
@@ -1208,7 +1208,14 @@ export function withAdminAuth(
         // forgets to read `viewer.scopes` from handing every key holder the
         // admin surface. The default policy re-derives the same answer rather
         // than trusting this, so it is also correct when called directly.
-        if (!hasScope(apiKey.scopes, 'admin')) {
+        //
+        // The second clause is the org axis (§106, t-673): an org-bound key
+        // never satisfies this floor, whatever its scopes. Mint refuses the
+        // combination (`POST /api/v1/user/api-keys`) and the backfill leaves
+        // `admin` keys unbound, so no honest row has both; a row that does —
+        // edited by hand, or a fork that widened its mint — is refused here
+        // rather than admitted to every org's admin surface from inside one.
+        if (!hasScope(apiKey.scopes, 'admin') || apiKey.orgId) {
           throw new ForbiddenError('Admin scope required');
         }
         session = apiKey.session;
