@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { cuidSchema, slugSchema } from '@/lib/validations/common';
 import { ORG_ROLES, ORG_STATUSES } from '@/lib/tenancy/roles';
+import { ORG_ID_SHAPE } from '@/lib/tenancy/resolver';
 
 /**
  * `POST /api/v1/orgs/switch` body.
@@ -25,15 +26,11 @@ export type SwitchOrgInput = z.infer<typeof switchOrgSchema>;
 
 /**
  * An org id as it appears in a URL segment or a body: the install org's
- * literal `'install'` or a cuid. The same shape `ORG_ID_SHAPE` in
- * `lib/tenancy/resolver.ts` accepts from a resolver, so a value that passes
- * here is one the proxy would carry in a header.
+ * literal `'install'` or a cuid. The shape is `ORG_ID_SHAPE` from
+ * `lib/tenancy/resolver.ts` — the one the proxy accepts from a resolver — so
+ * a value that passes here is one the proxy would carry in a header.
  */
-export const orgIdSchema = z
-  .string()
-  .min(1, 'Org is required')
-  .max(200, 'Org id is too long')
-  .regex(/^[A-Za-z0-9_-]+$/, 'Invalid org id');
+export const orgIdSchema = z.string().regex(ORG_ID_SHAPE, 'Invalid org id');
 
 /** `[id]` segment of the org routes. */
 export const orgIdParamSchema = z.object({ id: orgIdSchema });

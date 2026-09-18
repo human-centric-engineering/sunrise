@@ -64,6 +64,10 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    // PATCH writes the role and the install-org membership in one
+    // transaction (§106 ruling a); the transaction client is the double.
+    orgMembership: { upsert: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -813,6 +817,9 @@ describe('PATCH /api/v1/users/[id]', () => {
 
     // Default mock headers
     vi.mocked(headers).mockResolvedValue(new Headers());
+    vi.mocked(prisma.$transaction).mockImplementation(((fn: (tx: typeof prisma) => unknown) =>
+      fn(prisma)) as never);
+    vi.mocked(prisma.orgMembership.upsert).mockResolvedValue({} as never);
   });
 
   describe('Authentication and Authorization', () => {
@@ -1014,6 +1021,65 @@ describe('PATCH /api/v1/users/[id]', () => {
           updatedAt: true,
         },
       });
+      // §106 ruling a: the install-org membership follows the platform role,
+      // in the same transaction as the role write. A promoted human admin
+      // becomes an install OWNER.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.orgMembership.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { orgId_userId: { orgId: 'install', userId: targetUserId } },
+          update: { role: 'OWNER' },
+          create: { orgId: 'install', userId: targetUserId, role: 'OWNER' },
+        })
+      );
+    });
+
+    it('demotes the install-org membership with the platform role (§106 ruling a)', async () => {
+      // The over-grant the ruling closes: a demoted ADMIN must not keep OWNER.
+      const targetUserId = 'cmjbv4i3x00006wsloputgwuz';
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: targetUserId,
+        role: 'ADMIN',
+        accountType: 'HUMAN',
+        email: 'user@example.com',
+      } as any);
+      vi.mocked(prisma.user.update).mockResolvedValue({ id: targetUserId, role: 'USER' } as any);
+
+      const response = await PATCH(
+        createMockRequest({
+          method: 'PATCH',
+          url: 'http://localhost:3000/api/v1/users/id',
+          body: { role: 'USER' },
+        }),
+        { params: createMockParams(targetUserId) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.orgMembership.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: { role: 'MEMBER' } })
+      );
+    });
+
+    it('leaves the install-org membership alone when the role is not in the body', async () => {
+      const targetUserId = 'cmjbv4i3x00006wsloputgwuz';
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: targetUserId,
+        role: 'USER',
+        accountType: 'HUMAN',
+      } as any);
+      vi.mocked(prisma.user.update).mockResolvedValue({ id: targetUserId, name: 'New' } as any);
+
+      const response = await PATCH(
+        createMockRequest({
+          method: 'PATCH',
+          url: 'http://localhost:3000/api/v1/users/id',
+          body: { name: 'New' },
+        }),
+        { params: createMockParams(targetUserId) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.orgMembership.upsert).not.toHaveBeenCalled();
     });
 
     it('should successfully update emailVerified', async () => {

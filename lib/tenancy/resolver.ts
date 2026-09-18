@@ -41,7 +41,7 @@ export type TenantResolver = (request: Request) => string | null;
  * otherwise hand the proxy a value that throws at `set`, which is the 500
  * the resolver's own try/catch exists to prevent.
  */
-const ORG_ID_SHAPE = /^[A-Za-z0-9_-]{1,200}$/;
+export const ORG_ID_SHAPE = /^[A-Za-z0-9_-]{1,200}$/;
 
 let resolver: TenantResolver | null = null;
 

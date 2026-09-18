@@ -78,6 +78,28 @@ describe('revokeUserSessions', () => {
     const where = deleteMany.mock.calls[0]?.[0] as { where: { userId?: string } };
     expect(where.where.userId).toBe('user-1');
   });
+
+  it('narrows to the sessions acting in one org when activeOrgId is given (§106)', async () => {
+    // A member removed from an org loses the sessions INSIDE it and keeps the
+    // rest — without the filter every session of theirs would go.
+    deleteMany.mockResolvedValue({ count: 1 });
+    const count = await revokeUserSessions({
+      userId: 'user-1',
+      activeOrgId: 'cmorg000000000000000other',
+      reason: 'removed from org',
+    });
+
+    expect(count).toBe(1);
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { userId: 'user-1', activeOrgId: 'cmorg000000000000000other' },
+    });
+  });
+
+  it('does not add an org filter when none is given', async () => {
+    await revokeUserSessions({ userId: 'user-1', reason: 'email_changed' });
+    const where = deleteMany.mock.calls[0]?.[0] as { where: Record<string, unknown> };
+    expect(where.where).not.toHaveProperty('activeOrgId');
+  });
 });
 
 describe('findMostRecentSessionToken', () => {
