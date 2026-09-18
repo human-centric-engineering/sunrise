@@ -111,13 +111,64 @@ release process.
   Behaviour at `TENANCY_MODE=single` is unchanged, by construction and by
   sweep: the install org is entered with **no membership read** (its role is
   the platform role projected by the same rule the migration and the signup
-  hook apply), no core resolver names an org-carrying resource so the org arm
-  cannot fire on any existing route, and `authorization-org.test.ts` asserts
-  every principal × every question a core route can ask answers identically
-  with and without org facts, on both policies. Fork note: a policy that
-  compares `resource.orgId === viewer.orgId` must guard the resource side —
-  both `undefined` compares equal. Guide:
-  [`.context/tenancy/context.md`](./.context/tenancy/context.md).
+  hook apply), no core route that predates the next bullet names an
+  org-carrying resource so the org arm cannot fire on any of them, and
+  `authorization-org.test.ts` asserts every principal × every question those
+  routes can ask answers identically with and without org facts, on both
+  policies. Fork note: a policy that compares `resource.orgId ===
+  viewer.orgId` must guard the resource side — both `undefined` compares
+  equal. Guide: [`.context/tenancy/context.md`](./.context/tenancy/context.md).
+- **An org can be created, suspended, exported and erased, and its members
+  managed, without touching its members' other orgs** (multi-tenancy §106,
+  fourth task). Two documented API surfaces and two privacy entry points:
+  - **The org API** ([`.context/api/org-endpoints.md`](./.context/api/org-endpoints.md)).
+    Member view, `withAuth`: `GET /api/v1/orgs` (my memberships, marks the
+    active one; like the switch it does **not** enter the session's org, so a
+    member of a suspended org can still find the way out), `GET
+    /api/v1/orgs/[id]` (any member), `GET/POST /api/v1/orgs/[id]/members` and
+    `PATCH/DELETE /api/v1/orgs/[id]/members/[userId]` — admitted by the
+    policy's org arm (the org's own `OWNER`/`ADMIN` **while acting in it**, or
+    a platform admin; no role check in the routes), mutations browser-session
+    only. Platform view, `withAdminAuth`: `GET/POST /api/v1/admin/orgs`,
+    `GET/PATCH/DELETE /api/v1/admin/orgs/[id]` (rename, re-slug, suspend,
+    reinstate; erase), `GET /api/v1/admin/orgs/[id]/export`. Constants under
+    `API.ORGS` / `API.ADMIN`. The rules live once, in `lib/tenancy/lifecycle.ts`,
+    and every refusal carries a `code`: the install org can be renamed but
+    never suspended, re-slugged or deleted (`INSTALL_ORG_IMMUTABLE`); an org
+    keeps at least one `OWNER` (`LAST_OWNER`); the install org's memberships
+    follow the platform role and cannot be edited or removed through the
+    members API (`INSTALL_ORG_MEMBERSHIP`); removing a member revokes their
+    sessions acting in that org (`revokeUserSessions` gains an optional
+    `activeOrgId` filter) and keeps the rest.
+  - **The ruling on role drift (a):** the install org's `OWNER` set now
+    _follows_ the platform-admin set — `PATCH /api/v1/users/[id]` with a
+    `role` upserts the install-org membership to the rule's answer in the
+    same transaction (`syncInstallMembershipRole`), so a demoted admin no
+    longer keeps `OWNER`.
+  - **`exportOrgData()`** (`lib/privacy/export-org.ts`) and the org manifest
+    `ORG_DATA_SOURCES` / `ORG_EXCLUDED_SOURCES` (`lib/privacy/org-sources.ts`):
+    the roster with member id/name/email, pending invitations into the org
+    (tokens omitted), and the four credential kinds as attribution (hashes and
+    scopes omitted). **Every model carrying an `orgId` column must be declared
+    there** — `tests/unit/lib/privacy/org-sources.test.ts` parses the schema
+    and fails until it is, the subject manifest's guard for an org subject;
+    row isolation will meet it on every model it adds `orgId` to. Guide:
+    [`.context/privacy/org-export.md`](./.context/privacy/org-export.md).
+  - **`eraseOrg()`** (`lib/privacy/erase-org.ts`): one transaction deleting
+    the pending invitations into the org, clearing `Session.activeOrgId` on
+    every session still pointing at it, and the org row (memberships and
+    credentials cascade). **Users are never deleted**; the install org is
+    refused. Guide: [`.context/privacy/org-erasure.md`](./.context/privacy/org-erasure.md).
+
+  Also: `ORG_STATUSES` / `OrgStatus` join `lib/tenancy/roles.ts`;
+  `ORG_ID_SHAPE` is exported from `lib/tenancy/resolver.ts` and shared with
+  the new `orgIdSchema`; `INVITATION_IDENTIFIER_PREFIX` is exported from
+  `lib/utils/invitation-token.ts`. `npm run smoke:tenancy` now walks the whole
+  lifecycle against a real database. Behaviour at `TENANCY_MODE=single` is
+  unchanged: no existing endpoint changes its answer, and on the install org
+  the org arm admits exactly the platform admins the platform check already
+  admitted, because the install-org role is the platform role's projection and
+  is now kept so.
 
 ## [0.12.1] — 2026-09-17
 

@@ -318,6 +318,7 @@ demoted or deleted). See
 
 ## Related Documentation
 
+- [Org Erasure](./org-erasure.md) — deleting an organisation; its members' accounts stay (§106)
 - [Privacy & Cookie Consent](./overview.md) — consent system
 - [Security Overview](../security/overview.md) — application security
 - [Auth Security](../auth/security.md) — sessions, password handling

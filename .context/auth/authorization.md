@@ -65,12 +65,18 @@ A platform credential — an `admin`-scoped API key — enters **no** org: no
 - **administers a resource that carries their org** —
   `resource.orgId === viewer.orgId`, with `resource.orgId` present. A `null`
   resource, or one without an `orgId`, grants **nothing**: those are the
-  platform-ops surfaces (every core admin route today — no core resolver
+  platform-ops surfaces (every core _admin_ route — no core admin resolver
   names an org until §107), which stay platform-only. That is the control-plane
-  split in the tenancy playbook, and it is what keeps a single-tenant install
-  byte-identical: with no org-carrying resource the arm cannot fire, and
-  `authorization-org.test.ts` sweeps every principal × every question a core
-  route can ask, with and without org facts, and asserts identical answers.
+  split in the tenancy playbook. The core routes that _do_ name an org are the
+  org members routes (`/api/v1/orgs/[id]/members/**`, §106 t-672), and this
+  arm is what admits an org's own OWNER/ADMIN there while they act in it —
+  see [org-endpoints.md](../api/org-endpoints.md). A single-tenant install
+  stays byte-identical: on the install org the OWNER set _is_ the
+  platform-admin set (the role follows the platform role and is kept in
+  step), so the arm admits exactly whom the platform check admits; on every
+  other core route no resource carries an org, and
+  `authorization-org.test.ts` sweeps every principal × every question those
+  routes can ask, with and without org facts, and asserts identical answers.
 - **reads the ownerless `this-row` of a resource that carries their org** —
   answered _before_ the once-per-kind diagnostic, because an org resource with
   no `ownerId` is a fork's steady state, not a misconfigured resolver.
@@ -87,9 +93,11 @@ to their own rows like any member — so on an org row **another member owns**,
 the subject arm would break parity with `subjectScope`, which can name one
 user or everyone and cannot yet say "rows in my org" (§107). The narrower
 face wins on the read path. **So an org admin is a _narrowed_ admin**,
-and the first admin route whose resolver names an org-carrying resource owes an
-`ownership` declaration and must read `session.subjectFilter` — the scenario
-`guards-ownership-development.test.ts` names. None exists in core until §107.
+and the first _admin_ route whose resolver names an org-carrying resource owes
+an `ownership` declaration and must read `session.subjectFilter` — the scenario
+`guards-ownership-development.test.ts` names. None exists in core until §107;
+the org members routes are `withAuth`, declare `ownership: 'resource'`, and
+read nothing outside the resolved org.
 
 The comparison is guarded on the resource side explicitly because
 `resource.orgId === viewer.orgId` with both `undefined` is `true` — the trap the

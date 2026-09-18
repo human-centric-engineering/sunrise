@@ -147,7 +147,12 @@ better-auth's own revocation is endpoint-scoped — it wants a request context
 that a verification callback does not have — so this goes at the `session`
 table directly. Omitting `exceptSessionToken` revokes everything, which is the
 correct degradation when the current session cannot be identified: one extra
-login beats leaving an attacker's session alive.
+login beats leaving an attacker's session alive. An optional `activeOrgId`
+narrows the delete to the sessions acting in one org — what removing a member
+from an org uses (§106, `lib/tenancy/lifecycle.ts`), so their sessions in other
+orgs survive. That path does not depend on the cache window below: the guard
+re-reads the membership on every request into a non-install org, so a removed
+member is refused at the next request regardless.
 
 **Deleting the row is not instant everywhere.** `session.cookieCache` (above)
 is enabled with a 5-minute `maxAge`, and `withAuth()` (`lib/auth/guards.ts`)

@@ -472,17 +472,23 @@ function administersEverything(viewer: AuthorizationPrincipal): boolean {
  * The org arm of the default policy, and everything it does NOT grant is the
  * point: an org OWNER/ADMIN administers rows that carry THEIR org and nothing
  * else. A `null` resource, or one without an `orgId`, grants nothing — those
- * are the platform-ops surfaces (every core admin route today, since no core
+ * are the platform-ops surfaces (every core admin route: no core admin
  * resolver names an org until §107), which stay platform-only: the control-
  * plane split in the tenancy playbook. And both sides must be present:
  * `resource.orgId === viewer.orgId` with both `undefined` is `true`, which is
  * the trap the fork seam's docblock warns about, so the comparison is guarded
  * on the resource side explicitly.
  *
- * Byte-identical at `single` by construction and by test: with no org-carrying
- * resource in core, this arm cannot fire on any existing route, and
- * `authorization.test.ts` asserts every existing case answers the same with
- * and without org facts on the principal.
+ * The core routes that DO name an org are the org members routes
+ * (`app/api/v1/orgs/[id]/members/**`, §106 t-672): `{ kind: 'org', id,
+ * orgId }`, no `ownerId`, so this arm is what admits an org's own OWNER/ADMIN
+ * to its roster while they act in it. Byte-identical at `single` still, by
+ * construction and by test: on the install org the OWNER set is the
+ * platform-admin set (the install-org role follows the platform role), so
+ * this arm admits exactly whom `administersEverything` admits there; on every
+ * other core route no resource carries an org, and `authorization.test.ts`
+ * asserts every existing case answers the same with and without org facts on
+ * the principal.
  */
 function administersOrgOf(
   viewer: AuthorizationPrincipal,

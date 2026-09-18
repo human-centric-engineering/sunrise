@@ -3,10 +3,11 @@
 What an organisation is in Sunrise, the invariant that every install has one
 and every user belongs to one, and what a fork may and may not add. This is
 the first piece of the multi-tenancy programme
-([design record](../architecture/multi-tenancy-design.md), Hub §106); the
-context primitive, the org lifecycle API and credential binding are later
-tasks of the same feature and are named here only where this page has to
-promise them something.
+([design record](../architecture/multi-tenancy-design.md), Hub §106). The
+context primitive is [context.md](./context.md); the org lifecycle — create,
+suspend, members, export, erase — is the [lifecycle section](#the-lifecycle-creating-suspending-and-retiring-an-org)
+below and [org-endpoints.md](../api/org-endpoints.md); credential binding at
+mint (t-673) is the one later task this page still has to promise something to.
 
 **At `TENANCY_MODE=single` nothing reads these rows for an authorization
 decision yet.** The session reads them to choose its active org, the Art. 15
@@ -26,6 +27,9 @@ anti-pattern below.
 | The org a new session starts in   | `activeOrgForSession()` — same module                             |
 | Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`    |
 | Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`)            |
+| Create / suspend / erase an org   | `/api/v1/admin/orgs` — `lib/tenancy/lifecycle.ts`, `erase-org.ts` |
+| Manage an org's members           | `/api/v1/orgs/[id]/members` — `lib/tenancy/lifecycle.ts`          |
+| Give an org its data              | `exportOrgData()` — `lib/privacy/export-org.ts`                   |
 | Prove it against a real database  | `npm run smoke:tenancy`                                           |
 | The migration                     | `prisma/migrations/20260917120000_org_identity/`                  |
 
@@ -77,9 +81,11 @@ model OrgMembership {
 Three things about the shape are decisions, not defaults:
 
 - **`Org` has no `User` FK.** Ownership is a membership role (`OWNER`), not a
-  `createdBy` column, so erasing the last owner leaves the org standing. What
-  happens to an owner-less org is the lifecycle task's (t-672) to decide; the
-  data model does not decide it for them by cascading.
+  `createdBy` column, so erasing the last owner leaves the org standing. An
+  owner-less org is administered by platform admins until one of them names
+  a new OWNER through the members API (the [lifecycle](#the-lifecycle-creating-suspending-and-retiring-an-org)
+  says why erasure is not refused); the data model does not decide it by
+  cascading.
 - **Both FKs on `OrgMembership` cascade.** A membership is the person's data
   — it goes with them (Art. 17) and it is exported to them (Art. 15, as an
   `export` source in `SUBJECT_DATA_SOURCES`). It also cannot outlive its org.
@@ -160,19 +166,24 @@ route applies `metadata.role` only after `signUpEmail` returns, and judged on
 the row an invited platform ADMIN would have landed as `MEMBER` (the gap
 t-669 found and t-670 closed).
 
-**Known gap until §106 t-672:** the mapping is applied once, at creation.
-A platform-role change afterwards — the admin `users/[id]` PATCH promoting a
-USER to ADMIN, or demoting an ADMIN — does not touch the install-org
-membership, so a demoted admin keeps `OWNER` and a promoted user stays
-`MEMBER`. Harmless at `single` today — the guard projects the install-org
-role from the platform role rather than reading the row, so a drifted row is
-not what the policy sees there ([context.md](./context.md)) — but the demote
-case becomes an over-grant the moment a row IS read (any non-install org,
-`multi`), and
-whether the install-org role should _follow_ the platform role or be managed
-independently through the members API is a ruling t-672 has to make before it
-ships. `smoke:tenancy` deliberately does not assert "every ADMIN is an OWNER"
-for this reason.
+**The mapping is kept, not applied once (ruling a on the feature).** A
+platform-role change afterwards — the admin `users/[id]` PATCH promoting a
+USER to ADMIN, or demoting an ADMIN — re-applies it: the route upserts the
+install-org membership to `initialMembershipFor(updated).role` in the same
+transaction as the role write (`syncInstallMembershipRole` in
+`lib/tenancy/lifecycle.ts`), so a demoted admin drops to `MEMBER` and a
+promoted user rises to `OWNER`, and a missing membership is healed by the same
+call. The install org's OWNER set therefore _follows_ the platform-admin set —
+which is what "byte-identical at single" implies, since platform admins
+administer the install — and the members API refuses to edit or remove an
+install-org membership directly (`INSTALL_ORG_MEMBERSHIP`): the role is not the
+caller's to pick, and the membership is the account's floor, left only by
+erasing the account. The alternative — two axes independent after creation,
+with the members API the only writer and the doc saying "demote in both
+places" — was rejected because the guard at `single` already projects the
+install-org role from the platform role without reading the row
+([context.md](./context.md)); the row must say the same thing or the first
+read of it (any non-install org, `multi`) is an over-grant.
 
 Why this rule and not "everyone is MEMBER" or "every ADMIN is OWNER": the
 byte-identical promise (principle 2). Nobody gains an org-level grant they did
@@ -211,7 +222,9 @@ resolver). Under Sunrise's default policy that answers exactly what
 today. The policy's org arm says yes to an org's own OWNER/ADMIN only for a
 resource that carries that org ([authorization.md](../auth/authorization.md#the-org-input));
 this route asks about the org itself, so the arm applies once `withAdminAuth`
-admits an org admin — the control-plane split t-672 decides route by route.
+admits an org admin — which, under the control-plane split the lifecycle
+applies, it does not: inviting is a platform act today, and an org admin adds
+an existing user through `POST /api/v1/orgs/[id]/members` instead.
 The named org must exist and be `ACTIVE` _when the invitation
 is written_; a missing and a suspended org get the same 400, so the endpoint
 leaks nothing about orgs the caller may not administer. Acceptance does not
@@ -280,9 +293,64 @@ validates it at runtime the way it validates `role`). `null` or absent means
 "none chosen" — the install org at `single`. An API-key session leaves it
 unset until t-673 binds the key's own org.
 
-**Not here:** revoking sessions when a membership is removed is the
-lifecycle task's (t-672); `revokeUserSessions` in `lib/auth/sessions.ts` is
-the primitive it will use.
+**When a membership is removed** (`removeMember` in `lib/tenancy/lifecycle.ts`)
+the user's sessions acting in that org are revoked — `revokeUserSessions`
+with its `activeOrgId` filter — and their sessions in other orgs are kept.
+When an org is erased, every session still pointing at it has `activeOrgId`
+cleared. The 5-minute cookie cache is not a hole in either case: the guard
+re-reads the membership on every request into a non-install org
+([context.md](./context.md)), so the removal is enforced at the next request.
+
+## The lifecycle: creating, suspending and retiring an org
+
+Every org mutation goes through `lib/tenancy/lifecycle.ts`, and every rule
+below is stated there once, so the routes inherit them rather than each
+re-deciding. The HTTP surface is [org-endpoints.md](../api/org-endpoints.md);
+which routes are the vendor's and which the customer's follows the
+[control-plane split](../architecture/multi-tenancy.md#the-control-plane-which-admin-surfaces-are-whose):
+create, rename, suspend, export and erase are platform-only
+(`/api/v1/admin/orgs`); membership within an org is the org's own OWNER/ADMIN's
+(`/api/v1/orgs/[id]/members`), admitted by the authorization policy's org arm
+while they are acting in that org — never by a role check in a route.
+
+**The rules, each with a test:**
+
+- **The install org can be renamed, and nothing else** (ruling b): never
+  suspended, re-slugged or deleted — `INSTALL_ORG_IMMUTABLE`. It is the one
+  row principle 1 promises always exists, and its id and slug are literals the
+  guard, the hook and the migration name.
+- **An org keeps at least one OWNER.** Demoting or removing the last one is
+  refused — `LAST_OWNER` — the way `users/me` refuses to delete the last
+  platform admin, and the count and the write share a transaction. Only the
+  members API is held to this: `eraseUser()` (Art. 17) is not conditional on
+  org roles, so an org _can_ be left owner-less by an erasure. That is a
+  state the admin list flags (`ownerCount: 0`), and a platform admin — whom
+  the policy admits everywhere — repairs it through the same members route.
+  `POST /api/v1/admin/orgs` takes `ownerUserId` so the org starts with one.
+- **The first member of an empty org becomes OWNER** when no role is asked for
+  — the same bootstrap as an invitation into an empty org
+  (`membershipForNewUser`). Unlike the invitation path, an explicit role on
+  `POST …/members` is honoured: it is an API call by someone who chose it.
+- **The install org's memberships follow the platform role**
+  (`INSTALL_ORG_MEMBERSHIP`; the ruling above), so the members API refuses a
+  role there, and refuses a removal there.
+- **A removed member's sessions in that org are revoked**, the rest kept.
+- **Suspension is enforced at entry.** `PATCH` with `status: "SUSPENDED"`
+  writes the status and nothing else; the guard refuses every request into
+  the org from then on ([context.md](./context.md)), and `POST
+/api/v1/orgs/switch` remains the member's way to another org. Reinstating is
+  the same write back. `smoke:tenancy` proves it through the real entry
+  function against real rows.
+- **Erasure is a privacy act, not a lifecycle one** — `eraseOrg()` in
+  `lib/privacy/erase-org.ts`, with [its own page](../privacy/org-erasure.md):
+  invitations into the org, session pointers and the row go in one
+  transaction, memberships and credentials cascade, and users are never
+  deleted. [Export](../privacy/org-export.md) precedes it.
+
+**Mutations need a browser session.** An API key — even an `admin`-scoped
+one the policy would admit — is refused by `POST/PATCH/DELETE` on the
+members routes, the same refusal as minting a key over a key: none of the
+scopes mean "manage the org".
 
 ## Credentials
 
@@ -328,7 +396,22 @@ merge-impact section promises forks.
   one after `migrate deploy` + `db:seed`): the install org exists, every user
   is a member exactly once, the seeded config-owner is a MEMBER, a new user
   gets a membership, the backfill rule on two keys it creates (the migration's
-  own UPDATE, scoped to those two ids), cascade on delete.
+  own UPDATE, scoped to those two ids), cascade on delete — and the
+  lifecycle: an org created with its OWNER, the last-OWNER guard both ways,
+  the install-org refusals, a SUSPENDED org refusing its own OWNER through
+  the real entry function and admitting them once reinstated, a removal
+  revoking exactly the session in that org, an export carrying every manifest
+  section, and an erasure leaving both users standing.
+- `tests/unit/lib/tenancy/lifecycle.test.ts` — every rule above on a
+  populated org (the last-OWNER guard with two members, shown to pass once a
+  second OWNER stands); `tests/unit/lib/privacy/org-sources.test.ts` — the
+  org manifest guard, shown to name an undeclared `orgId` model.
+- `tests/unit/app/api/v1/orgs/**`, `tests/unit/app/api/v1/admin/orgs/**` —
+  the routes through the real guards and the real policy: an org ADMIN acting
+  in the org is admitted, a MEMBER and an ADMIN acting elsewhere are not, a
+  platform admin is from anywhere, refusals name nothing.
+- `tests/unit/app/api/v1/users/[id]/route.test.ts` — a promotion upserts the
+  install membership to OWNER, a demotion to MEMBER (ruling a).
 - `npm run smoke:erasure` — now also proves a membership cascades with the
   subject and the org survives.
 - `tests/unit/lib/tenancy/migration.test.ts` — the migration's statements,

@@ -409,52 +409,9 @@ POST /api/auth/accept-invite
 
 ## Org Endpoints
 
-### Switch Active Org
-
-✅ **Implemented in:** `app/api/v1/orgs/switch/route.ts`
-
-**Purpose**: Change the org the current session acts in (§106). The
-session's `activeOrgId` is chosen at sign-in; this is the one way to change
-it afterwards.
-
-```
-POST /api/v1/orgs/switch
-```
-
-**Authentication**: Required (browser session — an API-key caller is refused,
-because a credential's org is fixed at mint)
-
-**Request Body**:
-
-```json
-{
-  "orgId": "install"
-}
-```
-
-**Validation**: Uses `switchOrgSchema` from `lib/validations/tenancy.ts`
-
-- `orgId`: Required, non-empty — the caller must be a member
-
-**Response** (200 OK) — also re-issues the session cookie cache so the next
-request reads the new org:
-
-```json
-{
-  "success": true,
-  "data": {
-    "activeOrgId": "install",
-    "org": { "id": "install", "slug": "install", "name": "Default organisation" }
-  }
-}
-```
-
-**Error Responses**:
-
-- **400 Validation Error**: Missing or empty `orgId`
-- **401 Unauthorized**: Not authenticated
-- **403 Forbidden**: Not a member of that org (the same answer whether the org
-  exists or not), the org is suspended, or the caller is an API key
+The org API — the caller's memberships, `POST /api/v1/orgs/switch`, an org's
+members, and the vendor's create / suspend / export / delete — is documented
+in [Org Endpoints](./org-endpoints.md).
 
 ## Related Documentation
 
@@ -462,3 +419,4 @@ request reads the new org:
 - [User Endpoints](./user-endpoints.md) - User management API
 - [OAuth Integration](../auth/oauth.md) - OAuth setup and configuration
 - [User Creation Patterns](../auth/user-creation.md) - Signup vs invitation flows
+- [Org Endpoints](./org-endpoints.md) - Memberships, the switch, org lifecycle

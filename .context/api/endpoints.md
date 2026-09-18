@@ -6,6 +6,7 @@
 | --------------- | ---------------------------------------------- | --------------------------------------------------- |
 | User Management | [user-endpoints.md](./user-endpoints.md)       | Profile, preferences, avatar, admin user operations |
 | Authentication  | [auth-endpoints.md](./auth-endpoints.md)       | Sign-in, sign-up, OAuth, invitations                |
+| Organisations   | [org-endpoints.md](./org-endpoints.md)         | Memberships, the switch, org lifecycle (§106)       |
 | Admin           | [admin-endpoints.md](./admin-endpoints.md)     | Stats, logs, feature flags, invitation management   |
 | Utilities       | [utility-endpoints.md](./utility-endpoints.md) | Health check, CSP reports, contact form             |
 

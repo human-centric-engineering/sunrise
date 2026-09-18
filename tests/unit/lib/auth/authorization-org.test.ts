@@ -186,8 +186,10 @@ describe('byte-identical: with no org-carrying resource, org facts change no ans
     orgId: INSTALL_ORG_ID,
     orgRole: p.role === 'ADMIN' ? 'OWNER' : 'MEMBER',
   });
-  // Every question a core route can ask today: none of these resources
-  // carries an orgId, because no core resolver names one until §107.
+  // Every question a core route other than the org members routes can ask:
+  // none of these resources carries an orgId — no core ADMIN resolver names
+  // one until §107, and the members routes (t-672) are the org arm's
+  // intended callers, covered by their own tests rather than swept here.
   const resources: (AuthorizationResource | null)[] = [
     null,
     { kind: 'thing', id: 't1', ownerId: 'user-1' },

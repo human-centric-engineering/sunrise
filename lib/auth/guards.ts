@@ -234,8 +234,10 @@ export interface RouteContext<TParams = Record<string, string>> {
  * Tells the authorization policy **what** a request is acting on.
  *
  * Without one, the policy is asked about the caller and nothing else, which is
- * all Sunrise's own policy needs on all but one route — `app/api/v1/users/[id]`
- * (GET) supplies one, and is the worked example.
+ * all Sunrise's own policy needs on all but a handful of routes —
+ * `app/api/v1/users/[id]` (GET) supplies one and is the worked example; the
+ * org members routes (`app/api/v1/orgs/[id]/members/**`, §106) supply the org
+ * itself so the policy's org arm can answer.
  * A fork scoping by owner (#367) or by org (§106) needs the resource, and the
  * alternative to this hook is rewriting every handler's signature to pass it
  * down.
@@ -325,20 +327,22 @@ export interface WithAuthOptions<TParams = Record<string, string>> {
   /**
    * Whether this route enters the session's org (§106). Every guarded route
    * does, and a session whose active org is suspended or no longer theirs is
-   * refused — which is what suspension means, except on the one route that
-   * exists to LEAVE that org: `POST /api/v1/orgs/switch`. A switch behind the
-   * refusal would lock a member of a suspended org out of every other org
-   * they belong to. So that route, and only that route, declares
-   * `{ entersOrg: false, because }`; the handler then runs outside any tenant
-   * scope with no org facts on the principal, and does its own membership
-   * check for the org it is switching TO. The `because` is required for the
-   * same reason `RouteOwnership`'s is: the value of the marker is the
-   * sentence. Do not reach for this to make a 403 go away.
+   * refused — which is what suspension means, except on the two routes that
+   * exist to LEAVE that org: `POST /api/v1/orgs/switch`, and `GET
+   * /api/v1/orgs`, the list of where they can go. A switch behind the refusal
+   * would lock a member of a suspended org out of every other org they belong
+   * to. So those routes, and only those, declare `{ entersOrg: false,
+   * because }`; the handler then runs outside any tenant scope with no org
+   * facts on the principal, and reads only the caller's own membership rows
+   * (the switch checks membership of the org it is switching TO). The
+   * `because` is required for the same reason `RouteOwnership`'s is: the
+   * value of the marker is the sentence. Do not reach for this to make a 403
+   * go away.
    *
-   * "Outside any scope" is today's state, not the end state: the switch reads
-   * memberships and writes a session row across orgs by design, so when §107
-   * makes the data layer read `requireTenantContext()`, this route owes an
-   * audited entry — a `runAsSystem`-style scope around exactly those two
+   * "Outside any scope" is today's state, not the end state: both routes read
+   * memberships across orgs by design (the switch also writes a session row),
+   * so when §107 makes the data layer read `requireTenantContext()`, they owe
+   * an audited entry — a `runAsSystem`-style scope around exactly those
    * calls, or a data-layer exemption for the membership and session tables —
    * or the lockout this marker fixes returns at `multi`. §107's plan names it.
    */

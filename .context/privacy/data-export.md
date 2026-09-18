@@ -461,6 +461,7 @@ transport (streaming, an expiring download) rather than by dropping rows.
 ## Related Documentation
 
 - [Account Deletion & Right to Erasure](./data-erasure.md) — the Art. 17 counterpart
+- [Org Data Export](./org-export.md) — the same discipline with an organisation as the subject (§106)
 - [Privacy & Cookie Consent](./overview.md) — consent system
 - `lib/privacy/export-sources.ts` — the manifest
 - `lib/app/data-export.ts` — the fork seam (collector + declarations)

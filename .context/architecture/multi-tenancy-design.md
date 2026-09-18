@@ -107,7 +107,10 @@ sync conflict is a "keep both", not a re-read.
 > `lib/tenancy/context.ts`, `lib/tenancy/entry.ts`, `lib/app/tenant-resolver.ts`
 > (+ `lib/tenancy/resolver.ts`), the `x-sunrise-org` header, the guards
 > entering the org and the default policy's org arm with t-671
-> ([`.context/tenancy/context.md`](../tenancy/context.md)). Of this
+> ([`.context/tenancy/context.md`](../tenancy/context.md)); the org
+> lifecycle API, `lib/tenancy/lifecycle.ts`, and the org-level privacy entry
+> points (`exportOrgData`, `eraseOrg`, the `orgId` manifest) with t-672
+> ([`.context/api/org-endpoints.md`](../api/org-endpoints.md)). Of this
 > section's request path, everything down to and including the policy
 > exists; the `lib/db/client.ts` `$extends`, the RLS policies and
 > `db:tenancy:enable` (§107) and the tick's `forEachOrg` wiring (§108) do not

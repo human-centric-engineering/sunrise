@@ -1,0 +1,121 @@
+# Org Data Export
+
+How Sunrise answers "give us our data" for an organisation — a customer being
+offboarded, or one asking what the install holds about them (§106 t-672). The
+entry point is `exportOrgData()` in `lib/privacy/export-org.ts`; the admin
+endpoint calls it. The per-person counterpart is
+[Subject Access Export](./data-export.md), and this page assumes you have read
+its "why a manifest and a build-breaking test" section — the org export is the
+same discipline with an org as the subject.
+
+## Quick Reference
+
+| Need                            | Use                                                              |
+| ------------------------------- | ---------------------------------------------------------------- |
+| Export an org (the only way)    | `exportOrgData()` — `lib/privacy/export-org.ts`                  |
+| The vendor exports for a client | `GET /api/v1/admin/orgs/[id]/export` (platform admin, download)  |
+| What counts as the org's data   | `ORG_DATA_SOURCES` — `lib/privacy/org-sources.ts`                |
+| What is deliberately left out   | `ORG_EXCLUDED_SOURCES` — same file, with the reason shown        |
+| The guard on the manifest       | `tests/unit/lib/privacy/org-sources.test.ts` (scans `orgId`)     |
+| Proving it against a database   | `npm run smoke:tenancy` (creates, exports, erases a fixture org) |
+
+## The manifest and its guard
+
+`ORG_DATA_SOURCES` is the single place that says which tables are an org's
+data. **Every Prisma model carrying an `orgId` column must appear there
+exactly once** — as a source with a disposition, or in `ORG_EXCLUDED_SOURCES`
+with a reason — and `org-sources.test.ts` parses `prisma/schema/*.prisma` for
+`orgId` columns and fails until it does. Today that is five models:
+`OrgMembership` and the four credential kinds. When row isolation (§107) adds
+`orgId` to the tenant-owned models, that test names every one of them until
+someone decides what the org receives from it. That is the point: a column can
+join an org, but an export cannot silently omit it.
+
+The scan matches the column name `orgId` exactly. `Session.activeOrgId` is a
+pointer to the org a session acts in, not the org's data, and does not match.
+
+The test is also run against a synthetic schema with an undeclared `orgId`
+model, so the rule is shown to fire — in vanilla Sunrise every such model is
+declared, and a rule with nothing to catch would pass while protecting nothing.
+
+## The two dispositions
+
+The subject manifest's two, read for an org:
+
+- **`export`** — the org's own records, in full minus named secrets.
+  `OrgMembership` is this: who belongs and as what, with each member's id,
+  name and email riding along so the roster reads as people. The members'
+  _other_ data is theirs, not the org's, and is not included — a member who
+  wants their own record asks for a subject export.
+- **`attribution`** — the fact that the org holds a thing, not the thing:
+  id + label + date. The four credential kinds (`AiApiKey`,
+  `AiAgentEmbedToken`, `AiAgentInviteToken`, `McpApiKey`) are this. A key's
+  hash is credential material the export must not carry, and its scopes are
+  platform configuration.
+
+`export` sources use Prisma `omit` for secrets, never `select` — a column
+added tomorrow is exported by default, and only a deliberate `omit` keeps it
+out.
+
+## The one source listed by hand
+
+A pending invitation _into_ the org lives in `Verification`, keyed by the
+invitee's email, with the org in the metadata JSON the invite route writes.
+There is no `orgId` column, so the scan cannot see it; it is in the manifest by
+hand (the `ContactSubmission` precedent in the subject manifest), selected by
+`metadata->>'orgId'`, with the token (`value`) omitted, and pinned by a test
+row. Any future table that names an org without a column needs the same
+treatment; nothing mechanical will find it.
+
+## Failing whole, not partial
+
+Every source runs; any that throws fails the export. Same reasoning as the
+subject export: a bundle that quietly lost a section is indistinguishable, to
+the person reading it, from one that had nothing to show — and the org being
+offboarded is exactly the reader who cannot check.
+
+## The bundle
+
+```json
+{
+  "meta": {
+    "formatVersion": 1,
+    "generatedAt": "2026-09-18T10:00:00.000Z",
+    "orgId": "cmorg…",
+    "exported": [{ "model": "OrgMembership", "section": "members", "description": "…", "rows": 2 }],
+    "attribution": [{ "model": "AiApiKey", "section": "apiKeys", "description": "…", "rows": 0 }],
+    "excluded": []
+  },
+  "org": { "id": "cmorg…", "slug": "acme", "name": "Acme", "status": "ACTIVE", "…": "…" },
+  "data": { "members": [], "pendingInvitations": [] },
+  "attributions": {
+    "apiKeys": [],
+    "agentEmbedTokens": [],
+    "agentInviteTokens": [],
+    "mcpApiKeys": []
+  }
+}
+```
+
+`meta` describes exactly what was delivered — every section with its row
+count, and every withheld table with its reason — so the reader can see the
+boundary of what they received. `ORG_EXPORT_FORMAT_VERSION` is separate from
+the subject bundle's version because the two bundles have different readers.
+
+No receipt is written and no `reason` is required: the org is not a data
+subject. The acting admin is logged.
+
+## What is deliberately not here yet
+
+- **A fork seam.** A fork's own org-owned tables are §109's tenant-data
+  dimension. The shape is the subject manifest's, which grew
+  `registerAppSubjectSources()` the same way, so that lands without a redesign.
+- **Self-service.** An org OWNER downloading their own export is §111's page,
+  on top of the same service; today the vendor answers the request.
+
+## Related Documentation
+
+- [Org Erasure](./org-erasure.md) — the deletion this precedes
+- [Subject Access Export](./data-export.md) — the per-person shape this mirrors
+- [Tenancy: Org Identity](../tenancy/identity.md) — the lifecycle these endpoints belong to
+- [Org Endpoints](../api/org-endpoints.md) — the HTTP reference

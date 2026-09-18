@@ -107,21 +107,26 @@ hook also apply. Reading the row would confirm what the rule already says. It
 is also what keeps the guards' hot path free of a per-request query on every
 single-tenant install, and every route test that runs the real guards free of
 a Prisma mock it never needed (124 test files run them; 91 mock Prisma
-without `orgMembership`, 32 not at all). The known drift cases — a demoted
-admin still `OWNER`, an invited `orgRole` on the install org — are t-672's
-ruling and are the one place the projection and the row can disagree.
+without `orgMembership`, 32 not at all). The row is kept in step with the
+projection: a platform-role change re-applies the rule to the install
+membership (ruling a, [identity.md](./identity.md#the-invariant-one-install-org-every-user-a-member)),
+and the members API refuses to edit install-org roles. The one remaining way
+the two can differ is an invitation that names an explicit `orgRole` on the
+install org, which is honoured as written.
 
 **A refusal is a 403 that names nothing.** "Not a member" and "no such org"
 are one answer; a suspended org is refused with the same words. The guard's
 log line (`tenancy: refused to enter an org for a request`) carries the
 reason.
 
-**One route does not enter the session's org:** `POST /api/v1/orgs/switch`
-declares `tenancy: { entersOrg: false, because }` (`WithAuthOptions`), so a
-member whose active org was suspended, or who was removed from it, can still
-reach the way out — a switch behind the refusal would lock them out of every
-other org they belong to. The handler runs outside any scope, with no org
-facts on the principal, and checks membership of the org it switches _to_.
+**Two routes do not enter the session's org:** `POST /api/v1/orgs/switch`
+and `GET /api/v1/orgs` declare `tenancy: { entersOrg: false, because }`
+(`WithAuthOptions`), so a member whose active org was suspended, or who was
+removed from it, can still see their orgs and reach the way out — a switch
+behind the refusal would lock them out of every other org they belong to. Both
+handlers run outside any scope, with no org facts on the principal, and read
+only the caller's own membership rows (the switch checks membership of the org
+it switches _to_).
 The marker carries a required `because`, like `ownership`; it is not a lever
 for making a 403 go away. Sign-in helps too: `activeOrgForSession` chooses
 among the user's **active** orgs, so a member of one suspended and one active
