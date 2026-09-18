@@ -99,6 +99,13 @@ describe('GET /api/v1/admin/orgs/[id]/export', () => {
     expect((await get()).status).toBe(404);
   });
 
+  it('lets any other export failure surface as a 500 — nothing is best-effort', async () => {
+    mockExport.mockRejectedValue(new Error('db down'));
+    const res = await get();
+    expect(res.status).toBe(500);
+    expect(JSON.parse(await res.text()).error.code).toBe('INTERNAL_ERROR');
+  });
+
   it('honours the per-admin sub-cap before exporting', async () => {
     mockLimiter.check.mockReturnValue({
       success: false,
