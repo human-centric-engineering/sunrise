@@ -65,7 +65,11 @@ const orgRow = (over: Partial<{ id: string; slug: string; status: string }> = {}
   ...over,
 });
 
-const human = (id: string, role = DEFAULT_USER_ROLE) => ({ id, role, accountType: 'HUMAN' });
+const human = (id: string, role: string = DEFAULT_USER_ROLE) => ({
+  id,
+  role,
+  accountType: 'HUMAN',
+});
 
 async function refusal(fn: () => Promise<unknown>): Promise<OrgLifecycleError> {
   try {
