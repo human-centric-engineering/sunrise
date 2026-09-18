@@ -70,6 +70,9 @@ vi.mock('@/lib/db/client', () => ({
     aiAdminAuditLog: {
       updateMany: vi.fn(),
     },
+    orgMembership: {
+      upsert: vi.fn(),
+    },
     dataErasureReceipt: {
       create: vi.fn(),
     },
@@ -349,6 +352,11 @@ describe('PATCH /api/v1/users/:id', () => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(null);
     vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    // The PATCH writes the role and the install-org membership in one
+    // transaction (§106 ruling a); the transaction client is the double.
+    vi.mocked(prisma.$transaction).mockImplementation(((fn: (tx: typeof prisma) => unknown) =>
+      fn(prisma)) as never);
+    vi.mocked(prisma.orgMembership.upsert).mockResolvedValue({} as never);
     // Default to a valid fixture so tests that override findUnique+update independently
     // don't receive undefined from update and produce a garbled response body.
     vi.mocked(prisma.user.update).mockResolvedValue(makeUserFixture());
