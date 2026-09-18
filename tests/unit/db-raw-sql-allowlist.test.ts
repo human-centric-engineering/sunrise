@@ -101,11 +101,6 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'knowledge-graph adjacency aggregation',
   },
   {
-    file: 'app/api/v1/chat/stream/route.ts',
-    calls: 1,
-    why: 'conversation-context vector lookup on the hot path',
-  },
-  {
     file: 'lib/db/drift-probes.ts',
     calls: 6,
     why: 'catalog queries (pg_indexes/pg_constraint/pg_class/pg_policies/information_schema) — reads system catalogs, never tenant rows',
@@ -119,6 +114,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     file: 'lib/orchestration/chat/message-embedder.ts',
     calls: 2,
     why: 'message-embedding vector INSERT/UPDATE (Prisma cannot write vector columns)',
+  },
+  {
+    file: 'lib/orchestration/invite-tokens.ts',
+    calls: 1,
+    why: 'atomic invite-token use_count increment guarded by max_uses — the TOCTOU guard the read-then-write cannot give (moved here from app/api/v1/chat/stream/route.ts in §106 t-673)',
   },
   {
     file: 'lib/orchestration/knowledge/document-manager.ts',
