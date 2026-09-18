@@ -49,7 +49,13 @@ One transaction, in this order:
    set to null. `session` is better-auth's table and carries no FK, so the
    pointer is cleared by hand before the row it names goes. The guard then
    resolves null to the install org at `single` and refuses with `no-org` at
-   `multi` until the user switches or is invited somewhere.
+   `multi` until the user switches or is invited somewhere. One window to
+   know about: the session cookie cache (5 minutes,
+   [security.md](../auth/security.md)) can still present the erased org as the
+   session's active org until it expires; every guarded request in that window
+   is refused at entry (`not-a-member`, since the membership is gone), and
+   `GET /api/v1/orgs` plus the switch — the two routes that do not enter the
+   org — remain the way to another org, as they are for a suspended one.
 3. **The org row.** Memberships and the four credential kinds cascade from it
    (`onDelete: Cascade` on each) — nothing here enumerates them, and a model
    that joins the org later joins the cascade by declaring the same policy.
