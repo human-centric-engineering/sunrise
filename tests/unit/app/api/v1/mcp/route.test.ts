@@ -41,6 +41,7 @@ const mockAuthContext = {
   clientIp: '127.0.0.1',
   userAgent: 'test-agent',
   scopedAgentId: null,
+  orgId: 'cmorg000000000000000other',
 };
 
 const mockServerState = {
@@ -130,6 +131,7 @@ import {
   logMcpAudit,
 } from '@/lib/orchestration/mcp';
 import { POST, GET, DELETE } from '@/app/api/v1/mcp/route';
+import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -959,5 +961,73 @@ describe('stateless mode: the protocol version comes from the header', () => {
     // evidence of a newer client, so they get the conservative floor.
     expect(await versionSeenByHandler({ 'mcp-protocol-version': '1999-01-01' })).toBe('2024-11-05');
     expect(await versionSeenByHandler({ 'mcp-protocol-version': 'banana' })).toBe('2024-11-05');
+  });
+});
+
+describe('the org the key acts for (§106, t-673)', () => {
+  // Each method runs its handler inside the key's org — asserted from inside
+  // the first thing the handler does, not from the arguments anything was
+  // called with — and nothing leaks past the response.
+  const IN_ORG = { orgId: mockAuthContext.orgId, source: 'mcp-key', role: undefined };
+
+  it('POST: the JSON-RPC dispatch sees the key’s org', async () => {
+    let seen: TenantContext | null | undefined;
+    vi.mocked(handleMcpRequest).mockImplementation((async () => {
+      seen = getTenantContext();
+      return { jsonrpc: '2.0', id: 1, result: {} };
+    }) as never);
+
+    const response = await POST(
+      makePostRequest(makeRpcRequest('tools/list'), { [MCP_SESSION_HEADER]: mockSession.id })
+    );
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual(IN_ORG);
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('GET: the stream is opened inside the key’s org', async () => {
+    let seen: TenantContext | null | undefined;
+    vi.mocked(getMcpServerConfig).mockImplementation((async () => {
+      seen = getTenantContext();
+      return mockServerState;
+    }) as never);
+
+    const response = await GET(makeGetRequest());
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual(IN_ORG);
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('DELETE: the session lookup and the audit row see the key’s org', async () => {
+    let seen: TenantContext | null | undefined;
+    mockSessionManager.getSession.mockImplementation(() => {
+      seen = getTenantContext();
+      return mockSession;
+    });
+    mockSessionManager.destroySession.mockReturnValue(true);
+
+    const response = await DELETE(makeDeleteRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
+
+    expect(response.status).toBe(204);
+    expect(seen).toEqual(IN_ORG);
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('a key that cannot enter its org is a 401 before any handler runs', async () => {
+    // `authenticateMcpRequest` answers null for a suspended org or a null-org
+    // key at multi (its own tests); the transport treats that as no key.
+    vi.mocked(authenticateMcpRequest).mockResolvedValue(null);
+    for (const call of [
+      () => POST(makePostRequest(makeRpcRequest('tools/list'))),
+      () => GET(makeGetRequest()),
+      () => DELETE(makeDeleteRequest({ [MCP_SESSION_HEADER]: mockSession.id })),
+    ]) {
+      expect((await call()).status).toBe(401);
+    }
+    expect(handleMcpRequest).not.toHaveBeenCalled();
+    expect(getMcpServerConfig).not.toHaveBeenCalled();
+    expect(mockSessionManager.getSession).not.toHaveBeenCalled();
   });
 });

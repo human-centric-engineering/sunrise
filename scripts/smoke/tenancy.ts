@@ -19,6 +19,13 @@
  * names every manifest section, and erasing the org leaves both users' rows
  * standing — the one with an install membership still holding it.
  *
+ * And credential binding (t-673): an embed token and an MCP key minted in
+ * the org resolve, through the real resolvers, to that org; while the org is
+ * SUSPENDED both are refused (the widget on a suspended customer's site goes
+ * quiet); an invite token minted in the org admits a request acting in it
+ * and reads as wrong-org from the install org; and the backfill re-run
+ * migration's own UPDATE binds a null-org token this run created.
+ *
  * What it deliberately does NOT assert: that every platform ADMIN on the
  * database is an install-org OWNER. The role mapping is applied at creation
  * (migration or hook) and is not re-synced when an admin later promotes or
@@ -52,6 +59,13 @@ import {
   updateOrg,
 } from '@/lib/tenancy/lifecycle';
 import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { resolveEmbedToken } from '@/lib/embed/auth';
+import {
+  authenticateMcpRequest,
+  generateApiKey as generateMcpKey,
+} from '@/lib/orchestration/mcp/auth';
+import { resolveInviteToken } from '@/lib/orchestration/invite-tokens';
 import { exportOrgData } from '@/lib/privacy/export-org';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { ORG_DATA_SOURCES } from '@/lib/privacy/org-sources';
@@ -100,6 +114,7 @@ async function main(): Promise<void> {
   let apiKeyId: string | null = null;
   let chatKeyId: string | null = null;
   let adminKeyId: string | null = null;
+  let agentId: string | null = null;
 
   try {
     // ── The install org ────────────────────────────────────────────────────
@@ -346,11 +361,73 @@ async function main(): Promise<void> {
     // Suspension is enforced where a request enters the org: the real entry
     // function, against the real rows, refuses the org's own OWNER while it
     // is SUSPENDED and admits them again once reinstated.
+    // ── Credentials minted in the org act only there (t-673) ───────────────
+    // The rows the mint routes write, resolved through the real resolvers
+    // against the real org row. The agent is the fixture the two tokens hang
+    // off; it is removed in `finally`, the tokens cascade with the org.
+    const agent = await prisma.aiAgent.create({
+      data: {
+        name: `${PREFIX} agent`,
+        slug: `${PREFIX}-agent-${stamp}`,
+        description: 'smoke fixture',
+        systemInstructions: 'smoke fixture',
+        model: '',
+        provider: '',
+        visibility: 'invite_only',
+      },
+    });
+    agentId = agent.id;
+    const embed = await prisma.aiAgentEmbedToken.create({
+      data: { agentId: agent.id, orgId: org.id, createdBy: owner.id },
+    });
+    const mcp = generateMcpKey();
+    await prisma.mcpApiKey.create({
+      data: {
+        name: `${PREFIX} mcp`,
+        keyHash: mcp.hash,
+        keyPrefix: mcp.prefix,
+        scopes: ['tools:list'],
+        orgId: org.id,
+        createdBy: owner.id,
+      },
+    });
+    const invite = await prisma.aiAgentInviteToken.create({
+      data: { agentId: agent.id, orgId: org.id, createdBy: owner.id },
+    });
+    check(
+      (await resolveEmbedToken(embed.token, '127.0.0.1'))?.orgId === org.id,
+      'an embed token minted in the org resolves to that org'
+    );
+    check(
+      (await authenticateMcpRequest(mcp.plaintext, '127.0.0.1', 'smoke'))?.orgId === org.id,
+      'an MCP key minted in the org resolves to that org'
+    );
+    check(
+      (await runAsOrg(org.id, () => resolveInviteToken(agent.id, invite.token))).ok,
+      'an invite token minted in the org admits a request acting in it'
+    );
+    const fromInstall = await runAsOrg(INSTALL_ORG_ID, () =>
+      resolveInviteToken(agent.id, invite.token)
+    );
+    check(
+      !fromInstall.ok && fromInstall.reason === 'wrong-org',
+      'the same invite token is wrong-org for a request acting in the install org'
+    );
+
+    // Suspension is enforced where a request enters the org: the real entry
+    // function, against the real rows, refuses the org's own OWNER while it
+    // is SUSPENDED and admits them again once reinstated — and the org's
+    // credentials are refused by their own resolvers in the same window.
     await updateOrg(org.id, { status: 'SUSPENDED' });
     const whileSuspended = await enterSessionOrg(owner, org.id, null);
     check(
       isOrgRefusal(whileSuspended) && whileSuspended.refused === 'org-suspended',
       'a SUSPENDED org refuses entry to its own OWNER'
+    );
+    check(
+      (await resolveEmbedToken(embed.token, '127.0.0.1')) === null &&
+        (await authenticateMcpRequest(mcp.plaintext, '127.0.0.1', 'smoke')) === null,
+      'a SUSPENDED org’s embed token and MCP key are refused by their resolvers'
     );
     await updateOrg(org.id, { status: 'ACTIVE' });
     const reinstated = await enterSessionOrg(owner, org.id, null);
@@ -360,6 +437,45 @@ async function main(): Promise<void> {
         reinstated.role === ORG_OWNER_ROLE,
       'a reinstated org admits its OWNER again, with their role'
     );
+    check(
+      (await resolveEmbedToken(embed.token, '127.0.0.1'))?.orgId === org.id,
+      'a reinstated org’s embed token resolves again'
+    );
+
+    // The backfill re-run: a token written with no org (the interim state)
+    // is bound to the install org by the new migration's own statement,
+    // scoped to this row. Read from the file, so the smoke cannot drift from
+    // what deploys.
+    const interim = await prisma.aiAgentEmbedToken.create({
+      data: { agentId: agent.id, createdBy: owner.id },
+    });
+    check(
+      interim.orgId === null,
+      'a token written without an org carries NULL (the interim state)'
+    );
+    const rerun = readFileSync(
+      path.join(
+        process.cwd(),
+        'prisma/migrations/20260918120000_credential_org_backfill/migration.sql'
+      ),
+      'utf8'
+    );
+    const embedUpdate = rerun
+      .split('\n')
+      .find((line) => line.startsWith('UPDATE "ai_agent_embed_token"'));
+    if (!embedUpdate?.endsWith(';'))
+      throw new Error('could not find the embed-token backfill UPDATE in the re-run migration');
+    const rebound = await prisma.$executeRawUnsafe(
+      `${embedUpdate.slice(0, -1)} AND "id" = $1;`,
+      interim.id
+    );
+    check(
+      rebound === 1 &&
+        (await prisma.aiAgentEmbedToken.findUnique({ where: { id: interim.id } }))?.orgId ===
+          INSTALL_ORG_ID,
+      'the backfill re-run binds the interim token to the install org'
+    );
+    await prisma.aiAgentEmbedToken.delete({ where: { id: interim.id } });
 
     // Removing a member revokes the sessions acting in THAT org only.
     const inOrg = await prisma.session.create({
@@ -445,6 +561,7 @@ async function main(): Promise<void> {
       if (id) await prisma.aiApiKey.deleteMany({ where: { id } }).catch(() => undefined);
     }
     if (orgId) await prisma.org.deleteMany({ where: { id: orgId } }).catch(() => undefined);
+    if (agentId) await prisma.aiAgent.deleteMany({ where: { id: agentId } }).catch(() => undefined);
     for (const id of [memberUserId, ownerUserId, otherUserId]) {
       if (id) await prisma.user.deleteMany({ where: { id } }).catch(() => undefined);
     }

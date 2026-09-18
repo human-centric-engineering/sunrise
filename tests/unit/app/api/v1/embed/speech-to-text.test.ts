@@ -70,6 +70,7 @@ import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { POST, OPTIONS } from '@/app/api/v1/embed/speech-to-text/route';
 import { assertNoAudioPersistence } from '@/tests/helpers/no-audio-persistence';
+import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 
 const VALID_TOKEN = 'tok_valid_1234';
 const VALID_CONTEXT = {
@@ -77,6 +78,7 @@ const VALID_CONTEXT = {
   agentSlug: 'support-bot',
   userId: 'embed_abc123',
   allowedOrigins: ['https://partner.com'],
+  orgId: 'cmorg000000000000000other',
 };
 
 function makeFormData(audio?: File | null, language?: string): FormData {
@@ -296,6 +298,22 @@ describe('POST /api/v1/embed/speech-to-text — provider routing', () => {
 });
 
 describe('POST /api/v1/embed/speech-to-text — happy path', () => {
+  it('transcribes inside the token’s org — seen from inside the provider call (§106, t-673)', async () => {
+    let seen: TenantContext | null | undefined;
+    const audio = makeAudioResolution();
+    audio.provider.transcribe.mockImplementation(() => {
+      seen = getTenantContext();
+      return Promise.resolve({ text: 'ok', durationMs: 10, language: 'en', model: 'whisper-1' });
+    });
+    vi.mocked(getAudioProvider).mockResolvedValue(audio as never);
+
+    const response = await POST(makePostRequest());
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual({ orgId: VALID_CONTEXT.orgId, source: 'embed-token', role: undefined });
+    expect(getTenantContext()).toBeNull();
+  });
+
   it('returns transcript and writes a cost log tagged to the embed agent', async () => {
     const audio = makeAudioResolution();
     audio.provider.transcribe.mockResolvedValue({

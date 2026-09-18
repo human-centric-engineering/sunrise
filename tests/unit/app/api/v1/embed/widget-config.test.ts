@@ -49,6 +49,7 @@ import { prisma } from '@/lib/db/client';
 import { getAudioProvider, hasModelWithCapability } from '@/lib/orchestration/llm/provider-manager';
 import { GET, OPTIONS } from '@/app/api/v1/embed/widget-config/route';
 import { DEFAULT_WIDGET_CONFIG } from '@/lib/validations/orchestration';
+import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 
 const VALID_TOKEN = 'tok_valid_1234';
 const VALID_CONTEXT = {
@@ -56,6 +57,7 @@ const VALID_CONTEXT = {
   agentSlug: 'support-bot',
   userId: 'embed_abc123',
   allowedOrigins: ['https://mysite.com'],
+  orgId: 'cmorg000000000000000other',
 };
 
 function makeGetRequest(headers: Record<string, string> = {}): NextRequest {
@@ -147,6 +149,25 @@ describe('GET /api/v1/embed/widget-config', () => {
     expect(body.data.config.primaryColor).toBe('#16a34a');
     expect(body.data.config.headerTitle).toBe('Council Planning');
     expect(body.data.config.sendLabel).toBe(DEFAULT_WIDGET_CONFIG.sendLabel);
+  });
+
+  it('reads the config inside the token’s org — seen from inside the read (§106, t-673)', async () => {
+    let seen: TenantContext | null | undefined;
+    vi.mocked(prisma.aiAgent.findUnique).mockImplementation((() => {
+      seen = getTenantContext();
+      return Promise.resolve({
+        widgetConfig: null,
+        enableVoiceInput: false,
+        enableImageInput: false,
+        enableDocumentInput: false,
+      });
+    }) as never);
+
+    const response = await GET(makeGetRequest({ 'x-embed-token': VALID_TOKEN }));
+
+    expect(response.status).toBe(200);
+    expect(seen).toEqual({ orgId: VALID_CONTEXT.orgId, source: 'embed-token', role: undefined });
+    expect(getTenantContext()).toBeNull();
   });
 
   it('sets wildcard CORS when allowedOrigins is empty', async () => {

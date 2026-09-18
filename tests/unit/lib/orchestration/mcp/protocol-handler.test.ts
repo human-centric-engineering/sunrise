@@ -78,6 +78,7 @@ function makeAuth(overrides: Partial<McpAuthContext> = {}): McpAuthContext {
     clientIp: '127.0.0.1',
     userAgent: 'test/1.0',
     scopedAgentId: null,
+    orgId: 'install',
     ...overrides,
   };
 }

@@ -16,7 +16,16 @@ vi.mock('@/lib/env', () => ({ env: mockEnv }));
 vi.mock('@/lib/db/client', () => ({ prisma: {} }));
 vi.mock('@/lib/logging', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
-import { enterApiKeyOrg, enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
+import {
+  enterApiKeyOrg,
+  enterSessionOrg,
+  isOrgRefusal,
+  orgForMint,
+  orgOfColumn,
+  resolveCredentialOrg,
+} from '@/lib/tenancy/entry';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { ForbiddenError } from '@/lib/api/errors';
 
 const findUnique = vi.fn();
 const db = { orgMembership: { findUnique } } as unknown as Pick<PrismaClient, 'orgMembership'>;
@@ -164,7 +173,7 @@ describe('enterApiKeyOrg', () => {
     expect(findUnique).not.toHaveBeenCalled();
   });
 
-  it('a key with no org is refused at multi (the interim state t-673 closes)', async () => {
+  it('a key with no org is refused at multi (the interim state the t-673 backfill closes)', async () => {
     mockEnv.TENANCY_MODE = 'multi';
     const result = await enterApiKeyOrg(
       { userId: USER.id, scopes: ['chat'], orgId: null, owner },
@@ -185,5 +194,89 @@ describe('enterApiKeyOrg', () => {
       db
     );
     expect(gone && isOrgRefusal(gone) && gone.refused).toBe('not-a-member');
+  });
+});
+
+describe('orgOfColumn — what a credential’s nullable column means', () => {
+  it('names the org it holds, in either mode', () => {
+    expect(orgOfColumn(OTHER)).toBe(OTHER);
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(orgOfColumn(OTHER)).toBe(OTHER);
+  });
+
+  it('reads null as the install org at single and as no org at multi', () => {
+    expect(orgOfColumn(null)).toBe(INSTALL_ORG_ID);
+    expect(orgOfColumn(undefined)).toBe(INSTALL_ORG_ID);
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(orgOfColumn(null)).toBeNull();
+  });
+});
+
+describe('resolveCredentialOrg — a token or key with no user behind it', () => {
+  it('a null org is the install org at single, with no role and the credential’s source', () => {
+    expect(resolveCredentialOrg({ orgId: null, orgStatus: null }, 'embed-token')).toEqual({
+      orgId: INSTALL_ORG_ID,
+      role: null,
+      source: 'embed-token',
+    });
+  });
+
+  it('a null org is refused at multi', () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(resolveCredentialOrg({ orgId: null, orgStatus: null }, 'mcp-key')).toEqual({
+      refused: 'no-org',
+    });
+  });
+
+  it('the install org at single does not consult the status — it cannot be suspended', () => {
+    expect(
+      resolveCredentialOrg({ orgId: INSTALL_ORG_ID, orgStatus: 'SUSPENDED' }, 'mcp-key')
+    ).toEqual({ orgId: INSTALL_ORG_ID, role: null, source: 'mcp-key' });
+  });
+
+  it('any other org must be ACTIVE — a suspended customer’s tokens stop', () => {
+    expect(resolveCredentialOrg({ orgId: OTHER, orgStatus: 'ACTIVE' }, 'embed-token')).toEqual({
+      orgId: OTHER,
+      role: null,
+      source: 'embed-token',
+    });
+    expect(resolveCredentialOrg({ orgId: OTHER, orgStatus: 'SUSPENDED' }, 'embed-token')).toEqual({
+      refused: 'org-suspended',
+    });
+    // A dangling column with no org row to join is not "active" either.
+    expect(resolveCredentialOrg({ orgId: OTHER, orgStatus: null }, 'embed-token')).toEqual({
+      refused: 'org-suspended',
+    });
+  });
+
+  it('at multi the install org is verified like any other', () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(
+      resolveCredentialOrg({ orgId: INSTALL_ORG_ID, orgStatus: 'ACTIVE' }, 'mcp-key')
+    ).toMatchObject({ orgId: INSTALL_ORG_ID });
+    expect(
+      resolveCredentialOrg({ orgId: INSTALL_ORG_ID, orgStatus: 'SUSPENDED' }, 'mcp-key')
+    ).toEqual({ refused: 'org-suspended' });
+  });
+});
+
+describe('orgForMint — the org a credential minted on this call stack binds to', () => {
+  it('is the org the guard entered', async () => {
+    await runAsOrg(OTHER, async () => {
+      expect(orgForMint()).toBe(OTHER);
+    });
+  });
+
+  it('with no context is the install org at single — what an admin key has always minted into', () => {
+    expect(orgForMint()).toBe(INSTALL_ORG_ID);
+  });
+
+  it('with no context at multi is a 403, not a plain throw', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(() => orgForMint()).toThrow(ForbiddenError);
+    // A system scope has no org either: nothing mints from a bypass.
+    await runAsSystem('fixture', async () => {
+      expect(() => orgForMint()).toThrow(ForbiddenError);
+    });
   });
 });

@@ -9,6 +9,7 @@
  * - Returns valid for active token
  * - Returns invalid for expired token
  * - Returns invalid for revoked token
+ * - Returns invalid — as not found — for a token minted in another org (§106 t-673)
  * - Returns 401 unauthenticated
  */
 
@@ -31,6 +32,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findFirst: vi.fn() },
     aiAgentInviteToken: { findFirst: vi.fn() },
+    orgMembership: { findUnique: vi.fn() },
   },
 }));
 
@@ -208,5 +210,48 @@ describe('POST /api/v1/chat/agents/:slug/validate-token', () => {
     );
     expect(body.data.valid).toBe(false);
     expect(body.data.reason).toBe('Token has reached its usage limit');
+  });
+
+  it('answers "not found" for a token minted in another org — nothing enumerates (§106 t-673)', async () => {
+    // The caller acts in OTHER (their session's active org, membership
+    // verified by the real guard); the token was minted in THIRD. The shared
+    // resolver's `wrong-org` is presented exactly like a token that does not
+    // exist, so a caller cannot learn that a token is real elsewhere.
+    const OTHER = 'cmorg000000000000000other';
+    const THIRD = 'cmorg000000000000000third';
+    const inOther = mockAuthenticatedUser();
+    inOther.session = { ...inOther.session, activeOrgId: OTHER } as typeof inOther.session;
+    vi.mocked(auth.api.getSession).mockResolvedValue(inOther);
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      role: 'MEMBER',
+      org: { status: 'ACTIVE' },
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+      id: 'agent-1',
+      visibility: 'invite_only',
+    } as never);
+    vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue({
+      id: 'tok-1',
+      orgId: THIRD,
+      revokedAt: null,
+      expiresAt: null,
+      maxUses: null,
+      useCount: 0,
+    } as never);
+
+    const response = await POST(makeRequest({ inviteToken: 'tok123' }), routeContext);
+
+    expect(response.status).toBe(200);
+    const body = await parseJson<{ success: boolean; data: { valid: boolean; reason: string } }>(
+      response
+    );
+    expect(body.data).toEqual({ valid: false, reason: 'Token not found' });
+
+    // Control: the same token read from inside THIRD is valid.
+    const inThird = mockAuthenticatedUser();
+    inThird.session = { ...inThird.session, activeOrgId: THIRD } as typeof inThird.session;
+    vi.mocked(auth.api.getSession).mockResolvedValue(inThird);
+    const control = await POST(makeRequest({ inviteToken: 'tok123' }), routeContext);
+    expect((await parseJson<{ data: { valid: boolean } }>(control)).data.valid).toBe(true);
   });
 });

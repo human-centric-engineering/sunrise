@@ -21,6 +21,9 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiApiKey: {
@@ -29,6 +32,7 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    orgMembership: { findUnique: vi.fn() },
   },
 }));
 
@@ -61,6 +65,7 @@ import {
   registerAuthorizationPolicy,
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -93,9 +98,20 @@ function makeKeyParams(keyId = KEY_ID) {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
+/** A session acting in `orgId`, with the membership the real guard will read. */
+function sessionIn(orgId: string, role: 'USER' | 'ADMIN' = 'USER') {
+  const base = mockAuthenticatedUser(role);
+  vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+    role: 'MEMBER',
+    org: { status: 'ACTIVE' },
+  } as never);
+  return { ...base, session: { ...base.session, activeOrgId: orgId } };
+}
+
 describe('API Key Endpoints', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
   });
 
@@ -240,6 +256,78 @@ describe('API Key Endpoints', () => {
       const res = await POST(makePostRequest({ name: 'Admin Key', scopes: ['admin'] }));
 
       expect(res.status).toBe(201);
+    });
+
+    // ── The org axis (§106, t-673) ─────────────────────────────────────────
+
+    it('binds the key to the org the request acts in, and says so in the response', async () => {
+      const OTHER = 'cmorg000000000000000other';
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(OTHER));
+      vi.mocked(prisma.aiApiKey.create).mockImplementation((async (args: {
+        data: { orgId: string | null };
+      }) => ({
+        id: KEY_ID,
+        name: 'Acme key',
+        keyPrefix: 'sk_test1',
+        scopes: ['chat'],
+        orgId: args.data.orgId,
+        expiresAt: null,
+        createdAt: new Date(),
+      })) as never);
+
+      const res = await POST(makePostRequest({ name: 'Acme key', scopes: ['chat'] }));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(201);
+      expect(prisma.aiApiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ orgId: OTHER }),
+          select: expect.objectContaining({ orgId: true }),
+        })
+      );
+      expect(json.data.key.orgId).toBe(OTHER);
+    });
+
+    it('binds the install org for a session that chose none (single)', async () => {
+      vi.mocked(prisma.aiApiKey.create).mockResolvedValue({ id: KEY_ID } as never);
+      await POST(makePostRequest({ name: 'Default', scopes: ['chat'] }));
+      expect(prisma.aiApiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ orgId: INSTALL_ORG_ID }) })
+      );
+    });
+
+    it('stores an admin key with NO org — a platform credential', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('ADMIN'));
+      vi.mocked(prisma.aiApiKey.create).mockResolvedValue({ id: KEY_ID } as never);
+      const res = await POST(makePostRequest({ name: 'Platform', scopes: ['admin'] }));
+      expect(res.status).toBe(201);
+      expect(prisma.aiApiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ orgId: null }) })
+      );
+    });
+
+    it('refuses an admin key asked for from inside a customer org — 400, naming no org', async () => {
+      // A platform admin acting in Acme asks for `admin`: the screen says one
+      // org, the credential would reach every org. Mint platform keys from the
+      // install org. The refusal names neither the org nor its id.
+      const OTHER = 'cmorg000000000000000other';
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(OTHER, 'ADMIN'));
+
+      const res = await POST(makePostRequest({ name: 'Oops', scopes: ['admin'] }));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(400);
+      expect(json.error.code).toBe('VALIDATION_ERROR');
+      expect(JSON.stringify(json)).not.toContain(OTHER);
+      expect(prisma.aiApiKey.create).not.toHaveBeenCalled();
+    });
+
+    it('lists the org each key is bound to', async () => {
+      vi.mocked(prisma.aiApiKey.findMany).mockResolvedValue([]);
+      await GET(makeGetRequest());
+      expect(prisma.aiApiKey.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ orgId: true }) })
+      );
     });
 
     it('creates a key with an expiry date when expiresAt is provided', async () => {

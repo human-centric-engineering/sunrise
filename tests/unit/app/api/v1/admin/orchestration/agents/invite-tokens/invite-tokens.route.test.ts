@@ -31,6 +31,7 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    orgMembership: { findUnique: vi.fn() },
   },
 }));
 
@@ -50,6 +51,7 @@ import { DELETE } from '@/app/api/v1/admin/orchestration/agents/[id]/invite-toke
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -172,6 +174,61 @@ describe('Invite Token Endpoints', () => {
 
       expect(res.status).toBe(201);
       expect(json.data.token.label).toBe('Partners');
+    });
+
+    it('binds the org the request acts in, and returns it (§106, t-673)', async () => {
+      const OTHER = 'cmorg000000000000000other';
+      const admin = mockAdminUser();
+      vi.mocked(auth.api.getSession).mockResolvedValue({
+        ...admin,
+        session: { ...admin.session, activeOrgId: OTHER },
+      });
+      vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+        role: 'OWNER',
+        org: { status: 'ACTIVE' },
+      } as never);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        id: AGENT_ID,
+        visibility: 'invite_only',
+        isActive: true,
+      } as never);
+      vi.mocked(prisma.aiAgentInviteToken.create).mockImplementation((async (args: {
+        data: { orgId: string };
+      }) => ({
+        id: TOKEN_ID,
+        token: 'tok',
+        label: 'Acme partners',
+        maxUses: null,
+        useCount: 0,
+        expiresAt: null,
+        orgId: args.data.orgId,
+        createdAt: new Date(),
+      })) as never);
+
+      const response = await POST(makePostRequest({ label: 'Acme partners' }), makeAgentParams());
+      const body = JSON.parse(await response.text());
+
+      expect(response.status).toBe(201);
+      expect(prisma.aiAgentInviteToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ orgId: OTHER }),
+          select: expect.objectContaining({ orgId: true }),
+        })
+      );
+      expect(body.data.token.orgId).toBe(OTHER);
+    });
+
+    it('binds the install org for a session that chose none (single)', async () => {
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
+        id: AGENT_ID,
+        visibility: 'invite_only',
+        isActive: true,
+      } as never);
+      vi.mocked(prisma.aiAgentInviteToken.create).mockResolvedValue({ id: TOKEN_ID } as never);
+      await POST(makePostRequest({ label: 'Default' }), makeAgentParams());
+      expect(prisma.aiAgentInviteToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ orgId: INSTALL_ORG_ID }) })
+      );
     });
 
     it('rejects token creation for non-invite_only agent', async () => {

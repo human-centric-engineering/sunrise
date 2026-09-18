@@ -39,6 +39,7 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn(),
       update: vi.fn(),
     },
+    orgMembership: { findUnique: vi.fn() },
     $executeRaw: vi.fn(),
   },
 }));
@@ -621,6 +622,44 @@ describe('POST /api/v1/chat/stream', () => {
       expect(response.status).toBe(200);
       expect(sseResponse).toHaveBeenCalledOnce();
       expect(prisma.$executeRaw).toHaveBeenCalledOnce();
+    });
+
+    it('refuses a token minted in another org with the words used for a bad token, and spends no use (§106 t-673)', async () => {
+      // The caller's session acts in OTHER (membership verified by the real
+      // guard); the token belongs to THIRD. Same 403 and message as a token
+      // that does not exist — the increment never runs.
+      const OTHER = 'cmorg000000000000000other';
+      const THIRD = 'cmorg000000000000000third';
+      const inOther = createMockSession();
+      vi.mocked(auth.api.getSession).mockResolvedValue({
+        ...inOther,
+        session: { ...inOther.session, activeOrgId: OTHER },
+      });
+      vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+        role: 'MEMBER',
+        org: { status: 'ACTIVE' },
+      } as never);
+      vi.mocked(prisma.aiAgentInviteToken.findFirst).mockResolvedValue({
+        id: 'tok-5',
+        orgId: THIRD,
+        revokedAt: null,
+        expiresAt: null,
+        maxUses: null,
+        useCount: 0,
+      } as never);
+      const request = createMockRequest({
+        ...validPayload,
+        agentSlug: 'private-bot',
+        inviteToken: 'elsewhere-token',
+      });
+
+      const response = await POST(request);
+      const body = await parseResponse<ErrorResponseBody>(response);
+
+      expect(response.status).toBe(403);
+      expect(body.error.message).toBe('Invalid or revoked invite token');
+      expect(prisma.$executeRaw).not.toHaveBeenCalled();
+      expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
     it('should allow access with unlimited token (maxUses null)', async () => {

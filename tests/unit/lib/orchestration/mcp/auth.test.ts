@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -41,9 +45,13 @@ function makeMcpApiKey(
     createdBy: string;
     isActive: boolean;
     expiresAt: Date | null;
+    orgId: string | null;
+    org: { status: string } | null;
   }> = {}
 ) {
   return {
+    orgId: null,
+    org: null,
     id: 'key-id-1',
     name: 'Test Key',
     keyHash: 'hash',
@@ -128,6 +136,7 @@ describe('hashApiKey', () => {
 describe('authenticateMcpRequest', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
   });
 
   it('returns null when bearer token is empty', async () => {
@@ -263,6 +272,50 @@ describe('authenticateMcpRequest', () => {
   });
 });
 
+describe('authenticateMcpRequest — the org the key acts for (§106, t-673)', () => {
+  const OTHER = 'cmorg000000000000000other';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue({} as never);
+  });
+
+  it('reads the org’s status with the key — one query, no second read', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ orgId: OTHER, org: { status: 'ACTIVE' } }) as never
+    );
+    const result = await authenticateMcpRequest('smcp_bound', CLIENT_IP, USER_AGENT);
+    expect(result?.orgId).toBe(OTHER);
+    expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ include: { org: { select: { status: true } } } })
+    );
+  });
+
+  it('a key minted before the column was written is the install org at single', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(makeMcpApiKey() as never);
+    const result = await authenticateMcpRequest('smcp_interim', CLIENT_IP, USER_AGENT);
+    expect(result?.orgId).toBe(INSTALL_ORG_ID);
+  });
+
+  it('… and is refused at multi', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(makeMcpApiKey() as never);
+    expect(await authenticateMcpRequest('smcp_interim', CLIENT_IP, USER_AGENT)).toBeNull();
+    // Refused before the key counts as used.
+    expect(prisma.mcpApiKey.update).not.toHaveBeenCalled();
+  });
+
+  it('a suspended org’s key is refused, and not marked used', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ orgId: OTHER, org: { status: 'SUSPENDED' } }) as never
+    );
+    expect(await authenticateMcpRequest('smcp_suspended', CLIENT_IP, USER_AGENT)).toBeNull();
+    expect(prisma.mcpApiKey.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('hasScope', () => {
   const auth: McpAuthContext = {
     apiKeyId: 'key-1',
@@ -272,6 +325,7 @@ describe('hasScope', () => {
     clientIp: '127.0.0.1',
     userAgent: 'test',
     scopedAgentId: null,
+    orgId: INSTALL_ORG_ID,
   };
 
   it('returns true when the scope is present', () => {

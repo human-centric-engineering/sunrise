@@ -80,6 +80,7 @@ import { resolveEmbedToken, isOriginAllowed } from '@/lib/embed/auth';
 import { streamChat } from '@/lib/orchestration/chat';
 import { embedChatLimiter, imageLimiter } from '@/lib/security/rate-limit';
 import { logger } from '@/lib/logging';
+import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ const VALID_CONTEXT = {
   agentSlug: 'support-bot',
   userId: 'user-1',
   allowedOrigins: ['https://mysite.com'],
+  orgId: 'cmorg000000000000000other',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -280,6 +282,27 @@ describe('POST /api/v1/embed/chat/stream', () => {
       expect(vi.mocked(logger.withContext)).toHaveBeenCalledWith(
         expect.objectContaining({ requestId: 'req-test-123', userAgent: 'test-agent/1.0' })
       );
+    });
+
+    it('runs the stream inside the token’s org — seen from inside, not from the arguments (§106, t-673)', async () => {
+      // `streamChat` is where the handler's work begins; what it sees is what
+      // every conversation write and cost row under it will see.
+      let seen: TenantContext | null | undefined;
+      vi.mocked(streamChat).mockImplementation(() => {
+        seen = getTenantContext();
+        return (async function* () {})();
+      });
+
+      await POST(
+        makePostRequest(
+          { message: 'Hello' },
+          { 'x-embed-token': VALID_TOKEN, origin: 'https://mysite.com' }
+        )
+      );
+
+      expect(seen).toEqual({ orgId: VALID_CONTEXT.orgId, source: 'embed-token', role: undefined });
+      // …and nothing leaks past the response.
+      expect(getTenantContext()).toBeNull();
     });
 
     it('returns SSE response on success', async () => {

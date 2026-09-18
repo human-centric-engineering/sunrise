@@ -25,6 +25,7 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(),
       create: vi.fn(),
     },
+    orgMembership: { findUnique: vi.fn() },
   },
 }));
 
@@ -32,11 +33,21 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
 }));
 
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+vi.mock('@/lib/auth/api-keys', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/api-keys')>()),
+  resolveApiKey: vi.fn().mockResolvedValue(null),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
+import { resolveApiKey } from '@/lib/auth/api-keys';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/agents/[id]/embed-tokens/route';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
@@ -89,6 +100,8 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockEnv.TENANCY_MODE = 'single';
+  vi.mocked(resolveApiKey).mockResolvedValue(null);
   vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
   vi.mocked(prisma.aiAgentEmbedToken.findMany).mockResolvedValue([]);
   vi.mocked(prisma.aiAgentEmbedToken.create).mockResolvedValue(makeToken() as never);
@@ -212,5 +225,75 @@ describe('POST /agents/:id/embed-tokens', () => {
     const response = await POST(makePostRequest({ allowedOrigins: ['not-a-url'] }), makeParams());
 
     expect(response.status).toBe(400);
+  });
+});
+
+describe('POST /agents/:id/embed-tokens — the org the token is minted in (§106, t-673)', () => {
+  const OTHER = 'cmorg000000000000000other';
+
+  it('binds the install org for an admin session that chose none (single)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const response = await POST(makePostRequest({ label: 'Site' }), makeParams());
+    expect(response.status).toBe(201);
+    expect(prisma.aiAgentEmbedToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: INSTALL_ORG_ID }) })
+    );
+  });
+
+  it('binds the org the session acts in — the real guard verifies the membership', async () => {
+    const admin = mockAdminUser();
+    vi.mocked(auth.api.getSession).mockResolvedValue({
+      ...admin,
+      session: { ...admin.session, activeOrgId: OTHER },
+    });
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      role: 'OWNER',
+      org: { status: 'ACTIVE' },
+    } as never);
+    vi.mocked(prisma.aiAgentEmbedToken.create).mockResolvedValue(
+      makeToken({ orgId: OTHER }) as never
+    );
+
+    const response = await POST(makePostRequest({ label: 'Acme site' }), makeParams());
+
+    expect(response.status).toBe(201);
+    expect(prisma.aiAgentEmbedToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: OTHER }) })
+    );
+    // The row is returned whole, so the response carries the org.
+    const body = await parseJson<{ data: { orgId: string } }>(response);
+    expect(body.data.orgId).toBe(OTHER);
+  });
+
+  it('an admin API key mints into the install org at single, and is refused at multi — there is no org to bind', async () => {
+    // `withAdminAuth` enters no org for a platform credential. At single the
+    // implicit context is the install org (what such callers always minted
+    // into); at multi the mint is a 403 that names nothing, not a 500.
+    vi.mocked(resolveApiKey).mockResolvedValue({
+      session: mockAdminUser(),
+      scopes: ['admin'],
+      rateLimitRpm: null,
+      orgId: null,
+    });
+    const request = () =>
+      new NextRequest(
+        `http://localhost:3000/api/v1/admin/orchestration/agents/${AGENT_ID}/embed-tokens`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', authorization: 'Bearer sk_platform' },
+          body: JSON.stringify({ label: 'CI' }),
+        }
+      );
+
+    expect((await POST(request(), makeParams())).status).toBe(201);
+    expect(prisma.aiAgentEmbedToken.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: INSTALL_ORG_ID }) })
+    );
+
+    vi.mocked(prisma.aiAgentEmbedToken.create).mockClear();
+    mockEnv.TENANCY_MODE = 'multi';
+    const refused = await POST(request(), makeParams());
+    expect(refused.status).toBe(403);
+    expect(prisma.aiAgentEmbedToken.create).not.toHaveBeenCalled();
   });
 });

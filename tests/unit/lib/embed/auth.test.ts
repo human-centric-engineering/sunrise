@@ -8,6 +8,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'crypto';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
@@ -24,6 +28,7 @@ vi.mock('@/lib/db/client', () => ({
 vi.mock('@/lib/logging', () => ({
   logger: {
     error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 
@@ -44,6 +49,8 @@ function makeTokenRecord(overrides: Record<string, unknown> = {}) {
     token: 'tok_abc123',
     isActive: true,
     allowedOrigins: ['https://example.com'],
+    orgId: null,
+    org: null,
     agent: {
       id: 'agent-id-1',
       slug: 'support-bot',
@@ -67,6 +74,7 @@ function expectedUserId(recordId: string, clientIp: string): string {
 describe('resolveEmbedToken', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
   });
 
   it('returns null when token is not found (findUnique returns null)', async () => {
@@ -152,6 +160,45 @@ describe('resolveEmbedToken', () => {
     const result = await resolveEmbedToken('tok_abc123', '1.2.3.4');
 
     expect(result).toBeNull();
+  });
+});
+
+describe('resolveEmbedToken — the org the token acts for (§106, t-673)', () => {
+  const OTHER = 'cmorg000000000000000other';
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
+  });
+
+  it('reads the org’s status with the token — one query, no second read', async () => {
+    mockFindUnique.mockResolvedValue(makeTokenRecord({ orgId: OTHER, org: { status: 'ACTIVE' } }));
+    const result = await resolveEmbedToken('tok_abc123', '1.2.3.4');
+    expect(result?.orgId).toBe(OTHER);
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ org: { select: { status: true } } }),
+      })
+    );
+  });
+
+  it('a token minted before the column was written is the install org at single', async () => {
+    mockFindUnique.mockResolvedValue(makeTokenRecord());
+    expect((await resolveEmbedToken('tok_abc123', '1.2.3.4'))?.orgId).toBe(INSTALL_ORG_ID);
+  });
+
+  it('… and is refused at multi', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    mockFindUnique.mockResolvedValue(makeTokenRecord());
+    expect(await resolveEmbedToken('tok_abc123', '1.2.3.4')).toBeNull();
+  });
+
+  it('a suspended org’s token is refused — the widget on that site stops answering', async () => {
+    mockFindUnique.mockResolvedValue(
+      makeTokenRecord({ orgId: OTHER, org: { status: 'SUSPENDED' } })
+    );
+    expect(await resolveEmbedToken('tok_abc123', '1.2.3.4')).toBeNull();
   });
 });
 

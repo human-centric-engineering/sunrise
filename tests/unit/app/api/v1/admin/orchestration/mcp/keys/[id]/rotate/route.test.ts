@@ -210,4 +210,17 @@ describe('POST /api/v1/admin/orchestration/mcp/keys/:id/rotate', () => {
       })
     );
   });
+
+  // ── The org axis (§106, t-673) ─────────────────────────────────────────
+
+  it('never touches the org — rotation replaces the material, not where the key acts', async () => {
+    const response = await POST(makeRequest(), { params: Promise.resolve({ id: VALID_ID }) });
+    expect(response.status).toBe(200);
+    const [args] = vi.mocked(prisma.mcpApiKey.update).mock.calls[0] as [
+      { data: Record<string, unknown>; select: Record<string, unknown> },
+    ];
+    expect(Object.keys(args.data)).not.toContain('orgId');
+    // …and reports it, so the operator sees which org the rotated key still serves.
+    expect(args.select.orgId).toBe(true);
+  });
 });

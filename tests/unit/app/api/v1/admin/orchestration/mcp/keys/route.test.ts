@@ -35,6 +35,7 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       create: vi.fn(),
     },
+    orgMembership: { findUnique: vi.fn() },
   },
 }));
 
@@ -65,6 +66,7 @@ import {
   mockUnauthenticatedUser,
   mockAuthenticatedUser,
 } from '@/tests/helpers/auth';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/mcp/keys/route';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -221,6 +223,50 @@ describe('POST /mcp/keys', () => {
     const body = await parseJson<{ data: { plaintext: string; id: string } }>(response);
     expect(body.data.plaintext).toBe('mcp_secret_abc123');
     expect(body.data.id).toBe(KEY_ID);
+  });
+
+  it('binds the org the request acts in and returns it — the key outlives its creator, not its org (§106, t-673)', async () => {
+    const OTHER = 'cmorg000000000000000other';
+    const admin = mockAdminUser();
+    vi.mocked(auth.api.getSession).mockResolvedValue({
+      ...admin,
+      session: { ...admin.session, activeOrgId: OTHER },
+    });
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      role: 'OWNER',
+      org: { status: 'ACTIVE' },
+    } as never);
+    vi.mocked(generateApiKey).mockReturnValue({
+      plaintext: 'mcp_secret_abc123',
+      hash: 'hashed_value',
+      prefix: 'mcp_abc',
+    });
+    vi.mocked(prisma.mcpApiKey.create).mockImplementation((async (args: {
+      data: { orgId: string };
+    }) => makeApiKey({ orgId: args.data.orgId })) as never);
+
+    const response = await POST(makePostRequest({ name: 'Acme MCP', scopes: ['tools:list'] }));
+    const body = await parseJson<{ data: { orgId: string } }>(response);
+
+    expect(response.status).toBe(201);
+    expect(prisma.mcpApiKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: OTHER }) })
+    );
+    expect(body.data.orgId).toBe(OTHER);
+  });
+
+  it('binds the install org for a session that chose none (single)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(generateApiKey).mockReturnValue({
+      plaintext: 'mcp_secret_abc123',
+      hash: 'hashed_value',
+      prefix: 'mcp_abc',
+    });
+    vi.mocked(prisma.mcpApiKey.create).mockResolvedValue(makeApiKey() as never);
+    await POST(makePostRequest({ name: 'Default', scopes: ['tools:list'] }));
+    expect(prisma.mcpApiKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ orgId: INSTALL_ORG_ID }) })
+    );
   });
 
   it('stores hash and prefix, not plaintext in DB', async () => {
