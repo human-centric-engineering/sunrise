@@ -25,11 +25,13 @@ same discipline with an org as the subject.
 data. **Every Prisma model carrying an `orgId` column must appear there
 exactly once** — as a source with a disposition, or in `ORG_EXCLUDED_SOURCES`
 with a reason — and `org-sources.test.ts` parses `prisma/schema/*.prisma` for
-`orgId` columns and fails until it does. Today that is five models:
-`OrgMembership` and the four credential kinds. When row isolation (§107) adds
-`orgId` to the tenant-owned models, that test names every one of them until
-someone decides what the org receives from it. That is the point: a column can
-join an org, but an export cannot silently omit it.
+`orgId` columns and fails until it does. Today that is 43 models:
+`OrgMembership`, the four credential kinds, and — since row isolation's first
+schema task (§107 t-705) — every tenant-owned model, child rows included. That
+task is the rule working as designed: the test named all 38 new columns until
+each had a disposition, and a fork adding `orgId` to its own model meets the
+same test. That is the point: a column can join an org, but an export cannot
+silently omit it.
 
 The scan matches the column name `orgId` exactly. `Session.activeOrgId` is a
 pointer to the org a session acts in, not the org's data, and does not match.
@@ -46,7 +48,18 @@ The subject manifest's two, read for an org:
   `OrgMembership` is this: who belongs and as what, with each member's id,
   name and email riding along so the roster reads as people. The members'
   _other_ data is theirs, not the org's, and is not included — a member who
-  wants their own record asks for a subject export.
+  wants their own record asks for a subject export. Every tenant-owned model
+  is this too (36 sections: agents, conversations and messages, knowledge
+  bases, documents and chunks, workflows, executions and step results,
+  datasets, evaluations, experiments, hooks, webhooks, cost rows, user
+  memories); three of them `omit` a signing secret —
+  `AiWebhookSubscription.secret`, `AiWorkflowTrigger.signingSecret`,
+  `AiEventHook.secret`. Vector columns are `Unsupported` in Prisma and are
+  never selected, so a chunk's text is exported and its embedding is not.
+- **excluded, with a reason** — `AiMessageEmbedding` (vectors only; the
+  message it derives from is exported) and `AiWorkflowExecutionLeaseEvent`
+  (engine lease bookkeeping; the execution is exported). The reason travels
+  in the bundle's `meta` so the recipient can see what was left out and why.
 - **`attribution`** — the fact that the org holds a thing, not the thing:
   id + label + date. The four credential kinds (`AiApiKey`,
   `AiAgentEmbedToken`, `AiAgentInviteToken`, `McpApiKey`) are this. A key's
