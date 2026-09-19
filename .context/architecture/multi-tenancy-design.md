@@ -323,6 +323,22 @@ BY`; a role is removed by revoking those grants explicitly first.
    derivation to `prisma/schema/*.prisma`. Today it derives the four
    credential models plus `OrgMembership`, which the allowlist removes.
 
+9. **Bypass GUC versus bypass role — open for 3.2/3.3.** The spike validates
+   the bypass as a GUC arm in the policy, and proves (item 7) that the
+   `NOBYPASSRLS` app role can set it. That is the property `runAsSystem`
+   needs, and it is also the property an attacker wants: a SQL injection
+   into the app's connection — a `$queryRawUnsafe` that ever receives user
+   input — becomes a one-statement total bypass
+   (`SELECT set_config('app.bypass_rls','on',true)` in the same transaction),
+   not a cross-row read inside one tenant. The alternative is role-based:
+   `runAsSystem` runs on a second pool connected as a `BYPASSRLS` role the
+   app role cannot assume, and the GUC arm exists only for the migrate-role
+   remedy. Cost: a second DSN and pool at `multi`; benefit: no reachable
+   bypass from the request path at all. 3.2 decides, with the raw-SQL
+   allowlist (`tests/unit/db-raw-sql-allowlist.test.ts`) and the absence of
+   any `$queryRawUnsafe` in `lib/` as the inputs. (Raised by the security
+   review of the spike PR.)
+
 One hazard is about the callers rather than the client. A `PrismaPromise` is
 lazy: the extension hook — and with it the read of the tenant context — runs
 when the promise is awaited, not when it is created. `runAsOrg(org, () =>
