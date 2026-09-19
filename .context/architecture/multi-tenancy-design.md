@@ -168,10 +168,11 @@ background tick → forEachOrg(fn)  one org-scoped context per iteration, per-or
   baseline migration) while `npm run db:tenancy:enable` runs only
   `ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY` over the derived tenant-owned
   set. At `multi` the app connects as a restricted role (no `BYPASSRLS`, not
-  the table owner); migrations and seeds use a privileged DSN. Child rows
-  without their own `orgId` use join-based policies; hot-path children
-  (`AiMessage`, `AiKnowledgeChunk`, `AiMessageEmbedding`, `AiCostLog`)
-  denormalise the column. `orgId` is nullable first and backfilled to the
+  the table owner); migrations and seeds use a privileged DSN. Every
+  tenant-owned row carries its own `orgId`, child rows included — no
+  join-based policies, so the policy, the probe and the injection derive from
+  one column (§107 planning decision, 2026-09-18: a join policy is
+  hand-written per table and cannot be derived). `orgId` is nullable first and backfilled to the
   install org; `NOT NULL` is a later staged migration (the
   `AiKnowledgeDocument.slug` precedent).
 - **Control plane** — `lib/auth/authorization.ts` default policy; override
@@ -203,26 +204,133 @@ exists because its failure mode is silent:
 
 ## Spike register
 
-Open questions a day of throwaway code answers better than a paragraph; resolve
-before sizing the dependent work, and fold findings back into this document.
+Open questions a day of throwaway code answers better than a paragraph. Items
+5 and 6 were resolved by §106 (t-670 and t-671; see
+[`tenancy/identity.md`](../tenancy/identity.md) and
+[`tenancy/context.md`](../tenancy/context.md)). Items 1–4 and the three added
+by §105/§106 were answered on 2026-09-19 by
+`scripts/spikes/rls-chokepoint-spike.ts` (§107 t-704), run against a local
+`pgvector/pgvector:pg15` container direct and through PgBouncer 1.25 in
+transaction mode, and against a Neon preview branch (PostgreSQL 17.11, direct
+and `-pooler`). All 38 checks pass on both. The script header carries the run
+commands; the numbers below are from those runs.
 
-1. **Client extension × interactive transactions.** The documented pattern
-   wraps each op in a _batch_ transaction; callers already inside
-   `prisma.$transaction(async tx => …)` need one `set_config` per transaction,
-   not a nested batch per op.
-2. **Nested-create `orgId`.** `$allModels.create` sees only top-level args;
-   children created via nested writes rely on join policies or explicit
-   denormalisation. `WITH CHECK` is the backstop either way — verify it fires.
-3. **Per-op cost and pooling.** Two round trips per op at `multi`; measure
-   behind Neon's pooled endpoint and PgBouncer transaction mode.
-4. **Dormant policies.** Confirm `CREATE POLICY` without enablement is fully
-   inert for any single-tenant role, and that `migrate dev`'s drift output
-   stays manageable with probes.
-5. **Session `additionalFields` in better-auth 1.7.** Type inference through
-   `customSessionClient`; whether org switching is `updateSession` or a
-   database hook on session create.
-6. **Proxy runtime.** The resolver-seam contract must be Web-standard only —
-   the proxy may run on Edge for Vercel-deployed forks.
+> **The one fact that reshapes 3.3 first:** on Neon the deploy role
+> (`neondb_owner`, via `neon_superuser`) is **not** superuser but **has
+> `BYPASSRLS`**. An app connecting as it is never subject to a policy, FORCE
+> or not. At `multi` the app **must** connect as a separate `NOBYPASSRLS`
+> login role; the migrate DSN keeps `neondb_owner`. The role split is a
+> requirement of the deploy target, not an option.
+
+1. **Client extension × interactive transactions — answered.** A top-level
+   `query.$allOperations` hook fires for ops made through the `tx` client
+   inside `$transaction(async tx => …)`, but the documented per-op
+   `$transaction([set_config, op])` wrap issued from inside one **runs on a
+   different connection and escapes the transaction** — a write made that
+   way survived a rollback. It is not a nesting error; it is silent. So the
+   shape is: an extension `client` component **may replace `$transaction`**
+   (Prisma accepts it; no Proxy over the client needed). The replacement
+   issues one `set_config` at the top of an interactive transaction and runs
+   the callback under an ALS `inTx` flag that makes the per-op hook pass
+   through; the setter itself must be issued **inside** that flag or it is
+   wrapped onto another connection too. For the batch form it prepends the
+   setter and slices the results. Measured: three ops in one interactive
+   transaction → exactly one `set_config`; 20 interleaved per-op wraps across
+   four pooled connections each saw only their org, and an unscoped query
+   afterwards saw 0 rows. The override survives a further `$extends` layer
+   (item 8).
+2. **Nested-create `orgId` — answered.** `WITH CHECK` fires: a nested create
+   with no `orgId` at `multi` is refused (`P2039`, the Postgres message in
+   `meta.driverAdapterError`) and the parent rolls back with it. Two remedies
+   both work: (a) a recursive walk over `create` / `createMany` /
+   `connectOrCreate` using the client's runtime data model (relation fields
+   carry the target model), which landed `orgId` on nested children of two
+   models in one create; (b) a column `DEFAULT
+NULLIF(current_setting('app.current_org', true), '')`, which fills a nested
+   child with no injection because Prisma omits the unset column. **3.2 ships
+   (a)** — at `single` the GUC is never set, so (b) would leave `NULL` there
+   and the one-code-path principle would be lost. Two rules the walk taught:
+   it runs on **every** create whatever the root model (an `AiAgent` create
+   reaches tenant-owned `embedTokens` while `AiAgent` itself is not yet
+   tenant-owned), and at `multi` **every write** is wrapped when a context
+   exists, not only writes on tenant-owned roots — the nested inserts run
+   inside the root's statement and need the GUC. Reads on non-tenant models
+   stay unwrapped; a no-context write on a non-tenant root (the switch route's
+   `session.update`) passes through with `WITH CHECK` as the backstop.
+3. **Per-op cost and pooling — measured.** The wrap is a four-statement
+   transaction (`BEGIN`, `set_config`, op, `COMMIT`) where there was one
+   statement, and the cost is round trips, not work: local direct 0.5 → 2.0 ms
+   median per op (×4), local PgBouncer 0.4 → 1.6 ms (×4), Neon from a
+   developer machine 19 → 63 ms direct and 16 → 65 ms pooled (×3.3–4). Five
+   ops in one interactive transaction cost **0.33–0.46×** of five wraps on
+   every target, so the amortisation lever is transaction scope, not the
+   hook. In-region (Vercel → Neon) the absolute cost is the ×4 of a ~1 ms
+   round trip. Through the pooler: `set_config(…, true)` outside an explicit
+   transaction is gone by the next statement (a one-statement transaction);
+   a **session-level `SET` poisons the pooler's server connection for other
+   clients** (client 2 read client 1's org and an unscoped query saw both
+   orgs' rows) — the wrapped op still saw only its org because `SET LOCAL`
+   inside the transaction overrides the session value, but nothing unwrapped
+   is safe on a poisoned pool. Six interactive transactions each holding
+   400 ms against a client pool of 4 completed in 850 ms locally, 1.1 s on
+   Neon, no errors. Also observed: a pooler keeps server connections
+   authenticated by role OID, so dropping and recreating a role behind it
+   hands out sessions with the old role's (now absent) grants.
+4. **Dormant policies — answered.** `CREATE POLICY` on a table without
+   `ENABLE ROW LEVEL SECURITY` is inert for a `NOBYPASSRLS` role: every row
+   visible, a `NULL`-org insert accepted. After `ENABLE` + `FORCE` the same
+   role sees 0 rows and `WITH CHECK` refuses. `ENABLE` twice is a no-op;
+   `DISABLE` leaves the policies in place and only clears the two
+   `pg_class` flags (`relrowsecurity`, `relforcerowsecurity`) — those flags
+   are the idempotence check `db:tenancy:enable|disable` should read.
+   `prisma migrate diff` from the database to the schema **does not mention
+   policies at all** (it emits only the known unmodelled-index drops), so
+   policies neither appear in nor are dropped by `migrate dev`; the drift
+   probes are the only thing that notices a missing one.
+5. **Session `additionalFields`** — resolved in §106 t-670.
+6. **Proxy runtime** — resolved in §106 t-671.
+7. **FORCE RLS and the migrate role — answered.** A `NOBYPASSRLS` table
+   _owner_ sees every row without FORCE and **sees and updates nothing under
+   FORCE** — a data migration run by such a role backfills zero rows and
+   reports success. A `BYPASSRLS` role (superuser locally, `neondb_owner` on
+   Neon) is unaffected. The remedy for any role is the policy's bypass arm:
+   `current_setting('app.bypass_rls', true) = 'on' OR …` in both `USING` and
+   `WITH CHECK`, set with `set_config('app.bypass_rls','on', true)` inside the
+   transaction — the owner saw everything again with it, and it is what
+   `runAsSystem` maps to. So: policies carry the bypass arm; migrations that
+   touch tenant-owned rows open with the bypass setter (Prisma runs each
+   migration in one transaction); the app role is `NOBYPASSRLS` and is
+   granted `USAGE` on the schema, `SELECT/INSERT/UPDATE/DELETE` on all tables
+   and `USAGE/SELECT` on all sequences, plus `ALTER DEFAULT PRIVILEGES` for
+   tables future migrations create. On Neon `neondb_owner` cannot `DROP OWNED
+BY`; a role is removed by revoking those grants explicitly first.
+8. **Types, layering and the tenant-owned set — answered.** The extended
+   client's `$transaction` hands its callback a `tx` that satisfies a callee
+   typed `(tx: Prisma.TransactionClient)`, so the four such callers need no
+   change (the spike file itself is under `npm run type-check`). A second
+   `$extends` layer inspecting `args.where` on `findMany` composes with the
+   tenancy layer — both hooks fire, scoping intact, and the `$transaction`
+   override is inherited by the outer layer — which is §115's starting point;
+   its per-read cost was not measured separately (one object walk per read).
+   Prisma types the **top-level** `$allOperations` hook's `args` and `query`
+   as `any` (the per-model hooks are typed): 3.2 owes a typed boundary at
+   that one point rather than a lint exemption. The generated client's
+   `_runtimeDataModel` (a private property, stable across Prisma 7) carries
+   every model's field names, kinds, relation targets and **`dbName`**, so
+   the tenant-owned set — "has an `orgId` scalar" minus the system allowlist
+   — and the table names the policies, probes and enable script need are all
+   derivable at runtime with no registration; a schema-parsing test pins the
+   derivation to `prisma/schema/*.prisma`. Today it derives the four
+   credential models plus `OrgMembership`, which the allowlist removes.
+
+One hazard is about the callers rather than the client. A `PrismaPromise` is
+lazy: the extension hook — and with it the read of the tenant context — runs
+when the promise is awaited, not when it is created. `runAsOrg(org, () =>
+prisma.x.findMany())` with a **non-async** callback returns the promise out of
+the scope unawaited and loses the context (it threw at `multi` in the spike);
+an `async` callback keeps it. The guards already call an `async` handler, so
+requests are safe; 3.2 documents the rule for `runAsOrg` / `runAsSystem` /
+`forEachOrg` callers and the harness exercises it.
 
 ## What a fork gets, and what it owns
 
