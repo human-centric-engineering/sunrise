@@ -158,7 +158,12 @@ interface Ctx {
   inTx?: boolean;
 }
 const als = new AsyncLocalStorage<Ctx>();
-const runAsOrg = <T>(orgId: string, fn: () => Promise<T>) => als.run({ orgId }, fn);
+// `async () => await fn()` rather than `fn`: a PrismaPromise is lazy and reads
+// the ALS store when it is awaited, so awaiting INSIDE the scope closes the
+// non-async-callback hazard at the seam instead of at every caller (1f). This
+// is the shape recommended for lib/tenancy/context.ts in 3.2.
+const runAsOrg = <T>(orgId: string, fn: () => Promise<T>) =>
+  als.run({ orgId }, async () => await fn());
 
 const SET_ORG = (orgId: string) => Prisma.sql`SELECT set_config('app.current_org', ${orgId}, true)`;
 const SET_BYPASS = Prisma.sql`SELECT set_config('app.bypass_rls', 'on', true)`;
@@ -186,9 +191,26 @@ function injectOrgId(
     const nested = row[f.name] as Record<string, unknown>;
     if (!nested || typeof nested !== 'object') continue;
     const copy = { ...nested };
-    for (const verb of ['create', 'createMany', 'connectOrCreate']) {
+    for (const verb of ['create', 'createMany', 'connectOrCreate', 'update', 'upsert']) {
       if (copy[verb] === undefined) continue;
-      if (verb === 'createMany') {
+      if (verb === 'update' || verb === 'upsert') {
+        // A nested update/upsert may itself carry nested creates (and an
+        // upsert carries a `create` branch) — recurse into their data.
+        const walkOne = (x: Record<string, unknown>) => {
+          const y = { ...x };
+          if (y.data !== undefined)
+            y.data = injectOrgId(rdm, tenantOwned, f.type, y.data, orgId, stats);
+          if (y.create !== undefined)
+            y.create = injectOrgId(rdm, tenantOwned, f.type, y.create, orgId, stats);
+          if (y.update !== undefined)
+            y.update = injectOrgId(rdm, tenantOwned, f.type, y.update, orgId, stats);
+          return y;
+        };
+        const v = copy[verb];
+        copy[verb] = Array.isArray(v)
+          ? v.map((x) => walkOne(x as Record<string, unknown>))
+          : walkOne(v as Record<string, unknown>);
+      } else if (verb === 'createMany') {
         const cm = copy[verb] as { data?: unknown };
         copy[verb] = { ...cm, data: injectOrgId(rdm, tenantOwned, f.type, cm.data, orgId, stats) };
       } else if (verb === 'connectOrCreate') {
@@ -225,6 +247,12 @@ function tenancyExtension(
 ) {
   const rdm = runtimeDataModel(base);
   const seen: Array<{ model?: string; operation: string; wrapped: boolean }> = [];
+  const internalSeen: Array<{
+    model?: string;
+    operation: string;
+    boundToTx: boolean;
+    inTxFlag: boolean;
+  }> = [];
   const injectStats = { injected: [] as string[] };
 
   const ext = base.$extends({
@@ -235,23 +263,31 @@ function tenancyExtension(
       // `query` as `any` (the per-model hooks are typed). 3.2 owes a typed
       // boundary here; the spike fences the hook instead.
       /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/consistent-type-assertions*/
-      async $allOperations({ model, operation, args, query }) {
+      async $allOperations({ model, operation, args, query, ...rest }) {
         const ctx = als.getStore();
+        // Undocumented: Prisma passes `__internalParams` with a `transaction`
+        // entry for ops bound to an interactive tx. Recorded, not relied on.
+        const internal = (rest as { __internalParams?: { transaction?: unknown } })
+          .__internalParams;
+        const boundToTx = internal?.transaction !== undefined;
+        internalSeen.push({ model, operation, boundToTx, inTxFlag: ctx?.inTx === true });
         const isTenantModel = model !== undefined && opts.tenantOwned.has(model);
         const isRaw = model === undefined;
 
         // Write-side injection (both modes).
         let nextArgs = args;
-        // The walk runs on EVERY create, whatever the root model: AiAgent is not
-        // tenant-owned today but its nested embedTokens are (Q3b).
-        if (opts.inject && model !== undefined && CREATE_OPS.has(operation) && ctx?.orgId) {
-          const a = args as { data?: unknown; create?: unknown };
+        // The walk runs on EVERY write, whatever the root model: AiAgent is not
+        // tenant-owned today but its nested embedTokens are (Q3b), and an
+        // update root can carry a nested create just as a create root can (3d).
+        if (opts.inject && model !== undefined && WRITE_OPS.has(operation) && ctx?.orgId) {
+          const a = args as { data?: unknown; create?: unknown; update?: unknown };
           if (operation === 'upsert') {
             nextArgs = {
               ...a,
               create: injectOrgId(rdm, opts.tenantOwned, model, a.create, ctx.orgId, injectStats),
+              update: injectOrgId(rdm, opts.tenantOwned, model, a.update, ctx.orgId, injectStats),
             } as typeof args;
-          } else {
+          } else if (a.data !== undefined) {
             nextArgs = {
               ...a,
               data: injectOrgId(rdm, opts.tenantOwned, model, a.data, ctx.orgId, injectStats),
@@ -327,7 +363,7 @@ function tenancyExtension(
   }) as unknown as TxFn;
   const patched = ext.$extends({ client: { $transaction: patchedTx } });
 
-  return { ext, patched, seen, injectStats };
+  return { ext, patched, seen, internalSeen, injectStats };
 }
 
 // ---------------------------------------------------------------------------
@@ -604,9 +640,11 @@ async function main() {
     await q(admin, `DROP ROLE IF EXISTS ${OWNER_ROLE}`).catch(() => undefined);
     await q(admin, `CREATE ROLE ${OWNER_ROLE} LOGIN NOBYPASSRLS PASSWORD '${APP_PW}'`);
     await q(admin, `GRANT USAGE, CREATE ON SCHEMA public TO ${OWNER_ROLE}`);
+    // Two entries: if the admin cannot drop another role's table, the role
+    // revoke/drop is still attempted (cleanup runs every entry, logging failures).
+    cleanup.push(() => dropRole(OWNER_ROLE));
     cleanup.push(async () => {
       await q(admin, `DROP TABLE IF EXISTS spike_force`);
-      await dropRole(OWNER_ROLE);
     });
     ownerPool = new Pool({ connectionString: withCreds(ADMIN_URL!, OWNER_ROLE, APP_PW), max: 1 });
     await q(ownerPool, `CREATE TABLE spike_force (id serial PRIMARY KEY, "orgId" text)`);
@@ -656,7 +694,7 @@ async function main() {
 
     // ---- Q1 extension × transactions ------------------------------------------
     section('Q1 extension × transactions (app role, multi)');
-    const { ext, patched, seen } = tenancyExtension(appBase.client, {
+    const { ext, patched, seen, internalSeen } = tenancyExtension(appBase.client, {
       multi: true,
       inject: true,
       tenantOwned,
@@ -780,8 +818,8 @@ async function main() {
       );
       const [n, list] = rows as [number, Array<{ label: string }>];
       report(
-        n === 2 && list.every((l) => l.label.startsWith('spike-B')),
-        '1d  batch $transaction([...]) with prepended set_config scopes every member',
+        n === 2 && list.every((l) => l.label.startsWith('spike-B')) && setConfigCount(from) === 1,
+        '1d  batch $transaction([...]) with prepended set_config scopes every member — and issues exactly one setter',
         {
           n,
           labels: list.map((l) => l.label),
@@ -819,24 +857,56 @@ async function main() {
       );
     }
 
+    // 1g: an op on the ROOT client inside an interactive tx callback is not bound
+    // to the transaction: the inTx flag passes it through UNWRAPPED, on another
+    // connection with no GUC — the mirror image of 1a. Does Prisma tell us?
+    {
+      internalSeen.length = 0;
+      const r = await runAsOrg(ORG_B, async () =>
+        patched.$transaction(async (tx) => {
+          const viaTx = await tx.aiAgentEmbedToken.count({ where: spikeWhere });
+          const viaRoot = await patched.aiAgentEmbedToken.count({ where: spikeWhere });
+          return { viaTx, viaRoot };
+        })
+      );
+      const txOp = internalSeen.find((s) => s.operation === 'count' && s.boundToTx);
+      const rootOp = internalSeen.find(
+        (s) => s.operation === 'count' && !s.boundToTx && s.inTxFlag
+      );
+      report(
+        r.viaTx === 2 && r.viaRoot === 0,
+        '1g  a ROOT-client op inside a tx callback is passed through unwrapped and reads 0 rows (the inverse of 1a) — 3.2 must detect or forbid it',
+        r
+      );
+      report(
+        txOp !== undefined && rootOp !== undefined,
+        "1g  Prisma's undocumented __internalParams.transaction distinguishes a tx-bound op from a root-client op inside the same callback — 3.2 can key the pass-through on THAT instead of the ALS flag",
+        { txBound: txOp, rootInsideCallback: rootOp }
+      );
+    }
+
     // 1f: PrismaPromise is lazy — the hook (and so the ALS read) runs at await time.
     {
+      type Probe = { ok: boolean; n?: number; err?: string };
       const lazy = await runAsOrg(ORG_B, () =>
         patched.aiAgentEmbedToken.count({ where: spikeWhere })
       )
-        .then((n) => ({ ok: true, n }))
-        .catch((e) => ({ ok: false, err: errCode(e) }));
+        .then((n): Probe => ({ ok: true, n }))
+        .catch((e): Probe => ({ ok: false, err: errCode(e) }));
       report(
-        !lazy.ok,
-        '1f  returning a PrismaPromise out of runAsOrg WITHOUT awaiting loses the context (hook runs at .then, outside the scope) — 3.2 must document/guard this',
+        lazy.ok && lazy.n === 2,
+        '1f  a NON-async callback returning a bare PrismaPromise keeps its context because runAsOrg awaits inside the scope (`async () => await fn()`) — the seam-level fix for the lazy-PrismaPromise hazard',
         lazy
       );
-      const eager = await runAsOrg(ORG_B, async () =>
-        patched.aiAgentEmbedToken.count({ where: spikeWhere })
+      const naive = await als
+        .run({ orgId: ORG_B }, () => patched.aiAgentEmbedToken.count({ where: spikeWhere }))
+        .then((n): Probe => ({ ok: true, n }))
+        .catch((e): Probe => ({ ok: false, err: errCode(e) }));
+      report(
+        !naive.ok,
+        '1f  …whereas the bare `als.run(ctx, fn)` shape (what lib/tenancy/context.ts does today) loses it: the hook runs at .then, outside the scope',
+        naive
       );
-      report(eager === 2, '1f  an async callback (await/return inside an async fn) keeps it', {
-        n: eager,
-      });
     }
 
     // ---- Q2 raw SQL ------------------------------------------------------------
@@ -977,6 +1047,26 @@ async function main() {
           embed: created.embedTokens,
           invite: created.inviteTokens,
         }
+      );
+
+      // 3d: an UPDATE root carrying a nested create (review finding): the walk must cover it.
+      const parent = await adminPrisma.client.aiAgent.findFirst({
+        where: { slug: { startsWith: 'spike-nested-' } },
+        select: { id: true },
+      });
+      const viaUpdate = await runAsOrg(ORG_B, async () =>
+        inj.aiAgent.update({
+          where: { id: parent!.id },
+          data: { embedTokens: { create: [{ label: 'spike-nested-via-update' }] } },
+          select: {
+            embedTokens: { where: { label: 'spike-nested-via-update' }, select: { orgId: true } },
+          },
+        })
+      );
+      report(
+        viaUpdate.embedTokens[0]?.orgId === ORG_B,
+        '3d  a nested create under an UPDATE root is injected too (the walk runs on every write, not only creates)',
+        viaUpdate.embedTokens
       );
 
       // 3c: column DEFAULT from the GUC, no injection — does Prisma omit the column so the DEFAULT applies?
