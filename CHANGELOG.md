@@ -20,7 +20,8 @@ release process.
 
 - **Every tenant-owned row knows its org** (multi-tenancy §107, first
   schema task). One migration, `20260919200000_tenant_owned_org_id`, adds a
-  nullable `orgId` + `org Org? @relation(onDelete: Cascade)` + `@@index` to
+  nullable `orgId` + `org Org? @relation(onDelete: Cascade)` (`SetNull` on
+  `AiCostLog`, a billing record) + `@@index` to
   the 38 tenant-owned published models that did not yet carry one — every
   agent, conversation, message, knowledge, workflow, evaluation, experiment,
   webhook and cost row, child tables included (no join-based policies; the

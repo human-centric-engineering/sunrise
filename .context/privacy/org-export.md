@@ -65,10 +65,18 @@ The subject manifest's two, read for an org:
   matches `orgId IS NULL` as well — nothing writes the column until the
   data-layer chokepoint lands, and a fresh install's seeded agents would
   otherwise be missing from its own export (the `smoke:tenancy` run asserts a
-  `NULL`-org agent is carried). At `multi` the match is strict:
-  `db:tenancy:enable` backfills `NULL` before enforcing, so a `NULL` there is
-  an orphan. The four credential attributions never read `NULL` — a `NULL`-org
-  API key is a platform credential, not the org's.
+  `NULL`-org agent is carried). At `multi` the match is strict — `multi` is
+  unreachable until the chokepoint task lifts the `lib/db/client.ts` guard,
+  and the enable script that ships with the policies (§107 3.3) will backfill
+  `NULL` to the install org before enforcing, so a `NULL` seen at `multi` is
+  an orphan. The four credential attributions never read `NULL` — a
+  `NULL`-org API key is a platform credential, not the org's.
+
+  One tenant-owned relation is `SetNull` rather than `Cascade`: `AiCostLog`.
+  A cost row is a billing record, so erasing an org detaches its spend rather
+  than deleting it — the same rule `data-erasure.md` applies to a person —
+  and `smoke:tenancy` asserts the row survives `eraseOrg()` with `orgId` null
+  and the amount unchanged.
 
 - **excluded, with a reason** — `AiMessageEmbedding` (vectors only; the
   message it derives from is exported) and `AiWorkflowExecutionLeaseEvent`
@@ -83,6 +91,16 @@ The subject manifest's two, read for an org:
 `export` sources use Prisma `omit` for secrets, never `select` — a column
 added tomorrow is exported by default, and only a deliberate `omit` keeps it
 out.
+
+## Size
+
+The bundle is assembled in memory and returned as one JSON body. With every
+tenant-owned table in it — messages, chunk text, document content twice
+(original and processed), step results, delivery payloads — a modest install
+produces megabytes, and a hosted function's response limit (Vercel: 4.5 MB)
+is the ceiling. That is acceptable for the installs this ships to today and is
+recorded on the §107 feature as follow-up work (streaming to a stored file),
+not something this endpoint will grow into silently.
 
 ## The one source listed by hand
 

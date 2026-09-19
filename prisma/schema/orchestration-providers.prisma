@@ -40,7 +40,10 @@ model AiCostLog {
   user              User?                @relation("AiCostLogUser", fields: [userId], references: [id], onDelete: SetNull)
 
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
-  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade: a cost row is a billing record (data-erasure.md "Why
+  // retain a cost log?") — erasing an org detaches its spend, it does not
+  // delete it. The one tenant-owned relation with this policy.
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: SetNull)
 
   @@index([orgId])
   @@index([agentId])

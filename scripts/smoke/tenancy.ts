@@ -115,6 +115,7 @@ async function main(): Promise<void> {
   let chatKeyId: string | null = null;
   let adminKeyId: string | null = null;
   let agentId: string | null = null;
+  let costLogId: string | null = null;
 
   try {
     // ── The install org ────────────────────────────────────────────────────
@@ -545,8 +546,39 @@ async function main(): Promise<void> {
         activeOrgId: org.id,
       },
     });
+    // Two rows the org owns, to watch the cascade from both sides: an embed
+    // token (personal to the org → goes with it) and a cost row (a billing
+    // record → detached, never deleted; data-erasure.md "Why retain a cost
+    // log?"). Non-zero spend on purpose, as the erasure smoke explains.
+    const orgToken = await prisma.aiAgentEmbedToken.create({
+      data: { agentId: agent.id, label: `${PREFIX}-org-token-${stamp}`, orgId: org.id },
+    });
+    const orgCost = await prisma.aiCostLog.create({
+      data: {
+        orgId: org.id,
+        agentId: agent.id,
+        model: 'smoke-model',
+        provider: 'smoke-provider',
+        inputTokens: 1,
+        outputTokens: 1,
+        inputCostUsd: 0.25,
+        outputCostUsd: 0.75,
+        totalCostUsd: 1,
+        operation: 'chat',
+      },
+    });
+    costLogId = orgCost.id;
     const erased = await eraseOrg({ orgId: org.id, actorUserId: owner.id });
     orgId = null;
+    check(
+      (await prisma.aiAgentEmbedToken.findUnique({ where: { id: orgToken.id } })) === null,
+      'a tenant-owned row cascades with its org (the embed token is gone)'
+    );
+    const costAfter = await prisma.aiCostLog.findUnique({ where: { id: orgCost.id } });
+    check(
+      costAfter !== null && costAfter.orgId === null && costAfter.totalCostUsd === 1,
+      'the org’s cost row survives its erasure with orgId detached and the spend unchanged (billing record, SetNull)'
+    );
     check(erased.members === 2, 'eraseOrg() reports the two memberships the cascade removed');
     check(
       erased.sessionsCleared === 1,
@@ -578,6 +610,8 @@ async function main(): Promise<void> {
       if (id) await prisma.aiApiKey.deleteMany({ where: { id } }).catch(() => undefined);
     }
     if (orgId) await prisma.org.deleteMany({ where: { id: orgId } }).catch(() => undefined);
+    if (costLogId)
+      await prisma.aiCostLog.deleteMany({ where: { id: costLogId } }).catch(() => undefined);
     if (agentId) await prisma.aiAgent.deleteMany({ where: { id: agentId } }).catch(() => undefined);
     for (const id of [memberUserId, ownerUserId, otherUserId]) {
       if (id) await prisma.user.deleteMany({ where: { id } }).catch(() => undefined);

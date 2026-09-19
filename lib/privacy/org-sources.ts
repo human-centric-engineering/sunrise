@@ -78,8 +78,10 @@ const byCreatedAt = { createdAt: 'asc' } as const;
  * migration and that PR carries `NULL`, and the install org's export would
  * otherwise silently omit it (a fresh install would export none of its
  * seeded agents; caught by the t-705 code review). At `multi` the match is
- * strict: `db:tenancy:enable` backfills `NULL` before enforcing, so a `NULL`
- * there is an orphan, not the install org's. The credential attributions
+ * strict — `multi` is unreachable until §107 3.2 lifts the guard in
+ * `lib/db/client.ts`, and 3.3's `db:tenancy:enable` (not yet written) owns
+ * backfilling `NULL` to the install org before enforcing, so a `NULL` seen
+ * at `multi` is an orphan, not the install org's. The credential attributions
  * below deliberately do NOT use this — a `NULL`-org API key is a platform
  * credential, not the org's.
  */

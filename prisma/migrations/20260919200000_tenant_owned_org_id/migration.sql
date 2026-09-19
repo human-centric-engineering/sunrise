@@ -328,7 +328,8 @@ ALTER TABLE "ai_experiment" ADD CONSTRAINT "ai_experiment_orgId_fkey" FOREIGN KE
 ALTER TABLE "ai_experiment_variant" ADD CONSTRAINT "ai_experiment_variant_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ai_cost_log" ADD CONSTRAINT "ai_cost_log_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "org"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- SET NULL, not CASCADE: a cost row is a billing record; erasing an org detaches its spend rather than deleting it.
+ALTER TABLE "ai_cost_log" ADD CONSTRAINT "ai_cost_log_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "org"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ai_workflow" ADD CONSTRAINT "ai_workflow_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "org"("id") ON DELETE CASCADE ON UPDATE CASCADE;

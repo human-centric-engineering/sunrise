@@ -437,7 +437,10 @@ merge-impact section promises forks.
   @@index([orgId])
   ```
 
-  plus a back-relation line on `Org`. `tests/unit/lib/tenancy/model-classification.test.ts`
+  plus a back-relation line on `Org`. `Cascade` is the rule for data that is
+  the org's; a retained record (a billing row — `AiCostLog` is the one core
+  case) uses `onDelete: SetNull` instead, per the FK rule in `CLAUDE.md`.
+  `tests/unit/lib/tenancy/model-classification.test.ts`
   names every model that is neither tenant-owned nor on the two allowlists in
   `lib/tenancy/classification.ts` (`SYSTEM_MODELS`, `GLOBAL_CONFIG_MODELS`)
   until it is classified, and `tests/unit/lib/privacy/org-sources.test.ts`
