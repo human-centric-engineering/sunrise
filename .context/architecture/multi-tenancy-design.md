@@ -335,8 +335,13 @@ BY`; a role is removed by revoking those grants explicitly first.
    app role cannot assume, and the GUC arm exists only for the migrate-role
    remedy. Cost: a second DSN and pool at `multi`; benefit: no reachable
    bypass from the request path at all. 3.2 decides, with the raw-SQL
-   allowlist (`tests/unit/db-raw-sql-allowlist.test.ts`) and the absence of
-   any `$queryRawUnsafe` in `lib/` as the inputs. (Raised by the security
+   allowlist (`tests/unit/db-raw-sql-allowlist.test.ts`) as the input: on
+   2026-09-19 `lib/` and `app/` hold ten `$queryRawUnsafe` /
+   `$executeRawUnsafe` sites (vector search, cost reports, conversation
+   search, the knowledge seeder and embedder), every one passing values as
+   `$n` parameters and using the unsafe form only for SQL structure — the
+   injection would have to arrive through a future site, which is what the
+   allowlist exists to make deliberate. (Raised by the security
    review of the spike PR.)
 
 One hazard is about the callers rather than the client. A `PrismaPromise` is
