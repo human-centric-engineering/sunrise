@@ -39,6 +39,10 @@ model AiWorkflow {
   triggers         AiWorkflowTrigger[]
   evaluationRuns   AiEvaluationRun[]     @relation("AiEvaluationRunWorkflow")
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([createdBy])
   @@index([isActive])
   @@index([isTemplate])
@@ -66,7 +70,11 @@ model AiWorkflowVersion {
   publishedFor AiWorkflow[]          @relation("WorkflowPublishedVersion")
   executions   AiWorkflowExecution[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([workflowId, version])
+  @@index([orgId])
   @@index([workflowId])
   @@map("ai_workflow_version")
 }
@@ -94,6 +102,10 @@ model AiWorkflowSchedule {
   workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   creator  User?      @relation("AiWorkflowScheduleCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([workflowId])
   @@index([isEnabled, nextRunAt])
   @@map("ai_workflow_schedule")
@@ -130,7 +142,11 @@ model AiWorkflowTrigger {
   workflow AiWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   creator  User?      @relation("AiWorkflowTriggerCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([channel, workflowId]) // one trigger per (channel, workflow); v2 may relax for multi-event setups
+  @@index([orgId])
   @@index([workflowId])
   @@index([channel, isEnabled])
   @@map("ai_workflow_trigger")
@@ -238,11 +254,15 @@ model AiWorkflowExecution {
   runningSteps   AiWorkflowRunningStep[]
   leaseEvents    AiWorkflowExecutionLeaseEvent[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   // Inbound-trigger dedup keyed on `dedupKey`. Route computes per-channel scope:
   //   - shared-secret channels (slack, postmark): `<channel>:<externalId>` — globally per channel
   //   - per-trigger HMAC: `hmac:<workflowId>:<externalId>` — scoped per trigger
   // Postgres treats NULLs as distinct, so non-inbound rows (NULL dedupKey) never collide.
   @@unique([dedupKey], map: "ai_workflow_execution_dedup_key")
+  @@index([orgId])
   @@index([workflowId])
   @@index([versionId])
   @@index([userId])
@@ -283,6 +303,10 @@ model AiWorkflowStepDispatch {
 
   execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([executionId, stepId]) // resume-time replay lookup per execution+step
   @@index([createdAt]) // future cleanup of stale cache rows
   @@map("ai_workflow_step_dispatch")
@@ -325,7 +349,11 @@ model AiWorkflowRunningStep {
 
   execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([executionId, stepId])
+  @@index([orgId])
   @@index([executionId])
   @@map("ai_workflow_running_step")
 }
@@ -355,6 +383,10 @@ model AiWorkflowExecutionLeaseEvent {
 
   execution AiWorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([executionId, createdAt])
   @@index([createdAt]) // retention prune
   @@map("ai_workflow_execution_lease_event")

@@ -36,6 +36,9 @@ model AiConversation {
   share            AiConversationShare?
   outboundMessages AiOutboundMessage[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   // `name:` sets the Client-API compound-key (used by findUnique in
   // lib/orchestration/inbound/conversation-resolver.ts); `map:` pins the DB
   // constraint name. Prisma 7's migrate diff ignores `name:` for the DB object
@@ -43,6 +46,7 @@ model AiConversation {
   // `ALTER INDEX ... RENAME` on every `migrate dev` (issue #283). `map:` makes
   // the derived name match the deployed object so the rename disappears.
   @@unique([agentId, channel, fromAddress], name: "ai_conversation_inbound_key", map: "ai_conversation_inbound_key")
+  @@index([orgId])
   @@index([userId])
   @@index([agentId])
   @@index([contextType, contextId])
@@ -75,6 +79,10 @@ model AiOutboundMessage {
 
   conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([conversationId, createdAt])
   @@map("ai_outbound_message")
 }
@@ -106,6 +114,10 @@ model AiConversationShare {
 
   conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([expiresAt])
   @@map("ai_conversation_share")
 }
@@ -150,6 +162,10 @@ model AiMessage {
   evaluationLogs   AiEvaluationLog[]
   messageEmbedding AiMessageEmbedding?
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([conversationId])
   @@index([conversationId, createdAt])
   // Serves the embedding-backfill anti-join in
@@ -198,6 +214,10 @@ model AiMessageEmbedding {
 
   message AiMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([messageId])
   @@map("ai_message_embedding")
 }
@@ -221,6 +241,10 @@ model AiEventHook {
   creator    User?                 @relation("AiEventHookCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   deliveries AiEventHookDelivery[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([eventType])
   @@index([isEnabled])
   @@map("ai_event_hook")
@@ -243,6 +267,10 @@ model AiEventHookDelivery {
 
   hook AiEventHook @relation(fields: [hookId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([hookId])
   @@index([status])
   @@index([nextRetryAt])
@@ -263,7 +291,11 @@ model AiUserMemory {
   user  User    @relation("AiUserMemoryUser", fields: [userId], references: [id], onDelete: Cascade)
   agent AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([userId, agentId, key])
+  @@index([orgId])
   @@index([userId, agentId])
   @@map("ai_user_memory")
 }

@@ -42,6 +42,48 @@ model Org {
   inviteTokens AiAgentInviteToken[]
   mcpApiKeys   McpApiKey[]
 
+  // Every tenant-owned row (§107 t-705): the relation is what lets `eraseOrg()`
+  // cascade without enumerating tables. A fork's own tenant-owned model adds
+  // its line here the same way.
+  aiAgents                          AiAgent[]
+  aiAgentVersions                   AiAgentVersion[]
+  aiAgentCapabilitys                AiAgentCapability[]
+  aiConversations                   AiConversation[]
+  aiConversationShares              AiConversationShare[]
+  aiMessages                        AiMessage[]
+  aiMessageEmbeddings               AiMessageEmbedding[]
+  aiOutboundMessages                AiOutboundMessage[]
+  aiUserMemorys                     AiUserMemory[]
+  aiEventHooks                      AiEventHook[]
+  aiEventHookDeliverys              AiEventHookDelivery[]
+  aiDatasets                        AiDataset[]
+  aiDatasetCases                    AiDatasetCase[]
+  aiEvaluationSessions              AiEvaluationSession[]
+  aiEvaluationLogs                  AiEvaluationLog[]
+  aiEvaluationRuns                  AiEvaluationRun[]
+  aiEvaluationCaseResults           AiEvaluationCaseResult[]
+  aiAgentKnowledgeDocuments         AiAgentKnowledgeDocument[]
+  aiAgentKnowledgeTags              AiAgentKnowledgeTag[]
+  aiKnowledgeBases                  AiKnowledgeBase[]
+  aiKnowledgeDocuments              AiKnowledgeDocument[]
+  aiKnowledgeDocumentRevisions      AiKnowledgeDocumentRevision[]
+  aiKnowledgeDocumentPendingChanges AiKnowledgeDocumentPendingChange[]
+  aiKnowledgeChunks                 AiKnowledgeChunk[]
+  aiKnowledgeDocumentTags           AiKnowledgeDocumentTag[]
+  aiWebhookSubscriptions            AiWebhookSubscription[]
+  aiWebhookDeliverys                AiWebhookDelivery[]
+  aiExperiments                     AiExperiment[]
+  aiExperimentVariants              AiExperimentVariant[]
+  aiCostLogs                        AiCostLog[]
+  aiWorkflows                       AiWorkflow[]
+  aiWorkflowVersions                AiWorkflowVersion[]
+  aiWorkflowSchedules               AiWorkflowSchedule[]
+  aiWorkflowTriggers                AiWorkflowTrigger[]
+  aiWorkflowExecutions              AiWorkflowExecution[]
+  aiWorkflowStepDispatchs           AiWorkflowStepDispatch[]
+  aiWorkflowRunningSteps            AiWorkflowRunningStep[]
+  aiWorkflowExecutionLeaseEvents    AiWorkflowExecutionLeaseEvent[]
+
   @@map("org")
 }
 

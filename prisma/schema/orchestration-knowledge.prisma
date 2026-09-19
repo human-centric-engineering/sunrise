@@ -24,6 +24,10 @@ model AiKnowledgeBase {
 
   documents AiKnowledgeDocument[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@map("ai_knowledge_base")
 }
 
@@ -91,6 +95,10 @@ model AiKnowledgeDocument {
   revisions      AiKnowledgeDocumentRevision[]
   pendingChanges AiKnowledgeDocumentPendingChange[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([uploadedBy])
   @@index([status])
   @@index([scope])
@@ -130,7 +138,11 @@ model AiKnowledgeDocumentRevision {
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   actor    User?               @relation("AiKnowledgeDocumentRevisionActor", fields: [actorId], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([documentId, version])
+  @@index([orgId])
   @@index([documentId, createdAt])
   @@map("ai_knowledge_document_revision")
 }
@@ -159,6 +171,10 @@ model AiKnowledgeDocumentPendingChange {
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   actor    User?               @relation("AiKnowledgeDocumentPendingChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([documentId, createdAt])
   @@map("ai_knowledge_document_pending_change")
 }
@@ -219,6 +235,10 @@ model AiKnowledgeChunk {
   // Relations
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([documentId])
   @@index([chunkType])
   @@index([patternNumber])
@@ -250,7 +270,11 @@ model AiKnowledgeDocumentTag {
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   tag      KnowledgeTag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@id([documentId, tagId])
+  @@index([orgId])
   @@index([tagId])
   @@map("ai_knowledge_document_tag")
 }
@@ -264,7 +288,11 @@ model AiAgentKnowledgeDocument {
   agent    AiAgent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@id([agentId, documentId])
+  @@index([orgId])
   @@index([documentId])
   @@map("ai_agent_knowledge_document")
 }
@@ -278,7 +306,11 @@ model AiAgentKnowledgeTag {
   agent AiAgent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
   tag   KnowledgeTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@id([agentId, tagId])
+  @@index([orgId])
   @@index([tagId])
   @@map("ai_agent_knowledge_tag")
 }

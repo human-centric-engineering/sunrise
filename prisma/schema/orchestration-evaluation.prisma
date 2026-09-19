@@ -23,6 +23,10 @@ model AiEvaluationSession {
   logs               AiEvaluationLog[]
   experimentVariants AiExperimentVariant[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([userId])
   @@index([agentId])
   @@index([status])
@@ -58,6 +62,10 @@ model AiEvaluationLog {
   session AiEvaluationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   message AiMessage?          @relation(fields: [messageId], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([sessionId])
   @@index([messageId])
   @@index([eventType])
@@ -97,6 +105,10 @@ model AiDataset {
   evaluationRuns AiEvaluationRun[]
   experiments    AiExperiment[]    @relation("AiExperimentDataset")
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([userId, updatedAt])
   @@map("ai_dataset")
 }
@@ -122,7 +134,11 @@ model AiDatasetCase {
   dataset AiDataset                @relation(fields: [datasetId], references: [id], onDelete: Cascade)
   results AiEvaluationCaseResult[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([datasetId, position])
+  @@index([orgId])
   @@index([datasetId])
   @@map("ai_dataset_case")
 }
@@ -196,6 +212,10 @@ model AiEvaluationRun {
   results  AiEvaluationCaseResult[]
   variants AiExperimentVariant[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([userId, updatedAt])
   @@index([status, lockedAt])
   @@index([datasetId])
@@ -232,7 +252,11 @@ model AiEvaluationCaseResult {
   run         AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   datasetCase AiDatasetCase   @relation(fields: [datasetCaseId], references: [id])
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([runId, casePosition])
+  @@index([orgId])
   @@index([runId])
   @@index([datasetCaseId])
   @@map("ai_evaluation_case_result")

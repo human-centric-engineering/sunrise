@@ -42,6 +42,10 @@ model AiWebhookSubscription {
   user       User                @relation("AiWebhookUser", fields: [createdBy], references: [id], onDelete: Cascade)
   deliveries AiWebhookDelivery[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([isActive])
   @@index([createdBy])
   @@index([channel])
@@ -64,6 +68,10 @@ model AiWebhookDelivery {
 
   subscription AiWebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([subscriptionId])
   @@index([status])
   @@index([nextRetryAt])
@@ -128,6 +136,10 @@ model AiExperiment {
   creator  User?                 @relation("AiExperimentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   variants AiExperimentVariant[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([agentId])
   @@index([status])
   @@index([datasetId])
@@ -158,6 +170,10 @@ model AiExperimentVariant {
   evaluationSession AiEvaluationSession? @relation(fields: [evaluationSessionId], references: [id], onDelete: SetNull)
   evaluationRun     AiEvaluationRun?     @relation(fields: [evaluationRunId], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([experimentId])
   @@index([evaluationSessionId])
   @@index([evaluationRunId])

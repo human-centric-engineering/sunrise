@@ -134,6 +134,10 @@ model AiAgent {
   grantedTags      AiAgentKnowledgeTag[]
   mcpApiKeys       McpApiKey[]
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([createdBy])
   @@index([provider])
   @@index([isActive, visibility])
@@ -208,7 +212,11 @@ model AiAgentVersion {
   agent   AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
   creator User?   @relation("AgentVersionCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([agentId, version])
+  @@index([orgId])
   @@map("ai_agent_version")
 }
 
@@ -294,7 +302,11 @@ model AiAgentCapability {
   agent      AiAgent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
   capability AiCapability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
   @@unique([agentId, capabilityId])
+  @@index([orgId])
   @@index([agentId])
   @@index([capabilityId])
   @@map("ai_agent_capability")

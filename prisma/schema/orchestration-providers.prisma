@@ -39,6 +39,10 @@ model AiCostLog {
   workflowExecution AiWorkflowExecution? @relation(fields: [workflowExecutionId], references: [id], onDelete: SetNull)
   user              User?                @relation("AiCostLogUser", fields: [userId], references: [id], onDelete: SetNull)
 
+  orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
   @@index([agentId])
   @@index([conversationId])
   @@index([workflowExecutionId])
