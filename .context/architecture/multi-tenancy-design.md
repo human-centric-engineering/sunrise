@@ -303,9 +303,12 @@ NULLIF(current_setting('app.current_org', true), '')`, which fills a nested
    `ENABLE ROW LEVEL SECURITY` is inert for a `NOBYPASSRLS` role: every row
    visible, a `NULL`-org insert accepted. After `ENABLE` + `FORCE` the same
    role sees 0 rows and `WITH CHECK` refuses. `ENABLE` twice is a no-op;
-   `DISABLE` leaves the policies in place and only clears the two
-   `pg_class` flags (`relrowsecurity`, `relforcerowsecurity`) — those flags
-   are the idempotence check `db:tenancy:enable|disable` should read.
+   `DISABLE ROW LEVEL SECURITY` **plus** `NO FORCE ROW LEVEL SECURITY` (two
+   independent flags; `DISABLE` alone leaves `relforcerowsecurity` set)
+   leave the policies in place and clear the two `pg_class` flags
+   (`relrowsecurity`, `relforcerowsecurity`) — those flags are the
+   idempotence check `db:tenancy:enable|disable` should read, and the
+   disable script must issue both statements.
    `prisma migrate diff` from the database to the schema **does not mention
    policies at all** (it emits only the known unmodelled-index drops), so
    policies neither appear in nor are dropped by `migrate dev`; the drift

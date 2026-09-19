@@ -206,6 +206,14 @@ function injectOrgId(
         // A nested update/upsert may itself carry nested creates (and an
         // upsert carries a `create` branch) — recurse into their data.
         const walkOne = (x: Record<string, unknown>) => {
+          // To-one shorthand: `relation: { update: { ...fields } }` carries no
+          // `data`/`where` wrapper — the object IS the update payload.
+          if (verb === 'update' && x.data === undefined && x.where === undefined) {
+            return injectOrgId(rdm, tenantOwned, f.type, x, orgId, stats, false) as Record<
+              string,
+              unknown
+            >;
+          }
           const y = { ...x };
           if (y.data !== undefined)
             y.data = injectOrgId(rdm, tenantOwned, f.type, y.data, orgId, stats, false);
@@ -361,11 +369,13 @@ function tenancyExtension(
   });
 
   // Interactive-transaction override as a `client` component (Prisma lets an
-  // extension redefine `$transaction` — Q1b). It closes over `ext`, the layer
-  // that carries the query hooks, so the `tx` handed to the callback still
-  // injects. One set_config at the top, then the callback runs with `inTx`
-  // set so per-op wrapping is skipped — the setter itself is issued INSIDE
-  // that scope, or it would be wrapped onto a different connection (Q1a).
+  // extension redefine `$transaction` — Q1b). It delegates to the runtime's
+  // own `$transaction` with the OUTERMOST client as `this`, so the `tx` handed
+  // to the callback carries every layer's hooks (6b). One set_config at the
+  // top, then the callback runs with `inTx` set so per-op wrapping is skipped
+  // — the setter itself is issued INSIDE that scope, or it would be wrapped
+  // onto a different connection (Q1a). Note for 3.2: with no context at multi
+  // this throws synchronously rather than returning a rejected promise.
   type TxFn = PrismaClient['$transaction'];
   type InteractiveFn = (tx: Prisma.TransactionClient) => Promise<unknown>;
   type TxOptions = {
@@ -835,7 +845,7 @@ async function main() {
       );
     }
 
-    // 1c: the Proxy-patched client — one set_config per interactive tx, none per op inside.
+    // 1c: the patched client — one set_config per interactive tx, none per op inside.
     {
       const from = appBase.events.length;
       seen.length = 0;
@@ -1462,9 +1472,17 @@ async function main() {
     );
   } finally {
     section('cleanup');
-    await appBase?.client.$disconnect();
-    await appPooled?.client.$disconnect();
-    await ownerPool?.end();
+    // Disconnects first (so DROP ROLE is not blocked by our own sessions), but a
+    // rejected disconnect must not skip the cleanup that follows.
+    for (const close of [
+      () => appBase?.client.$disconnect(),
+      () => appPooled?.client.$disconnect(),
+      () => ownerPool?.end(),
+    ]) {
+      await Promise.resolve()
+        .then(close)
+        .catch((e: unknown) => console.error('  disconnect failed:', errCode(e)));
+    }
     await runCleanup();
     await adminPrisma.client.$disconnect();
     await admin.end();
