@@ -169,20 +169,29 @@ const SET_ORG = (orgId: string) => Prisma.sql`SELECT set_config('app.current_org
 const SET_BYPASS = Prisma.sql`SELECT set_config('app.bypass_rls', 'on', true)`;
 
 /** Recursively inject `orgId` on every nested create whose target model is tenant-owned. */
+/**
+ * `stamp` is true only for a create-shaped node (the data of a create /
+ * createMany, an upsert's `create` branch, a connectOrCreate's `create`).
+ * Update-shaped nodes (update / updateMany data, an upsert's `update` branch)
+ * are DESCENDED for the nested creates they may carry but never stamped —
+ * stamping an update would `SET orgId = <current org>` and move a row
+ * between orgs wherever RLS is not enforcing (review finding, 3e).
+ */
 function injectOrgId(
   rdm: Rdm,
   tenantOwned: ReadonlyMap<string, string>,
   model: string,
   data: unknown,
   orgId: string,
-  stats: { injected: string[] }
+  stats: { injected: string[] },
+  stamp: boolean
 ): unknown {
   if (Array.isArray(data)) {
-    return data.map((d) => injectOrgId(rdm, tenantOwned, model, d, orgId, stats));
+    return data.map((d) => injectOrgId(rdm, tenantOwned, model, d, orgId, stats, stamp));
   }
   if (!data || typeof data !== 'object') return data;
   const row = { ...(data as Record<string, unknown>) };
-  if (tenantOwned.has(model) && row.orgId === undefined && row.org === undefined) {
+  if (stamp && tenantOwned.has(model) && row.orgId === undefined && row.org === undefined) {
     row.orgId = orgId;
     stats.injected.push(model);
   }
@@ -199,11 +208,11 @@ function injectOrgId(
         const walkOne = (x: Record<string, unknown>) => {
           const y = { ...x };
           if (y.data !== undefined)
-            y.data = injectOrgId(rdm, tenantOwned, f.type, y.data, orgId, stats);
+            y.data = injectOrgId(rdm, tenantOwned, f.type, y.data, orgId, stats, false);
           if (y.create !== undefined)
-            y.create = injectOrgId(rdm, tenantOwned, f.type, y.create, orgId, stats);
+            y.create = injectOrgId(rdm, tenantOwned, f.type, y.create, orgId, stats, true);
           if (y.update !== undefined)
-            y.update = injectOrgId(rdm, tenantOwned, f.type, y.update, orgId, stats);
+            y.update = injectOrgId(rdm, tenantOwned, f.type, y.update, orgId, stats, false);
           return y;
         };
         const v = copy[verb];
@@ -212,18 +221,21 @@ function injectOrgId(
           : walkOne(v as Record<string, unknown>);
       } else if (verb === 'createMany') {
         const cm = copy[verb] as { data?: unknown };
-        copy[verb] = { ...cm, data: injectOrgId(rdm, tenantOwned, f.type, cm.data, orgId, stats) };
+        copy[verb] = {
+          ...cm,
+          data: injectOrgId(rdm, tenantOwned, f.type, cm.data, orgId, stats, true),
+        };
       } else if (verb === 'connectOrCreate') {
         const coc = copy[verb];
         const one = (x: Record<string, unknown>) => ({
           ...x,
-          create: injectOrgId(rdm, tenantOwned, f.type, x.create, orgId, stats),
+          create: injectOrgId(rdm, tenantOwned, f.type, x.create, orgId, stats, true),
         });
         copy[verb] = Array.isArray(coc)
           ? coc.map((x) => one(x as Record<string, unknown>))
           : one(coc as Record<string, unknown>);
       } else {
-        copy[verb] = injectOrgId(rdm, tenantOwned, f.type, copy[verb], orgId, stats);
+        copy[verb] = injectOrgId(rdm, tenantOwned, f.type, copy[verb], orgId, stats, true);
       }
     }
     row[f.name] = copy;
@@ -284,13 +296,37 @@ function tenancyExtension(
           if (operation === 'upsert') {
             nextArgs = {
               ...a,
-              create: injectOrgId(rdm, opts.tenantOwned, model, a.create, ctx.orgId, injectStats),
-              update: injectOrgId(rdm, opts.tenantOwned, model, a.update, ctx.orgId, injectStats),
+              create: injectOrgId(
+                rdm,
+                opts.tenantOwned,
+                model,
+                a.create,
+                ctx.orgId,
+                injectStats,
+                true
+              ),
+              update: injectOrgId(
+                rdm,
+                opts.tenantOwned,
+                model,
+                a.update,
+                ctx.orgId,
+                injectStats,
+                false
+              ),
             } as typeof args;
           } else if (a.data !== undefined) {
             nextArgs = {
               ...a,
-              data: injectOrgId(rdm, opts.tenantOwned, model, a.data, ctx.orgId, injectStats),
+              data: injectOrgId(
+                rdm,
+                opts.tenantOwned,
+                model,
+                a.data,
+                ctx.orgId,
+                injectStats,
+                CREATE_OPS.has(operation)
+              ),
             } as typeof args;
           }
         }
@@ -337,11 +373,27 @@ function tenancyExtension(
     timeout?: number;
     isolationLevel?: Prisma.TransactionIsolationLevel;
   };
-  const originalTx = ext.$transaction.bind(ext) as unknown as (
+  // The runtime's own `$transaction` (an own property of the base client),
+  // called with `this` = the OUTERMOST client via Prisma.getExtensionContext.
+  // Closing over `ext.$transaction` instead would clone the tx client from
+  // this inner layer, so a hook added by a LATER $extends (§115's guard)
+  // would never fire inside a transaction (review finding, 6b).
+  // Read by property get, not getOwnPropertyDescriptor: the client is a Proxy
+  // whose `ownKeys` trap lists `$transaction` but whose descriptor trap does not.
+  // Deliberately unbound — it is re-bound with `.call(outermost)` below.
+  const runtimeTx = Reflect.get(base, '$transaction') as unknown as (
+    this: unknown,
     arg: InteractiveFn | Prisma.PrismaPromise<unknown>[],
     opts?: TxOptions
   ) => Promise<unknown>;
-  const patchedTx = ((arg: InteractiveFn | Prisma.PrismaPromise<unknown>[], txOpts?: TxOptions) => {
+  const patchedTx = function (
+    this: unknown,
+    arg: InteractiveFn | Prisma.PrismaPromise<unknown>[],
+    txOpts?: TxOptions
+  ) {
+    const outermost = Prisma.getExtensionContext(this);
+    const originalTx = (a: InteractiveFn | Prisma.PrismaPromise<unknown>[], o?: TxOptions) =>
+      runtimeTx.call(outermost, a, o);
     const ctx = als.getStore();
     if (!opts.multi) return originalTx(arg, txOpts);
     if (!ctx) throw new Error('No tenant context for $transaction at multi');
@@ -360,7 +412,7 @@ function tenancyExtension(
         }),
       txOpts
     );
-  }) as unknown as TxFn;
+  } as unknown as TxFn;
   const patched = ext.$extends({ client: { $transaction: patchedTx } });
 
   return { ext, patched, seen, internalSeen, injectStats };
@@ -611,8 +663,23 @@ async function main() {
       { rows: enabledCount }
     );
     // Idempotence of enable.
+    const flagsBefore = await q<{ t: string; en: boolean; forced: boolean }>(
+      admin,
+      `SELECT relname t, relrowsecurity en, relforcerowsecurity forced FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY 1`,
+      [tables]
+    );
     for (const t of tables) await q(admin, `ALTER TABLE "${t}" ENABLE ROW LEVEL SECURITY`);
-    report(true, 'ENABLE ROW LEVEL SECURITY twice is a no-op (idempotent)');
+    const flagsAfter = await q<{ t: string; en: boolean; forced: boolean }>(
+      admin,
+      `SELECT relname t, relrowsecurity en, relforcerowsecurity forced FROM pg_class WHERE relname = ANY($1::text[]) ORDER BY 1`,
+      [tables]
+    );
+    report(
+      JSON.stringify(flagsBefore) === JSON.stringify(flagsAfter) &&
+        flagsAfter.every((f) => f.en && f.forced),
+      'ENABLE ROW LEVEL SECURITY twice leaves pg_class flags unchanged (idempotent)',
+      flagsAfter
+    );
 
     // ---- Q7 FORCE, the migrate role, the bypass GUC --------------------------
     section('Q7 FORCE RLS × migrate role × bypass GUC');
@@ -1069,6 +1136,41 @@ async function main() {
         viaUpdate.embedTokens
       );
 
+      // 3e: an UPDATE on a tenant-owned row must never be stamped — at single
+      // (no RLS) that would move the row into the caller's org (review finding).
+      {
+        const single = tenancyExtension(adminPrisma.client, {
+          multi: false,
+          inject: true,
+          tenantOwned,
+        });
+        const target = await adminPrisma.client.aiAgentEmbedToken.findFirst({
+          where: { label: 'spike-B-1' },
+          select: { id: true },
+        });
+        const moved = await runAsOrg(INSTALL_ORG, async () =>
+          single.patched.aiAgentEmbedToken.update({
+            where: { id: target!.id },
+            data: { label: 'spike-B-1' },
+            select: { orgId: true },
+          })
+        );
+        const many = await runAsOrg(INSTALL_ORG, async () =>
+          single.patched.aiAgentEmbedToken.updateMany({
+            where: { label: { startsWith: 'spike-B' } },
+            data: { isActive: true },
+          })
+        );
+        const stillB = await adminPrisma.client.aiAgentEmbedToken.count({
+          where: { label: { startsWith: 'spike-B' }, orgId: ORG_B },
+        });
+        report(
+          moved.orgId === ORG_B && many.count >= 2 && stillB >= 2,
+          "3e  update / updateMany on another org's rows under an install-org context (single, no RLS) leave orgId untouched — the walk stamps create nodes only",
+          { afterUpdate: moved.orgId, updateManyCount: many.count, stillInB: stillB }
+        );
+      }
+
       // 3c: column DEFAULT from the GUC, no injection — does Prisma omit the column so the DEFAULT applies?
       await q(
         admin,
@@ -1156,6 +1258,7 @@ async function main() {
         }
       );
       const from2 = appBase.events.length;
+      const inspectedBefore = inspected;
       const inTxRows = await runAsOrg(ORG_B, async () =>
         layered.$transaction(async (tx) =>
           tx.aiAgentEmbedToken.findMany({ where: spikeWhere, select: { orgId: true } })
@@ -1164,11 +1267,13 @@ async function main() {
       report(
         inTxRows.length === expectedB &&
           inTxRows.every((r) => r.orgId === ORG_B) &&
-          setConfigCount(from2) === 1,
-        '6b  the $transaction client-component override survives a further $extends layer (one setter, scoped)',
+          setConfigCount(from2) === 1 &&
+          inspected === inspectedBefore + 1,
+        "6b  the $transaction override survives a further $extends layer AND the outer layer's hook fires on the tx client (override runs the runtime $transaction with the outermost client as `this`)",
         {
           rows: inTxRows.length,
           setConfigStatements: setConfigCount(from2),
+          outerHookInsideTx: inspected - inspectedBefore,
         }
       );
     }

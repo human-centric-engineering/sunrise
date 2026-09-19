@@ -212,7 +212,7 @@ by §105/§106 were answered on 2026-09-19 by
 `scripts/spikes/rls-chokepoint-spike.ts` (§107 t-704), run against a local
 `pgvector/pgvector:pg15` container direct and through PgBouncer 1.25 in
 transaction mode, and against a Neon preview branch (PostgreSQL 17.11, direct
-and `-pooler`). All 41 checks pass on both. The script header carries the run
+and `-pooler`). All 42 checks pass on both. The script header carries the run
 commands; the numbers below are from those runs.
 
 > **The one fact that reshapes 3.3 first:** on Neon the deploy role
@@ -229,7 +229,14 @@ commands; the numbers below are from those runs.
    different connection and escapes the transaction** — a write made that
    way survived a rollback. It is not a nesting error; it is silent. So the
    shape is: an extension `client` component **may replace `$transaction`**
-   (Prisma accepts it; no Proxy over the client needed). The replacement
+   (Prisma accepts it; no Proxy over the client needed). **How it delegates
+   matters:** the replacement must call the runtime's own `$transaction`
+   (read off the base client) with `this` set to the _outermost_ client
+   (`Prisma.getExtensionContext(this)`). Closing over an inner layer's
+   `$transaction` instead clones the transaction client from that layer, and
+   a hook added by any later `$extends` — §115's guard — silently never
+   fires inside a transaction; the review caught it, and 6b now asserts the
+   outer hook fires on the `tx` client. The replacement
    issues one `set_config` at the top of an interactive transaction and runs
    the callback under an ALS `inTx` flag that makes the per-op hook pass
    through; the setter itself must be issued **inside** that flag or it is
@@ -260,10 +267,15 @@ NULLIF(current_setting('app.current_org', true), '')`, which fills a nested
    create reaches tenant-owned `embedTokens` while `AiAgent` itself is not
    yet tenant-owned, and a nested create under an `update` root (measured)
    or inside a nested `update` / `upsert` is a create all the same, so the
-   walk covers `create` / `createMany` / `createManyAndReturn` / `update` /
+   walk descends `create` / `createMany` / `createManyAndReturn` / `update` /
    `updateMany` / both `upsert` branches at the root and `create` /
-   `createMany` / `connectOrCreate` / `update` / `upsert` under relations;
-   at `multi` **every write** is wrapped when a context exists, not only
+   `createMany` / `connectOrCreate` / `update` / `upsert` under relations —
+   but **stamps `orgId` only on create-shaped nodes**. An update payload is
+   descended for the nested creates it may carry and never stamped: stamping
+   it would `SET "orgId" = <current org>` and, wherever RLS is not enforcing
+   (every `single` install), silently move another org's row into the
+   caller's (measured: an `update` and an `updateMany` under the install
+   org's context leave org B's rows in org B). At `multi` **every write** is wrapped when a context exists, not only
    writes on tenant-owned roots — the nested inserts run inside the root's
    statement and need the GUC. Reads on non-tenant models
    stay unwrapped; a no-context write on a non-tenant root (the switch route's
@@ -320,9 +332,11 @@ BY`; a role is removed by revoking those grants explicitly first.
    typed `(tx: Prisma.TransactionClient)`, so the four such callers need no
    change (the spike file itself is under `npm run type-check`). A second
    `$extends` layer inspecting `args.where` on `findMany` composes with the
-   tenancy layer — both hooks fire, scoping intact, and the `$transaction`
-   override is inherited by the outer layer — which is §115's starting point;
-   its per-read cost was not measured separately (one object walk per read).
+   tenancy layer — both hooks fire, scoping intact, outside a transaction
+   _and_ on the `tx` client inside one, the latter only because the
+   `$transaction` override delegates with the outermost client as `this`
+   (item 1). That is §115's starting point; its per-read cost was not
+   measured separately (one object walk per read).
    Prisma types the **top-level** `$allOperations` hook's `args` and `query`
    as `any` (the per-model hooks are typed): 3.2 owes a typed boundary at
    that one point rather than a lint exemption. The generated client's
