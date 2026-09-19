@@ -76,7 +76,11 @@ The subject manifest's two, read for an org:
   A cost row is a billing record, so erasing an org detaches its spend rather
   than deleting it — the same rule `data-erasure.md` applies to a person —
   and `smoke:tenancy` asserts the row survives `eraseOrg()` with `orgId` null
-  and the amount unchanged.
+  and the amount unchanged. A consequence of the `NULL` rule above: at
+  `single`, an erased org's detached cost rows read as the install org's and
+  appear in its export. Both are the platform operator's own books on a
+  single-tenant install; the staged `NOT NULL` migration, which gives `NULL`
+  one meaning, ends it.
 
 - **excluded, with a reason** — `AiMessageEmbedding` (vectors only; the
   message it derives from is exported) and `AiWorkflowExecutionLeaseEvent`
@@ -98,9 +102,12 @@ The bundle is assembled in memory and returned as one JSON body. With every
 tenant-owned table in it — messages, chunk text, document content twice
 (original and processed), step results, delivery payloads — a modest install
 produces megabytes, and a hosted function's response limit (Vercel: 4.5 MB)
-is the ceiling. That is acceptable for the installs this ships to today and is
-recorded on the §107 feature as follow-up work (streaming to a stored file),
-not something this endpoint will grow into silently.
+is the ceiling. The sources also run concurrently through one `Promise.all`,
+so on a pool of ten connections with a ten-second connect timeout, a scan slow
+enough to hold the pool fails the queued sources and with them the whole
+export. Both are acceptable for the installs this ships to today and are
+recorded on the §107 feature as follow-up work (bounded concurrency; streaming
+to a stored file), not something this endpoint will grow into silently.
 
 ## The one source listed by hand
 
