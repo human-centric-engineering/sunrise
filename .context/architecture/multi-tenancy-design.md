@@ -212,7 +212,7 @@ by §105/§106 were answered on 2026-09-19 by
 `scripts/spikes/rls-chokepoint-spike.ts` (§107 t-704), run against a local
 `pgvector/pgvector:pg15` container direct and through PgBouncer 1.25 in
 transaction mode, and against a Neon preview branch (PostgreSQL 17.11, direct
-and `-pooler`). All 38 checks pass on both. The script header carries the run
+and `-pooler`). All 41 checks pass on both. The script header carries the run
 commands; the numbers below are from those runs.
 
 > **The one fact that reshapes 3.3 first:** on Neon the deploy role
@@ -238,7 +238,13 @@ commands; the numbers below are from those runs.
    transaction → exactly one `set_config`; 20 interleaved per-op wraps across
    four pooled connections each saw only their org, and an unscoped query
    afterwards saw 0 rows. The override survives a further `$extends` layer
-   (item 8).
+   (item 8). **The inverse hazard is real too:** an op issued on the _root_
+   client from inside a transaction callback is not bound to that
+   transaction, and an ALS-keyed pass-through lets it run unwrapped on
+   another connection — it read 0 rows at `multi` beside a `tx` op that read 2. Prisma hands the hook an undocumented `__internalParams.transaction`
+   that is set for the `tx`-bound op and absent for the root-client op in the
+   same callback, so 3.2 should key the pass-through on _that_ (or on both),
+   not on the ALS flag alone; it is undocumented, so a test pins it.
 2. **Nested-create `orgId` — answered.** `WITH CHECK` fires: a nested create
    with no `orgId` at `multi` is refused (`P2039`, the Postgres message in
    `meta.driverAdapterError`) and the parent rolls back with it. Two remedies
@@ -249,12 +255,17 @@ commands; the numbers below are from those runs.
 NULLIF(current_setting('app.current_org', true), '')`, which fills a nested
    child with no injection because Prisma omits the unset column. **3.2 ships
    (a)** — at `single` the GUC is never set, so (b) would leave `NULL` there
-   and the one-code-path principle would be lost. Two rules the walk taught:
-   it runs on **every** create whatever the root model (an `AiAgent` create
-   reaches tenant-owned `embedTokens` while `AiAgent` itself is not yet
-   tenant-owned), and at `multi` **every write** is wrapped when a context
-   exists, not only writes on tenant-owned roots — the nested inserts run
-   inside the root's statement and need the GUC. Reads on non-tenant models
+   and the one-code-path principle would be lost. Three rules the walk
+   taught: it runs on **every write** whatever the root model — an `AiAgent`
+   create reaches tenant-owned `embedTokens` while `AiAgent` itself is not
+   yet tenant-owned, and a nested create under an `update` root (measured)
+   or inside a nested `update` / `upsert` is a create all the same, so the
+   walk covers `create` / `createMany` / `createManyAndReturn` / `update` /
+   `updateMany` / both `upsert` branches at the root and `create` /
+   `createMany` / `connectOrCreate` / `update` / `upsert` under relations;
+   at `multi` **every write** is wrapped when a context exists, not only
+   writes on tenant-owned roots — the nested inserts run inside the root's
+   statement and need the GUC. Reads on non-tenant models
    stay unwrapped; a no-context write on a non-tenant root (the switch route's
    `session.update`) passes through with `WITH CHECK` as the backstop.
 3. **Per-op cost and pooling — measured.** The wrap is a four-statement
@@ -344,14 +355,17 @@ BY`; a role is removed by revoking those grants explicitly first.
    allowlist exists to make deliberate. (Raised by the security
    review of the spike PR.)
 
-One hazard is about the callers rather than the client. A `PrismaPromise` is
-lazy: the extension hook — and with it the read of the tenant context — runs
-when the promise is awaited, not when it is created. `runAsOrg(org, () =>
-prisma.x.findMany())` with a **non-async** callback returns the promise out of
-the scope unawaited and loses the context (it threw at `multi` in the spike);
-an `async` callback keeps it. The guards already call an `async` handler, so
-requests are safe; 3.2 documents the rule for `runAsOrg` / `runAsSystem` /
-`forEachOrg` callers and the harness exercises it.
+One hazard is about the seam rather than the client, and the spike closes it
+there. A `PrismaPromise` is lazy: the extension hook — and with it the read of
+the tenant context — runs when the promise is awaited, not when it is created.
+`lib/tenancy/context.ts` today does `tenantContext.run(ctx, fn)`, so
+`runAsOrg(org, () => prisma.x.findMany())` with a **non-async** callback
+returns the promise out of the scope unawaited and loses the context (it threw
+at `multi` in the spike). Changing the seam to
+`tenantContext.run(ctx, async () => await fn())` makes the await happen inside
+the scope; measured, the same non-async callback then keeps its context. 3.2
+makes that change in `runAsOrg` / `runAsSystem` / `forEachOrg` and pins it with
+a test, rather than documenting a rule every caller has to remember.
 
 ## What a fork gets, and what it owns
 
