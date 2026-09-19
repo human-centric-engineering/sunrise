@@ -101,12 +101,21 @@ describe('org-data source manifest', () => {
       expect(allModels.has('Org')).toBe(true);
     });
 
-    it('finds the five orgId columns it is meant to find', () => {
+    it('finds the orgId columns it is meant to find', () => {
       // Guard on the guard: if the regex stops matching, the coverage rule
-      // below passes while protecting nothing.
-      expect([...orgLinked].sort()).toEqual(
-        ['AiAgentEmbedToken', 'AiAgentInviteToken', 'AiApiKey', 'McpApiKey', 'OrgMembership'].sort()
-      );
+      // below passes while protecting nothing. The five §106 columns are
+      // pinned by name; §107 t-705 took the count to 43 (42 tenant-owned +
+      // OrgMembership) and the classification test owns that roster.
+      for (const model of [
+        'AiAgentEmbedToken',
+        'AiAgentInviteToken',
+        'AiApiKey',
+        'McpApiKey',
+        'OrgMembership',
+      ]) {
+        expect(orgLinked.has(model), model).toBe(true);
+      }
+      expect(orgLinked.size).toBe(43);
     });
 
     it('does not mistake Session.activeOrgId for the org’s data', () => {
@@ -167,15 +176,15 @@ describe('org-data source manifest', () => {
   });
 
   /**
-   * The rule, shown to fire. A schema with a sixth `orgId` model that the
-   * manifest does not know is named — this is what §107 will hit ~23 times.
+   * The rule, shown to fire. A schema with an `orgId` model that the
+   * manifest does not know is named — this is what §107 t-705 hit 38 times.
    */
   describe('the rule against a synthetic schema', () => {
     const fixture: SchemaFile[] = [
       {
         name: 'orchestration-agents.prisma',
         contents: [
-          'model AiAgent {',
+          'model AppWidget {',
           '  id    String @id',
           '  orgId String?',
           '  org   Org?   @relation(fields: [orgId], references: [id])',
@@ -193,12 +202,12 @@ describe('org-data source manifest', () => {
 
     it('names a model with an orgId column that neither list declares', () => {
       const scan = scanSchemaFiles(fixture);
-      expect(undeclaredOrgModels(scan.orgLinked, declared)).toEqual(['AiAgent']);
+      expect(undeclaredOrgModels(scan.orgLinked, declared)).toEqual(['AppWidget']);
     });
 
     it('is satisfied by a declaration in either list', () => {
       const scan = scanSchemaFiles(fixture);
-      expect(undeclaredOrgModels(scan.orgLinked, new Set([...declared, 'AiAgent']))).toEqual([]);
+      expect(undeclaredOrgModels(scan.orgLinked, new Set([...declared, 'AppWidget']))).toEqual([]);
     });
   });
 
