@@ -60,6 +60,16 @@ The subject manifest's two, read for an org:
   but not their values (that is where a receiver's `Authorization` lives).
   Vector columns are `Unsupported` in Prisma and are never selected, so a
   chunk's text is exported and its embedding is not.
+  A `NULL` `orgId` is read the way the tenant context reads a missing org: at
+  `TENANCY_MODE=single` it is the install org's, so the install org's export
+  matches `orgId IS NULL` as well — nothing writes the column until the
+  data-layer chokepoint lands, and a fresh install's seeded agents would
+  otherwise be missing from its own export (the `smoke:tenancy` run asserts a
+  `NULL`-org agent is carried). At `multi` the match is strict:
+  `db:tenancy:enable` backfills `NULL` before enforcing, so a `NULL` there is
+  an orphan. The four credential attributions never read `NULL` — a `NULL`-org
+  API key is a platform credential, not the org's.
+
 - **excluded, with a reason** — `AiMessageEmbedding` (vectors only; the
   message it derives from is exported) and `AiWorkflowExecutionLeaseEvent`
   (engine lease bookkeeping; the execution is exported). The reason travels

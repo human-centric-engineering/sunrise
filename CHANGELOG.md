@@ -41,8 +41,11 @@ release process.
   allowlist; add the column (the shape is in
   `.context/tenancy/identity.md`) or classify it deliberately, never by
   deleting from an allowlist. Behaviour at `TENANCY_MODE=single` is
-  unchanged: the column exists and is filled, and only the org export reads
-  it until the chokepoint and policies land.
+  unchanged. Nothing writes the column until the data-layer chokepoint
+  lands (§107's next task), so a row created after this migration carries
+  `NULL`; the org export — the only reader so far — treats `NULL` as the
+  install org's at `single` and strictly at `multi`, where
+  `db:tenancy:enable` will backfill before enforcing.
 - **Every install has an org, and every user belongs to one** (multi-tenancy
   §106, first task). Two published model interfaces in a new
   `prisma/schema/tenancy.prisma`: `Org` (`slug`, `name`, `status`

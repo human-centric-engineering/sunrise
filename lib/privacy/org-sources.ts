@@ -42,6 +42,8 @@ import { prisma } from '@/lib/db/client';
 import type { SourceDisposition, AttributionRow } from '@/lib/privacy/export-sources';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
 import { toSafeHook, type SafeHook } from '@/lib/orchestration/hooks/serialize';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant } from '@/lib/tenancy/context';
 
 /** Identity of the org being exported. */
 export interface OrgQuery {
@@ -67,6 +69,24 @@ export interface OrgExcludedSource {
 }
 
 const byCreatedAt = { createdAt: 'asc' } as const;
+
+/**
+ * The `where` for a tenant-owned model, read the way the tenant context reads
+ * a missing org: at `TENANCY_MODE=single` a row with `orgId IS NULL` belongs
+ * to the install org — nothing writes the column until the data-layer
+ * chokepoint (§107 3.2) lands, so every row created between the backfill
+ * migration and that PR carries `NULL`, and the install org's export would
+ * otherwise silently omit it (a fresh install would export none of its
+ * seeded agents; caught by the t-705 code review). At `multi` the match is
+ * strict: `db:tenancy:enable` backfills `NULL` before enforcing, so a `NULL`
+ * there is an orphan, not the install org's. The credential attributions
+ * below deliberately do NOT use this — a `NULL`-org API key is a platform
+ * credential, not the org's.
+ */
+function ownedBy(orgId: string): { orgId: string } | { OR: [{ orgId: string }, { orgId: null }] } {
+  if (orgId === INSTALL_ORG_ID && !isMultiTenant()) return { OR: [{ orgId }, { orgId: null }] };
+  return { orgId };
+}
 
 /** Narrow labelled credential rows to the attribution shape. */
 function toAttribution(
@@ -132,7 +152,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'The organisation’s agents: name, slug, instructions, model and provider choices, visibility and runtime settings.',
     fetch: ({ orgId }) =>
       prisma.aiAgent.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -144,7 +164,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Every published version of each agent — the configuration snapshot as it was at publish time.',
     fetch: ({ orgId }) =>
       prisma.aiAgentVersion.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -156,7 +176,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Which platform capabilities each agent is bound to, and the per-agent configuration of that binding. The capability definitions themselves are platform config and are not included.',
     fetch: ({ orgId }) =>
       prisma.aiAgentCapability.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: [{ agentId: 'asc' }, { capabilityId: 'asc' }],
       }),
   },
@@ -167,7 +187,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Which knowledge documents each agent can search.',
     fetch: ({ orgId }) =>
       prisma.aiAgentKnowledgeDocument.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: [{ agentId: 'asc' }, { documentId: 'asc' }],
       }),
   },
@@ -179,7 +199,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Which knowledge tags each agent searches by. The tag definitions are platform config and are not included.',
     fetch: ({ orgId }) =>
       prisma.aiAgentKnowledgeTag.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: [{ agentId: 'asc' }, { tagId: 'asc' }],
       }),
   },
@@ -191,7 +211,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Every conversation held with the organisation’s agents: title, channel, participant, context and timestamps.',
     fetch: ({ orgId }) =>
       prisma.aiConversation.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -203,7 +223,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Every message in those conversations — role, content, tool calls and token counts.',
     fetch: ({ orgId }) =>
       prisma.aiMessage.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -214,7 +234,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Share grants on conversations: reason, expiry and revocation.',
     fetch: ({ orgId }) =>
       prisma.aiConversationShare.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -226,7 +246,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Messages the organisation’s agents sent out over external channels, with delivery status.',
     fetch: ({ orgId }) =>
       prisma.aiOutboundMessage.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -237,7 +257,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Per-call model usage and cost for the organisation’s agents and workflows.',
     fetch: ({ orgId }) =>
       prisma.aiCostLog.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -249,7 +269,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Facts the organisation’s agents remembered about their users between conversations.',
     fetch: ({ orgId }) =>
       prisma.aiUserMemory.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -265,7 +285,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     // masked, `secret` is dropped. Found by the security review of t-705.
     fetch: async ({ orgId }: OrgQuery): Promise<SafeHook[]> => {
       const rows = await prisma.aiEventHook.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       });
       return rows.map(toSafeHook);
@@ -278,7 +298,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Each attempt to deliver an event to a hook, with the payload and the outcome.',
     fetch: ({ orgId }) =>
       prisma.aiEventHookDelivery.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -290,7 +310,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Outbound webhook subscriptions — channel, destination, events and retry policy. The signing secret is not included.',
     fetch: ({ orgId }) =>
       prisma.aiWebhookSubscription.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         omit: { secret: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -303,7 +323,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Each attempt to deliver an event to a webhook subscription, with the payload and the outcome.',
     fetch: ({ orgId }) =>
       prisma.aiWebhookDelivery.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -314,7 +334,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'A/B experiments the organisation ran on its agents.',
     fetch: ({ orgId }) =>
       prisma.aiExperiment.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -325,7 +345,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The variants of each experiment and their results.',
     fetch: ({ orgId }) =>
       prisma.aiExperimentVariant.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { id: 'asc' },
       }),
   },
@@ -336,7 +356,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Evaluation datasets the organisation authored.',
     fetch: ({ orgId }) =>
       prisma.aiDataset.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -347,7 +367,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The cases in each dataset — inputs and expected outputs.',
     fetch: ({ orgId }) =>
       prisma.aiDatasetCase.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { id: 'asc' },
       }),
   },
@@ -358,7 +378,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Manual evaluation sessions on the organisation’s agents.',
     fetch: ({ orgId }) =>
       prisma.aiEvaluationSession.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -369,7 +389,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Per-message annotations and scores recorded in evaluation sessions.',
     fetch: ({ orgId }) =>
       prisma.aiEvaluationLog.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -380,7 +400,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Dataset-driven evaluation runs, their configuration and summary.',
     fetch: ({ orgId }) =>
       prisma.aiEvaluationRun.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -391,7 +411,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The per-case outcome of each evaluation run.',
     fetch: ({ orgId }) =>
       prisma.aiEvaluationCaseResult.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -402,7 +422,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The organisation’s knowledge bases.',
     fetch: ({ orgId }) =>
       prisma.aiKnowledgeBase.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -414,7 +434,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Every document in those knowledge bases — name, slug, source, status and the document text.',
     fetch: ({ orgId }) =>
       prisma.aiKnowledgeDocument.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -425,7 +445,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The revision history of each document.',
     fetch: ({ orgId }) =>
       prisma.aiKnowledgeDocumentRevision.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -436,7 +456,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Edits to documents that are proposed but not yet applied.',
     fetch: ({ orgId }) =>
       prisma.aiKnowledgeDocumentPendingChange.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -448,7 +468,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'The searchable chunks each document was split into, with their text and metadata. The vector embeddings are derived data and are not included.',
     fetch: ({ orgId }) =>
       prisma.aiKnowledgeChunk.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { id: 'asc' },
       }),
   },
@@ -460,7 +480,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Which tags each document carries. The tag definitions are platform config and are not included.',
     fetch: ({ orgId }) =>
       prisma.aiKnowledgeDocumentTag.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: [{ documentId: 'asc' }, { tagId: 'asc' }],
       }),
   },
@@ -471,7 +491,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The organisation’s workflows — name, slug, definition and settings.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflow.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -482,7 +502,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Every published version of each workflow.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowVersion.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -493,7 +513,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Cron schedules that run the organisation’s workflows.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowSchedule.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -505,7 +525,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Inbound triggers on the organisation’s workflows — channel, name and scope. The trigger’s signing secret is not included.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowTrigger.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         omit: { signingSecret: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -518,7 +538,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       'Every run of the organisation’s workflows — input, output, status, cost and timing. The engine’s lease token is not included.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowExecution.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         omit: { leaseToken: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -530,7 +550,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'The result each workflow step produced on each run.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowStepDispatch.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { createdAt: 'asc' },
       }),
   },
@@ -541,7 +561,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     description: 'Per-step timing and turn records for each run.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowRunningStep.findMany({
-        where: { orgId },
+        where: ownedBy(orgId),
         orderBy: { startedAt: 'asc' },
       }),
   },

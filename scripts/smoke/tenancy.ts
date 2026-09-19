@@ -519,6 +519,23 @@ async function main(): Promise<void> {
       'the export’s roster is exactly the org’s two members'
     );
 
+    // A row nothing has written an orgId on yet (this run's agent, created
+    // above with the column NULL — every create does that until the data-layer
+    // chokepoint lands) is the INSTALL org's at single, and no other org's.
+    // On a fresh CI database every seeded agent is in this state, so an
+    // export that read `orgId = 'install'` strictly would carry none of them.
+    const agentsOf = (b: Awaited<ReturnType<typeof exportOrgData>>) =>
+      (b.data.agents as { id: string }[]).map((a) => a.id);
+    const installBundle = await exportOrgData({ orgId: INSTALL_ORG_ID, actorUserId: owner.id });
+    check(
+      agentsOf(installBundle).includes(agent.id),
+      'the install org’s export carries an agent whose orgId is still NULL (born before the chokepoint writes it)'
+    );
+    check(
+      !agentsOf(bundle).includes(agent.id),
+      'another org’s export does not carry that NULL-org agent'
+    );
+
     // Erasing the org: memberships and the pointer go, the people stay.
     const pointing = await prisma.session.create({
       data: {

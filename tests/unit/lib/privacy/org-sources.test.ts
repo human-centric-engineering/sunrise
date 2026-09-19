@@ -48,6 +48,9 @@ const prismaMock = vi.hoisted(() => {
   });
 });
 vi.mock('@/lib/db/client', () => ({ prisma: prismaMock }));
+vi.mock('@/lib/tenancy/context', () => ({ isMultiTenant: vi.fn(() => false) }));
+
+const { isMultiTenant } = await import('@/lib/tenancy/context');
 
 const { ORG_DATA_SOURCES, ORG_EXCLUDED_SOURCES } = await import('@/lib/privacy/org-sources');
 
@@ -126,7 +129,9 @@ describe('org-data source manifest', () => {
       ]) {
         expect(orgLinked.has(model), model).toBe(true);
       }
-      expect(orgLinked.size).toBe(43);
+      // A lower bound, not a total: a fork adds a column plus a disposition
+      // and is done — it must not have to edit this file too.
+      expect(orgLinked.size).toBeGreaterThanOrEqual(43);
     });
 
     it('does not mistake Session.activeOrgId for the org’s data', () => {
@@ -240,8 +245,8 @@ describe('org-data source manifest', () => {
         source.disposition === 'export' && !['OrgMembership', 'Verification'].includes(source.model)
     );
 
-    it('drives every tenant-owned export source (the §107 t-705 set is 36)', () => {
-      expect(tenantOwnedExports.length).toBe(36);
+    it('drives every tenant-owned export source (the §107 t-705 set is 36; a fork may add more)', () => {
+      expect(tenantOwnedExports.length).toBeGreaterThanOrEqual(36);
     });
 
     it.each(tenantOwnedExports.map((source) => [source.model, source] as const))(
@@ -270,6 +275,51 @@ describe('org-data source manifest', () => {
         }
       }
     );
+
+    describe('a NULL orgId is the install org’s at single, and nobody’s at multi', () => {
+      const install = 'install';
+
+      it('the install org’s export reads orgId IS NULL too — rows born before the chokepoint writes the column', async () => {
+        const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'AiAgent');
+        prismaMock.aiAgent.findMany.mockResolvedValue([]);
+        await source!.fetch({ orgId: install });
+        expect(prismaMock.aiAgent.findMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({ where: { OR: [{ orgId: install }, { orgId: null }] } })
+        );
+      });
+
+      it('another org’s export never reads NULL rows', async () => {
+        const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'AiAgent');
+        prismaMock.aiAgent.findMany.mockResolvedValue([]);
+        await source!.fetch({ orgId: 'cmorg000000000000000other' });
+        expect(prismaMock.aiAgent.findMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({ where: { orgId: 'cmorg000000000000000other' } })
+        );
+      });
+
+      it('at multi the install org’s match is strict — enable backfills NULL before enforcing', async () => {
+        vi.mocked(isMultiTenant).mockReturnValue(true);
+        try {
+          const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'AiAgent');
+          prismaMock.aiAgent.findMany.mockResolvedValue([]);
+          await source!.fetch({ orgId: install });
+          expect(prismaMock.aiAgent.findMany).toHaveBeenLastCalledWith(
+            expect.objectContaining({ where: { orgId: install } })
+          );
+        } finally {
+          vi.mocked(isMultiTenant).mockReturnValue(false);
+        }
+      });
+
+      it('a NULL-org credential is a platform key, never the install org’s — attribution stays strict', async () => {
+        const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'AiApiKey');
+        prismaMock.aiApiKey.findMany.mockResolvedValue([]);
+        await source!.fetch({ orgId: install });
+        expect(prismaMock.aiApiKey.findMany).toHaveBeenLastCalledWith(
+          expect.objectContaining({ where: { orgId: install } })
+        );
+      });
+    });
 
     it('withholds a secret from exactly the sources that carry one', () => {
       const withOmit = tenantOwnedExports
