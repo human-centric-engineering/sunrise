@@ -113,11 +113,15 @@ sync conflict is a "keep both", not a re-read.
 > ([`.context/api/org-endpoints.md`](../api/org-endpoints.md)); every
 > credential bound to an org at mint and entering it at resolution
 > (`resolveCredentialOrg`, `orgForMint`, `lib/orchestration/invite-tokens.ts`)
-> with t-673 ([`.context/tenancy/identity.md#credentials`](../tenancy/identity.md#credentials)). Of this
-> section's request path, everything down to and including the policy
-> exists; the `lib/db/client.ts` `$extends`, the RLS policies and
-> `db:tenancy:enable` (§107) and the tick's `forEachOrg` wiring (§108) do not
-> yet — `forEachOrg` itself ships, uncalled. At `TENANCY_MODE=single` the
+> with t-673 ([`.context/tenancy/identity.md#credentials`](../tenancy/identity.md#credentials));
+> `orgId` on every tenant-owned model (42, child rows included), backfilled
+> to the install org, with the classification allowlists and the runtime
+> roster in `lib/tenancy/classification.ts` and the org-export dispositions
+> for each, with §107 t-705. Of this section's request path, everything
+> down to and including the policy exists; the `lib/db/client.ts`
+> `$extends`, the RLS policies and `db:tenancy:enable` (§107) and the tick's
+> `forEachOrg` wiring (§108) do not yet — `forEachOrg` itself ships,
+> uncalled. At `TENANCY_MODE=single` the
 > same components run with the install org as the only answer, as the
 > diagram says.
 

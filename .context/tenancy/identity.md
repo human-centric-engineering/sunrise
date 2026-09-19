@@ -66,7 +66,10 @@ model Org {
   status   OrgStatus @default(ACTIVE)   // ACTIVE | SUSPENDED
   settings Json?
   memberships OrgMembership[]
-  // + the four credential relations (see "Credentials")
+  // + a back-relation for every tenant-owned model (42 as of §107 t-705):
+  //   the four credential relations (see "Credentials") and the 38 the
+  //   row-isolation feature added. The relation, not a list, is what lets
+  //   eraseOrg() cascade — see "The lifecycle".
 }
 
 model OrgMembership {
@@ -425,8 +428,22 @@ merge-impact section promises forks.
 - **A product layer beneath the org** — plans, billing, branding, teams — is
   yours (principle 8). Put it in your own schema file with a FK to `Org`.
 - **Your own tenant-owned models** join the org by carrying an `orgId` column
-  (principle 4); the row-isolation feature's classification test will name
-  each one until it is classified.
+  (principle 4), in the exact shape every core model uses:
+
+  ```prisma
+  orgId String?
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  ```
+
+  plus a back-relation line on `Org`. `tests/unit/lib/tenancy/model-classification.test.ts`
+  names every model that is neither tenant-owned nor on the two allowlists in
+  `lib/tenancy/classification.ts` (`SYSTEM_MODELS`, `GLOBAL_CONFIG_MODELS`)
+  until it is classified, and `tests/unit/lib/privacy/org-sources.test.ts`
+  names every `orgId` model until `lib/privacy/org-sources.ts` says what an
+  org receives from it. Never delete from an allowlist to go green.
+
 - **Not a fourth org role.** The enum is closed upstream. A "billing admin"
   or "viewer" is a product-layer concept on your side of the FK, not a value
   on `OrgMembership.role`.
