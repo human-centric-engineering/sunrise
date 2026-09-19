@@ -52,10 +52,14 @@ The subject manifest's two, read for an org:
   is this too (36 sections: agents, conversations and messages, knowledge
   bases, documents and chunks, workflows, executions and step results,
   datasets, evaluations, experiments, hooks, webhooks, cost rows, user
-  memories); three of them `omit` a signing secret —
-  `AiWebhookSubscription.secret`, `AiWorkflowTrigger.signingSecret`,
-  `AiEventHook.secret`. Vector columns are `Unsupported` in Prisma and are
-  never selected, so a chunk's text is exported and its embedding is not.
+  memories). Four withhold credential material: `AiWebhookSubscription`
+  omits `secret`, `AiWorkflowTrigger` omits `signingSecret`,
+  `AiWorkflowExecution` omits the engine's `leaseToken`, and `AiEventHook`
+  rows pass through `toSafeHook` — the admin API's own redaction — so the
+  signing secret is dropped and the custom request headers keep their names
+  but not their values (that is where a receiver's `Authorization` lives).
+  Vector columns are `Unsupported` in Prisma and are never selected, so a
+  chunk's text is exported and its embedding is not.
 - **excluded, with a reason** — `AiMessageEmbedding` (vectors only; the
   message it derives from is exported) and `AiWorkflowExecutionLeaseEvent`
   (engine lease bookkeeping; the execution is exported). The reason travels

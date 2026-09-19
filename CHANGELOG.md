@@ -31,8 +31,9 @@ release process.
   `tenantOwnedModels()` (model → table, derived from the generated client at
   runtime — the roster the row-isolation policies, drift probes and enable
   script will read). Every one of the 38 has a disposition in
-  `lib/privacy/org-sources.ts` (36 `export`, with the signing secrets on
-  `AiWebhookSubscription`, `AiWorkflowTrigger` and `AiEventHook` omitted;
+  `lib/privacy/org-sources.ts` (36 `export` — withholding the signing secrets on
+  `AiWebhookSubscription` and `AiWorkflowTrigger`, an execution's `leaseToken`,
+  and an event hook's secret and custom header values via `toSafeHook`;
   `AiMessageEmbedding` and `AiWorkflowExecutionLeaseEvent` excluded with
   reasons), so an org export now carries 42 sections. **Fork note:** a new
   `tests/unit/lib/tenancy/model-classification.test.ts` fails by name on any

@@ -41,6 +41,7 @@
 import { prisma } from '@/lib/db/client';
 import type { SourceDisposition, AttributionRow } from '@/lib/privacy/export-sources';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
+import { toSafeHook, type SafeHook } from '@/lib/orchestration/hooks/serialize';
 
 /** Identity of the org being exported. */
 export interface OrgQuery {
@@ -119,8 +120,9 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
 
   // ---------------------------------------------------------------------
   // Tenant-owned records (§107 t-705) — every model that carries `orgId`
-  // because a row of it belongs to one org. Full rows minus the three named
-  // signing secrets; vector columns are `Unsupported` and never selected.
+  // because a row of it belongs to one org. Full rows minus the named secrets
+  // (two signing secrets, a lease token, and a hook's header values via
+  // `toSafeHook`); vector columns are `Unsupported` and never selected.
   // ---------------------------------------------------------------------
   {
     model: 'AiAgent',
@@ -256,13 +258,18 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     section: 'eventHooks',
     disposition: 'export',
     description:
-      'Event hooks the organisation configured — the event, the filter and the action. The hook’s signing secret is not included.',
-    fetch: ({ orgId }) =>
-      prisma.aiEventHook.findMany({
+      'Event hooks the organisation configured — the event, the filter and the action. The hook’s signing secret and the values of its custom request headers are not included.',
+    // `action.headers` holds whatever the author put there — in practice the
+    // receiver's `Authorization` — so the rows go through the same redaction
+    // the admin API applies (`toSafeHook`): header names stay, values are
+    // masked, `secret` is dropped. Found by the security review of t-705.
+    fetch: async ({ orgId }: OrgQuery): Promise<SafeHook[]> => {
+      const rows = await prisma.aiEventHook.findMany({
         where: { orgId },
-        omit: { secret: true },
         orderBy: { createdAt: 'asc' },
-      }),
+      });
+      return rows.map(toSafeHook);
+    },
   },
   {
     model: 'AiEventHookDelivery',
@@ -508,10 +515,11 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     section: 'workflowExecutions',
     disposition: 'export',
     description:
-      'Every run of the organisation’s workflows — input, output, status, cost and timing.',
+      'Every run of the organisation’s workflows — input, output, status, cost and timing. The engine’s lease token is not included.',
     fetch: ({ orgId }) =>
       prisma.aiWorkflowExecution.findMany({
         where: { orgId },
+        omit: { leaseToken: true },
         orderBy: { createdAt: 'asc' },
       }),
   },

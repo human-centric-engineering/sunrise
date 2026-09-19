@@ -223,12 +223,17 @@ describe('org-data source manifest', () => {
   });
 
   describe('what the sources ask Prisma for', () => {
-    /** The three sources whose rows carry a signing secret, and the column each withholds. */
+    /**
+     * Sources whose rows carry a secret column withheld with `omit`.
+     * `AiEventHook` is the fourth secret-bearing source but is not here: its
+     * rows are mapped through `toSafeHook` instead, pinned separately below.
+     */
     const SECRET_COLUMNS: Record<string, string> = {
       AiWebhookSubscription: 'secret',
       AiWorkflowTrigger: 'signingSecret',
-      AiEventHook: 'secret',
+      AiWorkflowExecution: 'leaseToken',
     };
+    const MAPPED_SOURCES = new Set(['AiEventHook']);
     const lowerFirst = (name: string) => name[0].toLowerCase() + name.slice(1);
     const tenantOwnedExports = ORG_DATA_SOURCES.filter(
       (source) =>
@@ -266,11 +271,49 @@ describe('org-data source manifest', () => {
       }
     );
 
-    it('withholds a secret from exactly the three sources that carry one', () => {
+    it('withholds a secret from exactly the sources that carry one', () => {
       const withOmit = tenantOwnedExports
         .map((source) => source.model)
-        .filter((model) => model in SECRET_COLUMNS);
-      expect(withOmit.sort()).toEqual(Object.keys(SECRET_COLUMNS).sort());
+        .filter((model) => model in SECRET_COLUMNS || MAPPED_SOURCES.has(model));
+      expect(withOmit.sort()).toEqual([...Object.keys(SECRET_COLUMNS), ...MAPPED_SOURCES].sort());
+    });
+
+    it('masks an event hook’s custom header values and drops its secret (toSafeHook), keeping the header names', async () => {
+      // The receiver's bearer token lives in `action.headers` — the admin API
+      // never returns it in plaintext, and neither may the org export.
+      prismaMock.aiEventHook.findMany.mockResolvedValue([
+        {
+          id: 'hook-1',
+          name: 'Notify CRM',
+          eventType: 'conversation.ended',
+          action: {
+            type: 'webhook',
+            url: 'https://crm.example/hooks',
+            headers: { Authorization: 'Bearer live-token', 'X-Env': 'prod' },
+          },
+          filter: null,
+          isEnabled: true,
+          secret: 'signing-secret',
+          createdBy: 'user-1',
+          createdAt: new Date('2026-09-01'),
+          updatedAt: new Date('2026-09-01'),
+          orgId: 'cmorg000000000000000other',
+        },
+      ]);
+      const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'AiEventHook');
+      const [row] = (await source!.fetch({ orgId: 'cmorg000000000000000other' })) as Array<
+        Record<string, unknown>
+      >;
+
+      expect(row).not.toHaveProperty('secret');
+      expect(row.hasSecret).toBe(true);
+      expect((row.action as { url: string }).url).toBe('https://crm.example/hooks');
+      expect((row.action as { headers: Record<string, string> }).headers).toEqual({
+        Authorization: '••••••••',
+        'X-Env': '••••••••',
+      });
+      expect(JSON.stringify(row)).not.toContain('live-token');
+      expect(JSON.stringify(row)).not.toContain('signing-secret');
     });
 
     it('withholds the invitation token and selects invitations INTO this org only', async () => {
