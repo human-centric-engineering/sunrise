@@ -90,6 +90,7 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
 
 function makeVersion(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: VERSION_ID,
     agentId: AGENT_ID,
     version: 2,

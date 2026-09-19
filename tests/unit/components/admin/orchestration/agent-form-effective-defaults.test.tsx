@@ -100,6 +100,7 @@ function makeSystemSeededAgent(): AiAgent {
   // are seeded — empty strings that are resolved at runtime by
   // agent-resolver.ts.
   return {
+    orgId: null,
     id: 'pattern-advisor',
     name: 'Pattern Advisor',
     slug: 'pattern-advisor',

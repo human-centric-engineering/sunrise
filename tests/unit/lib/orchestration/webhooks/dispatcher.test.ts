@@ -60,6 +60,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 function makeSub(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: 'sub-1',
     channel: 'webhook',
     url: 'https://example.com/webhook',
@@ -81,6 +82,7 @@ function makeSub(overrides: Record<string, unknown> = {}) {
 
 function makeEmailSub(overrides: Record<string, unknown> = {}) {
   return makeSub({
+    orgId: null,
     id: 'sub-email',
     channel: 'email',
     url: null,
@@ -92,6 +94,7 @@ function makeEmailSub(overrides: Record<string, unknown> = {}) {
 
 function makeDelivery(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: 'del-1',
     subscriptionId: 'sub-1',
     eventType: 'budget_exceeded',

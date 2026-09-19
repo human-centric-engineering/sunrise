@@ -290,6 +290,7 @@ function makeWorkflow(overrides: AiWorkflowOverrides = {}): AiWorkflowWithVersio
       ? pvOverride
       : {
           id: 'wfv-1',
+          orgId: null,
           workflowId: 'wf-1',
           version: 1,
           snapshot: snapshot,

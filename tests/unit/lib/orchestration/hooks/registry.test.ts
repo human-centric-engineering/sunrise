@@ -52,6 +52,7 @@ import {
 
 function makeHook(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: 'hook-1',
     name: 'Test Hook',
     eventType: 'conversation.started',
@@ -68,6 +69,7 @@ function makeHook(overrides: Record<string, unknown> = {}) {
 
 function makeDelivery(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: 'del-1',
     hookId: 'hook-1',
     eventType: 'conversation.started',

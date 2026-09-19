@@ -62,6 +62,7 @@ const HOOK_ID = 'cmjbv4i3x00003wsloputgwu2';
 
 function makeHook(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: HOOK_ID,
     name: 'Test Hook',
     eventType: 'conversation.started',

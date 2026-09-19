@@ -284,6 +284,15 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'an ownerless row has no subject to be exported to.',
   },
   {
+    path: 'lib/privacy/org-sources.ts',
+    disposition: 'by-design',
+    reason:
+      'the org-data manifest (§106 t-672, widened to every tenant-owned model in §107 t-705), ' +
+      'keyed on `orgId` by construction: the org receives its own rows whoever inside it ' +
+      'authored them, and the route that assembles it (`GET /api/v1/admin/orgs/:id/export`) is what ' +
+      'decides who may ask.',
+  },
+  {
     path: 'lib/orchestration/evaluations/run-cases/workflow-case.ts',
     disposition: 'by-design',
     reason:

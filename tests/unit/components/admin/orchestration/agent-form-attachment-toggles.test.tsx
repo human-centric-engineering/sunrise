@@ -129,6 +129,7 @@ const MODELS = [
 
 function makeAgent(model: string, provider: string = 'openai') {
   return {
+    orgId: null,
     id: 'agent-toggle-test',
     name: 'Toggle Test Agent',
     slug: 'toggle-test',

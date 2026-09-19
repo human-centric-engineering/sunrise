@@ -28,14 +28,25 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 
-const prismaMock = vi.hoisted(() => ({
-  orgMembership: { findMany: vi.fn() },
-  verification: { findMany: vi.fn() },
-  aiApiKey: { findMany: vi.fn() },
-  aiAgentEmbedToken: { findMany: vi.fn() },
-  aiAgentInviteToken: { findMany: vi.fn() },
-  mcpApiKey: { findMany: vi.fn() },
-}));
+const prismaMock = vi.hoisted(() => {
+  // The named delegates the hand-written tests reach for, plus a fallback
+  // that mints a `findMany` for any other model on first touch — the
+  // parametric test below drives every tenant-owned source through it.
+  const named: Record<string, { findMany: ReturnType<typeof vi.fn> }> = {
+    orgMembership: { findMany: vi.fn() },
+    verification: { findMany: vi.fn() },
+    aiApiKey: { findMany: vi.fn() },
+    aiAgentEmbedToken: { findMany: vi.fn() },
+    aiAgentInviteToken: { findMany: vi.fn() },
+    mcpApiKey: { findMany: vi.fn() },
+  };
+  return new Proxy(named, {
+    get(target, prop: string) {
+      if (!(prop in target)) target[prop] = { findMany: vi.fn() };
+      return target[prop];
+    },
+  });
+});
 vi.mock('@/lib/db/client', () => ({ prisma: prismaMock }));
 
 const { ORG_DATA_SOURCES, ORG_EXCLUDED_SOURCES } = await import('@/lib/privacy/org-sources');
@@ -212,6 +223,56 @@ describe('org-data source manifest', () => {
   });
 
   describe('what the sources ask Prisma for', () => {
+    /** The three sources whose rows carry a signing secret, and the column each withholds. */
+    const SECRET_COLUMNS: Record<string, string> = {
+      AiWebhookSubscription: 'secret',
+      AiWorkflowTrigger: 'signingSecret',
+      AiEventHook: 'secret',
+    };
+    const lowerFirst = (name: string) => name[0].toLowerCase() + name.slice(1);
+    const tenantOwnedExports = ORG_DATA_SOURCES.filter(
+      (source) =>
+        source.disposition === 'export' && !['OrgMembership', 'Verification'].includes(source.model)
+    );
+
+    it('drives every tenant-owned export source (the §107 t-705 set is 36)', () => {
+      expect(tenantOwnedExports.length).toBe(36);
+    });
+
+    it.each(tenantOwnedExports.map((source) => [source.model, source] as const))(
+      '%s: scopes by the org, in a stable order, and withholds only its named secret',
+      async (model, source) => {
+        const delegate = prismaMock[lowerFirst(model)];
+        delegate.findMany.mockResolvedValue([]);
+        await source.fetch({ orgId: 'cmorg000000000000000other' });
+
+        expect(delegate.findMany).toHaveBeenCalledTimes(1);
+        const args = delegate.findMany.mock.calls[0][0] as {
+          where?: unknown;
+          omit?: Record<string, boolean>;
+          orderBy?: unknown;
+          select?: unknown;
+        };
+        expect(args.where).toEqual({ orgId: 'cmorg000000000000000other' });
+        expect(args.orderBy).toBeDefined();
+        // `export` means full rows: never a `select` (which would silently drop a column added tomorrow).
+        expect(args.select).toBeUndefined();
+        const secret = SECRET_COLUMNS[model];
+        if (secret) {
+          expect(args.omit).toEqual({ [secret]: true });
+        } else {
+          expect(args.omit).toBeUndefined();
+        }
+      }
+    );
+
+    it('withholds a secret from exactly the three sources that carry one', () => {
+      const withOmit = tenantOwnedExports
+        .map((source) => source.model)
+        .filter((model) => model in SECRET_COLUMNS);
+      expect(withOmit.sort()).toEqual(Object.keys(SECRET_COLUMNS).sort());
+    });
+
     it('withholds the invitation token and selects invitations INTO this org only', async () => {
       prismaMock.verification.findMany.mockResolvedValue([]);
       const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'Verification');

@@ -76,6 +76,7 @@ const WORKFLOW_ID = 'cmjbv4i3x00013wsloputgwu3';
 
 function makeTrigger(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: TRIGGER_ID,
     workflowId: WORKFLOW_ID,
     channel: 'slack',

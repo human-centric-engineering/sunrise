@@ -123,6 +123,7 @@ function makeDeleteRequest(): NextRequest {
 const mockWorkflow = { id: VALID_WF_ID, slug: 'test-wf', isActive: true };
 
 const mockScheduleRecord = {
+  orgId: null,
   id: VALID_SCHED_ID,
   workflowId: VALID_WF_ID,
   name: 'Daily run',

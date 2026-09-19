@@ -35,6 +35,7 @@ function makeSearchResult(
   return {
     chunk: {
       id: 'chunk-1',
+      orgId: null,
       chunkKey: 'chunk-key-1',
       documentId: 'doc-1',
       section: null,

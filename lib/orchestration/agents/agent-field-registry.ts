@@ -113,7 +113,8 @@ type NonConfigScalar =
   | 'lastActiveAt'
   | 'createdBy'
   | 'isSystem'
-  | 'systemInstructionsHistory';
+  | 'systemInstructionsHistory'
+  | 'orgId'; // tenancy: which org owns the agent (§107) — set by the data layer, never a form field
 
 /**
  * Every editable scalar config field on `AiAgent`. Derived from Prisma's

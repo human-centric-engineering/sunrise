@@ -59,6 +59,7 @@ const VERSION_ID = 'cmjbv4i3x00003wsloputgwu3';
 
 function makeVersion(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: VERSION_ID,
     agentId: AGENT_ID,
     version: 1,

@@ -140,6 +140,7 @@ const VALID_SNAPSHOT = {
 
 function makeTriggerRow(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: TRIGGER_ID_SLACK,
     workflowId: WORKFLOW_ID,
     channel: 'slack',
@@ -171,6 +172,7 @@ function makeTriggerRow(overrides: Record<string, unknown> = {}) {
 
 function makeExecutionRow(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: EXECUTION_ID,
     workflowId: WORKFLOW_ID,
     versionId: VERSION_ID,

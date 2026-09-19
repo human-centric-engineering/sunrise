@@ -328,6 +328,7 @@ async function runVectorOnlySearch({
       c."embeddingProvider",
       c."embeddingDimension",
       c."embeddedAt",
+      c."orgId",
       d.name AS "documentName",
       d."fileHash" AS "documentContentHash",
       (c.embedding <=> $1::vector) AS distance,
@@ -429,6 +430,7 @@ async function runHybridSearch({
         c."embeddingProvider",
         c."embeddingDimension",
         c."embeddedAt",
+        c."orgId",
         d.name AS "documentName",
         d."fileHash" AS "documentContentHash",
         (c.embedding <=> $1::vector) AS distance,
@@ -502,6 +504,7 @@ function pickChunk(row: AiKnowledgeChunk): AiKnowledgeChunk {
     embeddingDimension: row.embeddingDimension,
     embeddedAt: row.embeddedAt,
     metadata: row.metadata,
+    orgId: row.orgId,
   };
 }
 

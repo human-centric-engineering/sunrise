@@ -66,6 +66,7 @@ function makeDocument(
   }> = {}
 ) {
   return {
+    orgId: null,
     id: overrides.id ?? 'doc-1',
     slug: overrides.slug ?? `${overrides.id ?? 'doc-1'}-abc123ab`,
     knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,

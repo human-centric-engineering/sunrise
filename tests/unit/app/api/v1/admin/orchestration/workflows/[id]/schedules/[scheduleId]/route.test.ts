@@ -73,6 +73,7 @@ const VALID_WF_ID = 'cmjbv4i3x00003wsloputgwul';
 const VALID_SCHED_ID = 'cmjbv4i3x00004wsloputgwum';
 
 const mockScheduleRecord = {
+  orgId: null,
   id: VALID_SCHED_ID,
   workflowId: VALID_WF_ID,
   name: 'Daily run',

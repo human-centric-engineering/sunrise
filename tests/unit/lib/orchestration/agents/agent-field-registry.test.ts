@@ -129,6 +129,7 @@ const NON_CONFIG_SCALARS = [
   'createdBy',
   'isSystem',
   'systemInstructionsHistory',
+  'orgId', // tenancy (§107): set by the data layer, never a form field
 ];
 
 const sortedSet = (xs: Iterable<string>): string[] => [...new Set(xs)].sort();

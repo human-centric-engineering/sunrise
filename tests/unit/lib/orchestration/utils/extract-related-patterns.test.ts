@@ -11,6 +11,7 @@ import type { AiKnowledgeChunk } from '@/types/orchestration';
 
 function makeChunk(content: string, patternNumber = 1): AiKnowledgeChunk {
   return {
+    orgId: null,
     id: 'chunk-1',
     chunkKey: 'test-chunk',
     documentId: 'doc-1',

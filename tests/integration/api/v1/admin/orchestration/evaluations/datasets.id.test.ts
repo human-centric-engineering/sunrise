@@ -78,6 +78,7 @@ const INVALID_ID = 'not-a-cuid';
 
 function makeDatasetRow(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: DATASET_ID,
     userId: ADMIN_ID,
     name: 'd',

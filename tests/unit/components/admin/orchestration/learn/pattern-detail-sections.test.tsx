@@ -24,6 +24,7 @@ vi.mock('@/components/admin/orchestration/learn/pattern-content', () => ({
 
 function makeChunk(overrides: Partial<AiKnowledgeChunk> = {}): AiKnowledgeChunk {
   return {
+    orgId: null,
     id: 'chunk-1',
     chunkKey: 'key-1',
     documentId: 'doc-1',

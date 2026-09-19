@@ -83,6 +83,7 @@ function makeCapability() {
 
 function makeLink(overrides: Record<string, unknown> = {}) {
   return {
+    orgId: null,
     id: LINK_ID,
     agentId: AGENT_ID,
     capabilityId: CAPABILITY_ID,
