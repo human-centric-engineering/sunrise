@@ -40,6 +40,8 @@
  * @see prisma/migrations/20260920120000_org_isolation_policies/migration.sql
  */
 
+import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
+
 /** The one policy name every tenant-owned table carries. */
 export const ORG_ISOLATION_POLICY = 'org_isolation';
 
@@ -217,4 +219,26 @@ export async function runTenancySwitch(
     backfilled: backfilled.get(entry.table) ?? 0,
   }));
   return { mode, entries, noop: entries.every((e) => e.statements.length === 0) };
+}
+
+const SCRAM_ITERATIONS = 4096;
+
+/**
+ * The SCRAM-SHA-256 verifier Postgres stores for a password — computed here
+ * so the cleartext never crosses the wire or lands in a server log:
+ * `CREATE ROLE … PASSWORD '<cleartext>'` is written verbatim by
+ * `log_statement = 'ddl'`, the hardened default on most managed Postgres.
+ * Postgres accepts a pre-computed verifier in place of the password (what
+ * `psql \password` sends); the shape is RFC 7677 with Postgres's framing:
+ * `SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>`, base64.
+ */
+export function scramSha256Verifier(password: string, salt = randomBytes(16)): string {
+  const salted = pbkdf2Sync(password.normalize('NFKC'), salt, SCRAM_ITERATIONS, 32, 'sha256');
+  const clientKey = createHmac('sha256', salted).update('Client Key').digest();
+  const storedKey = createHash('sha256').update(clientKey).digest();
+  const serverKey = createHmac('sha256', salted).update('Server Key').digest();
+  return (
+    `SCRAM-SHA-256$${SCRAM_ITERATIONS}:${salt.toString('base64')}` +
+    `$${storedKey.toString('base64')}:${serverKey.toString('base64')}`
+  );
 }

@@ -33,8 +33,11 @@ release process.
   refusing to report success until the flags read back; `npm run
   db:tenancy:role -- --create|--drop` for the required `LOGIN NOBYPASSRLS`
   app role (`TENANCY_APP_ROLE`, password only via
-  `TENANCY_APP_ROLE_PASSWORD`) with its grants and default privileges,
-  revoking before dropping (Neon refuses `DROP OWNED BY`). New optional env
+  `TENANCY_APP_ROLE_PASSWORD`, sent as a locally computed SCRAM-SHA-256
+  verifier) with its grants and default privileges — nothing on
+  `_prisma_migrations` — refusing to touch a superuser, a `BYPASSRLS` role,
+  a table owner or the connecting role, and revoking before dropping (Neon
+  refuses `DROP OWNED BY`). `prisma/seed.ts` prefers the same owner DSN. New optional env
   var **`MIGRATE_DATABASE_URL`** — the owner DSN `prisma.config.ts` and the
   `db:tenancy:*` scripts prefer over `DATABASE_URL`, because a table's owner
   (and any `BYPASSRLS` role, Neon's `neondb_owner` included) is never

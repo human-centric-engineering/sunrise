@@ -132,8 +132,11 @@ whatever the policies say (item 7). So at `multi`:
 | `MIGRATE_DATABASE_URL` | the owner (`postgres`, `neondb_owner`…) | `prisma migrate`, `db:seed`, `db:tenancy:enable\|disable\|role` |
 
 `MIGRATE_DATABASE_URL` is optional and falls back to `DATABASE_URL`, which is
-the single-tenant shape ([`prisma.config.ts`](../../prisma.config.ts) reads
-it; [`lib/env.ts`](../../lib/env.ts) validates it). Migrations that touch
+the single-tenant shape ([`prisma.config.ts`](../../prisma.config.ts) and
+[`prisma/seed.ts`](../../prisma/seed.ts) read it; [`lib/env.ts`](../../lib/env.ts)
+validates it). The seed builds a bare client with no tenant context, so at
+`multi` it must run as the owner — as the app role its tenant-owned inserts
+are refused by `WITH CHECK`. Migrations that touch
 tenant-owned rows open with the bypass setter — Prisma runs each migration in
 one transaction, so `SELECT set_config('app.bypass_rls', 'on', true)` as the
 first statement covers the rest.
@@ -147,13 +150,19 @@ npm run db:tenancy:role -- --drop
 the role (`TENANCY_APP_ROLE`, default `sunrise_app`) as
 `LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE` with `USAGE` on the
 current schema, `SELECT/INSERT/UPDATE/DELETE` on its tables, `USAGE/SELECT`
-on its sequences, and `ALTER DEFAULT PRIVILEGES` for the connecting owner so
-tables future migrations create are covered. `--create` is idempotent (an
-existing role has its password reset and grants re-applied); `--drop`
-revokes the default privileges and every grant **first**, then drops the
-role — Neon refuses `DROP OWNED BY`, and a role that still holds a grant
-cannot be dropped anywhere. The password comes only from the environment,
-never an argument.
+on its sequences — never anything on `_prisma_migrations`, which the app
+does not touch and a compromised app role must not be able to forge — and
+`ALTER DEFAULT PRIVILEGES` for the connecting owner so tables future
+migrations create are covered. `--create` is idempotent (an existing role
+has its password reset and grants re-applied); `--drop` revokes the default
+privileges and every grant **first**, then drops the role — Neon refuses
+`DROP OWNED BY`, and a role that still holds a grant cannot be dropped
+anywhere. The password comes only from the environment, never an argument,
+and is sent as a SCRAM-SHA-256 verifier computed locally
+(`scramSha256Verifier`), so the cleartext never crosses the wire or lands in
+a server's DDL log. The script refuses to touch the role running it, a
+superuser, a `BYPASSRLS` role, or a table owner — `TENANCY_APP_ROLE=postgres`
+would otherwise demote and re-password the operator's own login.
 
 Then point `DATABASE_URL` at the new role, set `MIGRATE_DATABASE_URL` to the
 owner's DSN, and set `TENANCY_MODE=multi`.

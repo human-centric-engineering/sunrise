@@ -19,8 +19,8 @@ Configuration for PostgreSQL database connection via Prisma ORM.
 - **Required:** ❌ No
 - **Type:** PostgreSQL connection string
 - **Default:** falls back to `DATABASE_URL`
-- **Used By:** `prisma.config.ts` (every `prisma migrate` / `db seed`),
-  `scripts/db/tenancy-enable.ts`, `scripts/db/tenancy-role.ts`
+- **Used By:** `prisma.config.ts` (every `prisma migrate`), `prisma/seed.ts`
+  (`db:seed`), `scripts/db/tenancy-enable.ts`, `scripts/db/tenancy-role.ts`
 
 At `TENANCY_MODE=single` leave it unset: one DSN does everything, which is
 the shape the template ships. At `multi` the app connects (`DATABASE_URL`) as

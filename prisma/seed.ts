@@ -10,7 +10,12 @@ import { logger } from '@/lib/logging';
 import { runSeeds } from '@/prisma/runner';
 
 const { Pool } = pg;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// The owner DSN when there is one: at TENANCY_MODE=multi the app role is
+// NOBYPASSRLS and the seed writes tenant-owned rows outside any org context
+// (see .context/tenancy/isolation.md#the-role-split).
+const pool = new Pool({
+  connectionString: process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL,
+});
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 

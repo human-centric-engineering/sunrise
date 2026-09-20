@@ -14,10 +14,13 @@
  * owner for migrations, seeds and `db:tenancy:enable|disable`.
  *
  * Grants: `USAGE` on the current schema, `SELECT/INSERT/UPDATE/DELETE` on its
- * tables and `USAGE/SELECT` on its sequences, plus `ALTER DEFAULT PRIVILEGES`
- * for the connecting (owner) role so tables and sequences future migrations
- * create are covered without re-running this. Nothing on `_prisma_migrations`
- * beyond what "all tables" grants; the app never writes it.
+ * tables — except `_prisma_migrations`, which the app never touches and a
+ * compromised app role must not be able to forge — and `USAGE/SELECT` on its
+ * sequences, plus `ALTER DEFAULT PRIVILEGES` for the connecting (owner) role
+ * so tables and sequences future migrations create are covered without
+ * re-running this. The password is sent as a SCRAM-SHA-256 verifier computed
+ * here, never as cleartext, and the script refuses to touch a role that is
+ * the one running it, a superuser, `BYPASSRLS`, or a table owner.
  *
  * `--create` is idempotent: an existing role has its password reset and its
  * grants re-applied. `--drop` revokes the default privileges and every grant
@@ -34,10 +37,10 @@
 
 import { Client } from 'pg';
 import { logger } from '@/lib/logging';
+import { scramSha256Verifier } from '@/lib/tenancy/isolation';
 
 const DEFAULT_ROLE = 'sunrise_app';
 const ROLE_NAME = /^[a-z_][a-z0-9_]*$/;
-
 type Action = 'create' | 'drop';
 
 function parseAction(argv: readonly string[]): Action {
@@ -62,10 +65,54 @@ async function currentSchema(client: Client): Promise<string> {
   return client.escapeIdentifier(schema);
 }
 
+/**
+ * Refuse to touch a role this script must never demote: the one running it,
+ * a superuser, a `BYPASSRLS` role, or the owner of any table in the schema.
+ * `--create` on an existing role re-asserts `NOSUPERUSER NOBYPASSRLS` and
+ * resets the password, so `TENANCY_APP_ROLE=postgres` would otherwise lock
+ * the operator out of their own database.
+ */
+async function refuseIfPrivileged(client: Client, role: string): Promise<void> {
+  const { rows } = await client.query<{
+    is_self: boolean;
+    is_super: boolean;
+    bypasses: boolean;
+    owns_tables: boolean;
+  }>(
+    `SELECT r.rolname = current_user AS is_self,
+            r.rolsuper AS is_super,
+            r.rolbypassrls AS bypasses,
+            EXISTS (
+              SELECT 1 FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.relowner = r.oid AND c.relkind IN ('r', 'p') AND n.nspname = current_schema()
+            ) AS owns_tables
+       FROM pg_roles r WHERE r.rolname = $1`,
+    [role]
+  );
+  const row = rows[0];
+  if (!row) return;
+  const why = row.is_self
+    ? 'it is the role running this script'
+    : row.is_super
+      ? 'it is a superuser'
+      : row.bypasses
+        ? 'it has BYPASSRLS'
+        : row.owns_tables
+          ? 'it owns tables in the current schema'
+          : null;
+  if (why) {
+    throw new Error(
+      `refusing to change role "${role}": ${why}. The app role must be a separate, unprivileged login — set TENANCY_APP_ROLE to a new name.`
+    );
+  }
+}
+
 async function create(client: Client, role: string, password: string): Promise<void> {
   const r = client.escapeIdentifier(role);
-  const pw = client.escapeLiteral(password);
+  const pw = client.escapeLiteral(scramSha256Verifier(password));
   const s = await currentSchema(client);
+  await refuseIfPrivileged(client, role);
   if (await roleExists(client, role)) {
     await client.query(
       `ALTER ROLE ${r} WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD ${pw}`
@@ -79,6 +126,9 @@ async function create(client: Client, role: string, password: string): Promise<v
   }
   await client.query(`GRANT USAGE ON SCHEMA ${s} TO ${r}`);
   await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${s} TO ${r}`);
+  // The app never reads or writes the migration ledger; a compromised app
+  // role must not be able to mark a migration applied so a deploy skips it.
+  await client.query(`REVOKE ALL ON ${s}."_prisma_migrations" FROM ${r}`);
   await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${s} TO ${r}`);
   // For the tables future migrations create — as the role running them (this one).
   await client.query(
@@ -98,6 +148,7 @@ async function drop(client: Client, role: string): Promise<void> {
     logger.info(`  role ${role}: absent — nothing to drop`);
     return;
   }
+  await refuseIfPrivileged(client, role);
   const s = await currentSchema(client);
   // Revoke explicitly and in this order: default privileges, then the grants
   // they would otherwise keep re-creating, then the role.

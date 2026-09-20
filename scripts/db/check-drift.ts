@@ -20,9 +20,12 @@
  * — they never edit this platform script. The probe primitives and registry
  * live in `@/lib/db/drift-probes`.
  *
- * Runs under `runAsSystem`: the probes are raw catalog reads, and at `multi`
- * the chokepoint refuses a raw op with no context. This script connects as
- * the privileged DSN, so the audited bypass is the honest scope for it.
+ * Runs under `runAsSystem`: the probes are raw catalog reads (`pg_indexes`,
+ * `pg_class`, `pg_policies`, `information_schema` — none of them
+ * RLS-governed), and at `multi` the chokepoint refuses a raw op with no
+ * context. It connects through the app client (`DATABASE_URL`), so the
+ * bypass GUC changes nothing about what it can see; it is the scope that
+ * lets the probes run at all.
  *
  * Usage:
  *   npm run db:drift-check

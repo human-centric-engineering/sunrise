@@ -57,21 +57,48 @@ describe('scripts/db/tenancy-role', () => {
     exitSpy.mockRestore();
   });
 
-  /** Answers: role absent/present per `exists`, schema `public`, everything else empty. */
-  function answer(exists: boolean) {
+  type Privilege = Partial<{
+    is_self: boolean;
+    is_super: boolean;
+    bypasses: boolean;
+    owns_tables: boolean;
+  }>;
+
+  /**
+   * Answers: role absent/present per `exists` (and, when present, the
+   * privilege flags the guard reads), schema `public`, everything else empty.
+   */
+  function answer(exists: boolean, privilege: Privilege = {}) {
     mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('AS is_self')) {
+        return Promise.resolve({
+          rows: exists
+            ? [
+                {
+                  is_self: false,
+                  is_super: false,
+                  bypasses: false,
+                  owns_tables: false,
+                  ...privilege,
+                },
+              ]
+            : [],
+        });
+      }
       if (sql.includes('FROM pg_roles'))
         return Promise.resolve({ rows: [{ n: exists ? '1' : '0' }] });
-      if (sql.includes('current_schema()'))
-        return Promise.resolve({ rows: [{ schema: 'public' }] });
+      if (sql.includes('AS schema')) return Promise.resolve({ rows: [{ schema: 'public' }] });
       return Promise.resolve({ rows: [] });
     });
   }
 
+  /** The statements that change something — the catalog reads filtered out. */
   const statements = () =>
     mockQuery.mock.calls
       .map((c) => c[0] as string)
-      .filter((s) => !s.includes('FROM pg_roles') && !s.includes('current_schema()'));
+      .filter((s) => !s.includes('FROM pg_roles') && !s.includes('AS schema'));
+
+  const SCRAM = /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/;
 
   async function run(...args: string[]): Promise<void> {
     process.argv = ['node', 'scripts/db/tenancy-role.ts', ...args];
@@ -88,11 +115,18 @@ describe('scripts/db/tenancy-role', () => {
     expect(vi.mocked(Client)).toHaveBeenCalledWith({
       connectionString: 'postgresql://owner:pw@localhost:5432/db',
     });
-    expect(statements()).toEqual([
-      'BEGIN',
-      `CREATE ROLE "sunrise_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 's3cret''quote'`,
+    const [begin, createRole, ...rest] = statements();
+    expect(begin).toBe('BEGIN');
+    // The password never appears: what is sent is its SCRAM-SHA-256 verifier.
+    expect(createRole).toMatch(
+      /^CREATE ROLE "sunrise_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '/
+    );
+    expect(createRole).not.toContain('s3cret');
+    expect(createRole.slice(createRole.indexOf("PASSWORD '") + 10, -1)).toMatch(SCRAM);
+    expect(rest).toEqual([
       'GRANT USAGE ON SCHEMA "public" TO "sunrise_app"',
       'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "public" TO "sunrise_app"',
+      'REVOKE ALL ON "public"."_prisma_migrations" FROM "sunrise_app"',
       'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "public" TO "sunrise_app"',
       'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "sunrise_app"',
       'ALTER DEFAULT PRIVILEGES IN SCHEMA "public" GRANT USAGE, SELECT ON SEQUENCES TO "sunrise_app"',
@@ -106,8 +140,8 @@ describe('scripts/db/tenancy-role', () => {
     process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
     answer(true);
     await run('--create');
-    expect(statements()[1]).toBe(
-      `ALTER ROLE "acme_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'pw'`
+    expect(statements()[1]).toMatch(
+      /^ALTER ROLE "acme_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'SCRAM-SHA-256\$4096:/
     );
     expect(statements().some((s) => s.startsWith('CREATE ROLE'))).toBe(false);
     expect(exitSpy).toHaveBeenCalledWith(0);
@@ -156,6 +190,28 @@ describe('scripts/db/tenancy-role', () => {
       expect(mockConnect).not.toHaveBeenCalled();
       expect(mockError).toHaveBeenCalledWith(expect.stringContaining(message));
       expect(exitSpy).toHaveBeenCalledWith(2);
+    }
+  });
+
+  it('refuses to touch the connecting role, a superuser, a BYPASSRLS role or a table owner', async () => {
+    for (const [privilege, why] of [
+      [{ is_self: true }, 'the role running this script'],
+      [{ is_super: true }, 'a superuser'],
+      [{ bypasses: true }, 'BYPASSRLS'],
+      [{ owns_tables: true }, 'owns tables'],
+    ] as const) {
+      for (const action of ['--create', '--drop'] as const) {
+        vi.resetModules();
+        vi.clearAllMocks();
+        mockConnect.mockResolvedValue(undefined);
+        mockEnd.mockResolvedValue(undefined);
+        process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+        answer(true, privilege);
+        await run(action);
+        expect(mockError).toHaveBeenCalledWith(expect.stringContaining(why));
+        expect(statements()).toEqual(['BEGIN', 'ROLLBACK']);
+        expect(exitSpy).toHaveBeenCalledWith(2);
+      }
     }
   });
 
