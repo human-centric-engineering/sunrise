@@ -13,8 +13,12 @@
  *     `AiAgent` update can carry a nested `embedTokens.create`) and stamps
  *     create-shaped nodes only. Stamping an update payload would `SET
  *     "orgId"` and move a row between orgs wherever RLS is not enforcing —
- *     every `single` install (design doc, Spike register item 2). An explicit
- *     `orgId` is never overwritten; under `runAsSystem` nothing is stamped.
+ *     every `single` install (design doc, Spike register item 2). The stamp
+ *     takes the form the row already uses — the scalar `orgId`, or
+ *     `org: { connect }` when the row names a relation that carries its own
+ *     foreign key (Prisma's checked create form forbids the scalar there).
+ *     An explicit `orgId` or `org` is never overwritten; under `runAsSystem`
+ *     nothing is stamped.
  *   • **Scopes each operation at `multi`** as
  *     `$transaction([set_config('app.current_org', org, true), op])` — the
  *     transaction-local GUC the `org_isolation` policies read — and gives an
@@ -75,6 +79,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   classifyModels,
+  foreignKeyRelations,
+  readInlineSchema,
   readRuntimeDataModel,
   type RuntimeDataModel,
   type RuntimeDataModelField,
@@ -138,33 +144,70 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** What the walks read about the schema, derived once from the base client. */
+export interface TenancySchema {
+  rdm: RuntimeDataModel;
+  /** Model names whose rows belong to one org. */
+  tenantOwned: ReadonlySet<string>;
+  /** Per model, the relation fields whose foreign key lives on that model. */
+  fkRelations: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+/** Derive {@link TenancySchema} from a generated client. */
+export function readTenancySchema(client: unknown): TenancySchema {
+  const rdm = readRuntimeDataModel(client);
+  return {
+    rdm,
+    tenantOwned: new Set(classifyModels(rdm).tenantOwned.map((m) => m.model)),
+    fkRelations: foreignKeyRelations(readInlineSchema(client)),
+  };
+}
+
 /**
- * Walk a write payload, stamping `orgId` on create-shaped nodes of
+ * Stamp the org on a create row in the form the row already uses. Prisma's
+ * create input is checked XOR unchecked: a row naming a relation whose
+ * foreign key lives on this model (`creator: { connect }`) is the checked
+ * form and cannot carry a scalar FK, so it gets `org: { connect }`; any
+ * other row gets the scalar `orgId`.
+ */
+function stampOrg(
+  schema: TenancySchema,
+  model: string,
+  row: Record<string, unknown>,
+  orgId: string
+): void {
+  const fkFields = schema.fkRelations.get(model);
+  const checkedForm = fkFields !== undefined && Object.keys(row).some((k) => fkFields.has(k));
+  if (checkedForm) row.org = { connect: { id: orgId } };
+  else row.orgId = orgId;
+}
+
+/**
+ * Walk a write payload, stamping the org on create-shaped nodes of
  * tenant-owned models and descending everything else for the nested creates
  * it may carry. `stamp` is true only for create data: a create / createMany
  * payload, an upsert's `create` branch, a connectOrCreate's `create`.
  */
 export function injectOrgId(
-  rdm: RuntimeDataModel,
-  tenantOwned: ReadonlySet<string>,
+  schema: TenancySchema,
   model: string,
   data: unknown,
   orgId: string,
   stamp: boolean
 ): unknown {
   if (Array.isArray(data)) {
-    return data.map((d: unknown) => injectOrgId(rdm, tenantOwned, model, d, orgId, stamp));
+    return data.map((d: unknown) => injectOrgId(schema, model, d, orgId, stamp));
   }
   if (!isRecord(data)) return data;
   const row: Record<string, unknown> = { ...data };
-  if (stamp && tenantOwned.has(model) && row.orgId === undefined && row.org === undefined) {
-    row.orgId = orgId;
+  if (stamp && schema.tenantOwned.has(model) && row.orgId === undefined && row.org === undefined) {
+    stampOrg(schema, model, row, orgId);
   }
-  for (const field of rdm.models[model]?.fields ?? []) {
+  for (const field of schema.rdm.models[model]?.fields ?? []) {
     if (field.kind !== 'object') continue;
     const nested = row[field.name];
     if (!isRecord(nested)) continue;
-    row[field.name] = walkRelation(rdm, tenantOwned, field, nested, orgId);
+    row[field.name] = walkRelation(schema, field, nested, orgId);
   }
   return row;
 }
@@ -176,14 +219,13 @@ export function injectOrgId(
  * org, and Prisma's `...WithoutOrgInput` refuses an explicit `orgId` there.
  */
 function walkRelation(
-  rdm: RuntimeDataModel,
-  tenantOwned: ReadonlySet<string>,
+  schema: TenancySchema,
   field: RuntimeDataModelField,
   relation: Record<string, unknown>,
   orgId: string
 ): Record<string, unknown> {
   const target = field.type;
-  const backRelation = rdm.models[target]?.fields.find(
+  const backRelation = schema.rdm.models[target]?.fields.find(
     (f) => f.kind === 'object' && f.relationName === field.relationName
   );
   const viaOrg = backRelation?.name === 'org' && backRelation.type === 'Org';
@@ -197,18 +239,18 @@ function walkRelation(
         : value;
 
   if (out.create !== undefined) {
-    out.create = injectOrgId(rdm, tenantOwned, target, out.create, orgId, stampCreates);
+    out.create = injectOrgId(schema, target, out.create, orgId, stampCreates);
   }
   if (isRecord(out.createMany)) {
     out.createMany = {
       ...out.createMany,
-      data: injectOrgId(rdm, tenantOwned, target, out.createMany.data, orgId, stampCreates),
+      data: injectOrgId(schema, target, out.createMany.data, orgId, stampCreates),
     };
   }
   if (out.connectOrCreate !== undefined) {
     out.connectOrCreate = each(out.connectOrCreate, (x) => ({
       ...x,
-      create: injectOrgId(rdm, tenantOwned, target, x.create, orgId, stampCreates),
+      create: injectOrgId(schema, target, x.create, orgId, stampCreates),
     }));
   }
   if (out.update !== undefined) {
@@ -216,16 +258,16 @@ function walkRelation(
       // To-one shorthand: `relation: { update: { ...fields } }` has no
       // `data` / `where` wrapper — the object IS the update payload.
       if (x.data === undefined && x.where === undefined) {
-        return injectOrgId(rdm, tenantOwned, target, x, orgId, false);
+        return injectOrgId(schema, target, x, orgId, false);
       }
-      return { ...x, data: injectOrgId(rdm, tenantOwned, target, x.data, orgId, false) };
+      return { ...x, data: injectOrgId(schema, target, x.data, orgId, false) };
     });
   }
   if (out.upsert !== undefined) {
     out.upsert = each(out.upsert, (x) => ({
       ...x,
-      create: injectOrgId(rdm, tenantOwned, target, x.create, orgId, stampCreates),
-      update: injectOrgId(rdm, tenantOwned, target, x.update, orgId, false),
+      create: injectOrgId(schema, target, x.create, orgId, stampCreates),
+      update: injectOrgId(schema, target, x.update, orgId, false),
     }));
   }
   return out;
@@ -233,8 +275,7 @@ function walkRelation(
 
 /** Stamp the root payload of a write, whichever shape the operation carries. */
 function injectIntoArgs(
-  rdm: RuntimeDataModel,
-  tenantOwned: ReadonlySet<string>,
+  schema: TenancySchema,
   model: string,
   operation: string,
   args: unknown,
@@ -244,57 +285,116 @@ function injectIntoArgs(
   if (operation === 'upsert') {
     return {
       ...args,
-      create: injectOrgId(rdm, tenantOwned, model, args.create, orgId, true),
-      update: injectOrgId(rdm, tenantOwned, model, args.update, orgId, false),
+      create: injectOrgId(schema, model, args.create, orgId, true),
+      update: injectOrgId(schema, model, args.update, orgId, false),
     };
   }
   if (args.data === undefined) return args;
   return {
     ...args,
-    data: injectOrgId(rdm, tenantOwned, model, args.data, orgId, CREATE_OPS.has(operation)),
+    data: injectOrgId(schema, model, args.data, orgId, CREATE_OPS.has(operation)),
   };
 }
 
-/** The argument keys under which a read can name a relation. */
-const RELATION_ARG_KEYS = ['include', 'select', 'where', 'orderBy'] as const;
 /** Boolean combinators a `where` nests relation filters under. */
-const WHERE_COMBINATORS = ['AND', 'OR', 'NOT'] as const;
+const WHERE_COMBINATORS: ReadonlySet<string> = new Set(['AND', 'OR', 'NOT']);
+/** The wrappers a relation filter takes: list relations and to-one ones. */
+const RELATION_FILTERS: ReadonlySet<string> = new Set(['some', 'every', 'none', 'is', 'isNot']);
 
 /**
  * Does a read on `model` reach a tenant-owned table through a relation —
  * an `include` / `select` (a `_count` too), a relation filter in `where`, or
- * a relation `orderBy`? Such a read on a non-tenant root must be scoped like
- * a tenant-owned one: under the policies its joined rows are simply absent
- * without the GUC, so `aiCapability.findMany({ include: { agents } })` would
- * answer "no agents" for every org rather than fail. One level is enough —
- * anything nested deeper sits under a relation this level already caught.
+ * a relation `orderBy`, at any depth through non-tenant relations? Such a
+ * read on a non-tenant root must be scoped like a tenant-owned one: under
+ * the policies its joined rows are simply absent without the GUC, so
+ * `aiCapability.findMany({ include: { agents } })` would answer "no agents"
+ * for every org rather than fail. The descent stops at a tenant-owned
+ * relation (the answer is yes) and at scalars.
  */
-function reachesTenantRelation(
-  rdm: RuntimeDataModel,
-  tenantOwned: ReadonlySet<string>,
+export function reachesTenantRelation(
+  schema: TenancySchema,
   model: string,
   args: unknown
 ): boolean {
   if (!isRecord(args)) return false;
+  return (
+    selectionReaches(schema, model, args.include) ||
+    selectionReaches(schema, model, args.select) ||
+    whereReaches(schema, model, args.where) ||
+    orderByReaches(schema, model, args.orderBy)
+  );
+}
+
+function relationsOf(schema: TenancySchema, model: string): Map<string, string> {
   const relations = new Map<string, string>();
-  for (const f of rdm.models[model]?.fields ?? []) {
-    if (f.kind === 'object' && tenantOwned.has(f.type)) relations.set(f.name, f.type);
+  for (const f of schema.rdm.models[model]?.fields ?? []) {
+    if (f.kind === 'object') relations.set(f.name, f.type);
   }
-  if (relations.size === 0) return false;
-  const namesRelation = (node: unknown): boolean => {
-    if (Array.isArray(node)) return node.some(namesRelation);
-    if (!isRecord(node)) return false;
-    for (const key of Object.keys(node)) {
-      if (relations.has(key)) return true;
-      if (key === '_count' && isRecord(node._count) && namesRelation(node._count.select))
-        return true;
-      if ((WHERE_COMBINATORS as readonly string[]).includes(key) && namesRelation(node[key])) {
-        return true;
-      }
+  return relations;
+}
+
+function hasTenantRelation(schema: TenancySchema, model: string): boolean {
+  for (const target of relationsOf(schema, model).values()) {
+    if (schema.tenantOwned.has(target)) return true;
+  }
+  return false;
+}
+
+/** `include` / `select`: a relation key, `_count`, or a nested selection on a non-tenant relation. */
+function selectionReaches(schema: TenancySchema, model: string, node: unknown): boolean {
+  if (!isRecord(node)) return false;
+  const relations = relationsOf(schema, model);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === '_count') {
+      if (value === true && hasTenantRelation(schema, model)) return true;
+      if (isRecord(value) && selectionReaches(schema, model, value.select)) return true;
+      continue;
     }
-    return false;
-  };
-  return RELATION_ARG_KEYS.some((key) => namesRelation(args[key]));
+    const target = relations.get(key);
+    if (target === undefined || value === false) continue;
+    if (schema.tenantOwned.has(target)) return true;
+    if (reachesTenantRelation(schema, target, value)) return true;
+  }
+  return false;
+}
+
+/** `where`: a relation filter, through combinators and non-tenant relations. */
+function whereReaches(schema: TenancySchema, model: string, node: unknown): boolean {
+  if (Array.isArray(node)) return node.some((n: unknown) => whereReaches(schema, model, n));
+  if (!isRecord(node)) return false;
+  const relations = relationsOf(schema, model);
+  for (const [key, value] of Object.entries(node)) {
+    if (WHERE_COMBINATORS.has(key)) {
+      if (whereReaches(schema, model, value)) return true;
+      continue;
+    }
+    const target = relations.get(key);
+    if (target === undefined) continue;
+    if (schema.tenantOwned.has(target)) return true;
+    if (!isRecord(value)) continue;
+    // `{ some: {…} }` on a list, `{ is: {…} }` or the bare where on a to-one.
+    const inner = Object.keys(value).some((k) => RELATION_FILTERS.has(k))
+      ? Object.entries(value)
+          .filter(([k]) => RELATION_FILTERS.has(k))
+          .map(([, v]) => v)
+      : [value];
+    if (inner.some((w) => whereReaches(schema, target, w))) return true;
+  }
+  return false;
+}
+
+/** `orderBy`: a relation key (`{ agents: { _count } }` or a to-one's field), through non-tenant relations. */
+function orderByReaches(schema: TenancySchema, model: string, node: unknown): boolean {
+  if (Array.isArray(node)) return node.some((n: unknown) => orderByReaches(schema, model, n));
+  if (!isRecord(node)) return false;
+  const relations = relationsOf(schema, model);
+  for (const [key, value] of Object.entries(node)) {
+    const target = relations.get(key);
+    if (target === undefined) continue;
+    if (schema.tenantOwned.has(target)) return true;
+    if (orderByReaches(schema, target, value)) return true;
+  }
+  return false;
 }
 
 type InteractiveFn = (tx: Prisma.TransactionClient) => Promise<unknown>;
@@ -319,10 +419,7 @@ function noContextError(what: string): Error {
  * `Prisma.TransactionClient` compile against it unchanged (item 8).
  */
 export function withTenancy(base: PrismaClient, options: TenancyExtensionOptions): TenancyClient {
-  const rdm = readRuntimeDataModel(base);
-  const tenantOwned: ReadonlySet<string> = new Set(
-    classifyModels(rdm).tenantOwned.map((m) => m.model)
-  );
+  const schema = readTenancySchema(base);
 
   // The runtime's own `$transaction`, read by property get (the client is a
   // Proxy whose descriptor trap does not list it) and deliberately unbound —
@@ -344,17 +441,17 @@ export function withTenancy(base: PrismaClient, options: TenancyExtensionOptions
 
     let args = params.args;
     if (isWrite && ctx?.orgId) {
-      args = injectIntoArgs(rdm, tenantOwned, model, operation, args, ctx.orgId);
+      args = injectIntoArgs(schema, model, operation, args, ctx.orgId);
     }
     if (!multi) return query(args);
 
     const isRaw = model === undefined;
-    const isTenantModel = model !== undefined && tenantOwned.has(model);
+    const isTenantModel = model !== undefined && schema.tenantOwned.has(model);
     const needsScope =
       isTenantModel ||
       isRaw ||
       (isWrite && ctx !== null) ||
-      (model !== undefined && reachesTenantRelation(rdm, tenantOwned, model, args));
+      (model !== undefined && reachesTenantRelation(schema, model, args));
     if (!needsScope) return query(args);
     if (!ctx) throw noContextError(`${model ?? 'raw SQL'}.${operation}`);
 

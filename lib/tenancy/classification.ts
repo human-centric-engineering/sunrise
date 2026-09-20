@@ -111,6 +111,54 @@ export function readRuntimeDataModel(client: unknown): RuntimeDataModel {
   return rdm as RuntimeDataModel;
 }
 
+/**
+ * Read the schema text the generated client embeds for its query compiler.
+ * `_engineConfig.inlineSchema` is, like `_runtimeDataModel`, undocumented;
+ * the classification test pins it to `prisma/schema/*.prisma` on every run.
+ */
+export function readInlineSchema(client: unknown): string {
+  const text = (client as { _engineConfig?: { inlineSchema?: unknown } })._engineConfig
+    ?.inlineSchema;
+  if (typeof text !== 'string' || text.length === 0) {
+    throw new Error(
+      'Prisma client exposes no _engineConfig.inlineSchema; the tenancy chokepoint cannot tell which relations carry their foreign key'
+    );
+  }
+  return text;
+}
+
+const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
+const FK_RELATION = /^\s*(\w+)\s+\w+\??\s+@relation\([^)]*\bfields:\s*\[/;
+
+/**
+ * For every model, the relation fields whose foreign key lives on that model
+ * — `@relation(fields: [...])`. These are the fields Prisma's *checked*
+ * create input carries in place of the scalar FK: a create naming one of
+ * them cannot also name a scalar FK such as `orgId`, and vice versa. The
+ * compact runtime data model does not record which side of a relation holds
+ * the key, so this is read from the schema text instead.
+ */
+export function foreignKeyRelations(schemaText: string): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
+  let current: Set<string> | null = null;
+  for (const line of schemaText.split('\n')) {
+    const open = MODEL_OPEN.exec(line);
+    if (open) {
+      current = new Set();
+      out.set(open[1], current);
+      continue;
+    }
+    if (line.startsWith('}')) {
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    const fk = FK_RELATION.exec(line);
+    if (fk) current.add(fk[1]);
+  }
+  return out;
+}
+
 export interface TenantOwnedModel {
   /** Prisma model name, e.g. `AiAgent`. */
   model: string;

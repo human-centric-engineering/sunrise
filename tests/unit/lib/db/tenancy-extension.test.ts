@@ -24,8 +24,7 @@ import type {
   SqlResultSet,
   Transaction,
 } from '@prisma/driver-adapter-utils';
-import { withTenancy, injectOrgId } from '@/lib/db/tenancy-extension';
-import { classifyModels, readRuntimeDataModel } from '@/lib/tenancy/classification';
+import { withTenancy, injectOrgId, readTenancySchema } from '@/lib/db/tenancy-extension';
 import type { TenantContext } from '@/lib/tenancy/context';
 
 // ---------------------------------------------------------------------------
@@ -64,9 +63,11 @@ function answer(q: SqlQuery): SqlResultSet {
   if (/^SELECT COUNT\(\*\)/.test(q.sql)) {
     return { columnNames: ['_count$_all'], columnTypes: [ColumnTypeEnum.Int32], rows: [[0]] };
   }
-  // A nested write under an Org root first reads the parent row; let it exist
-  // (every column null but the id, which the WHERE bound first).
-  const orgRead = /^SELECT (.+) FROM "public"\."org" WHERE/.exec(q.sql);
+  // A nested write under an Org root, or a `connect` to an agent, first reads
+  // that row; let it exist (every column null but the id, which the WHERE
+  // bound first). Embed tokens are deliberately absent so an upsert creates.
+  const orgRead =
+    /^SELECT (.+) FROM "public"\."(org|ai_agent)" WHERE \(?"public"\."\2"\."id" = \$1/.exec(q.sql);
   if (orgRead) {
     const cols = orgRead[1].split(',').map((c) =>
       c
@@ -159,8 +160,7 @@ const db = withTenancy(base, {
   getTenantContext: () => store.getStore() ?? null,
   installOrgId: INSTALL,
 });
-const rdm = readRuntimeDataModel(base);
-const tenantOwned = new Set(classifyModels(rdm).tenantOwned.map((m) => m.model));
+const schema = readTenancySchema(base);
 
 const setConfigs = () => recorder.statements.filter((s) => s.sql.includes("set_config('app."));
 const inserts = (table: string) =>
@@ -220,6 +220,22 @@ describe('at single', () => {
       db.aiAgentEmbedToken.create({ data: { ...embedToken, orgId: ORG_B } })
     );
     expect(boundValue(inserts('ai_agent_embed_token')[0], 'orgId')).toBe(ORG_B);
+  });
+
+  it('stamps org: { connect } on a create in the checked form (a relation carrying its FK)', async () => {
+    // Prisma's create input is checked XOR unchecked: `agent: { connect }`
+    // forbids a scalar `orgId` beside it, so the stamp takes the relation form.
+    await db.aiAgentEmbedToken.create({ data: { agent: { connect: { id: 'agent-1' } } } });
+    const [insert] = inserts('ai_agent_embed_token');
+    expect(boundValue(insert, 'orgId')).toBe(INSTALL);
+  });
+
+  it('stamps the scalar on the unchecked form even when a list relation is nested', async () => {
+    await db.aiAgent.create({
+      data: { ...agent, createdBy: 'u1', embedTokens: { create: [{ label: 'site' }] } },
+    });
+    expect(boundValue(inserts('ai_agent')[0], 'orgId')).toBe(INSTALL);
+    expect(boundValue(inserts('ai_agent_embed_token')[0], 'orgId')).toBe(INSTALL);
   });
 
   it('stamps nothing under runAsSystem', async () => {
@@ -378,6 +394,20 @@ describe('at multi', () => {
       expect(setConfigs()).toHaveLength(2);
     });
 
+    it('is wrapped for the _count: true shorthand, which counts every relation', async () => {
+      await asOrg(ORG_A, () => db.aiCapability.findMany({ include: { _count: true } }));
+      expect(setConfigs()).toHaveLength(1);
+    });
+
+    it('is wrapped when the tenant table sits behind a non-tenant relation', async () => {
+      await asOrg(ORG_A, async () => {
+        await db.session.findMany({ include: { user: { include: { aiAgents: true } } } });
+        await db.session.findMany({ where: { user: { aiAgents: { some: { name: 'x' } } } } });
+        await db.session.findMany({ orderBy: { user: { aiAgents: { _count: 'desc' } } } });
+      });
+      expect(setConfigs()).toHaveLength(3);
+    });
+
     it('throws before any SQL with no context', async () => {
       await expect(db.aiCapability.findMany({ include: { agents: true } })).rejects.toThrow(
         /No tenant context for AiCapability\.findMany/
@@ -387,11 +417,7 @@ describe('at multi', () => {
 
     it('stays unwrapped when the read names only scalars and non-tenant relations', async () => {
       await asOrg(ORG_A, async () => {
-        await db.user.findUnique({
-          where: { id: 'u1' },
-          include: { orgMemberships: true },
-          select: undefined,
-        });
+        await db.user.findUnique({ where: { id: 'u1' }, include: { orgMemberships: true } });
         await db.session.findMany({
           where: { AND: [{ userId: 'u1' }] },
           orderBy: { createdAt: 'desc' },
@@ -549,10 +575,10 @@ describe('at multi', () => {
 
 describe('injectOrgId', () => {
   it('stamps only tenant-owned models', () => {
-    expect(injectOrgId(rdm, tenantOwned, 'FeatureFlag', { name: 'x' }, ORG_A, true)).toEqual({
+    expect(injectOrgId(schema, 'FeatureFlag', { name: 'x' }, ORG_A, true)).toEqual({
       name: 'x',
     });
-    expect(injectOrgId(rdm, tenantOwned, 'AiAgent', { name: 'x' }, ORG_A, true)).toEqual({
+    expect(injectOrgId(schema, 'AiAgent', { name: 'x' }, ORG_A, true)).toEqual({
       name: 'x',
       orgId: ORG_A,
     });
@@ -560,13 +586,12 @@ describe('injectOrgId', () => {
 
   it('leaves an explicit org relation alone', () => {
     const data = { name: 'x', org: { connect: { id: ORG_B } } };
-    expect(injectOrgId(rdm, tenantOwned, 'AiAgent', data, ORG_A, true)).toEqual(data);
+    expect(injectOrgId(schema, 'AiAgent', data, ORG_A, true)).toEqual(data);
   });
 
   it('walks connectOrCreate, nested upsert and the to-one update shorthand', () => {
     const out = injectOrgId(
-      rdm,
-      tenantOwned,
+      schema,
       'AiAgentEmbedToken',
       {
         agent: {
@@ -575,13 +600,18 @@ describe('injectOrgId', () => {
       },
       ORG_A,
       true
-    ) as { orgId: string; agent: { connectOrCreate: { create: { orgId: string } } } };
-    expect(out.orgId).toBe(ORG_A);
+    ) as {
+      orgId?: string;
+      org?: { connect: { id: string } };
+      agent: { connectOrCreate: { create: { orgId: string } } };
+    };
+    // The root names `agent`, an FK-carrying relation: checked form.
+    expect(out.orgId).toBeUndefined();
+    expect(out.org).toEqual({ connect: { id: ORG_A } });
     expect(out.agent.connectOrCreate.create.orgId).toBe(ORG_A);
 
     const upsert = injectOrgId(
-      rdm,
-      tenantOwned,
+      schema,
       'AiAgent',
       {
         embedTokens: {
@@ -599,8 +629,7 @@ describe('injectOrgId', () => {
     expect(upsert.embedTokens.upsert[0].update.orgId).toBeUndefined();
 
     const shorthand = injectOrgId(
-      rdm,
-      tenantOwned,
+      schema,
       'AiAgentEmbedToken',
       { agent: { update: { name: 'renamed', embedTokens: { create: { label: 'new' } } } } },
       ORG_A,
@@ -610,9 +639,18 @@ describe('injectOrgId', () => {
     expect(shorthand.agent.update.embedTokens.create.orgId).toBe(ORG_A);
   });
 
+  it('chooses the relation form only for a row naming an FK-carrying relation', () => {
+    expect(
+      injectOrgId(schema, 'AiAgentEmbedToken', { creator: { connect: { id: 'u' } } }, ORG_A, true)
+    ).toEqual({ creator: { connect: { id: 'u' } }, org: { connect: { id: ORG_A } } });
+    expect(
+      injectOrgId(schema, 'AiAgent', { embedTokens: { create: { label: 'l' } } }, ORG_A, true)
+    ).toMatchObject({ orgId: ORG_A });
+  });
+
   it('passes scalars and arrays of scalars through', () => {
-    expect(injectOrgId(rdm, tenantOwned, 'AiAgent', 'x', ORG_A, true)).toBe('x');
-    expect(injectOrgId(rdm, tenantOwned, 'AiAgent', [1, 2], ORG_A, true)).toEqual([1, 2]);
+    expect(injectOrgId(schema, 'AiAgent', 'x', ORG_A, true)).toBe('x');
+    expect(injectOrgId(schema, 'AiAgent', [1, 2], ORG_A, true)).toEqual([1, 2]);
   });
 });
 

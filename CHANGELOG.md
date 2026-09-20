@@ -250,15 +250,16 @@ release process.
   `withTenancy()` (new `lib/db/tenancy-extension.ts`, a Prisma `$extends`):
   every create of a tenant-owned row — nested creates included, whatever the
   root model — is stamped with the org the request entered (the install org
-  at `single` when nothing entered a context; never overwriting an explicit
-  `orgId`; nothing under `runAsSystem`), and at `multi` every operation on a
+  at `single` when nothing entered a context; as the scalar `orgId`, or as
+  `org: { connect }` on a row in Prisma's checked form; never overwriting an
+  explicit `orgId`; nothing under `runAsSystem`), and at `multi` every operation on a
   tenant-owned model, every raw op and every write under a context runs as
   `$transaction([set_config('app.current_org', <org>, true), op])` with one
   setter at the top of an interactive or batch `$transaction`, `runAsSystem`
   setting `app.bypass_rls` instead, and an operation that needs an org and has
   none throwing before any SQL; a read on a non-tenant model that reaches a
-  tenant-owned one through a relation (`include` / `select` / `_count`, a
-  relation filter or `orderBy`) is scoped the same way. `runAsOrg` / `runAsSystem` / `forEachOrg` now
+  tenant-owned one through a relation at any depth (`include` / `select` /
+  `_count`, a relation filter or `orderBy`) is scoped the same way. `runAsOrg` / `runAsSystem` / `forEachOrg` now
   await their callback inside the scope, so a non-async callback returning a
   lazy `PrismaPromise` keeps its org. **Type note for forks:** `prisma` is
   typed `Omit<PrismaClient, '$on'>` (`TenancyClient`) — every call site,

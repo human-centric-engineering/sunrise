@@ -273,14 +273,15 @@ describe('lib/db/client', () => {
   });
 
   describe('Singleton caching — non-production (development)', () => {
-    it('should cache prisma on globalForPrisma in development', async () => {
+    it('should cache the base prisma client on globalForPrisma in development', async () => {
       // Arrange + Act
-      const { prisma } = await importClientWithEnv({ NODE_ENV: 'development' });
+      const { MockPrismaClient } = await importClientWithEnv({ NODE_ENV: 'development' });
 
-      // Assert — the module wrote the instance into globalThis
+      // Assert — the module wrote the BASE instance into globalThis (the
+      // extension is applied fresh on every evaluation)
       const g = globalThis as unknown as { prisma?: unknown };
       expect(g.prisma).toBeDefined();
-      expect(g.prisma).toBe(prisma);
+      expect(g.prisma).toBe(MockPrismaClient.mock.instances[0]);
     });
 
     it('should cache pool on globalForPrisma in development', async () => {
@@ -301,14 +302,14 @@ describe('lib/db/client', () => {
       const cachedPool = { __type: 'CachedPool', connect: vi.fn() };
 
       // Act — pass pre-seeded globals so the module finds them at load time
-      const { prisma, MockPrismaClient } = await importClientWithEnv({
+      const { MockPrismaClient, mockWithTenancy } = await importClientWithEnv({
         NODE_ENV: 'development',
         preSeededGlobal: { prisma: cachedPrisma, pool: cachedPool },
       });
 
-      // Assert — module returned the cached instance without calling the constructor
-      expect(prisma).toBe(cachedPrisma);
+      // Assert — the cached base client was wrapped, not replaced
       expect(MockPrismaClient).not.toHaveBeenCalled();
+      expect(mockWithTenancy).toHaveBeenCalledWith(cachedPrisma, expect.anything());
     });
   });
 
@@ -359,19 +360,25 @@ describe('lib/db/client', () => {
       expect(mockWithTenancy).toHaveBeenCalledTimes(1);
     });
 
-    it('does not re-wrap a cached client on hot reload', async () => {
-      // Arrange — the cached instance is already the extended client
-      const cachedPrisma = { __type: 'CachedTenancyClient' };
+    it('re-wraps the cached BASE client on hot reload, so the extension reads the live context module', async () => {
+      // Arrange — what survives a reload is the base client (it owns the pool)
+      const cachedBase = { __type: 'CachedPrismaClient' };
 
       // Act
-      const { prisma, mockWithTenancy } = await importClientWithEnv({
+      const { prisma, MockPrismaClient, mockWithTenancy } = await importClientWithEnv({
         NODE_ENV: 'development',
-        preSeededGlobal: { prisma: cachedPrisma, pool: { __type: 'CachedPool' } },
+        preSeededGlobal: { prisma: cachedBase, pool: { __type: 'CachedPool' } },
       });
 
-      // Assert — wrapping twice would stack two setters per operation
-      expect(prisma).toBe(cachedPrisma);
-      expect(mockWithTenancy).not.toHaveBeenCalled();
+      // Assert — no new base client, but a fresh extension over the cached
+      // one: a retained extended client would close over the previous
+      // evaluation's AsyncLocalStorage and see no context after a reload.
+      expect(MockPrismaClient).not.toHaveBeenCalled();
+      expect(mockWithTenancy).toHaveBeenCalledTimes(1);
+      expect(mockWithTenancy.mock.calls[0][0]).toBe(cachedBase);
+      expect(prisma).toBe(mockWithTenancy.mock.results[0].value);
+      const g = globalThis as unknown as { prisma?: unknown };
+      expect(g.prisma).toBe(cachedBase);
     });
   });
 

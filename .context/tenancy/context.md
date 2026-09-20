@@ -236,13 +236,18 @@ Two behaviours, and only these:
   nested `create` / `createMany` / `connectOrCreate` / `update` / `upsert`,
   and stamps **create-shaped nodes only**: an update payload is never
   stamped, because that would move a row between orgs wherever RLS is not
-  enforcing. An explicit `orgId` is never overwritten; a create reached
-  through the org relation itself is left to the nesting; under
-  `runAsSystem` nothing is stamped.
+  enforcing. The stamp takes the form the row already uses — the scalar
+  `orgId`, or `org: { connect }` when the row names a relation carrying its
+  own foreign key (`creator: { connect }`), since Prisma's checked create
+  form forbids the scalar beside it; which relations those are is read from
+  the schema the client embeds (`lib/tenancy/classification.ts`,
+  `foreignKeyRelations`). An explicit `orgId` or `org` is never overwritten;
+  a create reached through the org relation itself is left to the nesting;
+  under `runAsSystem` nothing is stamped.
 - **At `multi` every operation on a tenant-owned model, every raw op, every
   read on a non-tenant model that reaches a tenant-owned one through a
-  relation (an `include` / `select` / `_count`, a relation filter, a
-  relation `orderBy` — `aiCapability.findMany({ include: { agents } })` would
+  relation at any depth (an `include` / `select` / `_count`, a relation
+  filter, a relation `orderBy` — `aiCapability.findMany({ include: { agents } })` would
   otherwise answer "no agents" for every org under the policies rather than
   fail), and — when a context exists — every write on any model runs as
   `$transaction([set_config('app.current_org', <org>, true), op])`**, the

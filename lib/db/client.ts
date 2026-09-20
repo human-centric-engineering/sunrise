@@ -44,7 +44,7 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
  */
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: TenancyClient | undefined;
+  prisma: PrismaClient | undefined;
   pool: Pool | undefined;
 };
 
@@ -82,6 +82,23 @@ if (env.NODE_ENV !== 'production') globalForPrisma.pool = pool;
 const adapter = new PrismaPg(pool);
 
 /**
+ * The base client — the one thing retained across hot reloads, because it
+ * owns the connection. The extension is applied fresh on every evaluation
+ * of this module: it closes over `getTenantContext`, and a dev reload that
+ * re-evaluates `lib/tenancy/context.ts` gives the guards a new
+ * `AsyncLocalStorage` — a retained extended client would keep reading the
+ * old one and see no context.
+ */
+const baseClient =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    adapter,
+    log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  });
+
+if (env.NODE_ENV !== 'production') globalForPrisma.prisma = baseClient;
+
+/**
  * The tenancy-extended client every importer receives.
  *
  * `lib/tenancy/context.ts` imports `prisma` back from here for `forEachOrg`
@@ -90,16 +107,10 @@ const adapter = new PrismaPg(pool);
  * from `context.ts`, and that side reads `prisma` only inside `forEachOrg`,
  * never at evaluation.
  */
-export const prisma: TenancyClient =
-  globalForPrisma.prisma ??
-  withTenancy(
-    new PrismaClient({
-      adapter,
-      log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-    }),
-    { isMultiTenant, getTenantContext, installOrgId: INSTALL_ORG_ID }
-  );
-
-if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+export const prisma: TenancyClient = withTenancy(baseClient, {
+  isMultiTenant,
+  getTenantContext,
+  installOrgId: INSTALL_ORG_ID,
+});
 
 export default prisma;
