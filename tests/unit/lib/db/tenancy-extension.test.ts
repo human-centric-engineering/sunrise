@@ -230,6 +230,12 @@ describe('at single', () => {
     expect(boundValue(insert, 'orgId')).toBe(INSTALL);
   });
 
+  it('ignores a relation key set to undefined when choosing the form', async () => {
+    // The optional-connect pattern in the tree: `profile: id ? { connect } : undefined`.
+    await db.aiAgent.create({ data: { ...agent, createdBy: 'u1', profile: undefined } });
+    expect(boundValue(inserts('ai_agent')[0], 'orgId')).toBe(INSTALL);
+  });
+
   it('stamps the scalar on the unchecked form even when a list relation is nested', async () => {
     await db.aiAgent.create({
       data: { ...agent, createdBy: 'u1', embedTokens: { create: [{ label: 'site' }] } },

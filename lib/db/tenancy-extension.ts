@@ -177,7 +177,11 @@ function stampOrg(
   orgId: string
 ): void {
   const fkFields = schema.fkRelations.get(model);
-  const checkedForm = fkFields !== undefined && Object.keys(row).some((k) => fkFields.has(k));
+  // A key set to `undefined` is one Prisma strips, so it decides nothing:
+  // `profile: profileId ? { connect } : undefined` is the unchecked form.
+  const checkedForm =
+    fkFields !== undefined &&
+    Object.entries(row).some(([k, v]) => v !== undefined && fkFields.has(k));
   if (checkedForm) row.org = { connect: { id: orgId } };
   else row.orgId = orgId;
 }
