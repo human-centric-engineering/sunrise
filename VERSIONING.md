@@ -131,10 +131,13 @@ covered by the version contract.
   than trusting it.** The guard cannot derive this half, and a short list here
   is the same broken promise #732 was about:
   - erasure-hook registry (`lib/privacy/erasure-hooks.ts`)
-  - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`, and the tenant context
-    `lib/tenancy/context.ts` — `getTenantContext` / `requireTenantContext` /
-    `runAsOrg` / `runAsSystem` / `forEachOrg` — plus the `x-sunrise-org`
-    request-header contract between `proxy.ts` and the guards)
+  - tenancy seam (`TENANCY_MODE` + `lib/db/client.ts`, whose exported client
+    is the base client through `withTenancy()` in `lib/db/tenancy-extension.ts`
+    — `orgId` stamped on every tenant-owned create, every operation scoped by
+    `set_config` at `multi`; and the tenant context `lib/tenancy/context.ts`
+    — `getTenantContext` / `requireTenantContext` / `runAsOrg` /
+    `runAsSystem` / `forEachOrg` — plus the `x-sunrise-org` request-header
+    contract between `proxy.ts` and the guards)
   - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
   - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold; the default returns `BRAND.name` as a bare string, so a fork replaces markup rather than filling a blank)
   - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)

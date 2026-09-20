@@ -16,6 +16,37 @@ release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **A query runs only inside the org the request entered, and a forgotten
+  path fails loud instead of reading wide** (multi-tenancy §107, the
+  data-layer chokepoint). The tenancy seam's contract changes:
+  `TENANCY_MODE=multi` no longer throws at import. The client
+  `lib/db/client.ts` exports is now the base `PrismaClient` through
+  `withTenancy()` (new `lib/db/tenancy-extension.ts`, a Prisma `$extends`):
+  every create of a tenant-owned row — nested creates included, whatever the
+  root model — is stamped with the org the request entered (the install org
+  at `single` when nothing entered a context; never overwriting an explicit
+  `orgId`; nothing under `runAsSystem`), and at `multi` every operation on a
+  tenant-owned model, every raw op and every write under a context runs as
+  `$transaction([set_config('app.current_org', <org>, true), op])` with one
+  setter at the top of an interactive or batch `$transaction`, `runAsSystem`
+  setting `app.bypass_rls` instead, and an operation that needs an org and has
+  none throwing before any SQL. `runAsOrg` / `runAsSystem` / `forEachOrg` now
+  await their callback inside the scope, so a non-async callback returning a
+  lazy `PrismaPromise` keeps its org. **Type note for forks:** `prisma` is
+  typed `Omit<PrismaClient, '$on'>` (`TenancyClient`) — every call site,
+  `Pick<PrismaClient, …>` default and `typeof prisma.x.y` compiles unchanged;
+  only a parameter annotated exactly `PrismaClient` needs `TenancyClient`, and
+  `$on` was never usable on an extended client. `tenantOwnedModels()` in
+  `lib/tenancy/classification.ts` now takes the client (`tenantOwnedModels(prisma)`)
+  so the module stays free of the client it helps build. Behaviour at
+  `TENANCY_MODE=single` is unchanged apart from the stamped column — no
+  `set_config` is ever issued there, proven through the real Prisma runtime on
+  a recording adapter (`tests/unit/lib/db/tenancy-extension.test.ts`). `multi`
+  is correct only with the policies enabled and a `NOBYPASSRLS` app role
+  (§107's next task ships both).
+
 ### Added
 
 - **Every tenant-owned row knows its org** (multi-tenancy §107, first
@@ -29,9 +60,9 @@ release process.
   to the install org. `NOT NULL` is a later staged migration. `Org` gains a
   back-relation per model. New `lib/tenancy/classification.ts`:
   `SYSTEM_MODELS`, `GLOBAL_CONFIG_MODELS`, `classifyModels()` and
-  `tenantOwnedModels()` (model → table, derived from the generated client at
-  runtime — the roster the row-isolation policies, drift probes and enable
-  script will read). Every one of the 38 has a disposition in
+  `tenantOwnedModels(prisma)` (model → table, derived from the client it is
+  given at runtime — the roster the row-isolation policies, drift probes and
+  enable script will read). Every one of the 38 has a disposition in
   `lib/privacy/org-sources.ts` (36 `export` — withholding the signing secrets on
   `AiWebhookSubscription` and `AiWorkflowTrigger`, an execution's `leaseToken`,
   and an event hook's secret and custom header values via `toSafeHook`;
@@ -42,11 +73,11 @@ release process.
   allowlist; add the column (the shape is in
   `.context/tenancy/identity.md`) or classify it deliberately, never by
   deleting from an allowlist. Behaviour at `TENANCY_MODE=single` is
-  unchanged. Nothing writes the column until the data-layer chokepoint
-  lands (§107's next task), so a row created after this migration carries
-  `NULL`; the org export — the only reader so far — treats `NULL` as the
-  install org's at `single` and strictly at `multi`, where
-  `db:tenancy:enable` will backfill before enforcing.
+  unchanged. The data-layer chokepoint (under _Changed_) stamps the column
+  on every create; a row created between this migration and that stamping
+  carries `NULL`, which the org export treats as the install org's at
+  `single` and strictly at `multi`, where `db:tenancy:enable` will backfill
+  before enforcing.
 - **Every install has an org, and every user belongs to one** (multi-tenancy
   §106, first task). Two published model interfaces in a new
   `prisma/schema/tenancy.prisma`: `Org` (`slug`, `name`, `status`

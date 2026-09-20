@@ -26,6 +26,12 @@
  * and reads as wrong-org from the install org; and the backfill re-run
  * migration's own UPDATE binds a null-org token this run created.
  *
+ * And the data-layer chokepoint (t-706) at `single`: a create that names no
+ * org is stamped with the install org, a nested create under it too, an
+ * explicit `orgId` (including the platform credential's `null`) stands, and
+ * `runAsSystem` stamps nothing. The interim NULL rows the export and backfill
+ * checks need are therefore written with an explicit `orgId: null`.
+ *
  * What it deliberately does NOT assert: that every platform ADMIN on the
  * database is an install-org OWNER. The role mapping is applied at creation
  * (migration or hook) and is not re-synced when an admin later promotes or
@@ -59,7 +65,7 @@ import {
   updateOrg,
 } from '@/lib/tenancy/lifecycle';
 import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { resolveEmbedToken } from '@/lib/embed/auth';
 import {
   authenticateMcpRequest,
@@ -115,6 +121,7 @@ async function main(): Promise<void> {
   let chatKeyId: string | null = null;
   let adminKeyId: string | null = null;
   let agentId: string | null = null;
+  let nullAgentId: string | null = null;
   let costLogId: string | null = null;
 
   try {
@@ -208,7 +215,9 @@ async function main(): Promise<void> {
     // also bind every key an operator has minted since the migration (nothing
     // writes orgId at mint until t-673), rewriting rows this smoke does not
     // own and failing its own count. The chat key binds; the admin key stays
-    // NULL.
+    // NULL. Both are written with an explicit `orgId: null` — the shape the
+    // mint route uses for a platform credential — because since t-706 a
+    // create that omits the column is stamped with the install org.
     const chatKey = await prisma.aiApiKey.create({
       data: {
         userId: member.id,
@@ -216,6 +225,7 @@ async function main(): Promise<void> {
         keyHash: `${PREFIX}-chat-${stamp}`,
         keyPrefix: 'sk_smoke',
         scopes: ['chat'],
+        orgId: null,
       },
     });
     chatKeyId = chatKey.id;
@@ -226,12 +236,13 @@ async function main(): Promise<void> {
         keyHash: `${PREFIX}-admin-${stamp}`,
         keyPrefix: 'sk_smoke',
         scopes: ['admin'],
+        orgId: null,
       },
     });
     adminKeyId = adminKey.id;
     check(
       chatKey.orgId === null && adminKey.orgId === null,
-      'two keys created unbound (orgId NULL)'
+      'two keys created unbound (an explicit orgId: null stands — the chokepoint never overwrites it)'
     );
     const migration = readFileSync(
       path.join(process.cwd(), 'prisma/migrations/20260917120000_org_identity/migration.sql'),
@@ -378,6 +389,40 @@ async function main(): Promise<void> {
       },
     });
     agentId = agent.id;
+    // ── The chokepoint at single (t-706) ───────────────────────────────────
+    check(
+      agent.orgId === INSTALL_ORG_ID,
+      'a create that names no org is stamped with the install org at single'
+    );
+    const nested = await prisma.aiAgent.update({
+      where: { id: agent.id },
+      data: { embedTokens: { create: { createdBy: owner.id, label: `${PREFIX} nested` } } },
+      include: { embedTokens: { where: { label: `${PREFIX} nested` } } },
+    });
+    check(
+      nested.embedTokens.length === 1 && nested.embedTokens[0].orgId === INSTALL_ORG_ID,
+      'a nested create under an update root is stamped too'
+    );
+    check(nested.orgId === INSTALL_ORG_ID, 'the update itself did not touch the parent’s orgId');
+    const systemToken = await runAsSystem('smoke: unstamped fixture', () =>
+      prisma.aiAgentEmbedToken.create({
+        data: { agentId: agent.id, createdBy: owner.id, label: `${PREFIX} system` },
+      })
+    );
+    check(systemToken.orgId === null, 'runAsSystem stamps nothing');
+    const inOrgToken = await runAsOrg(org.id, () =>
+      prisma.aiAgentEmbedToken.create({
+        data: { agentId: agent.id, createdBy: owner.id, label: `${PREFIX} in-org` },
+      })
+    );
+    check(
+      inOrgToken.orgId === org.id,
+      'a create inside runAsOrg is stamped with that org — from a non-async callback'
+    );
+    await prisma.aiAgentEmbedToken.deleteMany({
+      where: { id: { in: [nested.embedTokens[0].id, systemToken.id] } },
+    });
+
     const embed = await prisma.aiAgentEmbedToken.create({
       data: { agentId: agent.id, orgId: org.id, createdBy: owner.id },
     });
@@ -448,11 +493,11 @@ async function main(): Promise<void> {
     // scoped to this row. Read from the file, so the smoke cannot drift from
     // what deploys.
     const interim = await prisma.aiAgentEmbedToken.create({
-      data: { agentId: agent.id, createdBy: owner.id },
+      data: { agentId: agent.id, createdBy: owner.id, orgId: null },
     });
     check(
       interim.orgId === null,
-      'a token written without an org carries NULL (the interim state)'
+      'a token written with an explicit null org carries NULL (the interim state, simulated)'
     );
     const rerun = readFileSync(
       path.join(
@@ -520,21 +565,33 @@ async function main(): Promise<void> {
       'the export’s roster is exactly the org’s two members'
     );
 
-    // A row nothing has written an orgId on yet (this run's agent, created
-    // above with the column NULL — every create does that until the data-layer
-    // chokepoint lands) is the INSTALL org's at single, and no other org's.
-    // On a fresh CI database every seeded agent is in this state, so an
-    // export that read `orgId = 'install'` strictly would carry none of them.
+    // A row still carrying NULL (born between the t-705 migration and the
+    // t-706 chokepoint, or seeded under runAsSystem) is the INSTALL org's at
+    // single, and no other org's. Simulated with an explicit null, since a
+    // plain create is now stamped.
     const agentsOf = (b: Awaited<ReturnType<typeof exportOrgData>>) =>
       (b.data.agents as { id: string }[]).map((a) => a.id);
+    const nullAgent = await prisma.aiAgent.create({
+      data: {
+        name: `${PREFIX} null-org agent`,
+        slug: `${PREFIX}-null-agent-${stamp}`,
+        description: 'smoke fixture',
+        systemInstructions: 'smoke fixture',
+        model: '',
+        provider: '',
+        visibility: 'invite_only',
+        orgId: null,
+      },
+    });
+    nullAgentId = nullAgent.id;
     const installBundle = await exportOrgData({ orgId: INSTALL_ORG_ID, actorUserId: owner.id });
     check(
-      agentsOf(installBundle).includes(agent.id),
-      'the install org’s export carries an agent whose orgId is still NULL (born before the chokepoint writes it)'
+      agentsOf(installBundle).includes(nullAgent.id) && agentsOf(installBundle).includes(agent.id),
+      'the install org’s export carries a NULL-org agent and a stamped one'
     );
     check(
-      !agentsOf(bundle).includes(agent.id),
-      'another org’s export does not carry that NULL-org agent'
+      !agentsOf(bundle).includes(nullAgent.id) && !agentsOf(bundle).includes(agent.id),
+      'another org’s export carries neither'
     );
 
     // Erasing the org: memberships and the pointer go, the people stay.
@@ -613,6 +670,8 @@ async function main(): Promise<void> {
     if (costLogId)
       await prisma.aiCostLog.deleteMany({ where: { id: costLogId } }).catch(() => undefined);
     if (agentId) await prisma.aiAgent.deleteMany({ where: { id: agentId } }).catch(() => undefined);
+    if (nullAgentId)
+      await prisma.aiAgent.deleteMany({ where: { id: nullAgentId } }).catch(() => undefined);
     for (const id of [memberUserId, ownerUserId, otherUserId]) {
       if (id) await prisma.user.deleteMany({ where: { id } }).catch(() => undefined);
     }

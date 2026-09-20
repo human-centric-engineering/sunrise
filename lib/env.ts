@@ -102,11 +102,11 @@ const serverEnvSchema = z.object({
     .enum(['single', 'multi'])
     .default('single')
     .describe(
-      'Deployment tenancy model. "single" (default) = standard single-tenant install. ' +
-        '"multi" is NOT implemented by the template — it requires the Postgres-RLS retrofit ' +
-        'in .context/architecture/multi-tenancy.md. Setting "multi" without that work makes the ' +
-        'Prisma client throw at startup (see the tenancy seam in lib/db/client.ts) rather than ' +
-        'silently run unscoped queries.'
+      'Deployment tenancy model. "single" (default) = standard single-tenant install; the install ' +
+        'org is the only org and no query is scoped. "multi" makes the data layer (lib/db/tenancy-extension.ts) ' +
+        'scope every operation to the org the request entered and refuse one that entered none; it is ' +
+        'correct only with the RLS policies enabled (npm run db:tenancy:enable) and the app connecting as a ' +
+        'NOBYPASSRLS role — see .context/architecture/multi-tenancy-design.md.'
     ),
 
   // MCP session model (see .context/orchestration/mcp.md)

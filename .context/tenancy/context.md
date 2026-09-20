@@ -10,9 +10,9 @@ something.
 
 **At `TENANCY_MODE=single` the install org is the only answer**, and every
 component on this page runs anyway — that is the point. A single-tenant
-install exercises the same guard entry, the same policy arm and the same
-context every multi-tenant install will, with the install org where a tenant
-would be. Nothing here changes what a single-tenant install does, and
+install exercises the same guard entry, the same policy arm, the same
+context and the same data-layer chokepoint every multi-tenant install does,
+with the install org where a tenant would be. Nothing here changes what a single-tenant install does, and
 [`authorization-org.test.ts`](../../tests/unit/lib/auth/authorization-org.test.ts)
 proves it by sweep rather than by sentence.
 
@@ -79,11 +79,18 @@ interface TenantContext {
   whole async subtree and nothing outside it. A throw does not leak the
   context to the next caller; concurrent work on the same process does not
   see it. The six ALS guarantees are pinned by
-  [`context.test.ts`](../../tests/unit/lib/tenancy/context.test.ts).
+  [`context.test.ts`](../../tests/unit/lib/tenancy/context.test.ts). The
+  seam **awaits `fn` inside the scope** rather than merely calling it there:
+  a `PrismaPromise` is lazy and reads the context when it is awaited, so
+  `runAsOrg(org, () => prisma.x.findMany())` — a non-async callback — would
+  otherwise hand the promise out unawaited and lose its org (§107 t-704
+  measured it both ways; t-706 fixed it here rather than as a rule for every
+  caller).
 - **`runAsSystem(reason, fn)`** — the audited platform bypass: no org, and
   the reason logged at `info` on every entry. For genuinely global work
-  only; at `multi` this is the one scope §107's data layer will let through
-  unscoped.
+  only; at `multi` this is the one scope the data layer lets through
+  unscoped — it sets `app.bypass_rls` for the transaction instead of an org
+  (below).
 - **`forEachOrg(fn)`** — one `runAsOrg` scope per `ACTIVE` org, sequential on
   purpose (per-org batch caps are meaningless if every org runs at once).
   Nothing in core calls it in production yet; §108 wires the maintenance
@@ -140,7 +147,7 @@ means.
 `viewer.orgRole`) for the policy, and as the tenant context that the
 route's `resource` resolver, the policy call and the handler all run inside
 — one `runAsOrg` around all three, so the resolver's own query is scoped the
-same way the handler's are once §107 makes the data layer read the context.
+same way the handler's are.
 A platform credential runs outside any scope.
 
 **Also entered, by the guard-less routes themselves:** the webhook trigger
@@ -153,9 +160,9 @@ token enters nothing**: it is a gate the session passes through, and
 the guard entered ([agent-visibility.md](../orchestration/agent-visibility.md#org-binding-106)).
 **Not yet entered** (each named with its owner): the maintenance tick and
 other background work until §108; HMAC approval tokens and inbound adapters
-until executions and triggers carry an org (§107). Until then those paths run
-outside any context — the install org at `single`, a refusal at `multi`,
-never a wide read.
+until executions and triggers carry an org (§107 t-708). Until then those
+paths run outside any context — the install org at `single`, a refusal at
+`multi` the moment they touch a tenant-owned row, never a wide read.
 
 ## The fork's resolver — `lib/app/tenant-resolver.ts`
 
@@ -211,15 +218,65 @@ and its row in [`fork-init-seams.md`](../architecture/fork-init-seams.md).
   the principal with no org role: they ask with `resource: null`, where the
   org arm grants nothing by design, so a membership read could not change the
   answer.
-- **§107's data layer** will read `requireTenantContext()` to scope every
-  query — which is why `multi` throws rather than answers when nothing entered
-  a context.
+- **The data layer** — the section below — stamps and scopes every query by
+  it, which is why `multi` throws rather than answers when nothing entered a
+  context.
+
+## The data layer — `lib/db/tenancy-extension.ts`
+
+The client every importer receives from `lib/db/client.ts` is the base
+`PrismaClient` through `withTenancy()`, a Prisma `$extends` that reads this
+context below the handler. No route, job or script learns about `orgId`.
+Two behaviours, and only these:
+
+- **Every create of a tenant-owned row is stamped** with the context's org
+  — at `single` the install org when nothing entered a context — in both
+  modes, one code path. The walk runs on every write whatever the root model
+  (an `AiAgent` update carrying a nested `embedTokens.create`), descends
+  nested `create` / `createMany` / `connectOrCreate` / `update` / `upsert`,
+  and stamps **create-shaped nodes only**: an update payload is never
+  stamped, because that would move a row between orgs wherever RLS is not
+  enforcing. An explicit `orgId` is never overwritten; a create reached
+  through the org relation itself is left to the nesting; under
+  `runAsSystem` nothing is stamped.
+- **At `multi` every operation on a tenant-owned model, every raw op, and —
+  when a context exists — every write on any model runs as
+  `$transaction([set_config('app.current_org', <org>, true), op])`**, the
+  transaction-local GUC the `org_isolation` policies read; `runAsSystem`
+  sets `app.bypass_rls` instead. An interactive or batch `$transaction`
+  gets one setter at its top (the override delegates to the runtime's own
+  `$transaction` with the outermost client as `this`, so a later layer's
+  hooks fire inside transactions too). Reads on non-tenant models stay
+  unwrapped; a no-context write on a non-tenant root passes through — that
+  is `POST /orgs/switch` writing `Session.activeOrgId`. **An operation that
+  needs an org and has none throws before any SQL** — a path nobody taught
+  to enter an org fails loud instead of reading wide. A `$transaction`
+  opened for one org refuses an op for another inside it.
+
+At `single` **no `set_config` is ever issued** and no transaction is opened
+that the caller did not ask for. The design record's Spike register
+([`multi-tenancy-design.md`](../architecture/multi-tenancy-design.md#spike-register))
+carries the measurements behind each rule; the bypass-as-GUC choice (item 9)
+is a §107 journal decision.
+
+Enabling `multi` is only correct with the policies enabled
+(`npm run db:tenancy:enable`, §107 t-707) and the app connecting as a
+`NOBYPASSRLS` role that does not own the tables — on Neon the deploy role
+has `BYPASSRLS` and is never subject to a policy.
 
 ## Proving it
 
 - [`tests/unit/lib/tenancy/context.test.ts`](../../tests/unit/lib/tenancy/context.test.ts)
   — the six ALS behaviours, both modes of `requireTenantContext`,
-  `runAsSystem`'s logged reason, `forEachOrg`'s one-scope-per-active-org.
+  `runAsSystem`'s logged reason, `forEachOrg`'s one-scope-per-active-org,
+  and the seam keeping a non-async callback's context.
+- [`tests/unit/lib/db/tenancy-extension.test.ts`](../../tests/unit/lib/db/tenancy-extension.test.ts)
+  — the real generated client and the real extension on a recording driver
+  adapter: the stamped column on every create shape at both modes, no
+  `set_config` at `single`, the exact statements and transaction boundaries
+  at `multi`, the bypass GUC under `runAsSystem`, the refusal with no
+  context, and the undocumented `__internalParams.transaction` the
+  pass-through keys on.
 - [`tests/unit/lib/tenancy/entry.test.ts`](../../tests/unit/lib/tenancy/entry.test.ts)
   — every arm of the read rule, both credentials, both modes; the install
   org's no-read at `single` asserted by the mock never being called.

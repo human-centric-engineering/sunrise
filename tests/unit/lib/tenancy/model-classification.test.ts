@@ -23,21 +23,19 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 /**
  * A real generated client on a pool that never connects — `_runtimeDataModel`
  * is populated by the constructor, and no test here runs a query.
  */
-const realClient = vi.hoisted(async () => {
+const realClient = (async () => {
   const { Pool } = await import('pg');
   const { PrismaPg } = await import('@prisma/adapter-pg');
   const { PrismaClient } = await import('@prisma/client');
   const pool = new Pool({ connectionString: 'postgresql://never:connects@127.0.0.1:1/never' });
   return new PrismaClient({ adapter: new PrismaPg(pool) });
-});
-vi.mock('@/lib/db/client', async () => ({ prisma: await realClient }));
-
+})();
 const {
   SYSTEM_MODELS,
   GLOBAL_CONFIG_MODELS,
@@ -203,8 +201,10 @@ describe('model classification', () => {
       expect(fromClient.contradictions).toEqual([]);
     });
 
-    it('tenantOwnedModels() serves that roster from the application client', () => {
-      const roster = tenantOwnedModels();
+    it('tenantOwnedModels() serves that roster from the client it is given, once', async () => {
+      const client = await realClient;
+      const roster = tenantOwnedModels(client);
+      expect(tenantOwnedModels(client)).toBe(roster);
       expect([...roster.entries()]).toEqual(fromSchema.tenantOwned.map((m) => [m.model, m.table]));
       expect(roster.get('AiAgent')).toBe('ai_agent');
       expect(roster.has('Org')).toBe(false);

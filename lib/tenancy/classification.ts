@@ -32,8 +32,6 @@
  * @see lib/privacy/org-sources.ts — what an org receives from each tenant-owned model
  */
 
-import { prisma } from '@/lib/db/client';
-
 /**
  * System rows: they decide or record tenancy rather than belong to a tenant.
  * `OrgMembership` carries `orgId` but is the join that *decides* which org a
@@ -83,7 +81,10 @@ export type GlobalConfigModel = (typeof GLOBAL_CONFIG_MODELS)[number];
 export interface RuntimeDataModelField {
   name: string;
   kind: 'scalar' | 'object' | 'enum' | 'unsupported';
+  /** The scalar type, or for a relation (`kind: 'object'`) the target model. */
   type: string;
+  /** Present on relation fields; the two ends of a relation share it. */
+  relationName?: string;
 }
 export interface RuntimeDataModelModel {
   fields: RuntimeDataModelField[];
@@ -161,17 +162,25 @@ export function classifyModels(rdm: RuntimeDataModel): ModelClassification {
   return out;
 }
 
-let cached: ReadonlyMap<string, string> | undefined;
+const rosters = new WeakMap<object, ReadonlyMap<string, string>>();
 
 /**
- * Model name → table name for every tenant-owned model, derived once from the
- * application's Prisma client. This is the roster the row-isolation policies,
- * the drift probes and the enable script read; nothing hand-lists it.
+ * Model name → table name for every tenant-owned model, derived once per
+ * client (pass the application's `prisma`). This is the roster the
+ * row-isolation policies, the drift probes and the enable script read;
+ * nothing hand-lists it.
+ *
+ * The client is a parameter rather than an import: `lib/db/client.ts` reads
+ * this module to build the chokepoint, so importing the client back from here
+ * would be a cycle whose evaluation order depends on which side a script
+ * loads first.
  */
-export function tenantOwnedModels(): ReadonlyMap<string, string> {
-  if (!cached) {
-    const { tenantOwned } = classifyModels(readRuntimeDataModel(prisma));
-    cached = new Map(tenantOwned.map((m) => [m.model, m.table]));
+export function tenantOwnedModels(client: object): ReadonlyMap<string, string> {
+  let roster = rosters.get(client);
+  if (!roster) {
+    const { tenantOwned } = classifyModels(readRuntimeDataModel(client));
+    roster = new Map(tenantOwned.map((m) => [m.model, m.table]));
+    rosters.set(client, roster);
   }
-  return cached;
+  return roster;
 }

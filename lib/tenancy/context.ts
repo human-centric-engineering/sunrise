@@ -2,8 +2,8 @@
  * Tenant context — which org the current call stack is acting for (§106).
  *
  * The primitive everything downstream reads: the guards ENTER it for every
- * request they admit, the log context reads it, and — from §107 — the data
- * layer will scope queries by it. It is an `AsyncLocalStorage`, the
+ * request they admit, the log context reads it, and the data layer
+ * (`lib/db/tenancy-extension.ts`, §107) stamps and scopes every query by it. It is an `AsyncLocalStorage`, the
  * `lib/auth/signup-mode.ts` precedent, and not a parameter threaded through
  * handlers, because the handlers are tenancy-unaware by design: the org is a
  * property of the request, decided once at the boundary.
@@ -92,6 +92,20 @@ export function requireTenantContext(): TenantContext {
 }
 
 /**
+ * Await the callback's result INSIDE the scope, not just call it there.
+ *
+ * A `PrismaPromise` is lazy: the data layer's hook — and with it the read of
+ * this context — runs when the promise is awaited, not when it is created.
+ * `run(ctx, fn)` with a non-async callback (`() => prisma.x.findMany()`)
+ * would hand the promise out of the scope unawaited and lose the context
+ * (measured both ways, §107 t-704). Awaiting here closes that at the seam
+ * rather than with a rule every caller has to remember.
+ */
+async function settleInside<T>(fn: () => Promise<T>): Promise<T> {
+  return await fn();
+}
+
+/**
  * Run `fn` as `orgId`. The guards call this for every admitted request;
  * non-request code (a job iterating orgs, a script) calls it directly.
  *
@@ -107,7 +121,9 @@ export function runAsOrg<T>(
     role?: OrgRole | null;
   } = {}
 ): Promise<T> {
-  return tenantContext.run({ orgId, source: options.source ?? 'job', role: options.role }, fn);
+  return tenantContext.run({ orgId, source: options.source ?? 'job', role: options.role }, () =>
+    settleInside(fn)
+  );
 }
 
 /**
@@ -115,13 +131,13 @@ export function runAsOrg<T>(
  *
  * For genuinely global work only: a sweep that must see every org's rows at
  * once, a migration-time backfill. The `reason` is logged at info on every
- * entry, because at `multi` this is the one scope the data layer will let
- * through unscoped (§107's `set_config` bypass), and an unexplained bypass is
- * exactly what an audit needs to find. Prefer {@link forEachOrg}.
+ * entry, because at `multi` this is the one scope the data layer lets
+ * through unscoped (it sets `app.bypass_rls` for the transaction instead of
+ * an org), and an unexplained bypass is exactly what an audit needs to find. Prefer {@link forEachOrg}.
  */
 export function runAsSystem<T>(reason: string, fn: () => Promise<T>): Promise<T> {
   logger.info('Entering system tenant scope', { reason });
-  return tenantContext.run({ orgId: null, source: 'system' }, fn);
+  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
 }
 
 /**

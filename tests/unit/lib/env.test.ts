@@ -356,8 +356,8 @@ describe('server path (typeof window === undefined)', () => {
       expect(env.TENANCY_MODE).toBe('single');
     });
 
-    it("should accept 'multi' at the env layer (the client.ts guard enforces it, not Zod)", async () => {
-      // Arrange — 'multi' is a valid enum value; rejecting it is the client's job
+    it("should accept 'multi' at the env layer (the data layer acts on it, not Zod)", async () => {
+      // Arrange — 'multi' is a valid enum value; what it does is the chokepoint's job
       setEnv({ ...validServerEnv, TENANCY_MODE: 'multi' });
 
       // Act

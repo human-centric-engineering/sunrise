@@ -117,13 +117,22 @@ sync conflict is a "keep both", not a re-read.
 > `orgId` on every tenant-owned model (42, child rows included), backfilled
 > to the install org, with the classification allowlists and the runtime
 > roster in `lib/tenancy/classification.ts` and the org-export dispositions
-> for each, with §107 t-705. Of this section's request path, everything
-> down to and including the policy exists; the `lib/db/client.ts`
-> `$extends`, the RLS policies and `db:tenancy:enable` (§107) and the tick's
+> for each, with §107 t-705; the `lib/db/client.ts` `$extends`
+> (`lib/db/tenancy-extension.ts`, [`tenancy/context.md`](../tenancy/context.md#the-data-layer--libdbtenancy-extensionts))
+> — `orgId` stamped on every tenant-owned create in both modes, every
+> operation scoped by `set_config` at `multi`, the `$transaction` override,
+> the bypass GUC under `runAsSystem`, the throw before SQL with no context,
+> and the seam awaiting inside the scope — with t-706. Of this section's
+> request path, everything down to and including the data layer exists; the
+> RLS policies and `db:tenancy:enable` (§107 t-707) and the tick's
 > `forEachOrg` wiring (§108) do not yet — `forEachOrg` itself ships,
-> uncalled. At `TENANCY_MODE=single` the
-> same components run with the install org as the only answer, as the
-> diagram says.
+> uncalled. At `TENANCY_MODE=single` the same components run with the
+> install org as the only answer, as the diagram says. One measurement from
+> t-706 that binds §115 and any fork layer: the exported client is typed
+> `Omit<PrismaClient, '$on'>` and asserted from the `$extends` result,
+> because typing it as the extension's own result type made `tsc` exhaust a
+> 4 GB heap across this tree (baseline 7 s) — every call site re-instantiates
+> the dynamic extension types. A further layer keeps the same exported type.
 
 Request path at `multi` — at `single` the same components run with the install
 org as the only answer:
@@ -355,7 +364,13 @@ BY`; a role is removed by revoking those grants explicitly first.
    derivation to `prisma/schema/*.prisma`. Today it derives the four
    credential models plus `OrgMembership`, which the allowlist removes.
 
-9. **Bypass GUC versus bypass role — open for 3.2/3.3.** The spike validates
+9. **Bypass GUC versus bypass role — decided for the GUC, t-706 (journal
+   decision at merge).** `runAsSystem` runs on the same client and pool and
+   sets `app.bypass_rls` for its transaction. The role alternative would
+   hand `runAsSystem`'s callback a different client — a signature change
+   every consumer and fork feels — and the GUC arm must exist in the
+   policies regardless, for the migrate role under FORCE (item 7). The
+   exposure below is bounded by the raw-SQL allowlist. As spiked: the spike validates
    the bypass as a GUC arm in the policy, and proves (item 7) that the
    `NOBYPASSRLS` app role can set it. That is the property `runAsSystem`
    needs, and it is also the property an attacker wants: a SQL injection
@@ -379,14 +394,15 @@ BY`; a role is removed by revoking those grants explicitly first.
 One hazard is about the seam rather than the client, and the spike closes it
 there. A `PrismaPromise` is lazy: the extension hook — and with it the read of
 the tenant context — runs when the promise is awaited, not when it is created.
-`lib/tenancy/context.ts` today does `tenantContext.run(ctx, fn)`, so
+`lib/tenancy/context.ts` did `tenantContext.run(ctx, fn)`, so
 `runAsOrg(org, () => prisma.x.findMany())` with a **non-async** callback
-returns the promise out of the scope unawaited and loses the context (it threw
+returned the promise out of the scope unawaited and lost the context (it threw
 at `multi` in the spike). Changing the seam to
 `tenantContext.run(ctx, async () => await fn())` makes the await happen inside
-the scope; measured, the same non-async callback then keeps its context. 3.2
-makes that change in `runAsOrg` / `runAsSystem` / `forEachOrg` and pins it with
-a test, rather than documenting a rule every caller has to remember.
+the scope; measured, the same non-async callback then keeps its context. t-706
+made that change in `runAsOrg` / `runAsSystem` (and so `forEachOrg`) and pins
+it with a lazy-thenable test, rather than documenting a rule every caller has
+to remember.
 
 ## What a fork gets, and what it owns
 

@@ -98,6 +98,24 @@ describe('the store', () => {
     expect(outside).toBeNull();
   });
 
+  it('keeps the context for a lazy promise a non-async callback returns unawaited', async () => {
+    // A PrismaPromise is lazy: the data layer reads the context when the
+    // promise is awaited, not when it is created. This thenable is that
+    // shape — it reads the store when something awaits it. The seam awaits
+    // inside the scope, so `() => prisma.x.findMany()` keeps its org.
+    const lazy = () =>
+      ({
+        then(resolve: (value: string | null | undefined) => void) {
+          resolve(getTenantContext()?.orgId);
+        },
+      }) as unknown as Promise<string | null | undefined>;
+    expect(await runAsOrg(ORG_A, lazy)).toBe(ORG_A);
+    expect(await runAsSystem('lazy', lazy)).toBeNull();
+    // The shape it guards against: awaited outside the scope, the same
+    // thenable reads nothing.
+    expect(await lazy()).toBeUndefined();
+  });
+
   it('returns the callback result to the caller', async () => {
     expect(await runAsOrg(ORG_A, async () => 42)).toBe(42);
   });

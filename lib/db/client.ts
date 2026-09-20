@@ -2,6 +2,9 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { env } from '@/lib/env';
+import { withTenancy, type TenancyClient } from '@/lib/db/tenancy-extension';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /**
  * Prisma Client Singleton
@@ -19,30 +22,29 @@ import { env } from '@/lib/env';
 /**
  * Tenancy seam.
  *
- * This single module is the chokepoint every `prisma` importer inherits, which
- * is exactly where a multi-tenant fork plugs in. At `TENANCY_MODE=single` (the
- * default) this is a no-op — behaviour is identical to a template with no
- * tenancy concept at all.
+ * This single module is the chokepoint every `prisma` importer inherits. The
+ * client exported below is the base client wrapped by `withTenancy`
+ * (`lib/db/tenancy-extension.ts`): every create of a tenant-owned row is
+ * stamped with the org the request entered, and at `TENANCY_MODE=multi` every
+ * operation runs inside a transaction that first issues
+ * `set_config('app.current_org', <org>, true)` for the `org_isolation`
+ * policies to read — an op that needs an org and has none throws before any
+ * SQL. At `single` (the default) the install org is the only answer and no
+ * `set_config` is ever issued; behaviour is otherwise identical to a template
+ * with no tenancy concept at all.
  *
- * The template does NOT implement multi-tenancy. Setting `multi` fails loud
- * here rather than letting unscoped queries run with no isolation. A fork that
- * wants multi-tenancy removes this guard and wraps the exported client so every
- * tenant-scoped call runs inside a `$transaction` that first issues
- * `SET LOCAL app.current_org = '<org-id>'` (per-transaction, never per-session —
- * the pool recycles connections). The full retrofit recipe, the proven RLS
- * policy, and the gotchas are in `.context/architecture/multi-tenancy.md`.
+ * Setting `multi` is the data-plane half of the capability. It is correct
+ * only with the policies enabled (`npm run db:tenancy:enable`) and the app
+ * connecting as a `NOBYPASSRLS` role that does not own the tables — see
+ * `.context/architecture/multi-tenancy-design.md` and
+ * `.context/tenancy/context.md`.
+ *
+ * The read-side owner predicate is §115 `f-mt-owner-predicate`, a later
+ * `$extends` layer over this one; nothing here builds toward it.
  */
-if (env.TENANCY_MODE === 'multi') {
-  throw new Error(
-    'TENANCY_MODE=multi is not implemented by the Sunrise template. Multi-tenancy ' +
-      'requires the Postgres-RLS retrofit documented in .context/architecture/multi-tenancy.md ' +
-      '(wrap this client so every tenant-scoped call runs inside a $transaction that issues ' +
-      'SET LOCAL app.current_org). Complete that work and remove this guard, or set TENANCY_MODE=single.'
-  );
-}
 
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  prisma: TenancyClient | undefined;
   pool: Pool | undefined;
 };
 
@@ -79,13 +81,24 @@ if (env.NODE_ENV !== 'production') globalForPrisma.pool = pool;
 // Create Prisma adapter
 const adapter = new PrismaPg(pool);
 
-// Create Prisma client
-export const prisma =
+/**
+ * The tenancy-extended client every importer receives.
+ *
+ * `lib/tenancy/context.ts` imports `prisma` back from here for `forEachOrg`
+ * — the one import cycle this module takes part in. It is safe in either
+ * load order because this side reads only hoisted function declarations
+ * from `context.ts`, and that side reads `prisma` only inside `forEachOrg`,
+ * never at evaluation.
+ */
+export const prisma: TenancyClient =
   globalForPrisma.prisma ??
-  new PrismaClient({
-    adapter,
-    log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-  });
+  withTenancy(
+    new PrismaClient({
+      adapter,
+      log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    }),
+    { isMultiTenant, getTenantContext, installOrgId: INSTALL_ORG_ID }
+  );
 
 if (env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
