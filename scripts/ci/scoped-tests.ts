@@ -105,6 +105,21 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/lib/tenancy/model-classification.test.ts',
+    reason:
+      'parses `prisma/schema/*.prisma` and fails naming any model that neither ' +
+      'carries `orgId` nor sits on a tenancy allowlist. Adding a model is exactly ' +
+      'the change no import chain connects to this test.',
+  },
+  {
+    path: 'tests/unit/lib/tenancy/policy-coverage.test.ts',
+    reason:
+      'reads `prisma/migrations/*_org_isolation_policies/migration.sql` off disk ' +
+      'and compares it with the tenant-owned roster the generated client derives, ' +
+      'failing naming any tenant-owned table without its `org_isolation` policy. A ' +
+      'new model with `orgId`, or a migration, reaches no test through the module graph.',
+  },
+  {
     path: 'tests/unit/scripts/ci/ownerless-surfaces.test.ts',
     reason:
       'lists every source file under app/, lib/ and components/ that reads ' +
