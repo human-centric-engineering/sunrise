@@ -190,13 +190,16 @@ function stampOrg(
  * Walk a write payload, stamping the org on create-shaped nodes of
  * tenant-owned models and descending everything else for the nested creates
  * it may carry. `stamp` is true only for create data: a create / createMany
- * payload, an upsert's `create` branch, a connectOrCreate's `create`.
+ * payload, an upsert's `create` branch, a connectOrCreate's `create`. A
+ * `null` org stamps nothing in the whole subtree — the shape below the org
+ * relation, where the nesting decides the org and the context's would be
+ * another org's.
  */
 export function injectOrgId(
   schema: TenancySchema,
   model: string,
   data: unknown,
-  orgId: string,
+  orgId: string | null,
   stamp: boolean
 ): unknown {
   if (Array.isArray(data)) {
@@ -204,7 +207,13 @@ export function injectOrgId(
   }
   if (!isRecord(data)) return data;
   const row: Record<string, unknown> = { ...data };
-  if (stamp && schema.tenantOwned.has(model) && row.orgId === undefined && row.org === undefined) {
+  if (
+    stamp &&
+    orgId !== null &&
+    schema.tenantOwned.has(model) &&
+    row.orgId === undefined &&
+    row.org === undefined
+  ) {
     stampOrg(schema, model, row, orgId);
   }
   for (const field of schema.rdm.models[model]?.fields ?? []) {
@@ -219,21 +228,26 @@ export function injectOrgId(
 /**
  * The verbs a relation argument may carry, and how each is walked. A create
  * reached through the org relation itself (`org.update({ data: { aiAgents:
- * { create } } })`) is descended but not stamped: the nesting supplies the
- * org, and Prisma's `...WithoutOrgInput` refuses an explicit `orgId` there.
+ * { create } } })`) is descended but nothing under it is stamped: the
+ * nesting supplies the org, Prisma's `...WithoutOrgInput` refuses an
+ * explicit `orgId` there, and a grandchild stamped with the context's org
+ * would belong to a different org than its parent.
  */
 function walkRelation(
   schema: TenancySchema,
   field: RuntimeDataModelField,
   relation: Record<string, unknown>,
-  orgId: string
+  contextOrg: string | null
 ): Record<string, unknown> {
   const target = field.type;
   const backRelation = schema.rdm.models[target]?.fields.find(
     (f) => f.kind === 'object' && f.relationName === field.relationName
   );
   const viaOrg = backRelation?.name === 'org' && backRelation.type === 'Org';
-  const stampCreates = !viaOrg;
+  // Below the org relation the parent decides the org — for this node and
+  // for every create nested under it, which the context's org would
+  // otherwise claim for another org.
+  const orgId = viaOrg ? null : contextOrg;
   const out: Record<string, unknown> = { ...relation };
   const each = (value: unknown, fn: (x: Record<string, unknown>) => unknown): unknown =>
     Array.isArray(value)
@@ -243,18 +257,18 @@ function walkRelation(
         : value;
 
   if (out.create !== undefined) {
-    out.create = injectOrgId(schema, target, out.create, orgId, stampCreates);
+    out.create = injectOrgId(schema, target, out.create, orgId, true);
   }
   if (isRecord(out.createMany)) {
     out.createMany = {
       ...out.createMany,
-      data: injectOrgId(schema, target, out.createMany.data, orgId, stampCreates),
+      data: injectOrgId(schema, target, out.createMany.data, orgId, true),
     };
   }
   if (out.connectOrCreate !== undefined) {
     out.connectOrCreate = each(out.connectOrCreate, (x) => ({
       ...x,
-      create: injectOrgId(schema, target, x.create, orgId, stampCreates),
+      create: injectOrgId(schema, target, x.create, orgId, true),
     }));
   }
   if (out.update !== undefined) {
@@ -270,7 +284,7 @@ function walkRelation(
   if (out.upsert !== undefined) {
     out.upsert = each(out.upsert, (x) => ({
       ...x,
-      create: injectOrgId(schema, target, x.create, orgId, stampCreates),
+      create: injectOrgId(schema, target, x.create, orgId, true),
       update: injectOrgId(schema, target, x.update, orgId, false),
     }));
   }

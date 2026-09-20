@@ -294,6 +294,19 @@ describe('at single', () => {
     expect(boundValue(insert, 'orgId')).toBe(ORG_A);
   });
 
+  it('stamps nothing below the org relation — a grandchild is the parent’s org, not the context’s', async () => {
+    // An install-org admin acting in org A creating an agent for org B:
+    // the token under it must not be stamped A.
+    await asOrg(ORG_A, () =>
+      db.org.update({
+        where: { id: ORG_B },
+        data: { aiAgents: { create: { ...agent, embedTokens: { create: { label: 'site' } } } } },
+      })
+    );
+    expect(boundValue(inserts('ai_agent')[0], 'orgId')).toBe(ORG_B);
+    expect(boundValue(inserts('ai_agent_embed_token')[0], 'orgId')).toBeUndefined();
+  });
+
   it('leaves an updateMany payload alone (an update never moves rows)', async () => {
     await asOrg(ORG_A, () =>
       db.aiAgentEmbedToken.updateMany({ where: { agentId: 'agent-1' }, data: { isActive: false } })
