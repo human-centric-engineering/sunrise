@@ -256,7 +256,9 @@ release process.
   `$transaction([set_config('app.current_org', <org>, true), op])` with one
   setter at the top of an interactive or batch `$transaction`, `runAsSystem`
   setting `app.bypass_rls` instead, and an operation that needs an org and has
-  none throwing before any SQL. `runAsOrg` / `runAsSystem` / `forEachOrg` now
+  none throwing before any SQL; a read on a non-tenant model that reaches a
+  tenant-owned one through a relation (`include` / `select` / `_count`, a
+  relation filter or `orderBy`) is scoped the same way. `runAsOrg` / `runAsSystem` / `forEachOrg` now
   await their callback inside the scope, so a non-async callback returning a
   lazy `PrismaPromise` keeps its org. **Type note for forks:** `prisma` is
   typed `Omit<PrismaClient, '$on'>` (`TenancyClient`) — every call site,

@@ -28,10 +28,13 @@
  * the real Prisma runtime on a recording adapter.
  *
  * **What is wrapped at `multi`, and what is not.** Every op on a tenant-owned
- * model, every raw op, and — when a context exists — every write on any model
- * (a nested create under a non-tenant root reaches tenant-owned children and
- * runs inside the root's statement). Reads on non-tenant models stay
- * unwrapped, and a no-context write on a non-tenant root passes through: that
+ * model, every raw op, every read on a non-tenant model that reaches a
+ * tenant-owned one through a relation (an `include` / `select` / `_count`, a
+ * relation filter, a relation `orderBy` — under the policies those joined
+ * rows are silently absent without the GUC), and — when a context exists —
+ * every write on any model (a nested create under a non-tenant root reaches
+ * tenant-owned children and runs inside the root's statement). Other reads
+ * on non-tenant models stay unwrapped, and a no-context write on a non-tenant root passes through: that
  * is `POST /orgs/switch` writing `Session.activeOrgId` before any org is
  * chosen, with the policies' `WITH CHECK` as the backstop (§107 planning
  * decision, 2026-09-18).
@@ -252,6 +255,48 @@ function injectIntoArgs(
   };
 }
 
+/** The argument keys under which a read can name a relation. */
+const RELATION_ARG_KEYS = ['include', 'select', 'where', 'orderBy'] as const;
+/** Boolean combinators a `where` nests relation filters under. */
+const WHERE_COMBINATORS = ['AND', 'OR', 'NOT'] as const;
+
+/**
+ * Does a read on `model` reach a tenant-owned table through a relation —
+ * an `include` / `select` (a `_count` too), a relation filter in `where`, or
+ * a relation `orderBy`? Such a read on a non-tenant root must be scoped like
+ * a tenant-owned one: under the policies its joined rows are simply absent
+ * without the GUC, so `aiCapability.findMany({ include: { agents } })` would
+ * answer "no agents" for every org rather than fail. One level is enough —
+ * anything nested deeper sits under a relation this level already caught.
+ */
+function reachesTenantRelation(
+  rdm: RuntimeDataModel,
+  tenantOwned: ReadonlySet<string>,
+  model: string,
+  args: unknown
+): boolean {
+  if (!isRecord(args)) return false;
+  const relations = new Map<string, string>();
+  for (const f of rdm.models[model]?.fields ?? []) {
+    if (f.kind === 'object' && tenantOwned.has(f.type)) relations.set(f.name, f.type);
+  }
+  if (relations.size === 0) return false;
+  const namesRelation = (node: unknown): boolean => {
+    if (Array.isArray(node)) return node.some(namesRelation);
+    if (!isRecord(node)) return false;
+    for (const key of Object.keys(node)) {
+      if (relations.has(key)) return true;
+      if (key === '_count' && isRecord(node._count) && namesRelation(node._count.select))
+        return true;
+      if ((WHERE_COMBINATORS as readonly string[]).includes(key) && namesRelation(node[key])) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return RELATION_ARG_KEYS.some((key) => namesRelation(args[key]));
+}
+
 type InteractiveFn = (tx: Prisma.TransactionClient) => Promise<unknown>;
 type TxArg = InteractiveFn | Promise<unknown>[];
 type TxOptions = {
@@ -305,7 +350,11 @@ export function withTenancy(base: PrismaClient, options: TenancyExtensionOptions
 
     const isRaw = model === undefined;
     const isTenantModel = model !== undefined && tenantOwned.has(model);
-    const needsScope = isTenantModel || isRaw || (isWrite && ctx !== null);
+    const needsScope =
+      isTenantModel ||
+      isRaw ||
+      (isWrite && ctx !== null) ||
+      (model !== undefined && reachesTenantRelation(rdm, tenantOwned, model, args));
     if (!needsScope) return query(args);
     if (!ctx) throw noContextError(`${model ?? 'raw SQL'}.${operation}`);
 

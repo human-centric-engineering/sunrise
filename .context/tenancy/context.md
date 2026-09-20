@@ -239,8 +239,12 @@ Two behaviours, and only these:
   enforcing. An explicit `orgId` is never overwritten; a create reached
   through the org relation itself is left to the nesting; under
   `runAsSystem` nothing is stamped.
-- **At `multi` every operation on a tenant-owned model, every raw op, and —
-  when a context exists — every write on any model runs as
+- **At `multi` every operation on a tenant-owned model, every raw op, every
+  read on a non-tenant model that reaches a tenant-owned one through a
+  relation (an `include` / `select` / `_count`, a relation filter, a
+  relation `orderBy` — `aiCapability.findMany({ include: { agents } })` would
+  otherwise answer "no agents" for every org under the policies rather than
+  fail), and — when a context exists — every write on any model runs as
   `$transaction([set_config('app.current_org', <org>, true), op])`**, the
   transaction-local GUC the `org_isolation` policies read; `runAsSystem`
   sets `app.bypass_rls` instead. An interactive or batch `$transaction`
@@ -252,6 +256,14 @@ Two behaviours, and only these:
   needs an org and has none throws before any SQL** — a path nobody taught
   to enter an org fails loud instead of reading wide. A `$transaction`
   opened for one org refuses an op for another inside it.
+
+  One such path is known and named, for §107 t-707 / t-709: the credential
+  resolvers' own row lookup — `resolveApiKey`, `resolveEmbedToken`, MCP key
+  resolution — reads a tenant-owned credential row **to learn** the org it
+  will then enter, so at `multi` the chokepoint refuses it today and every
+  credential-authenticated request fails. That lookup needs an audited entry
+  of its own (a `runAsSystem`-shaped scope around the single hash lookup)
+  before `multi` is exercised end to end.
 
 At `single` **no `set_config` is ever issued** and no transaction is opened
 that the caller did not ask for. The design record's Spike register

@@ -61,7 +61,7 @@ function answer(q: SqlQuery): SqlResultSet {
       rows: [cols.map(() => null)],
     };
   }
-  if (/COUNT\(\*\)/.test(q.sql)) {
+  if (/^SELECT COUNT\(\*\)/.test(q.sql)) {
     return { columnNames: ['_count$_all'], columnTypes: [ColumnTypeEnum.Int32], rows: [[0]] };
   }
   // A nested write under an Org root first reads the parent row; let it exist
@@ -351,6 +351,54 @@ describe('at multi', () => {
     await asOrg(ORG_A, () => db.featureFlag.findMany());
     expect(setConfigs()).toEqual([]);
     expect(recorder.boundaries).toEqual([]);
+  });
+
+  describe('a read on a non-tenant root that reaches a tenant-owned relation', () => {
+    // The shapes in the tree: capabilities list agents, tags count documents.
+    it('is wrapped when it includes one', async () => {
+      await asOrg(ORG_A, () =>
+        db.aiCapability.findMany({ include: { agents: { include: { agent: true } } } })
+      );
+      expect(setConfigs()).toHaveLength(1);
+      expect(recorder.statements.every((s) => s.conn === 'tx1')).toBe(true);
+    });
+
+    it('is wrapped when it counts one', async () => {
+      await asOrg(ORG_A, () =>
+        db.knowledgeTag.findMany({ include: { _count: { select: { documents: true } } } })
+      );
+      expect(setConfigs()).toHaveLength(1);
+    });
+
+    it('is wrapped when it filters or orders by one', async () => {
+      await asOrg(ORG_A, async () => {
+        await db.user.findMany({ where: { OR: [{ aiApiKeys: { some: { name: 'x' } } }] } });
+        await db.user.findMany({ orderBy: { aiApiKeys: { _count: 'desc' } } });
+      });
+      expect(setConfigs()).toHaveLength(2);
+    });
+
+    it('throws before any SQL with no context', async () => {
+      await expect(db.aiCapability.findMany({ include: { agents: true } })).rejects.toThrow(
+        /No tenant context for AiCapability\.findMany/
+      );
+      expect(recorder.statements).toEqual([]);
+    });
+
+    it('stays unwrapped when the read names only scalars and non-tenant relations', async () => {
+      await asOrg(ORG_A, async () => {
+        await db.user.findUnique({
+          where: { id: 'u1' },
+          include: { orgMemberships: true },
+          select: undefined,
+        });
+        await db.session.findMany({
+          where: { AND: [{ userId: 'u1' }] },
+          orderBy: { createdAt: 'desc' },
+        });
+      });
+      expect(setConfigs()).toEqual([]);
+    });
   });
 
   it('passes a no-context write on a non-tenant root through (the switch route)', async () => {
