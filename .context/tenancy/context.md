@@ -277,9 +277,10 @@ carries the measurements behind each rule; the bypass-as-GUC choice (item 9)
 is a §107 journal decision.
 
 Enabling `multi` is only correct with the policies enabled
-(`npm run db:tenancy:enable`, §107 t-707) and the app connecting as a
-`NOBYPASSRLS` role that does not own the tables — on Neon the deploy role
-has `BYPASSRLS` and is never subject to a policy.
+(`npm run db:tenancy:enable`) and the app connecting as a `NOBYPASSRLS` role
+that does not own the tables — on Neon the deploy role has `BYPASSRLS` and
+is never subject to a policy. The policies, the switch, the role split and
+the drift probes are [`isolation.md`](./isolation.md).
 
 ## Proving it
 

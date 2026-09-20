@@ -14,6 +14,11 @@ export default defineConfig({
     seed: 'tsx prisma/seed.ts',
   },
   datasource: {
-    url: env('DATABASE_URL'),
+    // The migrate DSN. At TENANCY_MODE=multi the app connects as a restricted
+    // NOBYPASSRLS role that does not own the tables, while migrations and seeds
+    // keep the owner (BYPASSRLS) role: MIGRATE_DATABASE_URL names it and falls
+    // back to DATABASE_URL, the single-tenant shape. See
+    // .context/tenancy/isolation.md#the-role-split.
+    url: process.env.MIGRATE_DATABASE_URL ? env('MIGRATE_DATABASE_URL') : env('DATABASE_URL'),
   },
 });

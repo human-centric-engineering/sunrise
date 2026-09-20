@@ -11,10 +11,18 @@
  * project's `lib/db/client` singleton). Exits 0 if every probe succeeds,
  * non-zero on the first failure.
  *
- * Two probe sets run together: Sunrise's own A-series (`DRIFT_OBJECTS` below)
- * and any fork-registered probes (`lib/app/db-drift.ts`). Forks register their
- * own unmodelled objects there — they never edit this platform script. The
- * probe primitives and registry live in `@/lib/db/drift-probes`.
+ * Three probe sets run together: Sunrise's own A-series (`DRIFT_OBJECTS`
+ * below), the T-series derived from the tenant-owned roster (one
+ * `org_isolation` policy probe per table, plus an enabled-and-forced probe at
+ * `TENANCY_MODE=multi` — never a hand-written row; see
+ * `tenancyDriftProbes`), and any fork-registered probes
+ * (`lib/app/db-drift.ts`). Forks register their own unmodelled objects there
+ * — they never edit this platform script. The probe primitives and registry
+ * live in `@/lib/db/drift-probes`.
+ *
+ * Runs under `runAsSystem`: the probes are raw catalog reads, and at `multi`
+ * the chokepoint refuses a raw op with no context. This script connects as
+ * the privileged DSN, so the audited bypass is the honest scope for it.
  *
  * Usage:
  *   npm run db:drift-check
@@ -41,10 +49,13 @@ import {
   getAppDriftProbes,
   indexExists,
   mergeDriftProbes,
+  tenancyDriftProbes,
   type DriftObject,
   type Probe,
 } from '@/lib/db/drift-probes';
 import { logger } from '@/lib/logging';
+import { tenantOwnedModels } from '@/lib/tenancy/classification';
+import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 
 /**
  * Probe that the 'english' tsearch configuration exists. A custom or
@@ -128,15 +139,19 @@ const DRIFT_OBJECTS: DriftObject[] = [
 
 async function main(): Promise<void> {
   // Pull in any fork-registered probes (lib/app/db-drift.ts), then run the
-  // A-series and app probes together. mergeDriftProbes throws if a fork reused
-  // an A-series name.
+  // A-series, the derived T-series and app probes together. mergeDriftProbes
+  // throws if a fork reused a platform name.
   registerAppDriftProbes();
   const appProbes = getAppDriftProbes();
-  const probes = mergeDriftProbes(DRIFT_OBJECTS, appProbes);
+  const multi = isMultiTenant();
+  const tenancyProbes = tenancyDriftProbes(tenantOwnedModels(prisma), { multi });
+  const probes = mergeDriftProbes([...DRIFT_OBJECTS, ...tenancyProbes], appProbes);
 
-  const appSuffix =
-    appProbes.length > 0 ? ` (${DRIFT_OBJECTS.length} platform + ${appProbes.length} app)` : '';
-  logger.info(`Running ${probes.length} drift probes against the deployed DB${appSuffix}...`);
+  const appSuffix = appProbes.length > 0 ? ` + ${appProbes.length} app` : '';
+  logger.info(
+    `Running ${probes.length} drift probes against the deployed DB (${DRIFT_OBJECTS.length} platform + ` +
+      `${tenancyProbes.length} tenancy at ${multi ? 'multi' : 'single'}${appSuffix})...`
+  );
 
   let failed = 0;
 
@@ -168,7 +183,7 @@ async function main(): Promise<void> {
   process.exit(1);
 }
 
-main()
+runAsSystem('db:drift-check', main)
   .catch((err) => {
     logger.error('Drift check crashed', {
       error: err instanceof Error ? err.message : String(err),

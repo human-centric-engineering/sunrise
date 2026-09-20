@@ -74,6 +74,7 @@ function setEnv(vars: Record<string, string | undefined>) {
     'EMAIL_FROM',
     'TENANCY_MODE',
     'DATABASE_POOL_MAX',
+    'MIGRATE_DATABASE_URL',
   ];
   for (const key of keysToManage) {
     delete process.env[key];
@@ -338,6 +339,41 @@ describe('server path (typeof window === undefined)', () => {
     it('should throw when set to a non-numeric value', async () => {
       // Arrange
       setEnv({ ...validServerEnv, DATABASE_POOL_MAX: 'lots' });
+
+      // Act & Assert
+      await expect(importEnv()).rejects.toThrow();
+    });
+  });
+
+  describe('MIGRATE_DATABASE_URL', () => {
+    it('should stay undefined when absent — prisma.config.ts then falls back to DATABASE_URL', async () => {
+      // Arrange — the single-tenant shape: one DSN does everything
+      setEnv(validServerEnv);
+
+      // Act
+      const env = await importEnv();
+
+      // Assert
+      expect(env.MIGRATE_DATABASE_URL).toBeUndefined();
+    });
+
+    it('should accept a Postgres connection string (the owner role at multi)', async () => {
+      // Arrange
+      setEnv({
+        ...validServerEnv,
+        MIGRATE_DATABASE_URL: 'postgresql://owner:secret@localhost:5432/sunrise',
+      });
+
+      // Act
+      const env = await importEnv();
+
+      // Assert
+      expect(env.MIGRATE_DATABASE_URL).toBe('postgresql://owner:secret@localhost:5432/sunrise');
+    });
+
+    it('should throw when set to something that is not a URL', async () => {
+      // Arrange
+      setEnv({ ...validServerEnv, MIGRATE_DATABASE_URL: 'the owner dsn' });
 
       // Act & Assert
       await expect(importEnv()).rejects.toThrow();

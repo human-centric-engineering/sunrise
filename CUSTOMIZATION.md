@@ -1478,6 +1478,14 @@ your version, and add a follow-up rather than rewriting Sunrise's.
 - **Reading a release's migration set:** the migrations a release added are the
   new folders under `prisma/migrations/` — diff against your last-synced point
   with `git diff <last-sync>..<release> -- prisma/migrations/`.
+- **Your tenant-owned models need a policy.** A model of yours that carries
+  `orgId` is tenant-owned, and
+  `tests/unit/lib/tenancy/policy-coverage.test.ts` fails naming its table until
+  a migration of yours carries its `org_isolation` policy — append
+  `orgIsolationPolicySql('<table>')` from `lib/tenancy/isolation.ts` to a new
+  migration. The policy is dormant at `TENANCY_MODE=single`; the switch, the
+  role split and the `MIGRATE_DATABASE_URL` variable it introduces are in
+  [`.context/tenancy/isolation.md`](./.context/tenancy/isolation.md).
 
 The full reconciliation recipe — including `prisma migrate resolve --applied` /
 `--rolled-back` for baselining or recovering a migration, the pgvector

@@ -21,17 +21,28 @@ The mitigation is **inspect-before-apply**: every schema-folded migration's gene
 
 All objects below are defined in `prisma/migrations/00000000000000_baseline/migration.sql` unless noted. The `Drop-check SQL` column is exactly what `scripts/db/check-drift.ts` runs.
 
-| ID  | Name                                        | Kind                      | Table                   | Drop-check SQL                                                                                                                          |
-| --- | ------------------------------------------- | ------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | `searchVector`                              | GENERATED tsvector column | `ai_knowledge_chunk`    | `SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_knowledge_chunk' AND column_name = 'searchVector'`                     |
-| A2  | `idx_ai_knowledge_chunk_search_vector`      | GIN index                 | `ai_knowledge_chunk`    | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ai_knowledge_chunk_search_vector'`                                                     |
-| A3  | `idx_knowledge_embedding`                   | HNSW index (pgvector)     | `ai_knowledge_chunk`    | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_knowledge_embedding'`                                                                  |
-| A4  | `idx_message_embedding`                     | HNSW index (pgvector)     | `ai_message_embedding`  | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_message_embedding'`                                                                    |
-| A5  | `idx_knowledge_doc_file_hash_ready`         | partial unique index      | `ai_knowledge_document` | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_knowledge_doc_file_hash_ready'`                                                        |
-| A6  | `ai_workflow_execution_lease_pair_coherent` | CHECK constraint          | `ai_workflow_execution` | `SELECT 1 FROM pg_constraint WHERE conname = 'ai_workflow_execution_lease_pair_coherent' AND pg_get_constraintdef(oid) LIKE '%length%'` |
-| A7  | `idx_ai_knowledge_base_single_default`      | partial unique index      | `ai_knowledge_base`     | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ai_knowledge_base_single_default'`                                                     |
-| A8  | `ai_knowledge_document_status_lowercase`    | CHECK constraint          | `ai_knowledge_document` | `SELECT 1 FROM pg_constraint WHERE conname = 'ai_knowledge_document_status_lowercase'`                                                  |
-| —   | `english` tsearch configuration             | `pg_ts_config` row        | (system)                | `SELECT 1 FROM pg_ts_config WHERE cfgname = 'english'`                                                                                  |
+| ID    | Name                                        | Kind                      | Table                    | Drop-check SQL                                                                                                                          |
+| ----- | ------------------------------------------- | ------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| A1    | `searchVector`                              | GENERATED tsvector column | `ai_knowledge_chunk`     | `SELECT 1 FROM information_schema.columns WHERE table_name = 'ai_knowledge_chunk' AND column_name = 'searchVector'`                     |
+| A2    | `idx_ai_knowledge_chunk_search_vector`      | GIN index                 | `ai_knowledge_chunk`     | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ai_knowledge_chunk_search_vector'`                                                     |
+| A3    | `idx_knowledge_embedding`                   | HNSW index (pgvector)     | `ai_knowledge_chunk`     | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_knowledge_embedding'`                                                                  |
+| A4    | `idx_message_embedding`                     | HNSW index (pgvector)     | `ai_message_embedding`   | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_message_embedding'`                                                                    |
+| A5    | `idx_knowledge_doc_file_hash_ready`         | partial unique index      | `ai_knowledge_document`  | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_knowledge_doc_file_hash_ready'`                                                        |
+| A6    | `ai_workflow_execution_lease_pair_coherent` | CHECK constraint          | `ai_workflow_execution`  | `SELECT 1 FROM pg_constraint WHERE conname = 'ai_workflow_execution_lease_pair_coherent' AND pg_get_constraintdef(oid) LIKE '%length%'` |
+| A7    | `idx_ai_knowledge_base_single_default`      | partial unique index      | `ai_knowledge_base`      | `SELECT 1 FROM pg_indexes WHERE indexname = 'idx_ai_knowledge_base_single_default'`                                                     |
+| A8    | `ai_knowledge_document_status_lowercase`    | CHECK constraint          | `ai_knowledge_document`  | `SELECT 1 FROM pg_constraint WHERE conname = 'ai_knowledge_document_status_lowercase'`                                                  |
+| —     | `english` tsearch configuration             | `pg_ts_config` row        | (system)                 | `SELECT 1 FROM pg_ts_config WHERE cfgname = 'english'`                                                                                  |
+| T_n_  | `org_isolation`                             | RLS policy                | every tenant-owned table | `SELECT 1 FROM pg_policies WHERE schemaname = current_schema() AND tablename = '<table>' AND policyname = 'org_isolation'`              |
+| T_n_f | RLS enabled + forced                        | `pg_class` flags          | every tenant-owned table | `SELECT relrowsecurity, relforcerowsecurity FROM pg_class …` — at `TENANCY_MODE=multi` only                                             |
+
+The T-series is **derived, not listed**: `tenancyDriftProbes()` in
+`lib/db/drift-probes.ts` generates one policy probe per tenant-owned table
+from the roster `lib/tenancy/classification.ts` reads off the generated client
+(42 at the time of writing), plus an enabled-and-forced probe per table when
+`TENANCY_MODE=multi`. The policies live in
+`prisma/migrations/20260920120000_org_isolation_policies/migration.sql`, not
+the baseline. See
+[`.context/tenancy/isolation.md`](../tenancy/isolation.md#the-drift-probes--the-t-series).
 
 ### Per-object purpose
 
@@ -44,6 +55,7 @@ All objects below are defined in `prisma/migrations/00000000000000_baseline/migr
 - **A7 single-default partial unique** `(isDefault) WHERE isDefault = true`. At most one row may carry the default flag — the runtime invariant `getOrCreateDefaultKnowledgeBase()` and every upload path depend on. Drop → uploading code keeps going if a second `isDefault=true` row is created (e.g. by an admin SQL fix gone wrong), but new documents may route to whichever default the upsert happens to find by slug-natural-key.
 - **A8 status casing CHECK**. Pins `ai_knowledge_document.status` to `('processing', 'ready', 'failed', 'pending_review')`. Catches typos / casing drift (`'Ready'` vs `'ready'`) from raw-SQL or direct-DB writes before they corrupt the upload state machine. Drop → divergent values silently break the admin UI filter and the upload status machine.
 - **`english` tsearch config** — the GENERATED expression on A1 references `to_tsvector('english', …)`. A custom or locale-stripped Postgres install can lack it, which turns the generated expression into a runtime error on every chunk insert (write-time failure, not load-time). Worth checking before first deploy.
+- **T-series `org_isolation` policies** — `prisma migrate diff` does not see policies at all: it neither lists nor drops them, so unlike the A-series a `migrate dev` cannot drop one by accident — but a hand-run `DROP POLICY`, a restore from a backup taken before the migration, or a fork's own migration can. Drop → at `single` nothing changes (the policies are dormant); at `multi` with RLS enabled the table has RLS on and **no policy**, which Postgres treats as deny-all — every query on that table returns nothing and every insert is refused. Loud, at least. The `T_n_f` flags probe is the other direction: RLS **disabled** on a table at `multi` fails open, every role reading every row, which is why it is asserted only there and asserts `FORCE` too.
 
 ## How to run the drift check
 
@@ -55,7 +67,7 @@ Output:
 
 - `OK    A1 …` — green for each present object
 - `FAIL  AN …` — red for each missing object, identifying the kind and table
-- Exit 0 if all 9 probes pass, exit 1 if any failed, exit 2 on script crash
+- Exit 0 if every probe passes (9 platform + the derived T-series + any fork probes), exit 1 if any failed, exit 2 on script crash
 
 Where this runs automatically:
 

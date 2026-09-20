@@ -6,7 +6,7 @@ Complete reference for all environment variables used in Sunrise.
 
 | Category       | File                                 | Variables                                                                         |
 | -------------- | ------------------------------------ | --------------------------------------------------------------------------------- |
-| Database       | [database-env.md](./database-env.md) | `DATABASE_URL`, `DATABASE_POOL_MAX`                                               |
+| Database       | [database-env.md](./database-env.md) | `DATABASE_URL`, `DATABASE_POOL_MAX`, `MIGRATE_DATABASE_URL`                       |
 | Authentication | [auth-env.md](./auth-env.md)         | `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `GOOGLE_*`                               |
 | Email          | [email-env.md](./email-env.md)       | `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `CONTACT_EMAIL`                |
 | Storage        | [storage-env.md](./storage-env.md)   | `STORAGE_PROVIDER`, `S3_*`, `BLOB_READ_WRITE_TOKEN`, `MAX_FILE_SIZE_MB`           |
@@ -18,6 +18,7 @@ Complete reference for all environment variables used in Sunrise.
 | ---------------------------------------------------------------- | -------- | ------------ | ------------------- | ---------------------------------------------------- |
 | [`DATABASE_URL`](./database-env.md)                              | ✅ Yes   | URL          | -                   | PostgreSQL connection string                         |
 | [`DATABASE_POOL_MAX`](./database-env.md)                         | ❌ No    | Integer      | `10`                | Max pg connections per process                       |
+| [`MIGRATE_DATABASE_URL`](./database-env.md)                      | ❌ No    | URL          | `DATABASE_URL`      | Owner DSN for migrations, seeds, `db:tenancy:*`      |
 | [`BETTER_AUTH_URL`](./auth-env.md)                               | ✅ Yes   | URL          | -                   | Application base URL                                 |
 | [`BETTER_AUTH_SECRET`](./auth-env.md)                            | ✅ Yes   | String (32+) | -                   | JWT signing secret                                   |
 | [`SIGNUP_MODE`](./auth-env.md)                                   | ❌ No    | Enum         | `open`              | Who may create an account                            |
@@ -32,7 +33,7 @@ Complete reference for all environment variables used in Sunrise.
 | [`EMAIL_PORT`](./services-env.md#email_port) ¹                   | ❌ No    | Integer      | `3000`              | React Email preview server port                      |
 | [`ALLOWED_DEV_ORIGINS`](./services-env.md#allowed_dev_origins) ¹ | ❌ No    | String       | App URL hosts       | Extra hosts allowed for dev HMR                      |
 | [`INTERNAL_API_URL`](./services-env.md#internal_api_url)         | ❌ No    | URL          | Loopback / auth URL | Address for server-side self-calls                   |
-| [`TENANCY_MODE`](../architecture/multi-tenancy.md)               | ❌ No    | Enum         | `single`            | Tenancy model (`multi` = opt-in RLS)                 |
+| [`TENANCY_MODE`](../tenancy/isolation.md)                        | ❌ No    | Enum         | `single`            | Tenancy model (`multi` = opt-in RLS)                 |
 | [`MCP_SESSION_MODE`](../orchestration/mcp.md)                    | ❌ No    | Enum         | `stateless`         | MCP session model (`stateful` = single process only) |
 | `ESCALATION_WEBHOOK_ALLOW_PRIVATE`                               | ❌ No    | Enum         | `false`             | Allow escalation POSTs to RFC1918 ³                  |
 | [`NEXT_PUBLIC_APP_URL`](./services-env.md)                       | ✅ Yes   | URL          | -                   | Public app URL (client-side)                         |

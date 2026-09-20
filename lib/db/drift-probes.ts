@@ -17,6 +17,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { ORG_ISOLATION_POLICY } from '@/lib/tenancy/isolation';
 
 export interface ProbeResult {
   ok: boolean;
@@ -169,7 +170,7 @@ export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }
     if (!row.enabled) {
       return {
         ok: false,
-        note: 'RLS is not enabled — every role reads every row. Run ALTER TABLE … ENABLE ROW LEVEL SECURITY (see db:tenancy:enable once it ships).',
+        note: 'RLS is not enabled — every role reads every row. Run npm run db:tenancy:enable (ALTER TABLE … ENABLE ROW LEVEL SECURITY).',
       };
     }
     if (requireForced && !row.forced) {
@@ -204,6 +205,39 @@ export function policyExists(tableName: string, policyName: string): Probe {
     `;
     return { ok: Number(rows[0]?.count ?? 0n) === 1 };
   };
+}
+
+/**
+ * The T-series drift probes, derived from the roster (model → table). Every
+ * table gets a policy probe; at `multi` each also gets an enabled-and-forced
+ * probe, because there RLS being off is the failure that reads as healthy.
+ * Names are `T<n>` / `T<n>f` in roster order, which `mergeDriftProbes` keeps
+ * distinct from the A-series and from a fork's.
+ */
+export function tenancyDriftProbes(
+  roster: ReadonlyMap<string, string>,
+  options: { multi: boolean }
+): DriftObject[] {
+  const probes: DriftObject[] = [];
+  let n = 0;
+  for (const [model, table] of roster) {
+    n += 1;
+    probes.push({
+      name: `T${n} ${ORG_ISOLATION_POLICY} on ${table} (${model})`,
+      kind: 'RLS policy',
+      table,
+      probe: policyExists(table, ORG_ISOLATION_POLICY),
+    });
+    if (options.multi) {
+      probes.push({
+        name: `T${n}f RLS enabled + forced on ${table}`,
+        kind: 'RLS flags',
+        table,
+        probe: rlsEnabled(table, { requireForced: true }),
+      });
+    }
+  }
+  return probes;
 }
 
 /**

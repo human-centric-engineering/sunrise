@@ -18,6 +18,39 @@ release process.
 
 ### Added
 
+- **Isolation policies ship dormant with the schema, and one command turns
+  them on or off** (multi-tenancy §107, the database half of row isolation).
+  One raw-SQL migration, `20260920120000_org_isolation_policies`, creates an
+  `org_isolation` policy on every tenant-owned table (42) — `USING` and
+  `WITH CHECK` both `"orgId" = NULLIF(current_setting('app.current_org',
+  true), '')` behind the bypass arm `current_setting('app.bypass_rls', true) =
+  'on'` — **without** enabling RLS, so a `migrate deploy` carries them while a
+  single-tenant install pays nothing. New commands: `npm run
+  db:tenancy:enable` (backfills `NULL` `orgId` to the install org, then
+  `ENABLE` + `FORCE ROW LEVEL SECURITY` on every tenant-owned table — derived
+  from the generated client, no list) and `db:tenancy:disable` (`DISABLE` +
+  `NO FORCE`, both flags), each idempotent by reading `pg_class` and
+  refusing to report success until the flags read back; `npm run
+  db:tenancy:role -- --create|--drop` for the required `LOGIN NOBYPASSRLS`
+  app role (`TENANCY_APP_ROLE`, password only via
+  `TENANCY_APP_ROLE_PASSWORD`) with its grants and default privileges,
+  revoking before dropping (Neon refuses `DROP OWNED BY`). New optional env
+  var **`MIGRATE_DATABASE_URL`** — the owner DSN `prisma.config.ts` and the
+  `db:tenancy:*` scripts prefer over `DATABASE_URL`, because a table's owner
+  (and any `BYPASSRLS` role, Neon's `neondb_owner` included) is never
+  subject to the policies. `npm run db:drift-check` gains a derived T-series:
+  `tenancyDriftProbes()` (new export on `lib/db/drift-probes.ts`) yields one
+  `policyExists` probe per tenant-owned table always and an
+  enabled-and-forced probe per table at `TENANCY_MODE=multi` (9 + 42 probes
+  at `single`, 9 + 84 at `multi`); the script now runs under `runAsSystem`.
+  New `lib/tenancy/isolation.ts` (side-effect-free): `orgIsolationPolicySql`,
+  `planRlsSwitch`, `runTenancySwitch`. **Fork note:** a new
+  `tests/unit/lib/tenancy/policy-coverage.test.ts` fails naming any
+  tenant-owned table — yours included — without exactly one `org_isolation`
+  policy in the migrations (append `orgIsolationPolicySql('<table>')` to a new
+  migration), and any non-tenant table carrying one. Behaviour at
+  `TENANCY_MODE=single` is unchanged: the policies are inert until enabled.
+  Docs: new `.context/tenancy/isolation.md`.
 - **Every tenant-owned row knows its org** (multi-tenancy §107, first
   schema task). One migration, `20260919200000_tenant_owned_org_id`, adds a
   nullable `orgId` + `org Org? @relation(onDelete: Cascade)` (`SetNull` on

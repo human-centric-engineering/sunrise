@@ -35,6 +35,19 @@ const serverEnvSchema = z.object({
     message:
       'DATABASE_URL must be a valid PostgreSQL connection string (e.g., postgresql://user:password@localhost:5432/dbname)',
   }),
+  MIGRATE_DATABASE_URL: z
+    .string()
+    .url({
+      message:
+        'MIGRATE_DATABASE_URL must be a valid PostgreSQL connection string (the owner role, for migrations and db:tenancy:*)',
+    })
+    .optional()
+    .describe(
+      'Privileged DSN for migrations, seeds and db:tenancy:enable|disable. Optional: falls back to ' +
+        'DATABASE_URL. At TENANCY_MODE=multi the app connects as a NOBYPASSRLS role that does not own ' +
+        'the tables, and this keeps the owner (BYPASSRLS) role for the operations that must see every ' +
+        'row — see .context/tenancy/isolation.md.'
+    ),
   DATABASE_POOL_MAX: z.coerce
     .number()
     .int()

@@ -122,11 +122,14 @@ sync conflict is a "keep both", not a re-read.
 > — `orgId` stamped on every tenant-owned create in both modes, every
 > operation scoped by `set_config` at `multi`, the `$transaction` override,
 > the bypass GUC under `runAsSystem`, the throw before SQL with no context,
-> and the seam awaiting inside the scope — with t-706. Of this section's
-> request path, everything down to and including the data layer exists; the
-> RLS policies and `db:tenancy:enable` (§107 t-707) and the tick's
-> `forEachOrg` wiring (§108) do not yet — `forEachOrg` itself ships,
-> uncalled. At `TENANCY_MODE=single` the same components run with the
+> and the seam awaiting inside the scope — with t-706; the dormant
+> `org_isolation` policies (one per tenant-owned table, in a raw-SQL
+> migration), `db:tenancy:enable|disable`, the required role split with
+> `MIGRATE_DATABASE_URL` and `db:tenancy:role`, and the derived T-series
+> drift probes ([`tenancy/isolation.md`](../tenancy/isolation.md)) with
+> t-707. Of this section's request path, everything down to and including
+> Postgres exists; the tick's `forEachOrg` wiring (§108) does not yet —
+> `forEachOrg` itself ships, uncalled. At `TENANCY_MODE=single` the same components run with the
 > install org as the only answer, as the diagram says. One measurement from
 > t-706 that binds §115 and any fork layer: the exported client is typed
 > `Omit<PrismaClient, '$on'>` and asserted from the `$extends` result,
@@ -180,7 +183,8 @@ background tick → forEachOrg(fn)  one org-scoped context per iteration, per-or
   so policies version with the schema (the pgvector-index precedent in the
   baseline migration) while `npm run db:tenancy:enable` runs only
   `ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY` over the derived tenant-owned
-  set. At `multi` the app connects as a restricted role (no `BYPASSRLS`, not
+  set (after backfilling any `NULL` `orgId` to the install org); `disable`
+  clears both flags. At `multi` the app connects as a restricted role (no `BYPASSRLS`, not
   the table owner); migrations and seeds use a privileged DSN. Every
   tenant-owned row carries its own `orgId`, child rows included — no
   join-based policies, so the policy, the probe and the injection derive from

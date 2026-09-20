@@ -13,6 +13,23 @@ Configuration for PostgreSQL database connection via Prisma ORM.
   - `lib/db/client.ts` - Prisma client initialization
   - `prisma/schema/` - Database migrations
 
+## `MIGRATE_DATABASE_URL`
+
+- **Purpose:** The privileged (owner) DSN for migrations, seeds and `db:tenancy:*`
+- **Required:** ❌ No
+- **Type:** PostgreSQL connection string
+- **Default:** falls back to `DATABASE_URL`
+- **Used By:** `prisma.config.ts` (every `prisma migrate` / `db seed`),
+  `scripts/db/tenancy-enable.ts`, `scripts/db/tenancy-role.ts`
+
+At `TENANCY_MODE=single` leave it unset: one DSN does everything, which is
+the shape the template ships. At `multi` the app connects (`DATABASE_URL`) as
+a restricted `NOBYPASSRLS` role that does not own the tables — a table's
+owner, and any `BYPASSRLS` role such as Neon's `neondb_owner`, is never
+subject to the isolation policies — while migrations, seeds and the enable
+switch keep the owner. This variable names the owner. See
+[`.context/tenancy/isolation.md#the-role-split`](../tenancy/isolation.md#the-role-split).
+
 ## `DATABASE_POOL_MAX`
 
 - **Purpose:** Maximum pg connections held by this process

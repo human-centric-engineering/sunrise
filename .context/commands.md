@@ -44,6 +44,18 @@ npm run db:generate         # Regenerate Prisma client after schema changes
 npm run db:studio           # Open Prisma Studio GUI
 npm run db:seed             # Apply new/changed seed units
 npx prisma validate         # Validate schema syntax
+npm run db:drift-check      # Probe the DB for Prisma-unmodelled objects (A-series + tenancy T-series)
+```
+
+Row isolation (multi-tenancy §107 — see
+[`.context/tenancy/isolation.md`](./tenancy/isolation.md)); all three connect
+with `MIGRATE_DATABASE_URL` when set, else `DATABASE_URL`:
+
+```bash
+npm run db:tenancy:enable                                   # ENABLE + FORCE RLS on every tenant-owned table (backfills NULL orgId first)
+npm run db:tenancy:disable                                  # DISABLE + NO FORCE — both flags
+TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create   # the NOBYPASSRLS app role + grants (idempotent)
+npm run db:tenancy:role -- --drop                           # revoke, then drop it
 ```
 
 > `prisma db push` is intentionally **not** exposed as a script — it bypasses
