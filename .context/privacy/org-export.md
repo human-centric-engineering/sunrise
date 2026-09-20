@@ -62,12 +62,13 @@ The subject manifest's two, read for an org:
   chunk's text is exported and its embedding is not.
   A `NULL` `orgId` is read the way the tenant context reads a missing org: at
   `TENANCY_MODE=single` it is the install org's, so the install org's export
-  matches `orgId IS NULL` as well — nothing writes the column until the
-  data-layer chokepoint lands, and a fresh install's seeded agents would
-  otherwise be missing from its own export (the `smoke:tenancy` run asserts a
-  `NULL`-org agent is carried). At `multi` the match is strict — `multi` is
-  unreachable until the chokepoint task lifts the `lib/db/client.ts` guard,
-  and the enable script that ships with the policies (§107 3.3) will backfill
+  matches `orgId IS NULL` as well — the data-layer chokepoint
+  (`lib/db/tenancy-extension.ts`, §107 t-706) stamps the column on every
+  create, but a row born before it, or written under `runAsSystem`, still
+  carries `NULL`, and a fresh install's seeded agents would otherwise be
+  missing from its own export (the `smoke:tenancy` run asserts a `NULL`-org
+  agent is carried beside a stamped one). At `multi` the match is strict —
+  the enable script that ships with the policies (§107 t-707) will backfill
   `NULL` to the install org before enforcing, so a `NULL` seen at `multi` is
   an orphan. The four credential attributions never read `NULL` — a
   `NULL`-org API key is a platform credential, not the org's.

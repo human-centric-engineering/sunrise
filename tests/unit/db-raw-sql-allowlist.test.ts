@@ -106,6 +106,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'catalog queries (pg_indexes/pg_constraint/pg_class/pg_policies/information_schema) — reads system catalogs, never tenant rows',
   },
   {
+    file: 'lib/db/tenancy-extension.ts',
+    calls: 3,
+    why: 'the set_config setters that scope every other query at multi (per-op wrap, interactive tx top, batch tx top) — constant SQL with the org as a bound parameter, no tenant rows read',
+  },
+  {
     file: 'lib/db/utils.ts',
     calls: 2,
     why: 'SELECT 1 health checks — no tenant data (the playbook’s exempt row)',

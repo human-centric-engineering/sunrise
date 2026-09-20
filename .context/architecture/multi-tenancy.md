@@ -47,12 +47,15 @@ Two things, and nothing else:
    the codebase. (The `@/`-import discipline is what bought this — see the
    import rule in `CLAUDE.md`.)
 
-2. **An inert seam.** `TENANCY_MODE` (in [`lib/env.ts`](../../lib/env.ts),
-   default `single`) and a guard at the top of `lib/db/client.ts`. At `single`
-   it is a no-op. Set it to `multi` and the client throws at startup with a
-   pointer back here — so a half-finished fork fails loud instead of silently
-   running unscoped queries with no isolation. You delete that guard as the last
-   step of the retrofit.
+2. **The seam.** `TENANCY_MODE` (in [`lib/env.ts`](../../lib/env.ts),
+   default `single`) and the chokepoint applied in `lib/db/client.ts`. At
+   `single` no query is scoped. Since §107 t-706 the client no longer throws
+   at `multi`: `lib/db/tenancy-extension.ts` scopes every operation to the
+   org the request entered and refuses one that entered none — see
+   [`tenancy/context.md`](../tenancy/context.md#the-data-layer--libdbtenancy-extensionts).
+   (The retrofit steps below that say "delete the guard" describe the
+   pre-§107 shape; this playbook is rewritten as the enablement guide with
+   §107 t-710.)
 
 ## Where a fork's tenancy code lives
 
