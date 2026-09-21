@@ -10,6 +10,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { requireTenantContext } from '@/lib/tenancy/context';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
 import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestration';
@@ -29,7 +30,13 @@ const MCP_SYSTEM_AGENT_SLUG = 'mcp-system';
 
 let cachedTools: McpToolDefinition[] | null = null;
 let cachedAt = 0;
-let mcpSystemAgentId: string | null = null;
+/**
+ * The `mcp-system` agent's id, per org. Slugs are unique per org (§107
+ * t-708), so each org can hold its own `mcp-system` and a process-wide
+ * single value would hand org B the first org's agent — its disabled
+ * capabilities invisible under B's scope, its cost rows misattributed.
+ */
+const mcpSystemAgentIdByOrg = new Map<string, string>();
 
 /**
  * List MCP-exposed tools that are both enabled in McpExposedTool and active
@@ -122,7 +129,12 @@ async function getDisabledCapabilitySlugs(agentId: string): Promise<Set<string>>
  * Returns null if the agent doesn't exist yet.
  */
 async function getMcpSystemAgentId(): Promise<string | null> {
-  if (mcpSystemAgentId) return mcpSystemAgentId;
+  // The org the lookup runs in — the read below is scoped to it at `multi`,
+  // so the cache has to be too. A system scope has no org and caches under
+  // its own key.
+  const cacheKey = requireTenantContext().orgId ?? 'system';
+  const cached = mcpSystemAgentIdByOrg.get(cacheKey);
+  if (cached) return cached;
 
   const agent = await prisma.aiAgent.findFirst({
     where: { slug: MCP_SYSTEM_AGENT_SLUG },
@@ -130,9 +142,9 @@ async function getMcpSystemAgentId(): Promise<string | null> {
   });
 
   if (agent) {
-    mcpSystemAgentId = agent.id;
+    mcpSystemAgentIdByOrg.set(cacheKey, agent.id);
   }
-  return mcpSystemAgentId;
+  return agent?.id ?? null;
 }
 
 /**
@@ -252,7 +264,7 @@ export async function callMcpTool(
 export function clearMcpToolCache(): void {
   cachedTools = null;
   cachedAt = 0;
-  mcpSystemAgentId = null;
+  mcpSystemAgentIdByOrg.clear();
 }
 
 // ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ vi.mock('@/lib/orchestration/capabilities/registry', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import { runAsOrg } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
@@ -540,6 +541,28 @@ describe('callMcpTool', () => {
     await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledOnce();
+  });
+
+  it('caches the agent ID per org — org B never inherits org A’s mcp-system (§107 t-708)', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+    vi.mocked(prisma.aiAgent.findFirst)
+      .mockResolvedValueOnce({ id: 'agent-org-a' } as never)
+      .mockResolvedValueOnce({ id: 'agent-org-b' } as never);
+    vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+
+    await runAsOrg('org_a', () => callMcpTool('search_knowledge', {}, { userId: 'user-1' }));
+    await runAsOrg('org_b', () => callMcpTool('search_knowledge', {}, { userId: 'user-1' }));
+    await runAsOrg('org_a', () => callMcpTool('search_knowledge', {}, { userId: 'user-1' }));
+
+    // One lookup per org, and each org dispatches under its own agent.
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledTimes(2);
+    const agentIds = vi
+      .mocked(capabilityDispatcher.dispatch)
+      .mock.calls.map((c) => (c[2] as { agentId: string }).agentId);
+    expect(agentIds).toEqual(['agent-org-a', 'agent-org-b', 'agent-org-a']);
   });
 
   it('clearMcpToolCache resets the cached agent ID', async () => {
