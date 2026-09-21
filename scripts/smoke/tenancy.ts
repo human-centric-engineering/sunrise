@@ -65,7 +65,8 @@ import {
   updateOrg,
 } from '@/lib/tenancy/lifecycle';
 import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
-import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { tenantOwnedModels } from '@/lib/tenancy/classification';
 import { resolveEmbedToken } from '@/lib/embed/auth';
 import {
   authenticateMcpRequest,
@@ -131,6 +132,32 @@ async function main(): Promise<void> {
     check(install?.slug === INSTALL_ORG_SLUG, `install org slug is "${INSTALL_ORG_SLUG}"`);
     check(install?.status === 'ACTIVE', 'install org is ACTIVE');
     check((await prisma.org.count()) >= 1, 'at least one org exists (principle 1)');
+
+    // ── Single-tenant is byte-identical: the policies are dormant ──────────
+    // The same migrations ship the org_isolation policies; at single nothing
+    // has run db:tenancy:enable, so pg_class must say so for every
+    // tenant-owned table (§107 t-709). At multi this smoke runs after the
+    // enable, and the T-series drift probes are the assertion instead.
+    if (!isMultiTenant()) {
+      const tables = [...tenantOwnedModels(prisma).values()];
+      check(tables.length > 40, `the roster names the tenant-owned tables (${tables.length})`);
+      const flags = await prisma.$queryRaw<
+        Array<{ table: string; enabled: boolean; forced: boolean }>
+      >`
+        SELECT c.relname AS table, c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced
+          FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p')
+           AND c.relname = ANY(${tables})`;
+      check(
+        flags.length === tables.length,
+        `pg_class answers for every tenant-owned table (${flags.length})`
+      );
+      const live = flags.filter((f) => f.enabled || f.forced).map((f) => f.table);
+      check(
+        live.length === 0,
+        `at single, RLS is dormant on every tenant-owned table (live: ${live.join(', ') || 'none'})`
+      );
+    }
 
     // ── Every existing user is a member (the backfill) ─────────────────────
     const users = await prisma.user.count();

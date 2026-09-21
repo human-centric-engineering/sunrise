@@ -20,7 +20,7 @@
  * **The org (§107 t-708).** The token names an execution, not a
  * principal, so no guard has entered an org when these run. After the
  * token verifies, {@link runAsExecutionOrg} reads the execution's `orgId`
- * under an audited system scope — that one read — and runs the action
+ * under the credential-lookup scope — that one read — and runs the action
  * inside `runAsOrg(orgId, …, { source: 'approval-token' })`, so the
  * execution read, the state change and the resumed engine all run inside
  * the org that owns the run. The status route enters the same way.
@@ -37,7 +37,7 @@ import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
 import { cuidSchema } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
-import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { runAsCredentialLookup, runAsOrg } from '@/lib/tenancy/context';
 import { isOrgRefusal, resolveCredentialOrg } from '@/lib/tenancy/entry';
 
 const approveBodySchema = z.object({
@@ -244,14 +244,14 @@ export async function handleRejectRequest(
  * Run `fn` inside the org that owns execution `executionId`, for a caller
  * holding a verified approval token and nothing else.
  *
- * The execution's `orgId` is read under `runAsSystem` — the one read this
- * route makes before it has an org — and passed through the credential
+ * The execution's `orgId` is read under `runAsCredentialLookup` — the one
+ * read this route makes before it has an org — and passed through the credential
  * read rule. An execution that does not exist, whose org is suspended, or
  * that carries no org at `multi`, is the action's own `NOT_FOUND`: the
  * routes already answer that with a 404 that names nothing.
  */
 export async function runAsExecutionOrg<T>(executionId: string, fn: () => Promise<T>): Promise<T> {
-  const execution = await runAsSystem('approval-token-resolution', () =>
+  const execution = await runAsCredentialLookup('approval-token', () =>
     prisma.aiWorkflowExecution.findUnique({
       where: { id: executionId },
       select: { orgId: true, org: { select: { status: true } } },

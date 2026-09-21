@@ -11,6 +11,8 @@
 
 import { randomBytes, createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
+import { runAsCredentialLookup } from '@/lib/tenancy/context';
 import type { NextRequest } from 'next/server';
 import type { AuthSession } from '@/lib/auth/guards';
 export {
@@ -94,25 +96,38 @@ export async function resolveApiKey(request: NextRequest): Promise<{
   const rawKey = authHeader.slice('Bearer '.length);
   const hash = hashApiKey(rawKey);
 
-  const apiKey = await prisma.aiApiKey.findFirst({
-    where: {
-      keyHash: hash,
-      revokedAt: null,
-    },
-    include: {
-      user: true,
-    },
+  // The key row is tenant-owned and is what tells us the org, so the one
+  // lookup — and the last-used touch that rides with it — runs under the
+  // credential-lookup scope (§107 t-709); the guard enters the org after.
+  const apiKey = await runAsCredentialLookup('api-key', async () => {
+    const row = await prisma.aiApiKey.findFirst({
+      where: {
+        keyHash: hash,
+        revokedAt: null,
+      },
+      include: {
+        user: true,
+      },
+    });
+    if (!row) return null;
+    if (row.expiresAt && row.expiresAt < new Date()) return null;
+
+    // Update last used timestamp (fire-and-forget, inside the same scope)
+    void prisma.aiApiKey
+      .update({
+        where: { id: row.id },
+        data: { lastUsedAt: new Date() },
+      })
+      .catch((err: unknown) => {
+        logger.warn('API key: failed to update lastUsedAt', {
+          keyId: row.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return row;
   });
 
   if (!apiKey) return null;
-
-  if (apiKey.expiresAt && apiKey.expiresAt < new Date()) return null;
-
-  // Update last used timestamp (fire-and-forget)
-  void prisma.aiApiKey.update({
-    where: { id: apiKey.id },
-    data: { lastUsedAt: new Date() },
-  });
 
   // Build a session-like object from the API key's user
   const session: AuthSession = {

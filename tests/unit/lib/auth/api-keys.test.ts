@@ -28,6 +28,7 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import { getTenantContext } from '@/lib/tenancy/context';
 import {
   generateApiKey,
   hashApiKey,
@@ -252,6 +253,36 @@ describe('resolveApiKey', () => {
         data: expect.objectContaining({ lastUsedAt: expect.any(Date) }),
       })
     );
+  });
+
+  it('reads the key row, and touches lastUsedAt, under the credential-lookup scope — with no context entered (t-709)', async () => {
+    const seen: Array<{ op: string; ctx: ReturnType<typeof getTenantContext> }> = [];
+    vi.mocked(prisma.aiApiKey.findFirst).mockImplementation((async () => {
+      seen.push({ op: 'findFirst', ctx: getTenantContext() });
+      return makeApiKey({ orgId: 'org_b' });
+    }) as never);
+    vi.mocked(prisma.aiApiKey.update).mockImplementation((async () => {
+      seen.push({ op: 'update', ctx: getTenantContext() });
+      return {};
+    }) as never);
+
+    expect(getTenantContext()).toBeNull();
+    const result = await resolveApiKey(makeRequest('Bearer sk_' + 'd'.repeat(64)));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(result?.orgId).toBe('org_b');
+    expect(seen.map((s) => s.op)).toEqual(['findFirst', 'update']);
+    for (const { ctx } of seen) expect(ctx).toEqual({ orgId: null, source: 'system' });
+    // The resolver hands the org to the guard; it does not enter it.
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('a failing lastUsedAt touch is logged, never thrown into the request', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(makeApiKey() as never);
+    vi.mocked(prisma.aiApiKey.update).mockRejectedValue(new Error('pool gone'));
+    const result = await resolveApiKey(makeRequest('Bearer sk_' + 'e'.repeat(64)));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(result).not.toBeNull();
   });
 
   it('looks up key by SHA-256 hash of the raw key', async () => {

@@ -241,10 +241,11 @@ insert is refused by `WITH CHECK` (`42501`), a cross-org update finds no row,
 and a plain connection with no GUC sees zero rows. The two-org harness and
 CI job that keep this true are §107 t-709.
 
-**Known gap until t-709:** the credential resolvers (`resolveApiKey`,
-`resolveEmbedToken`, MCP key resolution) read a tenant-owned row to learn
-the org they then enter, and the chokepoint refuses that read with no
-context — see [`context.md`](./context.md#the-data-layer--libdbtenancy-extensionts).
+The credential resolvers (`resolveApiKey`, `resolveEmbedToken`, MCP key
+resolution) read a tenant-owned row to learn the org they then enter; that
+one read runs under `runAsCredentialLookup` (t-709) — the bypass for one
+statement, logged at debug — see
+[`context.md`](./context.md#the-data-layer--libdbtenancy-extensionts).
 
 ## Proving it
 

@@ -107,6 +107,15 @@ interface TenantContext {
   only; at `multi` this is the one scope the data layer lets through
   unscoped — it sets `app.bypass_rls` for the transaction instead of an org
   (below).
+- **`runAsCredentialLookup(credential, fn)`** (t-709) — the same null-org
+  system scope, for the ONE read that learns which org a credential belongs
+  to: a key hash, an embed token, an MCP key, a trigger row, an execution
+  named by an approval token. Logged at `debug`, because it runs once per
+  credential-authenticated request and an `info` line per entry would drown
+  the signal `runAsSystem`'s log exists to give (an unexplained bypass); the
+  sites are enumerable by grep, and what an audit needs is that nothing but
+  the lookup — and the credential's last-used touch, which rides with it —
+  runs inside one.
 - **`forEachOrg(fn)`** — one `runAsOrg` scope per `ACTIVE` org, sequential on
   purpose (per-org batch caps are meaningless if every org runs at once).
   Nothing in core calls it in production yet; §108 wires the maintenance
@@ -181,13 +190,23 @@ naming a row rather than a principal** (t-708): the inbound trigger route
 through `runAsExecutionOrg` in `lib/orchestration/approval-route-helpers.ts`).
 Nothing has authenticated when they look their row up, so that one read —
 the trigger by `(channel, workflow.slug)`, the execution by id — runs under
-`runAsSystem` (`inbound-trigger-resolution`, `approval-token-resolution`),
-and the row's `orgId` with its org's status goes through the same
+`runAsCredentialLookup` (`inbound-trigger`, `approval-token`; t-709 moved
+them from `runAsSystem` to the quieter scope), and the row's `orgId` with its org's status goes through the same
 `resolveCredentialOrg` rule a credential's does before the rest of the
 request runs inside `runAsOrg(orgId, …, { source: 'inbound-trigger' |
 'approval-token' })`. A refusal — no org at `multi`, a suspended org — is
 the route's usual 404. The fire-and-forget engine drain and resume start
 inside that scope and keep it.
+**The credential resolvers read their row the same way** (t-709):
+`resolveApiKey` (`lib/auth/api-keys.ts`), `resolveEmbedToken`
+(`lib/embed/auth.ts`) and `authenticateMcpRequest`
+(`lib/orchestration/mcp/auth.ts`) each read a tenant-owned credential row
+**to learn** the org the guard or route then enters, so that one lookup —
+and the `lastUsedAt` touch that rides with it, which has no org to run in
+either (a platform `admin` key has none) — runs under
+`runAsCredentialLookup(<credential>)`. The resolver hands the org back; it
+never enters it. Pinned in each resolver's unit test by recording
+`getTenantContext()` inside the prisma mock at `multi` with no context.
 **Not yet entered** (each named with its owner): the maintenance tick and
 other background work until §108. Until then those paths run outside any
 context — the install org at `single`, a refusal at `multi` the moment they
@@ -293,13 +312,11 @@ Two behaviours, and only these:
   to enter an org fails loud instead of reading wide. A `$transaction`
   opened for one org refuses an op for another inside it.
 
-  One such path is known and named, for §107 t-707 / t-709: the credential
-  resolvers' own row lookup — `resolveApiKey`, `resolveEmbedToken`, MCP key
-  resolution — reads a tenant-owned credential row **to learn** the org it
-  will then enter, so at `multi` the chokepoint refuses it today and every
-  credential-authenticated request fails. That lookup needs an audited entry
-  of its own (a `runAsSystem`-shaped scope around the single hash lookup)
-  before `multi` is exercised end to end.
+  The one such path that existed — the credential resolvers' own row
+  lookup, which reads a tenant-owned row **to learn** the org it will then
+  enter — runs under `runAsCredentialLookup` since t-709 (above); the
+  chokepoint sees a null-org system scope and sets the bypass for that one
+  statement.
 
 At `single` **no `set_config` is ever issued** and no transaction is opened
 that the caller did not ask for. The design record's Spike register

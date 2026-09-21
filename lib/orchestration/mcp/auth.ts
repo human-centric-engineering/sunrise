@@ -12,6 +12,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { mcpKeyScopeSchema } from '@/lib/validations/mcp';
 import { resolveCredentialOrg } from '@/lib/tenancy/entry';
+import { runAsCredentialLookup } from '@/lib/tenancy/context';
 import type { McpAuthContext } from '@/types/mcp';
 
 const KEY_PREFIX = 'smcp_';
@@ -79,10 +80,15 @@ export async function authenticateMcpRequest(
   }
 
   const keyHash = hashApiKey(bearerToken);
-  const key = await prisma.mcpApiKey.findUnique({
-    where: { keyHash },
-    include: { org: { select: { status: true } } },
-  });
+  // The key row is tenant-owned and is what tells us the org: the one lookup
+  // runs under the credential-lookup scope (§107 t-709), and the transport
+  // enters the org it answers.
+  const key = await runAsCredentialLookup('mcp-key', () =>
+    prisma.mcpApiKey.findUnique({
+      where: { keyHash },
+      include: { org: { select: { status: true } } },
+    })
+  );
 
   if (!key) {
     return null;
@@ -110,18 +116,19 @@ export async function authenticateMcpRequest(
     return null;
   }
 
-  // Fire-and-forget lastUsedAt update
-  void prisma.mcpApiKey
-    .update({
+  // Fire-and-forget lastUsedAt update — under the lookup scope, since the
+  // transport has not entered the org yet and a platform key has none.
+  void runAsCredentialLookup('mcp-key-touch', () =>
+    prisma.mcpApiKey.update({
       where: { id: key.id },
       data: { lastUsedAt: new Date() },
     })
-    .catch((err) => {
-      logger.error('MCP auth: failed to update lastUsedAt', {
-        keyId: key.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
+  ).catch((err) => {
+    logger.error('MCP auth: failed to update lastUsedAt', {
+      keyId: key.id,
+      error: err instanceof Error ? err.message : String(err),
     });
+  });
 
   // Re-validate the persisted scope carrier before trusting it — the JSON
   // column is never used raw. A malformed value is dropped (key treated as

@@ -11,8 +11,8 @@
  *   4. If adapter has `handleHandshake` and it returns a Response, return it.
  *   5. Lookup `AiWorkflowTrigger` by (channel, workflow.slug, isEnabled).
  *      Missing or workflow inactive → 404. Nothing has authenticated yet,
- *      so no org has been entered: the lookup runs under an audited system
- *      scope (`runAsSystem`) — that one read — and the workflow's org, put
+ *      so no org has been entered: the lookup runs under the credential-lookup
+ *      scope (`runAsCredentialLookup`) — that one read — and the workflow's org, put
  *      through the credential read rule (`resolveCredentialOrg`), is the
  *      org the rest of the request runs inside (`runAsOrg`, source
  *      `inbound-trigger`). A workflow whose org is suspended, or carries
@@ -49,7 +49,7 @@ import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap'
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
 import { resolveConversation } from '@/lib/orchestration/inbound/conversation-resolver';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
-import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { runAsCredentialLookup, runAsOrg } from '@/lib/tenancy/context';
 import { isOrgRefusal, resolveCredentialOrg } from '@/lib/tenancy/entry';
 
 // Module-level bootstrap. Idempotent — first call registers adapters from env.
@@ -149,9 +149,9 @@ export async function POST(
 
   // Resolve trigger → workflow → published version. No org has been entered
   // yet — the trigger row is what tells us which — so this one read runs
-  // under the audited system scope, and everything after it inside the
+  // under the credential-lookup scope, and everything after it inside the
   // workflow's org.
-  const trigger = await runAsSystem('inbound-trigger-resolution', () =>
+  const trigger = await runAsCredentialLookup('inbound-trigger', () =>
     prisma.aiWorkflowTrigger.findFirst({
       where: {
         channel,

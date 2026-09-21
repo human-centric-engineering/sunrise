@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { resolveCredentialOrg } from '@/lib/tenancy/entry';
+import { runAsCredentialLookup } from '@/lib/tenancy/context';
 
 /**
  * Prefix of the synthetic per-visitor id minted below. An embed visitor has no
@@ -70,15 +71,19 @@ export async function resolveEmbedToken(
   clientIp: string
 ): Promise<EmbedContext | null> {
   try {
-    const record = await prisma.aiAgentEmbedToken.findUnique({
-      where: { token },
-      include: {
-        agent: {
-          select: { id: true, slug: true, isActive: true },
+    // The token row is tenant-owned and is what tells us the org: the one
+    // lookup runs under the credential-lookup scope (§107 t-709).
+    const record = await runAsCredentialLookup('embed-token', () =>
+      prisma.aiAgentEmbedToken.findUnique({
+        where: { token },
+        include: {
+          agent: {
+            select: { id: true, slug: true, isActive: true },
+          },
+          org: { select: { status: true } },
         },
-        org: { select: { status: true } },
-      },
-    });
+      })
+    );
 
     if (!record || !record.isActive || !record.agent.isActive) {
       return null;

@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'crypto';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -27,6 +28,7 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/logging', () => ({
   logger: {
+    debug: vi.fn(),
     error: vi.fn(),
     warn: vi.fn(),
   },
@@ -192,6 +194,20 @@ describe('resolveEmbedToken — the org the token acts for (§106, t-673)', () =
     mockEnv.TENANCY_MODE = 'multi';
     mockFindUnique.mockResolvedValue(makeTokenRecord());
     expect(await resolveEmbedToken('tok_abc123', '1.2.3.4')).toBeNull();
+  });
+
+  it('reads the token row under the credential-lookup scope — at multi with no context entered (t-709)', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    let seen: ReturnType<typeof getTenantContext> | undefined;
+    mockFindUnique.mockImplementation(async () => {
+      seen = getTenantContext();
+      return makeTokenRecord({ orgId: OTHER, org: { status: 'ACTIVE' } });
+    });
+
+    expect(getTenantContext()).toBeNull();
+    expect((await resolveEmbedToken('tok_abc123', '1.2.3.4'))?.orgId).toBe(OTHER);
+    expect(seen).toEqual({ orgId: null, source: 'system' });
+    expect(getTenantContext()).toBeNull();
   });
 
   it('a suspended org’s token is refused — the widget on that site stops answering', async () => {

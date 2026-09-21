@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -15,6 +16,7 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/logging', () => ({
   logger: {
+    debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
     info: vi.fn(),
@@ -305,6 +307,29 @@ describe('authenticateMcpRequest — the org the key acts for (§106, t-673)', (
     expect(await authenticateMcpRequest('smcp_interim', CLIENT_IP, USER_AGENT)).toBeNull();
     // Refused before the key counts as used.
     expect(prisma.mcpApiKey.update).not.toHaveBeenCalled();
+  });
+
+  it('reads the key row, and touches lastUsedAt, under the credential-lookup scope — at multi with no context entered (t-709)', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const seen: Array<{ op: string; ctx: ReturnType<typeof getTenantContext> }> = [];
+    vi.mocked(prisma.mcpApiKey.findUnique).mockImplementation((async () => {
+      seen.push({ op: 'findUnique', ctx: getTenantContext() });
+      return makeMcpApiKey({ orgId: OTHER, org: { status: 'ACTIVE' } });
+    }) as never);
+    vi.mocked(prisma.mcpApiKey.update).mockImplementation((async () => {
+      seen.push({ op: 'update', ctx: getTenantContext() });
+      return {};
+    }) as never);
+
+    expect(getTenantContext()).toBeNull();
+    const result = await authenticateMcpRequest('smcp_scoped', CLIENT_IP, USER_AGENT);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(result?.orgId).toBe(OTHER);
+    expect(seen.map((s) => s.op)).toEqual(['findUnique', 'update']);
+    for (const { ctx } of seen) expect(ctx).toEqual({ orgId: null, source: 'system' });
+    // The resolver hands back the org; it does not enter it — the transport does.
+    expect(getTenantContext()).toBeNull();
   });
 
   it('a suspended org’s key is refused, and not marked used', async () => {

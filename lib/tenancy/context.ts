@@ -15,8 +15,9 @@
  * the embed routes from the embed token, the MCP transport from the MCP key
  * (each credential is bound to an org at mint, t-673); the two routes whose
  * credential is a signed token naming a ROW — the inbound trigger, the HMAC
- * approval token — read that row under {@link runAsSystem} and enter its org
- * (§107 t-708). An agent invite token
+ * approval token — read that row and enter its org (§107 t-708). Every one
+ * of those resolvers reads its credential row before an org is known, and
+ * does so under {@link runAsCredentialLookup} (t-709). An agent invite token
  * enters nothing: it is a gate the session passes through, checked against
  * the org the guard entered. Background jobs enter it through
  * {@link forEachOrg} / {@link runAsSystem} once §108 wires the tick. Until
@@ -172,6 +173,29 @@ export function runAsOrg<T>(
  */
 export function runAsSystem<T>(reason: string, fn: () => Promise<T>): Promise<T> {
   logger.info('Entering system tenant scope', { reason });
+  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+}
+
+/**
+ * Run `fn` as the system scope for the ONE read that learns which org a
+ * credential belongs to (§107 t-709).
+ *
+ * A key hash, an embed token, an MCP key, a trigger row, an execution named
+ * by an approval token: each is a tenant-owned row that has to be read
+ * before any org is known, so the read runs with the bypass — the same
+ * scope as {@link runAsSystem}, the same `app.bypass_rls` setter — and the
+ * row's org then goes through `resolveCredentialOrg` and `runAsOrg`. The
+ * touch that records the credential's last use rides in the same scope, for
+ * the same reason.
+ *
+ * Logged at debug, not info: this runs once per credential-authenticated
+ * request, and an info line per entry would drown the signal
+ * {@link runAsSystem}'s log exists to give — an unexplained bypass. What an
+ * audit needs here is the other half: the sites are enumerable by grep, and
+ * nothing but the lookup runs inside one.
+ */
+export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T>): Promise<T> {
+  logger.debug('Entering system tenant scope for a credential lookup', { credential });
   return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
 }
 

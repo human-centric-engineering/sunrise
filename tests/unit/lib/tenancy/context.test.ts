@@ -17,7 +17,12 @@ vi.mock('@/lib/env', () => ({ env: mockEnv }));
 const mockFindMany = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/db/client', () => ({ prisma: { org: { findMany: mockFindMany } } }));
 
-const mockLogger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
 import {
@@ -26,6 +31,7 @@ import {
   isMultiTenant,
   requireTenantContext,
   requireOrgId,
+  runAsCredentialLookup,
   runAsOrg,
   runAsSystem,
 } from '@/lib/tenancy/context';
@@ -180,6 +186,28 @@ describe('runAsSystem', () => {
     mockEnv.TENANCY_MODE = 'multi';
     const seen = await runAsSystem('reason', async () => requireTenantContext());
     expect(seen.source).toBe('system');
+  });
+});
+
+describe('runAsCredentialLookup — the one read that learns the org', () => {
+  it('is the same null-org system scope, logged at debug rather than info', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const seen = await runAsCredentialLookup('api-key', async () => getTenantContext());
+    expect(seen).toEqual({ orgId: null, source: 'system' });
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Entering system tenant scope for a credential lookup',
+      { credential: 'api-key' }
+    );
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('is what requireTenantContext answers inside it, and refuses requireOrgId', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    expect((await runAsCredentialLookup('x', async () => requireTenantContext())).orgId).toBeNull();
+    await expect(runAsCredentialLookup('x', async () => requireOrgId())).rejects.toThrow(
+      /system scope/
+    );
   });
 });
 
