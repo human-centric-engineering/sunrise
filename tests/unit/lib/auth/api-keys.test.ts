@@ -27,6 +27,14 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
+vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
+
 import { prisma } from '@/lib/db/client';
 import { getTenantContext } from '@/lib/tenancy/context';
 import {
@@ -283,6 +291,10 @@ describe('resolveApiKey', () => {
     const result = await resolveApiKey(makeRequest('Bearer sk_' + 'e'.repeat(64)));
     await new Promise((r) => setTimeout(r, 0));
     expect(result).not.toBeNull();
+    expect(mockLogger.warn).toHaveBeenCalledWith('API key: failed to update lastUsedAt', {
+      keyId: 'key-1',
+      error: 'pool gone',
+    });
   });
 
   it('looks up key by SHA-256 hash of the raw key', async () => {

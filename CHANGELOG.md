@@ -37,7 +37,11 @@ release process.
   `resolveEmbedToken` and `authenticateMcpRequest` run their lookup (and the
   `lastUsedAt` touch) inside it, which closes the known gap where every
   credential-authenticated request threw at `multi`, and the inbound and
-  approval routes use it in place of `runAsSystem`. The conversation
+  approval routes use it in place of `runAsSystem`. One behaviour change
+  rides along: `AiApiKey.lastUsedAt` is now actually written on every
+  `sk_` request — the previous `void prisma.aiApiKey.update(…)` never ran,
+  a `PrismaPromise` being lazy until awaited, so the column has been `NULL`
+  for every key since it was added; a failed touch is logged at warn. The conversation
   semantic-search SQL moved from the admin route into
   `lib/orchestration/chat/conversation-semantic-search.ts`
   (`searchConversationEmbeddings`) so the harness drives the statement

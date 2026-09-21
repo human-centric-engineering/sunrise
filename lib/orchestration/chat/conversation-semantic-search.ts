@@ -13,9 +13,10 @@
  *
  * **`includeOwnerless` is the authorization policy's answer, never a
  * caller's choice**: the route passes `session.unattributedReads.conversation`
- * and nothing else may pass `true` without asking the policy first. This
- * module reads `AiConversation` / `AiMessage`, so a new caller is fenced by
- * the ownerless-surfaces guard (`tests/unit/scripts/ci/ownerless-surfaces.test.ts`).
+ * and nothing else may pass `true` without asking the policy first. Note the
+ * ownerless-surfaces guard fences THIS module (it names the tables; it sits
+ * on the by-design list), not a caller of this export — a new caller is
+ * invisible to it, so the obligation lives here, at the seam, in words.
  */
 import { prisma } from '@/lib/db/client';
 
@@ -43,7 +44,8 @@ export interface ConversationSearchRow {
   conversationId: string;
   conversationTitle: string | null;
   agentId: string | null;
-  userId: string;
+  /** `null` for a system-owned inbound thread, which the ownerless arm admits. */
+  userId: string | null;
   conversationIsActive: boolean;
   conversationCreatedAt: Date;
   conversationUpdatedAt: Date;

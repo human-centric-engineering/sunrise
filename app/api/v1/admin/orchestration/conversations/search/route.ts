@@ -120,7 +120,7 @@ export const GET = withAdminAuth(async (request, session) => {
     }));
 
   // Audit-of-audits for matches that aren't the caller's own. The OR-subquery
-  // in the SQL above pulls in actively-shared conversations, and system-owned
+  // in the query module's SQL pulls in actively-shared conversations, and system-owned
   // inbound threads when the policy admits them, alongside the caller's own;
   // for any returned row the caller doesn't own, write one row under the basis
   // that admitted it. Owner-basis matches no-op via `logConversationAccess`.

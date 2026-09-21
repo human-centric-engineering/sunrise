@@ -142,7 +142,7 @@ POST /api/v1/inbound/:channel/:slug
   ↓ rawBody = await request.text()
   ↓ bodyParsed = JSON.parse(rawBody)             (best-effort; null on parse fail)
   ↓ adapter.handleHandshake?(bodyParsed)         → return early (Slack url_verification)
-  ↓ trigger = runAsSystem('inbound-trigger-resolution', () =>
+  ↓ trigger = runAsCredentialLookup('inbound-trigger', () =>
   ↓     prisma.aiWorkflowTrigger.findFirst({channel, workflow.slug, isEnabled}))
   ↓                                              → 404 if missing or workflow inactive
   ↓ entry = resolveCredentialOrg({workflow.orgId, workflow.org.status}, 'inbound-trigger')
@@ -168,7 +168,7 @@ POST /api/v1/inbound/:channel/:slug
 Nothing has authenticated when the trigger is looked up — the channel
 signature is verified against the trigger row's own secret, so the row has
 to be found first — and no guard has entered an org. The route therefore
-reads that one row under the audited system scope (`runAsSystem`), puts the
+reads that one row under the credential-lookup scope (`runAsCredentialLookup`, the same null-org system scope as `runAsSystem`, logged at debug), puts the
 workflow's `orgId` and its org's status through the same
 `resolveCredentialOrg` rule a credential's does, and runs everything after
 the lookup inside `runAsOrg(orgId, …, { source: 'inbound-trigger' })`: the
