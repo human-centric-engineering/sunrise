@@ -18,6 +18,31 @@ release process.
 
 ### Added
 
+- **A CI job drives the platform as two orgs and proves neither can see the
+  other** (multi-tenancy §107 t-709). `smoke-multi` in `ci.yml` runs the
+  operator's sequence on a fresh pgvector container — migrate and seed as
+  the owner, `db:tenancy:role --create`, `db:tenancy:enable`, the drift
+  check at `TENANCY_MODE=multi` as the restricted role (93 probes) — then
+  the new `npm run smoke:tenancy-isolation`
+  (`scripts/smoke/tenancy-isolation.ts`, throwaway databases only) as that
+  role: two orgs with equivalent rows, and as one org every read path —
+  vector search, cost reports, conversation semantic search, the message
+  embedder's raw `INSERT`, relation reach from a global root, `forEachOrg`,
+  the credential resolvers and the inbound route called as nobody — answers
+  its own rows and none of the other's. `smoke:tenancy` now also asserts at
+  `single` that RLS is neither enabled nor forced on any tenant-owned table.
+  New on `lib/tenancy/context.ts`: **`runAsCredentialLookup(credential, fn)`**
+  — the null-org system scope for the one read that learns which org a
+  credential belongs to, logged at debug; `resolveApiKey`,
+  `resolveEmbedToken` and `authenticateMcpRequest` run their lookup (and the
+  `lastUsedAt` touch) inside it, which closes the known gap where every
+  credential-authenticated request threw at `multi`, and the inbound and
+  approval routes use it in place of `runAsSystem`. The conversation
+  semantic-search SQL moved from the admin route into
+  `lib/orchestration/chat/conversation-semantic-search.ts`
+  (`searchConversationEmbeddings`) so the harness drives the statement
+  itself; the route's behaviour is unchanged.
+
 - **Isolation policies ship dormant with the schema, and one command turns
   them on or off** (multi-tenancy §107, the database half of row isolation).
   One raw-SQL migration, `20260920120000_org_isolation_policies`, creates an
