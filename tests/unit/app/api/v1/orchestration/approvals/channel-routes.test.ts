@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 // Mirrors the setup.ts test env (APP_URL must match what env.NEXT_PUBLIC_APP_URL
 // resolved to at module load time in the test runtime).
@@ -24,6 +25,16 @@ vi.mock('@/lib/security/ip', () => ({
 const mockVerify = vi.fn();
 vi.mock('@/lib/orchestration/approval-tokens', () => ({
   verifyApprovalToken: (token: string): unknown => mockVerify(token),
+}));
+
+// The helper enters the execution's org before the action runs (§107 t-708):
+// one row, its org and the org's status. The real tenancy context is kept so
+// the action mocks can record the scope they were called in.
+const mockFindExecution = vi.fn();
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    aiWorkflowExecution: { findUnique: (args: unknown): unknown => mockFindExecution(args) },
+  },
 }));
 
 const mockExecuteApproval = vi.fn();
@@ -84,6 +95,7 @@ function makeRequest(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFindExecution.mockResolvedValue({ orgId: 'org_b', org: { status: 'ACTIVE' } });
   mockVerify.mockReturnValue({
     executionId: VALID_ID,
     action: 'approve',
@@ -175,7 +187,15 @@ describe('chat sub-routes (same-origin CORS)', () => {
     expect(mockExecuteApproval).not.toHaveBeenCalled();
   });
 
-  it('POST /approve/chat fire-and-forget triggers engine resumption', async () => {
+  it('POST /approve/chat fire-and-forget triggers engine resumption, inside the execution’s org', async () => {
+    const scopes: Array<ReturnType<typeof getTenantContext>> = [];
+    mockExecuteApproval.mockImplementation(async () => {
+      scopes.push(getTenantContext());
+      return { success: true, executionId: VALID_ID, resumeStepId: null, workflowId: 'wf-1' };
+    });
+    mockResumeApprovedExecution.mockImplementation(async () => {
+      scopes.push(getTenantContext());
+    });
     const res = await chatApproveModule.POST(
       makeRequest(`${APP_URL}/api/v1/orchestration/approvals/${VALID_ID}/approve/chat?token=t`, {
         method: 'POST',
@@ -188,6 +208,11 @@ describe('chat sub-routes (same-origin CORS)', () => {
     // Microtask may not have fired yet — flush.
     await Promise.resolve();
     expect(mockResumeApprovedExecution).toHaveBeenCalledWith(VALID_ID);
+    // Both the action and the detached resume ran in the org the row named.
+    expect(scopes).toHaveLength(2);
+    for (const scope of scopes) {
+      expect(scope).toMatchObject({ orgId: 'org_b', source: 'approval-token' });
+    }
   });
 
   it('POST /reject/chat does NOT trigger resumption (rejection cancels, no engine work)', async () => {

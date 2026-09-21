@@ -25,7 +25,7 @@ vi.mock('@/lib/orchestration/engine/executor-registry', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiConversation: { findUnique: vi.fn() },
-    aiAgent: { findUnique: vi.fn() },
+    aiAgent: { findFirst: vi.fn() },
     aiMessage: { findMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
       fn({
@@ -187,7 +187,7 @@ describe('chat_turn — happy path', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([
       // Returned newest-first (DESC); executor reverses to chronological.
       { role: 'assistant', content: 'A2' },
@@ -237,7 +237,7 @@ describe('chat_turn — happy path', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
 
     await executeChatTurn(makeStep({ historyLimit: 0 }), makeCtx());
 
@@ -250,7 +250,7 @@ describe('chat_turn — happy path', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     await executeChatTurn(makeStep({ persistMessages: false }), makeCtx());
@@ -279,7 +279,7 @@ describe('chat_turn — error paths', () => {
 
   it('throws conversation_not_found when the conversation row is missing', async () => {
     vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(null);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
 
     await expect(executeChatTurn(makeStep(), makeCtx())).rejects.toMatchObject({
       code: 'conversation_not_found',
@@ -291,7 +291,7 @@ describe('chat_turn — error paths', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
 
     await expect(executeChatTurn(makeStep(), makeCtx())).rejects.toMatchObject({
       code: 'agent_not_found',
@@ -304,7 +304,7 @@ describe('chat_turn — error paths', () => {
         id: 'conv_1',
         agentId: 'agent_1',
       } as never);
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
       vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
       vi.mocked(resolveAgentProviderAndModel).mockRejectedValue(err);
       try {
@@ -357,7 +357,7 @@ describe('chat_turn — error paths', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
     vi.mocked(getProviderWithFallbacks).mockResolvedValue({
       provider: {
@@ -383,7 +383,7 @@ describe('chat_turn — persistence resilience', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.$transaction).mockRejectedValue(new Error('DB down'));
 
@@ -411,7 +411,7 @@ describe('chat_turn — provider config precedence', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     await executeChatTurn(makeStep({ temperature: 0.9 }), makeCtx());
@@ -425,7 +425,7 @@ describe('chat_turn — provider config precedence', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     await executeChatTurn(makeStep(), makeCtx());
@@ -439,7 +439,7 @@ describe('chat_turn — provider config precedence', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       ...mockAgent,
       temperature: null,
     } as never);
@@ -456,7 +456,7 @@ describe('chat_turn — provider config precedence', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
 
     await executeChatTurn(makeStep({ maxTokens: 1000 }), makeCtx());
@@ -470,7 +470,7 @@ describe('chat_turn — provider config precedence', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       ...mockAgent,
       maxTokens: null,
     } as never);
@@ -487,7 +487,7 @@ describe('chat_turn — provider config precedence', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       ...mockAgent,
       reasoningEffort: 'high',
     } as never);
@@ -509,7 +509,7 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
     vi.mocked(getProviderWithFallbacks).mockResolvedValueOnce({
       provider: {
@@ -529,7 +529,7 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     // String throw (not an Error instance) — exercises the branch where the
     // thrown value is neither of the resolver's own error types.
     vi.mocked(resolveAgentProviderAndModel).mockRejectedValueOnce('weird non-error throw');
@@ -549,7 +549,7 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
     vi.mocked(getProviderWithFallbacks).mockResolvedValueOnce({
       provider: {
@@ -577,7 +577,7 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       ...mockAgent,
       versions: [],
     } as never);
@@ -611,7 +611,7 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       ...mockAgent,
       versions: [{ id: 'agentver_42' }],
     } as never);
@@ -645,7 +645,7 @@ describe('chat_turn — logCost failure', () => {
       id: 'conv_1',
       agentId: 'agent_1',
     } as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
     vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
     // First call rejects — exercises the .catch() handler on line 239.
     vi.mocked(logCost).mockRejectedValueOnce(new Error('cost log DB down'));

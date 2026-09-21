@@ -34,7 +34,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => {
   const txMock = {
     aiAgent: {
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     },
@@ -189,8 +189,8 @@ describe('Agent Export → Import Round-Trip', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    // tx.aiAgent.findUnique returns null so import creates a new agent
-    txMock.aiAgent.findUnique.mockResolvedValue(null);
+    // tx.aiAgent.findFirst returns null so import creates a new agent
+    txMock.aiAgent.findFirst.mockResolvedValue(null);
     txMock.aiAgent.create.mockResolvedValue({ id: 'new-agent-id', slug: 'research-assistant' });
     txMock.aiAgentCapability.createMany.mockResolvedValue({ count: 1 });
     txMock.aiAgentKnowledgeTag.createMany.mockResolvedValue({ count: 1 });

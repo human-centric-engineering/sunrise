@@ -38,7 +38,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiExperiment: { findFirst: vi.fn(), update: vi.fn() },
-    aiAgent: { findUnique: vi.fn() },
+    aiAgent: { findFirst: vi.fn() },
     aiEvaluationCaseResult: { findMany: vi.fn() },
   },
 }));
@@ -275,7 +275,7 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
       vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(
         makeExperiment({ dataset: { caseCount: 3, userId: null } }) as never
       );
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
         id: 'judge-1',
         kind: 'judge',
         isActive: true,
@@ -318,14 +318,14 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
 
   it('returns 400 when the judge agent slug does not exist', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
     const res = await POST(makeRequest(defaultBody()), ctx());
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when the named agent is not a judge', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       id: 'a',
       kind: 'chat',
       isActive: true,
@@ -339,7 +339,7 @@ describe('POST /experiments/:id/verdicts — happy path', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       id: 'a',
       kind: 'judge',
       isActive: true,
@@ -516,7 +516,7 @@ describe('POST /experiments/:id/verdicts — rate limit', () => {
 describe('audit — a verdict overwrite leaves a record whoever made it', () => {
   beforeEach(() => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({
       id: 'a',
       kind: 'judge',
       isActive: true,

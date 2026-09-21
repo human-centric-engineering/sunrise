@@ -94,6 +94,8 @@ import { inboundLimiter } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { drainEngine } from '@/lib/orchestration/scheduling/scheduler';
+import { env } from '@/lib/env';
+import { getTenantContext } from '@/lib/tenancy/context';
 import { resetInboundAdapters, getInboundAdapter } from '@/lib/orchestration/inbound/registry';
 import {
   bootstrapInboundAdapters,
@@ -1462,6 +1464,132 @@ describe('observability', () => {
 });
 
 // ─── Common error paths ───────────────────────────────────────────────────────
+
+describe('the org (§107 t-708)', () => {
+  // Nothing has authenticated when the trigger is looked up, so the route
+  // reads the row under a system scope, then runs the rest inside the
+  // workflow's org — read from the row, never from the request.
+  const ORG_B = 'org_b_integration';
+  const slackEventBody = {
+    type: 'event_callback',
+    event_id: 'EvOrg001',
+    team_id: 'T12345',
+    api_app_id: 'A12345',
+    event_time: 1700000000,
+    event: { type: 'app_mention', user: 'U12345', text: 'Hello', ts: '1.1', channel: 'C1' },
+  };
+  const workflowIn = (orgId: string | null, status = 'ACTIVE') => ({
+    id: WORKFLOW_ID,
+    slug: WORKFLOW_SLUG,
+    orgId,
+    org: orgId ? { status } : null,
+    maxCostPerExecutionUsd: null,
+    publishedVersion: { id: VERSION_ID, snapshot: VALID_SNAPSHOT },
+  });
+  const mode = env.TENANCY_MODE;
+  afterAll(() => {
+    env.TENANCY_MODE = mode;
+  });
+
+  /** Every prisma call the route makes, with the scope it was made in. */
+  function recordScopes(): Array<{ op: string; ctx: ReturnType<typeof getTenantContext> }> {
+    const seen: Array<{ op: string; ctx: ReturnType<typeof getTenantContext> }> = [];
+    const record = (op: string, answer: unknown) => async (): Promise<unknown> => {
+      seen.push({ op, ctx: getTenantContext() });
+      return answer;
+    };
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockImplementation(
+      record('trigger.findFirst', makeTriggerRow({ workflow: workflowIn(ORG_B) })) as never
+    );
+    vi.mocked(prisma.aiWorkflowExecution.create).mockImplementation(
+      record('execution.create', makeExecutionRow({ id: EXECUTION_ID })) as never
+    );
+    vi.mocked(prisma.aiWorkflowTrigger.update).mockImplementation(
+      record('trigger.update', {}) as never
+    );
+    vi.mocked(drainEngine).mockImplementation(record('drainEngine', undefined) as never);
+    return seen;
+  }
+
+  for (const tenancyMode of ['single', 'multi'] as const) {
+    it(`at ${tenancyMode}: looks the trigger up under the system scope and runs everything else inside the workflow's org`, async () => {
+      env.TENANCY_MODE = tenancyMode;
+      const seen = recordScopes();
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, {
+        ip: `10.9.${tenancyMode === 'multi' ? 1 : 0}.10`,
+      });
+
+      const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+      await new Promise((r) => setTimeout(r, 0)); // the detached update and drain
+
+      expect(response.status).toBe(202);
+      // The lookup asks for the org and its status alongside the workflow.
+      const lookup = vi.mocked(prisma.aiWorkflowTrigger.findFirst).mock.calls[0][0];
+      expect(lookup?.include).toMatchObject({
+        workflow: { select: { orgId: true, org: { select: { status: true } } } },
+      });
+      expect(seen.map((s) => s.op)).toEqual([
+        'trigger.findFirst',
+        'execution.create',
+        'trigger.update',
+        'drainEngine',
+      ]);
+      expect(seen[0].ctx).toEqual({ orgId: null, source: 'system' });
+      for (const { ctx } of seen.slice(1)) {
+        expect(ctx).toMatchObject({ orgId: ORG_B, source: 'inbound-trigger' });
+      }
+    });
+  }
+
+  it('at multi: a workflow that carries no org is not found, and nothing is written', async () => {
+    env.TENANCY_MODE = 'multi';
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({ workflow: workflowIn(null) })
+    );
+    const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.9.2.10' });
+
+    const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(404);
+    expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
+  });
+
+  it("a suspended org's trigger is not found either, at single as at multi", async () => {
+    for (const [tenancyMode, ip] of [
+      ['single', '10.9.3.10'],
+      ['multi', '10.9.3.11'],
+    ] as const) {
+      env.TENANCY_MODE = tenancyMode;
+      vi.mocked(prisma.aiWorkflowExecution.create).mockClear();
+      vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+        makeTriggerRow({ workflow: workflowIn(ORG_B, 'SUSPENDED') })
+      );
+      const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip });
+
+      const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+      expect(response.status).toBe(404);
+      expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('at single: a workflow that carries no org runs as the install org (the pre-t-708 rows)', async () => {
+    env.TENANCY_MODE = 'single';
+    const seen = recordScopes();
+    vi.mocked(prisma.aiWorkflowTrigger.findFirst).mockResolvedValue(
+      makeTriggerRow({ workflow: workflowIn(null) })
+    );
+    const request = makeSlackRequest('slack', WORKFLOW_SLUG, slackEventBody, { ip: '10.9.4.10' });
+
+    const response = await POST(request, makeParams('slack', WORKFLOW_SLUG));
+
+    expect(response.status).toBe(202);
+    expect(seen.find((s) => s.op === 'execution.create')?.ctx).toMatchObject({
+      orgId: 'install',
+      source: 'inbound-trigger',
+    });
+  });
+});
 
 describe('error paths', () => {
   it('returns 404 when trigger row does not exist', async () => {

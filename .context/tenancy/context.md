@@ -64,7 +64,16 @@ precedent), where
 interface TenantContext {
   orgId: string | null; // null only for a `system` scope
   source:
-    'session' | 'api-key' | 'embed-token' | 'mcp-key' | 'resolver' | 'system' | 'job' | 'implicit';
+    | 'session'
+    | 'api-key'
+    | 'embed-token'
+    | 'mcp-key'
+    | 'resolver'
+    | 'inbound-trigger'
+    | 'approval-token' // a signed token naming a ROW (t-708)
+    | 'system'
+    | 'job'
+    | 'implicit';
   role?: OrgRole | null; // the caller's role in orgId, when the entering code looked it up
 }
 ```
@@ -75,6 +84,13 @@ interface TenantContext {
   before a query runs wide is the only safe answer); at `single` answers the
   install org marked `implicit`, the eighth source, so a log line can tell it
   from a real entry.
+- **`requireOrgId()`** — the entered org, for a lookup that has to name it: a
+  per-org unique key (`orgId_slug` on an agent, a knowledge base or a
+  document, t-708) cannot be asked without saying whose `support` is meant.
+  The same answers as `requireTenantContext`, and the `system` scope is
+  refused too — a global scope cannot name one org's row by slug, it has to
+  search (`findFirst({ where: { slug } })` inside an org is the shape every
+  slug read uses).
 - **`runAsOrg(orgId, fn, { source?, role? })`** — the scope covers `fn`'s
   whole async subtree and nothing outside it. A throw does not leak the
   context to the next caller; concurrent work on the same process does not
@@ -158,11 +174,26 @@ and the route wraps its handler in `runAsOrg` (t-673). **An agent invite
 token enters nothing**: it is a gate the session passes through, and
 `lib/orchestration/invite-tokens.ts` compares the token's org with the one
 the guard entered ([agent-visibility.md](../orchestration/agent-visibility.md#org-binding-106)).
+**Entered from the row, by the two routes whose credential is a signed token
+naming a row rather than a principal** (t-708): the inbound trigger route
+(`app/api/v1/inbound/[channel]/[slug]`) and the HMAC approval routes
+(`approvals/[id]/{approve,reject,status}` and their `chat`/`embed` variants,
+through `runAsExecutionOrg` in `lib/orchestration/approval-route-helpers.ts`).
+Nothing has authenticated when they look their row up, so that one read —
+the trigger by `(channel, workflow.slug)`, the execution by id — runs under
+`runAsSystem` (`inbound-trigger-resolution`, `approval-token-resolution`),
+and the row's `orgId` with its org's status goes through the same
+`resolveCredentialOrg` rule a credential's does before the rest of the
+request runs inside `runAsOrg(orgId, …, { source: 'inbound-trigger' |
+'approval-token' })`. A refusal — no org at `multi`, a suspended org — is
+the route's usual 404. The fire-and-forget engine drain and resume start
+inside that scope and keep it.
 **Not yet entered** (each named with its owner): the maintenance tick and
-other background work until §108; HMAC approval tokens and inbound adapters
-until executions and triggers carry an org (§107 t-708). Until then those
-paths run outside any context — the install org at `single`, a refusal at
-`multi` the moment they touch a tenant-owned row, never a wide read.
+other background work until §108. Until then those paths run outside any
+context — the install org at `single`, a refusal at `multi` the moment they
+touch a tenant-owned row, never a wide read. The smoke scripts under
+`scripts/smoke/` run their `main` inside `runAsOrg(INSTALL_ORG_ID)` for the
+same reason.
 
 ## The fork's resolver — `lib/app/tenant-resolver.ts`
 

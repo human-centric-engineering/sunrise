@@ -33,7 +33,7 @@ vi.mock('@/lib/db/client', () => ({
       create: vi.fn(),
     },
     aiAgent: {
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
 }));
@@ -259,7 +259,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
   describe('Successful save', () => {
     it('returns 201 with the saved quiz score', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: AGENT_ID } as never);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({ id: AGENT_ID } as never);
       vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
         id: SESSION_ID,
         metadata: { quizScore: { correct: 8, total: 10 } },
@@ -283,7 +283,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
 
     it('creates the session with null agentId when quiz-master agent is not found', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
         id: SESSION_ID,
         metadata: { quizScore: { correct: 5, total: 5 } },
@@ -299,7 +299,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
 
     it('passes the correct userId from the session to the create call', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
         id: SESSION_ID,
         metadata: { quizScore: { correct: 10, total: 10 } },
@@ -314,7 +314,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
 
     it('stores correct and total in metadata.quizScore', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
         id: SESSION_ID,
         metadata: { quizScore: { correct: 3, total: 7 } },
@@ -333,7 +333,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
 
     it('accepts correct=0 (perfect score of 0/N is valid)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
         id: SESSION_ID,
         metadata: { quizScore: { correct: 0, total: 5 } },

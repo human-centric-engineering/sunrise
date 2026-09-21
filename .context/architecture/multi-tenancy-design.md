@@ -171,7 +171,7 @@ background tick → forEachOrg(fn)  one org-scoped context per iteration, per-or
   the install-scoped `AuthBootstrap`.
 - **Context** — `lib/tenancy/context.ts`: `AsyncLocalStorage<{ orgId, source }>`
   where `source` ∈ session · api-key · embed-token · mcp-key · resolver ·
-  system · job. Entered by the guards (in-repo precedent:
+  inbound-trigger · approval-token · system · job. Entered by the guards (in-repo precedent:
   `lib/auth/signup-mode.ts`); `requireTenantContext()` throws at `multi`;
   `runAsOrg`, `runAsSystem(reason)` (logged), `forEachOrg` for non-request call
   stacks. `getFullContext()` carries `orgId` so breach scoping is lookup, not
@@ -198,12 +198,17 @@ background tick → forEachOrg(fn)  one org-scoped context per iteration, per-or
 
 ### Namespace rules
 
-Human-meaningful slugs (`AiAgent`, `AiWorkflow`, `AiKnowledgeBase`,
-`AiKnowledgeDocument`) become `@@unique([orgId, slug])`. Global-config slugs
-stay global. **Routing keys stay globally unique** — trigger channels,
-`dedupKey`, `idempotencyKey`, inbound/webhook slugs — because the routes they
+Human-meaningful slugs (`AiAgent`, `AiKnowledgeBase`, `AiKnowledgeDocument`)
+are `@@unique([orgId, slug])` — shipped with §107 t-708, together with the two
+partial uniques on the same tables that Prisma cannot model (the ready-document
+dedupe on `(orgId, fileHash)`, one default knowledge base per org), which would
+otherwise have failed an org's upload with a violation from a table it cannot
+see into. Global-config slugs stay global. **Routing keys stay globally
+unique** — trigger channels, `dedupKey`, `idempotencyKey`, inbound/webhook
+slugs, and so `AiWorkflow.slug` (journal decision) — because the routes they
 address carry no tenant: those routes resolve the row under system context and
-then `runAsOrg(row.orgId)`.
+then `runAsOrg(row.orgId)` (the inbound route and the HMAC approval routes do,
+with t-708; [`tenancy/context.md`](../tenancy/context.md)).
 
 ## Assurance
 

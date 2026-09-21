@@ -846,7 +846,7 @@ Use the `AgentWithCapabilities` type from `@/types/orchestration` to load an age
 
 **Purpose:** Source documents and their vector embeddings for retrieval-augmented generation.
 
-- **`AiKnowledgeDocument`** — tracks uploaded source files. `fileHash` is a SHA-256 used for deduplication. `status` follows `DocumentStatus` (`processing`, `ready`, `failed`). A **partial unique index** (`idx_knowledge_doc_file_hash_ready`) prevents two `ready` documents from sharing a hash; failed uploads are intentionally excluded so callers can retry.
+- **`AiKnowledgeDocument`** — tracks uploaded source files. `fileHash` is a SHA-256 used for deduplication. `status` follows `DocumentStatus` (`processing`, `ready`, `failed`). A **partial unique index** (`idx_knowledge_doc_file_hash_ready`, on `(orgId, fileHash)`) prevents two `ready` documents in one org from sharing a hash; failed uploads are intentionally excluded so callers can retry. `slug` is unique per org (`@@unique([orgId, slug])`, §107 t-708), as on `AiAgent` and `AiKnowledgeBase`.
 - **`AiKnowledgeChunk`** — vector store row. **Non-obvious:**
   - `embedding` is `Unsupported("vector(1536)")?` — it is **not selectable through the Prisma client**. All reads/writes must use `prisma.$queryRaw` with pgvector operators (`<=>` for cosine distance).
   - An HNSW index on `embedding` (`vector_cosine_ops`, m=16, ef_construction=64) supports approximate nearest-neighbour search.

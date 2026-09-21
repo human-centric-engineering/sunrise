@@ -248,6 +248,30 @@ describe('resolveCredentialOrg — a token or key with no user behind it', () =>
     ).toEqual({ orgId: INSTALL_ORG_ID, role: null, source: 'mcp-key' });
   });
 
+  it('answers the two signed-token routes the same way, under their own source names (t-708)', () => {
+    // The inbound trigger and the approval token name a ROW, and the row's
+    // org goes through this rule exactly as a credential's does.
+    for (const source of ['inbound-trigger', 'approval-token'] as const) {
+      expect(resolveCredentialOrg({ orgId: OTHER, orgStatus: 'ACTIVE' }, source)).toEqual({
+        orgId: OTHER,
+        role: null,
+        source,
+      });
+      expect(resolveCredentialOrg({ orgId: OTHER, orgStatus: 'SUSPENDED' }, source)).toEqual({
+        refused: 'org-suspended',
+      });
+      expect(resolveCredentialOrg({ orgId: null, orgStatus: null }, source)).toEqual({
+        orgId: INSTALL_ORG_ID,
+        role: null,
+        source,
+      });
+    }
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(resolveCredentialOrg({ orgId: null, orgStatus: null }, 'inbound-trigger')).toEqual({
+      refused: 'no-org',
+    });
+  });
+
   it('any other org must be ACTIVE — a suspended customer’s tokens stop', () => {
     expect(resolveCredentialOrg({ orgId: OTHER, orgStatus: 'ACTIVE' }, 'embed-token')).toEqual({
       orgId: OTHER,

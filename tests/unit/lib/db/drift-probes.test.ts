@@ -82,8 +82,11 @@ beforeEach(() => {
 });
 
 describe('indexExists', () => {
+  const HNSW =
+    'CREATE INDEX idx_knowledge_embedding ON public.ai_knowledge_chunk USING hnsw (embedding)';
+
   it('queries pg_indexes by name and reports ok when exactly one row exists', async () => {
-    queryRaw.mockResolvedValue([{ count: 1n }]);
+    queryRaw.mockResolvedValue([{ def: HNSW }]);
 
     const result = await indexExists('idx_knowledge_embedding')();
 
@@ -92,14 +95,26 @@ describe('indexExists', () => {
     expect(lastValues()).toEqual(['idx_knowledge_embedding']);
   });
 
-  it('reports not-ok when the index is absent (count 0)', async () => {
-    queryRaw.mockResolvedValue([{ count: 0n }]);
-    expect(await indexExists('missing')()).toEqual({ ok: false });
-  });
-
   it('treats an empty result set as absent rather than crashing', async () => {
     queryRaw.mockResolvedValue([]);
     expect(await indexExists('missing')()).toEqual({ ok: false });
+  });
+
+  it('asserts the definition when asked — an index re-created under the same name with the old columns is drift', async () => {
+    const perOrg =
+      'CREATE UNIQUE INDEX idx_knowledge_doc_file_hash_ready ON public.ai_knowledge_document USING btree ("orgId", "fileHash") WHERE (status = \'ready\'::text)';
+    queryRaw.mockResolvedValue([{ def: perOrg }]);
+    expect(await indexExists('idx_knowledge_doc_file_hash_ready', '"orgId"')()).toEqual({
+      ok: true,
+    });
+
+    const global =
+      'CREATE UNIQUE INDEX idx_knowledge_doc_file_hash_ready ON public.ai_knowledge_document USING btree ("fileHash") WHERE (status = \'ready\'::text)';
+    queryRaw.mockResolvedValue([{ def: global }]);
+    const result = await indexExists('idx_knowledge_doc_file_hash_ready', '"orgId"')();
+    expect(result.ok).toBe(false);
+    expect(result.note).toContain('definition missing');
+    expect(result.note).toContain(global);
   });
 });
 

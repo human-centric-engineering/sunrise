@@ -33,6 +33,7 @@ vi.mock('@/lib/env', () => ({
 
 import { prisma } from '@/lib/db/client';
 import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -205,5 +206,50 @@ describe('POST /api/v1/orchestration/approvals/:id/approve (token auth)', () => 
 
     const response = await POST(request, makeParams(EXECUTION_ID));
     expect(response.status).toBe(200);
+  });
+
+  // ── The org (§107 t-708) ───────────────────────────────────────────────────
+  // The token names an execution, not a principal: the route reads the row's
+  // org under a system scope and runs the action inside it.
+
+  it("runs the approval inside the execution's org, read from the row under a system scope", async () => {
+    const seen: Array<ReturnType<typeof getTenantContext>> = [];
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockImplementation((async () => {
+      seen.push(getTenantContext());
+      return makeExecution({ orgId: 'org_b', org: { status: 'ACTIVE' } });
+    }) as never);
+    vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async () => {
+      seen.push(getTenantContext());
+      return { count: 1 };
+    }) as never);
+    const { token } = generateApprovalToken(EXECUTION_ID, 'approve', 60);
+
+    const response = await POST(makeRequest(EXECUTION_ID, token), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(200);
+
+    // First read: the entry lookup, under the system scope, asking only for
+    // the org and its status. Then the action's own read and write, inside
+    // the execution's org.
+    expect(vi.mocked(prisma.aiWorkflowExecution.findUnique).mock.calls[0][0]).toEqual({
+      where: { id: EXECUTION_ID },
+      select: { orgId: true, org: { select: { status: true } } },
+    });
+    expect(seen[0]).toEqual({ orgId: null, source: 'system' });
+    expect(seen.slice(1)).toHaveLength(2);
+    for (const ctx of seen.slice(1)) {
+      expect(ctx).toMatchObject({ orgId: 'org_b', source: 'approval-token' });
+    }
+  });
+
+  it("answers 404 and touches nothing when the execution's org is suspended", async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ orgId: 'org_b', org: { status: 'SUSPENDED' } }) as never
+    );
+    const { token } = generateApprovalToken(EXECUTION_ID, 'approve', 60);
+
+    const response = await POST(makeRequest(EXECUTION_ID, token), makeParams(EXECUTION_ID));
+    expect(response.status).toBe(404);
+    expect(prisma.aiWorkflowExecution.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.aiWorkflowExecution.updateMany).not.toHaveBeenCalled();
   });
 });

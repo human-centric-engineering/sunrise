@@ -24,7 +24,7 @@ vi.mock('next/headers', () => ({
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    aiAgent: { findUnique: vi.fn() },
+    aiAgent: { findFirst: vi.fn() },
     aiEvaluationSession: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -63,7 +63,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({ id: 'agent-1' } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({ id: 'agent-1' } as never);
     vi.mocked(prisma.aiEvaluationSession.create).mockResolvedValue({
       id: 'session-1',
       metadata: { quizScore: { correct: 3, total: 5 } },
@@ -203,7 +203,7 @@ describe('POST /api/v1/admin/orchestration/quiz-scores — agent fallback', () =
   });
 
   it('creates score with null agentId when quiz-master agent does not exist', async () => {
-    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
 
     const res = await POST(makePostRequest({ correct: 1, total: 2 }));
     expect(res.status).toBe(201);

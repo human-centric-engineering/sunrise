@@ -38,7 +38,7 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => {
   const txMock = {
     aiAgent: {
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     },
@@ -143,7 +143,7 @@ function makeDbAgent(id: string, slug: string) {
 function getTxMock() {
   return (prisma as unknown as Record<string, unknown>)._txMock as {
     aiAgent: {
-      findUnique: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
     };
@@ -185,7 +185,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
 
     // Default: no existing agents (clean import), no capabilities
     const tx = getTxMock();
-    tx.aiAgent.findUnique.mockResolvedValue(null);
+    tx.aiAgent.findFirst.mockResolvedValue(null);
     tx.aiAgent.create.mockResolvedValue({ id: AGENT_ID, slug: 'new-agent' });
     tx.aiAgent.update.mockResolvedValue({ id: AGENT_ID });
     tx.aiAgentCapability.deleteMany.mockResolvedValue({ count: 0 });
@@ -220,7 +220,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
     it('creates agents and returns imported count', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(null);
+      tx.aiAgent.findFirst.mockResolvedValue(null);
 
       const response = await POST(
         makeRequest({ bundle: makeBundle([makeBundledAgent('new-agent')]) })
@@ -244,7 +244,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         { id: CAPABILITY_ID, slug: 'search-web' },
       ] as never);
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(null);
+      tx.aiAgent.findFirst.mockResolvedValue(null);
 
       await POST(
         makeRequest({
@@ -272,7 +272,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
     it('leaves existing agent untouched and increments skipped count', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(makeDbAgent(AGENT_ID, 'existing-agent'));
+      tx.aiAgent.findFirst.mockResolvedValue(makeDbAgent(AGENT_ID, 'existing-agent'));
 
       const response = await POST(
         makeRequest({
@@ -297,7 +297,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
     it('skips existing and imports new in the same bundle', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const tx = getTxMock();
-      tx.aiAgent.findUnique
+      tx.aiAgent.findFirst
         .mockResolvedValueOnce(makeDbAgent(AGENT_ID, 'existing-agent')) // first agent exists
         .mockResolvedValueOnce(null); // second agent is new
 
@@ -321,7 +321,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+      tx.aiAgent.findFirst.mockResolvedValue(existingAgent);
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
         { id: CAPABILITY_ID, slug: 'search-web' },
       ] as never);
@@ -357,7 +357,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+      tx.aiAgent.findFirst.mockResolvedValue(existingAgent);
       // Target env resolves the document slug to a local id.
       vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([
         { id: 'local-doc-1', slug: 'handbook-abc12345' },
@@ -386,7 +386,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+      tx.aiAgent.findFirst.mockResolvedValue(existingAgent);
       vi.mocked(prisma.aiKnowledgeDocument.findMany).mockResolvedValue([] as never); // not found
 
       const bundled = {
@@ -408,7 +408,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(existingAgent);
+      tx.aiAgent.findFirst.mockResolvedValue(existingAgent);
 
       const stored = { primaryColor: '#16a34a', headerTitle: 'Council' };
       const bundledWithWidget = {
@@ -433,7 +433,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const systemAgent = { ...makeDbAgent(AGENT_ID, 'system-agent'), isSystem: true };
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(systemAgent);
+      tx.aiAgent.findFirst.mockResolvedValue(systemAgent);
 
       const response = await POST(
         makeRequest({
@@ -463,7 +463,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       // No matching capabilities in DB
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(null);
+      tx.aiAgent.findFirst.mockResolvedValue(null);
 
       const response = await POST(
         makeRequest({
@@ -484,7 +484,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(null);
+      tx.aiAgent.findFirst.mockResolvedValue(null);
 
       const bundledAgentWithTwoUnknown = makeBundledAgent('new-agent', [
         { slug: 'unknown-cap-1' },
@@ -503,7 +503,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(null);
+      tx.aiAgent.findFirst.mockResolvedValue(null);
 
       await POST(
         makeRequest({
@@ -520,7 +520,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
     it('calls clearCache exactly once after successful import', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const tx = getTxMock();
-      tx.aiAgent.findUnique.mockResolvedValue(null);
+      tx.aiAgent.findFirst.mockResolvedValue(null);
 
       await POST(makeRequest({ bundle: makeBundle([makeBundledAgent('new-agent')]) }));
 

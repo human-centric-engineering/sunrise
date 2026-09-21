@@ -142,8 +142,12 @@ POST /api/v1/inbound/:channel/:slug
   ↓ rawBody = await request.text()
   ↓ bodyParsed = JSON.parse(rawBody)             (best-effort; null on parse fail)
   ↓ adapter.handleHandshake?(bodyParsed)         → return early (Slack url_verification)
-  ↓ trigger = prisma.aiWorkflowTrigger.findFirst({channel, workflow.slug, isEnabled})
+  ↓ trigger = runAsSystem('inbound-trigger-resolution', () =>
+  ↓     prisma.aiWorkflowTrigger.findFirst({channel, workflow.slug, isEnabled}))
   ↓                                              → 404 if missing or workflow inactive
+  ↓ entry = resolveCredentialOrg({workflow.orgId, workflow.org.status}, 'inbound-trigger')
+  ↓                                              → 404 if refused (no org at multi, org suspended)
+  ↓ runAsOrg(entry.orgId, …, {source: 'inbound-trigger'})   # everything below runs inside the workflow's org
   ↓ adapter.verify(req, {signingSecret, metadata, rawBody})  → 401 if invalid (reason logged, not surfaced)
   ↓ normalised = adapter.normalise(bodyParsed, headers)
   ↓ optional metadata.eventTypes filter           → 200 {skipped} if filtered
@@ -158,6 +162,23 @@ POST /api/v1/inbound/:channel/:slug
   ↓ void drainEngine(...)                        # fire-and-forget; identical crash handling to schedule path
   ↓ 202 {executionId, channel, workflowSlug, status: 'pending'}
 ```
+
+### The org (§107 t-708)
+
+Nothing has authenticated when the trigger is looked up — the channel
+signature is verified against the trigger row's own secret, so the row has
+to be found first — and no guard has entered an org. The route therefore
+reads that one row under the audited system scope (`runAsSystem`), puts the
+workflow's `orgId` and its org's status through the same
+`resolveCredentialOrg` rule a credential's does, and runs everything after
+the lookup inside `runAsOrg(orgId, …, { source: 'inbound-trigger' })`: the
+execution row, the conversation the resolver creates, the audit entry and
+the fire-and-forget `drainEngine` are all stamped with, and scoped to, the
+workflow's org. A workflow whose org is suspended, or that carries none at
+`TENANCY_MODE=multi`, is the same 404 as no trigger — a refusal names
+nothing. `AiWorkflow.slug` stays globally unique for exactly this reason: it
+is the URL segment the lookup runs on before any org is known (decision on
+the §107 journal). See [`tenancy/context.md`](../tenancy/context.md).
 
 ## Scope carrier — static + payload-derived
 
@@ -447,6 +468,7 @@ Test fixtures notable enough to know about:
 - Generic-HMAC signature generation: `signHookPayload(secret, rawBody, tsSec)` from `@/lib/orchestration/hooks/signing`.
 - Postmark Basic auth: `Buffer.from('user:pass').toString('base64')`.
 - For the cross-workflow Slack replay regression test: the integration suite captures the `dedupKey` from a first-leg create call and asserts the second-leg call (different workflow, same `event_id`) produces the SAME dedupKey — proving the database UNIQUE would block the replay on a real Postgres instance.
+- The org (`describe('the org (§107 t-708)')` in the integration suite): the prisma mocks record `getTenantContext()` at call time, so the suite asserts the lookup ran as `{ orgId: null, source: 'system' }` and the create, the `lastFiredAt` update and `drainEngine` ran as `{ orgId: <workflow.orgId>, source: 'inbound-trigger' }` — at `single` and, by flipping `env.TENANCY_MODE`, at `multi` with no context entered; plus the two refusals (no org at `multi`, a suspended org) writing nothing.
 
 156 tests across 7 files at the time of writing.
 

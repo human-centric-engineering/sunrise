@@ -285,6 +285,36 @@ release process.
 
 ### Changed
 
+- **Two orgs can each have an agent called `support`** (multi-tenancy §107
+  t-708). `AiAgent`, `AiKnowledgeBase` and `AiKnowledgeDocument` — published
+  model interfaces — move from `slug @unique` to `@@unique([orgId, slug])`
+  (`20260921120000_org_scoped_slugs`; the generated compound key is
+  `orgId_slug`). `AiWorkflow.slug` stays global: it is the unauthenticated
+  `inbound/:channel/:slug` URL segment. **Breaking for a fork that keys a
+  Prisma call on `where: { slug }` for one of the three** — the type no
+  longer admits it; use `findFirst({ where: { slug } })` inside an org
+  context (the tenancy context scopes it at `multi`, the same row at
+  `single`), or `where: { orgId_slug: { orgId: requireOrgId(), slug } }`
+  where the caller has the org (the seeds do; `requireOrgId()` is new on
+  `lib/tenancy/context.ts`, refusing the system scope). The two partial
+  uniques on the same tables that Prisma cannot model move with them, under
+  their existing names: the ready-document dedupe becomes `(orgId,
+  fileHash) WHERE status = 'ready'` and "one default knowledge base"
+  becomes one per org — `getOrCreateDefaultKnowledgeBase()` now upserts
+  the caller's org's default, and only the install org's keeps the fixed id
+  `kb_default`. `npm run db:drift-check`'s A5 and A7 probes assert the new
+  definitions (`indexExists` gains an optional `definitionContains`, the
+  `constraintExists` shape). A new always-run guard,
+  `tests/unit/lib/tenancy/org-scoped-slugs.test.ts`, fails naming any
+  tenant-owned model whose slug is still a global `@unique`. The two routes
+  whose credential is a signed token naming a row — the inbound trigger
+  (`/api/v1/inbound/:channel/:slug`) and the HMAC approval routes — now read
+  that row under `runAsSystem` and run inside `runAsOrg` with the new
+  `TenantContextSource` values `inbound-trigger` and `approval-token`
+  (`resolveCredentialOrg` accepts both); a workflow or execution whose org
+  is suspended, or carries none at `multi`, is a 404. The smoke scripts run
+  their `main` inside the install org.
+
 - **A query runs only inside the org the request entered, and a forgotten
   path fails loud instead of reading wide** (multi-tenancy §107, the
   data-layer chokepoint). The tenancy seam's contract changes:

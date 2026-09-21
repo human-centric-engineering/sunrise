@@ -52,7 +52,14 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiDataset: { findFirst: vi.fn() },
     aiDatasetCase: { count: vi.fn() },
-    aiAgent: { findUnique: vi.fn() },
+    // The subject is read by id (findUnique); the judge by slug, which is a
+    // findFirst within the org since §107 t-708. The judge lookups below
+    // choreograph one mock keyed on `where`, so findFirst delegates to it.
+    aiAgent: (() => {
+      const agent = { findUnique: vi.fn(), findFirst: vi.fn() };
+      agent.findFirst.mockImplementation((args: unknown) => agent.findUnique(args));
+      return agent;
+    })(),
     aiWorkflow: { findUnique: vi.fn(), findFirst: vi.fn() },
   },
 }));

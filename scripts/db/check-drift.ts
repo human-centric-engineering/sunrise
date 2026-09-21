@@ -109,10 +109,10 @@ const DRIFT_OBJECTS: DriftObject[] = [
     probe: indexExists('idx_message_embedding'),
   },
   {
-    name: 'A5 idx_knowledge_doc_file_hash_ready',
+    name: 'A5 idx_knowledge_doc_file_hash_ready (per org)',
     kind: 'partial unique index',
     table: 'ai_knowledge_document',
-    probe: indexExists('idx_knowledge_doc_file_hash_ready'),
+    probe: indexExists('idx_knowledge_doc_file_hash_ready', '"orgId"'),
   },
   {
     name: 'A6 ai_workflow_execution_lease_pair_coherent (tightened)',
@@ -121,10 +121,10 @@ const DRIFT_OBJECTS: DriftObject[] = [
     probe: constraintExists('ai_workflow_execution_lease_pair_coherent', 'length'),
   },
   {
-    name: 'A7 idx_ai_knowledge_base_single_default',
+    name: 'A7 idx_ai_knowledge_base_single_default (per org)',
     kind: 'partial unique index',
     table: 'ai_knowledge_base',
-    probe: indexExists('idx_ai_knowledge_base_single_default'),
+    probe: indexExists('idx_ai_knowledge_base_single_default', '"orgId"'),
   },
   {
     name: 'A8 ai_knowledge_document_status_lowercase',

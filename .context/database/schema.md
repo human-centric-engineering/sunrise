@@ -440,13 +440,26 @@ embedding Unsupported("vector(1536)")?
 - The column is indexed with an HNSW index using `vector_cosine_ops` (m=16, ef_construction=64) for approximate nearest-neighbour search.
 - Embeddings are 1536 dimensions, matching OpenAI's `text-embedding-3-small` output.
 
+### Per-org slugs (§107 t-708)
+
+`AiAgent`, `AiKnowledgeBase` and `AiKnowledgeDocument` key their `slug` on
+`@@unique([orgId, slug])`, so two orgs can each hold an agent called `support`.
+`AiWorkflow.slug` stays a global `@unique`: it is the unauthenticated
+`inbound/:channel/:slug` URL segment, which has to resolve before any org is
+known. A lookup by slug is a `findFirst({ where: { slug } })` inside the
+caller's org (the tenancy context scopes it at `multi`, the same row at
+`single`) or the compound key `orgId_slug` where the caller already has the
+org (`requireOrgId()`, [`tenancy/context.md`](../tenancy/context.md)).
+`tests/unit/lib/tenancy/org-scoped-slugs.test.ts` fails naming a tenant-owned
+model whose slug is still global.
+
 ### Knowledge document deduplication
 
-`ai_knowledge_document` has a **partial unique index** that prevents duplicate "ready" documents with the same content hash:
+`ai_knowledge_document` has a **partial unique index** that prevents duplicate "ready" documents with the same content hash within an org (per org since `20260921120000_org_scoped_slugs`; two orgs may each hold the same file):
 
 ```sql
 CREATE UNIQUE INDEX idx_knowledge_doc_file_hash_ready
-ON ai_knowledge_document ("fileHash")
+ON ai_knowledge_document ("orgId", "fileHash")
 WHERE status = 'ready';
 ```
 

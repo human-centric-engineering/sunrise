@@ -52,7 +52,7 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: {
-      findUnique: vi.fn(() => Promise.resolve({ id: 'agent-id', rateLimitRpm: null })),
+      findFirst: vi.fn(() => Promise.resolve({ id: 'agent-id', rateLimitRpm: null })),
     },
   },
 }));

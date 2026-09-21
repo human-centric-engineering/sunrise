@@ -37,16 +37,28 @@ export interface DriftObject {
 }
 
 /**
- * Existence probe by index name in pg_indexes.
+ * Existence probe by index name in pg_indexes. An optional
+ * `definitionContains` substring asserts the index definition text — use it
+ * when a migration re-creates an index under the same name with a different
+ * column set (the per-org partial uniques of §107 t-708), where the name
+ * alone would vouch for the old shape.
  */
-export function indexExists(indexName: string): Probe {
+export function indexExists(indexName: string, definitionContains?: string): Probe {
   return async () => {
-    const rows = await prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT count(*)::bigint AS count
+    const rows = await prisma.$queryRaw<Array<{ def: string | null }>>`
+      SELECT indexdef AS def
       FROM pg_indexes
       WHERE indexname = ${indexName}
     `;
-    return { ok: Number(rows[0]?.count ?? 0n) === 1 };
+    const def = rows[0]?.def;
+    if (rows.length !== 1 || !def) return { ok: false };
+    if (definitionContains && !def.includes(definitionContains)) {
+      return {
+        ok: false,
+        note: `definition missing "${definitionContains}" — saw: ${def}`,
+      };
+    }
+    return { ok: true };
   };
 }
 

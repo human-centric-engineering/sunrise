@@ -13,7 +13,10 @@
  * verified resolver header (`lib/tenancy/entry.ts`); the guard-less routes
  * enter it from their own credential — the webhook trigger from its API key,
  * the embed routes from the embed token, the MCP transport from the MCP key
- * (each credential is bound to an org at mint, t-673). An agent invite token
+ * (each credential is bound to an org at mint, t-673); the two routes whose
+ * credential is a signed token naming a ROW — the inbound trigger, the HMAC
+ * approval token — read that row under {@link runAsSystem} and enter its org
+ * (§107 t-708). An agent invite token
  * enters nothing: it is a gate the session passes through, checked against
  * the org the guard entered. Background jobs enter it through
  * {@link forEachOrg} / {@link runAsSystem} once §108 wires the tick. Until

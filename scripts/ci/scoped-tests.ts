@@ -112,6 +112,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/lib/tenancy/org-scoped-slugs.test.ts',
+    reason:
+      'parses `prisma/schema/*.prisma` and fails naming any tenant-owned model whose ' +
+      '`slug` is a global `@unique` or lacks `@@unique([orgId, slug])`, and reads the ' +
+      'migrations for the two per-org partial uniques. A new tenant-owned model with a ' +
+      'slug reaches no test through the module graph.',
+  },
+  {
     path: 'tests/unit/lib/tenancy/policy-coverage.test.ts',
     reason:
       'reads every `prisma/migrations/*/migration.sql` off disk (policies created ' +

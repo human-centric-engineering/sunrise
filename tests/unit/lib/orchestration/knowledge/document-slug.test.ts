@@ -47,7 +47,7 @@ describe('generateUniqueDocumentSlug', () => {
     const taken = new Set(takenSlugs);
     return {
       aiKnowledgeDocument: {
-        findUnique: vi.fn(async ({ where }: { where: { slug: string } }) =>
+        findFirst: vi.fn(async ({ where }: { where: { slug: string } }) =>
           taken.has(where.slug) ? { id: `id-${where.slug}` } : null
         ),
       },
@@ -59,7 +59,7 @@ describe('generateUniqueDocumentSlug', () => {
     await expect(generateUniqueDocumentSlug(client, 'Q3 Report', HASH)).resolves.toBe(
       'q3-report-a3f9c1b2'
     );
-    expect(client.aiKnowledgeDocument.findUnique).toHaveBeenCalledTimes(1);
+    expect(client.aiKnowledgeDocument.findFirst).toHaveBeenCalledTimes(1);
   });
 
   it('appends -2, -3, ... until it finds a free slug (matches the migration backfill convention)', async () => {
@@ -72,7 +72,7 @@ describe('generateUniqueDocumentSlug', () => {
   it('passes a select of only the id (does not over-fetch)', async () => {
     const client = clientReturning([]);
     await generateUniqueDocumentSlug(client, 'Doc', HASH);
-    expect(client.aiKnowledgeDocument.findUnique).toHaveBeenCalledWith({
+    expect(client.aiKnowledgeDocument.findFirst).toHaveBeenCalledWith({
       where: { slug: 'doc-a3f9c1b2' },
       select: { id: true },
     });

@@ -232,6 +232,14 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'the signed approval token is the whole authorization — no session, no admin ' +
       'check — and it reads exactly the one execution the token was minted for.',
   },
+  {
+    path: 'lib/orchestration/approval-route-helpers.ts',
+    disposition: 'by-design',
+    reason:
+      'reads the one execution a verified approval token names — its `orgId` and its org’s ' +
+      'status, nothing else — to enter that org before the action runs (§107 t-708); the ' +
+      'token is the whole authorization, as on the status route.',
+  },
 
   // ── Engine, scheduler and maintenance: the work is the organisation’s ─────
   {

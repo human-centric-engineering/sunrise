@@ -144,7 +144,8 @@ describe('020-cleanup-agent seed', () => {
 
     expect(agentUpsert).toHaveBeenCalledTimes(1);
     const arg = agentUpsert.mock.calls[0][0];
-    expect(arg.where).toEqual({ slug: 'cleanup-agent' });
+    // Keyed per org (§107 t-708): the seed runs for the install org.
+    expect(arg.where).toEqual({ orgId_slug: { orgId: 'install', slug: 'cleanup-agent' } });
     expect(arg.update).toEqual({ isSystem: true });
     expect(arg.create).toMatchObject({
       slug: 'cleanup-agent',

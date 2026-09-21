@@ -70,7 +70,7 @@ vi.mock('@/lib/db/client', () => ({
       ),
     },
     aiAgent: {
-      findUnique: vi.fn(async () => ({
+      findFirst: vi.fn(async () => ({
         id: 'agent_chatbot',
         slug: 'inbound-chatbot',
         systemInstructions: 'You answer concisely.',

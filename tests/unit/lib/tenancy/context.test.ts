@@ -25,6 +25,7 @@ import {
   getTenantContext,
   isMultiTenant,
   requireTenantContext,
+  requireOrgId,
   runAsOrg,
   runAsSystem,
 } from '@/lib/tenancy/context';
@@ -139,6 +140,30 @@ describe('requireTenantContext', () => {
     mockEnv.TENANCY_MODE = 'multi';
     expect(isMultiTenant()).toBe(true);
     expect(() => requireTenantContext()).toThrow(/No tenant context/);
+  });
+});
+
+describe('requireOrgId — a lookup that has to name the org', () => {
+  it('is the entered org, in either mode', async () => {
+    for (const mode of ['single', 'multi'] as const) {
+      mockEnv.TENANCY_MODE = mode;
+      expect(await runAsOrg(ORG_A, async () => requireOrgId())).toBe(ORG_A);
+    }
+  });
+
+  it('is the install org at single when nothing entered a context, and a throw at multi', () => {
+    expect(requireOrgId()).toBe(INSTALL_ORG_ID);
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(() => requireOrgId()).toThrow(/No tenant context/);
+  });
+
+  it('refuses the system scope — a global scope cannot name one org’s row by slug', async () => {
+    for (const mode of ['single', 'multi'] as const) {
+      mockEnv.TENANCY_MODE = mode;
+      await expect(runAsSystem('reason', async () => requireOrgId())).rejects.toThrow(
+        /system scope, which has no org to name/
+      );
+    }
   });
 });
 

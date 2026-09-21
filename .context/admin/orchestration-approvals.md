@@ -139,7 +139,7 @@ The approval system supports approvals from external channels (Slack, email, Wha
    - `approval_required` webhook event (same payload)
    - Notification dispatch log (via `dispatchApprovalNotification`)
 3. **External system delivers** — A webhook consumer (e.g., Slack bot, email sender) receives the event and posts the approve/reject URLs to the target channel.
-4. **Recipient clicks URL** — The signed URL hits the public token-authenticated endpoint, which verifies the HMAC token and calls the shared approval action.
+4. **Recipient clicks URL** — The signed URL hits the public token-authenticated endpoint, which verifies the HMAC token and calls the shared approval action. The token names an execution, not a principal, so no guard has entered an org: after the token verifies, the route reads that execution's `orgId` under an audited system scope and runs the action — and the fire-and-forget resume — inside `runAsOrg(orgId, …, { source: 'approval-token' })` (`runAsExecutionOrg` in `lib/orchestration/approval-route-helpers.ts`; the status route enters the same way). An execution whose org is suspended, or that carries none at `TENANCY_MODE=multi`, is a 404 (§107 t-708; [`tenancy/context.md`](../tenancy/context.md)).
 
 ### Token design
 

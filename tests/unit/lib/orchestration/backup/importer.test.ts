@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
 const mockTx = {
-  aiAgent: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+  aiAgent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiCapability: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiWorkflow: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiWorkflowVersion: { findFirst: vi.fn(), create: vi.fn() },
@@ -159,7 +159,7 @@ describe('importOrchestrationConfig', () => {
   beforeEach(() => {
     // Reset individual tx mock methods — do NOT use vi.resetAllMocks() here because
     // that would also clear the prisma.$transaction implementation set at module level.
-    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.findFirst.mockReset();
     mockTx.aiAgent.create.mockReset();
     mockTx.aiAgent.update.mockReset();
     mockTx.aiCapability.findUnique.mockReset();
@@ -193,7 +193,7 @@ describe('importOrchestrationConfig', () => {
   });
 
   it('creates a new agent when no existing record found → agents.created = 1', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValue(null);
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
     mockTx.aiAgent.create.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
@@ -211,7 +211,7 @@ describe('importOrchestrationConfig', () => {
     // the AiAgent model, so a real Prisma client rejects it as an unknown arg and
     // rolls back the whole import. This mock faithfully reproduces that rejection;
     // the default no-op create mock used elsewhere is exactly why CI missed the bug.
-    mockTx.aiAgent.findUnique.mockResolvedValue(null);
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
     mockTx.aiAgent.create.mockImplementation((args: { data?: Record<string, unknown> }) => {
       if (args?.data && 'knowledgeCategories' in args.data) {
         throw new Error('Unknown argument `knowledgeCategories`.');
@@ -231,7 +231,7 @@ describe('importOrchestrationConfig', () => {
   });
 
   it('updates existing agent when record already exists → agents.updated = 1', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
+    mockTx.aiAgent.findFirst.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
     mockTx.aiAgent.update.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
@@ -506,7 +506,7 @@ describe('importOrchestrationConfig', () => {
 
 describe('importOrchestrationConfig — knowledgeTags', () => {
   beforeEach(() => {
-    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.findFirst.mockReset();
     mockTx.aiAgent.create.mockReset();
     mockTx.aiAgent.update.mockReset();
     mockTx.knowledgeTag.upsert.mockReset();
@@ -601,7 +601,7 @@ describe('importOrchestrationConfig — knowledgeTags', () => {
 
 describe('importOrchestrationConfig — system agent protection', () => {
   beforeEach(() => {
-    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.findFirst.mockReset();
     mockTx.aiAgent.create.mockReset();
     mockTx.aiAgent.update.mockReset();
     mockTx.aiAgentKnowledgeTag.deleteMany.mockReset();
@@ -613,7 +613,7 @@ describe('importOrchestrationConfig — system agent protection', () => {
 
   it('skips a system agent and adds a warning instead of updating it', async () => {
     // Existing record has isSystem: true — the import must not overwrite it.
-    mockTx.aiAgent.findUnique.mockResolvedValue({
+    mockTx.aiAgent.findFirst.mockResolvedValue({
       id: 'sys-1',
       slug: 'system-bot',
       isSystem: true,
@@ -640,7 +640,7 @@ describe('importOrchestrationConfig — system agent protection', () => {
 
 describe('importOrchestrationConfig — knowledge grants', () => {
   beforeEach(() => {
-    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.findFirst.mockReset();
     mockTx.aiAgent.create.mockReset();
     mockTx.aiAgent.update.mockReset();
     mockTx.knowledgeTag.upsert.mockReset();
@@ -661,7 +661,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
       updatedAt: now,
     });
     // Agent does not exist yet → create path
-    mockTx.aiAgent.findUnique
+    mockTx.aiAgent.findFirst
       .mockResolvedValueOnce(null) // first call: slug lookup for upsert
       .mockResolvedValueOnce({ id: 'agent-1' }); // second call: select id for grants
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-1' });
@@ -688,7 +688,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
 
   it('emits a warning when a grantedTagSlug does not map to a known tag', async () => {
     // No knowledgeTags in payload → tagIdBySlug is empty
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-2' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-2' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-2' });
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
 
@@ -709,7 +709,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
   });
 
   it('resolves document grants by fileHash and calls createMany', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3' });
     // The DB has a doc with matching fileHash
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([
@@ -735,7 +735,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
   });
 
   it('resolves document grants by slug (v3) and calls createMany', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3a' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3a' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3a' });
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([
       { id: 'doc-9', slug: 'handbook-abc12345' },
@@ -763,7 +763,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
   });
 
   it('prefers slug over fileHash when a v3 bundle carries both', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3b' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3b' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3b' });
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([
       { id: 'doc-by-slug', slug: 'handbook-abc12345' },
@@ -798,7 +798,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
   });
 
   it('emits a warning for a missing document slug and skips that grant (warn-skip, not fail)', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3c' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-3c' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-3c' });
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]); // slug not present
 
@@ -821,7 +821,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
   });
 
   it('emits a warning for missing document hashes and skips the missing doc grant', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-4' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-4' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-4' });
     // DB returns empty — hash not found
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
@@ -842,7 +842,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
   });
 
   it('does not call createMany for tags when there are no resolved tag ids', async () => {
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-5' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-5' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-5' });
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
 
@@ -872,7 +872,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
 
 describe('importOrchestrationConfig — v1 schemaVersion compatibility', () => {
   beforeEach(() => {
-    mockTx.aiAgent.findUnique.mockReset();
+    mockTx.aiAgent.findFirst.mockReset();
     mockTx.aiAgent.create.mockReset();
     mockTx.aiAgent.update.mockReset();
     mockTx.knowledgeTag.upsert.mockReset();
@@ -892,7 +892,7 @@ describe('importOrchestrationConfig — v1 schemaVersion compatibility', () => {
       createdAt: now,
       updatedAt: now,
     });
-    mockTx.aiAgent.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-v1' });
+    mockTx.aiAgent.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'agent-v1' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-v1' });
     mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
 
@@ -925,7 +925,7 @@ describe('importOrchestrationConfig — v1 schemaVersion compatibility', () => {
   });
 
   it('skips blank knowledgeCategories entries when inferring v1 tags', async () => {
-    mockTx.aiAgent.findUnique
+    mockTx.aiAgent.findFirst
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 'agent-blank' });
     mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-blank' });
