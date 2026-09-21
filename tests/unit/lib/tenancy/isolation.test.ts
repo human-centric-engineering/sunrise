@@ -16,6 +16,7 @@ import {
   ORG_ISOLATION_POLICY,
   backfillNullOrgSql,
   orgIsolationPolicySql,
+  ownerDsn,
   planRlsSwitch,
   readRlsFlags,
   runTenancySwitch,
@@ -36,6 +37,19 @@ describe('orgIsolationPolicySql', () => {
       );
     }
     expect(sql.endsWith(';')).toBe(true);
+  });
+});
+
+describe('ownerDsn', () => {
+  it('prefers MIGRATE_DATABASE_URL, falls back to DATABASE_URL, and treats blank as unset', () => {
+    expect(ownerDsn({ MIGRATE_DATABASE_URL: 'pg://owner', DATABASE_URL: 'pg://app' })).toBe(
+      'pg://owner'
+    );
+    expect(ownerDsn({ DATABASE_URL: 'pg://app' })).toBe('pg://app');
+    // The templated-but-empty shape must not reach pg as '' (libpq defaults).
+    expect(ownerDsn({ MIGRATE_DATABASE_URL: '', DATABASE_URL: 'pg://app' })).toBe('pg://app');
+    expect(ownerDsn({ MIGRATE_DATABASE_URL: '', DATABASE_URL: '' })).toBeUndefined();
+    expect(ownerDsn({})).toBeUndefined();
   });
 });
 

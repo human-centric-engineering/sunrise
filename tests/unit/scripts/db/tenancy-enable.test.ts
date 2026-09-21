@@ -25,7 +25,10 @@ vi.mock('pg', () => ({
 }));
 
 const mockRun = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/tenancy/isolation', () => ({ runTenancySwitch: mockRun }));
+vi.mock('@/lib/tenancy/isolation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tenancy/isolation')>()),
+  runTenancySwitch: mockRun,
+}));
 
 vi.mock('@/lib/db/client', () => ({ prisma: { __type: 'app-client' } }));
 const mockRoster = vi.hoisted(() => vi.fn());

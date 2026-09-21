@@ -37,7 +37,7 @@
 
 import { Client } from 'pg';
 import { logger } from '@/lib/logging';
-import { scramSha256Verifier } from '@/lib/tenancy/isolation';
+import { ownerDsn, scramSha256Verifier } from '@/lib/tenancy/isolation';
 
 const DEFAULT_ROLE = 'sunrise_app';
 const ROLE_NAME = /^[a-z_][a-z0-9_]*$/;
@@ -113,6 +113,18 @@ async function create(client: Client, role: string, password: string): Promise<v
   const pw = client.escapeLiteral(scramSha256Verifier(password));
   const s = await currentSchema(client);
   await refuseIfPrivileged(client, role);
+  // The app never reads or writes the migration ledger; a compromised app
+  // role must not be able to mark a migration applied so a deploy skips it.
+  // The ledger has to exist for that to hold: created before the first
+  // `migrate deploy`, the default privileges above would grant it later.
+  const ledger = await client.query<{ present: boolean }>(
+    `SELECT to_regclass(${client.escapeLiteral(`${s}._prisma_migrations`)}) IS NOT NULL AS present`
+  );
+  if (!ledger.rows[0]?.present) {
+    throw new Error(
+      'the database has no _prisma_migrations table — run `npm run db:migrate:deploy` before creating the app role'
+    );
+  }
   if (await roleExists(client, role)) {
     // No SUPERUSER / BYPASSRLS words here: mentioning either on ALTER ROLE
     // needs a superuser whatever the value (measured), and the guard above
@@ -127,8 +139,7 @@ async function create(client: Client, role: string, password: string): Promise<v
   }
   await client.query(`GRANT USAGE ON SCHEMA ${s} TO ${r}`);
   await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${s} TO ${r}`);
-  // The app never reads or writes the migration ledger; a compromised app
-  // role must not be able to mark a migration applied so a deploy skips it.
+  // The app never reads or writes the migration ledger (checked to exist above).
   await client.query(`REVOKE ALL ON ${s}."_prisma_migrations" FROM ${r}`);
   await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${s} TO ${r}`);
   // For the tables future migrations create — as the role running them (this one).
@@ -168,7 +179,7 @@ async function main(): Promise<void> {
   if (!ROLE_NAME.test(role)) {
     throw new Error(`TENANCY_APP_ROLE "${role}" must match ${ROLE_NAME}`);
   }
-  const dsn = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL;
+  const dsn = ownerDsn();
   if (!dsn) throw new Error('set MIGRATE_DATABASE_URL (or DATABASE_URL) to the owner role’s DSN');
   const password = process.env.TENANCY_APP_ROLE_PASSWORD;
   if (action === 'create' && !password) {

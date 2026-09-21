@@ -49,18 +49,26 @@ const client = new PrismaClient({
   },
 });
 
-const CREATE_POLICY = /CREATE POLICY "([^"]+)" ON "([^"]+)"/g;
-const DROP_POLICY = /DROP POLICY (?:IF EXISTS )?"([^"]+)" ON "([^"]+)"/g;
+// Identifiers quoted or bare — a hand-written statement is as real as a generated one.
+const IDENT = '"?([A-Za-z_][A-Za-z0-9_]*)"?';
+const CREATE_POLICY = new RegExp(`CREATE POLICY ${IDENT} ON ${IDENT}`, 'g');
+const DROP_POLICY = new RegExp(`DROP POLICY (?:IF EXISTS )?${IDENT} ON ${IDENT}`, 'g');
+const DROP_TABLE = new RegExp(`DROP TABLE (?:IF EXISTS )?${IDENT}`, 'g');
 
-/** Every `(policy, table)` a migration text creates, and every one it drops. */
+/**
+ * Every `(policy, table)` a migration text creates, every one it drops, and
+ * every table it drops — a dropped table takes its policies with it.
+ */
 function policiesIn(sql: string): {
   created: Array<{ policy: string; table: string }>;
   dropped: Array<{ policy: string; table: string }>;
+  droppedTables: string[];
 } {
   const pair = (m: RegExpMatchArray) => ({ policy: m[1], table: m[2] });
   return {
     created: [...sql.matchAll(CREATE_POLICY)].map(pair),
     dropped: [...sql.matchAll(DROP_POLICY)].map(pair),
+    droppedTables: [...sql.matchAll(DROP_TABLE)].map((m) => m[1]),
   };
 }
 
@@ -68,7 +76,7 @@ function policiesIn(sql: string): {
 function coverageGaps(sql: string, roster: ReadonlyMap<string, string>) {
   const tenantTables = new Set(roster.values());
   const covered = new Map<string, number>();
-  const { created, dropped } = policiesIn(sql);
+  const { created, dropped, droppedTables } = policiesIn(sql);
   for (const { policy, table } of created) {
     if (policy !== ORG_ISOLATION_POLICY) continue;
     covered.set(table, (covered.get(table) ?? 0) + 1);
@@ -79,6 +87,7 @@ function coverageGaps(sql: string, roster: ReadonlyMap<string, string>) {
     if (n <= 0) covered.delete(table);
     else covered.set(table, n);
   }
+  for (const table of droppedTables) covered.delete(table);
   return {
     missing: [...tenantTables].filter((t) => !covered.has(t)).sort(),
     stray: [...covered.keys()].filter((t) => !tenantTables.has(t)).sort(),
@@ -116,10 +125,13 @@ describe('org_isolation policy coverage', () => {
     }
   });
 
-  it('has both arms in both clauses of every policy', () => {
-    // The header comment mentions CREATE POLICY too; a statement starts with the quoted name.
-    const blocks = sql.split(/(?=CREATE POLICY ")/).filter((b) => b.startsWith('CREATE POLICY "'));
-    expect(blocks.length).toBe(roster.size);
+  it('has both arms in both clauses of every org_isolation policy', () => {
+    // Only this policy's statements: a fork's or §115's own policies are
+    // theirs to shape. Coverage (exactly one per table) is the case above.
+    const blocks = sql
+      .split(/(?=CREATE POLICY )/)
+      .filter((b) => b.startsWith(`CREATE POLICY "${ORG_ISOLATION_POLICY}"`));
+    expect(blocks.length).toBeGreaterThanOrEqual(roster.size);
     for (const block of blocks) {
       const [using, withCheck] = block.split('WITH CHECK');
       expect(using).toContain("current_setting('app.bypass_rls', true) = 'on'");
@@ -151,6 +163,16 @@ describe('org_isolation policy coverage', () => {
       expect(coverageGaps(later, grown).missing).toEqual([]);
       const droppedLater = sql + '\nDROP POLICY "org_isolation" ON "ai_cost_log";';
       expect(coverageGaps(droppedLater, roster).missing).toEqual(['ai_cost_log']);
+      // Bare identifiers count too — a hand-written statement is as real as a generated one.
+      const droppedBare = sql + '\nDROP POLICY org_isolation ON ai_cost_log;';
+      expect(coverageGaps(droppedBare, roster).missing).toEqual(['ai_cost_log']);
+    });
+
+    it('lets a dropped table take its policy with it rather than reporting it stray forever', () => {
+      const shrunk = new Map([...roster].filter(([m]) => m !== 'AiCostLog'));
+      expect(coverageGaps(sql, shrunk).stray).toEqual(['ai_cost_log']);
+      const dropped = sql + '\nDROP TABLE "ai_cost_log";';
+      expect(coverageGaps(dropped, shrunk).stray).toEqual([]);
     });
   });
 });

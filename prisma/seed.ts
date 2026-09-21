@@ -1,6 +1,6 @@
-import dotenv from 'dotenv';
-dotenv.config({ path: '.env.local' });
-dotenv.config({ path: '.env' });
+// First, and as a side-effect import: everything below validates the
+// environment at import time, and imports are evaluated in order.
+import '@/prisma/load-env';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
@@ -10,15 +10,14 @@ import { logger } from '@/lib/logging';
 import { withTenancy } from '@/lib/db/tenancy-extension';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { getTenantContext, isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
+import { ownerDsn } from '@/lib/tenancy/isolation';
 import { runSeeds } from '@/prisma/runner';
 
 const { Pool } = pg;
 // The owner DSN when there is one: at TENANCY_MODE=multi the app role is
 // NOBYPASSRLS and does not own the tables (see
 // .context/tenancy/isolation.md#the-role-split).
-const pool = new Pool({
-  connectionString: process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL,
-});
+const pool = new Pool({ connectionString: ownerDsn() });
 const adapter = new PrismaPg(pool);
 // Through the chokepoint, and run as the install org: every tenant-owned row
 // a seed creates is stamped with it, and at multi each write carries its

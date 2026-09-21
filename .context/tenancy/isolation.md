@@ -180,6 +180,16 @@ would otherwise demote and re-password the operator's own login.
 Then point `DATABASE_URL` at the new role, set `MIGRATE_DATABASE_URL` to the
 owner's DSN, and set `TENANCY_MODE=multi`.
 
+Two orderings to know. **Migrate first:** `--create` refuses on a database
+with no `_prisma_migrations` table, because the default privileges it sets
+would otherwise grant the ledger when the first `migrate deploy` creates
+it. **Re-create after a reset:** `npm run db:reset` drops and recreates the
+schema, and the role's `USAGE`, table grants and default privileges go with
+it — the app then sees `permission denied for schema public` until
+`--create` is run again (the role itself survives; the re-run re-grants).
+A blank `MIGRATE_DATABASE_URL` counts as unset in every reader
+(`ownerDsn()` in `lib/tenancy/isolation.ts`, `prisma.config.ts`).
+
 ## The drift probes — the T-series
 
 `npm run db:drift-check` runs, beside the A-series, one probe per

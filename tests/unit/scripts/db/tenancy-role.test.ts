@@ -88,15 +88,19 @@ describe('scripts/db/tenancy-role', () => {
       if (sql.includes('FROM pg_roles'))
         return Promise.resolve({ rows: [{ n: exists ? '1' : '0' }] });
       if (sql.includes('AS schema')) return Promise.resolve({ rows: [{ schema: 'public' }] });
+      if (sql.includes('AS present')) return Promise.resolve({ rows: [{ present: ledger }] });
       return Promise.resolve({ rows: [] });
     });
   }
+  let ledger = true;
 
   /** The statements that change something — the catalog reads filtered out. */
   const statements = () =>
     mockQuery.mock.calls
       .map((c) => c[0] as string)
-      .filter((s) => !s.includes('FROM pg_roles') && !s.includes('AS schema'));
+      .filter(
+        (s) => !s.includes('FROM pg_roles') && !s.includes('AS schema') && !s.includes('AS present')
+      );
 
   const SCRAM = /^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/;
 
@@ -149,6 +153,28 @@ describe('scripts/db/tenancy-role', () => {
     expect(statements()[1]).not.toMatch(/SUPERUSER|BYPASSRLS/);
     expect(statements().some((s) => s.startsWith('CREATE ROLE'))).toBe(false);
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it('--create refuses on a database the migrations have not reached (the ledger would be granted later)', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+    ledger = false;
+    answer(false);
+    await run('--create');
+    ledger = true;
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('db:migrate:deploy'));
+    expect(statements()).not.toContain('COMMIT');
+    expect(statements().at(-1)).toBe('ROLLBACK');
+    expect(exitSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('treats a blank MIGRATE_DATABASE_URL as unset rather than handing pg an empty string', async () => {
+    process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
+    process.env.MIGRATE_DATABASE_URL = '';
+    answer(false);
+    await run('--create');
+    expect(vi.mocked(Client)).toHaveBeenCalledWith({
+      connectionString: 'postgresql://app:pw@localhost:5432/db',
+    });
   });
 
   it('--drop: revokes default privileges and every grant before DROP ROLE', async () => {

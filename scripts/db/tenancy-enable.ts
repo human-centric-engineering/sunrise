@@ -35,7 +35,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { tenantOwnedModels } from '@/lib/tenancy/classification';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { runTenancySwitch, type TenancySwitch } from '@/lib/tenancy/isolation';
+import { ownerDsn, runTenancySwitch, type TenancySwitch } from '@/lib/tenancy/isolation';
 
 function parseMode(argv: readonly string[]): TenancySwitch {
   if (argv.includes('--disable')) return 'disable';
@@ -45,7 +45,7 @@ function parseMode(argv: readonly string[]): TenancySwitch {
 
 async function main(): Promise<void> {
   const mode = parseMode(process.argv.slice(2));
-  const dsn = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL;
+  const dsn = ownerDsn();
   if (!dsn) throw new Error('set MIGRATE_DATABASE_URL (or DATABASE_URL) to the owner role’s DSN');
 
   const tables = [...tenantOwnedModels(prisma).values()];

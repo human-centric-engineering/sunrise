@@ -42,6 +42,19 @@
 
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 
+/**
+ * The DSN the owner-side tools connect with: `MIGRATE_DATABASE_URL` when it
+ * is set to something, else `DATABASE_URL`. A blank value counts as unset —
+ * the templated-but-empty shape a container env file produces — so the
+ * fallback here agrees with `prisma.config.ts`'s, and `pg` never sees `''`
+ * (which it would read as "libpq defaults": localhost as the current user).
+ */
+export function ownerDsn(
+  env: Record<string, string | undefined> = process.env
+): string | undefined {
+  return env.MIGRATE_DATABASE_URL || env.DATABASE_URL || undefined;
+}
+
 /** The one policy name every tenant-owned table carries. */
 export const ORG_ISOLATION_POLICY = 'org_isolation';
 
