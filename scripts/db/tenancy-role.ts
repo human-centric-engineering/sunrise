@@ -114,9 +114,10 @@ async function create(client: Client, role: string, password: string): Promise<v
   const s = await currentSchema(client);
   await refuseIfPrivileged(client, role);
   if (await roleExists(client, role)) {
-    await client.query(
-      `ALTER ROLE ${r} WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD ${pw}`
-    );
+    // No SUPERUSER / BYPASSRLS words here: mentioning either on ALTER ROLE
+    // needs a superuser whatever the value (measured), and the guard above
+    // has already proven this role is neither. CREATE ROLE has no such rule.
+    await client.query(`ALTER ROLE ${r} WITH LOGIN NOCREATEDB NOCREATEROLE PASSWORD ${pw}`);
     logger.info(`  role ${role}: exists — password reset, attributes re-asserted`);
   } else {
     await client.query(

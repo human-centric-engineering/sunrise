@@ -2,11 +2,17 @@ import { readdir, readFile } from 'fs/promises';
 import { createHash } from 'crypto';
 import { dirname, join, relative, resolve, sep } from 'path';
 import { pathToFileURL } from 'url';
-import type { PrismaClient } from '@prisma/client';
+import type { TenancyClient } from '@/lib/db/tenancy-extension';
 import { logger } from '@/lib/logging';
 
 export interface SeedContext {
-  prisma: PrismaClient;
+  /**
+   * The tenancy-extended client (`PrismaClient` less `$on`): every
+   * tenant-owned row a unit creates is stamped with the org the seed runs
+   * for — the install org — and at `TENANCY_MODE=multi` each write carries
+   * its setter, so a seed lands rows an org can see.
+   */
+  prisma: TenancyClient;
   logger: typeof logger;
 }
 
@@ -46,7 +52,7 @@ const SEED_FILE_PATTERN = /^\d{3}-[a-z0-9-]+\.ts$/;
  * top-level core seeds (digit-prefixed) run before any app subdirectory
  * (letter-prefixed), and numerically within each directory.
  */
-export async function runSeeds(prisma: PrismaClient, seedsDir: string): Promise<void> {
+export async function runSeeds(prisma: TenancyClient, seedsDir: string): Promise<void> {
   const files = (await discoverSeedFiles(seedsDir, seedsDir)).sort();
 
   if (files.length === 0) {
@@ -80,7 +86,7 @@ async function discoverSeedFiles(dir: string, baseDir: string): Promise<string[]
   return found;
 }
 
-async function applySeed(prisma: PrismaClient, seedsDir: string, file: string): Promise<void> {
+async function applySeed(prisma: TenancyClient, seedsDir: string, file: string): Promise<void> {
   const filePath = join(seedsDir, file);
   const source = await readFile(filePath, 'utf-8');
   const name = file.replace(/\.ts$/, '');

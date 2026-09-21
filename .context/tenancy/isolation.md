@@ -134,9 +134,22 @@ whatever the policies say (item 7). So at `multi`:
 `MIGRATE_DATABASE_URL` is optional and falls back to `DATABASE_URL`, which is
 the single-tenant shape ([`prisma.config.ts`](../../prisma.config.ts) and
 [`prisma/seed.ts`](../../prisma/seed.ts) read it; [`lib/env.ts`](../../lib/env.ts)
-validates it). The seed builds a bare client with no tenant context, so at
-`multi` it must run as the owner — as the app role its tenant-owned inserts
-are refused by `WITH CHECK`. Migrations that touch
+validates it). The seed runs through the chokepoint as the install org
+(`runAsOrg(INSTALL_ORG_ID, …)` around `runSeeds`), so every built-in agent,
+knowledge base, template and chunk lands as the install org's — measured
+on a throwaway database with RLS forced: no `NULL`-org row on any seeded
+table — and at `multi` it must run as the owner, since the app role does
+not own the tables.
+
+**Raw inserts stamp themselves.** A raw `INSERT` is the one create shape
+the chokepoint cannot stamp. The three that write tenant-owned rows —
+`ai_message_embedding` (`lib/orchestration/chat/message-embedder.ts`) and
+`ai_knowledge_chunk` (`lib/orchestration/knowledge/seeder.ts`,
+`document-manager.ts`) — read the org off the parent row in the same
+statement (`(SELECT "orgId" FROM ai_message WHERE id = $1)`); at `multi` the
+subselect sees only the current org's parent, so `WITH CHECK` holds. A new
+raw insert on a tenant-owned table needs the same, and the raw-SQL
+allowlist test is where that is decided. Migrations that touch
 tenant-owned rows open with the bypass setter — Prisma runs each migration in
 one transaction, so `SELECT set_config('app.bypass_rls', 'on', true)` as the
 first statement covers the rest.

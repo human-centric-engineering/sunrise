@@ -187,10 +187,13 @@ export function rlsEnabled(tableName: string, opts?: { requireForced?: boolean }
  * Existence probe for one named RLS policy on one table (`pg_policies`).
  *
  * The companion to `rlsEnabled`, and the probe every RLS table needs: policies
- * are Prisma-unmodelled objects, so `prisma migrate dev` emits `DROP POLICY`
- * for them exactly as it does for the HNSW indexes this registry was built
- * around. A policy can also exist while RLS is disabled (`CREATE POLICY` on an
- * un-enabled table is inert), so register both probes per protected table.
+ * are Prisma-unmodelled objects, and — unlike the HNSW indexes this registry
+ * was built around — `prisma migrate diff` does not see them at all
+ * (measured, §107 t-704): it neither lists nor drops them, so nothing but
+ * this probe notices a hand-run `DROP POLICY`, a restore from before the
+ * policies' migration, or a fork migration that removed one. A policy can
+ * also exist while RLS is disabled (`CREATE POLICY` on an un-enabled table
+ * is inert), so register both probes per protected table.
  * Scoped to `current_schema()` so a same-named policy in a backup schema can
  * neither answer for a dropped live policy nor inflate the count past 1.
  */

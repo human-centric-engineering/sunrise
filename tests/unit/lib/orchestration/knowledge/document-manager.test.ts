@@ -397,6 +397,10 @@ describe('uploadDocument', () => {
     const [sql] = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0] as [string, ...unknown[]];
     expect(sql).toContain('::vector');
     expect(sql).toContain('$1');
+    // A raw INSERT is the one create the tenancy chokepoint cannot stamp: the
+    // chunk's org is read from its document in the same statement (§107).
+    expect(sql).toContain('"orgId"');
+    expect(sql).toContain('(SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)');
   });
 
   it('updates document to status ready with correct chunkCount after successful upload', async () => {

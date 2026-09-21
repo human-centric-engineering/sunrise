@@ -114,8 +114,8 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
     path: 'tests/unit/lib/tenancy/policy-coverage.test.ts',
     reason:
-      'reads `prisma/migrations/*_org_isolation_policies/migration.sql` off disk ' +
-      'and compares it with the tenant-owned roster the generated client derives, ' +
+      'reads every `prisma/migrations/*/migration.sql` off disk (policies created ' +
+      'minus dropped) and compares them with the tenant-owned roster the generated client derives, ' +
       'failing naming any tenant-owned table without its `org_isolation` policy. A ' +
       'new model with `orgId`, or a migration, reaches no test through the module graph.',
   },

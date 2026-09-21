@@ -481,16 +481,19 @@ async function insertChunks(
     const chunk = chunks[i];
     const embeddingStr = `[${embeddings[i].join(',')}]`;
 
+    // A raw INSERT is the one create shape the tenancy chokepoint cannot
+    // stamp: the chunk's org is its document's, read in the same statement (§107).
     await tx.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content, embedding,
         "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata,
-        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt"
+        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt", "orgId"
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3, $4::vector,
         $5, $6, $7, $8, $9, $10, $11::jsonb,
-        $12, $13, $14, $15
+        $12, $13, $14, $15,
+        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
       )`,
       chunk.id,
       documentId,

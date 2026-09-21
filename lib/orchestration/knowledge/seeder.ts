@@ -134,15 +134,18 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
     },
   });
 
+  // Raw INSERTs are the one create shape the tenancy chokepoint cannot stamp:
+  // the chunk's org is its document's, read in the same statement (§107).
   for (const chunk of chunks) {
     await prisma.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content,
         "chunkType", "patternNumber", "patternName",
-        section, keywords, "estimatedTokens", metadata
+        section, keywords, "estimatedTokens", metadata, "orgId"
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3,
-        $4, $5, $6, $7, $8, $9, $10::jsonb
+        $4, $5, $6, $7, $8, $9, $10::jsonb,
+        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
       )`,
       chunk.id,
       document.id,

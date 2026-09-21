@@ -37,7 +37,12 @@ release process.
   verifier) with its grants and default privileges — nothing on
   `_prisma_migrations` — refusing to touch a superuser, a `BYPASSRLS` role,
   a table owner or the connecting role, and revoking before dropping (Neon
-  refuses `DROP OWNED BY`). `prisma/seed.ts` prefers the same owner DSN. New optional env
+  refuses `DROP OWNED BY`). `prisma/seed.ts` prefers the same owner DSN and
+  now runs through the tenancy chokepoint as the install org (`SeedContext.prisma`
+  is the extended client), so every seeded tenant-owned row is stamped;
+  the three raw `INSERT`s that write tenant-owned rows (message embeddings,
+  knowledge chunks from the seeder and the document manager) read `orgId`
+  off the parent row in the same statement. New optional env
   var **`MIGRATE_DATABASE_URL`** — the owner DSN `prisma.config.ts` and the
   `db:tenancy:*` scripts prefer over `DATABASE_URL`, because a table's owner
   (and any `BYPASSRLS` role, Neon's `neondb_owner` included) is never

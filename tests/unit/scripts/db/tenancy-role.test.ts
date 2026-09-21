@@ -140,9 +140,13 @@ describe('scripts/db/tenancy-role', () => {
     process.env.TENANCY_APP_ROLE_PASSWORD = 'pw';
     answer(true);
     await run('--create');
+    // No SUPERUSER / BYPASSRLS words on ALTER: mentioning either needs a
+    // superuser (a CREATEROLE owner on Neon/RDS is refused), and the guard
+    // already proved the role is neither.
     expect(statements()[1]).toMatch(
-      /^ALTER ROLE "acme_app" WITH LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD 'SCRAM-SHA-256\$4096:/
+      /^ALTER ROLE "acme_app" WITH LOGIN NOCREATEDB NOCREATEROLE PASSWORD 'SCRAM-SHA-256\$4096:/
     );
+    expect(statements()[1]).not.toMatch(/SUPERUSER|BYPASSRLS/);
     expect(statements().some((s) => s.startsWith('CREATE ROLE'))).toBe(false);
     expect(exitSpy).toHaveBeenCalledWith(0);
   });

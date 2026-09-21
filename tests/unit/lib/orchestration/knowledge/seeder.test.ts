@@ -188,6 +188,18 @@ describe('seedChunks', () => {
 
     await seedChunks(CHUNKS_PATH);
 
+    // A raw INSERT is the one create the tenancy chokepoint cannot stamp: each
+    // chunk's org is its document's, read in the same statement (§107).
+    const insertSql = vi
+      .mocked(prisma.$executeRawUnsafe)
+      .mock.calls.map((c) => c[0])
+      .filter((sql) => sql.includes('INSERT INTO ai_knowledge_chunk'));
+    expect(insertSql.length).toBeGreaterThan(0);
+    for (const sql of insertSql) {
+      expect(sql).toContain('"orgId"');
+      expect(sql).toContain('(SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)');
+    }
+
     // The seeded document carries the deterministic export slug (#338):
     // slugify('Agentic Design Patterns') + '-' + first8(fileHash). The hash is
     // derived from the committed chunk content, so it's stable across envs.

@@ -87,6 +87,11 @@ describe('queueMessageEmbedding', () => {
         FAKE_EMBED_RESULT.provider,
         FAKE_EMBED_RESULT.dimensions
       );
+      // A raw INSERT is the one create the tenancy chokepoint cannot stamp:
+      // the embedding's org is its message's, read in the same statement (§107).
+      const [sql] = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0] as [string, ...unknown[]];
+      expect(sql).toContain('"orgId"');
+      expect(sql).toContain('(SELECT "orgId" FROM ai_message WHERE id = $1)');
     });
   });
 

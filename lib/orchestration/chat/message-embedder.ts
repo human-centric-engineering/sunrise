@@ -100,12 +100,19 @@ async function generateAndStoreEmbedding(
   });
   const embeddingStr = `[${embedding.join(',')}]`;
 
+  // A raw INSERT is the one create shape the tenancy chokepoint cannot stamp,
+  // so the row's org comes from its parent message — always the same org,
+  // and at TENANCY_MODE=multi the subselect sees only the current org's
+  // message, so WITH CHECK holds (§107).
   await prisma.$executeRawUnsafe(
     `INSERT INTO ai_message_embedding (
        id, "messageId", embedding,
-       "embeddingModel", "embeddingProvider", "embeddingDimension"
+       "embeddingModel", "embeddingProvider", "embeddingDimension", "orgId"
      )
-     VALUES (gen_random_uuid(), $1, $2::vector, $3, $4, $5)
+     VALUES (
+       gen_random_uuid(), $1, $2::vector, $3, $4, $5,
+       (SELECT "orgId" FROM ai_message WHERE id = $1)
+     )
      ON CONFLICT ("messageId") DO UPDATE
        SET embedding = $2::vector,
            "embeddingModel" = $3,
