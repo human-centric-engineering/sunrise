@@ -174,6 +174,15 @@ describe('scripts/db/tenancy-enable', () => {
     expect(exitSpy).toHaveBeenCalledWith(2);
     expect(mockError).toHaveBeenCalledWith(expect.stringContaining('--sideways'));
 
+    // `npm run db:tenancy:enable -- --disable`: the command named enable must not disable.
+    vi.resetModules();
+    exitSpy.mockClear();
+    mockRun.mockClear();
+    await run('--enable', '--disable');
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('exactly one'));
+    expect(mockRun).not.toHaveBeenCalled();
+
     vi.resetModules();
     exitSpy.mockClear();
     mockConnect.mockRejectedValueOnce(new Error('ECONNREFUSED'));

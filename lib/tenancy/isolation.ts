@@ -118,13 +118,23 @@ export function planRlsSwitch(flags: readonly RlsFlags[], mode: TenancySwitch): 
 
 /**
  * Rows whose `NULL` org is a meaning, not a gap — the backfill must leave
- * them alone. A platform (`admin`-scoped) API key binds no org by design:
- * `withAdminAuth` refuses one that carries an org, so binding it would lock
- * every platform key out. The §106 backfill migration made the same
- * exception; this is that predicate, kept in one place.
+ * them alone. A predicate narrows the backfill to the rows it may touch;
+ * `null` skips the table entirely.
+ *
+ *   • A platform (`admin`-scoped) API key binds no org by design:
+ *     `withAdminAuth` refuses one that carries an org, so binding it would
+ *     lock every platform key out. The §106 backfill migration made the same
+ *     exception; this is that predicate, kept in one place.
+ *   • `AiCostLog` is the one tenant-owned relation that is `SetNull`: erasing
+ *     an org detaches its spend rather than deleting it (t-705 ruling), and
+ *     a detached row is indistinguishable from an interim one. Binding them
+ *     would hand an erased org's per-call usage to the install org's export.
+ *     They stay `NULL` — visible to `runAsSystem` (platform billing), to no
+ *     org — which is what "detached" means.
  */
-export const BACKFILL_EXEMPTIONS: Readonly<Record<string, string>> = {
+export const BACKFILL_EXEMPTIONS: Readonly<Record<string, string | null>> = {
   ai_api_key: `NOT ('admin' = ANY("scopes"))`,
+  ai_cost_log: null,
 };
 
 /**
@@ -133,11 +143,12 @@ export const BACKFILL_EXEMPTIONS: Readonly<Record<string, string>> = {
  * `runAsSystem` — would be invisible to every org once the policies enforce,
  * so it becomes the install org's, the answer `single` already gives it —
  * except the rows {@link BACKFILL_EXEMPTIONS} names, whose `NULL` is the
- * point. (At `multi` those platform keys are read by the resolver under the
- * bypass, never through a policy — §107 t-709.)
+ * point. (At `multi` a platform key is to be read by its resolver under the
+ * bypass, never through a policy — the entry §107 t-709 adds.)
  */
-export function backfillNullOrgSql(table: string): string {
+export function backfillNullOrgSql(table: string): string | null {
   const exemption = BACKFILL_EXEMPTIONS[table];
+  if (exemption === null) return null;
   const keep = exemption ? ` AND ${exemption}` : '';
   return `UPDATE "${table}" SET "orgId" = $1 WHERE "orgId" IS NULL${keep}`;
 }
@@ -252,7 +263,9 @@ export async function runTenancySwitch(
   const backfilled = new Map<string, number>();
   if (mode === 'enable') {
     for (const table of tables) {
-      const { rowCount } = await db.query(backfillNullOrgSql(table), [installOrgId]);
+      const sql = backfillNullOrgSql(table);
+      if (sql === null) continue;
+      const { rowCount } = await db.query(sql, [installOrgId]);
       backfilled.set(table, rowCount ?? 0);
     }
   }

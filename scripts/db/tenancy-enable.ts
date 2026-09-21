@@ -38,8 +38,13 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ownerDsn, runTenancySwitch, type TenancySwitch } from '@/lib/tenancy/isolation';
 
 function parseMode(argv: readonly string[]): TenancySwitch {
-  if (argv.includes('--disable')) return 'disable';
-  if (argv.includes('--enable') || argv.length === 0) return 'enable';
+  const enable = argv.includes('--enable');
+  const disable = argv.includes('--disable');
+  // Both at once is `npm run db:tenancy:enable -- --disable` from a stale
+  // shell line: the command named enable must not turn isolation off.
+  if (enable && disable) throw new Error('Pass exactly one of --enable or --disable');
+  if (disable) return 'disable';
+  if (enable || argv.length === 0) return 'enable';
   throw new Error(`Unknown argument(s): ${argv.join(' ')} — use --enable (default) or --disable`);
 }
 

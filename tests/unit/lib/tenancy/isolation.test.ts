@@ -105,6 +105,10 @@ describe('backfillNullOrgSql', () => {
     );
   });
 
+  it('skips AiCostLog entirely — a detached (SetNull) row is no org’s, and interim rows are indistinguishable', () => {
+    expect(backfillNullOrgSql('ai_cost_log')).toBeNull();
+  });
+
   it('leaves a platform (admin-scoped) API key unbound — its NULL org is the point', () => {
     // The §106 backfill migration's own exemption; binding one would make
     // withAdminAuth refuse every platform key.
@@ -201,7 +205,20 @@ describe('runTenancySwitch', () => {
     expect(flags.get('a')).toEqual({ table: 'a', enabled: true, forced: true });
     expect(report.noop).toBe(false);
     expect(report.entries.map((e) => e.backfilled)).toEqual([0, 3]);
+    expect(updates.map((u) => u.sql)).not.toContain(expect.stringContaining('ai_cost_log'));
     expect(report.entries[0].after).toEqual({ table: 'a', enabled: true, forced: true });
+  });
+
+  it('never backfills an exempt table', async () => {
+    const { runner, log } = fakeRunner([
+      { table: 'ai_cost_log', enabled: false, forced: false },
+      { table: 'a', enabled: false, forced: false },
+    ]);
+    const report = await runTenancySwitch(runner, ['ai_cost_log', 'a'], 'enable', 'install');
+    const updates = log.filter((l) => l.sql.startsWith('UPDATE')).map((l) => l.sql);
+    expect(updates).toEqual(['UPDATE "a" SET "orgId" = $1 WHERE "orgId" IS NULL']);
+    expect(report.entries[0].backfilled).toBe(0);
+    expect(report.entries[0].after).toEqual({ table: 'ai_cost_log', enabled: true, forced: true });
   });
 
   it('is idempotent: a second enable issues no ALTER and reports no change', async () => {

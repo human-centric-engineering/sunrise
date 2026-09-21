@@ -13,21 +13,16 @@ import { resolve } from 'path';
 import { readFile } from 'fs/promises';
 import { createHash } from 'crypto';
 import { z } from 'zod';
-import { config } from 'dotenv';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+// First: the app client below validates the environment at import time.
+import '@/prisma/load-env';
+import { prisma } from '@/lib/db/client';
 import { seedChunkSchema } from '@/lib/orchestration/knowledge/seeder';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 import { buildDocumentSlugBase } from '@/lib/orchestration/knowledge/document-slug';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 
-// Load env from .env.local
-config({ path: resolve(__dirname, '../.env.local') });
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+// The app client — through the tenancy chokepoint, so the document and its
+// chunks are stamped with the install org rather than landing NULL (§107).
 
 const DOCUMENT_NAME = 'Agentic Design Patterns';
 const CHUNKS_PATH = resolve(__dirname, '../prisma/seeds/data/chunks/chunks.json');
@@ -244,7 +239,7 @@ async function main() {
     console.log('\n--- Done ---\n');
   } finally {
     await prisma.$disconnect();
-    await pool.end();
+    await prisma.$disconnect();
   }
 }
 

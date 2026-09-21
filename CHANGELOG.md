@@ -28,7 +28,7 @@ release process.
   single-tenant install pays nothing. New commands: `npm run
   db:tenancy:enable` (refuses if any table lacks its policy; backfills `NULL`
   `orgId` to the install org — a platform `admin` API key excepted, its `NULL`
-  being the point — then `ENABLE` + `FORCE ROW LEVEL SECURITY` on every
+  being the point, and `AiCostLog` skipped, a detached row being no org's — then `ENABLE` + `FORCE ROW LEVEL SECURITY` on every
   tenant-owned table — derived from the generated client, no list) and `db:tenancy:disable` (`DISABLE` +
   `NO FORCE`, both flags), each idempotent by reading `pg_class` and
   refusing to report success until the flags read back; `npm run
