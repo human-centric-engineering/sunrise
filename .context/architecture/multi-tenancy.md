@@ -146,9 +146,10 @@ reverses both flags. The script is mode-agnostic — enabling at `single` is
 pointless, and what you see depends on the role, because no setter is ever
 issued at `single`: a superuser or a `BYPASSRLS` owner (a local `postgres`,
 Neon's `neondb_owner`) is not subject to the policies and sees no symptom
-at all; **any other role — including a plain `NOBYPASSRLS` owner, the
-Docker Compose or RDS shape — is under `FORCE` and sees zero rows and a
-`WITH CHECK` error on every write**. An accidental enable on that install
+at all (this repo's `docker-compose.yml` runs as `postgres`, so a Compose
+developer sees nothing change); **any other role — including a plain
+`NOBYPASSRLS` owner, the RDS master-user shape — is under `FORCE` and sees
+zero rows and a `WITH CHECK` error on every write**. An accidental enable on that install
 is an outage; `db:tenancy:disable` is the fix.
 
 ### 3. Flip the mode
@@ -203,12 +204,14 @@ public` until `--create` re-grants), and the policies come back
   `MIGRATE_DATABASE_URL`.
 - **Seeding at `multi`** runs as the owner (`db:seed` reads
   `MIGRATE_DATABASE_URL`) and lands every built-in row as the install org's.
-- **Turning it off — mode first, policies last.** Stop the app (or flip
-  `TENANCY_MODE=single` and `DATABASE_URL` back to the owner and restart),
-  **then** `db:tenancy:disable`. The other order leaves a window in which a
-  live app at `multi` issues `set_config` against dormant policies and
-  serves every org's rows to whichever org asked. The stamped `orgId`
-  columns stay; nothing is lost.
+- **Turning it off — stop the app, then `db:tenancy:disable`, then
+  restart at `single`.** Running `disable` while a live app is still at
+  `multi` opens a window in which it issues `set_config` against dormant
+  policies and serves every org's rows to whichever org asked. Restarting
+  at `single` on the owner DSN _before_ `disable` closes that leak but, on
+  a plain `NOBYPASSRLS` owner, is the fail-closed outage above until
+  `disable` runs — acceptable only if you would rather be down than wide.
+  The stamped `orgId` columns stay; nothing is lost.
 - **Never `ALTER ROLE … SUPERUSER` / `BYPASSRLS`** on the app role, not even
   to say `NO`: mentioning either needs a superuser, and the role script never
   does.
