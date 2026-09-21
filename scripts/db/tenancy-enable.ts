@@ -13,9 +13,11 @@
  * flips the flags that make Postgres consult them. Idempotent: the plan is
  * computed from the flags as read, a table already in the requested state
  * gets no statement, and a second run reports "no change". Mode-agnostic —
- * it does not read `TENANCY_MODE`; enabling at `single` is safe (the
- * chokepoint issues no setter there, so the app sees no rows — which is the
- * point of running it only when you mean it).
+ * it does not read `TENANCY_MODE`; enabling at `single` is reversible but
+ * not harmless: the chokepoint issues no setter there, so any role under the
+ * policies (a restricted app role, or a plain NOBYPASSRLS owner under FORCE)
+ * sees no rows and fails every write; only a superuser or BYPASSRLS owner is
+ * exempt. Run it only when you mean it; `--disable` undoes it.
  *
  * Connects with `MIGRATE_DATABASE_URL` when set, else `DATABASE_URL` — the
  * owner role, never the restricted app role: `ALTER TABLE` needs the owner,

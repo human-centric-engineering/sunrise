@@ -129,10 +129,12 @@ done or nothing to do; `1` the database did not reach the requested state;
 not created — and the refusal above, a tenant-owned table with no
 `org_isolation` policy, which exits `2` too: nothing was attempted).
 Mode-agnostic: it does not read `TENANCY_MODE`. Enabling at `single` is
-pointless: the chokepoint issues no setter there, so a restricted app role
-sees no rows — and the owner or a superuser, the usual single-tenant
-`DATABASE_URL`, is not subject to the policies and sees everything with no
-symptom at all. Run it only when you mean it.
+pointless and, on most installs, an outage: the chokepoint issues no setter
+there, so every role under the policies — a restricted app role, or a plain
+`NOBYPASSRLS` owner under `FORCE` — sees no rows and fails every write;
+only a superuser or a `BYPASSRLS` owner (`postgres`, `neondb_owner`) is
+exempt and sees no symptom. Run it only when you mean it; `disable` undoes
+it.
 
 It connects with **`MIGRATE_DATABASE_URL`** when set, else `DATABASE_URL`:
 `ALTER TABLE` needs the owner, and at `multi` `DATABASE_URL` is the

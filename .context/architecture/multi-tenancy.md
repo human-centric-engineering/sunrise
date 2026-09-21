@@ -143,11 +143,13 @@ with no policy (RLS on with no policy is default-deny: an outage), reads the
 flags back, and exits non-zero unless every table is in the requested state.
 Idempotent; a second run prints "no change". `npm run db:tenancy:disable`
 reverses both flags. The script is mode-agnostic — enabling at `single` is
-pointless, and what you see depends on the role: as a `NOBYPASSRLS`
-non-owner the app sees no rows (no setter is ever issued at `single`); as
-the owner or a superuser — the usual single-tenant `DATABASE_URL` — the
-policies do not apply and nothing changes at all, so an accidental enable
-has no symptom.
+pointless, and what you see depends on the role, because no setter is ever
+issued at `single`: a superuser or a `BYPASSRLS` owner (a local `postgres`,
+Neon's `neondb_owner`) is not subject to the policies and sees no symptom
+at all; **any other role — including a plain `NOBYPASSRLS` owner, the
+Docker Compose or RDS shape — is under `FORCE` and sees zero rows and a
+`WITH CHECK` error on every write**. An accidental enable on that install
+is an outage; `db:tenancy:disable` is the fix.
 
 ### 3. Flip the mode
 
@@ -192,14 +194,21 @@ checks and dropping one fails its first create.
 - **After `npm run db:reset`, run steps 1 and 2 again** —
   `db:tenancy:role -- --create` **and** `db:tenancy:enable`. The reset
   recreates the schema from the migrations: the role's grants go with it
-  (the role itself survives), and the policies come back **dormant**, so
-  until `enable` runs again the app at `multi` is issuing `set_config`
-  against tables with RLS off and sees every org's rows. The reset's
-  re-seed runs as the owner through `MIGRATE_DATABASE_URL`.
+  (the role itself survives — the app sees `permission denied for schema
+public` until `--create` re-grants), and the policies come back
+  **dormant** — so between re-running `--create` and re-running `enable`
+  the app at `multi` is issuing `set_config` against tables with RLS off
+  and sees every org's rows. Do both, in that order, before the app comes
+  back. The reset's re-seed runs as the owner through
+  `MIGRATE_DATABASE_URL`.
 - **Seeding at `multi`** runs as the owner (`db:seed` reads
   `MIGRATE_DATABASE_URL`) and lands every built-in row as the install org's.
-- **Turning it off**: `db:tenancy:disable`, then `TENANCY_MODE=single`. The
-  stamped `orgId` columns stay; nothing is lost.
+- **Turning it off — mode first, policies last.** Stop the app (or flip
+  `TENANCY_MODE=single` and `DATABASE_URL` back to the owner and restart),
+  **then** `db:tenancy:disable`. The other order leaves a window in which a
+  live app at `multi` issues `set_config` against dormant policies and
+  serves every org's rows to whichever org asked. The stamped `orgId`
+  columns stay; nothing is lost.
 - **Never `ALTER ROLE … SUPERUSER` / `BYPASSRLS`** on the app role, not even
   to say `NO`: mentioning either needs a superuser, and the role script never
   does.
@@ -332,11 +341,12 @@ has the numbers.
   explicit `orgId` is another — it is outside every org and every namespace
   (Postgres treats `NULL`s as distinct in a unique index).
 - **Enabling at `single` has no useful outcome.** The chokepoint issues no
-  setter there: a restricted app role sees zero rows; the owner or a
-  superuser (the single-tenant `DATABASE_URL`) is not subject to the
-  policies and sees everything, with no symptom that anything is on.
-  Enable only with `multi`, and check with `TENANCY_MODE=multi npm run
-db:drift-check` rather than by looking at the app.
+  setter there: a superuser or `BYPASSRLS` owner is not subject to the
+  policies and sees everything with no symptom; every other role — a
+  restricted app role, or a plain `NOBYPASSRLS` owner under `FORCE` — sees
+  zero rows and fails every write. Enable only with `multi`, and check with
+  `TENANCY_MODE=multi npm run db:drift-check` rather than by looking at the
+  app.
 - **Neon's deploy role bypasses RLS.** `neondb_owner` inherits `BYPASSRLS`
   from `neon_superuser`; it is the owner DSN, never the app's. Neon also
   refuses `DROP OWNED BY`, which is why `--drop` revokes grants first.
