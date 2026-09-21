@@ -102,6 +102,33 @@ describe('GET /api/v1/orchestration/approvals/:id/status', () => {
     expect(res.status).toBe(404);
   });
 
+  it("returns 404 when the execution's org is suspended, without reading the status (t-708)", async () => {
+    mockVerify.mockReturnValue({
+      executionId: VALID_ID,
+      action: 'approve',
+      expiresAt: new Date('2030-01-01').toISOString(),
+    });
+    findUnique.mockResolvedValue({ orgId: 'org_b', org: { status: 'SUSPENDED' } });
+    const res = await GET(makeRequest('valid-token'), {
+      params: Promise.resolve({ id: VALID_ID }),
+    });
+    expect(res.status).toBe(404);
+    // The entry read only; the status read never ran.
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a database failure surface rather than reading it as not found', async () => {
+    mockVerify.mockReturnValue({
+      executionId: VALID_ID,
+      action: 'approve',
+      expiresAt: new Date('2030-01-01').toISOString(),
+    });
+    findUnique.mockRejectedValue(new Error('connection reset'));
+    await expect(
+      GET(makeRequest('valid-token'), { params: Promise.resolve({ id: VALID_ID }) })
+    ).rejects.toThrow('connection reset');
+  });
+
   it('returns the execution status, error message, and trace on success', async () => {
     mockVerify.mockReturnValue({
       executionId: VALID_ID,
