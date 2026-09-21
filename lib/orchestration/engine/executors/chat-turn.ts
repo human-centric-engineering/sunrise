@@ -89,7 +89,7 @@ export async function executeChatTurn(
       where: { id: conversationId },
       select: { id: true, agentId: true },
     }),
-    prisma.aiAgent.findUnique({
+    prisma.aiAgent.findFirst({
       where: { slug: config.agentSlug },
       include: {
         profile: true,

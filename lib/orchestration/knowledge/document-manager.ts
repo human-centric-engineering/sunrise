@@ -32,6 +32,8 @@ import {
   type ParseDocumentOptions,
 } from '@/lib/orchestration/knowledge/parsers';
 import type { AiKnowledgeDocument } from '@/types/prisma';
+import { requireOrgId } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /**
  * Default knowledge base id used as the FK target for every uploaded
@@ -43,26 +45,35 @@ import type { AiKnowledgeDocument } from '@/types/prisma';
 export const DEFAULT_KNOWLEDGE_BASE_ID = 'kb_default';
 
 /**
- * Default slug used in the `AiKnowledgeBase.slug @unique` field. Upserting
- * by this slug (the natural key) lets the helper survive an existing row
- * whose `id` happens not to be `kb_default` — e.g. a fork that pre-seeded
- * a different id before the helper ran.
+ * Default slug of an org's default knowledge base (`AiKnowledgeBase` is
+ * unique on `(orgId, slug)`, §107 t-708). Upserting by this natural key lets
+ * the helper survive an existing row whose `id` happens not to be
+ * `kb_default` — e.g. a fork that pre-seeded a different id before the
+ * helper ran.
  */
 const DEFAULT_KNOWLEDGE_BASE_SLUG = 'default';
 
 /**
- * Ensure the default knowledge base row exists and return its id. Runtime
- * upload paths call this before creating an `AiKnowledgeDocument` so the
- * FK is guaranteed to resolve. Upserts by `slug` (the natural key) so a
- * pre-existing row with a different id is reused rather than crashing on
- * a duplicate-key error.
+ * Ensure the default knowledge base row exists FOR THE ORG THIS CALL RUNS IN
+ * and return its id. Runtime upload paths call this before creating an
+ * `AiKnowledgeDocument` so the FK is guaranteed to resolve. Upserts by
+ * `(orgId, slug)` so a pre-existing row with a different id is reused
+ * rather than crashing on a duplicate-key error.
+ *
+ * Only the install org's default carries the fixed id `kb_default` — the
+ * seed's row and the id the system-document seeder writes into. Every other
+ * org's default is created on its first upload with a generated id: an id
+ * is global, and two orgs cannot share one. The one-default-per-org rule is
+ * the partial unique `idx_ai_knowledge_base_single_default` (see the
+ * schema's drift warning).
  */
 export async function getOrCreateDefaultKnowledgeBase(): Promise<string> {
+  const orgId = requireOrgId();
   const kb = await prisma.aiKnowledgeBase.upsert({
-    where: { slug: DEFAULT_KNOWLEDGE_BASE_SLUG },
+    where: { orgId_slug: { orgId, slug: DEFAULT_KNOWLEDGE_BASE_SLUG } },
     update: {},
     create: {
-      id: DEFAULT_KNOWLEDGE_BASE_ID,
+      ...(orgId === INSTALL_ORG_ID ? { id: DEFAULT_KNOWLEDGE_BASE_ID } : {}),
       slug: DEFAULT_KNOWLEDGE_BASE_SLUG,
       name: 'Default',
       description: 'Default knowledge base for documents without an explicit corpus assignment',
@@ -89,7 +100,7 @@ const CLEANUP_AGENT_SLUG = 'cleanup-agent';
 const CLEANUP_REDIRECT = (id: string): string => `/admin/orchestration/knowledge/${id}/cleanup`;
 
 async function getCleanupAgentId(): Promise<string> {
-  const agent = await prisma.aiAgent.findUnique({
+  const agent = await prisma.aiAgent.findFirst({
     where: { slug: CLEANUP_AGENT_SLUG },
     select: { id: true },
   });
@@ -597,7 +608,7 @@ export async function uploadDocument(
     // unique-constraint violation as a 500. A genuine different-content slug
     // collision (vanishingly rare) is re-thrown.
     if (!isDuplicateSlugError(err)) throw err;
-    const winner = await prisma.aiKnowledgeDocument.findUnique({ where: { slug } });
+    const winner = await prisma.aiKnowledgeDocument.findFirst({ where: { slug } });
     if (!winner || winner.fileHash !== fileHash) throw err;
     logger.info('Document slug race — returning concurrent winner', {
       documentId: winner.id,
@@ -773,7 +784,7 @@ async function uploadCsvFromParsed(
     // Concurrent same-content upload won the slug race — dedup to it (see
     // uploadDocument for the rationale); a different-content collision re-throws.
     if (!isDuplicateSlugError(err)) throw err;
-    const winner = await prisma.aiKnowledgeDocument.findUnique({ where: { slug } });
+    const winner = await prisma.aiKnowledgeDocument.findFirst({ where: { slug } });
     if (!winner || winner.fileHash !== fileHash) throw err;
     logger.info('CSV document slug race — returning concurrent winner', {
       documentId: winner.id,
@@ -1042,7 +1053,7 @@ export async function previewDocument(
     // Concurrent same-content preview won the slug race — return its row with
     // the freshly-parsed text (see uploadDocument for the rationale).
     if (!isDuplicateSlugError(err)) throw err;
-    const winner = await prisma.aiKnowledgeDocument.findUnique({ where: { slug } });
+    const winner = await prisma.aiKnowledgeDocument.findFirst({ where: { slug } });
     if (!winner || winner.fileHash !== fileHash) throw err;
     logger.info('Document preview slug race — returning concurrent winner', {
       documentId: winner.id,

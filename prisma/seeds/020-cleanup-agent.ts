@@ -1,5 +1,6 @@
 import { serviceAccountWhere } from '@/lib/auth/account';
 import type { SeedContext, SeedUnit } from '@/prisma/runner';
+import { requireOrgId } from '@/lib/tenancy/context';
 
 const CLEANUP_INSTRUCTIONS = `You are the Document Clean Up Assistant. An admin has uploaded a document into the knowledge base and wants it cleaned before it is chunked and embedded. They tell you what they want; you choose the tools and apply the changes.
 
@@ -138,7 +139,7 @@ const unit: SeedUnit = {
     }
 
     const agent = await prisma.aiAgent.upsert({
-      where: { slug: 'cleanup-agent' },
+      where: { orgId_slug: { orgId: requireOrgId(), slug: 'cleanup-agent' } },
       update: { isSystem: true },
       create: {
         name: 'Document Clean Up Assistant',

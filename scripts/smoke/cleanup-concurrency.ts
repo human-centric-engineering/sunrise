@@ -44,6 +44,8 @@ import { NormalisePunctuationCapability } from '@/lib/orchestration/capabilities
 import { StripSpeakerLabelsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-speaker-labels';
 import { StripTimestampsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-timestamps';
 import type { CapabilityContext } from '@/lib/orchestration/capabilities/types';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const PREFIX = 'smoke-test-cleanup-concurrency';
 const stamp = Date.now();
@@ -209,7 +211,9 @@ async function main(): Promise<void> {
   }
 }
 
-main()
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' })
   .catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
     if (/ECONNREFUSED|Can't reach database server|P1001/.test(message)) {

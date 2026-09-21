@@ -36,6 +36,8 @@
 
 import { prisma } from '@/lib/db/client';
 import { changedSeedOwnedFields } from '@/lib/orchestration/capabilities/seed-owned';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const PREFIX = 'smoke-test-seed-ownership';
 const stamp = Date.now();
@@ -173,7 +175,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' }).catch((err: unknown) => {
   console.error(err);
   process.exit(1);
 });

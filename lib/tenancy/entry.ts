@@ -53,7 +53,13 @@ export interface OrgEntry {
   role: OrgRole | null;
   source: Extract<
     TenantContextSource,
-    'session' | 'api-key' | 'resolver' | 'embed-token' | 'mcp-key'
+    | 'session'
+    | 'api-key'
+    | 'resolver'
+    | 'embed-token'
+    | 'mcp-key'
+    | 'inbound-trigger'
+    | 'approval-token'
   >;
 }
 
@@ -181,10 +187,21 @@ export async function enterApiKeyOrg(
  * exactly as it refuses its members' sessions — the widget on a suspended
  * customer's site stops answering. The install org cannot be suspended
  * (`INSTALL_ORG_IMMUTABLE`), so at `single` the status is not consulted.
+ *
+ * The same rule answers the two routes whose credential is a signed token
+ * naming a ROW rather than a principal — the inbound trigger and the HMAC
+ * approval token (§107 t-708). Those routes must read the row to learn the
+ * org, so the read runs under `runAsSystem` (that one read, nothing else),
+ * and the row's `orgId` and its org's status come here before anything runs
+ * inside the org. A refusal is the route's usual "not found": it names
+ * nothing, like every other refusal.
  */
 export function resolveCredentialOrg(
   credential: { orgId: string | null; orgStatus: string | null },
-  source: Extract<TenantContextSource, 'embed-token' | 'mcp-key'>
+  source: Extract<
+    TenantContextSource,
+    'embed-token' | 'mcp-key' | 'inbound-trigger' | 'approval-token'
+  >
 ): OrgEntryResult {
   const orgId = orgOfColumn(credential.orgId);
   if (!orgId) return { refused: 'no-org' };

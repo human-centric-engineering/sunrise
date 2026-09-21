@@ -16,6 +16,14 @@
  * be replayed under a misleading channel name in audit logs, and CORS
  * scoping differs per channel — admin chat is same-origin, the embed
  * widget is allowlist, and the legacy email/Slack route has no CORS.
+ *
+ * **The org (§107 t-708).** The token names an execution, not a
+ * principal, so no guard has entered an org when these run. After the
+ * token verifies, {@link runAsExecutionOrg} reads the execution's `orgId`
+ * under an audited system scope — that one read — and runs the action
+ * inside `runAsOrg(orgId, …, { source: 'approval-token' })`, so the
+ * execution read, the state change and the resumed engine all run inside
+ * the org that owns the run. The status route enters the same way.
  */
 
 import { NextRequest } from 'next/server';
@@ -28,6 +36,9 @@ import { executeApproval, executeRejection } from '@/lib/orchestration/approval-
 import { resumeApprovedExecution } from '@/lib/orchestration/scheduling';
 import { cuidSchema } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
+import { prisma } from '@/lib/db/client';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { isOrgRefusal, resolveCredentialOrg } from '@/lib/tenancy/entry';
 
 const approveBodySchema = z.object({
   notes: z.string().max(5000).optional(),
@@ -126,15 +137,19 @@ export async function handleApproveRequest(
   }
 
   try {
-    const result = await executeApproval(id, { notes, actorLabel: opts.actorLabel });
-    if (opts.triggerResume) {
-      // Fire-and-forget — the engine drives the resumed run independently;
-      // any error logs through the engine's own paths. We do NOT await,
-      // because the response should land before the workflow restarts.
-      void resumeApprovedExecution(id).catch((err: unknown) => {
-        logger.error('resumeApprovedExecution failed', err, { executionId: id });
-      });
-    }
+    const result = await runAsExecutionOrg(id, async () => {
+      const outcome = await executeApproval(id, { notes, actorLabel: opts.actorLabel });
+      if (opts.triggerResume) {
+        // Fire-and-forget — the engine drives the resumed run independently;
+        // any error logs through the engine's own paths. We do NOT await,
+        // because the response should land before the workflow restarts.
+        // Started inside the org scope, so the resumed run keeps it.
+        void resumeApprovedExecution(id).catch((err: unknown) => {
+          logger.error('resumeApprovedExecution failed', err, { executionId: id });
+        });
+      }
+      return outcome;
+    });
     return wrap(successResponse(result));
   } catch (err) {
     return wrap(mapActionError(err, 'approve'));
@@ -213,14 +228,51 @@ export async function handleRejectRequest(
   }
 
   try {
-    const result = await executeRejection(id, {
-      reason: body.reason,
-      actorLabel: opts.actorLabel,
-    });
+    const result = await runAsExecutionOrg(id, () =>
+      executeRejection(id, {
+        reason: body.reason,
+        actorLabel: opts.actorLabel,
+      })
+    );
     return wrap(successResponse(result));
   } catch (err) {
     return wrap(mapActionError(err, 'reject'));
   }
+}
+
+/**
+ * Run `fn` inside the org that owns execution `executionId`, for a caller
+ * holding a verified approval token and nothing else.
+ *
+ * The execution's `orgId` is read under `runAsSystem` — the one read this
+ * route makes before it has an org — and passed through the credential
+ * read rule. An execution that does not exist, whose org is suspended, or
+ * that carries no org at `multi`, is the action's own `NOT_FOUND`: the
+ * routes already answer that with a 404 that names nothing.
+ */
+export async function runAsExecutionOrg<T>(executionId: string, fn: () => Promise<T>): Promise<T> {
+  const execution = await runAsSystem('approval-token-resolution', () =>
+    prisma.aiWorkflowExecution.findUnique({
+      where: { id: executionId },
+      select: { orgId: true, org: { select: { status: true } } },
+    })
+  );
+  const entry = execution
+    ? resolveCredentialOrg(
+        { orgId: execution.orgId, orgStatus: execution.org?.status ?? null },
+        'approval-token'
+      )
+    : null;
+  if (!entry || isOrgRefusal(entry)) {
+    if (entry) {
+      logger.warn('approval token: execution cannot enter its org', {
+        executionId,
+        refused: entry.refused,
+      });
+    }
+    throw Object.assign(new Error(`Execution ${executionId} not found`), { code: 'NOT_FOUND' });
+  }
+  return runAsOrg(entry.orgId, fn, { source: entry.source });
 }
 
 function mapActionError(err: unknown, kind: 'approve' | 'reject'): Response {

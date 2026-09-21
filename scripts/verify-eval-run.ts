@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   // 1. Resolve admin + agent
   const user = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
   if (!user) throw new Error(`No user with email ${ADMIN_EMAIL}`);
-  const agent = await prisma.aiAgent.findUnique({ where: { slug: AGENT_SLUG } });
+  const agent = await prisma.aiAgent.findFirst({ where: { slug: AGENT_SLUG } });
   if (!agent) throw new Error(`No agent with slug ${AGENT_SLUG}`);
   console.log(`✓ admin=${user.email}  agent=${agent.slug}`);
 

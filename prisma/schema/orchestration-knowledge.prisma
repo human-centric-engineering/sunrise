@@ -4,8 +4,9 @@
 //
 // ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
 // A partial unique index `idx_ai_knowledge_base_single_default` on
-// `(isDefault) WHERE isDefault = true` is managed via raw SQL — Prisma
-// cannot model partial indexes. At most one row may be flagged default;
+// `(orgId) WHERE isDefault = true` is managed via raw SQL — Prisma
+// cannot model partial indexes. At most one row PER ORG may be flagged
+// default (per org since 20260921120000_org_scoped_slugs);
 // `getOrCreateDefaultKnowledgeBase()` and every upload path depend on
 // this invariant. `npx prisma migrate dev` will emit a DROP statement
 // on schema-diff runs; always inspect generated SQL and strip any line
@@ -15,7 +16,7 @@
 // (folded by the 2026-05-29 post-squash hardening pass).
 model AiKnowledgeBase {
   id          String   @id @default(cuid())
-  slug        String   @unique
+  slug        String // unique per org (§107 t-708) — @@unique([orgId, slug]) below
   name        String
   description String?  @db.Text
   isDefault   Boolean  @default(false)
@@ -27,6 +28,7 @@ model AiKnowledgeBase {
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  @@unique([orgId, slug])
   @@index([orgId])
   @@map("ai_knowledge_base")
 }
@@ -36,11 +38,12 @@ model AiKnowledgeBase {
 // ⚠️ PRISMA-SCHEMA DRIFT WARNING ⚠️
 // Two raw-SQL objects on this table that Prisma cannot model:
 //
-// 1. Partial unique index `idx_knowledge_doc_file_hash_ready` on `fileHash`
-//    WHERE `status = 'ready'`. The plain `@@index([fileHash])` below is a
-//    separate (non-unique, non-partial) index; both coexist in the deployed
-//    DB. Dropping the partial unique would silently allow duplicate
-//    `(fileHash, status='ready')` rows, defeating the dedupe contract.
+// 1. Partial unique index `idx_knowledge_doc_file_hash_ready` on
+//    `(orgId, fileHash)` WHERE `status = 'ready'` (per org since
+//    20260921120000_org_scoped_slugs). The plain `@@index([fileHash])` below
+//    is a separate (non-unique, non-partial) index; both coexist in the
+//    deployed DB. Dropping the partial unique would silently allow duplicate
+//    `(orgId, fileHash, status='ready')` rows, defeating the dedupe contract.
 //
 // 2. CHECK constraint `ai_knowledge_document_status_lowercase` pinning
 //    `status` to ('processing', 'ready', 'failed', 'pending_review',
@@ -60,7 +63,7 @@ model AiKnowledgeBase {
 model AiKnowledgeDocument {
   id                 String    @id @default(cuid())
   knowledgeBaseId    String
-  slug               String    @unique // stable cross-environment key (used in backup/export); deterministic: slugify(name)-<first8 of fileHash>
+  slug               String // stable cross-environment key (used in backup/export), unique per org (§107 t-708; @@unique([orgId, slug]) below); deterministic: slugify(name)-<first8 of fileHash>
   name               String
   fileName           String
   fileHash           String // SHA-256 for deduplication
@@ -98,6 +101,7 @@ model AiKnowledgeDocument {
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  @@unique([orgId, slug])
   @@index([orgId])
   @@index([uploadedBy])
   @@index([status])

@@ -198,7 +198,7 @@ export const POST = withAdminAuth(async (request, session) => {
       if (entry.slug !== 'judge_agent') return entry;
 
       const cfg = parsed.data as { agentSlug: string; subjectBrandVoice?: string };
-      const judgeAgent = await prisma.aiAgent.findUnique({
+      const judgeAgent = await prisma.aiAgent.findFirst({
         where: { slug: cfg.agentSlug },
         select: { kind: true, isActive: true },
       });

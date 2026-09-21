@@ -34,6 +34,8 @@ import {
   hasModelWithCapability,
 } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const VISION_ROW_SLUG = 'smoke-test-vision-capable';
 const NO_VISION_ROW_SLUG = 'smoke-test-vision-textonly';
@@ -133,7 +135,9 @@ async function main(): Promise<void> {
   console.log('✅ Vision smoke: PASSED');
 }
 
-main()
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' })
   .then(async () => {
     await prisma.$disconnect();
     process.exit(0);

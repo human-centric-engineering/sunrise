@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { requireOrgId } from '@/lib/tenancy/context';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
 const QUIZ_MASTER_INSTRUCTIONS = `You are a quiz master for agentic design patterns. Your job is to test and teach through interactive questioning.
@@ -48,7 +49,7 @@ const unit: SeedUnit = {
     const createdBy = admin.id;
 
     const agent = await prisma.aiAgent.upsert({
-      where: { slug: 'quiz-master' },
+      where: { orgId_slug: { orgId: requireOrgId(), slug: 'quiz-master' } },
       update: { isSystem: true },
       create: {
         name: 'Pattern Quiz Master',

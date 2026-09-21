@@ -115,7 +115,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
   await prisma.$transaction(async (tx) => {
     for (const bundled of bundle.agents) {
-      const existing = await tx.aiAgent.findUnique({ where: { slug: bundled.slug } });
+      const existing = await tx.aiAgent.findFirst({ where: { slug: bundled.slug } });
 
       if (existing && conflictMode === 'skip') {
         results.skipped += 1;

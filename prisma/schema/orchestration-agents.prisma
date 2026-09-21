@@ -6,7 +6,7 @@
 model AiAgent {
   id                        String    @id @default(cuid())
   name                      String
-  slug                      String    @unique
+  slug                      String // unique per org (§107 t-708) — @@unique([orgId, slug]) below
   description               String    @db.Text
   systemInstructions        String    @db.Text
   systemInstructionsHistory Json      @default("[]") // [{instructions, changedAt, changedBy}]
@@ -137,6 +137,7 @@ model AiAgent {
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  @@unique([orgId, slug])
   @@index([orgId])
   @@index([createdBy])
   @@index([provider])

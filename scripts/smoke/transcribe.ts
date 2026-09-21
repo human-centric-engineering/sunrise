@@ -43,6 +43,8 @@ import type {
   TranscribeOptions,
   TranscribeResponse,
 } from '@/lib/orchestration/llm/types';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const SMOKE_PROVIDER_SLUG = 'smoke-test-audio-provider';
 const SMOKE_MODEL_ID = 'smoke-whisper';
@@ -170,7 +172,9 @@ async function main(): Promise<void> {
   console.log('✅ Audio smoke: PASSED');
 }
 
-main()
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' })
   .then(async () => {
     await prisma.$disconnect();
     process.exit(0);

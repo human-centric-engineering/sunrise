@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { SeedUnit } from '@/prisma/runner';
+import { requireOrgId } from '@/lib/tenancy/context';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
@@ -38,7 +39,7 @@ const unit: SeedUnit = {
     }
 
     await prisma.aiAgent.upsert({
-      where: { slug: 'mcp-system' },
+      where: { orgId_slug: { orgId: requireOrgId(), slug: 'mcp-system' } },
       update: {
         isSystem: true,
         description:

@@ -48,7 +48,7 @@ export const POST = withAdminAuth(async (request, session) => {
   // their per-agent throttle by switching surfaces. The lookup is a
   // single indexed find and is intentionally separate from the heavier
   // agent resolution inside `streamChat`.
-  const agent = await prisma.aiAgent.findUnique({
+  const agent = await prisma.aiAgent.findFirst({
     where: { slug: body.agentSlug },
     select: { id: true, rateLimitRpm: true },
   });

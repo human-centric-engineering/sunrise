@@ -31,6 +31,8 @@
 
 import { prisma } from '@/lib/db/client';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const DOCUMENT_NAME = 'smoke-test-hybrid-search-document';
 const CHUNK_KEYS = {
@@ -208,7 +210,9 @@ async function main(): Promise<void> {
   await prisma.$disconnect();
 }
 
-main().catch(async (err) => {
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' }).catch(async (err) => {
   console.error('\n✗ smoke script failed:', err);
   try {
     await prisma.$disconnect();

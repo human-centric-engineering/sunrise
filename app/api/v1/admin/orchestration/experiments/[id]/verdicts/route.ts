@@ -144,7 +144,7 @@ export const POST = withAdminAuth<Params>(
       );
     }
 
-    const judgeAgent = await prisma.aiAgent.findUnique({
+    const judgeAgent = await prisma.aiAgent.findFirst({
       where: { slug: body.judgeAgentSlug },
       select: { id: true, kind: true, isActive: true },
     });

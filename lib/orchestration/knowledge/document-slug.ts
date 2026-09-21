@@ -54,7 +54,7 @@ export function buildDocumentSlugBase(name: string, fileHash: string): string {
 /** Minimal client surface needed to check slug uniqueness (prisma or a tx). */
 type SlugLookupClient = {
   aiKnowledgeDocument: {
-    findUnique: (args: {
+    findFirst: (args: {
       where: { slug: string };
       select: { id: true };
     }) => Promise<{ id: string } | null>;
@@ -100,7 +100,7 @@ export async function generateUniqueDocumentSlug(
   // preview-refresh path re-derives a pending_review row's slug after a rename
   // and must not count its own current slug as a collision.
   for (;;) {
-    const hit = await client.aiKnowledgeDocument.findUnique({
+    const hit = await client.aiKnowledgeDocument.findFirst({
       where: { slug: candidate },
       select: { id: true },
     });

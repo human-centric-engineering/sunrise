@@ -10,7 +10,14 @@
  *   3. Read raw body once. Try JSON parse (best-effort).
  *   4. If adapter has `handleHandshake` and it returns a Response, return it.
  *   5. Lookup `AiWorkflowTrigger` by (channel, workflow.slug, isEnabled).
- *      Missing or workflow inactive → 404.
+ *      Missing or workflow inactive → 404. Nothing has authenticated yet,
+ *      so no org has been entered: the lookup runs under an audited system
+ *      scope (`runAsSystem`) — that one read — and the workflow's org, put
+ *      through the credential read rule (`resolveCredentialOrg`), is the
+ *      org the rest of the request runs inside (`runAsOrg`, source
+ *      `inbound-trigger`). A workflow whose org is suspended, or carries
+ *      none at `multi`, is the same 404 (§107 t-708). `AiWorkflow.slug` is
+ *      global — it is this URL segment — so the lookup is unambiguous.
  *   6. Adapter `verify` against raw body. Failure → 401.
  *   7. Adapter `normalise` → channel-agnostic payload.
  *   8. Optional event-type filter from `trigger.metadata.eventTypes`.
@@ -42,6 +49,8 @@ import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap'
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
 import { resolveConversation } from '@/lib/orchestration/inbound/conversation-resolver';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { isOrgRefusal, resolveCredentialOrg } from '@/lib/tenancy/entry';
 
 // Module-level bootstrap. Idempotent — first call registers adapters from env.
 bootstrapInboundAdapters();
@@ -138,29 +147,87 @@ export async function POST(
     }
   }
 
-  // Resolve trigger → workflow → published version.
-  const trigger = await prisma.aiWorkflowTrigger.findFirst({
-    where: {
-      channel,
-      isEnabled: true,
-      workflow: { slug, isActive: true },
-    },
-    include: {
-      workflow: {
-        select: {
-          id: true,
-          slug: true,
-          maxCostPerExecutionUsd: true,
-          publishedVersion: { select: { id: true, snapshot: true } },
-        },
+  // Resolve trigger → workflow → published version. No org has been entered
+  // yet — the trigger row is what tells us which — so this one read runs
+  // under the audited system scope, and everything after it inside the
+  // workflow's org.
+  const trigger = await runAsSystem('inbound-trigger-resolution', () =>
+    prisma.aiWorkflowTrigger.findFirst({
+      where: {
+        channel,
+        isEnabled: true,
+        workflow: { slug, isActive: true },
       },
-    },
-  });
+      include: TRIGGER_INCLUDE,
+    })
+  );
 
   if (!trigger) {
     return errorResponse('Trigger not found', { code: 'NOT_FOUND', status: 404 });
   }
 
+  const entry = resolveCredentialOrg(
+    { orgId: trigger.workflow.orgId, orgStatus: trigger.workflow.org?.status ?? null },
+    'inbound-trigger'
+  );
+  if (isOrgRefusal(entry)) {
+    // The same answer as no trigger: a refusal names nothing.
+    logger.warn('Inbound: trigger cannot enter its org', {
+      channel,
+      slug,
+      triggerId: trigger.id,
+      refused: entry.refused,
+    });
+    return errorResponse('Trigger not found', { code: 'NOT_FOUND', status: 404 });
+  }
+
+  return runAsOrg(
+    entry.orgId,
+    () => fireTrigger(request, { channel, slug, clientIP, rawBody, bodyParsed, adapter, trigger }),
+    { source: entry.source }
+  );
+}
+
+/** The trigger row as step 5 reads it, with the workflow facts the run needs. */
+const TRIGGER_INCLUDE = {
+  workflow: {
+    select: {
+      id: true,
+      slug: true,
+      orgId: true,
+      org: { select: { status: true } },
+      maxCostPerExecutionUsd: true,
+      publishedVersion: { select: { id: true, snapshot: true } },
+    },
+  },
+} satisfies Prisma.AiWorkflowTriggerInclude;
+type ResolvedTrigger = Prisma.AiWorkflowTriggerGetPayload<{ include: typeof TRIGGER_INCLUDE }>;
+
+/**
+ * Steps 6–11: verify, normalise, enqueue, ack — inside the workflow's org,
+ * so every row this request writes is stamped with it and the engine drain
+ * it starts inherits the scope.
+ */
+async function fireTrigger(
+  request: NextRequest,
+  {
+    channel,
+    slug,
+    clientIP,
+    rawBody,
+    bodyParsed,
+    adapter,
+    trigger,
+  }: {
+    channel: string;
+    slug: string;
+    clientIP: string;
+    rawBody: string;
+    bodyParsed: unknown;
+    adapter: NonNullable<ReturnType<typeof getInboundAdapter>>;
+    trigger: ResolvedTrigger;
+  }
+): Promise<Response> {
   if (!trigger.workflow.publishedVersion) {
     logger.warn('Inbound: workflow has no published version', {
       channel,

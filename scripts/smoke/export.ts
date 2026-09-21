@@ -39,6 +39,8 @@ import {
 } from '@/lib/privacy/subject-source-registry';
 import { isEmptySection } from '@/scripts/smoke/export-assertions';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const PREFIX = 'smoke-test-export';
 const stamp = Date.now();
@@ -550,7 +552,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(async (err) => {
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' }).catch(async (err) => {
   console.error('\n✗ smoke:export failed:', err);
   try {
     await prisma.$disconnect();

@@ -13,7 +13,9 @@
  * HMAC verification only — no session, no admin check. Anyone with a
  * valid unexpired token can read status. The token's audience is the
  * end user themselves; leaking it has the same impact as leaking an
- * approve URL.
+ * approve URL. The read runs inside the execution's own org, entered the
+ * way the approve/reject helpers enter it (`runAsExecutionOrg`, §107
+ * t-708); an execution that cannot enter its org is a 404.
  *
  * CORS: permissive (`*`) so the embed widget can poll from third-party
  * origins. The data exposed is scoped to a single execution that the
@@ -24,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { verifyApprovalToken } from '@/lib/orchestration/approval-tokens';
+import { runAsExecutionOrg } from '@/lib/orchestration/approval-route-helpers';
 import { prisma } from '@/lib/db/client';
 import { cuidSchema } from '@/lib/validations/common';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
@@ -73,15 +76,20 @@ export async function GET(
     );
   }
 
-  const execution = await prisma.aiWorkflowExecution.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      errorMessage: true,
-      executionTrace: true,
-      completedAt: true,
-    },
+  const execution = await runAsExecutionOrg(id, () =>
+    prisma.aiWorkflowExecution.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        status: true,
+        errorMessage: true,
+        executionTrace: true,
+        completedAt: true,
+      },
+    })
+  ).catch((err: unknown) => {
+    if ((err as { code?: string }).code === 'NOT_FOUND') return null;
+    throw err;
   });
   if (!execution) {
     return withCors(errorResponse('Execution not found', { code: 'NOT_FOUND', status: 404 }));

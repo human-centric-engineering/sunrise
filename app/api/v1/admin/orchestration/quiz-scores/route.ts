@@ -61,7 +61,7 @@ export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const { correct, total } = await validateRequestBody(request, saveQuizScoreSchema);
 
-  const agent = await prisma.aiAgent.findUnique({
+  const agent = await prisma.aiAgent.findFirst({
     where: { slug: QUIZ_MASTER_SLUG },
     select: { id: true },
   });

@@ -124,7 +124,7 @@ async function getDisabledCapabilitySlugs(agentId: string): Promise<Set<string>>
 async function getMcpSystemAgentId(): Promise<string | null> {
   if (mcpSystemAgentId) return mcpSystemAgentId;
 
-  const agent = await prisma.aiAgent.findUnique({
+  const agent = await prisma.aiAgent.findFirst({
     where: { slug: MCP_SYSTEM_AGENT_SLUG },
     select: { id: true },
   });

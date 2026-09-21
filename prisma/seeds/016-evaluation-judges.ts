@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { requireOrgId } from '@/lib/tenancy/context';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
@@ -333,7 +334,7 @@ const unit: SeedUnit = {
 
     for (const judge of JUDGES) {
       await prisma.aiAgent.upsert({
-        where: { slug: judge.slug },
+        where: { orgId_slug: { orgId: requireOrgId(), slug: judge.slug } },
         update: {
           // Seed-managed: the rubrics evolve with the platform, so we
           // OVERWRITE systemInstructions on re-seed. Admin customisations

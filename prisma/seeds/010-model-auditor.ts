@@ -2,6 +2,7 @@ import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/pro
 import { Prisma } from '@prisma/client';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
+import { requireOrgId } from '@/lib/tenancy/context';
 import { CAPABILITIES } from '@/lib/orchestration/model-audit/enums';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
@@ -369,7 +370,7 @@ const unit: SeedUnit = {
 
     // 1. Create the agent
     const agent = await prisma.aiAgent.upsert({
-      where: { slug: 'provider-model-auditor' },
+      where: { orgId_slug: { orgId: requireOrgId(), slug: 'provider-model-auditor' } },
       update: { isSystem: true },
       create: {
         name: 'Provider Model Auditor',
@@ -546,7 +547,7 @@ const unit: SeedUnit = {
 
     // 7. Create the audit-report-writer agent (no capabilities — pure synthesis)
     await prisma.aiAgent.upsert({
-      where: { slug: 'audit-report-writer' },
+      where: { orgId_slug: { orgId: requireOrgId(), slug: 'audit-report-writer' } },
       update: { isSystem: true },
       create: {
         name: 'Audit Report Writer',

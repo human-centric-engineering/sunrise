@@ -30,6 +30,7 @@ import { eraseUser } from '@/lib/privacy/erase-user';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { runAsOrg } from '@/lib/tenancy/context';
 
 const PREFIX = 'smoke-test-erasure';
 const stamp = Date.now();
@@ -338,7 +339,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(async (err) => {
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' }).catch(async (err) => {
   console.error('\n✗ smoke:erasure failed:', err);
   try {
     await prisma.$disconnect();

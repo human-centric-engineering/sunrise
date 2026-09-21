@@ -41,10 +41,23 @@ import type { OrgRole } from '@/lib/tenancy/roles';
 /**
  * How the org was decided. The design record's seven, plus `implicit` — the
  * single-tenant fallback {@link requireTenantContext} answers when nothing
- * entered a context, named so a log line can tell it from a real entry.
+ * entered a context, named so a log line can tell it from a real entry —
+ * and the two signed-token entries of §107 t-708: `inbound-trigger` (a
+ * channel signature over a workflow's trigger row) and `approval-token` (an
+ * HMAC token over an execution id), where the org is the ROW's, read under a
+ * system scope before it is entered.
  */
 export type TenantContextSource =
-  'session' | 'api-key' | 'embed-token' | 'mcp-key' | 'resolver' | 'system' | 'job' | 'implicit';
+  | 'session'
+  | 'api-key'
+  | 'embed-token'
+  | 'mcp-key'
+  | 'resolver'
+  | 'inbound-trigger'
+  | 'approval-token'
+  | 'system'
+  | 'job'
+  | 'implicit';
 
 export interface TenantContext {
   /** The org this call stack acts for. `null` only for a `system` scope. */
@@ -89,6 +102,25 @@ export function requireTenantContext(): TenantContext {
     );
   }
   return { orgId: INSTALL_ORG_ID, source: 'implicit' };
+}
+
+/**
+ * The org this call stack acts for, for a lookup that has to name it.
+ *
+ * A per-org unique key is the case: `orgId_slug` on an agent, a knowledge
+ * base or a document (§107 t-708) cannot be asked without saying whose
+ * `support` is meant. Same answers as {@link requireTenantContext}, and the
+ * one scope that has no org — `system` — is refused too: a global scope
+ * cannot name one org's row by slug, it has to search
+ * (`findFirst({ where: { slug, orgId } })`).
+ */
+export function requireOrgId(): string {
+  const { orgId } = requireTenantContext();
+  if (orgId) return orgId;
+  throw new Error(
+    'No org in the tenant context: this call stack runs as the system scope, which has no org to name. ' +
+      'A per-org lookup (orgId_slug) belongs inside runAsOrg.'
+  );
 }
 
 /**

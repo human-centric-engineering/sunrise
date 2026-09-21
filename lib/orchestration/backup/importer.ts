@@ -96,7 +96,7 @@ export async function importOrchestrationConfig(
 
     // Import agents by slug upsert
     for (const agent of parsed.data.agents) {
-      const existing = await tx.aiAgent.findUnique({ where: { slug: agent.slug } });
+      const existing = await tx.aiAgent.findFirst({ where: { slug: agent.slug } });
       if (existing) {
         if (existing.isSystem) {
           result.warnings.push(
@@ -105,7 +105,7 @@ export async function importOrchestrationConfig(
           continue;
         }
         await tx.aiAgent.update({
-          where: { slug: agent.slug },
+          where: { id: existing.id },
           data: {
             name: agent.name,
             description: agent.description,
@@ -186,7 +186,7 @@ export async function importOrchestrationConfig(
       // empty and we synthesised tag rows from knowledgeCategories above),
       // fall back to looking up by category-derived slug so the agent ends up
       // with the same effective scope as before the migration.
-      const target = await tx.aiAgent.findUnique({
+      const target = await tx.aiAgent.findFirst({
         where: { slug: agent.slug },
         select: { id: true },
       });

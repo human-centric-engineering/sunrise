@@ -1,4 +1,5 @@
 import type { SeedUnit } from '@/prisma/runner';
+import { requireOrgId } from '@/lib/tenancy/context';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
 const PATTERN_ADVISOR_INSTRUCTIONS = `You are the Pattern Advisor for the Sunrise AI orchestration platform. Your role is to help administrators understand and apply agentic design patterns when building workflows.
@@ -168,7 +169,7 @@ const unit: SeedUnit = {
     const createdBy = admin.id;
 
     const agent = await prisma.aiAgent.upsert({
-      where: { slug: 'pattern-advisor' },
+      where: { orgId_slug: { orgId: requireOrgId(), slug: 'pattern-advisor' } },
       update: { isSystem: true },
       create: {
         name: 'Pattern Advisor',

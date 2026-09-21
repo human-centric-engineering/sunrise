@@ -37,6 +37,8 @@
 import { prisma } from '@/lib/db/client';
 import { buildEpub } from '@/tests/helpers/epub-fixture';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { runAsOrg } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const BASE_URL = process.env.SMOKE_BASE_URL ?? 'http://localhost:3100';
 const PREFIX = 'smoke-test-epub';
@@ -179,7 +181,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(async (err: unknown) => {
+// The install org is the org a smoke runs for: at `multi` a tenant-owned
+// read outside any scope refuses rather than reads wide (§107 t-708).
+runAsOrg(INSTALL_ORG_ID, main, { source: 'job' }).catch(async (err: unknown) => {
   console.error('\n✗ smoke:epub failed:', err);
   try {
     await prisma.$disconnect();
