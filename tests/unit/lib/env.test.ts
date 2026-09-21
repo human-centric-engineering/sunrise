@@ -371,6 +371,17 @@ describe('server path (typeof window === undefined)', () => {
       expect(env.MIGRATE_DATABASE_URL).toBe('postgresql://owner:secret@localhost:5432/sunrise');
     });
 
+    it('should treat a blank value as unset — the templated-but-empty container shape', async () => {
+      // Arrange
+      setEnv({ ...validServerEnv, MIGRATE_DATABASE_URL: '' });
+
+      // Act
+      const env = await importEnv();
+
+      // Assert — the same rule prisma.config.ts and ownerDsn() apply
+      expect(env.MIGRATE_DATABASE_URL).toBeUndefined();
+    });
+
     it('should throw when set to something that is not a URL', async () => {
       // Arrange
       setEnv({ ...validServerEnv, MIGRATE_DATABASE_URL: 'the owner dsn' });

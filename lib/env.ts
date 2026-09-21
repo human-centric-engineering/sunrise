@@ -36,12 +36,18 @@ const serverEnvSchema = z.object({
       'DATABASE_URL must be a valid PostgreSQL connection string (e.g., postgresql://user:password@localhost:5432/dbname)',
   }),
   MIGRATE_DATABASE_URL: z
-    .string()
-    .url({
-      message:
-        'MIGRATE_DATABASE_URL must be a valid PostgreSQL connection string (the owner role, for migrations and db:tenancy:*)',
-    })
-    .optional()
+    .preprocess(
+      // Blank means unset — the templated-but-empty shape a container env file
+      // produces — so every reader (prisma.config.ts, ownerDsn()) agrees.
+      (value) => (value === '' ? undefined : value),
+      z
+        .string()
+        .url({
+          message:
+            'MIGRATE_DATABASE_URL must be a valid PostgreSQL connection string (the owner role, for migrations and db:tenancy:*)',
+        })
+        .optional()
+    )
     .describe(
       'Privileged DSN for migrations, seeds and db:tenancy:enable|disable. Optional: falls back to ' +
         'DATABASE_URL. At TENANCY_MODE=multi the app connects as a NOBYPASSRLS role that does not own ' +

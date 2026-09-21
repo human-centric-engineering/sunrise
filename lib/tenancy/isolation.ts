@@ -117,13 +117,29 @@ export function planRlsSwitch(flags: readonly RlsFlags[], mode: TenancySwitch): 
 }
 
 /**
+ * Rows whose `NULL` org is a meaning, not a gap — the backfill must leave
+ * them alone. A platform (`admin`-scoped) API key binds no org by design:
+ * `withAdminAuth` refuses one that carries an org, so binding it would lock
+ * every platform key out. The §106 backfill migration made the same
+ * exception; this is that predicate, kept in one place.
+ */
+export const BACKFILL_EXEMPTIONS: Readonly<Record<string, string>> = {
+  ai_api_key: `NOT ('admin' = ANY("scopes"))`,
+};
+
+/**
  * The backfill `enable` runs first: a row still carrying `NULL` — born between
  * the column's migration and the chokepoint stamping it, or written under
  * `runAsSystem` — would be invisible to every org once the policies enforce,
- * so it becomes the install org's, the answer `single` already gives it.
+ * so it becomes the install org's, the answer `single` already gives it —
+ * except the rows {@link BACKFILL_EXEMPTIONS} names, whose `NULL` is the
+ * point. (At `multi` those platform keys are read by the resolver under the
+ * bypass, never through a policy — §107 t-709.)
  */
 export function backfillNullOrgSql(table: string): string {
-  return `UPDATE "${table}" SET "orgId" = $1 WHERE "orgId" IS NULL`;
+  const exemption = BACKFILL_EXEMPTIONS[table];
+  const keep = exemption ? ` AND ${exemption}` : '';
+  return `UPDATE "${table}" SET "orgId" = $1 WHERE "orgId" IS NULL${keep}`;
 }
 
 /** The slice of a `pg` client the switch needs — one query at a time, in the caller's transaction. */
@@ -189,6 +205,32 @@ export async function readRlsFlags(db: SqlRunner, tables: readonly string[]): Pr
 }
 
 /**
+ * Refuse to enforce on a table with no `org_isolation` policy: RLS enabled
+ * with no policy is default-deny — zero rows for every org, an outage —
+ * and a policy can be missing without any migration noticing
+ * (`prisma migrate diff` does not see them). Same catalog, one round trip.
+ */
+async function requirePolicies(db: SqlRunner, tables: readonly string[]): Promise<void> {
+  const { rows } = await db.query(
+    `SELECT tablename AS table FROM pg_policies
+      WHERE schemaname = current_schema() AND policyname = $1 AND tablename = ANY($2)`,
+    [ORG_ISOLATION_POLICY, tables]
+  );
+  const present = new Set(
+    rows.map((r) =>
+      typeof r === 'object' && r !== null ? (r as { table?: unknown }).table : undefined
+    )
+  );
+  const missing = tables.filter((t) => !present.has(t));
+  if (missing.length > 0) {
+    throw new Error(
+      `No ${ORG_ISOLATION_POLICY} policy on: ${missing.join(', ')} — enabling RLS there would deny every row. ` +
+        'Run the migrations (or restore the policy) first; npm run db:drift-check names it.'
+    );
+  }
+}
+
+/**
  * Run the switch inside the caller's transaction: read the flags, backfill
  * `NULL` orgs to the install org (enable only, before anything enforces),
  * apply the plan, read the flags back. Every table reports what happened to
@@ -205,6 +247,7 @@ export async function runTenancySwitch(
   // whatever role the migrate DSN turns out to be.
   await db.query(`SELECT set_config('${BYPASS_RLS_SETTING}', 'on', true)`);
   const before = await readRlsFlags(db, tables);
+  if (mode === 'enable') await requirePolicies(db, tables);
   const plan = planRlsSwitch(before, mode);
   const backfilled = new Map<string, number>();
   if (mode === 'enable') {

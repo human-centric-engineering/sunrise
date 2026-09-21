@@ -100,10 +100,10 @@ async function main(): Promise<void> {
     await prisma.$executeRawUnsafe(
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content, embedding,
-        "chunkType", "embeddedAt"
+        "chunkType", "embeddedAt", "orgId"
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3, $4::vector,
-        'smoke', NOW()
+        'smoke', NOW(), (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
       )`,
       chunkKey,
       doc.id,

@@ -104,15 +104,30 @@ describe('backfillNullOrgSql', () => {
       'UPDATE "ai_agent" SET "orgId" = $1 WHERE "orgId" IS NULL'
     );
   });
+
+  it('leaves a platform (admin-scoped) API key unbound — its NULL org is the point', () => {
+    // The §106 backfill migration's own exemption; binding one would make
+    // withAdminAuth refuse every platform key.
+    expect(backfillNullOrgSql('ai_api_key')).toBe(
+      `UPDATE "ai_api_key" SET "orgId" = $1 WHERE "orgId" IS NULL AND NOT ('admin' = ANY("scopes"))`
+    );
+  });
 });
 
 /** A runner that records every statement and answers pg_class from a mutable flag table. */
-function fakeRunner(initial: RlsFlags[]) {
+function fakeRunner(initial: RlsFlags[], missingPolicies: ReadonlySet<string> = new Set()) {
   const flags = new Map(initial.map((f) => [f.table, { ...f }]));
   const log: Array<{ sql: string; params?: unknown[] }> = [];
   const runner: SqlRunner = {
     async query(sql, params) {
       log.push({ sql, params });
+      if (sql.includes('FROM pg_policies')) {
+        const wanted = (params?.[1] as string[]) ?? [];
+        return {
+          rows: wanted.filter((t) => !missingPolicies.has(t)).map((t) => ({ table: t })),
+          rowCount: null,
+        };
+      }
       if (sql.includes('FROM pg_class')) {
         const wanted = (params?.[0] as string[]) ?? [];
         return {
@@ -209,6 +224,26 @@ describe('runTenancySwitch', () => {
     expect(log.some((l) => l.sql.startsWith('UPDATE'))).toBe(false);
     expect(flags.get('b')).toEqual({ table: 'b', enabled: false, forced: false });
     expect(report.entries.map((e) => e.backfilled)).toEqual([0, 0]);
+  });
+
+  it('refuses to enable a table with no org_isolation policy — that would deny every row', async () => {
+    const { runner, log } = fakeRunner(dormant(), new Set(['b']));
+    await expect(runTenancySwitch(runner, ['a', 'b'], 'enable', 'install')).rejects.toThrow(
+      /No org_isolation policy on: b/
+    );
+    expect(log.some((l) => l.sql.startsWith('ALTER') || l.sql.startsWith('UPDATE'))).toBe(false);
+  });
+
+  it('does not need the policies to disable', async () => {
+    const { runner, flags } = fakeRunner(
+      [
+        { table: 'a', enabled: true, forced: true },
+        { table: 'b', enabled: true, forced: true },
+      ],
+      new Set(['a', 'b'])
+    );
+    await runTenancySwitch(runner, ['a', 'b'], 'disable', 'install');
+    expect(flags.get('a')).toEqual({ table: 'a', enabled: false, forced: false });
   });
 
   it('throws when the flags read back do not show the requested state', async () => {

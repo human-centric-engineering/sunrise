@@ -98,10 +98,11 @@ async function seedWithoutEmbeddings(): Promise<void> {
       `INSERT INTO ai_knowledge_chunk (
         id, "chunkKey", "documentId", content,
         "chunkType", "patternNumber", "patternName", category,
-        section, keywords, "estimatedTokens", metadata
+        section, keywords, "estimatedTokens", metadata, "orgId"
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3,
-        $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+        $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
       )`,
       chunk.id,
       document.id,

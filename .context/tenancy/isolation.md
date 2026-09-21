@@ -98,8 +98,13 @@ registration. What it does:
    `NOBYPASSRLS` owner; under `FORCE` it would otherwise see nothing).
 2. Reads `pg_class.relrowsecurity` and `relforcerowsecurity` for every
    table.
-3. **`enable`:** backfills `orgId IS NULL` rows to the install org on every
-   table, then `ENABLE` / `FORCE` whichever flags are off. **`disable`:**
+3. **`enable`:** refuses if any table has no `org_isolation` policy (RLS
+   on with no policy is default-deny — an outage the same catalog round trip
+   can prevent); backfills `orgId IS NULL` rows to the install org on every
+   table — except a platform (`admin`-scoped) API key, whose `NULL` is the
+   point (`BACKFILL_EXEMPTIONS`, the §106 migration's own rule;
+   `withAdminAuth` refuses an admin key that carries an org) — then
+   `ENABLE` / `FORCE` whichever flags are off. **`disable`:**
    `DISABLE` and `NO FORCE` whichever are on — the two flags are independent,
    and `DISABLE` alone leaves `FORCE` set (item 4).
 4. Reads the flags back and refuses to report success unless every table
@@ -145,7 +150,7 @@ not own the tables.
 the chokepoint cannot stamp. The three that write tenant-owned rows —
 `ai_message_embedding` (`lib/orchestration/chat/message-embedder.ts`) and
 `ai_knowledge_chunk` (`lib/orchestration/knowledge/seeder.ts`,
-`document-manager.ts`) — read the org off the parent row in the same
+`document-manager.ts`, and the two dev scripts that seed chunks) — read the org off the parent row in the same
 statement (`(SELECT "orgId" FROM ai_message WHERE id = $1)`); at `multi` the
 subselect sees only the current org's parent, so `WITH CHECK` holds. A new
 raw insert on a tenant-owned table needs the same, and the raw-SQL
