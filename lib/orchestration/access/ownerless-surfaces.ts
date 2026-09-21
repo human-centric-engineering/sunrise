@@ -129,12 +129,13 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
 
   // ── Admin surfaces that scope by a road the helper does not offer ─────────
   {
-    path: 'app/api/v1/admin/orchestration/conversations/search/route.ts',
+    path: 'lib/orchestration/chat/conversation-semantic-search.ts',
     disposition: 'by-design',
     reason:
-      'a pgvector cosine-distance query, not expressible through Prisma’s builder, so ' +
-      'the three arms are hand-written in SQL and pinned against ' +
-      '`conversationVisibilityWhere` in `conversations/policy-narrowing.test.ts`.',
+      'the admin conversation search’s pgvector cosine-distance query, not expressible ' +
+      'through Prisma’s builder, so the three arms are hand-written in SQL and pinned ' +
+      'against `conversationVisibilityWhere` in `conversations/policy-narrowing.test.ts`; ' +
+      'moved out of the route (§107 t-709) so the isolation harness drives the statement.',
   },
   {
     path: 'app/api/v1/admin/orchestration/conversations/clear/route.ts',

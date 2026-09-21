@@ -112,18 +112,20 @@ export async function resolveApiKey(request: NextRequest): Promise<{
     if (!row) return null;
     if (row.expiresAt && row.expiresAt < new Date()) return null;
 
-    // Update last used timestamp (fire-and-forget, inside the same scope)
-    void prisma.aiApiKey
-      .update({
+    // Update last used timestamp (fire-and-forget, inside the same scope).
+    // `Promise.resolve` adopts the lazy PrismaPromise, and tolerates a test
+    // double that answers `undefined`.
+    void Promise.resolve(
+      prisma.aiApiKey.update({
         where: { id: row.id },
         data: { lastUsedAt: new Date() },
       })
-      .catch((err: unknown) => {
-        logger.warn('API key: failed to update lastUsedAt', {
-          keyId: row.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    ).catch((err: unknown) => {
+      logger.warn('API key: failed to update lastUsedAt', {
+        keyId: row.id,
+        error: err instanceof Error ? err.message : String(err),
       });
+    });
     return row;
   });
 
