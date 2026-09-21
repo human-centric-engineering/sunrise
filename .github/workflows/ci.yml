@@ -605,6 +605,11 @@ jobs:
       # to a policy, so a run as `postgres` would prove nothing.
       OWNER_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
       APP_URL: 'postgresql://sunrise_app:ci-app-role-not-a-secret@localhost:5432/sunrise_ci'
+      # `prisma generate` runs on `postinstall` and `prisma.config.ts` refuses
+      # to load without DATABASE_URL defined (see "The Postgres service
+      # container" in .context/architecture/ci.md). Every step below that
+      # connects overrides it with the role it needs.
+      DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
       BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
       BETTER_AUTH_URL: 'http://localhost:3000'
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
