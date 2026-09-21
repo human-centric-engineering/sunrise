@@ -7,15 +7,15 @@ repos, and the two knobs a fork may want to flip. The pipeline is designed to be
 
 ## Workflows
 
-| File                                        | Trigger                      | Purpose                                                                                                                                                 |
-| ------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.github/workflows/ci.yml`                  | push to `main`, PR to `main` | Type-check, lint/format, build, tests, real-DB smoke (migration drift + erasure + subject-access export), Docker build + stack smoke, lockfile metadata |
-| `.github/workflows/codeql.yml`              | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                                                                           |
-| `.github/workflows/dependency-review.yml`   | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                                                                         |
-| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | **Two** gates: TruffleHog (diff on PR, full history on cron) **and** a Postgres DSN tripwire (see below)                                                |
-| `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                                                                      |
-| `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)                                                          |
-| `.github/workflows/pr-cache-cleanup.yml`    | PR closed                    | Reclaims the Actions cache a merged/closed PR leaves scoped to its own ref (see below)                                                                  |
+| File                                        | Trigger                      | Purpose                                                                                                                                                                                                   |
+| ------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`                  | push to `main`, PR to `main` | Type-check, lint/format, build, tests, real-DB smoke (migration drift + erasure + subject-access export + tenancy), the two-org isolation smoke at `multi`, Docker build + stack smoke, lockfile metadata |
+| `.github/workflows/codeql.yml`              | push, PR, weekly cron        | SAST → Security → Code scanning (skips on private; see below)                                                                                                                                             |
+| `.github/workflows/dependency-review.yml`   | PR to `main`                 | Blocks PRs adding vulnerable deps (skips on private; see below)                                                                                                                                           |
+| `.github/workflows/secret-scan.yml`         | push, PR, weekly cron        | **Two** gates: TruffleHog (diff on PR, full history on cron) **and** a Postgres DSN tripwire (see below)                                                                                                  |
+| `.github/workflows/dependency-audit.yml`    | weekly cron, manual          | Audits the tree **as it stands**: advisories + `libc` completeness                                                                                                                                        |
+| `.github/workflows/fork-sync-integrity.yml` | push to `main`, manual       | Detects a squash-merged sync PR that silently reset the merge base (no-op upstream; see below)                                                                                                            |
+| `.github/workflows/pr-cache-cleanup.yml`    | PR closed                    | Reclaims the Actions cache a merged/closed PR leaves scoped to its own ref (see below)                                                                                                                    |
 
 ## `ci.yml` shape
 
@@ -28,7 +28,8 @@ config ──┬─ typecheck
          ├─ build
          ├─ test-full   (4-way shard matrix)   ┐ exactly one test
          ├─ test-changed (single, PR only)     ┘ job runs (see below)
-         ├─ smoke — real-DB invariants (drift + erasure + export)
+         ├─ smoke — real-DB invariants (drift + erasure + export + tenancy)
+         ├─ smoke-multi — two orgs at TENANCY_MODE=multi, RLS enforced
          ├─ docker — build + prod-stack smoke  (parallel; gated on PRs)
          └─ lockfile — platform metadata       (PRs touching the manifest)
                                    └─ ci-status (branch-protection gate)
@@ -818,7 +819,7 @@ with no action available.
 
 ### The Postgres service container
 
-One job attaches one — `smoke`:
+Two jobs attach one — `smoke`, and `smoke-multi` (below):
 
 ```yaml
 services:
@@ -839,9 +840,55 @@ The `pg_isready` health check is what makes the container's readiness a
 precondition of the first step rather than a race: GitHub holds the job until it
 passes, up to 5 × 10s.
 
-`smoke` is the only consumer: migration drift, the erasure invariants, and the
-~28 subject-access export queries all need Postgres, because the vitest suite
-mocks Prisma and so never executes them.
+`smoke` and `smoke-multi` are the only consumers: migration drift, the erasure
+invariants, the ~28 subject-access export queries and the row-isolation
+policies all need Postgres, because the vitest suite mocks Prisma and so never
+executes them.
+
+### `smoke-multi` — the only control that runs a policy (§107 t-709)
+
+Every other control on row isolation is a file parse or a mocked unit test
+(`policy-coverage`, `org-scoped-slugs`, the chokepoint's recording adapter).
+This job is the one that runs the `org_isolation` policies against a real
+Postgres, **as the restricted role** — a table's owner, and any `BYPASSRLS`
+role, is never subject to a policy, so a run as `postgres` would prove
+nothing. It is the operator's own sequence
+([`tenancy/isolation.md`](../tenancy/isolation.md)), each step reading its
+exit code, scripts invoked directly (the npm scripts load `.env.local`):
+
+1. `prisma migrate deploy` and `tsx prisma/seed.ts` as the owner
+   (`OWNER_URL` as both `DATABASE_URL` and `MIGRATE_DATABASE_URL`).
+2. `scripts/db/tenancy-role.ts --create` as the owner — the `LOGIN
+NOBYPASSRLS` app role, with `TENANCY_APP_ROLE_PASSWORD` set to a value
+   that is not a secret (it never leaves the runner).
+3. `scripts/db/tenancy-enable.ts --enable` as the owner.
+4. `scripts/db/check-drift.ts` at `TENANCY_MODE=multi` **as the app role**:
+   9 platform + 84 tenancy probes (every policy present, RLS enabled and
+   forced on every tenant-owned table).
+5. `scripts/smoke/tenancy-isolation.ts` at `multi` as the app role — two
+   orgs with equivalent rows; as A, every read path including the raw-SQL
+   ones (vector search, cost reports, conversation semantic search, the
+   message embedder's `INSERT`) answers A's rows and none of B's, after
+   asserting the population is non-empty; `forEachOrg`, the no-context
+   throw, the nested create, `runAsSystem`; the three credential resolvers
+   and the inbound route called as nobody learn B's org from B's row; the
+   t-708 namespaces. Measured: it fails 5 checks when one policy is widened
+   to `USING (true)`, and at the first create when one is dropped
+   (default-deny under `FORCE`).
+6. The switch round-trips — `--enable` (no change) → `--disable` →
+   `--disable` (no change) → `--enable` → `--disable` — exit 0 each time.
+7. `scripts/smoke/tenancy.ts` at `single` as the owner, on the same
+   database, which now also asserts `pg_class` shows RLS neither enabled nor
+   forced on every tenant-owned table.
+
+It is in `ci-status`'s `needs`. **What a fork must supply:** nothing for an
+unmodified fork — the role name, the password and both DSNs are set in the
+job's `env`. A fork that adds a tenant-owned model needs its `org_isolation`
+policy in a migration (`policy-coverage` fails the unit run first); a fork
+that adds a raw-SQL read of a tenant-owned table should add it to the
+harness's step 4, since no `where` clause reaches it. A fork on a database
+whose deploy role is `BYPASSRLS` (Neon's `neondb_owner`) runs its own app
+under a role like the one step 2 creates — the job is the rehearsal.
 
 **`test-full` and `test-changed` used to attach one too, and it was dead weight
 (removed in #629).** `tests/setup.ts` is a global `setupFiles` entry and

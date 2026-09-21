@@ -579,6 +579,95 @@ jobs:
       # (see .context/tenancy/identity.md).
       - run: npx tsx scripts/smoke/tenancy.ts
 
+  smoke-multi:
+    name: Smoke — two orgs at TENANCY_MODE=multi (RLS enforced, restricted role)
+    runs-on: ubuntu-latest
+    needs: config
+    if: needs.config.outputs.code == 'true'
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sunrise_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # The OWNER connection: migrations, the seed, the role and the switch
+      # all run as it. The app role below is what every code path is tested
+      # through — a table's owner (and any BYPASSRLS role) is never subject
+      # to a policy, so a run as `postgres` would prove nothing.
+      OWNER_URL: 'postgresql://postgres:postgres@localhost:5432/sunrise_ci'
+      APP_URL: 'postgresql://sunrise_app:ci-app-role-not-a-secret@localhost:5432/sunrise_ci'
+      BETTER_AUTH_SECRET: 'ci-build-secret-not-for-production-use'
+      BETTER_AUTH_URL: 'http://localhost:3000'
+      NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      # The sequence an operator runs (see .context/tenancy/isolation.md),
+      # invoked directly rather than through the npm scripts, which load
+      # `.env.local`. Every step reads its exit code.
+      - name: Migrate and seed as the owner
+        env:
+          DATABASE_URL: ${{ env.OWNER_URL }}
+          MIGRATE_DATABASE_URL: ${{ env.OWNER_URL }}
+        run: |
+          npx prisma migrate deploy
+          npx tsx prisma/seed.ts
+      - name: Create the restricted app role
+        env:
+          DATABASE_URL: ${{ env.OWNER_URL }}
+          MIGRATE_DATABASE_URL: ${{ env.OWNER_URL }}
+          TENANCY_APP_ROLE_PASSWORD: 'ci-app-role-not-a-secret'
+        run: npx tsx scripts/db/tenancy-role.ts --create
+      - name: Enable the policies
+        env:
+          DATABASE_URL: ${{ env.OWNER_URL }}
+          MIGRATE_DATABASE_URL: ${{ env.OWNER_URL }}
+        run: npx tsx scripts/db/tenancy-enable.ts --enable
+      # 9 platform + 84 tenancy probes: every policy present, RLS enabled AND
+      # forced on every tenant-owned table, as the app role.
+      - name: Drift check at multi, as the app role
+        env:
+          DATABASE_URL: ${{ env.APP_URL }}
+          TENANCY_MODE: multi
+        run: npx tsx scripts/db/check-drift.ts
+      # The control that actually runs a policy: two orgs, every read path
+      # including the raw-SQL ones, as the restricted role.
+      - name: Two-org isolation harness, as the app role
+        env:
+          DATABASE_URL: ${{ env.APP_URL }}
+          TENANCY_MODE: multi
+        run: npx tsx scripts/smoke/tenancy-isolation.ts
+      # Idempotence: the switch reports "no change" and exits 0 either way.
+      - name: Enable is idempotent; disable and re-enable round-trip
+        env:
+          DATABASE_URL: ${{ env.OWNER_URL }}
+          MIGRATE_DATABASE_URL: ${{ env.OWNER_URL }}
+        run: |
+          npx tsx scripts/db/tenancy-enable.ts --enable
+          npx tsx scripts/db/tenancy-enable.ts --disable
+          npx tsx scripts/db/tenancy-enable.ts --disable
+          npx tsx scripts/db/tenancy-enable.ts --enable
+          npx tsx scripts/db/tenancy-enable.ts --disable
+      # With the policies dormant again, the single-mode invariant still
+      # holds on the same database (the `smoke` job proves it on a fresh one).
+      - name: Single-mode smoke still passes on the same database
+        env:
+          DATABASE_URL: ${{ env.OWNER_URL }}
+        run: npx tsx scripts/smoke/tenancy.ts
+
   docker:
     name: Docker Build + Stack Smoke
     runs-on: ubuntu-latest
@@ -916,7 +1005,19 @@ jobs:
     # outputs, so if IT fails they all resolve to `skipped` — and the loop below
     # passes on `skipped`. That produced "CI passed" with zero gates run: the
     # exact hole this file's change-detection fix closes, one job further up.
-    needs: [config, typecheck, lint, build, test-full, test-changed, smoke, docker, lockfile]
+    needs:
+      [
+        config,
+        typecheck,
+        lint,
+        build,
+        test-full,
+        test-changed,
+        smoke,
+        smoke-multi,
+        docker,
+        lockfile,
+      ]
     if: always()
     steps:
       - name: Check CI result
@@ -929,6 +1030,7 @@ jobs:
             "${{ needs.test-full.result }}" \
             "${{ needs.test-changed.result }}" \
             "${{ needs.smoke.result }}" \
+            "${{ needs.smoke-multi.result }}" \
             "${{ needs.docker.result }}" \
             "${{ needs.lockfile.result }}"; do
             # Allow-list, not a deny-list. Testing for `failure` let
