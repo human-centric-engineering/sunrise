@@ -104,7 +104,12 @@ registration. What it does:
    table — except a platform (`admin`-scoped) API key, whose `NULL` is the
    point (`BACKFILL_EXEMPTIONS`, the §106 migration's own rule;
    `withAdminAuth` refuses an admin key that carries an org) — then
-   `ENABLE` / `FORCE` whichever flags are off. **`disable`:**
+   `ENABLE` / `FORCE` whichever flags are off. That is the only `NULL` with
+   a meaning of its own: every other credential's `NULL` was the interim
+   state §106 already backfilled (`orgOfColumn` reads it as the install org
+   at `single` and refuses it at `multi`), and an `AiCostLog` detached by an
+   org's erasure (`SetNull`) reads as the install org's at `single` already —
+   the backfill makes that literal. **`disable`:**
    `DISABLE` and `NO FORCE` whichever are on — the two flags are independent,
    and `DISABLE` alone leaves `FORCE` set (item 4).
 4. Reads the flags back and refuses to report success unless every table
