@@ -10,6 +10,12 @@
  * SAME statement under a real policy — a copy of the SQL in the harness would
  * be the thing that drifts. The route embeds the query, calls this, and does
  * the grouping and the access audit.
+ *
+ * **`includeOwnerless` is the authorization policy's answer, never a
+ * caller's choice**: the route passes `session.unattributedReads.conversation`
+ * and nothing else may pass `true` without asking the policy first. This
+ * module reads `AiConversation` / `AiMessage`, so a new caller is fenced by
+ * the ownerless-surfaces guard (`tests/unit/scripts/ci/ownerless-surfaces.test.ts`).
  */
 import { prisma } from '@/lib/db/client';
 
