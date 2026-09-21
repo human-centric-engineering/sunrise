@@ -143,7 +143,11 @@ with no policy (RLS on with no policy is default-deny: an outage), reads the
 flags back, and exits non-zero unless every table is in the requested state.
 Idempotent; a second run prints "no change". `npm run db:tenancy:disable`
 reverses both flags. The script is mode-agnostic — enabling at `single` is
-safe but pointless, and the app would see no rows.
+pointless, and what you see depends on the role: as a `NOBYPASSRLS`
+non-owner the app sees no rows (no setter is ever issued at `single`); as
+the owner or a superuser — the usual single-tenant `DATABASE_URL` — the
+policies do not apply and nothing changes at all, so an accidental enable
+has no symptom.
 
 ### 3. Flip the mode
 
@@ -185,9 +189,13 @@ checks and dropping one fails its first create.
 
 - **Migrate → role → enable.** The role script needs the ledger; the enable
   script needs the policies the migrations carry.
-- **After `npm run db:reset`**, run `db:tenancy:role -- --create` again: the
-  reset recreates the schema and the grants go with it (the role survives).
-  The reset's re-seed runs as the owner through `MIGRATE_DATABASE_URL`.
+- **After `npm run db:reset`, run steps 1 and 2 again** —
+  `db:tenancy:role -- --create` **and** `db:tenancy:enable`. The reset
+  recreates the schema from the migrations: the role's grants go with it
+  (the role itself survives), and the policies come back **dormant**, so
+  until `enable` runs again the app at `multi` is issuing `set_config`
+  against tables with RLS off and sees every org's rows. The reset's
+  re-seed runs as the owner through `MIGRATE_DATABASE_URL`.
 - **Seeding at `multi`** runs as the owner (`db:seed` reads
   `MIGRATE_DATABASE_URL`) and lands every built-in row as the install org's.
 - **Turning it off**: `db:tenancy:disable`, then `TENANCY_MODE=single`. The
@@ -215,9 +223,9 @@ org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 injection, the setter, the drift probes, the enable script and the harness
 all derive the tenant-owned set from the generated client. In particular,
 **do not register `rlsEnabled` / `policyExists` probes for it** in
-`lib/app/db-drift.ts`: `db:drift-check` already derives both for every
-tenant-owned table; those two factories are for RLS you hand-roll on a table
-outside that set. What remains is what the tests will name until you do it:
+`lib/app/db-drift.ts`: `db:drift-check` already derives them for every
+tenant-owned table (`policyExists` in both modes, `rlsEnabled` at `multi`);
+those two factories are for RLS you hand-roll on a table outside that set. What remains is what the tests will name until you do it:
 
 | The test that names your model                        | What it wants                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -323,8 +331,12 @@ has the numbers.
   `runAsSystem` and to no org. A row created under `runAsSystem` without an
   explicit `orgId` is another — it is outside every org and every namespace
   (Postgres treats `NULL`s as distinct in a unique index).
-- **Enabling at `single` hides everything.** The chokepoint issues no
-  setter there, so the app sees zero rows. Enable only with `multi`.
+- **Enabling at `single` has no useful outcome.** The chokepoint issues no
+  setter there: a restricted app role sees zero rows; the owner or a
+  superuser (the single-tenant `DATABASE_URL`) is not subject to the
+  policies and sees everything, with no symptom that anything is on.
+  Enable only with `multi`, and check with `TENANCY_MODE=multi npm run
+db:drift-check` rather than by looking at the app.
 - **Neon's deploy role bypasses RLS.** `neondb_owner` inherits `BYPASSRLS`
   from `neon_superuser`; it is the owner DSN, never the app's. Neon also
   refuses `DROP OWNED BY`, which is why `--drop` revokes grants first.

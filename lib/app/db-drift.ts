@@ -37,8 +37,9 @@
  * `constraintExists` (optional definition-substring assertion), `columnExists`,
  * `generatedColumnExists`, plus `rlsEnabled` (asserts ENABLE and, by default,
  * FORCE) and `policyExists`. You do NOT need the last two for a model that
- * carries `orgId`: `db:drift-check` already derives both probes for every
- * tenant-owned table (`tenancyDriftProbes`, §107), yours included. They are
+ * carries `orgId`: `db:drift-check` already derives them for every
+ * tenant-owned table (`tenancyDriftProbes`, §107 — `policyExists` in both
+ * modes, `rlsEnabled` at TENANCY_MODE=multi), yours included. They are
  * for RLS you hand-roll on a table OUTSIDE that set — and then register BOTH
  * per table: a policy can exist while RLS is disabled, and vice versa. For a
  * `GENERATED ALWAYS` column use `generatedColumnExists` —
